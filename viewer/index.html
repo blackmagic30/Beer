@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Melbourne Beer Map</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./config.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0f172a;
+      font-family: Arial, sans-serif;
+    }
+
+    #topbar {
+      height: 64px;
+      box-sizing: border-box;
+      padding: 16px 20px;
+      background: #111827;
+      color: white;
+      border-bottom: 1px solid #1f2937;
+    }
+
+    #topbar h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+
+    #debug {
+      padding: 10px 20px;
+      background: #172554;
+      color: #facc15;
+      white-space: pre-wrap;
+      font-size: 14px;
+      min-height: 48px;
+      box-sizing: border-box;
+    }
+
+    #map {
+      width: 100%;
+      height: calc(100vh - 64px - 68px);
+      min-height: 320px;
+    }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <h1>Melbourne Beer Map</h1>
+  </div>
+
+  <div id="debug">Starting viewer...</div>
+  <div id="map"></div>
+
+  <script>
+    const viewerConfig =
+      window.MELB_BEER_BOT_VIEWER_CONFIG &&
+      typeof window.MELB_BEER_BOT_VIEWER_CONFIG === "object"
+        ? window.MELB_BEER_BOT_VIEWER_CONFIG
+        : {};
+    const params = new URLSearchParams(window.location.search);
+    const SUPABASE_URL = viewerConfig.supabaseUrl || "";
+    const SUPABASE_KEY = viewerConfig.supabaseAnonKey || "";
+    const DEFAULT_GOOGLE_MAPS_KEY = viewerConfig.googleMapsApiKey || "";
+    const GOOGLE_MAPS_MAP_ID = viewerConfig.googleMapsMapId || "";
+    const GOOGLE_MAPS_KEY =
+      params.get("googleMapsKey") ||
+      window.localStorage.getItem("googleMapsKey") ||
+      DEFAULT_GOOGLE_MAPS_KEY;
+    const debugEl = document.getElementById("debug");
+    let googleMapsAuthFailed = false;
+
+    if (params.get("googleMapsKey")) {
+      window.localStorage.setItem("googleMapsKey", params.get("googleMapsKey"));
+    }
+
+    function debug(message) {
+      console.log(message);
+      debugEl.textContent += "\n" + message;
+    }
+
+    function debugJson(label, value) {
+      const text = typeof value === "string"
+        ? value
+        : JSON.stringify(value, null, 2);
+      debug(`${label}: ${text}`);
+    }
+
+    function fail(message, error) {
+      console.error(message, error);
+      debug(message + (error && error.message ? ": " + error.message : ""));
+    }
+
+    function renderMapFailure(message) {
+      const mapEl = document.getElementById("map");
+
+      mapEl.innerHTML = `
+        <div style="height:100%; display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box; background:#0f172a;">
+          <div style="max-width:680px; width:100%; background:#111827; color:#e5e7eb; border:1px solid #1f2937; border-radius:20px; padding:24px; box-sizing:border-box;">
+            <div style="font-size:22px; font-weight:700; margin-bottom:12px;">Google Maps could not load</div>
+            <div style="font-size:14px; line-height:1.6; color:#cbd5e1; margin-bottom:16px;">
+              ${escapeHtml(message)}
+            </div>
+            <div style="font-size:13px; line-height:1.7; color:#93c5fd;">
+              Current origin: ${escapeHtml(window.location.origin || "unknown")}<br>
+              Try allowing these browser referrers on the Google Maps browser key:<br>
+              <code>http://localhost:3000/*</code><br>
+              <code>http://127.0.0.1:3000/*</code><br>
+              <code>http://localhost:*/*</code><br>
+              <code>http://127.0.0.1:*/*</code>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function getVenueRecord(venueValue) {
+      if (Array.isArray(venueValue)) {
+        return venueValue[0] || null;
+      }
+
+      if (venueValue && typeof venueValue === "object") {
+        return venueValue;
+      }
+
+      return null;
+    }
+
+    function getCleanedRecord(row) {
+      return row && row.cleaned && typeof row.cleaned === "object"
+        ? row.cleaned
+        : {};
+    }
+
+    function formatPriceValue(value) {
+      return value == null ? "Price unavailable" : `$${value}`;
+    }
+
+    function titleizeKey(value) {
+      return String(value || "")
+        .split(/[_\s]+/)
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(" ");
+    }
+
+    function getAvailabilityLabel(source) {
+      const availability = source && typeof source.availability === "object"
+        ? source.availability
+        : null;
+
+      if (availability && availability.label) {
+        return availability.label;
+      }
+
+      switch (source.availability_status) {
+        case "on_tap":
+          return "On tap";
+        case "package_only":
+          if (source.unavailable_reason === "bottles_only") {
+            return "Bottles only";
+          }
+
+          return "Cans only";
+        case "unavailable":
+          return source.unavailable_reason === "not_on_tap" ? "Not on tap" : "Unavailable";
+        default:
+          return "Unknown";
+      }
+    }
+
+    function getAvailabilityTone(availabilityLabel) {
+      switch (availabilityLabel) {
+        case "On tap":
+          return {
+            background: "#dcfce7",
+            color: "#166534",
+          };
+        case "Cans only":
+        case "Bottles only":
+        case "Not on tap":
+          return {
+            background: "#fef3c7",
+            color: "#92400e",
+          };
+        case "Unavailable":
+          return {
+            background: "#fee2e2",
+            color: "#991b1b",
+          };
+        default:
+          return {
+            background: "#e2e8f0",
+            color: "#334155",
+          };
+      }
+    }
+
+    function getBeerItems(row) {
+      const cleaned = getCleanedRecord(row);
+      const nestedBeers = cleaned.beers && typeof cleaned.beers === "object"
+        ? cleaned.beers
+        : {};
+      const entries = Object.entries(nestedBeers)
+        .filter(([, source]) => source && typeof source === "object")
+        .map(([key, source]) => {
+          const availabilityLabel = getAvailabilityLabel(source);
+
+          return {
+            label: source.label || titleizeKey(key),
+            priceText:
+              source.price_text ||
+              formatPriceValue(source.price_numeric ?? source.price),
+            needsReview: Boolean(source.needs_review),
+            availabilityLabel,
+            availabilityTone: getAvailabilityTone(availabilityLabel),
+          };
+        })
+        .sort((left, right) => left.label.localeCompare(right.label));
+
+      if (entries.length > 0) {
+        return entries;
+      }
+
+      return [];
+    }
+
+    function getHappyHourSummary(row) {
+      const cleaned = getCleanedRecord(row);
+      const happyHour = cleaned.happy_hour;
+
+      if (!happyHour || typeof happyHour !== "object") {
+        return null;
+      }
+
+      const exists = Boolean(happyHour.exists);
+
+      if (!exists) {
+        return "No happy hour listed";
+      }
+
+      const parts = [
+        happyHour.days || happyHour.days_times || null,
+        happyHour.start && happyHour.end ? `${happyHour.start}-${happyHour.end}` : null,
+        happyHour.price != null ? `$${happyHour.price}` : null,
+      ].filter(Boolean);
+
+      return parts.length ? parts.join(" • ") : "Happy hour available";
+    }
+
+    function formatAddress(venue) {
+      return [
+        venue.address,
+        venue.suburb,
+        venue.state,
+        venue.postcode,
+      ].filter(Boolean).join(", ");
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    window.gm_authFailure = function gmAuthFailure() {
+      googleMapsAuthFailed = true;
+      const message =
+        "Google Maps authentication failed. This usually means the browser API key does not allow this localhost origin, Maps JavaScript API is not enabled for the key's project, or billing is not enabled.";
+
+      fail(message);
+      renderMapFailure(message);
+    };
+
+    async function loadGoogleMapsScript() {
+      return new Promise((resolve, reject) => {
+        if (window.google && window.google.maps) {
+          resolve();
+          return;
+        }
+
+        if (!GOOGLE_MAPS_KEY) {
+          reject(new Error("Missing Google Maps browser key"));
+          return;
+        }
+
+        const script = document.createElement("script");
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_KEY)}&loading=async`;
+        script.async = true;
+        script.defer = true;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("Google Maps script failed to load"));
+        document.head.appendChild(script);
+      });
+    }
+
+    async function init() {
+      try {
+        if (!window.supabase || typeof window.supabase.createClient !== "function") {
+          throw new Error("Supabase browser client failed to load");
+        }
+
+        if (!SUPABASE_URL || !SUPABASE_KEY) {
+          throw new Error("Viewer config is missing Supabase browser values. Check viewer/config.js");
+        }
+
+        debug("Creating Supabase client...");
+        debug(`Supabase URL: ${SUPABASE_URL}`);
+        debug(`Viewer origin: ${window.location.origin}`);
+        debug(`Google Maps key in use: ...${GOOGLE_MAPS_KEY.slice(-6)}`);
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        debug("Loading Google Maps...");
+        await loadGoogleMapsScript();
+        if (googleMapsAuthFailed) {
+          throw new Error("Google Maps authentication failed");
+        }
+        if (!window.google || !window.google.maps) {
+          throw new Error("Google Maps loaded without a usable maps object");
+        }
+        debug("Google Maps loaded.");
+
+        const map = new google.maps.Map(document.getElementById("map"), {
+          center: { lat: -37.8136, lng: 144.9631 },
+          zoom: 13,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: true,
+          ...(GOOGLE_MAPS_MAP_ID ? { mapId: GOOGLE_MAPS_MAP_ID } : {}),
+        });
+
+        debug("Fetching call_results rows...");
+
+        const { data, error } = await supabase
+          .from("call_results")
+          .select(`
+            id,
+            venue_id,
+            venue_name,
+            suburb,
+            created_at,
+            saved_at,
+            cleaned,
+            venues!left (
+              id,
+              name,
+              address,
+              suburb,
+              state,
+              postcode,
+              latitude,
+              longitude
+            )
+          `)
+          .order("created_at", { ascending: false });
+
+        debugJson("Fetch error", error ? {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        } : null);
+
+        if (error) {
+          throw error;
+        }
+
+        const rows = Array.isArray(data) ? data : [];
+        debug(`Fetched row count: ${rows.length}`);
+        debugJson("Sample returned row", rows[0] || null);
+
+        const infoWindow = new google.maps.InfoWindow();
+        const bounds = new google.maps.LatLngBounds();
+        const latestRowsByVenue = new Map();
+
+        rows.forEach((item) => {
+          const venue = getVenueRecord(item.venues);
+          const venueId = item.venue_id || venue?.id;
+
+          if (!venueId || latestRowsByVenue.has(venueId)) {
+            return;
+          }
+
+          latestRowsByVenue.set(venueId, item);
+        });
+
+        const markerRows = Array.from(latestRowsByVenue.values()).filter((item) => {
+          const venue = getVenueRecord(item.venues);
+
+          if (!venue) {
+            return false;
+          }
+
+          const lat = Number(venue.latitude);
+          const lng = Number(venue.longitude);
+
+          return Number.isFinite(lat) && Number.isFinite(lng);
+        });
+
+        debug(`Markerable row count: ${markerRows.length}`);
+
+        if (rows.length === 0) {
+          debug(
+            "call_results returned zero public rows. This usually means no synced call data exists yet."
+          );
+        }
+
+        let markerCount = 0;
+
+        markerRows.forEach((item) => {
+          const venue = getVenueRecord(item.venues);
+          const lat = Number(venue.latitude);
+          const lng = Number(venue.longitude);
+          const beerItems = getBeerItems(item);
+          const happyHourSummary = getHappyHourSummary(item);
+          const headlineBeer =
+            beerItems.find((beer) => beer.availabilityLabel === "On tap" && beer.priceText !== "Price unavailable") ||
+            beerItems.find((beer) => beer.priceText !== "Price unavailable") ||
+            beerItems[0];
+
+          const marker = new google.maps.Marker({
+            position: { lat, lng },
+            map,
+            title: `${venue.name || item.venue_name || "Unknown venue"}${
+              headlineBeer ? ` - ${headlineBeer.label}: ${headlineBeer.priceText}` : ""
+            }`,
+          });
+
+          const address = formatAddress(venue);
+          const createdAt = item.saved_at || item.created_at
+            ? new Date(item.saved_at || item.created_at).toLocaleString()
+            : "Unknown";
+          const venueName = escapeHtml(venue.name || item.venue_name || "Unknown venue");
+          const safeAddress = escapeHtml(address || "Address unavailable");
+          const safeCreatedAt = escapeHtml(createdAt);
+          const beerMarkup = beerItems.length > 0
+            ? beerItems.map((beer) => `
+            <div style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #e2e8f0;">
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <span style="font-size:13px; font-weight:600; color:#0f172a;">${escapeHtml(beer.label)}</span>
+                <span style="display:inline-flex; align-self:flex-start; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:${beer.availabilityTone.background}; color:${beer.availabilityTone.color};">
+                  ${escapeHtml(beer.availabilityLabel)}
+                </span>
+              </div>
+              <span style="font-size:13px; color:${beer.needsReview ? "#b45309" : "#0f172a"}; font-weight:700; text-align:right;">${escapeHtml(beer.priceText)}</span>
+            </div>
+          `).join("")
+            : `
+            <div style="padding:12px 0; font-size:13px; color:#64748b;">
+              No synced beer data yet.
+            </div>
+          `;
+          const happyHourMarkup = happyHourSummary ? `
+            <div style="margin-top:12px; padding:10px 12px; background:#eff6ff; border-radius:12px; font-size:12px; color:#1d4ed8;">
+              <strong>Happy hour</strong><br>
+              ${escapeHtml(happyHourSummary)}
+            </div>
+          ` : "";
+
+          const content = `
+            <div style="max-width:300px; padding:6px 4px 2px; font-family: Arial, sans-serif; color:#0f172a;">
+              <div style="font-size:18px; font-weight:700; line-height:1.2; margin-bottom:8px;">
+                ${venueName}
+              </div>
+              <div style="font-size:13px; line-height:1.45; color:#475569; margin-bottom:14px;">
+                ${safeAddress}
+              </div>
+              <div style="border:1px solid #e2e8f0; border-radius:14px; padding:0 12px; background:#ffffff;">
+                ${beerMarkup}
+              </div>
+              ${happyHourMarkup}
+              <div style="padding-top:10px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b;">
+                Logged ${safeCreatedAt}
+              </div>
+            </div>
+          `;
+
+          marker.addListener("click", () => {
+            infoWindow.setContent(content);
+            infoWindow.open(map, marker);
+          });
+
+          bounds.extend({ lat, lng });
+          markerCount += 1;
+        });
+
+        if (markerCount > 0) {
+          map.fitBounds(bounds);
+        } else {
+          debug("No markerable venue rows were found.");
+        }
+
+        debug(`Map ready. Markers: ${markerCount}`);
+      } catch (error) {
+        fail("Viewer failed", error);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
