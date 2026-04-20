@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Melbourne Beer Map</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0f172a;
+      font-family: Arial, sans-serif;
+    }
+
+    #topbar {
+      height: 64px;
+      box-sizing: border-box;
+      padding: 16px 20px;
+      background: #111827;
+      color: white;
+      border-bottom: 1px solid #1f2937;
+    }
+
+    #topbar h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+
+    #debug {
+      padding: 10px 20px;
+      background: #172554;
+      color: #facc15;
+      white-space: pre-wrap;
+      font-size: 14px;
+    }
+
+    #map {
+      width: 100%;
+      height: calc(100vh - 64px - 48px);
+    }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <h1>Melbourne Beer Map</h1>
+  </div>
+
+  <div id="debug">Starting...</div>
+  <div id="map"></div>
+
+  <script>
+    const supabaseUrl = "https://jxpubqlmqnnqwadmjgyk.supabase.co";
+    const supabaseKey = "sb_publishable_lVXxai7yVD7epZCz8NzwzQ_4SCHj35Q";
+    const googleMapsKey = "AIzaSyBXdsmrHCS-4vDJhsaGpVff32kzVhCi-4k";
+
+    const debugEl = document.getElementById("debug");
+
+    function debug(msg) {
+      console.log(msg);
+      debugEl.textContent += "\n" + msg;
+    }
+
+    async function loadGoogleMapsScript() {
+      return new Promise((resolve, reject) => {
+        if (window.google && window.google.maps) {
+          resolve();
+          return;
+        }
+
+        const script = document.createElement("script");
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsKey}`;
+        script.async = true;
+        script.defer = true;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("Google Maps script failed to load"));
+        document.head.appendChild(script);
+      });
+    }
+
+    async function init() {
+      try {
+        debug("Creating Supabase client...");
+        const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        debug("Loading Google Maps...");
+        await loadGoogleMapsScript();
+        debug("Google Maps loaded.");
+
+        const melbourne = { lat: -37.8136, lng: 144.9631 };
+
+        const map = new google.maps.Map(document.getElementById("map"), {
+          center: melbourne,
+          zoom: 13,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: true,
+        });
+
+        debug("Fetching venues from Supabase...");
+        const { data, error } = await supabase
+          .from("venues")
+          .select("*")
+          .not("latitude", "is", null)
+          .not("longitude", "is", null);
+
+        if (error) {
+          debug("Supabase error: " + error.message);
+          return;
+        }
+
+        debug(`Rows returned: ${data.length}`);
+
+        const infoWindow = new google.maps.InfoWindow();
+        const bounds = new google.maps.LatLngBounds();
+
+        data.forEach((venue) => {
+          const position = {
+            lat: Number(venue.latitude),
+            lng: Number(venue.longitude),
+          };
+
+          const marker = new google.maps.Marker({
+            position,
+            map,
+            title: venue.name || "Unknown Venue",
+          });
+
+          const content = `
+            <div style="max-width:260px; font-family: Arial, sans-serif;">
+              <strong>${venue.name || "Unknown Venue"}</strong><br>
+              ${venue.address || ""}<br>
+              ${venue.suburb || ""}<br><br>
+              ${venue.phone || "No phone"}
+            </div>
+          `;
+
+          marker.addListener("click", () => {
+            infoWindow.setContent(content);
+            infoWindow.open(map, marker);
+          });
+
+          bounds.extend(position);
+        });
+
+        if (data.length > 0) {
+          map.fitBounds(bounds);
+        }
+
+        debug("Map ready.");
+      } catch (err) {
+        debug("Fatal error: " + err.message);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
