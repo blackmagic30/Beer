@@ -7,6 +7,24 @@ dotenv.config();
 
 const e164PhoneRegex = /^\+[1-9]\d{7,14}$/;
 
+function sanitizeEnvString(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
 const booleanFromEnv = z.preprocess((value) => {
   if (typeof value === "boolean") {
     return value;
@@ -28,20 +46,18 @@ const booleanFromEnv = z.preprocess((value) => {
 }, z.boolean());
 
 const optionalStringFromEnv = z.preprocess((value) => {
-  if (typeof value !== "string") {
-    return value;
+  const trimmed = sanitizeEnvString(value);
+  if (typeof trimmed !== "string") {
+    return trimmed;
   }
-
-  const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
 }, z.string().min(1).optional());
 
 const optionalE164PhoneFromEnv = z.preprocess((value) => {
-  if (typeof value !== "string") {
-    return value;
+  const trimmed = sanitizeEnvString(value);
+  if (typeof trimmed !== "string") {
+    return trimmed;
   }
-
-  const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
 }, z.string().regex(e164PhoneRegex, "TWILIO_PHONE_NUMBER must be in E.164 format").optional());
 
@@ -49,16 +65,16 @@ const clockTimeRegex = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  HOST: z.string().min(1).default("0.0.0.0"),
+  HOST: z.preprocess(sanitizeEnvString, z.string().min(1)).default("0.0.0.0"),
   PORT: z.coerce.number().int().positive().default(3000),
-  PUBLIC_BASE_URL: z.string().url(),
-  DATABASE_PATH: z.string().default("./data/melb-beer-bot.sqlite"),
+  PUBLIC_BASE_URL: z.preprocess(sanitizeEnvString, z.string().url()),
+  DATABASE_PATH: z.preprocess(sanitizeEnvString, z.string()).default("./data/melb-beer-bot.sqlite"),
   TRUST_PROXY: booleanFromEnv.default(true),
   OUTBOUND_CALLS_ENABLED: booleanFromEnv.default(true),
-  OUTBOUND_CALL_TIMEZONE: z.string().min(1).default("Australia/Melbourne"),
-  OUTBOUND_CALL_WINDOW_START: z.string().regex(clockTimeRegex).default("11:00"),
-  OUTBOUND_CALL_WINDOW_END: z.string().regex(clockTimeRegex).default("20:30"),
-  OUTBOUND_CALL_ALLOWED_DAYS: z.string().min(1).default("mon,tue,wed,thu,fri,sat,sun"),
+  OUTBOUND_CALL_TIMEZONE: z.preprocess(sanitizeEnvString, z.string().min(1)).default("Australia/Melbourne"),
+  OUTBOUND_CALL_WINDOW_START: z.preprocess(sanitizeEnvString, z.string().regex(clockTimeRegex)).default("11:00"),
+  OUTBOUND_CALL_WINDOW_END: z.preprocess(sanitizeEnvString, z.string().regex(clockTimeRegex)).default("20:30"),
+  OUTBOUND_CALL_ALLOWED_DAYS: z.preprocess(sanitizeEnvString, z.string().min(1)).default("mon,tue,wed,thu,fri,sat,sun"),
   OUTBOUND_REPEAT_GUARD_SECONDS: z.coerce.number().int().min(0).default(300),
   PARSE_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.72),
   BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD: z.coerce.number().int().min(1).max(20).default(5),
