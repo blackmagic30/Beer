@@ -1,7 +1,8 @@
 node_modules
 dist
 .env
-data/*.sqlite
-data/*.sqlite-*
+.DS_Store
+data/*
+!data/.gitkeep
 coverage
 viewer/config.js
