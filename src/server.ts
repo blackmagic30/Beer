@@ -13,8 +13,9 @@ async function boot(): Promise<void> {
       import("./lib/logger.js"),
     ]);
     const app = createApp();
-    server = app.listen(env.PORT, () => {
+    server = app.listen(env.PORT, env.HOST, () => {
       logger.info("melb-beer-bot listening", {
+        host: env.HOST,
         port: env.PORT,
         baseUrl: env.PUBLIC_BASE_URL,
       });

@@ -56,6 +56,7 @@ Set these values:
 
 ```dotenv
 NODE_ENV=development
+HOST=0.0.0.0
 PORT=3000
 PUBLIC_BASE_URL=https://your-ngrok-subdomain.ngrok-free.app
 DATABASE_PATH=./data/melb-beer-bot.sqlite
@@ -88,6 +89,7 @@ ELEVENLABS_WEBHOOK_SECRET=optional_shared_secret_from_elevenlabs
 What each one does:
 
 - `PUBLIC_BASE_URL`: your public HTTPS base URL. Use your ngrok URL here.
+- `HOST`: interface the Node server should bind to. Use `0.0.0.0` for Railway and other hosted deployments.
 - `DATABASE_PATH`: SQLite file path.
 - `OUTBOUND_CALLS_ENABLED`: master pause switch for real venue dialing. Test-mode calls still work.
 - `OUTBOUND_CALL_TIMEZONE`: timezone used for the venue call window.
