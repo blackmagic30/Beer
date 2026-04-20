@@ -5,8 +5,28 @@ let server:
     }
   | undefined;
 
+function getDeployMeta(): Record<string, string> {
+  return {
+    railwayEnvironment: process.env.RAILWAY_ENVIRONMENT_NAME ?? "unknown",
+    railwayService: process.env.RAILWAY_SERVICE_NAME ?? "unknown",
+    commitSha:
+      process.env.RAILWAY_GIT_COMMIT_SHA ??
+      process.env.GITHUB_SHA ??
+      process.env.VERCEL_GIT_COMMIT_SHA ??
+      "unknown",
+  };
+}
+
 async function boot(): Promise<void> {
   try {
+    console.log(
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "info",
+        message: "melb-beer-bot booting",
+        meta: getDeployMeta(),
+      }),
+    );
     const [{ createApp }, { env }, { logger }] = await Promise.all([
       import("./app.js"),
       import("./config/env.js"),
@@ -18,6 +38,7 @@ async function boot(): Promise<void> {
         host: env.HOST,
         port: env.PORT,
         baseUrl: env.PUBLIC_BASE_URL,
+        ...getDeployMeta(),
       });
     });
 
