@@ -36,6 +36,15 @@ const optionalStringFromEnv = z.preprocess((value) => {
   return trimmed.length === 0 ? undefined : trimmed;
 }, z.string().min(1).optional());
 
+const optionalE164PhoneFromEnv = z.preprocess((value) => {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}, z.string().regex(e164PhoneRegex, "TWILIO_PHONE_NUMBER must be in E.164 format").optional());
+
 const clockTimeRegex = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 const envSchema = z.object({
@@ -59,9 +68,9 @@ const envSchema = z.object({
   SUPABASE_RESULTS_TABLE: optionalStringFromEnv.default("call_results"),
   GOOGLE_MAPS_API_KEY: optionalStringFromEnv,
   GOOGLE_MAPS_MAP_ID: optionalStringFromEnv,
-  TWILIO_ACCOUNT_SID: z.string().min(1),
-  TWILIO_AUTH_TOKEN: z.string().min(1),
-  TWILIO_PHONE_NUMBER: z.string().regex(e164PhoneRegex, "TWILIO_PHONE_NUMBER must be in E.164 format"),
+  TWILIO_ACCOUNT_SID: optionalStringFromEnv,
+  TWILIO_AUTH_TOKEN: optionalStringFromEnv,
+  TWILIO_PHONE_NUMBER: optionalE164PhoneFromEnv,
   TWILIO_CALL_TIME_LIMIT_SECONDS: z.coerce.number().int().min(5).max(600).default(30),
   TWILIO_VALIDATE_SIGNATURES: booleanFromEnv.default(false),
   ELEVENLABS_API_KEY: optionalStringFromEnv,

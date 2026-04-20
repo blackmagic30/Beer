@@ -1,6 +1,7 @@
 import type { Request, RequestHandler } from "express";
 import twilio from "twilio";
 
+import { AppError } from "./errors.js";
 import { failure } from "./http.js";
 
 function buildExternalRequestUrl(req: Request): string {
@@ -11,25 +12,41 @@ function buildExternalRequestUrl(req: Request): string {
 }
 
 export class TwilioService {
-  private readonly client;
+  private readonly client?: ReturnType<typeof twilio>;
 
   constructor(
-    accountSid: string,
-    authToken: string,
-    private readonly fromNumber: string,
+    accountSid: string | undefined,
+    authToken: string | undefined,
+    private readonly fromNumber: string | undefined,
     private readonly callTimeLimitSeconds: number,
   ) {
-    this.client = twilio(accountSid, authToken);
+    if (accountSid && authToken) {
+      this.client = twilio(accountSid, authToken);
+    }
+
     this.authToken = authToken;
   }
 
-  private readonly authToken: string;
+  private readonly authToken: string | undefined;
+
+  isConfigured(): boolean {
+    return Boolean(this.client && this.fromNumber);
+  }
 
   async createOutboundCall(input: {
     toNumber: string;
     voiceWebhookUrl: string;
     statusWebhookUrl: string;
   }) {
+    if (!this.client || !this.fromNumber) {
+      throw new AppError("Twilio outbound calling is not configured", 503, {
+        missing: {
+          accountSid: !this.client,
+          fromNumber: !this.fromNumber,
+        },
+      });
+    }
+
     return this.client.calls.create({
       to: input.toNumber,
       from: this.fromNumber,
@@ -45,6 +62,13 @@ export class TwilioService {
   isValidRequest(req: Request, enabled: boolean): { isValid: boolean; reason?: string } {
     if (!enabled) {
       return { isValid: true };
+    }
+
+    if (!this.authToken) {
+      return {
+        isValid: false,
+        reason: "Twilio auth token is not configured",
+      };
     }
 
     const signature = req.get("x-twilio-signature");
