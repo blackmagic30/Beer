@@ -1,11 +1,17 @@
-import { createApp } from "./app.js";
-import { env } from "./config/env.js";
-import { logger } from "./lib/logger.js";
+let server:
+  | {
+      close(callback?: (error?: Error) => void): void;
+      on(event: "error", listener: (error: Error) => void): void;
+    }
+  | undefined;
 
-let server: ReturnType<ReturnType<typeof createApp>["listen"]> | undefined;
-
-function boot(): void {
+async function boot(): Promise<void> {
   try {
+    const [{ createApp }, { env }, { logger }] = await Promise.all([
+      import("./app.js"),
+      import("./config/env.js"),
+      import("./lib/logger.js"),
+    ]);
     const app = createApp();
     server = app.listen(env.PORT, () => {
       logger.info("melb-beer-bot listening", {
@@ -21,7 +27,7 @@ function boot(): void {
       process.exit(1);
     });
   } catch (error) {
-    logger.error("Application boot failed", {
+    console.error("Application boot failed", {
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -29,10 +35,10 @@ function boot(): void {
   }
 }
 
-boot();
+void boot();
 
 function shutdown(signal: string): void {
-  logger.info("Shutting down server", { signal });
+  console.info("Shutting down server", { signal });
 
   if (!server) {
     process.exit(0);
@@ -50,15 +56,10 @@ function shutdown(signal: string): void {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("uncaughtException", (error) => {
-  logger.error("Uncaught exception", {
-    error: error.message,
-    stack: error.stack,
-  });
+  console.error("Uncaught exception", error);
   process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
-  logger.error("Unhandled rejection", {
-    reason: reason instanceof Error ? reason.message : String(reason),
-  });
+  console.error("Unhandled rejection", reason);
   process.exit(1);
 });
