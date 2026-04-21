@@ -15,18 +15,45 @@
       font-family: Arial, sans-serif;
     }
 
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
     #topbar {
-      height: 64px;
       box-sizing: border-box;
-      padding: 16px 20px;
+      padding: 16px 20px 12px;
       background: #111827;
       color: white;
       border-bottom: 1px solid #1f2937;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
     }
 
     #topbar h1 {
       margin: 0;
       font-size: 24px;
+    }
+
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #cbd5e1;
+      font-size: 14px;
+    }
+
+    #beerFilter {
+      appearance: none;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: white;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 14px;
     }
 
     #debug {
@@ -35,20 +62,30 @@
       color: #facc15;
       white-space: pre-wrap;
       font-size: 14px;
-      min-height: 48px;
       box-sizing: border-box;
+      max-height: 168px;
+      overflow: auto;
+      flex: 0 0 auto;
     }
 
     #map {
       width: 100%;
-      height: calc(100vh - 64px - 68px);
-      min-height: 320px;
+      flex: 1 1 auto;
+      min-height: 420px;
     }
   </style>
 </head>
 <body>
   <div id="topbar">
     <h1>Melbourne Beer Map</h1>
+    <div id="toolbar">
+      <label for="beerFilter">Show</label>
+      <select id="beerFilter">
+        <option value="all">All captured venues</option>
+        <option value="guinness_only">Guinness only</option>
+        <option value="guinness_on_tap">Guinness on tap only</option>
+      </select>
+    </div>
   </div>
 
   <div id="debug">Starting viewer...</div>
@@ -70,6 +107,7 @@
       window.localStorage.getItem("googleMapsKey") ||
       DEFAULT_GOOGLE_MAPS_KEY;
     const debugEl = document.getElementById("debug");
+    const beerFilterEl = document.getElementById("beerFilter");
     let googleMapsAuthFailed = false;
 
     if (params.get("googleMapsKey")) {
@@ -225,6 +263,30 @@
       }
 
       return [];
+    }
+
+    function getGuinnessItems(row) {
+      return getBeerItems(row).filter((beer) =>
+        String(beer.label || "").toLowerCase().includes("guinness")
+      );
+    }
+
+    function rowMatchesFilter(row, filterValue) {
+      if (filterValue === "all") {
+        return true;
+      }
+
+      const guinnessItems = getGuinnessItems(row);
+
+      if (filterValue === "guinness_only") {
+        return guinnessItems.length > 0;
+      }
+
+      if (filterValue === "guinness_on_tap") {
+        return guinnessItems.some((beer) => beer.availabilityLabel === "On tap");
+      }
+
+      return true;
     }
 
     function getHappyHourSummary(row) {
@@ -417,7 +479,6 @@
         debugJson("Sample returned row", rows[0] || null);
 
         const infoWindow = new google.maps.InfoWindow();
-        const bounds = new google.maps.LatLngBounds();
         const latestRowsByVenue = new Map();
 
         rows.forEach((item) => {
@@ -431,7 +492,7 @@
           latestRowsByVenue.set(venueId, item);
         });
 
-        const markerRows = Array.from(latestRowsByVenue.values()).filter((item) => {
+        const venueRows = Array.from(latestRowsByVenue.values()).filter((item) => {
           const venue = getVenueRecord(item.venues);
 
           if (!venue) {
@@ -444,7 +505,7 @@
           return Number.isFinite(lat) && Number.isFinite(lng);
         });
 
-        debug(`Markerable row count: ${markerRows.length}`);
+        debug(`Markerable row count: ${venueRows.length}`);
 
         if (rows.length === 0) {
           debug(
@@ -452,92 +513,107 @@
           );
         }
 
-        let markerCount = 0;
+        let liveMarkers = [];
 
-        markerRows.forEach((item) => {
-          const venue = getVenueRecord(item.venues);
-          const lat = Number(venue.latitude);
-          const lng = Number(venue.longitude);
-          const beerItems = getBeerItems(item);
-          const happyHourSummary = getHappyHourSummary(item);
-          const headlineBeer =
-            beerItems.find((beer) => beer.availabilityLabel === "On tap" && beer.priceText !== "Price unavailable") ||
-            beerItems.find((beer) => beer.priceText !== "Price unavailable") ||
-            beerItems[0];
-
-          const marker = new google.maps.Marker({
-            position: { lat, lng },
-            map,
-            title: `${venue.name || item.venue_name || "Unknown venue"}${
-              headlineBeer ? ` - ${headlineBeer.label}: ${headlineBeer.priceText}` : ""
-            }`,
-          });
-
-          const address = formatAddress(venue);
-          const createdAt = item.saved_at || item.created_at
-            ? new Date(item.saved_at || item.created_at).toLocaleString()
-            : "Unknown";
-          const venueName = escapeHtml(venue.name || item.venue_name || "Unknown venue");
-          const safeAddress = escapeHtml(address || "Address unavailable");
-          const safeCreatedAt = escapeHtml(createdAt);
-          const beerMarkup = beerItems.length > 0
-            ? beerItems.map((beer) => `
-            <div style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #e2e8f0;">
-              <div style="display:flex; flex-direction:column; gap:4px;">
-                <span style="font-size:13px; font-weight:600; color:#0f172a;">${escapeHtml(beer.label)}</span>
-                <span style="display:inline-flex; align-self:flex-start; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:${beer.availabilityTone.background}; color:${beer.availabilityTone.color};">
-                  ${escapeHtml(beer.availabilityLabel)}
-                </span>
-              </div>
-              <span style="font-size:13px; color:${beer.needsReview ? "#b45309" : "#0f172a"}; font-weight:700; text-align:right;">${escapeHtml(beer.priceText)}</span>
-            </div>
-          `).join("")
-            : `
-            <div style="padding:12px 0; font-size:13px; color:#64748b;">
-              No synced beer data yet.
-            </div>
-          `;
-          const happyHourMarkup = happyHourSummary ? `
-            <div style="margin-top:12px; padding:10px 12px; background:#eff6ff; border-radius:12px; font-size:12px; color:#1d4ed8;">
-              <strong>Happy hour</strong><br>
-              ${escapeHtml(happyHourSummary)}
-            </div>
-          ` : "";
-
-          const content = `
-            <div style="max-width:300px; padding:6px 4px 2px; font-family: Arial, sans-serif; color:#0f172a;">
-              <div style="font-size:18px; font-weight:700; line-height:1.2; margin-bottom:8px;">
-                ${venueName}
-              </div>
-              <div style="font-size:13px; line-height:1.45; color:#475569; margin-bottom:14px;">
-                ${safeAddress}
-              </div>
-              <div style="border:1px solid #e2e8f0; border-radius:14px; padding:0 12px; background:#ffffff;">
-                ${beerMarkup}
-              </div>
-              ${happyHourMarkup}
-              <div style="padding-top:10px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b;">
-                Logged ${safeCreatedAt}
-              </div>
-            </div>
-          `;
-
-          marker.addListener("click", () => {
-            infoWindow.setContent(content);
-            infoWindow.open(map, marker);
-          });
-
-          bounds.extend({ lat, lng });
-          markerCount += 1;
-        });
-
-        if (markerCount > 0) {
-          map.fitBounds(bounds);
-        } else {
-          debug("No markerable venue rows were found.");
+        function clearMarkers() {
+          liveMarkers.forEach((marker) => marker.setMap(null));
+          liveMarkers = [];
         }
 
-        debug(`Map ready. Markers: ${markerCount}`);
+        function renderMarkers() {
+          clearMarkers();
+
+          const bounds = new google.maps.LatLngBounds();
+          const filteredRows = venueRows.filter((item) => rowMatchesFilter(item, beerFilterEl.value));
+          let markerCount = 0;
+
+          filteredRows.forEach((item) => {
+            const venue = getVenueRecord(item.venues);
+            const lat = Number(venue.latitude);
+            const lng = Number(venue.longitude);
+            const beerItems = getBeerItems(item);
+            const happyHourSummary = getHappyHourSummary(item);
+            const headlineBeer =
+              beerItems.find((beer) => beer.availabilityLabel === "On tap" && beer.priceText !== "Price unavailable") ||
+              beerItems.find((beer) => beer.priceText !== "Price unavailable") ||
+              beerItems[0];
+
+            const marker = new google.maps.Marker({
+              position: { lat, lng },
+              map,
+              title: `${venue.name || item.venue_name || "Unknown venue"}${
+                headlineBeer ? ` - ${headlineBeer.label}: ${headlineBeer.priceText}` : ""
+              }`,
+            });
+
+            const address = formatAddress(venue);
+            const createdAt = item.saved_at || item.created_at
+              ? new Date(item.saved_at || item.created_at).toLocaleString()
+              : "Unknown";
+            const venueName = escapeHtml(venue.name || item.venue_name || "Unknown venue");
+            const safeAddress = escapeHtml(address || "Address unavailable");
+            const safeCreatedAt = escapeHtml(createdAt);
+            const beerMarkup = beerItems.length > 0
+              ? beerItems.map((beer) => `
+              <div style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #e2e8f0;">
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                  <span style="font-size:13px; font-weight:600; color:#0f172a;">${escapeHtml(beer.label)}</span>
+                  <span style="display:inline-flex; align-self:flex-start; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:${beer.availabilityTone.background}; color:${beer.availabilityTone.color};">
+                    ${escapeHtml(beer.availabilityLabel)}
+                  </span>
+                </div>
+                <span style="font-size:13px; color:${beer.needsReview ? "#b45309" : "#0f172a"}; font-weight:700; text-align:right;">${escapeHtml(beer.priceText)}</span>
+              </div>
+            `).join("")
+              : `
+              <div style="padding:12px 0; font-size:13px; color:#64748b;">
+                No synced beer data yet.
+              </div>
+            `;
+            const happyHourMarkup = happyHourSummary ? `
+              <div style="margin-top:12px; padding:10px 12px; background:#eff6ff; border-radius:12px; font-size:12px; color:#1d4ed8;">
+                <strong>Happy hour</strong><br>
+                ${escapeHtml(happyHourSummary)}
+              </div>
+            ` : "";
+
+            const content = `
+              <div style="max-width:300px; padding:6px 4px 2px; font-family: Arial, sans-serif; color:#0f172a;">
+                <div style="font-size:18px; font-weight:700; line-height:1.2; margin-bottom:8px;">
+                  ${venueName}
+                </div>
+                <div style="font-size:13px; line-height:1.45; color:#475569; margin-bottom:14px;">
+                  ${safeAddress}
+                </div>
+                <div style="border:1px solid #e2e8f0; border-radius:14px; padding:0 12px; background:#ffffff;">
+                  ${beerMarkup}
+                </div>
+                ${happyHourMarkup}
+                <div style="padding-top:10px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b;">
+                  Logged ${safeCreatedAt}
+                </div>
+              </div>
+            `;
+
+            marker.addListener("click", () => {
+              infoWindow.setContent(content);
+              infoWindow.open(map, marker);
+            });
+
+            bounds.extend({ lat, lng });
+            liveMarkers.push(marker);
+            markerCount += 1;
+          });
+
+          if (markerCount > 0) {
+            map.fitBounds(bounds);
+          }
+
+          debug(`Map ready. Markers: ${markerCount}. Filter: ${beerFilterEl.value}`);
+        }
+
+        beerFilterEl.addEventListener("change", renderMarkers);
+        renderMarkers();
       } catch (error) {
         fail("Viewer failed", error);
       }
