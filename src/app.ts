@@ -7,6 +7,7 @@ import type { RequestHandler } from "express";
 
 import { env } from "./config/env.js";
 import { success } from "./lib/http.js";
+import { logger } from "./lib/logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFoundHandler } from "./middleware/not-found.js";
 import { captureRawBody } from "./middleware/raw-body.js";
@@ -133,6 +134,15 @@ export function createApp() {
   app.set("trust proxy", env.TRUST_PROXY);
   app.use(helmet());
   app.use(cors());
+  app.use((req, _res, next) => {
+    if (req.path === "/health" || req.path === "/" || req.path === "/config.js") {
+      logger.info("Inbound request", {
+        method: req.method,
+        path: req.originalUrl,
+      });
+    }
+    next();
+  });
   app.use(express.json({ verify: captureRawBody }));
   app.use(express.urlencoded({ extended: true, verify: captureRawBody }));
 

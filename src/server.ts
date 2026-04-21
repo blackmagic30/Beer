@@ -4,6 +4,7 @@ let server:
       on(event: "error", listener: (error: Error) => void): void;
     }
   | undefined;
+let heartbeatInterval: NodeJS.Timeout | undefined;
 
 function getDeployMeta(): Record<string, string> {
   return {
@@ -42,6 +43,10 @@ async function boot(): Promise<void> {
       });
     });
 
+    heartbeatInterval = setInterval(() => {
+      logger.info("melb-beer-bot heartbeat", getDeployMeta());
+    }, 30_000);
+
     server.on("error", (error) => {
       logger.error("Server failed to start", {
         error: error instanceof Error ? error.message : String(error),
@@ -61,6 +66,11 @@ void boot();
 
 function shutdown(signal: string): void {
   console.info("Shutting down server", { signal });
+
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = undefined;
+  }
 
   if (!server) {
     process.exit(0);
@@ -83,5 +93,7 @@ process.on("uncaughtException", (error) => {
 });
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled rejection", reason);
-  process.exit(1);
+});
+process.on("exit", (code) => {
+  console.info("Process exiting", { code, ...getDeployMeta() });
 });
