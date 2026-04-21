@@ -25,6 +25,27 @@ function sanitizeEnvString(value: unknown): unknown {
   return trimmed;
 }
 
+function normalizeHttpUrlString(value: unknown): unknown {
+  const trimmed = sanitizeEnvString(value);
+  if (typeof trimmed !== "string") {
+    return trimmed;
+  }
+
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(?:\/.*)?$/i.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+
+  return trimmed;
+}
+
 const booleanFromEnv = z.preprocess((value) => {
   if (typeof value === "boolean") {
     return value;
@@ -52,6 +73,15 @@ const optionalStringFromEnv = z.preprocess((value) => {
   }
   return trimmed.length === 0 ? undefined : trimmed;
 }, z.string().min(1).optional());
+
+const optionalHttpUrlFromEnv = z.preprocess((value) => {
+  const normalised = normalizeHttpUrlString(value);
+  if (typeof normalised !== "string") {
+    return normalised;
+  }
+
+  return normalised.length === 0 ? undefined : normalised;
+}, z.string().url().optional());
 
 const optionalE164PhoneFromEnv = z.preprocess((value) => {
   const trimmed = sanitizeEnvString(value);
@@ -85,7 +115,7 @@ const envSchema = z.object({
   OUTBOUND_REPEAT_GUARD_SECONDS: z.coerce.number().int().min(0).default(300),
   PARSE_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.72),
   BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD: z.coerce.number().int().min(1).max(20).default(5),
-  SUPABASE_URL: optionalStringFromEnv,
+  SUPABASE_URL: optionalHttpUrlFromEnv,
   SUPABASE_ANON_KEY: optionalStringFromEnv,
   SUPABASE_SERVICE_ROLE_KEY: optionalStringFromEnv,
   SUPABASE_RESULTS_TABLE: optionalStringFromEnv.default("call_results"),
