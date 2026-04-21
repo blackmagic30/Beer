@@ -299,6 +299,27 @@
       });
     }
 
+    async function getGoogleMapsLibrary() {
+      await loadGoogleMapsScript();
+
+      if (!window.google || !window.google.maps) {
+        throw new Error("Google Maps loaded without a usable maps object");
+      }
+
+      if (typeof window.google.maps.importLibrary === "function") {
+        return window.google.maps.importLibrary("maps");
+      }
+
+      if (typeof window.google.maps.Map === "function") {
+        return {
+          Map: window.google.maps.Map,
+          LatLngBounds: window.google.maps.LatLngBounds,
+        };
+      }
+
+      throw new Error("Google Maps library is missing Map constructor");
+    }
+
     async function init() {
       try {
         if (!window.supabase || typeof window.supabase.createClient !== "function") {
@@ -316,16 +337,21 @@
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         debug("Loading Google Maps...");
-        await loadGoogleMapsScript();
+        const mapsLibrary = await getGoogleMapsLibrary();
         if (googleMapsAuthFailed) {
           throw new Error("Google Maps authentication failed");
         }
-        if (!window.google || !window.google.maps) {
-          throw new Error("Google Maps loaded without a usable maps object");
+        const MapConstructor = mapsLibrary && mapsLibrary.Map ? mapsLibrary.Map : window.google.maps.Map;
+        const LatLngBoundsConstructor =
+          mapsLibrary && mapsLibrary.LatLngBounds
+            ? mapsLibrary.LatLngBounds
+            : window.google.maps.LatLngBounds;
+        if (typeof MapConstructor !== "function" || typeof LatLngBoundsConstructor !== "function") {
+          throw new Error("Google Maps library did not expose Map or LatLngBounds constructors");
         }
         debug("Google Maps loaded.");
 
-        const map = new google.maps.Map(document.getElementById("map"), {
+        const map = new MapConstructor(document.getElementById("map"), {
           center: { lat: -37.8136, lng: 144.9631 },
           zoom: 13,
           mapTypeControl: false,
@@ -375,7 +401,7 @@
         debugJson("Sample returned row", rows[0] || null);
 
         const infoWindow = new google.maps.InfoWindow();
-        const bounds = new google.maps.LatLngBounds();
+        const bounds = new LatLngBoundsConstructor();
         const latestRowsByVenue = new Map();
 
         rows.forEach((item) => {
