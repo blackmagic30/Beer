@@ -1,10 +1,9 @@
-let server:
-  | {
-      close(callback?: (error?: Error) => void): void;
-      on(event: "error", listener: (error: Error) => void): void;
-    }
-  | undefined;
+import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
+
+let server: Server | undefined;
 let heartbeatInterval: NodeJS.Timeout | undefined;
+let selfCheckInterval: NodeJS.Timeout | undefined;
 
 function getDeployMeta(): Record<string, string> {
   return {
@@ -35,16 +34,45 @@ async function boot(): Promise<void> {
     ]);
     const app = createApp();
     server = app.listen(env.PORT, env.HOST, () => {
+      const address = server?.address();
       logger.info("melb-beer-bot listening", {
         host: env.HOST,
         port: env.PORT,
         baseUrl: env.PUBLIC_BASE_URL,
+        boundAddress:
+          typeof address === "object" && address !== null
+            ? `${address.address}:${address.port}`
+            : String(address ?? "unknown"),
         ...getDeployMeta(),
       });
     });
 
     heartbeatInterval = setInterval(() => {
-      logger.info("melb-beer-bot heartbeat", getDeployMeta());
+      const address = server?.address();
+      logger.info("melb-beer-bot heartbeat", {
+        listening: server?.listening ?? false,
+        boundAddress:
+          typeof address === "object" && address !== null
+            ? `${address.address}:${address.port}`
+            : String(address ?? "unknown"),
+        ...getDeployMeta(),
+      });
+    }, 30_000);
+
+    selfCheckInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`http://127.0.0.1:${env.PORT}/health`);
+        logger.info("melb-beer-bot self-check", {
+          status: response.status,
+          ok: response.ok,
+          ...getDeployMeta(),
+        });
+      } catch (error) {
+        logger.error("melb-beer-bot self-check failed", {
+          error: error instanceof Error ? error.message : String(error),
+          ...getDeployMeta(),
+        });
+      }
     }, 30_000);
 
     server.on("error", (error) => {
@@ -52,6 +80,9 @@ async function boot(): Promise<void> {
         error: error instanceof Error ? error.message : String(error),
       });
       process.exit(1);
+    });
+    server.on("close", () => {
+      logger.warn("Server closed", getDeployMeta());
     });
   } catch (error) {
     console.error("Application boot failed", {
@@ -70,6 +101,11 @@ function shutdown(signal: string): void {
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
     heartbeatInterval = undefined;
+  }
+
+  if (selfCheckInterval) {
+    clearInterval(selfCheckInterval);
+    selfCheckInterval = undefined;
   }
 
   if (!server) {
