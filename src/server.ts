@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import { networkInterfaces } from "node:os";
 
 let server: Server | undefined;
 let heartbeatInterval: NodeJS.Timeout | undefined;
@@ -14,6 +15,43 @@ function getDeployMeta(): Record<string, string> {
       process.env.VERCEL_GIT_COMMIT_SHA ??
       "unknown",
   };
+}
+
+function getBoundAddress(): string {
+  const address = server?.address();
+  return typeof address === "object" && address !== null
+    ? `${address.address}:${address.port}`
+    : String(address ?? "unknown");
+}
+
+function getNetworkTargets(port: number): Array<{ name: string; url: string }> {
+  const targets: Array<{ name: string; url: string }> = [
+    { name: "loopback-ipv4", url: `http://127.0.0.1:${port}/health` },
+    { name: "loopback-ipv6", url: `http://[::1]:${port}/health` },
+  ];
+
+  const interfaces = networkInterfaces();
+  for (const [name, entries] of Object.entries(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.internal) {
+        continue;
+      }
+
+      if (entry.family === "IPv4") {
+        targets.push({
+          name: `${name}-ipv4-${entry.address}`,
+          url: `http://${entry.address}:${port}/health`,
+        });
+      } else if (entry.family === "IPv6") {
+        targets.push({
+          name: `${name}-ipv6-${entry.address}`,
+          url: `http://[${entry.address}]:${port}/health`,
+        });
+      }
+    }
+  }
+
+  return targets;
 }
 
 async function boot(): Promise<void> {
@@ -36,19 +74,10 @@ async function boot(): Promise<void> {
     const listenHost = useRailwayBinding ? "::" : env.HOST;
 
     const onListening = () => {
-      const address = server?.address();
-      logger.info("melb-beer-bot listening", {
-        configuredHost: env.HOST ?? "default",
-        effectiveHost: listenHost ?? "default",
-        railwayBinding: useRailwayBinding,
-        port: env.PORT,
-        baseUrl: env.PUBLIC_BASE_URL,
-        boundAddress:
-          typeof address === "object" && address !== null
-            ? `${address.address}:${address.port}`
-            : String(address ?? "unknown"),
-        ...getDeployMeta(),
-      });
+      logger.info(
+        `melb-beer-bot listening host=${env.HOST ?? "default"} effectiveHost=${listenHost ?? "default"} railwayBinding=${useRailwayBinding} port=${env.PORT} bound=${getBoundAddress()}`,
+        getDeployMeta(),
+      );
     };
 
     server = useRailwayBinding
@@ -65,38 +94,25 @@ async function boot(): Promise<void> {
         : app.listen(env.PORT, onListening);
 
     heartbeatInterval = setInterval(() => {
-      const address = server?.address();
-      logger.info("melb-beer-bot heartbeat", {
-        listening: server?.listening ?? false,
-        boundAddress:
-          typeof address === "object" && address !== null
-            ? `${address.address}:${address.port}`
-            : String(address ?? "unknown"),
-        ...getDeployMeta(),
-      });
+      logger.info(
+        `melb-beer-bot heartbeat listening=${server?.listening ?? false} bound=${getBoundAddress()}`,
+        getDeployMeta(),
+      );
     }, 30_000);
 
     selfCheckInterval = setInterval(async () => {
-      const targets = [
-        { name: "ipv4", url: `http://127.0.0.1:${env.PORT}/health` },
-        { name: "ipv6", url: `http://[::1]:${env.PORT}/health` },
-      ];
-
-      for (const target of targets) {
+      for (const target of getNetworkTargets(env.PORT)) {
         try {
           const response = await fetch(target.url);
-          logger.info("melb-beer-bot self-check", {
-            target: target.name,
-            status: response.status,
-            ok: response.ok,
-            ...getDeployMeta(),
-          });
+          logger.info(
+            `melb-beer-bot self-check target=${target.name} status=${response.status} ok=${response.ok}`,
+            getDeployMeta(),
+          );
         } catch (error) {
-          logger.error("melb-beer-bot self-check failed", {
-            target: target.name,
-            error: error instanceof Error ? error.message : String(error),
-            ...getDeployMeta(),
-          });
+          logger.error(
+            `melb-beer-bot self-check target=${target.name} failed=${error instanceof Error ? error.message : String(error)}`,
+            getDeployMeta(),
+          );
         }
       }
     }, 30_000);
