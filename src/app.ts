@@ -132,7 +132,13 @@ export function createApp() {
   const viewerDirectory = path.resolve(process.cwd(), "viewer");
 
   app.set("trust proxy", env.TRUST_PROXY);
-  app.use(helmet());
+  // The hosted viewer loads Google Maps, Supabase, and inline bootstrap code in the browser.
+  // Helmet's default CSP blocks those resources, which leaves the page stuck on "Starting viewer...".
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+    }),
+  );
   app.use(cors());
   app.use((req, _res, next) => {
     if (req.path === "/health" || req.path === "/" || req.path === "/config.js") {
