@@ -278,46 +278,62 @@
     };
 
     async function loadGoogleMapsScript() {
-      return new Promise((resolve, reject) => {
-        if (window.google && window.google.maps) {
-          resolve();
-          return;
+      if (
+        window.google &&
+        window.google.maps &&
+        typeof window.google.maps.Map === "function"
+      ) {
+        return;
+      }
+
+      if (!GOOGLE_MAPS_KEY) {
+        throw new Error("Missing Google Maps browser key");
+      }
+
+      if (window.__melbBeerBotGoogleMapsPromise) {
+        return window.__melbBeerBotGoogleMapsPromise;
+      }
+
+      window.__melbBeerBotGoogleMapsPromise = new Promise((resolve, reject) => {
+        const callbackName = "__melbBeerBotGoogleMapsReady";
+        const params = new URLSearchParams({
+          key: GOOGLE_MAPS_KEY,
+          callback: callbackName,
+          v: "weekly",
+          libraries: "marker",
+        });
+
+        if (GOOGLE_MAPS_MAP_ID) {
+          params.set("map_ids", GOOGLE_MAPS_MAP_ID);
         }
 
-        if (!GOOGLE_MAPS_KEY) {
-          reject(new Error("Missing Google Maps browser key"));
-          return;
-        }
+        window[callbackName] = function onGoogleMapsReady() {
+          delete window[callbackName];
+
+          if (
+            window.google &&
+            window.google.maps &&
+            typeof window.google.maps.Map === "function"
+          ) {
+            resolve();
+            return;
+          }
+
+          reject(new Error("Google Maps script loaded without Map constructor"));
+        };
 
         const script = document.createElement("script");
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_MAPS_KEY)}&loading=async`;
+        script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
         script.async = true;
         script.defer = true;
-        script.onload = resolve;
-        script.onerror = () => reject(new Error("Google Maps script failed to load"));
+        script.onerror = () => {
+          delete window[callbackName];
+          reject(new Error("Google Maps script failed to load"));
+        };
         document.head.appendChild(script);
       });
-    }
 
-    async function getGoogleMapsLibrary() {
-      await loadGoogleMapsScript();
-
-      if (!window.google || !window.google.maps) {
-        throw new Error("Google Maps loaded without a usable maps object");
-      }
-
-      if (typeof window.google.maps.importLibrary === "function") {
-        return window.google.maps.importLibrary("maps");
-      }
-
-      if (typeof window.google.maps.Map === "function") {
-        return {
-          Map: window.google.maps.Map,
-          LatLngBounds: window.google.maps.LatLngBounds,
-        };
-      }
-
-      throw new Error("Google Maps library is missing Map constructor");
+      return window.__melbBeerBotGoogleMapsPromise;
     }
 
     async function init() {
@@ -337,21 +353,21 @@
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         debug("Loading Google Maps...");
-        const mapsLibrary = await getGoogleMapsLibrary();
+        await loadGoogleMapsScript();
         if (googleMapsAuthFailed) {
           throw new Error("Google Maps authentication failed");
         }
-        const MapConstructor = mapsLibrary && mapsLibrary.Map ? mapsLibrary.Map : window.google.maps.Map;
-        const LatLngBoundsConstructor =
-          mapsLibrary && mapsLibrary.LatLngBounds
-            ? mapsLibrary.LatLngBounds
-            : window.google.maps.LatLngBounds;
-        if (typeof MapConstructor !== "function" || typeof LatLngBoundsConstructor !== "function") {
+        if (
+          !window.google ||
+          !window.google.maps ||
+          typeof window.google.maps.Map !== "function" ||
+          typeof window.google.maps.LatLngBounds !== "function"
+        ) {
           throw new Error("Google Maps library did not expose Map or LatLngBounds constructors");
         }
         debug("Google Maps loaded.");
 
-        const map = new MapConstructor(document.getElementById("map"), {
+        const map = new google.maps.Map(document.getElementById("map"), {
           center: { lat: -37.8136, lng: 144.9631 },
           zoom: 13,
           mapTypeControl: false,
@@ -401,7 +417,7 @@
         debugJson("Sample returned row", rows[0] || null);
 
         const infoWindow = new google.maps.InfoWindow();
-        const bounds = new LatLngBoundsConstructor();
+        const bounds = new google.maps.LatLngBounds();
         const latestRowsByVenue = new Map();
 
         rows.forEach((item) => {
