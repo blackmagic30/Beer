@@ -1,4 +1,3 @@
-import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 
 let server: Server | undefined;
@@ -33,14 +32,15 @@ async function boot(): Promise<void> {
       import("./lib/logger.js"),
     ]);
     const app = createApp();
-    const listenHost =
-      process.env.RAILWAY_ENVIRONMENT_NAME !== undefined ? undefined : env.HOST;
+    const useRailwayBinding = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined;
+    const listenHost = useRailwayBinding ? "::" : env.HOST;
 
     const onListening = () => {
       const address = server?.address();
       logger.info("melb-beer-bot listening", {
         configuredHost: env.HOST ?? "default",
         effectiveHost: listenHost ?? "default",
+        railwayBinding: useRailwayBinding,
         port: env.PORT,
         baseUrl: env.PUBLIC_BASE_URL,
         boundAddress:
@@ -51,9 +51,18 @@ async function boot(): Promise<void> {
       });
     };
 
-    server = listenHost
-      ? app.listen(env.PORT, listenHost, onListening)
-      : app.listen(env.PORT, onListening);
+    server = useRailwayBinding
+      ? app.listen(
+          {
+            port: env.PORT,
+            host: listenHost,
+            ipv6Only: false,
+          },
+          onListening,
+        )
+      : listenHost
+        ? app.listen(env.PORT, listenHost, onListening)
+        : app.listen(env.PORT, onListening);
 
     heartbeatInterval = setInterval(() => {
       const address = server?.address();
@@ -68,18 +77,27 @@ async function boot(): Promise<void> {
     }, 30_000);
 
     selfCheckInterval = setInterval(async () => {
-      try {
-        const response = await fetch(`http://127.0.0.1:${env.PORT}/health`);
-        logger.info("melb-beer-bot self-check", {
-          status: response.status,
-          ok: response.ok,
-          ...getDeployMeta(),
-        });
-      } catch (error) {
-        logger.error("melb-beer-bot self-check failed", {
-          error: error instanceof Error ? error.message : String(error),
-          ...getDeployMeta(),
-        });
+      const targets = [
+        { name: "ipv4", url: `http://127.0.0.1:${env.PORT}/health` },
+        { name: "ipv6", url: `http://[::1]:${env.PORT}/health` },
+      ];
+
+      for (const target of targets) {
+        try {
+          const response = await fetch(target.url);
+          logger.info("melb-beer-bot self-check", {
+            target: target.name,
+            status: response.status,
+            ok: response.ok,
+            ...getDeployMeta(),
+          });
+        } catch (error) {
+          logger.error("melb-beer-bot self-check failed", {
+            target: target.name,
+            error: error instanceof Error ? error.message : String(error),
+            ...getDeployMeta(),
+          });
+        }
       }
     }, 30_000);
 
