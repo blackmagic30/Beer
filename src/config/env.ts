@@ -65,7 +65,14 @@ const clockTimeRegex = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  HOST: z.preprocess(sanitizeEnvString, z.string().min(1)).default("0.0.0.0"),
+  HOST: z.preprocess((value) => {
+    const trimmed = sanitizeEnvString(value);
+    if (typeof trimmed !== "string") {
+      return trimmed;
+    }
+
+    return trimmed.length === 0 ? undefined : trimmed;
+  }, z.string().min(1).optional()),
   PORT: z.coerce.number().int().positive().default(3000),
   PUBLIC_BASE_URL: z.preprocess(sanitizeEnvString, z.string().url()),
   DATABASE_PATH: z.preprocess(sanitizeEnvString, z.string()).default("./data/melb-beer-bot.sqlite"),

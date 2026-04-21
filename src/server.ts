@@ -33,10 +33,14 @@ async function boot(): Promise<void> {
       import("./lib/logger.js"),
     ]);
     const app = createApp();
-    server = app.listen(env.PORT, env.HOST, () => {
+    const listenHost =
+      process.env.RAILWAY_ENVIRONMENT_NAME !== undefined ? undefined : env.HOST;
+
+    const onListening = () => {
       const address = server?.address();
       logger.info("melb-beer-bot listening", {
-        host: env.HOST,
+        configuredHost: env.HOST ?? "default",
+        effectiveHost: listenHost ?? "default",
         port: env.PORT,
         baseUrl: env.PUBLIC_BASE_URL,
         boundAddress:
@@ -45,7 +49,11 @@ async function boot(): Promise<void> {
             : String(address ?? "unknown"),
         ...getDeployMeta(),
       });
-    });
+    };
+
+    server = listenHost
+      ? app.listen(env.PORT, listenHost, onListening)
+      : app.listen(env.PORT, onListening);
 
     heartbeatInterval = setInterval(() => {
       const address = server?.address();
