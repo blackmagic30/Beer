@@ -281,6 +281,10 @@
             priceText:
               source.price_text ||
               formatPriceValue(source.price_numeric ?? source.price),
+            priceNumeric:
+              Number.isFinite(Number(source.price_numeric ?? source.price))
+                ? Number(source.price_numeric ?? source.price)
+                : null,
             needsReview: Boolean(source.needs_review),
             availabilityLabel,
             availabilityTone: getAvailabilityTone(availabilityLabel),
@@ -295,10 +299,142 @@
       return [];
     }
 
+    function hasNumericPrice(beer) {
+      return beer && Number.isFinite(Number(beer.priceNumeric));
+    }
+
+    function isMeaningfulBeerItem(beer) {
+      return Boolean(
+        beer &&
+        (
+          hasNumericPrice(beer) ||
+          beer.availabilityLabel !== "Unknown" ||
+          beer.priceText !== "Price unavailable"
+        )
+      );
+    }
+
+    function getBeerPriority(beer) {
+      if (!beer) {
+        return 0;
+      }
+
+      let score = 0;
+
+      if (beer.availabilityLabel === "On tap") {
+        score += 40;
+      }
+
+      if (hasNumericPrice(beer)) {
+        score += 25;
+      }
+
+      if (beer.availabilityLabel !== "Unknown") {
+        score += 10;
+      }
+
+      if (beer.priceText !== "Price unavailable") {
+        score += 5;
+      }
+
+      return score;
+    }
+
     function getGuinnessItems(row) {
       return getBeerItems(row).filter((beer) =>
-        String(beer.label || "").toLowerCase().includes("guinness")
+        String(beer.label || "").toLowerCase().includes("guinness") &&
+        isMeaningfulBeerItem(beer)
+      ).sort((left, right) => getBeerPriority(right) - getBeerPriority(left));
+    }
+
+    function getHeadlineBeer(row) {
+      const guinnessItems = getGuinnessItems(row);
+
+      if (guinnessItems.length > 0) {
+        return guinnessItems[0];
+      }
+
+      const beerItems = getBeerItems(row);
+
+      return (
+        beerItems.find((beer) => beer.availabilityLabel === "On tap" && beer.priceText !== "Price unavailable") ||
+        beerItems.find((beer) => beer.priceText !== "Price unavailable") ||
+        beerItems.find((beer) => isMeaningfulBeerItem(beer)) ||
+        beerItems[0] ||
+        null
       );
+    }
+
+    function getMarkerColor(beer) {
+      if (!beer) {
+        return "#64748b";
+      }
+
+      if (beer.availabilityLabel === "Unavailable" || beer.availabilityLabel === "Not on tap") {
+        return "#b91c1c";
+      }
+
+      if (beer.availabilityLabel === "Cans only" || beer.availabilityLabel === "Bottles only") {
+        return "#c2410c";
+      }
+
+      if (hasNumericPrice(beer)) {
+        if (beer.priceNumeric <= 12) {
+          return "#15803d";
+        }
+
+        if (beer.priceNumeric <= 15) {
+          return "#0f766e";
+        }
+
+        if (beer.priceNumeric <= 17) {
+          return "#b45309";
+        }
+
+        return "#b91c1c";
+      }
+
+      return "#475569";
+    }
+
+    function getMarkerLabel(beer) {
+      if (!beer) {
+        return "?";
+      }
+
+      if (hasNumericPrice(beer)) {
+        return String(Number(beer.priceNumeric).toFixed(1)).replace(/\.0$/, "");
+      }
+
+      if (beer.availabilityLabel === "Cans only") {
+        return "CAN";
+      }
+
+      if (beer.availabilityLabel === "Bottles only") {
+        return "BTL";
+      }
+
+      if (beer.availabilityLabel === "Unavailable" || beer.availabilityLabel === "Not on tap") {
+        return "NO";
+      }
+
+      return "G";
+    }
+
+    function getMarkerScale(beer) {
+      if (hasNumericPrice(beer)) {
+        return 17;
+      }
+
+      return 15;
+    }
+
+    function getMarkerVisual(beer) {
+      return {
+        fillColor: getMarkerColor(beer),
+        labelText: getMarkerLabel(beer),
+        scale: getMarkerScale(beer),
+      };
     }
 
     function rowMatchesFilter(row, filterValue) {
@@ -561,16 +697,29 @@
             const venue = getVenueRecord(item.venues);
             const lat = Number(venue.latitude);
             const lng = Number(venue.longitude);
+            const guinnessItems = getGuinnessItems(item);
             const beerItems = getBeerItems(item);
             const happyHourSummary = getHappyHourSummary(item);
-            const headlineBeer =
-              beerItems.find((beer) => beer.availabilityLabel === "On tap" && beer.priceText !== "Price unavailable") ||
-              beerItems.find((beer) => beer.priceText !== "Price unavailable") ||
-              beerItems[0];
+            const headlineBeer = getHeadlineBeer(item);
+            const markerVisual = getMarkerVisual(headlineBeer);
 
             const marker = new google.maps.Marker({
               position: { lat, lng },
               map,
+              icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                fillColor: markerVisual.fillColor,
+                fillOpacity: 0.95,
+                strokeColor: "#0f172a",
+                strokeWeight: 2,
+                scale: markerVisual.scale,
+              },
+              label: {
+                text: markerVisual.labelText,
+                color: "#ffffff",
+                fontSize: "11px",
+                fontWeight: "700",
+              },
               title: `${venue.name || item.venue_name || "Unknown venue"}${
                 headlineBeer ? ` - ${headlineBeer.label}: ${headlineBeer.priceText}` : ""
               }`,
@@ -583,6 +732,20 @@
             const venueName = escapeHtml(venue.name || item.venue_name || "Unknown venue");
             const safeAddress = escapeHtml(address || "Address unavailable");
             const safeCreatedAt = escapeHtml(createdAt);
+            const featuredBeerMarkup = guinnessItems.length > 0 ? `
+              <div style="margin-bottom:12px; padding:12px 14px; border-radius:14px; background:#0f172a; color:#e2e8f0;">
+                <div style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:#93c5fd; margin-bottom:6px;">Guinness</div>
+                <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+                  <div>
+                    <div style="font-size:18px; font-weight:700; color:#ffffff;">${escapeHtml(guinnessItems[0].priceText)}</div>
+                    <div style="font-size:12px; color:#cbd5e1; margin-top:4px;">${escapeHtml(guinnessItems[0].availabilityLabel)}</div>
+                  </div>
+                  <div style="padding:6px 10px; border-radius:999px; background:${guinnessItems[0].availabilityTone.background}; color:${guinnessItems[0].availabilityTone.color}; font-size:11px; font-weight:700;">
+                    ${escapeHtml(guinnessItems[0].label)}
+                  </div>
+                </div>
+              </div>
+            ` : "";
             const beerMarkup = beerItems.length > 0
               ? beerItems.map((beer) => `
               <div style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #e2e8f0;">
@@ -612,12 +775,13 @@
                 <div style="font-size:18px; font-weight:700; line-height:1.2; margin-bottom:8px;">
                   ${venueName}
                 </div>
-                <div style="font-size:13px; line-height:1.45; color:#475569; margin-bottom:14px;">
-                  ${safeAddress}
-                </div>
-                <div style="border:1px solid #e2e8f0; border-radius:14px; padding:0 12px; background:#ffffff;">
-                  ${beerMarkup}
-                </div>
+              <div style="font-size:13px; line-height:1.45; color:#475569; margin-bottom:14px;">
+                ${safeAddress}
+              </div>
+              ${featuredBeerMarkup}
+              <div style="border:1px solid #e2e8f0; border-radius:14px; padding:0 12px; background:#ffffff;">
+                ${beerMarkup}
+              </div>
                 ${happyHourMarkup}
                 <div style="padding-top:10px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b;">
                   Logged ${safeCreatedAt}
