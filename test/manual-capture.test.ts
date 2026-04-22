@@ -18,6 +18,7 @@ describe("manual capture helpers", () => {
       beers: {
         guinness: {
           label: "Guinness",
+          serving_size: "pint",
           price_numeric: 14,
           price_text: "$14",
           availability_status: "on_tap",
@@ -33,6 +34,7 @@ describe("manual capture helpers", () => {
     expect(entries.guinness).toEqual(
       expect.objectContaining({
         label: "Guinness",
+        serving_size: "pint",
         price_numeric: 14,
         availability_status: "on_tap",
       }),
@@ -54,6 +56,7 @@ describe("manual capture helpers", () => {
           beers: {
             guinness: buildManualBeerEntry({
               name: "Guinness",
+              servingSize: "pint",
               priceNumeric: 14,
               priceText: "$14",
               availabilityStatus: "on_tap",
@@ -68,6 +71,7 @@ describe("manual capture helpers", () => {
       beers: [
         {
           name: "Carlton Draft",
+          servingSize: "pint",
           priceNumeric: 12,
           priceText: "$12",
           availabilityStatus: "on_tap",
@@ -92,7 +96,9 @@ describe("manual capture helpers", () => {
             }),
             carlton_draft: expect.objectContaining({
               label: "Carlton Draft",
+              serving_size: "pint",
               price_numeric: 12,
+              price_text: "$12 pint",
             }),
           }),
           menu_capture: expect.objectContaining({

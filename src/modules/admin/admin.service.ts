@@ -351,6 +351,7 @@ export class AdminService {
     const beers = parsed.beers.map((beer) => {
       const normalized = buildManualBeerEntry({
         name: beer.name,
+        servingSize: "pint",
         priceNumeric: beer.price_numeric,
         priceText: beer.price_text,
         availabilityStatus: beer.availability_status,
@@ -362,6 +363,7 @@ export class AdminService {
 
       return {
         name: normalized.label,
+        servingSize: "pint",
         priceNumeric: normalized.price_numeric,
         priceText: normalized.price_text,
         availabilityStatus: normalized.availability_status,

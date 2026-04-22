@@ -13,6 +13,7 @@ const RESERVED_CLEANED_KEYS = new Set([
 
 export interface ManualBeerInput {
   name: string;
+  servingSize: "pint";
   priceNumeric: number | null;
   priceText: string | null;
   availabilityStatus: BeerAvailabilityStatus;
@@ -24,6 +25,8 @@ export interface ManualBeerInput {
 
 export interface ManualBeerEntry {
   label: string;
+  serving_size: "pint";
+  serving_size_label: string;
   price: number | null;
   price_numeric: number | null;
   price_text: string;
@@ -72,13 +75,22 @@ function sanitizeBeerName(value: string): string {
     .replace(/\s+/g, " ");
 }
 
-function formatPriceText(priceNumeric: number | null, priceText: string | null): string {
-  if (priceText && priceText.trim().length > 0) {
-    return priceText.trim();
+function formatPriceText(input: {
+  servingSize: "pint";
+  priceNumeric: number | null;
+  availabilityStatus: BeerAvailabilityStatus;
+  unavailableReason: BeerUnavailableReason;
+}): string {
+  if (input.availabilityStatus === "package_only") {
+    return input.unavailableReason === "bottles_only" ? "Bottles only" : "Cans only";
   }
 
-  if (priceNumeric !== null) {
-    return `$${Number(priceNumeric).toFixed(2).replace(/\.00$/, "")}`;
+  if (input.availabilityStatus === "unavailable") {
+    return input.unavailableReason === "not_on_tap" ? "Not on tap" : "Unavailable";
+  }
+
+  if (input.priceNumeric !== null) {
+    return `$${Number(input.priceNumeric).toFixed(2).replace(/\.00$/, "")} ${input.servingSize}`;
   }
 
   return "Price unavailable";
@@ -97,9 +109,16 @@ export function buildManualBeerEntry(input: ManualBeerInput): ManualBeerEntry {
 
   return {
     label,
+    serving_size: input.servingSize,
+    serving_size_label: input.servingSize.charAt(0).toUpperCase() + input.servingSize.slice(1),
     price: priceNumeric,
     price_numeric: priceNumeric,
-    price_text: formatPriceText(priceNumeric, input.priceText),
+    price_text: formatPriceText({
+      servingSize: input.servingSize,
+      priceNumeric,
+      availabilityStatus: input.availabilityStatus,
+      unavailableReason: input.unavailableReason,
+    }),
     availability_status: input.availabilityStatus,
     available_on_tap: input.availableOnTap,
     available_package_only: input.availablePackageOnly,
@@ -152,17 +171,28 @@ export function extractBeerEntriesFromCleaned(
           typeof beerValue.label === "string" && beerValue.label.trim().length > 0
             ? beerValue.label.trim()
             : sanitizeBeerName(key.replace(/_/g, " "));
+        const servingSize =
+          beerValue.serving_size === "pint"
+            ? "pint"
+            : "pint";
 
         return [
           key,
           {
             label,
+            serving_size: servingSize,
+            serving_size_label:
+              typeof beerValue.serving_size_label === "string" && beerValue.serving_size_label.trim().length > 0
+                ? beerValue.serving_size_label.trim()
+                : "Pint",
             price: priceNumeric,
             price_numeric: priceNumeric,
-            price_text: formatPriceText(
+            price_text: formatPriceText({
+              servingSize,
               priceNumeric,
-              typeof beerValue.price_text === "string" ? beerValue.price_text : null,
-            ),
+              availabilityStatus,
+              unavailableReason,
+            }),
             availability_status: availabilityStatus,
             available_on_tap: availableOnTap,
             available_package_only: availablePackageOnly,
@@ -196,6 +226,8 @@ export function buildMenuItemsFromBeerEntries(
     .map((beer) => ({
       label: beer.label,
       category: "beer",
+      serving_size: beer.serving_size,
+      serving_size_label: beer.serving_size_label,
       price: beer.price_numeric,
       price_text: beer.price_text,
       availability_status: beer.availability_status,

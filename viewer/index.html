@@ -342,6 +342,9 @@
 
       <section class="adminCard">
         <h3>Add beers to a pub/bar</h3>
+        <div class="adminNotice" style="margin-bottom:12px;">
+          Manual beer entries are standardized as <strong>pint prices</strong>. For on-tap beers, enter the pint number only and the app will save it in the shared map format.
+        </div>
         <label class="adminField">
           <span>Search venues</span>
           <input id="adminVenueSearch" type="search" placeholder="Search by venue, suburb, or address" />
@@ -379,6 +382,9 @@
 
       <section class="adminCard">
         <h3>Add new pub/bar</h3>
+        <div class="adminNotice" style="margin-bottom:12px;">
+          Use the official venue name, one full street address, and Melbourne-format suburb/state/postcode values so the map stays consistent.
+        </div>
         <div class="adminGrid">
           <label class="adminField">
             <span>Name</span>
@@ -386,11 +392,11 @@
           </label>
           <label class="adminField">
             <span>Phone</span>
-            <input id="adminNewVenuePhone" type="text" placeholder="+61..." />
+            <input id="adminNewVenuePhone" type="text" placeholder="(03) 9123 4567" />
           </label>
           <label class="adminField adminField--full" style="grid-column: 1 / -1;">
             <span>Address</span>
-            <input id="adminNewVenueAddress" type="text" placeholder="146 Flinders St, Melbourne VIC 3000" />
+            <input id="adminNewVenueAddress" type="text" placeholder="146 Flinders St" />
           </label>
           <label class="adminField">
             <span>Suburb</span>
@@ -1039,12 +1045,12 @@
           <input data-role="name" type="text" placeholder="Guinness" value="${escapeHtml(beer.name || "")}" />
         </label>
         <label class="adminField">
-          <span>Price number</span>
+          <span>Pint price</span>
           <input data-role="priceNumeric" type="number" step="0.01" placeholder="14" value="${beer.priceNumeric ?? ""}" />
         </label>
         <label class="adminField">
-          <span>Price text</span>
-          <input data-role="priceText" type="text" placeholder="$14 pint" value="${escapeHtml(beer.priceText || "")}" />
+          <span>Saved format</span>
+          <input data-role="pricePreview" type="text" value="" readonly />
         </label>
         <label class="adminField">
           <span>Availability</span>
@@ -1064,13 +1070,51 @@
             <option value="true">Yes</option>
           </select>
         </label>
+        <div class="adminHint" data-role="rowHint" style="grid-column: 1 / -1; margin-top:-2px;">
+          Saved as a pint entry.
+        </div>
         <div class="adminActions" style="grid-column: 1 / -1;">
           <button class="adminButton adminButton--danger" data-role="removeRow" type="button">Remove beer row</button>
         </div>
       `;
 
-      row.querySelector('[data-role="availability"]').value = availabilityChoiceFromBeer(beer);
+      const availabilityEl = row.querySelector('[data-role="availability"]');
+      const priceNumericEl = row.querySelector('[data-role="priceNumeric"]');
+      const pricePreviewEl = row.querySelector('[data-role="pricePreview"]');
+      const rowHintEl = row.querySelector('[data-role="rowHint"]');
+
+      function syncBeerRowPreview() {
+        const priceNumericRaw = priceNumericEl.value.trim();
+        const priceNumeric = priceNumericRaw ? Number(priceNumericRaw) : null;
+        const availability = buildAvailabilityFields(availabilityEl.value);
+
+        let preview = "Price unavailable";
+        let hint = "Saved as a pint entry.";
+
+        if (availability.availabilityStatus === "package_only") {
+          preview = availability.unavailableReason === "bottles_only" ? "Bottles only" : "Cans only";
+          hint = "This saves as a package-only beer, not an on-tap pint.";
+        } else if (availability.availabilityStatus === "unavailable") {
+          preview = availability.unavailableReason === "not_on_tap" ? "Not on tap" : "Unavailable";
+          hint = "This saves as unavailable for pint pricing.";
+        } else if (availability.availabilityStatus === "unknown") {
+          preview = "Price unavailable";
+          hint = "Use Unknown only when the menu is unclear and needs review.";
+        } else if (priceNumeric !== null && !Number.isNaN(priceNumeric)) {
+          preview = `$${Number(priceNumeric).toFixed(2).replace(/\.00$/, "")} pint`;
+          hint = "This will save as a standardized pint price.";
+        } else {
+          hint = "On-tap beers need the pint number before they can be saved.";
+        }
+
+        pricePreviewEl.value = preview;
+        rowHintEl.textContent = hint;
+      }
+
+      availabilityEl.value = availabilityChoiceFromBeer(beer);
       row.querySelector('[data-role="needsReview"]').value = beer.needsReview ? "true" : "false";
+      availabilityEl.addEventListener("change", syncBeerRowPreview);
+      priceNumericEl.addEventListener("input", syncBeerRowPreview);
       row.querySelector('[data-role="removeRow"]').addEventListener("click", () => {
         row.remove();
 
@@ -1078,6 +1122,8 @@
           adminBeerRowsEl.appendChild(createBeerRowElement());
         }
       });
+
+      syncBeerRowPreview();
 
       return row;
     }
@@ -1107,15 +1153,15 @@
           }
 
           const priceNumericRaw = row.querySelector('[data-role="priceNumeric"]').value.trim();
-          const priceText = row.querySelector('[data-role="priceText"]').value.trim() || null;
           const availability = buildAvailabilityFields(
             row.querySelector('[data-role="availability"]').value,
           );
 
           return {
             name,
+            servingSize: "pint",
             priceNumeric: priceNumericRaw ? Number(priceNumericRaw) : null,
-            priceText,
+            priceText: null,
             ...availability,
             needsReview: row.querySelector('[data-role="needsReview"]').value === "true",
           };
@@ -1315,7 +1361,7 @@
 
         setHint(adminOcrResultEl, "Reading menu photo...", null);
         const imageDataUrl = await compressImageFile(file);
-        const result = await authorizedJsonFetch("/api/admin/captures/menu-photo-ocr", {
+          const result = await authorizedJsonFetch("/api/admin/captures/menu-photo-ocr", {
           venueNameHint: venue.name,
           imageDataUrl,
         });
