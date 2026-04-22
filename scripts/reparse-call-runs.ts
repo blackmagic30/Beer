@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { getBeerByKey, normalizeTargetBeerKey } from "../src/constants/beers.js";
 import { BeerPriceResultsRepository } from "../src/db/beer-price-results.repository.js";
 import { CallRunsRepository } from "../src/db/call-runs.repository.js";
 import { createDatabase } from "../src/db/database.js";
@@ -114,10 +115,12 @@ async function main() {
     }
 
     const turns = parseTurns(run.rawTranscript);
-    const beerTranscript = extractBeerContextText(turns);
+    const targetBeer = getBeerByKey(run.requestedBeer ?? normalizeTargetBeerKey(undefined));
+    const beerTranscript = extractBeerContextText(turns, [targetBeer]);
     const userTranscript = flattenRoleTranscript(turns, "user");
     const parsedPrices = parseBeerPrices(beerTranscript || userTranscript || run.rawTranscript, {
       assumeBeerContext: Boolean(beerTranscript),
+      targetBeers: [targetBeer],
     });
     const detectedFailureReason = detectTranscriptFailureReason(userTranscript, run.rawTranscript);
     const baseParseSummary = summariseParseOutcome(parsedPrices, null, 0.72);

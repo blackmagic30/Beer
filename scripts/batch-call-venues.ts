@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient } from "@supabase/supabase-js";
 
+import { getBeerByKey, normalizeTargetBeerKey, type TargetBeerKey } from "../src/constants/beers.js";
 import { env } from "../src/config/env.js";
 import { CallRunsRepository } from "../src/db/call-runs.repository.js";
 import { createDatabase } from "../src/db/database.js";
@@ -29,6 +30,7 @@ interface VenueRow {
 
 interface LocalCallRunRow {
   venueId: string | null;
+  requestedBeer: string | null;
   callStatus: CallStatus;
   parseStatus: ParseStatus;
   errorMessage: string | null;
@@ -52,6 +54,7 @@ interface BatchAttemptRecord {
 interface BatchRunState {
   runId: string;
   status: "running" | "paused" | "completed";
+  targetBeer: TargetBeerKey;
   createdAt: string;
   updatedAt: string;
   stopReason: string | null;
@@ -284,6 +287,7 @@ function refreshResolvedAttempts(repository: CallRunsRepository, state: BatchRun
 
 async function buildSelectedVenues(
   database: ReturnType<typeof createDatabase>,
+  targetBeer: TargetBeerKey,
   includeAlreadyCalled: boolean,
   suburbFilter: string | undefined,
   limit: number,
@@ -292,20 +296,13 @@ async function buildSelectedVenues(
     "venues",
     "id, name, address, suburb, phone, latitude, longitude, source",
   );
-  const priorResults = includeAlreadyCalled
-    ? []
-    : await fetchAllRows<{ venue_id: string | null }>("call_results", "venue_id");
-  const remoteCalledIds = new Set(
-    priorResults
-      .map((row) => row.venue_id)
-      .filter((value): value is string => Boolean(value)),
-  );
   const localRuns = includeAlreadyCalled
     ? []
     : (database
         .prepare(
           `SELECT
              venue_id AS venueId,
+             requested_beer AS requestedBeer,
              call_status AS callStatus,
              parse_status AS parseStatus,
              error_message AS errorMessage,
@@ -319,7 +316,9 @@ async function buildSelectedVenues(
   const latestLocalRunByVenueId = new Map<string, LocalCallRunRow>();
 
   for (const row of localRuns) {
-    if (!row.venueId || latestLocalRunByVenueId.has(row.venueId)) {
+    const runBeer = normalizeTargetBeerKey(row.requestedBeer);
+
+    if (!row.venueId || runBeer !== targetBeer || latestLocalRunByVenueId.has(row.venueId)) {
       continue;
     }
 
@@ -337,7 +336,7 @@ async function buildSelectedVenues(
               parseStatus: latestLocalRun.parseStatus,
               errorMessage: latestLocalRun.errorMessage,
             })
-          : remoteCalledIds.has(venue.id);
+          : false;
 
       return buildReviewVenueRow({
         id: venue.id,
@@ -365,6 +364,7 @@ async function buildSelectedVenues(
 }
 
 function createNewState(input: {
+  targetBeer: TargetBeerKey;
   baseUrl: string;
   delayMs: number;
   limit: number;
@@ -381,6 +381,7 @@ function createNewState(input: {
   return {
     runId: randomUUID(),
     status: "running",
+    targetBeer: input.targetBeer,
     createdAt: timestamp,
     updatedAt: timestamp,
     stopReason: null,
@@ -404,6 +405,8 @@ function createNewState(input: {
 }
 
 async function main() {
+  const requestedBeerArg = getArg("beer", env.TARGET_BEER);
+  const targetBeer = normalizeTargetBeerKey(requestedBeerArg);
   const baseUrl = getArg("base-url", "http://localhost:3000")!;
   const delayMs = Number.parseInt(getArg("delay-ms", "45000") ?? "45000", 10);
   const limit = Number.parseInt(getArg("limit", "0") ?? "0", 10);
@@ -438,6 +441,7 @@ async function main() {
       if (existingState && existingState.status !== "completed") {
         state = {
           ...existingState,
+          targetBeer: existingState.targetBeer ?? targetBeer,
           status: "running",
           updatedAt: nowIso(),
           stopReason: null,
@@ -451,19 +455,22 @@ async function main() {
         };
         refreshResolvedAttempts(callRunsRepository, state);
         writeState(statePath, state);
-        console.log(`Resuming batch ${state.runId} at ${state.cursor + 1}/${state.total}.`);
+        console.log(
+          `Resuming ${getBeerByKey(state.targetBeer).name} batch ${state.runId} at ${state.cursor + 1}/${state.total}.`,
+        );
       }
     }
 
     if (!state) {
       const selected = await buildSelectedVenues(
         database,
+        targetBeer,
         includeAlreadyCalled,
         suburbFilter,
         limit,
       );
 
-      console.log(`Prepared ${selected.length} venues for outbound calling.`);
+      console.log(`Prepared ${selected.length} venues for ${getBeerByKey(targetBeer).name} outbound calling.`);
 
       if (dryRun) {
         console.log(`Dry run only. Current call window: ${buildCallingWindowReason()}`);
@@ -474,11 +481,12 @@ async function main() {
       }
 
       state = createNewState({
-        baseUrl,
-        delayMs,
-        limit,
-        suburbFilter: suburbFilter ?? null,
-        testMode,
+          baseUrl,
+          delayMs,
+          limit,
+          targetBeer,
+          suburbFilter: suburbFilter ?? null,
+          testMode,
         includeAlreadyCalled,
         circuitBreakerThreshold,
         venues: selected,
@@ -509,6 +517,7 @@ async function main() {
         venueName: venue.venueName,
         phoneNumber: venue.normalizedPhone,
         suburb: venue.suburb ?? "Melbourne",
+        requestedBeer: state.targetBeer,
         testMode,
       };
 

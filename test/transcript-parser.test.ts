@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { getBeerByKey } from "../src/constants/beers.js";
 import {
   extractBeerContextText,
   extractHappyHourContextText,
@@ -19,6 +20,34 @@ describe("parseBeerPrices", () => {
         needsReview: false,
         availabilityStatus: "on_tap",
         availableOnTap: true,
+      }),
+    ]);
+  });
+
+  it("extracts a direct Carlton Draft price when that beer is targeted", () => {
+    const results = parseBeerPrices("Carlton Draught is $14.", {
+      targetBeers: [getBeerByKey("carlton_draft")],
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draft",
+        priceNumeric: 14,
+        needsReview: false,
+      }),
+    ]);
+  });
+
+  it("extracts a direct Stone & Wood price when that beer is targeted", () => {
+    const results = parseBeerPrices("Stone and Wood is 15 dollars.", {
+      targetBeers: [getBeerByKey("stone_and_wood")],
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Stone & Wood",
+        priceNumeric: 15,
+        needsReview: false,
       }),
     ]);
   });

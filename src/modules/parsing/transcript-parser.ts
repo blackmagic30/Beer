@@ -1,4 +1,4 @@
-import { TARGET_BEERS, type BeerName } from "../../constants/beers.js";
+import { TARGET_BEERS, type BeerDefinition, type BeerName } from "../../constants/beers.js";
 import type {
   BeerAvailabilityStatus,
   BeerUnavailableReason,
@@ -45,6 +45,7 @@ export interface ParseOutcomeSummary {
 
 interface ParseBeerOptions {
   assumeBeerContext?: boolean;
+  targetBeers?: readonly BeerDefinition[];
 }
 
 interface PriceMention {
@@ -673,22 +674,22 @@ function getTurnText(turn: TranscriptTurnLike): string {
   return turn.message?.trim() || turn.originalMessage?.trim() || "";
 }
 
-function containsTargetBeerReference(text: string): boolean {
+function containsTargetBeerReference(text: string, beers: readonly BeerDefinition[] = TARGET_BEERS): boolean {
   const lowerText = text.toLowerCase();
 
-  return TARGET_BEERS.some((beer) =>
+  return beers.some((beer) =>
     [beer.name, ...beer.aliases].some((alias) => lowerText.includes(alias.toLowerCase())),
   );
 }
 
-function isBeerQuestionTurn(turn: TranscriptTurnLike): boolean {
+function isBeerQuestionTurn(turn: TranscriptTurnLike, beers: readonly BeerDefinition[] = TARGET_BEERS): boolean {
   const message = getTurnText(turn);
 
   if (!message || turn.role?.toLowerCase() !== "agent") {
     return false;
   }
 
-  return containsTargetBeerReference(message) && /\b(price|pint)\b/i.test(message);
+  return containsTargetBeerReference(message, beers) && /\b(price|pint)\b/i.test(message);
 }
 
 function isClarificationTurn(turn: TranscriptTurnLike): boolean {
@@ -721,7 +722,7 @@ function isClosingAgentTurn(turn: TranscriptTurnLike): boolean {
   return CLOSING_AGENT_TURN_REGEX.test(message);
 }
 
-function scoreBeerContextSequence(sequence: string): number {
+function scoreBeerContextSequence(sequence: string, beers: readonly BeerDefinition[] = TARGET_BEERS): number {
   const evidence = normaliseTranscript(sequence);
 
   if (!evidence) {
@@ -754,7 +755,7 @@ function scoreBeerContextSequence(sequence: string): number {
     }
   }
 
-  if (containsTargetBeerReference(evidence)) {
+  if (containsTargetBeerReference(evidence, beers)) {
     score += 0.08;
   }
 
@@ -859,7 +860,10 @@ function buildAssumedContextCandidate(transcriptText: string, beerName: BeerName
   };
 }
 
-export function extractBeerContextText(turns: TranscriptTurnLike[]): string {
+export function extractBeerContextText(
+  turns: TranscriptTurnLike[],
+  beers: readonly BeerDefinition[] = TARGET_BEERS,
+): string {
   const sequences: string[] = [];
   let collected: string[] = [];
   let capturing = false;
@@ -871,7 +875,7 @@ export function extractBeerContextText(turns: TranscriptTurnLike[]): string {
       continue;
     }
 
-    if (isBeerQuestionTurn(turn)) {
+    if (isBeerQuestionTurn(turn, beers)) {
       if (collected.length > 0) {
         sequences.push(collected.join(". ").trim());
         collected = [];
@@ -910,7 +914,7 @@ export function extractBeerContextText(turns: TranscriptTurnLike[]): string {
 
   return (
     [...sequences]
-      .sort((left, right) => scoreBeerContextSequence(right) - scoreBeerContextSequence(left))[0] ??
+      .sort((left, right) => scoreBeerContextSequence(right, beers) - scoreBeerContextSequence(left, beers))[0] ??
     ""
   );
 }
@@ -953,8 +957,9 @@ export function parseBeerPrices(
   options: ParseBeerOptions = {},
 ): ParsedBeerPrice[] {
   const segments = splitIntoSegments(transcriptText);
+  const targetBeers = options.targetBeers ?? TARGET_BEERS;
 
-  return TARGET_BEERS.map((beer) => {
+  return targetBeers.map((beer) => {
     const segmentCandidate =
       segments
       .map((segment) => buildBeerCandidate(segment, beer.name, beer.aliases))

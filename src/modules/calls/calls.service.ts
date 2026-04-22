@@ -23,6 +23,8 @@ export class CallsService {
   ) {}
 
   async createOutboundCall(input: OutboundCallBody) {
+    const requestedBeer = input.requestedBeer ?? env.TARGET_BEER;
+
     if (!env.OUTBOUND_CALLS_ENABLED && !input.testMode) {
       throw new AppError("Outbound calling is currently paused.", 503, {
         paused: true,
@@ -76,6 +78,7 @@ export class CallsService {
     this.callRunsRepository.create({
       id: callRunId,
       venueId: input.venueId,
+      requestedBeer,
       venueName: input.venueName,
       phoneNumber: input.phoneNumber,
       suburb: input.suburb,
@@ -105,6 +108,7 @@ export class CallsService {
         id: callRunId,
         callSid: call.sid,
         callStatus: normaliseTwilioCallStatus(call.status),
+        requestedBeer,
         venueId: input.venueId,
         venueName: input.venueName,
         suburb: input.suburb,
@@ -122,6 +126,7 @@ export class CallsService {
       logger.error("Outbound call creation failed", {
         callRunId,
         phoneNumber: input.phoneNumber,
+        requestedBeer,
         testMode: input.testMode,
         error: message,
       });

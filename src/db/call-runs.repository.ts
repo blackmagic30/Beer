@@ -7,6 +7,7 @@ import type {
   NewCallRunInput,
   ParseStatus,
 } from "./models.js";
+import { normalizeTargetBeerKey } from "../constants/beers.js";
 
 interface RawCallRunRecord extends Omit<CallRunRecord, "isTest"> {
   isTest: number;
@@ -39,6 +40,7 @@ export class CallRunsRepository {
         `INSERT INTO call_runs (
           id,
           venue_id,
+          requested_beer,
           venue_name,
           phone_number,
           suburb,
@@ -51,6 +53,7 @@ export class CallRunsRepository {
         ) VALUES (
           @id,
           @venueId,
+          @requestedBeer,
           @venueName,
           @phoneNumber,
           @suburb,
@@ -64,6 +67,7 @@ export class CallRunsRepository {
       )
       .run({
         ...input,
+        requestedBeer: input.requestedBeer ?? null,
         isTest: input.isTest ? 1 : 0,
       });
 
@@ -241,6 +245,7 @@ export class CallRunsRepository {
           call_sid AS callSid,
           conversation_id AS conversationId,
           venue_id AS venueId,
+          requested_beer AS requestedBeer,
           venue_name AS venueName,
           phone_number AS phoneNumber,
           suburb,
@@ -273,6 +278,7 @@ export class CallRunsRepository {
           call_sid AS callSid,
           conversation_id AS conversationId,
           venue_id AS venueId,
+          requested_beer AS requestedBeer,
           venue_name AS venueName,
           phone_number AS phoneNumber,
           suburb,
@@ -299,6 +305,7 @@ export class CallRunsRepository {
   private mapRow(row: RawCallRunRecord): CallRunRecord {
     return {
       ...row,
+      requestedBeer: row.requestedBeer ? normalizeTargetBeerKey(row.requestedBeer) : null,
       isTest: Boolean(row.isTest),
     };
   }

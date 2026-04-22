@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SUPPORTED_BEER_KEYS } from "../../constants/beers.js";
 
 const e164PhoneRegex = /^\+[1-9]\d{7,14}$/;
 
@@ -7,6 +8,7 @@ export const outboundCallBodySchema = z.object({
   venueName: z.string().trim().min(1).max(140),
   phoneNumber: z.string().trim().regex(e164PhoneRegex, "phoneNumber must be in E.164 format"),
   suburb: z.string().trim().min(1).max(120),
+  requestedBeer: z.enum(SUPPORTED_BEER_KEYS).optional(),
   testMode: z.boolean().optional().default(false),
 });
 

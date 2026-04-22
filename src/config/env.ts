@@ -95,6 +95,7 @@ const clockTimeRegex = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  TARGET_BEER: z.enum(["guinness", "carlton_draft", "stone_and_wood"]).default("guinness"),
   HOST: z.preprocess((value) => {
     const trimmed = sanitizeEnvString(value);
     if (typeof trimmed !== "string") {

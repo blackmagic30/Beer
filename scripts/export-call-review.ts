@@ -5,6 +5,8 @@ import path from "node:path";
 
 import { createClient } from "@supabase/supabase-js";
 
+import { getBeerByKey, normalizeTargetBeerKey } from "../src/constants/beers.js";
+import { env } from "../src/config/env.js";
 import { createDatabase } from "../src/db/database.js";
 import type { CallStatus, ParseStatus } from "../src/db/models.js";
 import { isRetryableVenueOutcome } from "../src/lib/call-batch.js";
@@ -22,14 +24,9 @@ interface VenueRow {
   source: string | null;
 }
 
-interface CallResultRow {
-  venue_id: string | null;
-  saved_at: string | null;
-  created_at: string;
-}
-
 interface LocalCallRunRow {
   venueId: string | null;
+  requestedBeer: string | null;
   callStatus: CallStatus;
   parseStatus: ParseStatus;
   errorMessage: string | null;
@@ -96,6 +93,7 @@ function escapeCsv(value: string | number | boolean | null): string {
 }
 
 async function main() {
+  const targetBeer = normalizeTargetBeerKey(getArg("beer", env.TARGET_BEER));
   const limit = Number.parseInt(getArg("limit", "0") ?? "0", 10);
   const suburbFilter = getArg("suburb")?.trim().toLowerCase();
   const includeCalled = hasFlag("include-called");
@@ -111,29 +109,12 @@ async function main() {
       "venues",
       "id, name, suburb, address, phone, latitude, longitude, source",
     );
-    const callResults = await fetchAllRows<CallResultRow>(
-      "call_results",
-      "venue_id, saved_at, created_at",
-    );
-
     const latestCallByVenueId = new Map<string, string>();
-
-    for (const row of callResults) {
-      if (!row.venue_id) {
-        continue;
-      }
-
-      const timestamp = row.saved_at ?? row.created_at;
-      const current = latestCallByVenueId.get(row.venue_id);
-
-      if (!current || timestamp > current) {
-        latestCallByVenueId.set(row.venue_id, timestamp);
-      }
-    }
     const localRuns = database
       .prepare(
         `SELECT
            venue_id AS venueId,
+           requested_beer AS requestedBeer,
            call_status AS callStatus,
            parse_status AS parseStatus,
            error_message AS errorMessage,
@@ -146,20 +127,18 @@ async function main() {
       .all() as LocalCallRunRow[];
 
     for (const row of localRuns) {
-      if (!row.venueId) {
+      if (!row.venueId || normalizeTargetBeerKey(row.requestedBeer) !== targetBeer) {
         continue;
       }
 
-      if (!latestCallByVenueId.has(row.venueId)) {
-        const alreadyResolved = !isRetryableVenueOutcome({
-          callStatus: row.callStatus,
-          parseStatus: row.parseStatus,
-          errorMessage: row.errorMessage,
-        });
+      const alreadyResolved = !isRetryableVenueOutcome({
+        callStatus: row.callStatus,
+        parseStatus: row.parseStatus,
+        errorMessage: row.errorMessage,
+      });
 
-        if (alreadyResolved) {
-          latestCallByVenueId.set(row.venueId, row.createdAt);
-        }
+      if (alreadyResolved && !latestCallByVenueId.has(row.venueId)) {
+        latestCallByVenueId.set(row.venueId, row.createdAt);
       }
     }
 
@@ -235,7 +214,7 @@ async function main() {
 
     fs.writeFileSync(csvPath, `${csvRows.join("\n")}\n`);
 
-    console.log(`Exported ${selectedRows.length} review rows.`);
+    console.log(`Exported ${selectedRows.length} review rows for ${getBeerByKey(targetBeer).name}.`);
     console.log(`JSON: ${jsonPath}`);
     console.log(`CSV: ${csvPath}`);
   } finally {

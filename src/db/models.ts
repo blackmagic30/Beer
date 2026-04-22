@@ -1,4 +1,4 @@
-import type { BeerName } from "../constants/beers.js";
+import type { BeerName, TargetBeerKey } from "../constants/beers.js";
 
 export type BeerAvailabilityStatus = "on_tap" | "package_only" | "unavailable" | "unknown";
 export type BeerUnavailableReason =
@@ -88,6 +88,7 @@ export interface CallRunRecord {
   callSid: string | null;
   conversationId: string | null;
   venueId: string | null;
+  requestedBeer: TargetBeerKey | null;
   venueName: string;
   phoneNumber: string;
   suburb: string;
@@ -107,6 +108,7 @@ export interface CallRunRecord {
 export interface NewCallRunInput {
   id: string;
   venueId: string | null;
+  requestedBeer: TargetBeerKey;
   venueName: string;
   phoneNumber: string;
   suburb: string;

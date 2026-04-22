@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS call_runs (
   call_sid TEXT UNIQUE,
   conversation_id TEXT UNIQUE,
   venue_id TEXT,
+  requested_beer TEXT,
   venue_name TEXT NOT NULL,
   phone_number TEXT NOT NULL,
   suburb TEXT NOT NULL,

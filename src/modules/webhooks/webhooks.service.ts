@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import { AGENT_FIRST_MESSAGE, AGENT_PROMPT } from "../../constants/agent-script.js";
-import { TARGET_BEERS } from "../../constants/beers.js";
+import { buildAgentFirstMessage, buildAgentPrompt } from "../../constants/agent-script.js";
+import { getBeerByKey, normalizeTargetBeerKey } from "../../constants/beers.js";
 import { BeerPriceResultsRepository } from "../../db/beer-price-results.repository.js";
 import { CallRunsRepository } from "../../db/call-runs.repository.js";
 import type { CallRunRecord, CallStatus } from "../../db/models.js";
@@ -438,9 +438,17 @@ export class WebhooksService {
 
     try {
       const userTranscript = flattenRoleTranscript(transcript, "user");
-      const beerTranscript = extractBeerContextText(transcript);
+      const targetBeerKey = run.requestedBeer ?? normalizeTargetBeerKey(
+        this.getOptionalDynamicString(
+          event.data.dynamicVariables.requested_beer,
+          event.data.dynamicVariables.requestedBeer,
+        ),
+      );
+      const targetBeer = getBeerByKey(targetBeerKey);
+      const beerTranscript = extractBeerContextText(transcript, [targetBeer]);
       const parsedPrices = parseBeerPrices(beerTranscript || userTranscript || rawTranscript, {
         assumeBeerContext: Boolean(beerTranscript),
+        targetBeers: [targetBeer],
       });
       const detectedFailureReason = detectTranscriptFailureReason(userTranscript, rawTranscript);
       const baseParseSummary = summariseParseOutcome(
@@ -708,6 +716,9 @@ export class WebhooksService {
     const run = this.callRunsRepository.create({
       id: runId,
       venueId: this.getOptionalDynamicString(dynamicVariables.venue_id, dynamicVariables.venueId),
+      requestedBeer: normalizeTargetBeerKey(
+        this.getOptionalDynamicString(dynamicVariables.requested_beer, dynamicVariables.requestedBeer),
+      ),
       venueName: this.getDynamicString(dynamicVariables.venue_name, "Unknown venue"),
       phoneNumber: this.getDynamicString(
         dynamicVariables.phone_number,
@@ -739,6 +750,7 @@ export class WebhooksService {
   }
 
   private buildConversationInitiationData(run: CallRunRecord): Record<string, unknown> {
+    const targetBeer = getBeerByKey(run.requestedBeer ?? normalizeTargetBeerKey(undefined));
     const promptSuffix = run.isTest
       ? "\nThis is a test call to the owner's own number. Still ask the normal questions so the call flow can be verified."
       : "";
@@ -750,16 +762,17 @@ export class WebhooksService {
         venue_name: run.venueName,
         suburb: run.suburb,
         phone_number: run.phoneNumber,
-        requested_beers: TARGET_BEERS.map((beer) => beer.name).join(", "),
+        requested_beer: targetBeer.key,
+        requested_beers: targetBeer.name,
         test_mode: run.isTest ? "true" : "false",
         call_run_id: run.id,
       },
       conversation_config_override: {
         agent: {
           language: "en",
-          first_message: AGENT_FIRST_MESSAGE,
+          first_message: buildAgentFirstMessage(targetBeer.name),
           prompt: {
-            prompt: `${AGENT_PROMPT}\nVenue name: ${run.venueName}\nSuburb: ${run.suburb}${promptSuffix}`,
+            prompt: `${buildAgentPrompt(targetBeer.name)}\nVenue name: ${run.venueName}\nSuburb: ${run.suburb}${promptSuffix}`,
           },
         },
       },
