@@ -34,7 +34,7 @@ export interface ReviewVenueRow {
   issues: string[];
 }
 
-const STRICT_BAR_PUB_TYPES = new Set(["bar", "pub"]);
+const STRICT_BAR_PUB_TYPES = new Set(["bar", "pub", "brewery"]);
 const EXCLUDED_NAME_PATTERNS = [
   /\bairport lounge\b/i,
   /\bairport services\b/i,
@@ -62,6 +62,49 @@ const EXCLUDED_NAME_PATTERNS = [
   /\bbeauty\b/i,
   /^\.$/,
 ];
+const RESTAURANT_LED_NAME_PATTERNS = [
+  /\brestaurant\b/i,
+  /\bcafe\b/i,
+  /\bbistro\b/i,
+  /\bdining\b/i,
+  /\beatery\b/i,
+  /\bdiner\b/i,
+  /\bgrill\b/i,
+  /\bbbq\b/i,
+  /\bcantina\b/i,
+  /\bcuisine\b/i,
+  /\bpizzeria\b/i,
+  /\bpizza\b/i,
+  /\bramen\b/i,
+  /\bcurry\b/i,
+  /\bthai\b/i,
+  /\bindian\b/i,
+  /\bnepalese\b/i,
+  /\bmexican\b/i,
+  /\bitalian\b/i,
+  /\btea bar\b/i,
+  /\bcellar door\b/i,
+  /\bcatering\b/i,
+  /\bbar hire\b/i,
+  /\boff[\s-]?licen[cs]e\b/i,
+  /\bbottles?hop\b/i,
+  /\bliquor\b/i,
+  /\bespresso\b/i,
+  /\bkitchen\b/i,
+];
+const STRONG_BAR_PUB_BREWERY_NAME_PATTERNS = [
+  /\bpub\b/i,
+  /\bhotel\b/i,
+  /\btavern\b/i,
+  /\balehouse\b/i,
+  /\bsaloon\b/i,
+  /\bbrew(ery|ing|pub)?\b/i,
+  /\btaproom\b/i,
+  /\bbeer garden\b/i,
+  /\brooftop\b/i,
+  /\bwine bar\b/i,
+  /\bwine room\b/i,
+];
 
 export function normalizeVenueKey(value: string | null | undefined): string {
   return (value ?? "")
@@ -74,8 +117,8 @@ export function normalizeVenueKey(value: string | null | undefined): string {
 export function isStrictBarOrPubPlace(place: GooglePlaceCandidate): boolean {
   const primaryType = place.primaryType?.trim().toLowerCase();
 
-  if (primaryType && STRICT_BAR_PUB_TYPES.has(primaryType)) {
-    return true;
+  if (primaryType) {
+    return STRICT_BAR_PUB_TYPES.has(primaryType);
   }
 
   const types = (place.types ?? []).map((type) => type.trim().toLowerCase());
@@ -84,6 +127,14 @@ export function isStrictBarOrPubPlace(place: GooglePlaceCandidate): boolean {
 
 export function isExcludedVenueName(name: string): boolean {
   return EXCLUDED_NAME_PATTERNS.some((pattern) => pattern.test(name));
+}
+
+export function isRestaurantLedVenueName(name: string): boolean {
+  return RESTAURANT_LED_NAME_PATTERNS.some((pattern) => pattern.test(name));
+}
+
+export function hasStrongBarOrPubNameSignal(name: string): boolean {
+  return STRONG_BAR_PUB_BREWERY_NAME_PATTERNS.some((pattern) => pattern.test(name));
 }
 
 export function shouldImportBarOrPubPlace(place: GooglePlaceCandidate): boolean {
@@ -103,6 +154,10 @@ export function shouldImportBarOrPubPlace(place: GooglePlaceCandidate): boolean 
   }
 
   if (isExcludedVenueName(name)) {
+    return false;
+  }
+
+  if (isRestaurantLedVenueName(name) && !hasStrongBarOrPubNameSignal(name)) {
     return false;
   }
 

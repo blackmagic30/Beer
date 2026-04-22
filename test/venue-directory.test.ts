@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildReviewVenueRow,
+  hasStrongBarOrPubNameSignal,
   isStrictBarOrPubPlace,
+  isRestaurantLedVenueName,
   shouldImportBarOrPubPlace,
 } from "../src/lib/venue-directory.js";
 
@@ -23,6 +25,35 @@ describe("isStrictBarOrPubPlace", () => {
         types: ["restaurant", "food"],
       }),
     ).toBe(false);
+  });
+
+  it("rejects restaurant-primary places even when bar appears in secondary types", () => {
+    expect(
+      isStrictBarOrPubPlace({
+        primaryType: "restaurant",
+        types: ["restaurant", "bar", "food"],
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts Google places tagged as a brewery", () => {
+    expect(
+      isStrictBarOrPubPlace({
+        primaryType: "brewery",
+        types: ["brewery", "food", "point_of_interest"],
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("name heuristics", () => {
+  it("spots restaurant-led venue names", () => {
+    expect(isRestaurantLedVenueName("Venue Sixty-Nine Restaurant & Bar")).toBe(true);
+  });
+
+  it("keeps strong pub and brewery signals", () => {
+    expect(hasStrongBarOrPubNameSignal("The Standard Hotel")).toBe(true);
+    expect(hasStrongBarOrPubNameSignal("Mountain Goat Brewery")).toBe(true);
   });
 });
 
@@ -83,6 +114,30 @@ describe("shouldImportBarOrPubPlace", () => {
         businessStatus: "OPERATIONAL",
       }),
     ).toBe(false);
+  });
+
+  it("filters restaurant-led bar names that are not true bar/pub/brewery venues", () => {
+    expect(
+      shouldImportBarOrPubPlace({
+        displayName: { text: "Venue Sixty-Nine Restaurant & Bar" },
+        formattedAddress: "Test Address",
+        primaryType: "bar",
+        types: ["bar", "restaurant", "food"],
+        businessStatus: "OPERATIONAL",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps brewery venues even when the name is not a pub or hotel", () => {
+    expect(
+      shouldImportBarOrPubPlace({
+        displayName: { text: "Mountain Goat Brewery" },
+        formattedAddress: "Test Address",
+        primaryType: "brewery",
+        types: ["brewery", "food", "point_of_interest"],
+        businessStatus: "OPERATIONAL",
+      }),
+    ).toBe(true);
   });
 });
 

@@ -36,18 +36,76 @@ const DEFAULT_STEP_LAT = 0.09;
 const DEFAULT_STEP_LNG = 0.09;
 const DEFAULT_RADIUS_METERS = 3200;
 const DEFAULT_CITY_RADIUS_METERS = 4500;
+const DEFAULT_SUBURB_RADIUS_METERS = 2600;
 const DEFAULT_CITY_CENTER = {
   latitude: -37.8136,
   longitude: 144.9631,
 };
-const DEFAULT_CITY_BACKFILL_QUERIES: Array<{ textQuery: string; includedType: "bar" | "pub" }> = [
-  { textQuery: "bars in Melbourne CBD", includedType: "bar" },
-  { textQuery: "pubs in Melbourne CBD", includedType: "pub" },
-  { textQuery: "cocktail bars in Melbourne CBD", includedType: "bar" },
-  { textQuery: "rooftop bars in Melbourne CBD", includedType: "bar" },
-];
 const DEFAULT_TEXT_SEARCH_PAGE_SIZE = 20;
 const DEFAULT_TEXT_SEARCH_MAX_PAGES = 3;
+
+interface BackfillArea {
+  name: string;
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+}
+
+interface TextSearchQuery {
+  textQuery: string;
+  includedType: "bar" | "pub" | "brewery";
+  latitude: number;
+  longitude: number;
+  radiusMeters: number;
+  tag: string;
+}
+
+const DEFAULT_CITY_BACKFILL_QUERIES: TextSearchQuery[] = [
+  {
+    textQuery: "bars in Melbourne CBD",
+    includedType: "bar",
+    latitude: DEFAULT_CITY_CENTER.latitude,
+    longitude: DEFAULT_CITY_CENTER.longitude,
+    radiusMeters: DEFAULT_CITY_RADIUS_METERS,
+    tag: "Melbourne CBD",
+  },
+  {
+    textQuery: "pubs in Melbourne CBD",
+    includedType: "pub",
+    latitude: DEFAULT_CITY_CENTER.latitude,
+    longitude: DEFAULT_CITY_CENTER.longitude,
+    radiusMeters: DEFAULT_CITY_RADIUS_METERS,
+    tag: "Melbourne CBD",
+  },
+  {
+    textQuery: "cocktail bars in Melbourne CBD",
+    includedType: "bar",
+    latitude: DEFAULT_CITY_CENTER.latitude,
+    longitude: DEFAULT_CITY_CENTER.longitude,
+    radiusMeters: DEFAULT_CITY_RADIUS_METERS,
+    tag: "Melbourne CBD",
+  },
+  {
+    textQuery: "rooftop bars in Melbourne CBD",
+    includedType: "bar",
+    latitude: DEFAULT_CITY_CENTER.latitude,
+    longitude: DEFAULT_CITY_CENTER.longitude,
+    radiusMeters: DEFAULT_CITY_RADIUS_METERS,
+    tag: "Melbourne CBD",
+  },
+];
+
+const DEFAULT_INNER_RING_BACKFILL_AREAS: BackfillArea[] = [
+  { name: "Fitzroy", latitude: -37.7987, longitude: 144.9788, radiusMeters: DEFAULT_SUBURB_RADIUS_METERS },
+  { name: "Collingwood", latitude: -37.8022, longitude: 144.9867, radiusMeters: DEFAULT_SUBURB_RADIUS_METERS },
+  { name: "Richmond", latitude: -37.8232, longitude: 144.9988, radiusMeters: DEFAULT_SUBURB_RADIUS_METERS },
+  { name: "Carlton", latitude: -37.8005, longitude: 144.9669, radiusMeters: DEFAULT_SUBURB_RADIUS_METERS },
+  { name: "South Yarra", latitude: -37.8396, longitude: 144.9915, radiusMeters: DEFAULT_SUBURB_RADIUS_METERS },
+  { name: "St Kilda", latitude: -37.8677, longitude: 144.9801, radiusMeters: DEFAULT_SUBURB_RADIUS_METERS },
+  { name: "Brunswick", latitude: -37.7682, longitude: 144.9629, radiusMeters: DEFAULT_SUBURB_RADIUS_METERS },
+  { name: "Prahran", latitude: -37.8512, longitude: 144.9936, radiusMeters: DEFAULT_SUBURB_RADIUS_METERS },
+  { name: "South Melbourne", latitude: -37.8336, longitude: 144.9607, radiusMeters: DEFAULT_SUBURB_RADIUS_METERS },
+];
 
 interface VenueRow {
   id: string;
@@ -88,6 +146,37 @@ function hasFlag(name: string): boolean {
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+function buildAreaBackfillQueries(areas: BackfillArea[]): TextSearchQuery[] {
+  return areas.flatMap((area) => [
+    {
+      textQuery: `bars in ${area.name} Melbourne`,
+      includedType: "bar" as const,
+      latitude: area.latitude,
+      longitude: area.longitude,
+      radiusMeters: area.radiusMeters,
+      tag: area.name,
+    },
+    {
+      textQuery: `pubs in ${area.name} Melbourne`,
+      includedType: "pub" as const,
+      latitude: area.latitude,
+      longitude: area.longitude,
+      radiusMeters: area.radiusMeters,
+      tag: area.name,
+    },
+    {
+      textQuery: `breweries in ${area.name} Melbourne`,
+      includedType: "brewery" as const,
+      latitude: area.latitude,
+      longitude: area.longitude,
+      radiusMeters: area.radiusMeters,
+      tag: area.name,
+    },
+  ]);
+}
+
+const DEFAULT_INNER_RING_BACKFILL_QUERIES = buildAreaBackfillQueries(DEFAULT_INNER_RING_BACKFILL_AREAS);
 
 function buildGridCenters() {
   const centers: Array<{ latitude: number; longitude: number }> = [];
@@ -208,7 +297,7 @@ async function searchNearbyPlaces(apiKey: string, latitude: number, longitude: n
 
 async function searchTextPlaces(
   apiKey: string,
-  query: { textQuery: string; includedType: "bar" | "pub" },
+  query: TextSearchQuery,
   pageToken?: string,
 ): Promise<TextSearchPage> {
   const response = await fetch(GOOGLE_TEXT_SEARCH_API_URL, {
@@ -225,8 +314,11 @@ async function searchTextPlaces(
       pageSize: DEFAULT_TEXT_SEARCH_PAGE_SIZE,
       locationBias: {
         circle: {
-          center: DEFAULT_CITY_CENTER,
-          radius: DEFAULT_CITY_RADIUS_METERS,
+          center: {
+            latitude: query.latitude,
+            longitude: query.longitude,
+          },
+          radius: query.radiusMeters,
         },
       },
       pageToken,
@@ -316,9 +408,11 @@ async function main() {
   const dryRun = hasFlag("dry-run");
   const cityBackfill = hasFlag("city-backfill");
   const cityOnly = hasFlag("city-only");
+  const innerRingBackfill = hasFlag("inner-ring-backfill");
+  const innerRingOnly = hasFlag("inner-ring-only");
   const maxCells = Number.parseInt(getArg("max-cells", "") ?? "", 10);
   const centers = buildGridCenters();
-  const cellsToScan = cityOnly
+  const cellsToScan = cityOnly || innerRingOnly
     ? []
     : Number.isFinite(maxCells) && maxCells > 0
       ? centers.slice(0, maxCells)
@@ -326,6 +420,10 @@ async function main() {
   const discovered = new Map<string, VenuePayload>();
   const failedCells: string[] = [];
   const failedQueries: string[] = [];
+  const textBackfillQueries: TextSearchQuery[] = [
+    ...(cityBackfill || cityOnly ? DEFAULT_CITY_BACKFILL_QUERIES : []),
+    ...(innerRingBackfill || innerRingOnly ? DEFAULT_INNER_RING_BACKFILL_QUERIES : []),
+  ];
 
   console.log(`Scanning ${cellsToScan.length} Melbourne grid cells for bars and pubs...`);
 
@@ -347,11 +445,11 @@ async function main() {
     }
   }
 
-  if (cityBackfill || cityOnly) {
-    console.log(`Running Melbourne CBD text-search backfill across ${DEFAULT_CITY_BACKFILL_QUERIES.length} queries...`);
+  if (textBackfillQueries.length > 0) {
+    console.log(`Running text-search backfill across ${textBackfillQueries.length} queries...`);
 
-    for (const query of DEFAULT_CITY_BACKFILL_QUERIES) {
-      console.log(`Backfill query: ${query.textQuery}`);
+    for (const query of textBackfillQueries) {
+      console.log(`Backfill query [${query.tag}]: ${query.textQuery}`);
       let pageToken: string | undefined;
 
       for (let pageNumber = 1; pageNumber <= DEFAULT_TEXT_SEARCH_MAX_PAGES; pageNumber += 1) {

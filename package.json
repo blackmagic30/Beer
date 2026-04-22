@@ -11,6 +11,7 @@
     "start": "node dist/src/server.js",
     "venues:import": "tsx scripts/import-melbourne-venues.ts",
     "venues:import:city": "tsx scripts/import-melbourne-venues.ts --city-backfill --city-only",
+    "venues:import:inner-ring": "tsx scripts/import-melbourne-venues.ts --inner-ring-backfill --inner-ring-only",
     "venues:review": "tsx scripts/export-call-review.ts",
     "venues:call": "tsx scripts/batch-call-venues.ts",
     "calls:recover-stale": "tsx scripts/recover-stale-call-runs.ts",

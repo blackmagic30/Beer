@@ -331,6 +331,31 @@ That city backfill:
 - is useful for filling gaps where Nearby Search ranking misses inner-city venues
 - still dedupes by `google_place_id` first, then normalized `name + address`
 
+For an inner-ring Melbourne suburb backfill across:
+
+- Fitzroy
+- Collingwood
+- Richmond
+- Carlton
+- South Yarra
+- St Kilda
+- Brunswick
+- Prahran
+- South Melbourne
+
+run:
+
+```bash
+npm run venues:import:inner-ring -- --dry-run
+npm run venues:import:inner-ring
+```
+
+That inner-ring backfill:
+
+- runs Google Places Text Search suburb-by-suburb for bars and pubs
+- is useful for catching major hospitality pockets just outside the CBD
+- keeps the suburb list explicit instead of widening the whole metro filter
+
 ## Review Export Before Calling
 
 Export a clean review list of call-ready venues before batch calling:
