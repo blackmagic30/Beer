@@ -10,6 +10,7 @@ import {
 } from "../src/lib/venue-directory.js";
 
 const GOOGLE_PLACES_API_URL = "https://places.googleapis.com/v1/places:searchNearby";
+const GOOGLE_TEXT_SEARCH_API_URL = "https://places.googleapis.com/v1/places:searchText";
 const GOOGLE_FIELD_MASK = [
   "places.id",
   "places.displayName",
@@ -34,6 +35,19 @@ const DEFAULT_BOUNDS = {
 const DEFAULT_STEP_LAT = 0.09;
 const DEFAULT_STEP_LNG = 0.09;
 const DEFAULT_RADIUS_METERS = 3200;
+const DEFAULT_CITY_RADIUS_METERS = 4500;
+const DEFAULT_CITY_CENTER = {
+  latitude: -37.8136,
+  longitude: 144.9631,
+};
+const DEFAULT_CITY_BACKFILL_QUERIES: Array<{ textQuery: string; includedType: "bar" | "pub" }> = [
+  { textQuery: "bars in Melbourne CBD", includedType: "bar" },
+  { textQuery: "pubs in Melbourne CBD", includedType: "pub" },
+  { textQuery: "cocktail bars in Melbourne CBD", includedType: "bar" },
+  { textQuery: "rooftop bars in Melbourne CBD", includedType: "bar" },
+];
+const DEFAULT_TEXT_SEARCH_PAGE_SIZE = 20;
+const DEFAULT_TEXT_SEARCH_MAX_PAGES = 3;
 
 interface VenueRow {
   id: string;
@@ -56,6 +70,11 @@ interface VenuePayload {
   source: string;
 }
 
+interface TextSearchPage {
+  places: GooglePlaceCandidate[];
+  nextPageToken: string | null;
+}
+
 function getArg(name: string, fallback?: string): string | undefined {
   const prefix = `--${name}=`;
   const match = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
@@ -64,6 +83,10 @@ function getArg(name: string, fallback?: string): string | undefined {
 
 function hasFlag(name: string): boolean {
   return process.argv.slice(2).includes(`--${name}`);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildGridCenters() {
@@ -183,6 +206,66 @@ async function searchNearbyPlaces(apiKey: string, latitude: number, longitude: n
   return Array.isArray(payload.places) ? payload.places : [];
 }
 
+async function searchTextPlaces(
+  apiKey: string,
+  query: { textQuery: string; includedType: "bar" | "pub" },
+  pageToken?: string,
+): Promise<TextSearchPage> {
+  const response = await fetch(GOOGLE_TEXT_SEARCH_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": `${GOOGLE_FIELD_MASK},nextPageToken`,
+    },
+    body: JSON.stringify({
+      textQuery: query.textQuery,
+      includedType: query.includedType,
+      strictTypeFiltering: true,
+      pageSize: DEFAULT_TEXT_SEARCH_PAGE_SIZE,
+      locationBias: {
+        circle: {
+          center: DEFAULT_CITY_CENTER,
+          radius: DEFAULT_CITY_RADIUS_METERS,
+        },
+      },
+      pageToken,
+      languageCode: "en",
+      regionCode: "AU",
+    }),
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(`Google Places Text Search error for "${query.textQuery}": ${JSON.stringify(payload)}`);
+  }
+
+  return {
+    places: Array.isArray(payload.places) ? payload.places : [],
+    nextPageToken: typeof payload.nextPageToken === "string" && payload.nextPageToken ? payload.nextPageToken : null,
+  };
+}
+
+function collectDiscoveredVenue(
+  discovered: Map<string, VenuePayload>,
+  place: GooglePlaceCandidate,
+) {
+  const venue = mapPlaceToVenue(place);
+
+  if (!venue) {
+    return;
+  }
+
+  const dedupeKey =
+    venue.google_place_id ??
+    `${normalizeVenueKey(venue.name)}|${normalizeVenueKey(venue.address)}`;
+
+  if (!discovered.has(dedupeKey)) {
+    discovered.set(dedupeKey, venue);
+  }
+}
+
 async function fetchExistingVenues() {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -231,11 +314,18 @@ async function main() {
   }
 
   const dryRun = hasFlag("dry-run");
+  const cityBackfill = hasFlag("city-backfill");
+  const cityOnly = hasFlag("city-only");
   const maxCells = Number.parseInt(getArg("max-cells", "") ?? "", 10);
   const centers = buildGridCenters();
-  const cellsToScan = Number.isFinite(maxCells) && maxCells > 0 ? centers.slice(0, maxCells) : centers;
+  const cellsToScan = cityOnly
+    ? []
+    : Number.isFinite(maxCells) && maxCells > 0
+      ? centers.slice(0, maxCells)
+      : centers;
   const discovered = new Map<string, VenuePayload>();
   const failedCells: string[] = [];
+  const failedQueries: string[] = [];
 
   console.log(`Scanning ${cellsToScan.length} Melbourne grid cells for bars and pubs...`);
 
@@ -253,18 +343,40 @@ async function main() {
     }
 
     for (const place of places) {
-      const venue = mapPlaceToVenue(place);
+      collectDiscoveredVenue(discovered, place);
+    }
+  }
 
-      if (!venue) {
-        continue;
-      }
+  if (cityBackfill || cityOnly) {
+    console.log(`Running Melbourne CBD text-search backfill across ${DEFAULT_CITY_BACKFILL_QUERIES.length} queries...`);
 
-      const dedupeKey =
-        venue.google_place_id ??
-        `${normalizeVenueKey(venue.name)}|${normalizeVenueKey(venue.address)}`;
+    for (const query of DEFAULT_CITY_BACKFILL_QUERIES) {
+      console.log(`Backfill query: ${query.textQuery}`);
+      let pageToken: string | undefined;
 
-      if (!discovered.has(dedupeKey)) {
-        discovered.set(dedupeKey, venue);
+      for (let pageNumber = 1; pageNumber <= DEFAULT_TEXT_SEARCH_MAX_PAGES; pageNumber += 1) {
+        try {
+          if (pageToken) {
+            await sleep(1500);
+          }
+
+          const page = await searchTextPlaces(googleApiKey, query, pageToken);
+
+          for (const place of page.places) {
+            collectDiscoveredVenue(discovered, place);
+          }
+
+          if (!page.nextPageToken) {
+            break;
+          }
+
+          pageToken = page.nextPageToken;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          failedQueries.push(query.textQuery);
+          console.error(message);
+          break;
+        }
       }
     }
   }
@@ -330,6 +442,10 @@ async function main() {
 
   if (failedCells.length > 0) {
     console.log(`Skipped ${failedCells.length} cells due to Google API errors.`);
+  }
+
+  if (failedQueries.length > 0) {
+    console.log(`Skipped ${failedQueries.length} text-search queries due to Google API errors.`);
   }
 }
 

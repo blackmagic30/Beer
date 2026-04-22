@@ -318,6 +318,19 @@ If you want to test on a smaller area first:
 npm run venues:import -- --dry-run --max-cells=5
 ```
 
+For a targeted Melbourne CBD backfill to catch bars the broad metro grid can miss:
+
+```bash
+npm run venues:import:city -- --dry-run
+npm run venues:import:city
+```
+
+That city backfill:
+
+- runs Google Places Text Search against Melbourne CBD bar/pub queries
+- is useful for filling gaps where Nearby Search ranking misses inner-city venues
+- still dedupes by `google_place_id` first, then normalized `name + address`
+
 ## Review Export Before Calling
 
 Export a clean review list of call-ready venues before batch calling:
