@@ -83,10 +83,218 @@
       cursor: pointer;
     }
 
+    #adminToggle {
+      appearance: none;
+      border: 1px solid #334155;
+      background: #1d4ed8;
+      color: white;
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
     #map {
       width: 100%;
       flex: 1 1 auto;
       min-height: 420px;
+    }
+
+    #adminOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.6);
+      z-index: 20;
+    }
+
+    #adminOverlay.hidden,
+    #adminPanel.hidden {
+      display: none;
+    }
+
+    #adminPanel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(440px, 100vw);
+      height: 100vh;
+      background: #0f172a;
+      border-left: 1px solid #1e293b;
+      z-index: 21;
+      display: flex;
+      flex-direction: column;
+      box-shadow: -24px 0 48px rgba(15, 23, 42, 0.45);
+    }
+
+    .adminPanel__header {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .adminPanel__header h2 {
+      margin: 0 0 4px;
+      color: #f8fafc;
+      font-size: 22px;
+    }
+
+    .adminPanel__header p {
+      margin: 0;
+      color: #94a3b8;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .adminPanel__body {
+      padding: 18px 20px 26px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .adminCard {
+      border: 1px solid #1e293b;
+      background: #111827;
+      border-radius: 18px;
+      padding: 16px;
+    }
+
+    .adminCard h3 {
+      margin: 0 0 12px;
+      color: #f8fafc;
+      font-size: 16px;
+    }
+
+    .adminField {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 12px;
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    .adminField input,
+    .adminField select,
+    .adminField textarea {
+      appearance: none;
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #f8fafc;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-family: inherit;
+    }
+
+    .adminField textarea {
+      min-height: 84px;
+      resize: vertical;
+    }
+
+    #adminVenueSelect {
+      min-height: 160px;
+    }
+
+    .adminActions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    .adminButton,
+    #adminClose {
+      appearance: none;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 12px;
+      padding: 9px 12px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .adminButton--primary {
+      background: #1d4ed8;
+      border-color: #1d4ed8;
+      color: white;
+    }
+
+    .adminButton--danger {
+      background: #7f1d1d;
+      border-color: #7f1d1d;
+    }
+
+    .adminHint {
+      color: #94a3b8;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .adminHint[data-tone="success"] {
+      color: #34d399;
+    }
+
+    .adminHint[data-tone="error"] {
+      color: #fca5a5;
+    }
+
+    .adminHint[data-tone="warning"] {
+      color: #fbbf24;
+    }
+
+    .adminNotice {
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: #172554;
+      color: #bfdbfe;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .adminBeerRows {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .adminBeerRow {
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 12px;
+      background: #0f172a;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .adminBeerRow .adminField {
+      margin-bottom: 0;
+    }
+
+    .adminBeerRow .adminField--full {
+      grid-column: 1 / -1;
+    }
+
+    .adminGrid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    @media (max-width: 640px) {
+      .adminBeerRow,
+      .adminGrid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -100,12 +308,124 @@
         <option value="guinness_only">Guinness only</option>
         <option value="guinness_on_tap">Guinness on tap only</option>
       </select>
+      <button id="adminToggle" type="button">Admin tools</button>
       <button id="debugToggle" type="button">Show debug</button>
     </div>
   </div>
 
   <div id="debug" class="hidden">Starting viewer...</div>
   <div id="map"></div>
+  <div id="adminOverlay" class="hidden"></div>
+  <aside id="adminPanel" class="hidden" aria-hidden="true">
+    <div class="adminPanel__header">
+      <div>
+        <h2>Admin tools</h2>
+        <p>Add new venues, attach more beers to existing bars and pubs, or read a menu photo with OCR before saving.</p>
+      </div>
+      <button id="adminClose" type="button">Close</button>
+    </div>
+    <div class="adminPanel__body">
+      <div id="adminBanner" class="adminNotice">Checking admin availability...</div>
+
+      <section class="adminCard">
+        <h3>Unlock admin actions</h3>
+        <label class="adminField">
+          <span>Admin secret</span>
+          <input id="adminSecret" type="password" autocomplete="current-password" placeholder="Enter the shared secret" />
+        </label>
+        <div class="adminActions">
+          <button id="adminSaveSecret" class="adminButton adminButton--primary" type="button">Save secret</button>
+          <button id="adminClearSecret" class="adminButton adminButton--danger" type="button">Clear</button>
+        </div>
+        <div id="adminSecretState" class="adminHint" style="margin-top:10px;"></div>
+      </section>
+
+      <section class="adminCard">
+        <h3>Add beers to a pub/bar</h3>
+        <label class="adminField">
+          <span>Search venues</span>
+          <input id="adminVenueSearch" type="search" placeholder="Search by venue, suburb, or address" />
+        </label>
+        <label class="adminField">
+          <span>Choose venue</span>
+          <select id="adminVenueSelect" size="8"></select>
+        </label>
+        <div id="adminSelectedVenue" class="adminHint" style="margin-bottom:12px;">No venue selected yet.</div>
+
+        <label class="adminField">
+          <span>Menu photo OCR</span>
+          <input id="adminMenuPhoto" type="file" accept="image/*" capture="environment" />
+        </label>
+        <div class="adminActions">
+          <button id="adminOcrButton" class="adminButton" type="button">Read menu photo</button>
+        </div>
+        <div id="adminOcrResult" class="adminHint" style="margin:10px 0 12px;"></div>
+
+        <div id="adminBeerRows" class="adminBeerRows"></div>
+        <div class="adminActions">
+          <button id="adminAddBeerRow" class="adminButton" type="button">Add beer row</button>
+        </div>
+
+        <label class="adminField" style="margin-top:12px;">
+          <span>Notes</span>
+          <textarea id="adminCaptureNote" placeholder="Optional notes about the menu or manual entry"></textarea>
+        </label>
+
+        <div class="adminActions">
+          <button id="adminSaveBeers" class="adminButton adminButton--primary" type="button">Save beers to venue</button>
+        </div>
+        <div id="adminCaptureStatus" class="adminHint" style="margin-top:10px;"></div>
+      </section>
+
+      <section class="adminCard">
+        <h3>Add new pub/bar</h3>
+        <div class="adminGrid">
+          <label class="adminField">
+            <span>Name</span>
+            <input id="adminNewVenueName" type="text" placeholder="The Duke of Wellington" />
+          </label>
+          <label class="adminField">
+            <span>Phone</span>
+            <input id="adminNewVenuePhone" type="text" placeholder="+61..." />
+          </label>
+          <label class="adminField adminField--full" style="grid-column: 1 / -1;">
+            <span>Address</span>
+            <input id="adminNewVenueAddress" type="text" placeholder="146 Flinders St, Melbourne VIC 3000" />
+          </label>
+          <label class="adminField">
+            <span>Suburb</span>
+            <input id="adminNewVenueSuburb" type="text" placeholder="Melbourne" />
+          </label>
+          <label class="adminField">
+            <span>State</span>
+            <input id="adminNewVenueState" type="text" value="VIC" />
+          </label>
+          <label class="adminField">
+            <span>Postcode</span>
+            <input id="adminNewVenuePostcode" type="text" placeholder="3000" />
+          </label>
+          <label class="adminField">
+            <span>Website</span>
+            <input id="adminNewVenueWebsite" type="url" placeholder="https://..." />
+          </label>
+          <label class="adminField">
+            <span>Latitude</span>
+            <input id="adminNewVenueLatitude" type="number" step="any" placeholder="-37.8136" />
+          </label>
+          <label class="adminField">
+            <span>Longitude</span>
+            <input id="adminNewVenueLongitude" type="number" step="any" placeholder="144.9631" />
+          </label>
+        </div>
+
+        <div class="adminActions">
+          <button id="adminFillCoords" class="adminButton" type="button">Find coords from address</button>
+          <button id="adminCreateVenue" class="adminButton adminButton--primary" type="button">Create venue</button>
+        </div>
+        <div id="adminCreateVenueStatus" class="adminHint" style="margin-top:10px;"></div>
+      </section>
+    </div>
+  </aside>
 
   <script>
     const viewerConfig =
@@ -125,8 +445,51 @@
     const debugEl = document.getElementById("debug");
     const beerFilterEl = document.getElementById("beerFilter");
     const debugToggleEl = document.getElementById("debugToggle");
+    const adminToggleEl = document.getElementById("adminToggle");
+    const adminOverlayEl = document.getElementById("adminOverlay");
+    const adminPanelEl = document.getElementById("adminPanel");
+    const adminCloseEl = document.getElementById("adminClose");
+    const adminBannerEl = document.getElementById("adminBanner");
+    const adminSecretEl = document.getElementById("adminSecret");
+    const adminSaveSecretEl = document.getElementById("adminSaveSecret");
+    const adminClearSecretEl = document.getElementById("adminClearSecret");
+    const adminSecretStateEl = document.getElementById("adminSecretState");
+    const adminVenueSearchEl = document.getElementById("adminVenueSearch");
+    const adminVenueSelectEl = document.getElementById("adminVenueSelect");
+    const adminSelectedVenueEl = document.getElementById("adminSelectedVenue");
+    const adminMenuPhotoEl = document.getElementById("adminMenuPhoto");
+    const adminOcrButtonEl = document.getElementById("adminOcrButton");
+    const adminOcrResultEl = document.getElementById("adminOcrResult");
+    const adminBeerRowsEl = document.getElementById("adminBeerRows");
+    const adminAddBeerRowEl = document.getElementById("adminAddBeerRow");
+    const adminCaptureNoteEl = document.getElementById("adminCaptureNote");
+    const adminSaveBeersEl = document.getElementById("adminSaveBeers");
+    const adminCaptureStatusEl = document.getElementById("adminCaptureStatus");
+    const adminNewVenueNameEl = document.getElementById("adminNewVenueName");
+    const adminNewVenuePhoneEl = document.getElementById("adminNewVenuePhone");
+    const adminNewVenueAddressEl = document.getElementById("adminNewVenueAddress");
+    const adminNewVenueSuburbEl = document.getElementById("adminNewVenueSuburb");
+    const adminNewVenueStateEl = document.getElementById("adminNewVenueState");
+    const adminNewVenuePostcodeEl = document.getElementById("adminNewVenuePostcode");
+    const adminNewVenueWebsiteEl = document.getElementById("adminNewVenueWebsite");
+    const adminNewVenueLatitudeEl = document.getElementById("adminNewVenueLatitude");
+    const adminNewVenueLongitudeEl = document.getElementById("adminNewVenueLongitude");
+    const adminFillCoordsEl = document.getElementById("adminFillCoords");
+    const adminCreateVenueEl = document.getElementById("adminCreateVenue");
+    const adminCreateVenueStatusEl = document.getElementById("adminCreateVenueStatus");
     let googleMapsAuthFailed = false;
     let debugEnabled = params.get("debug") === "1";
+    let adminPanelOpen = false;
+    let supabaseClient = null;
+    let adminStatus = {
+      enabled: false,
+      ocrEnabled: false,
+    };
+    let adminVenues = [];
+    let selectedAdminVenueId = null;
+    let adminCaptureSource = "manual_entry";
+    let geocoder = null;
+    const ADMIN_SECRET_STORAGE_KEY = "melbBeerBotAdminSecret";
 
     function syncDebugState() {
       debugEl.classList.toggle("hidden", !debugEnabled);
@@ -143,6 +506,81 @@
     if (params.get("googleMapsKey")) {
       window.localStorage.setItem("googleMapsKey", params.get("googleMapsKey"));
     }
+
+    adminSecretEl.value = window.localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) || "";
+
+    function syncAdminPanelState() {
+      adminOverlayEl.classList.toggle("hidden", !adminPanelOpen);
+      adminPanelEl.classList.toggle("hidden", !adminPanelOpen);
+      adminPanelEl.setAttribute("aria-hidden", adminPanelOpen ? "false" : "true");
+    }
+
+    adminToggleEl.addEventListener("click", async () => {
+      adminPanelOpen = true;
+      syncAdminPanelState();
+      try {
+        await ensureAdminVenuesLoaded();
+      } catch (error) {
+        setHint(
+          adminBannerEl,
+          error instanceof Error ? error.message : "Could not load venue list for admin tools.",
+          "error",
+        );
+      }
+    });
+
+    adminCloseEl.addEventListener("click", () => {
+      adminPanelOpen = false;
+      syncAdminPanelState();
+    });
+
+    adminOverlayEl.addEventListener("click", () => {
+      adminPanelOpen = false;
+      syncAdminPanelState();
+    });
+
+    function getAdminSecret() {
+      return adminSecretEl.value.trim();
+    }
+
+    function setHint(element, message, tone) {
+      element.textContent = message;
+      if (tone) {
+        element.setAttribute("data-tone", tone);
+      } else {
+        element.removeAttribute("data-tone");
+      }
+    }
+
+    function syncAdminSecretState() {
+      if (getAdminSecret()) {
+        setHint(adminSecretStateEl, "Admin secret is ready in this browser.", "success");
+        return;
+      }
+
+      setHint(adminSecretStateEl, "Enter the shared admin secret to enable write actions.", null);
+    }
+
+    adminSaveSecretEl.addEventListener("click", () => {
+      const secret = getAdminSecret();
+
+      if (!secret) {
+        setHint(adminSecretStateEl, "Enter a secret first.", "warning");
+        return;
+      }
+
+      window.localStorage.setItem(ADMIN_SECRET_STORAGE_KEY, secret);
+      setHint(adminSecretStateEl, "Admin secret saved in this browser.", "success");
+    });
+
+    adminClearSecretEl.addEventListener("click", () => {
+      adminSecretEl.value = "";
+      window.localStorage.removeItem(ADMIN_SECRET_STORAGE_KEY);
+      syncAdminSecretState();
+    });
+
+    adminSecretEl.addEventListener("input", syncAdminSecretState);
+    syncAdminSecretState();
 
     function debug(message) {
       console.log(message);
@@ -504,6 +942,513 @@
         .replaceAll("'", "&#39;");
     }
 
+    function getAdminStatusMessage() {
+      if (!adminStatus.enabled) {
+        return "Admin write tools are disabled on this deployment. Set ADMIN_SHARED_SECRET on the server to enable manual venue and beer entry.";
+      }
+
+      if (!adminStatus.ocrEnabled) {
+        return "Admin write tools are live. Menu-photo OCR still needs OPENAI_API_KEY on the server.";
+      }
+
+      return "Admin write tools and menu-photo OCR are ready.";
+    }
+
+    function syncAdminBanner() {
+      const tone = !adminStatus.enabled
+        ? "warning"
+        : adminStatus.ocrEnabled
+          ? "success"
+          : "warning";
+      setHint(adminBannerEl, getAdminStatusMessage(), tone);
+    }
+
+    function buildAvailabilityFields(choice) {
+      switch (choice) {
+        case "cans_only":
+          return {
+            availabilityStatus: "package_only",
+            availableOnTap: false,
+            availablePackageOnly: true,
+            unavailableReason: "cans_only",
+          };
+        case "bottles_only":
+          return {
+            availabilityStatus: "package_only",
+            availableOnTap: false,
+            availablePackageOnly: true,
+            unavailableReason: "bottles_only",
+          };
+        case "not_on_tap":
+          return {
+            availabilityStatus: "unavailable",
+            availableOnTap: false,
+            availablePackageOnly: false,
+            unavailableReason: "not_on_tap",
+          };
+        case "unavailable":
+          return {
+            availabilityStatus: "unavailable",
+            availableOnTap: false,
+            availablePackageOnly: false,
+            unavailableReason: "not_stocked",
+          };
+        case "unknown":
+          return {
+            availabilityStatus: "unknown",
+            availableOnTap: null,
+            availablePackageOnly: false,
+            unavailableReason: null,
+          };
+        default:
+          return {
+            availabilityStatus: "on_tap",
+            availableOnTap: true,
+            availablePackageOnly: false,
+            unavailableReason: null,
+          };
+      }
+    }
+
+    function availabilityChoiceFromBeer(beer) {
+      if (!beer) {
+        return "on_tap";
+      }
+
+      if (beer.availabilityStatus === "package_only") {
+        return beer.unavailableReason === "bottles_only" ? "bottles_only" : "cans_only";
+      }
+
+      if (beer.availabilityStatus === "unavailable") {
+        return beer.unavailableReason === "not_on_tap" ? "not_on_tap" : "unavailable";
+      }
+
+      if (beer.availabilityStatus === "unknown") {
+        return "unknown";
+      }
+
+      return "on_tap";
+    }
+
+    function createBeerRowElement(beer = {}) {
+      const row = document.createElement("div");
+      row.className = "adminBeerRow";
+      row.innerHTML = `
+        <label class="adminField adminField--full">
+          <span>Beer name</span>
+          <input data-role="name" type="text" placeholder="Guinness" value="${escapeHtml(beer.name || "")}" />
+        </label>
+        <label class="adminField">
+          <span>Price number</span>
+          <input data-role="priceNumeric" type="number" step="0.01" placeholder="14" value="${beer.priceNumeric ?? ""}" />
+        </label>
+        <label class="adminField">
+          <span>Price text</span>
+          <input data-role="priceText" type="text" placeholder="$14 pint" value="${escapeHtml(beer.priceText || "")}" />
+        </label>
+        <label class="adminField">
+          <span>Availability</span>
+          <select data-role="availability">
+            <option value="on_tap">On tap</option>
+            <option value="cans_only">Cans only</option>
+            <option value="bottles_only">Bottles only</option>
+            <option value="not_on_tap">Not on tap</option>
+            <option value="unavailable">Unavailable</option>
+            <option value="unknown">Unknown</option>
+          </select>
+        </label>
+        <label class="adminField">
+          <span>Needs review</span>
+          <select data-role="needsReview">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </label>
+        <div class="adminActions" style="grid-column: 1 / -1;">
+          <button class="adminButton adminButton--danger" data-role="removeRow" type="button">Remove beer row</button>
+        </div>
+      `;
+
+      row.querySelector('[data-role="availability"]').value = availabilityChoiceFromBeer(beer);
+      row.querySelector('[data-role="needsReview"]').value = beer.needsReview ? "true" : "false";
+      row.querySelector('[data-role="removeRow"]').addEventListener("click", () => {
+        row.remove();
+
+        if (!adminBeerRowsEl.children.length) {
+          adminBeerRowsEl.appendChild(createBeerRowElement());
+        }
+      });
+
+      return row;
+    }
+
+    function setBeerRows(beers) {
+      adminBeerRowsEl.innerHTML = "";
+
+      if (!beers || !beers.length) {
+        adminBeerRowsEl.appendChild(createBeerRowElement());
+        return;
+      }
+
+      beers.forEach((beer) => {
+        adminBeerRowsEl.appendChild(createBeerRowElement(beer));
+      });
+    }
+
+    function collectBeerRows() {
+      const rows = Array.from(adminBeerRowsEl.querySelectorAll(".adminBeerRow"));
+
+      return rows
+        .map((row) => {
+          const name = row.querySelector('[data-role="name"]').value.trim();
+
+          if (!name) {
+            return null;
+          }
+
+          const priceNumericRaw = row.querySelector('[data-role="priceNumeric"]').value.trim();
+          const priceText = row.querySelector('[data-role="priceText"]').value.trim() || null;
+          const availability = buildAvailabilityFields(
+            row.querySelector('[data-role="availability"]').value,
+          );
+
+          return {
+            name,
+            priceNumeric: priceNumericRaw ? Number(priceNumericRaw) : null,
+            priceText,
+            ...availability,
+            needsReview: row.querySelector('[data-role="needsReview"]').value === "true",
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function getSelectedAdminVenue() {
+      return adminVenues.find((venue) => venue.id === selectedAdminVenueId) || null;
+    }
+
+    function renderSelectedAdminVenue() {
+      const venue = getSelectedAdminVenue();
+
+      if (!venue) {
+        setHint(adminSelectedVenueEl, "No venue selected yet.", null);
+        return;
+      }
+
+      setHint(
+        adminSelectedVenueEl,
+        `${venue.name}${venue.suburb ? ` • ${venue.suburb}` : ""}${venue.address ? ` • ${venue.address}` : ""}`,
+        "success",
+      );
+    }
+
+    function renderAdminVenueOptions() {
+      const searchValue = adminVenueSearchEl.value.trim().toLowerCase();
+      const filteredVenues = adminVenues
+        .filter((venue) => {
+          if (!searchValue) {
+            return true;
+          }
+
+          return [venue.name, venue.suburb, venue.address]
+            .filter(Boolean)
+            .some((value) => value.toLowerCase().includes(searchValue));
+        })
+        .slice(0, 200);
+
+      adminVenueSelectEl.innerHTML = filteredVenues
+        .map((venue) => `
+          <option value="${venue.id}" ${venue.id === selectedAdminVenueId ? "selected" : ""}>
+            ${escapeHtml(`${venue.name}${venue.suburb ? ` — ${venue.suburb}` : ""}`)}
+          </option>
+        `)
+        .join("");
+
+      if (!filteredVenues.some((venue) => venue.id === selectedAdminVenueId)) {
+        selectedAdminVenueId = filteredVenues[0]?.id || null;
+      }
+
+      if (selectedAdminVenueId) {
+        adminVenueSelectEl.value = selectedAdminVenueId;
+      }
+
+      renderSelectedAdminVenue();
+    }
+
+    async function fetchAdminStatus() {
+      try {
+        const response = await fetch("/api/admin/status");
+        const payload = await response.json();
+        adminStatus = payload && payload.ok && payload.data
+          ? payload.data
+          : { enabled: false, ocrEnabled: false };
+      } catch (_error) {
+        adminStatus = { enabled: false, ocrEnabled: false };
+      }
+
+      syncAdminBanner();
+    }
+
+    async function ensureAdminVenuesLoaded() {
+      if (adminVenues.length > 0 || !supabaseClient) {
+        renderAdminVenueOptions();
+        return;
+      }
+
+      const { data, error } = await supabaseClient
+        .from("venues")
+        .select("id, name, address, suburb, state, postcode, phone, website, latitude, longitude")
+        .order("name", { ascending: true });
+
+      if (error) {
+        throw error;
+      }
+
+      adminVenues = Array.isArray(data) ? data : [];
+      renderAdminVenueOptions();
+    }
+
+    async function authorizedJsonFetch(url, body) {
+      const secret = getAdminSecret();
+
+      if (!secret) {
+        throw new Error("Add the admin secret first.");
+      }
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-secret": secret,
+        },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error?.message || `Request failed with status ${response.status}`);
+      }
+
+      return payload.data;
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("Failed to read image file."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function compressImageFile(file) {
+      const rawDataUrl = await readFileAsDataUrl(file);
+      const image = await new Promise((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error("Failed to load image for OCR."));
+        element.src = rawDataUrl;
+      });
+      const maxDimension = 1600;
+      const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext("2d");
+
+      if (!context) {
+        throw new Error("Canvas is not available for image compression.");
+      }
+
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/jpeg", 0.82);
+    }
+
+    function geocodeAddress(address) {
+      return new Promise((resolve, reject) => {
+        if (!window.google || !google.maps || typeof google.maps.Geocoder !== "function") {
+          reject(new Error("Google Maps geocoder is not available."));
+          return;
+        }
+
+        if (!geocoder) {
+          geocoder = new google.maps.Geocoder();
+        }
+
+        geocoder.geocode({ address }, (results, status) => {
+          if (status === "OK" && results && results[0] && results[0].geometry) {
+            resolve(results[0]);
+            return;
+          }
+
+          reject(new Error(`Could not geocode address (${status}).`));
+        });
+      });
+    }
+
+    adminVenueSearchEl.addEventListener("input", renderAdminVenueOptions);
+    adminVenueSelectEl.addEventListener("change", () => {
+      selectedAdminVenueId = adminVenueSelectEl.value || null;
+      renderSelectedAdminVenue();
+    });
+
+    adminAddBeerRowEl.addEventListener("click", () => {
+      adminCaptureSource = "manual_entry";
+      adminBeerRowsEl.appendChild(createBeerRowElement());
+    });
+
+    adminOcrButtonEl.addEventListener("click", async () => {
+      try {
+        if (!adminStatus.ocrEnabled) {
+          throw new Error("Menu OCR is not enabled on this deployment yet.");
+        }
+
+        const venue = getSelectedAdminVenue();
+        if (!venue) {
+          throw new Error("Choose a venue before reading a menu photo.");
+        }
+
+        const file = adminMenuPhotoEl.files?.[0];
+        if (!file) {
+          throw new Error("Choose a menu photo first.");
+        }
+
+        setHint(adminOcrResultEl, "Reading menu photo...", null);
+        const imageDataUrl = await compressImageFile(file);
+        const result = await authorizedJsonFetch("/api/admin/captures/menu-photo-ocr", {
+          venueNameHint: venue.name,
+          imageDataUrl,
+        });
+
+        adminCaptureSource = "menu_photo_ocr";
+        setBeerRows(result.beers || []);
+
+        if (result.capturedNotes && !adminCaptureNoteEl.value.trim()) {
+          adminCaptureNoteEl.value = result.capturedNotes;
+        }
+
+        setHint(
+          adminOcrResultEl,
+          `OCR found ${result.beers.length} beer item${result.beers.length === 1 ? "" : "s"}${result.venueNameGuess ? ` • venue guess: ${result.venueNameGuess}` : ""}`,
+          result.beers.length > 0 ? "success" : "warning",
+        );
+      } catch (error) {
+        setHint(
+          adminOcrResultEl,
+          error instanceof Error ? error.message : "Menu OCR failed.",
+          "error",
+        );
+      }
+    });
+
+    adminSaveBeersEl.addEventListener("click", async () => {
+      try {
+        const venue = getSelectedAdminVenue();
+        if (!venue) {
+          throw new Error("Choose a venue before saving beers.");
+        }
+
+        const beers = collectBeerRows();
+        if (!beers.length) {
+          throw new Error("Add at least one beer row.");
+        }
+
+        setHint(adminCaptureStatusEl, "Saving beers into the venue snapshot...", null);
+        const result = await authorizedJsonFetch("/api/admin/captures/manual", {
+          venueId: venue.id,
+          source: adminCaptureSource,
+          note: adminCaptureNoteEl.value.trim() || null,
+          beers,
+        });
+
+        setHint(
+          adminCaptureStatusEl,
+          `Saved ${result.beerCount} beer item${result.beerCount === 1 ? "" : "s"} for ${result.venue.name}. Refreshing the map...`,
+          "success",
+        );
+
+        window.setTimeout(() => {
+          window.location.reload();
+        }, 900);
+      } catch (error) {
+        setHint(
+          adminCaptureStatusEl,
+          error instanceof Error ? error.message : "Failed to save beers.",
+          "error",
+        );
+      }
+    });
+
+    adminFillCoordsEl.addEventListener("click", async () => {
+      try {
+        const address = [
+          adminNewVenueAddressEl.value.trim(),
+          adminNewVenueSuburbEl.value.trim(),
+          adminNewVenueStateEl.value.trim(),
+          adminNewVenuePostcodeEl.value.trim(),
+        ].filter(Boolean).join(", ");
+
+        if (!address) {
+          throw new Error("Enter an address before looking up coordinates.");
+        }
+
+        setHint(adminCreateVenueStatusEl, "Looking up coordinates from the address...", null);
+        const result = await geocodeAddress(address);
+        const location = result.geometry.location;
+        adminNewVenueLatitudeEl.value = String(location.lat());
+        adminNewVenueLongitudeEl.value = String(location.lng());
+        setHint(adminCreateVenueStatusEl, "Coordinates filled from the address.", "success");
+      } catch (error) {
+        setHint(
+          adminCreateVenueStatusEl,
+          error instanceof Error ? error.message : "Could not find coordinates.",
+          "error",
+        );
+      }
+    });
+
+    adminCreateVenueEl.addEventListener("click", async () => {
+      try {
+        const payload = {
+          name: adminNewVenueNameEl.value.trim(),
+          address: adminNewVenueAddressEl.value.trim(),
+          suburb: adminNewVenueSuburbEl.value.trim() || null,
+          state: adminNewVenueStateEl.value.trim() || "VIC",
+          postcode: adminNewVenuePostcodeEl.value.trim() || null,
+          phone: adminNewVenuePhoneEl.value.trim() || null,
+          website: adminNewVenueWebsiteEl.value.trim() || null,
+          latitude: adminNewVenueLatitudeEl.value,
+          longitude: adminNewVenueLongitudeEl.value,
+        };
+
+        if (!payload.name || !payload.address || !payload.latitude || !payload.longitude) {
+          throw new Error("Name, address, latitude, and longitude are required for a new venue.");
+        }
+
+        setHint(adminCreateVenueStatusEl, "Creating venue...", null);
+        const result = await authorizedJsonFetch("/api/admin/venues", payload);
+        const venue = result.venue;
+        adminVenues.unshift(venue);
+        selectedAdminVenueId = venue.id;
+        adminVenueSearchEl.value = venue.name;
+        renderAdminVenueOptions();
+        setHint(
+          adminCreateVenueStatusEl,
+          `${venue.name} was created and selected. You can add beers to it now.`,
+          "success",
+        );
+      } catch (error) {
+        setHint(
+          adminCreateVenueStatusEl,
+          error instanceof Error ? error.message : "Failed to create venue.",
+          "error",
+        );
+      }
+    });
+
+    setBeerRows([]);
+    syncAdminPanelState();
+
     window.gm_authFailure = function gmAuthFailure() {
       googleMapsAuthFailed = true;
       const message =
@@ -586,7 +1531,8 @@
         debug(`Supabase URL: ${SUPABASE_URL}`);
         debug(`Viewer origin: ${window.location.origin}`);
         debug(`Google Maps key in use: ...${GOOGLE_MAPS_KEY.slice(-6)}`);
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        await fetchAdminStatus();
 
         debug("Loading Google Maps...");
         await loadGoogleMapsScript();
@@ -614,7 +1560,7 @@
 
         debug("Fetching call_results rows...");
 
-        const { data, error } = await supabase
+        const { data, error } = await supabaseClient
           .from("call_results")
           .select(`
             id,

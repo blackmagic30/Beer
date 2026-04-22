@@ -16,6 +16,7 @@ type LazyRouters = {
   callsRouter: RequestHandler;
   resultsRouter: RequestHandler;
   webhooksRouter: RequestHandler;
+  adminRouter: RequestHandler;
 };
 
 let lazyRoutersPromise: Promise<LazyRouters> | undefined;
@@ -32,6 +33,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     { TwilioService },
     { createCallsRouter },
     { CallsService },
+    { createAdminRouter },
+    { AdminService },
     { createResultsRouter },
     { ResultsService },
     { createWebhooksRouter },
@@ -45,6 +48,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     import("./lib/twilio.js"),
     import("./modules/calls/calls.routes.js"),
     import("./modules/calls/calls.service.js"),
+    import("./modules/admin/admin.routes.js"),
+    import("./modules/admin/admin.service.js"),
     import("./modules/results/results.routes.js"),
     import("./modules/results/results.service.js"),
     import("./modules/webhooks/webhooks.routes.js"),
@@ -77,6 +82,13 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     beerPriceResultsRepository,
     env.PARSE_CONFIDENCE_THRESHOLD,
   );
+  const adminService = new AdminService(
+    env.SUPABASE_URL,
+    env.SUPABASE_SERVICE_ROLE_KEY,
+    env.SUPABASE_RESULTS_TABLE,
+    env.ADMIN_SHARED_SECRET,
+    env.OPENAI_API_KEY,
+  );
   const supabaseResultsSyncService = new SupabaseResultsSyncService(
     env.SUPABASE_URL,
     env.SUPABASE_SERVICE_ROLE_KEY,
@@ -101,6 +113,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       twilioService,
       validateTwilioSignatures: env.TWILIO_VALIDATE_SIGNATURES,
     }),
+    adminRouter: createAdminRouter(adminService),
   };
 }
 
@@ -149,8 +162,8 @@ export function createApp() {
     }
     next();
   });
-  app.use(express.json({ verify: captureRawBody }));
-  app.use(express.urlencoded({ extended: true, verify: captureRawBody }));
+  app.use(express.json({ limit: "12mb", verify: captureRawBody }));
+  app.use(express.urlencoded({ extended: true, limit: "12mb", verify: captureRawBody }));
 
   app.get("/health", (_req, res) => {
     res.json(
@@ -175,6 +188,7 @@ export function createApp() {
   });
 
   app.use("/api/calls", createLazyMount((routers) => routers.callsRouter));
+  app.use("/api/admin", createLazyMount((routers) => routers.adminRouter));
   app.use("/api/results", createLazyMount((routers) => routers.resultsRouter));
   app.use("/webhooks", createLazyMount((routers) => routers.webhooksRouter));
   app.use("/api", createLazyMount((routers) => routers.webhooksRouter));
