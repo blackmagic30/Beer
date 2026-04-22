@@ -429,7 +429,15 @@
       return 15;
     }
 
-    function getMarkerVisual(beer) {
+    function usesStyledBeerMarkers(filterValue) {
+      return filterValue !== "all";
+    }
+
+    function getMarkerVisual(filterValue, beer) {
+      if (!usesStyledBeerMarkers(filterValue)) {
+        return null;
+      }
+
       return {
         fillColor: getMarkerColor(beer),
         labelText: getMarkerLabel(beer),
@@ -690,7 +698,8 @@
           clearMarkers();
 
           const bounds = new google.maps.LatLngBounds();
-          const filteredRows = venueRows.filter((item) => rowMatchesFilter(item, beerFilterEl.value));
+          const filterValue = beerFilterEl.value;
+          const filteredRows = venueRows.filter((item) => rowMatchesFilter(item, filterValue));
           let markerCount = 0;
 
           filteredRows.forEach((item) => {
@@ -701,29 +710,34 @@
             const beerItems = getBeerItems(item);
             const happyHourSummary = getHappyHourSummary(item);
             const headlineBeer = getHeadlineBeer(item);
-            const markerVisual = getMarkerVisual(headlineBeer);
+            const markerVisual = getMarkerVisual(filterValue, headlineBeer);
 
-            const marker = new google.maps.Marker({
+            const markerOptions = {
               position: { lat, lng },
               map,
-              icon: {
+              title: `${venue.name || item.venue_name || "Unknown venue"}${
+                headlineBeer ? ` - ${headlineBeer.label}: ${headlineBeer.priceText}` : ""
+              }`,
+            };
+
+            if (markerVisual) {
+              markerOptions.icon = {
                 path: google.maps.SymbolPath.CIRCLE,
                 fillColor: markerVisual.fillColor,
                 fillOpacity: 0.95,
                 strokeColor: "#0f172a",
                 strokeWeight: 2,
                 scale: markerVisual.scale,
-              },
-              label: {
+              };
+              markerOptions.label = {
                 text: markerVisual.labelText,
                 color: "#ffffff",
                 fontSize: "11px",
                 fontWeight: "700",
-              },
-              title: `${venue.name || item.venue_name || "Unknown venue"}${
-                headlineBeer ? ` - ${headlineBeer.label}: ${headlineBeer.priceText}` : ""
-              }`,
-            });
+              };
+            }
+
+            const marker = new google.maps.Marker(markerOptions);
 
             const address = formatAddress(venue);
             const createdAt = item.saved_at || item.created_at
@@ -803,7 +817,7 @@
             map.fitBounds(bounds);
           }
 
-          debug(`Map ready. Markers: ${markerCount}. Filter: ${beerFilterEl.value}`);
+          debug(`Map ready. Markers: ${markerCount}. Filter: ${filterValue}`);
         }
 
         beerFilterEl.addEventListener("change", renderMarkers);
