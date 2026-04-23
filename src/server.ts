@@ -75,7 +75,7 @@ async function boot(): Promise<void> {
 
     const onListening = () => {
       logger.info(
-        `melb-beer-bot listening host=${env.HOST ?? "default"} effectiveHost=${listenHost ?? "default"} railwayBinding=${useRailwayBinding} port=${env.PORT} bound=${getBoundAddress()}`,
+        `melb-beer-bot listening host=${env.HOST ?? "default"} effectiveHost=${listenHost ?? "default"} railwayBinding=${useRailwayBinding} port=${env.PORT} bound=${getBoundAddress()} outboundCallsEnabled=${env.OUTBOUND_CALLS_ENABLED} targetBeer=${env.TARGET_BEER} publicBaseUrl=${env.PUBLIC_BASE_URL}`,
         getDeployMeta(),
       );
     };
