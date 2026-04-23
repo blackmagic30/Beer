@@ -16,6 +16,7 @@
     "venues:call": "tsx scripts/batch-call-venues.ts",
     "calls:recover-stale": "tsx scripts/recover-stale-call-runs.ts",
     "results:reparse": "tsx scripts/reparse-call-runs.ts",
+    "results:reparse:hosted": "tsx scripts/reparse-hosted-call-results.ts",
     "test": "vitest run",
     "check": "npm run build && npm run test"
   },

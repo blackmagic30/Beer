@@ -1,21 +1,12 @@
 import "dotenv/config";
 
-import { getBeerByKey, normalizeTargetBeerKey } from "../src/constants/beers.js";
+import { getBeerByKey } from "../src/constants/beers.js";
 import { BeerPriceResultsRepository } from "../src/db/beer-price-results.repository.js";
 import { CallRunsRepository } from "../src/db/call-runs.repository.js";
 import { createDatabase } from "../src/db/database.js";
-import type { CallRunRecord, PersistedHappyHourInput, PersistedBeerPriceResultInput } from "../src/db/models.js";
+import type { CallRunRecord } from "../src/db/models.js";
 import { SupabaseResultsSyncService } from "../src/lib/supabase-results-sync.js";
-import {
-  detectTranscriptFailureReason,
-  shouldOverrideParsedOutcome,
-} from "../src/modules/parsing/transcript-failure-reason.js";
-import {
-  extractBeerContextText,
-  parseBeerPrices,
-  summariseParseOutcome,
-  type TranscriptTurnLike,
-} from "../src/modules/parsing/transcript-parser.js";
+import { buildReparseCallRunResult } from "../src/modules/parsing/reparse-call-run.js";
 
 function getArg(name: string, fallback?: string): string | undefined {
   const prefix = `--${name}=`;
@@ -25,47 +16,6 @@ function getArg(name: string, fallback?: string): string | undefined {
 
 function hasFlag(name: string): boolean {
   return process.argv.slice(2).includes(`--${name}`);
-}
-
-function parseTurns(rawTranscript: string): TranscriptTurnLike[] {
-  const turns: Array<TranscriptTurnLike | null> = rawTranscript
-    .split(/\n+/)
-    .map((line) => {
-      const match = line.match(/^([A-Z]+):\s*(.*)$/);
-
-      if (!match) {
-        return null;
-      }
-
-      const message = match[2] ?? "";
-
-      return {
-        role: match[1]?.toLowerCase(),
-        message,
-        originalMessage: message,
-      };
-    });
-
-  return turns.filter((turn): turn is TranscriptTurnLike => turn !== null);
-}
-
-function flattenRoleTranscript(turns: TranscriptTurnLike[], role: string): string {
-  return turns
-    .filter((turn) => turn.role?.toLowerCase() === role.toLowerCase())
-    .map((turn) => turn.message?.trim() || turn.originalMessage?.trim() || "")
-    .filter(Boolean)
-    .join(". ");
-}
-
-function buildHappyHourDefaults(): PersistedHappyHourInput {
-  return {
-    happyHour: false,
-    happyHourDays: null,
-    happyHourStart: null,
-    happyHourEnd: null,
-    happyHourPrice: null,
-    happyHourConfidence: 0,
-  };
 }
 
 function selectRuns(
@@ -114,53 +64,15 @@ async function main() {
       continue;
     }
 
-    const turns = parseTurns(run.rawTranscript);
-    const targetBeer = getBeerByKey(run.requestedBeer ?? normalizeTargetBeerKey(undefined));
-    const beerTranscript = extractBeerContextText(turns, [targetBeer]);
-    const userTranscript = flattenRoleTranscript(turns, "user");
-    const parsedPrices = parseBeerPrices(beerTranscript || userTranscript || run.rawTranscript, {
-      assumeBeerContext: Boolean(beerTranscript),
-      targetBeers: [targetBeer],
-    });
-    const detectedFailureReason = detectTranscriptFailureReason(userTranscript, run.rawTranscript);
-    const baseParseSummary = summariseParseOutcome(parsedPrices, null, 0.72);
-    const overrideParsedOutcome = shouldOverrideParsedOutcome(detectedFailureReason);
-    const parseSummary = overrideParsedOutcome
-      ? {
-          parseConfidence: 0.05,
-          parseStatus: "failed" as const,
-          needsReview: true,
-        }
-      : baseParseSummary;
-    const failureReason =
-      parseSummary.parseStatus === "failed"
-        ? detectedFailureReason ?? run.errorMessage ?? "Parsing produced no useful data"
-        : null;
     const timestamp = new Date().toISOString();
-    const persistedItemsSource = overrideParsedOutcome
-      ? parsedPrices.map((item) => ({
-          ...item,
-          priceText: null,
-          priceNumeric: null,
-          confidence: 0.05,
-          needsReview: true,
-          availabilityStatus: "unknown" as const,
-          availableOnTap: null,
-          availablePackageOnly: false,
-          unavailableReason: null,
-        }))
-      : parsedPrices;
-    const items: PersistedBeerPriceResultInput[] = persistedItemsSource.map(({ evidence: _evidence, isUnavailable: _isUnavailable, ...item }) => ({
-      ...item,
-      needsReview: item.needsReview || parseSummary.needsReview,
-    }));
+    const reparse = buildReparseCallRunResult(run, 0.72);
 
     callRunsRepository.saveTranscriptParseById(run.id, {
       conversationId: run.conversationId,
       rawTranscript: run.rawTranscript,
-      parseConfidence: parseSummary.parseConfidence,
-      parseStatus: parseSummary.parseStatus,
-      errorMessage: failureReason,
+      parseConfidence: reparse.parseConfidence,
+      parseStatus: reparse.parseStatus,
+      errorMessage: reparse.errorMessage,
       endedAt: run.endedAt,
       updatedAt: timestamp,
     });
@@ -174,8 +86,8 @@ async function main() {
       rawTranscript: run.rawTranscript,
       callSid: run.callSid ?? `missing-${run.id}`,
       conversationId: run.conversationId,
-      items,
-      happyHour: buildHappyHourDefaults(),
+      items: reparse.items,
+      happyHour: reparse.happyHour,
     });
 
     if (supabaseResultsSyncService.isConfigured()) {
@@ -186,11 +98,11 @@ async function main() {
         resultTimestamp: run.startedAt,
         savedAt: timestamp,
         rawTranscript: run.rawTranscript,
-        parseConfidence: parseSummary.parseConfidence,
-        parseStatus: parseSummary.parseStatus,
-        needsReview: parseSummary.needsReview,
-        items,
-        happyHour: buildHappyHourDefaults(),
+        parseConfidence: reparse.parseConfidence,
+        parseStatus: reparse.parseStatus,
+        needsReview: reparse.needsReview,
+        items: reparse.items,
+        happyHour: reparse.happyHour,
       });
     }
 
@@ -198,10 +110,11 @@ async function main() {
       JSON.stringify({
         callSid: run.callSid,
         venueName: run.venueName,
-        parseStatus: parseSummary.parseStatus,
-        parseConfidence: parseSummary.parseConfidence,
-        errorMessage: failureReason,
-        items: items.map((item) => ({
+        requestedBeer: getBeerByKey(reparse.requestedBeer).name,
+        parseStatus: reparse.parseStatus,
+        parseConfidence: reparse.parseConfidence,
+        errorMessage: reparse.errorMessage,
+        items: reparse.items.map((item) => ({
           beerName: item.beerName,
           priceText: item.priceText,
           priceNumeric: item.priceNumeric,
