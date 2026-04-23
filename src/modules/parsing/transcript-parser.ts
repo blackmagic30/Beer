@@ -81,6 +81,36 @@ interface ParseHappyHourOptions {
 }
 
 const PRICE_REGEX = /\$?\s*(\d{1,2}(?:\.\d{1,2})?)(?:\s*(?:dollars?|bucks?))?/gi;
+const NUMBER_WORD_UNITS = [
+  "zero",
+  "oh",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+] as const;
+const NUMBER_WORD_TENS = ["twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"] as const;
+const NUMBER_WORD_TOKEN_PATTERN = [...NUMBER_WORD_UNITS, ...NUMBER_WORD_TENS].join("|");
+const NUMBER_WORD_PHRASE_PATTERN = `(?:${NUMBER_WORD_TOKEN_PATTERN})(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?`;
+const WORD_PRICE_REGEX = new RegExp(
+  `\\b(${NUMBER_WORD_PHRASE_PATTERN})(?:\\s+(?:dollars?|bucks?))(?:\\s+and\\s+(${NUMBER_WORD_PHRASE_PATTERN})\\s+cents?)?\\b`,
+  "gi",
+);
 const UNCERTAINTY_REGEX = /\b(not sure|don't know|dont know|unsure|maybe|around|about|probably|i think)\b/i;
 const DO_NOT_DISFLUENT_HAVE_PATTERN = "do not(?:,?\\s*(?:uh|um|ah|er),?)?\\s+have";
 const DO_NOT_DISFLUENT_SELL_PATTERN = "do not(?:,?\\s*(?:uh|um|ah|er),?)?\\s+sell";
@@ -157,6 +187,69 @@ function findAllIndexes(text: string, search: string): number[] {
   return indexes;
 }
 
+function parseNumberWordPhrase(phrase: string | undefined): number | null {
+  if (!phrase) {
+    return null;
+  }
+
+  const normalized = phrase.toLowerCase().replace(/-/g, " ").trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const directValues: Record<string, number> = {
+    zero: 0,
+    oh: 0,
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    thirteen: 13,
+    fourteen: 14,
+    fifteen: 15,
+    sixteen: 16,
+    seventeen: 17,
+    eighteen: 18,
+    nineteen: 19,
+    twenty: 20,
+    thirty: 30,
+    forty: 40,
+    fifty: 50,
+    sixty: 60,
+    seventy: 70,
+    eighty: 80,
+    ninety: 90,
+  };
+
+  if (normalized in directValues) {
+    return directValues[normalized]!;
+  }
+
+  const parts = normalized.split(/\s+/).filter(Boolean);
+
+  if (parts.length !== 2) {
+    return null;
+  }
+
+  const tens = directValues[parts[0]!] ?? null;
+  const units = directValues[parts[1]!] ?? null;
+
+  if (tens === null || units === null || tens < 20 || units > 9) {
+    return null;
+  }
+
+  return tens + units;
+}
+
 function extractPriceMentions(segment: string): PriceMention[] {
   const mentions: PriceMention[] = [];
 
@@ -199,6 +292,45 @@ function extractPriceMentions(segment: string): PriceMention[] {
       hasCurrencySignal: /\$|dollar|buck/i.test(fullMatch),
     });
   }
+
+  for (const match of segment.matchAll(WORD_PRICE_REGEX)) {
+    const wholeMatch = match[0];
+    const dollarsRaw = match[1];
+    const centsRaw = match[2];
+    const startIndex = match.index;
+
+    if (!wholeMatch || !dollarsRaw || startIndex === undefined) {
+      continue;
+    }
+
+    const dollars = parseNumberWordPhrase(dollarsRaw);
+    const cents = parseNumberWordPhrase(centsRaw);
+
+    if (dollars === null) {
+      continue;
+    }
+
+    const value = cents === null ? dollars : Number.parseFloat(`${dollars}.${String(cents).padStart(2, "0")}`);
+
+    if (
+      mentions.some(
+        (mention) =>
+          mention.index === startIndex &&
+          mention.value === value,
+      )
+    ) {
+      continue;
+    }
+
+    mentions.push({
+      index: startIndex,
+      value,
+      text: wholeMatch.trim(),
+      hasCurrencySignal: true,
+    });
+  }
+
+  mentions.sort((left, right) => left.index - right.index);
 
   return mentions;
 }

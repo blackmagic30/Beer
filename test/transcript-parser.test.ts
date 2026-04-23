@@ -52,6 +52,20 @@ describe("parseBeerPrices", () => {
     ]);
   });
 
+  it("extracts a direct Carlton Draft price when the amount is spoken in words", () => {
+    const results = parseBeerPrices("Carlton Draft is fourteen dollars.", {
+      targetBeers: [getBeerByKey("carlton_draft")],
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draft",
+        priceNumeric: 14,
+        needsReview: false,
+      }),
+    ]);
+  });
+
   it("keeps missing Guinness as a low-confidence review item", () => {
     const results = parseBeerPrices("Not sure on Guinness.");
 
@@ -84,6 +98,21 @@ describe("parseBeerPrices", () => {
       expect.objectContaining({
         beerName: "Guinness",
         priceNumeric: 10,
+        needsReview: false,
+      }),
+    ]);
+  });
+
+  it("uses beer-question context when the user answers with a spoken number", () => {
+    const results = parseBeerPrices("Fourteen dollars beautifully.", {
+      assumeBeerContext: true,
+      targetBeers: [getBeerByKey("carlton_draft")],
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draft",
+        priceNumeric: 14,
         needsReview: false,
       }),
     ]);

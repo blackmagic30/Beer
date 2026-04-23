@@ -84,6 +84,8 @@ interface BatchRunState {
 const ACTIVE_STALE_MINUTES = 20;
 const COMPLETED_STALE_MINUTES = 15;
 const TERMINAL_STALE_MINUTES = 5;
+const UNRESOLVED_CALL_GRACE_MS = 45000;
+const UNRESOLVED_CALL_POLL_MS = 5000;
 
 function getArg(name: string, fallback?: string): string | undefined {
   const prefix = `--${name}=`;
@@ -235,25 +237,78 @@ function getCurrentRunForAttempt(
   return undefined;
 }
 
-function resolveAttemptOutcome(
-  repository: CallRunsRepository,
+async function fetchRemoteRunOutcome(
+  baseUrl: string,
   attempt: BatchAttemptRecord,
-): BatchAttemptOutcome {
+): Promise<{
+  callStatus: CallStatus;
+  parseStatus: ParseStatus;
+  errorMessage: string | null;
+} | null> {
+  if (!attempt.callSid) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(new URL(`/api/calls/${encodeURIComponent(attempt.callSid)}`, baseUrl));
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const body = (await response.json().catch(() => null)) as
+      | {
+          data?: {
+            call?: {
+              callStatus?: CallStatus;
+              parseStatus?: ParseStatus;
+              errorMessage?: string | null;
+            };
+          };
+        }
+      | null;
+    const call = body?.data?.call;
+
+    if (!call?.callStatus || !call?.parseStatus) {
+      return null;
+    }
+
+    return {
+      callStatus: call.callStatus,
+      parseStatus: call.parseStatus,
+      errorMessage: call.errorMessage ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function resolveAttemptOutcome(
+  repository: CallRunsRepository,
+  baseUrl: string,
+  attempt: BatchAttemptRecord,
+): Promise<BatchAttemptOutcome> {
   if (!attempt.requestOk) {
     attempt.resolvedOutcome = "bad";
     attempt.resolvedAt = attempt.resolvedAt ?? nowIso();
     return "bad";
   }
 
-  const run = getCurrentRunForAttempt(repository, attempt);
+  const remoteRun = await fetchRemoteRunOutcome(baseUrl, attempt);
+  const run =
+    remoteRun ??
+    (() => {
+      const localRun = getCurrentRunForAttempt(repository, attempt);
+      return localRun
+        ? {
+            callStatus: localRun.callStatus,
+            parseStatus: localRun.parseStatus,
+            errorMessage: localRun.errorMessage,
+          }
+        : null;
+    })();
   const outcome = classifyBatchAttemptOutcome(
-    run
-      ? {
-          callStatus: run.callStatus,
-          parseStatus: run.parseStatus,
-          errorMessage: run.errorMessage,
-        }
-      : null,
+    run,
   );
 
   if (outcome !== "pending") {
@@ -278,13 +333,17 @@ function recomputeConsecutiveBadOutcomes(state: BatchRunState): void {
   state.consecutiveBadOutcomes = streak;
 }
 
-function refreshResolvedAttempts(repository: CallRunsRepository, state: BatchRunState): void {
+async function refreshResolvedAttempts(
+  repository: CallRunsRepository,
+  baseUrl: string,
+  state: BatchRunState,
+): Promise<void> {
   for (const attempt of state.attempts) {
     if (attempt.resolvedOutcome === "good" || attempt.resolvedOutcome === "bad") {
       continue;
     }
 
-    resolveAttemptOutcome(repository, attempt);
+    await resolveAttemptOutcome(repository, baseUrl, attempt);
   }
 
   recomputeConsecutiveBadOutcomes(state);
@@ -455,7 +514,7 @@ async function main() {
           recoveredStaleCalls: existingState.recoveredStaleCalls + recoveredStaleCalls,
           consecutiveBadOutcomes: 0,
         };
-        refreshResolvedAttempts(callRunsRepository, state);
+        await refreshResolvedAttempts(callRunsRepository, baseUrl, state);
         writeState(statePath, state);
         console.log(
           `Resuming ${getBeerByKey(state.targetBeer).name} batch ${state.runId} at ${state.cursor + 1}/${state.total}.`,
@@ -575,15 +634,25 @@ async function main() {
 
       await delay(state.delayMs);
 
-      const resolvedOutcome = resolveAttemptOutcome(callRunsRepository, attempt);
+      let resolvedOutcome = await resolveAttemptOutcome(callRunsRepository, baseUrl, attempt);
       state.updatedAt = nowIso();
 
       if (resolvedOutcome === "pending") {
-        state.status = "paused";
-        state.stopReason = `Previous call for ${venue.venueName} is still unresolved after ${state.delayMs}ms.`;
-        writeState(statePath, state);
-        console.log(`Pausing batch: ${state.stopReason}`);
-        break;
+        const waitUntil = Date.now() + UNRESOLVED_CALL_GRACE_MS;
+
+        while (Date.now() < waitUntil && resolvedOutcome === "pending") {
+          await delay(UNRESOLVED_CALL_POLL_MS);
+          resolvedOutcome = await resolveAttemptOutcome(callRunsRepository, baseUrl, attempt);
+          state.updatedAt = nowIso();
+        }
+
+        if (resolvedOutcome === "pending") {
+          state.status = "paused";
+          state.stopReason = `Previous call for ${venue.venueName} is still unresolved after ${state.delayMs + UNRESOLVED_CALL_GRACE_MS}ms.`;
+          writeState(statePath, state);
+          console.log(`Pausing batch: ${state.stopReason}`);
+          break;
+        }
       }
 
       if (resolvedOutcome === "good") {
