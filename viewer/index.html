@@ -304,7 +304,7 @@
     <div id="toolbar">
       <label for="beerFilter">Show</label>
       <select id="beerFilter">
-        <option value="all">All captured venues</option>
+        <option value="all">All venues</option>
         <option value="guinness_only">Guinness only</option>
         <option value="guinness_on_tap">Guinness on tap only</option>
       </select>
@@ -2001,6 +2001,36 @@
         debug(`Fetched row count: ${rows.length}`);
         debugJson("Sample returned row", rows[0] || null);
 
+        debug("Fetching venues rows...");
+        const { data: venuesData, error: venuesError } = await supabaseClient
+          .from("venues")
+          .select(`
+            id,
+            name,
+            address,
+            suburb,
+            state,
+            postcode,
+            latitude,
+            longitude
+          `)
+          .order("name", { ascending: true });
+
+        debugJson("Venue fetch error", venuesError ? {
+          message: venuesError.message,
+          details: venuesError.details,
+          hint: venuesError.hint,
+          code: venuesError.code,
+        } : null);
+
+        if (venuesError) {
+          throw venuesError;
+        }
+
+        const allVenues = Array.isArray(venuesData) ? venuesData : [];
+        debug(`Fetched venue count: ${allVenues.length}`);
+        debugJson("Sample venue row", allVenues[0] || null);
+
         const infoWindow = new google.maps.InfoWindow();
         const latestRowsByVenue = new Map();
 
@@ -2028,7 +2058,33 @@
           return Number.isFinite(lat) && Number.isFinite(lng);
         });
 
-        debug(`Markerable row count: ${venueRows.length}`);
+        const allVenueRows = allVenues
+          .filter((venue) => {
+            const lat = Number(venue.latitude);
+            const lng = Number(venue.longitude);
+            return Number.isFinite(lat) && Number.isFinite(lng);
+          })
+          .map((venue) => {
+            const existing = latestRowsByVenue.get(venue.id);
+
+            if (existing) {
+              return existing;
+            }
+
+            return {
+              id: `venue:${venue.id}`,
+              venue_id: venue.id,
+              venue_name: venue.name,
+              suburb: venue.suburb,
+              created_at: null,
+              saved_at: null,
+              cleaned: {},
+              venues: venue,
+            };
+          });
+
+        debug(`Markerable captured row count: ${venueRows.length}`);
+        debug(`Markerable all-venue row count: ${allVenueRows.length}`);
 
         if (rows.length === 0) {
           debug(
@@ -2048,7 +2104,8 @@
 
           const bounds = new google.maps.LatLngBounds();
           const filterValue = beerFilterEl.value;
-          const filteredRows = venueRows.filter((item) => rowMatchesFilter(item, filterValue));
+          const sourceRows = filterValue === "all" ? allVenueRows : venueRows;
+          const filteredRows = sourceRows.filter((item) => rowMatchesFilter(item, filterValue));
           let markerCount = 0;
 
           filteredRows.forEach((item) => {
@@ -2060,6 +2117,7 @@
             const happyHourSummary = getHappyHourSummary(item);
             const headlineBeer = getHeadlineBeer(item);
             const markerVisual = getMarkerVisual(filterValue, headlineBeer);
+            const hasCapturedData = Boolean(item.saved_at || item.created_at);
 
             const markerOptions = {
               position: { lat, lng },
@@ -2091,7 +2149,7 @@
             const address = formatAddress(venue);
             const createdAt = item.saved_at || item.created_at
               ? new Date(item.saved_at || item.created_at).toLocaleString()
-              : "Unknown";
+              : "Not captured yet";
             const venueName = escapeHtml(venue.name || item.venue_name || "Unknown venue");
             const safeAddress = escapeHtml(address || "Address unavailable");
             const safeCreatedAt = escapeHtml(createdAt);
@@ -2126,6 +2184,13 @@
                 No synced beer data yet.
               </div>
             `;
+            const captureStatusMarkup = hasCapturedData
+              ? ""
+              : `
+              <div style="margin-top:12px; padding:10px 12px; background:#f8fafc; border-radius:12px; font-size:12px; color:#475569;">
+                This venue is on the map, but beer prices have not been captured yet.
+              </div>
+            `;
             const happyHourMarkup = happyHourSummary ? `
               <div style="margin-top:12px; padding:10px 12px; background:#eff6ff; border-radius:12px; font-size:12px; color:#1d4ed8;">
                 <strong>Happy hour</strong><br>
@@ -2145,6 +2210,7 @@
               <div style="border:1px solid #e2e8f0; border-radius:14px; padding:0 12px; background:#ffffff;">
                 ${beerMarkup}
               </div>
+                ${captureStatusMarkup}
                 ${happyHourMarkup}
                 <div style="padding-top:10px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b;">
                   Logged ${safeCreatedAt}
