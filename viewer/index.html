@@ -383,7 +383,7 @@
       <section class="adminCard">
         <h3>Add new pub/bar</h3>
         <div class="adminNotice" style="margin-bottom:12px;">
-          Use the official venue name, one full street address, and Melbourne-format suburb/state/postcode values so the map stays consistent.
+          Enter the official venue name and a location hint like <strong>South Melbourne</strong> or <strong>123 Clarendon St, South Melbourne</strong>. We will look up the proper address and map coordinates for you.
         </div>
         <div class="adminGrid">
           <label class="adminField">
@@ -391,41 +391,55 @@
             <input id="adminNewVenueName" type="text" placeholder="The Duke of Wellington" />
           </label>
           <label class="adminField">
-            <span>Phone</span>
-            <input id="adminNewVenuePhone" type="text" placeholder="(03) 9123 4567" />
-          </label>
-          <label class="adminField adminField--full" style="grid-column: 1 / -1;">
-            <span>Address</span>
-            <input id="adminNewVenueAddress" type="text" placeholder="146 Flinders St" />
-          </label>
-          <label class="adminField">
-            <span>Suburb</span>
-            <input id="adminNewVenueSuburb" type="text" placeholder="Melbourne" />
-          </label>
-          <label class="adminField">
-            <span>State</span>
-            <input id="adminNewVenueState" type="text" value="VIC" />
-          </label>
-          <label class="adminField">
-            <span>Postcode</span>
-            <input id="adminNewVenuePostcode" type="text" placeholder="3000" />
-          </label>
-          <label class="adminField">
-            <span>Website</span>
-            <input id="adminNewVenueWebsite" type="url" placeholder="https://..." />
-          </label>
-          <label class="adminField">
-            <span>Latitude</span>
-            <input id="adminNewVenueLatitude" type="number" step="any" placeholder="-37.8136" />
-          </label>
-          <label class="adminField">
-            <span>Longitude</span>
-            <input id="adminNewVenueLongitude" type="number" step="any" placeholder="144.9631" />
+            <span>Location</span>
+            <input id="adminNewVenueLocation" type="text" placeholder="South Melbourne or 123 Clarendon St, South Melbourne" />
           </label>
         </div>
 
+        <div id="adminVenueLookupSummary" class="adminHint" style="margin:10px 0 12px;">
+          We will fill the address and map coordinates from the name + location when you create the venue.
+        </div>
+
+        <details style="margin-top:8px;">
+          <summary style="cursor:pointer; font-weight:600;">Advanced details (optional overrides)</summary>
+          <div class="adminGrid" style="margin-top:12px;">
+            <label class="adminField adminField--full" style="grid-column: 1 / -1;">
+              <span>Resolved address</span>
+              <input id="adminNewVenueAddress" type="text" placeholder="146 Flinders St" />
+            </label>
+            <label class="adminField">
+              <span>Suburb</span>
+              <input id="adminNewVenueSuburb" type="text" placeholder="Melbourne" />
+            </label>
+            <label class="adminField">
+              <span>State</span>
+              <input id="adminNewVenueState" type="text" value="VIC" />
+            </label>
+            <label class="adminField">
+              <span>Postcode</span>
+              <input id="adminNewVenuePostcode" type="text" placeholder="3000" />
+            </label>
+            <label class="adminField">
+              <span>Phone (optional)</span>
+              <input id="adminNewVenuePhone" type="text" placeholder="(03) 9123 4567" />
+            </label>
+            <label class="adminField">
+              <span>Website (optional)</span>
+              <input id="adminNewVenueWebsite" type="url" placeholder="https://..." />
+            </label>
+            <label class="adminField">
+              <span>Latitude</span>
+              <input id="adminNewVenueLatitude" type="number" step="any" placeholder="-37.8136" />
+            </label>
+            <label class="adminField">
+              <span>Longitude</span>
+              <input id="adminNewVenueLongitude" type="number" step="any" placeholder="144.9631" />
+            </label>
+          </div>
+        </details>
+
         <div class="adminActions">
-          <button id="adminFillCoords" class="adminButton" type="button">Find coords from address</button>
+          <button id="adminLookupVenue" class="adminButton" type="button">Look up venue details</button>
           <button id="adminCreateVenue" class="adminButton adminButton--primary" type="button">Create venue</button>
         </div>
         <div id="adminCreateVenueStatus" class="adminHint" style="margin-top:10px;"></div>
@@ -472,15 +486,17 @@
     const adminSaveBeersEl = document.getElementById("adminSaveBeers");
     const adminCaptureStatusEl = document.getElementById("adminCaptureStatus");
     const adminNewVenueNameEl = document.getElementById("adminNewVenueName");
-    const adminNewVenuePhoneEl = document.getElementById("adminNewVenuePhone");
+    const adminNewVenueLocationEl = document.getElementById("adminNewVenueLocation");
+    const adminVenueLookupSummaryEl = document.getElementById("adminVenueLookupSummary");
     const adminNewVenueAddressEl = document.getElementById("adminNewVenueAddress");
     const adminNewVenueSuburbEl = document.getElementById("adminNewVenueSuburb");
     const adminNewVenueStateEl = document.getElementById("adminNewVenueState");
     const adminNewVenuePostcodeEl = document.getElementById("adminNewVenuePostcode");
+    const adminNewVenuePhoneEl = document.getElementById("adminNewVenuePhone");
     const adminNewVenueWebsiteEl = document.getElementById("adminNewVenueWebsite");
     const adminNewVenueLatitudeEl = document.getElementById("adminNewVenueLatitude");
     const adminNewVenueLongitudeEl = document.getElementById("adminNewVenueLongitude");
-    const adminFillCoordsEl = document.getElementById("adminFillCoords");
+    const adminLookupVenueEl = document.getElementById("adminLookupVenue");
     const adminCreateVenueEl = document.getElementById("adminCreateVenue");
     const adminCreateVenueStatusEl = document.getElementById("adminCreateVenueStatus");
     let googleMapsAuthFailed = false;
@@ -495,6 +511,7 @@
     let selectedAdminVenueId = null;
     let adminCaptureSource = "manual_entry";
     let geocoder = null;
+    let placesService = null;
     const ADMIN_SECRET_STORAGE_KEY = "melbBeerBotAdminSecret";
 
     function syncDebugState() {
@@ -1332,6 +1349,143 @@
       });
     }
 
+    function getPlacesService() {
+      if (!window.google || !google.maps || !google.maps.places || typeof google.maps.places.PlacesService !== "function") {
+        throw new Error("Google Maps Places lookup is not available.");
+      }
+
+      if (!placesService) {
+        placesService = new google.maps.places.PlacesService(document.createElement("div"));
+      }
+
+      return placesService;
+    }
+
+    function extractAddressComponent(result, type, useShortName = false) {
+      const component = Array.isArray(result?.address_components)
+        ? result.address_components.find((item) => Array.isArray(item.types) && item.types.includes(type))
+        : null;
+
+      if (!component) {
+        return null;
+      }
+
+      return useShortName ? component.short_name || null : component.long_name || null;
+    }
+
+    function setVenueLookupSummary(message, tone = null) {
+      setHint(adminVenueLookupSummaryEl, message, tone);
+    }
+
+    function applyResolvedVenueFields(resolved) {
+      adminNewVenueAddressEl.value = resolved.address || adminNewVenueAddressEl.value;
+      adminNewVenueSuburbEl.value = resolved.suburb || adminNewVenueSuburbEl.value;
+      adminNewVenueStateEl.value = resolved.state || adminNewVenueStateEl.value || "VIC";
+      adminNewVenuePostcodeEl.value = resolved.postcode || adminNewVenuePostcodeEl.value;
+      adminNewVenueLatitudeEl.value = resolved.latitude != null ? String(resolved.latitude) : adminNewVenueLatitudeEl.value;
+      adminNewVenueLongitudeEl.value = resolved.longitude != null ? String(resolved.longitude) : adminNewVenueLongitudeEl.value;
+
+      const summaryParts = [
+        resolved.name ? `Matched: ${resolved.name}` : null,
+        resolved.address || null,
+        resolved.suburb ? `${resolved.suburb}${resolved.state ? `, ${resolved.state}` : ""}${resolved.postcode ? ` ${resolved.postcode}` : ""}` : null,
+      ].filter(Boolean);
+
+      setVenueLookupSummary(summaryParts.join(" • "), "success");
+    }
+
+    async function findVenueByNameAndLocation(name, locationHint) {
+      const trimmedName = name.trim();
+      const trimmedLocation = locationHint.trim();
+
+      if (!trimmedName || !trimmedLocation) {
+        throw new Error("Enter both the venue name and a location hint first.");
+      }
+
+      const query = [trimmedName, trimmedLocation]
+        .filter(Boolean)
+        .join(", ");
+
+      const service = getPlacesService();
+
+      const candidate = await new Promise((resolve, reject) => {
+        service.textSearch(
+          {
+            query,
+            region: "au",
+          },
+          (results, status) => {
+            if (status === google.maps.places.PlacesServiceStatus.OK && results && results[0]) {
+              resolve(results[0]);
+              return;
+            }
+
+            reject(new Error(`Could not find that venue in Google Maps (${status}).`));
+          },
+        );
+      });
+
+      const placeId = candidate.place_id || null;
+      let detailResult = null;
+
+      if (placeId) {
+        detailResult = await new Promise((resolve, reject) => {
+          if (!window.google || !google.maps || typeof google.maps.Geocoder !== "function") {
+            reject(new Error("Google Maps geocoder is not available."));
+            return;
+          }
+
+          if (!geocoder) {
+            geocoder = new google.maps.Geocoder();
+          }
+
+          geocoder.geocode({ placeId }, (results, status) => {
+            if (status === "OK" && results && results[0]) {
+              resolve(results[0]);
+              return;
+            }
+
+            reject(new Error(`Could not resolve that venue's address details (${status}).`));
+          });
+        }).catch(() => null);
+      } else {
+        detailResult = await geocodeAddress(query).catch(() => null);
+      }
+
+      const geometrySource = detailResult?.geometry?.location || candidate.geometry?.location;
+      if (!geometrySource) {
+        throw new Error("Google Maps found the venue, but did not return coordinates.");
+      }
+
+      const address = detailResult?.formatted_address || candidate.formatted_address || trimmedLocation;
+      return {
+        name: candidate.name || trimmedName,
+        address,
+        suburb:
+          extractAddressComponent(detailResult, "locality") ||
+          extractAddressComponent(detailResult, "sublocality_level_1") ||
+          extractAddressComponent(detailResult, "administrative_area_level_2"),
+        state: extractAddressComponent(detailResult, "administrative_area_level_1", true) || "VIC",
+        postcode: extractAddressComponent(detailResult, "postal_code"),
+        latitude: geometrySource.lat(),
+        longitude: geometrySource.lng(),
+      };
+    }
+
+    async function lookupAndFillVenueDetails() {
+      const name = adminNewVenueNameEl.value.trim();
+      const locationHint = adminNewVenueLocationEl.value.trim();
+
+      if (!name || !locationHint) {
+        throw new Error("Enter the venue name and a location hint first.");
+      }
+
+      setVenueLookupSummary("Looking up venue details from Google Maps...", null);
+      const resolved = await findVenueByNameAndLocation(name, locationHint);
+      applyResolvedVenueFields(resolved);
+      return resolved;
+    }
+
     adminVenueSearchEl.addEventListener("input", renderAdminVenueOptions);
     adminVenueSelectEl.addEventListener("change", () => {
       selectedAdminVenueId = adminVenueSelectEl.value || null;
@@ -1425,38 +1579,36 @@
       }
     });
 
-    adminFillCoordsEl.addEventListener("click", async () => {
+    adminLookupVenueEl.addEventListener("click", async () => {
       try {
-        const address = [
-          adminNewVenueAddressEl.value.trim(),
-          adminNewVenueSuburbEl.value.trim(),
-          adminNewVenueStateEl.value.trim(),
-          adminNewVenuePostcodeEl.value.trim(),
-        ].filter(Boolean).join(", ");
-
-        if (!address) {
-          throw new Error("Enter an address before looking up coordinates.");
-        }
-
-        setHint(adminCreateVenueStatusEl, "Looking up coordinates from the address...", null);
-        const result = await geocodeAddress(address);
-        const location = result.geometry.location;
-        adminNewVenueLatitudeEl.value = String(location.lat());
-        adminNewVenueLongitudeEl.value = String(location.lng());
-        setHint(adminCreateVenueStatusEl, "Coordinates filled from the address.", "success");
+        await lookupAndFillVenueDetails();
+        setHint(adminCreateVenueStatusEl, "Venue details filled from Google Maps.", "success");
       } catch (error) {
-        setHint(
-          adminCreateVenueStatusEl,
-          error instanceof Error ? error.message : "Could not find coordinates.",
-          "error",
-        );
+        const message = error instanceof Error ? error.message : "Could not find that venue.";
+        setVenueLookupSummary(message, "error");
+        setHint(adminCreateVenueStatusEl, message, "error");
       }
     });
 
     adminCreateVenueEl.addEventListener("click", async () => {
       try {
+        const name = adminNewVenueNameEl.value.trim();
+        const locationHint = adminNewVenueLocationEl.value.trim();
+
+        if (!name || !locationHint) {
+          throw new Error("Name and location are required for a new venue.");
+        }
+
+        if (
+          !adminNewVenueAddressEl.value.trim() ||
+          !adminNewVenueLatitudeEl.value ||
+          !adminNewVenueLongitudeEl.value
+        ) {
+          await lookupAndFillVenueDetails();
+        }
+
         const payload = {
-          name: adminNewVenueNameEl.value.trim(),
+          name,
           address: adminNewVenueAddressEl.value.trim(),
           suburb: adminNewVenueSuburbEl.value.trim() || null,
           state: adminNewVenueStateEl.value.trim() || "VIC",
@@ -1468,7 +1620,7 @@
         };
 
         if (!payload.name || !payload.address || !payload.latitude || !payload.longitude) {
-          throw new Error("Name, address, latitude, and longitude are required for a new venue.");
+          throw new Error("We couldn't resolve the venue address and map coordinates. Try a more specific location.");
         }
 
         setHint(adminCreateVenueStatusEl, "Creating venue...", null);
@@ -1478,6 +1630,8 @@
         selectedAdminVenueId = venue.id;
         adminVenueSearchEl.value = venue.name;
         renderAdminVenueOptions();
+        adminNewVenueLocationEl.value = "";
+        setVenueLookupSummary("We will fill the address and map coordinates from the name + location when you create the venue.", null);
         setHint(
           adminCreateVenueStatusEl,
           `${venue.name} was created and selected. You can add beers to it now.`,
@@ -1527,7 +1681,7 @@
           key: GOOGLE_MAPS_KEY,
           callback: callbackName,
           v: "weekly",
-          libraries: "marker",
+          libraries: "marker,places",
         });
 
         if (GOOGLE_MAPS_MAP_ID) {
