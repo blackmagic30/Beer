@@ -34,6 +34,14 @@ export interface ReviewVenueRow {
   issues: string[];
 }
 
+const AREA_FILTER_ALIASES: Record<string, string[]> = {
+  cbd: ["melbourne"],
+  "melbourne cbd": ["melbourne"],
+  "saint kilda": ["st kilda"],
+  "saint kilda east": ["st kilda east"],
+  beghntligh: ["bentleigh"],
+};
+
 const STRICT_BAR_PUB_TYPES = new Set(["bar", "pub", "brewery"]);
 const EXCLUDED_NAME_PATTERNS = [
   /\bairport lounge\b/i,
@@ -112,6 +120,42 @@ export function normalizeVenueKey(value: string | null | undefined): string {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .replace(/[^\w\s]/g, "");
+}
+
+export function buildAreaFilterTerms(value: string | null | undefined): string[] {
+  const rawTerms = String(value ?? "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+
+  const terms = new Set<string>();
+
+  for (const rawTerm of rawTerms) {
+    terms.add(rawTerm);
+
+    const aliasTerms = AREA_FILTER_ALIASES[rawTerm] ?? [];
+    for (const aliasTerm of aliasTerms) {
+      terms.add(aliasTerm);
+    }
+
+    if (rawTerm.startsWith("saint ")) {
+      terms.add(rawTerm.replace(/^saint\s+/, "st "));
+    }
+  }
+
+  return Array.from(terms);
+}
+
+export function matchesAreaFilter(input: {
+  suburb: string | null;
+  address: string | null;
+}, terms: string[]): boolean {
+  if (terms.length === 0) {
+    return true;
+  }
+
+  const haystack = `${input.suburb ?? ""} ${input.address ?? ""}`.toLowerCase();
+  return terms.some((term) => haystack.includes(term));
 }
 
 export function isStrictBarOrPubPlace(place: GooglePlaceCandidate): boolean {

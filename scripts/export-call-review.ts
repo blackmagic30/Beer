@@ -11,7 +11,7 @@ import { createDatabase } from "../src/db/database.js";
 import type { CallStatus, ParseStatus } from "../src/db/models.js";
 import { isRetryableVenueOutcome } from "../src/lib/call-batch.js";
 import { normalizeAustralianPhoneToE164 } from "../src/lib/phone.js";
-import { buildReviewVenueRow } from "../src/lib/venue-directory.js";
+import { buildAreaFilterTerms, buildReviewVenueRow, matchesAreaFilter } from "../src/lib/venue-directory.js";
 
 interface VenueRow {
   id: string;
@@ -95,7 +95,7 @@ function escapeCsv(value: string | number | boolean | null): string {
 async function main() {
   const targetBeer = normalizeTargetBeerKey(getArg("beer", env.TARGET_BEER));
   const limit = Number.parseInt(getArg("limit", "0") ?? "0", 10);
-  const suburbFilter = getArg("suburb")?.trim().toLowerCase();
+  const suburbFilterTerms = buildAreaFilterTerms(getArg("suburb"));
   const includeCalled = hasFlag("include-called");
   const includeNotReady = hasFlag("include-not-ready");
   const outputBase = path.resolve(
@@ -158,11 +158,7 @@ async function main() {
           latestCallAt: latestCallByVenueId.get(venue.id) ?? null,
         }),
       )
-      .filter((row) =>
-        suburbFilter
-          ? `${row.suburb ?? ""} ${row.address ?? ""}`.toLowerCase().includes(suburbFilter)
-          : true,
-      )
+      .filter((row) => matchesAreaFilter({ suburb: row.suburb, address: row.address }, suburbFilterTerms))
       .filter((row) => (includeCalled ? true : !row.alreadyCalled))
       .filter((row) => (includeNotReady ? true : row.callEligible))
       .sort((left, right) => left.venueName.localeCompare(right.venueName));

@@ -14,7 +14,12 @@ import type { CallRunRecord, CallStatus, ParseStatus } from "../src/db/models.js
 import { getCallingWindowStatus } from "../src/lib/business-hours.js";
 import { classifyBatchAttemptOutcome, isRetryableVenueOutcome, type BatchAttemptOutcome } from "../src/lib/call-batch.js";
 import { normalizeAustralianPhoneToE164 } from "../src/lib/phone.js";
-import { buildReviewVenueRow, type ReviewVenueRow } from "../src/lib/venue-directory.js";
+import {
+  buildAreaFilterTerms,
+  buildReviewVenueRow,
+  matchesAreaFilter,
+  type ReviewVenueRow,
+} from "../src/lib/venue-directory.js";
 import { recoverStaleCallRuns } from "../src/modules/calls/stale-call-recovery.js";
 
 interface VenueRow {
@@ -289,7 +294,7 @@ async function buildSelectedVenues(
   database: ReturnType<typeof createDatabase>,
   targetBeer: TargetBeerKey,
   includeAlreadyCalled: boolean,
-  suburbFilter: string | undefined,
+  suburbFilterTerms: string[],
   limit: number,
 ): Promise<ReviewVenueRow[]> {
   const venues = await fetchAllRows<VenueRow>(
@@ -353,11 +358,7 @@ async function buildSelectedVenues(
       });
     })
     .filter((venue) => venue.callEligible)
-    .filter((venue) =>
-      suburbFilter
-        ? `${venue.suburb ?? ""} ${venue.address ?? ""}`.toLowerCase().includes(suburbFilter)
-        : true,
-    )
+    .filter((venue) => matchesAreaFilter({ suburb: venue.suburb, address: venue.address }, suburbFilterTerms))
     .sort((left, right) => left.venueName.localeCompare(right.venueName));
 
   return limit > 0 ? candidates.slice(0, limit) : candidates;
@@ -410,7 +411,8 @@ async function main() {
   const baseUrl = getArg("base-url", "http://localhost:3000")!;
   const delayMs = Number.parseInt(getArg("delay-ms", "45000") ?? "45000", 10);
   const limit = Number.parseInt(getArg("limit", "0") ?? "0", 10);
-  const suburbFilter = getArg("suburb")?.trim().toLowerCase();
+  const suburbFilterRaw = getArg("suburb")?.trim() ?? null;
+  const suburbFilterTerms = buildAreaFilterTerms(suburbFilterRaw);
   const dryRun = hasFlag("dry-run");
   const testMode = hasFlag("test-mode");
   const includeAlreadyCalled = hasFlag("include-called");
@@ -466,7 +468,7 @@ async function main() {
         database,
         targetBeer,
         includeAlreadyCalled,
-        suburbFilter,
+        suburbFilterTerms,
         limit,
       );
 
@@ -485,7 +487,7 @@ async function main() {
           delayMs,
           limit,
           targetBeer,
-          suburbFilter: suburbFilter ?? null,
+          suburbFilter: suburbFilterRaw,
           testMode,
         includeAlreadyCalled,
         circuitBreakerThreshold,
