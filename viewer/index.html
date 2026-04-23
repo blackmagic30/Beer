@@ -400,6 +400,9 @@
           We will fill the address and map coordinates from the name + location when you create the venue.
         </div>
 
+        <div id="adminDuplicateWarning" class="adminHint" style="margin:10px 0 12px;"></div>
+        <div id="adminVenueLookupMatches" class="adminHint" style="margin:10px 0 12px;"></div>
+
         <details style="margin-top:8px;">
           <summary style="cursor:pointer; font-weight:600;">Advanced details (optional overrides)</summary>
           <div class="adminGrid" style="margin-top:12px;">
@@ -488,6 +491,8 @@
     const adminNewVenueNameEl = document.getElementById("adminNewVenueName");
     const adminNewVenueLocationEl = document.getElementById("adminNewVenueLocation");
     const adminVenueLookupSummaryEl = document.getElementById("adminVenueLookupSummary");
+    const adminDuplicateWarningEl = document.getElementById("adminDuplicateWarning");
+    const adminVenueLookupMatchesEl = document.getElementById("adminVenueLookupMatches");
     const adminNewVenueAddressEl = document.getElementById("adminNewVenueAddress");
     const adminNewVenueSuburbEl = document.getElementById("adminNewVenueSuburb");
     const adminNewVenueStateEl = document.getElementById("adminNewVenueState");
@@ -512,6 +517,8 @@
     let adminCaptureSource = "manual_entry";
     let geocoder = null;
     let placesService = null;
+    let venueLookupCandidates = [];
+    let selectedVenueLookupPlaceId = null;
     const ADMIN_SECRET_STORAGE_KEY = "melbBeerBotAdminSecret";
 
     function syncDebugState() {
@@ -1255,6 +1262,7 @@
     async function ensureAdminVenuesLoaded() {
       if (adminVenues.length > 0 || !supabaseClient) {
         renderAdminVenueOptions();
+        renderDuplicateWarning();
         return;
       }
 
@@ -1269,6 +1277,7 @@
 
       adminVenues = Array.isArray(data) ? data : [];
       renderAdminVenueOptions();
+      renderDuplicateWarning();
     }
 
     async function authorizedJsonFetch(url, body) {
@@ -1377,6 +1386,149 @@
       setHint(adminVenueLookupSummaryEl, message, tone);
     }
 
+    function normalizeVenueCompareValue(value) {
+      return String(value || "")
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function setDuplicateWarning(message, tone = null) {
+      setHint(adminDuplicateWarningEl, message, tone);
+    }
+
+    function setVenueLookupMatchesMessage(message, tone = null) {
+      setHint(adminVenueLookupMatchesEl, message, tone);
+    }
+
+    function getVenueDraft() {
+      return {
+        name: adminNewVenueNameEl.value.trim(),
+        locationHint: adminNewVenueLocationEl.value.trim(),
+        address: adminNewVenueAddressEl.value.trim(),
+        suburb: adminNewVenueSuburbEl.value.trim(),
+      };
+    }
+
+    function findPotentialDuplicateVenues(draft) {
+      const normalizedName = normalizeVenueCompareValue(draft.name);
+      const normalizedAddress = normalizeVenueCompareValue(draft.address);
+      const normalizedSuburb = normalizeVenueCompareValue(draft.suburb || draft.locationHint);
+
+      if (!normalizedName) {
+        return [];
+      }
+
+      return adminVenues
+        .map((venue) => {
+          const venueName = normalizeVenueCompareValue(venue.name);
+          const venueAddress = normalizeVenueCompareValue(venue.address);
+          const venueSuburb = normalizeVenueCompareValue(venue.suburb);
+
+          const exactName = normalizedName === venueName;
+          const similarName =
+            exactName ||
+            venueName.includes(normalizedName) ||
+            normalizedName.includes(venueName);
+          const sameAddress = normalizedAddress && venueAddress && normalizedAddress === venueAddress;
+          const sameSuburb = normalizedSuburb && venueSuburb && normalizedSuburb === venueSuburb;
+
+          const score =
+            (exactName ? 4 : 0) +
+            (sameAddress ? 3 : 0) +
+            (sameSuburb ? 2 : 0) +
+            (!exactName && similarName ? 1 : 0);
+
+          return {
+            venue,
+            score,
+          };
+        })
+        .filter((item) => item.score >= 3)
+        .sort((left, right) => right.score - left.score || left.venue.name.localeCompare(right.venue.name))
+        .slice(0, 5)
+        .map((item) => item.venue);
+    }
+
+    function renderDuplicateWarning() {
+      const duplicates = findPotentialDuplicateVenues(getVenueDraft());
+
+      if (!duplicates.length) {
+        setDuplicateWarning("No likely duplicate venues detected yet.", null);
+        return duplicates;
+      }
+
+      const message = `Possible duplicate${duplicates.length === 1 ? "" : "s"}: ${duplicates
+        .map((venue) => `${venue.name}${venue.suburb ? ` (${venue.suburb})` : ""}`)
+        .join(" • ")}`;
+      setDuplicateWarning(message, "warning");
+      return duplicates;
+    }
+
+    function renderVenueLookupCandidates() {
+      if (!venueLookupCandidates.length) {
+        setVenueLookupMatchesMessage("No Google Maps match selected yet.", null);
+        return;
+      }
+
+      adminVenueLookupMatchesEl.className = "adminHint adminHint--success";
+      adminVenueLookupMatchesEl.innerHTML = `
+        <div style="font-weight:600; margin-bottom:8px;">Google Maps matches</div>
+        <div style="display:grid; gap:8px;">
+          ${venueLookupCandidates
+            .map((candidate) => {
+              const selected = candidate.place_id && candidate.place_id === selectedVenueLookupPlaceId;
+              const title = escapeHtml(candidate.name || "Unnamed venue");
+              const address = escapeHtml(candidate.formatted_address || candidate.vicinity || "");
+              return `
+                <button
+                  type="button"
+                  class="adminButton ${selected ? "adminButton--primary" : ""}"
+                  data-role="venueCandidate"
+                  data-place-id="${escapeHtml(candidate.place_id || "")}"
+                  style="justify-content:flex-start; text-align:left;"
+                >
+                  <span style="display:block; font-weight:600;">${title}</span>
+                  <span style="display:block; opacity:0.8;">${address}</span>
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+
+      adminVenueLookupMatchesEl
+        .querySelectorAll('[data-role="venueCandidate"]')
+        .forEach((button) => {
+          button.addEventListener("click", async () => {
+            const placeId = button.getAttribute("data-place-id");
+            const candidate = venueLookupCandidates.find((item) => (item.place_id || "") === (placeId || ""));
+
+            if (!candidate) {
+              return;
+            }
+
+            try {
+              setVenueLookupSummary("Applying selected Google Maps match...", null);
+              const resolved = await resolveVenueCandidate(candidate, getVenueDraft().name, getVenueDraft().locationHint);
+              selectedVenueLookupPlaceId = candidate.place_id || null;
+              applyResolvedVenueFields(resolved);
+              renderVenueLookupCandidates();
+              renderDuplicateWarning();
+              setHint(adminCreateVenueStatusEl, "Selected Google Maps match applied.", "success");
+            } catch (error) {
+              setHint(
+                adminCreateVenueStatusEl,
+                error instanceof Error ? error.message : "Could not apply that Google Maps match.",
+                "error",
+              );
+            }
+          });
+        });
+    }
+
     function applyResolvedVenueFields(resolved) {
       adminNewVenueAddressEl.value = resolved.address || adminNewVenueAddressEl.value;
       adminNewVenueSuburbEl.value = resolved.suburb || adminNewVenueSuburbEl.value;
@@ -1394,7 +1546,7 @@
       setVenueLookupSummary(summaryParts.join(" • "), "success");
     }
 
-    async function findVenueByNameAndLocation(name, locationHint) {
+    async function searchVenueCandidates(name, locationHint) {
       const trimmedName = name.trim();
       const trimmedLocation = locationHint.trim();
 
@@ -1408,15 +1560,15 @@
 
       const service = getPlacesService();
 
-      const candidate = await new Promise((resolve, reject) => {
+      const candidates = await new Promise((resolve, reject) => {
         service.textSearch(
           {
             query,
             region: "au",
           },
           (results, status) => {
-            if (status === google.maps.places.PlacesServiceStatus.OK && results && results[0]) {
-              resolve(results[0]);
+            if (status === google.maps.places.PlacesServiceStatus.OK && results && results.length) {
+              resolve(results.slice(0, 5));
               return;
             }
 
@@ -1424,6 +1576,13 @@
           },
         );
       });
+
+      return candidates;
+    }
+
+    async function resolveVenueCandidate(candidate, fallbackName, fallbackLocation) {
+      const trimmedName = fallbackName.trim();
+      const trimmedLocation = fallbackLocation.trim();
 
       const placeId = candidate.place_id || null;
       let detailResult = null;
@@ -1481,8 +1640,18 @@
       }
 
       setVenueLookupSummary("Looking up venue details from Google Maps...", null);
-      const resolved = await findVenueByNameAndLocation(name, locationHint);
+      venueLookupCandidates = await searchVenueCandidates(name, locationHint);
+      const firstCandidate = venueLookupCandidates[0];
+
+      if (!firstCandidate) {
+        throw new Error("Could not find that venue in Google Maps.");
+      }
+
+      selectedVenueLookupPlaceId = firstCandidate.place_id || null;
+      renderVenueLookupCandidates();
+      const resolved = await resolveVenueCandidate(firstCandidate, name, locationHint);
       applyResolvedVenueFields(resolved);
+      renderDuplicateWarning();
       return resolved;
     }
 
@@ -1490,6 +1659,20 @@
     adminVenueSelectEl.addEventListener("change", () => {
       selectedAdminVenueId = adminVenueSelectEl.value || null;
       renderSelectedAdminVenue();
+    });
+    [adminNewVenueNameEl, adminNewVenueLocationEl].forEach((element) => {
+      element.addEventListener("input", () => {
+        selectedVenueLookupPlaceId = null;
+        venueLookupCandidates = [];
+        setVenueLookupMatchesMessage("No Google Maps match selected yet.", null);
+        setVenueLookupSummary("We will fill the address and map coordinates from the name + location when you create the venue.", null);
+        renderDuplicateWarning();
+      });
+    });
+    [adminNewVenueAddressEl, adminNewVenueSuburbEl].forEach((element) => {
+      element.addEventListener("input", () => {
+        renderDuplicateWarning();
+      });
     });
 
     adminAddBeerRowEl.addEventListener("click", () => {
@@ -1623,6 +1806,20 @@
           throw new Error("We couldn't resolve the venue address and map coordinates. Try a more specific location.");
         }
 
+        const duplicates = renderDuplicateWarning();
+        if (duplicates.length) {
+          const proceed = window.confirm(
+            `This may already exist as ${duplicates
+              .map((venue) => `${venue.name}${venue.suburb ? ` (${venue.suburb})` : ""}`)
+              .join(", ")}. Create it anyway?`,
+          );
+
+          if (!proceed) {
+            setHint(adminCreateVenueStatusEl, "Creation cancelled so you can review the possible duplicate.", "warning");
+            return;
+          }
+        }
+
         setHint(adminCreateVenueStatusEl, "Creating venue...", null);
         const result = await authorizedJsonFetch("/api/admin/venues", payload);
         const venue = result.venue;
@@ -1631,7 +1828,11 @@
         adminVenueSearchEl.value = venue.name;
         renderAdminVenueOptions();
         adminNewVenueLocationEl.value = "";
+        selectedVenueLookupPlaceId = null;
+        venueLookupCandidates = [];
+        setVenueLookupMatchesMessage("No Google Maps match selected yet.", null);
         setVenueLookupSummary("We will fill the address and map coordinates from the name + location when you create the venue.", null);
+        setDuplicateWarning("No likely duplicate venues detected yet.", null);
         setHint(
           adminCreateVenueStatusEl,
           `${venue.name} was created and selected. You can add beers to it now.`,
@@ -1647,6 +1848,8 @@
     });
 
     setBeerRows([]);
+    setVenueLookupMatchesMessage("No Google Maps match selected yet.", null);
+    setDuplicateWarning("No likely duplicate venues detected yet.", null);
     syncAdminPanelState();
 
     window.gm_authFailure = function gmAuthFailure() {
