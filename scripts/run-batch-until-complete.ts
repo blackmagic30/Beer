@@ -67,7 +67,7 @@ async function runBatchOnce(nodeBin: string, scriptPath: string, passthroughArgs
   return await new Promise((resolve) => {
     const child = spawn(nodeBin, [scriptPath, ...passthroughArgs], {
       stdio: "inherit",
-      cwd: path.dirname(path.dirname(scriptPath)),
+      cwd: process.cwd(),
       env: process.env,
     });
 
