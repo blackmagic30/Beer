@@ -77,6 +77,7 @@ interface BatchRunState {
   successCount: number;
   failureCount: number;
   consecutiveBadOutcomes: number;
+  consecutiveLowSignalOutcomes: number;
   venues: ReviewVenueRow[];
   attempts: BatchAttemptRecord[];
 }
@@ -375,17 +376,24 @@ async function resolveAttemptOutcome(
 }
 
 function recomputeConsecutiveBadOutcomes(state: BatchRunState): void {
-  let streak = 0;
+  let badStreak = 0;
+  let lowSignalStreak = 0;
 
   for (const attempt of state.attempts) {
     if (attempt.resolvedOutcome === "good") {
-      streak = 0;
+      badStreak = 0;
+      lowSignalStreak = 0;
+    } else if (attempt.resolvedOutcome === "soft") {
+      badStreak = 0;
+      lowSignalStreak += 1;
     } else if (attempt.resolvedOutcome === "bad") {
-      streak += 1;
+      badStreak += 1;
+      lowSignalStreak += 1;
     }
   }
 
-  state.consecutiveBadOutcomes = streak;
+  state.consecutiveBadOutcomes = badStreak;
+  state.consecutiveLowSignalOutcomes = lowSignalStreak;
 }
 
 async function refreshResolvedAttempts(
@@ -487,6 +495,7 @@ function createNewState(input: {
   testMode: boolean;
   includeAlreadyCalled: boolean;
   circuitBreakerThreshold: number;
+  lowSignalThreshold: number;
   venues: ReviewVenueRow[];
   dryRun: boolean;
   recoveredStaleCalls: number;
@@ -514,6 +523,7 @@ function createNewState(input: {
     successCount: 0,
     failureCount: 0,
     consecutiveBadOutcomes: 0,
+    consecutiveLowSignalOutcomes: 0,
     venues: input.venues,
     attempts: [],
   };
@@ -534,6 +544,11 @@ async function main() {
   const circuitBreakerThreshold = Number.parseInt(
     getArg("circuit-breaker-threshold", String(env.BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD)) ??
       String(env.BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD),
+    10,
+  );
+  const lowSignalThreshold = Number.parseInt(
+    getArg("low-signal-threshold", String(env.BATCH_CALL_LOW_SIGNAL_THRESHOLD)) ??
+      String(env.BATCH_CALL_LOW_SIGNAL_THRESHOLD),
     10,
   );
   const statePath = getStatePath();
@@ -568,6 +583,7 @@ async function main() {
           includeAlreadyCalled,
           recoveredStaleCalls: existingState.recoveredStaleCalls + recoveredStaleCalls,
           consecutiveBadOutcomes: 0,
+          consecutiveLowSignalOutcomes: existingState.consecutiveLowSignalOutcomes ?? 0,
         };
         await refreshResolvedAttempts(callRunsRepository, baseUrl, state);
         writeState(statePath, state);
@@ -605,6 +621,7 @@ async function main() {
           testMode,
         includeAlreadyCalled,
         circuitBreakerThreshold,
+        lowSignalThreshold,
         venues: selected,
         dryRun,
         recoveredStaleCalls,
@@ -660,6 +677,7 @@ async function main() {
       } catch (error) {
         state.failureCount += 1;
         state.consecutiveBadOutcomes += 1;
+        state.consecutiveLowSignalOutcomes += 1;
         state.status = "paused";
         state.updatedAt = nowIso();
         state.stopReason = `Network error while queueing ${venue.venueName}: ${describeError(error)}`;
@@ -677,6 +695,7 @@ async function main() {
       if (!response.ok) {
         state.failureCount += 1;
         state.consecutiveBadOutcomes += 1;
+        state.consecutiveLowSignalOutcomes += 1;
         console.error(`Call failed for ${venue.venueName}: ${response.status}`, body);
 
         if (response.status === 503) {
@@ -691,6 +710,14 @@ async function main() {
         if (state.consecutiveBadOutcomes >= state.circuitBreakerThreshold) {
           state.status = "paused";
           state.stopReason = `Circuit breaker tripped after ${state.consecutiveBadOutcomes} consecutive failed queue attempts.`;
+          writeState(statePath, state);
+          console.log(`Pausing batch: ${state.stopReason}`);
+          break;
+        }
+
+        if (state.consecutiveLowSignalOutcomes >= lowSignalThreshold) {
+          state.status = "paused";
+          state.stopReason = `Low-signal breaker tripped after ${state.consecutiveLowSignalOutcomes} consecutive failed queue attempts.`;
           writeState(statePath, state);
           console.log(`Pausing batch: ${state.stopReason}`);
           break;
@@ -733,8 +760,13 @@ async function main() {
 
       if (resolvedOutcome === "good") {
         state.consecutiveBadOutcomes = 0;
+        state.consecutiveLowSignalOutcomes = 0;
+      } else if (resolvedOutcome === "soft") {
+        state.consecutiveBadOutcomes = 0;
+        state.consecutiveLowSignalOutcomes += 1;
       } else {
         state.consecutiveBadOutcomes += 1;
+        state.consecutiveLowSignalOutcomes += 1;
       }
 
       writeState(statePath, state);
@@ -742,6 +774,14 @@ async function main() {
       if (state.consecutiveBadOutcomes >= state.circuitBreakerThreshold) {
         state.status = "paused";
         state.stopReason = `Circuit breaker tripped after ${state.consecutiveBadOutcomes} consecutive bad call outcomes.`;
+        writeState(statePath, state);
+        console.log(`Pausing batch: ${state.stopReason}`);
+        break;
+      }
+
+      if (state.consecutiveLowSignalOutcomes >= lowSignalThreshold) {
+        state.status = "paused";
+        state.stopReason = `Low-signal breaker tripped after ${state.consecutiveLowSignalOutcomes} consecutive no-signal outcomes.`;
         writeState(statePath, state);
         console.log(`Pausing batch: ${state.stopReason}`);
         break;

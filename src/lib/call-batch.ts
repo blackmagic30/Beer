@@ -6,11 +6,21 @@ export interface CallRunOutcomeLike {
   errorMessage?: string | null;
 }
 
-export type BatchAttemptOutcome = "good" | "bad" | "pending";
+export type BatchAttemptOutcome = "good" | "bad" | "soft" | "pending";
 
 const NON_RETRYABLE_FAILURE_PATTERNS = [
   /wrong business reached/i,
   /call challenged by staff/i,
+] as const;
+
+const SOFT_FAILURE_PATTERNS = [
+  /automated menu or ivr detected/i,
+  /ivr detected/i,
+  /voicemail detected/i,
+  /out-of-hours recording detected/i,
+  /no clear human response detected/i,
+  /staff needed to check price but no answer returned/i,
+  /parsing produced no useful data/i,
 ] as const;
 
 export function isRetryableVenueOutcome(outcome: CallRunOutcomeLike): boolean {
@@ -42,10 +52,18 @@ export function classifyBatchAttemptOutcome(outcome: CallRunOutcomeLike | null |
     return "good";
   }
 
+  if (["busy", "no-answer"].includes(outcome.callStatus)) {
+    return "soft";
+  }
+
   if (
-    ["failed", "busy", "no-answer", "canceled"].includes(outcome.callStatus) ||
-    outcome.parseStatus === "failed"
+    outcome.parseStatus === "failed" &&
+    SOFT_FAILURE_PATTERNS.some((pattern) => pattern.test(outcome.errorMessage ?? ""))
   ) {
+    return "soft";
+  }
+
+  if (["failed", "canceled"].includes(outcome.callStatus) || outcome.parseStatus === "failed") {
     return "bad";
   }
 

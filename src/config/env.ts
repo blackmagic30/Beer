@@ -116,6 +116,7 @@ const envSchema = z.object({
   OUTBOUND_REPEAT_GUARD_SECONDS: z.coerce.number().int().min(0).default(300),
   PARSE_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.72),
   BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD: z.coerce.number().int().min(1).max(20).default(5),
+  BATCH_CALL_LOW_SIGNAL_THRESHOLD: z.coerce.number().int().min(1).max(40).default(12),
   SUPABASE_URL: optionalHttpUrlFromEnv,
   SUPABASE_ANON_KEY: optionalStringFromEnv,
   SUPABASE_SERVICE_ROLE_KEY: optionalStringFromEnv,

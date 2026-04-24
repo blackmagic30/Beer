@@ -52,6 +52,26 @@ describe("classifyBatchAttemptOutcome", () => {
         parseStatus: "failed",
         errorMessage: "Voicemail detected",
       }),
+    ).toBe("soft");
+  });
+
+  it("treats busy outcomes as soft", () => {
+    expect(
+      classifyBatchAttemptOutcome({
+        callStatus: "busy",
+        parseStatus: "failed",
+        errorMessage: "Call ended with status busy",
+      }),
+    ).toBe("soft");
+  });
+
+  it("keeps hard failures as bad", () => {
+    expect(
+      classifyBatchAttemptOutcome({
+        callStatus: "failed",
+        parseStatus: "failed",
+        errorMessage: "Call ended with status failed",
+      }),
     ).toBe("bad");
   });
 
