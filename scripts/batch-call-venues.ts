@@ -86,6 +86,10 @@ const COMPLETED_STALE_MINUTES = 15;
 const TERMINAL_STALE_MINUTES = 5;
 const UNRESOLVED_CALL_GRACE_MS = 45000;
 const UNRESOLVED_CALL_POLL_MS = 5000;
+const OUTBOUND_FETCH_RETRY_ATTEMPTS = 4;
+const OUTBOUND_FETCH_RETRY_DELAY_MS = 3000;
+const REMOTE_OUTCOME_FETCH_RETRY_ATTEMPTS = 2;
+const REMOTE_OUTCOME_FETCH_RETRY_DELAY_MS = 1000;
 
 function getArg(name: string, fallback?: string): string | undefined {
   const prefix = `--${name}=`;
@@ -103,6 +107,48 @@ function delay(ms: number) {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    const cause = (error as Error & { cause?: unknown }).cause;
+    const causeMessage = cause ? describeError(cause) : null;
+
+    if (causeMessage && causeMessage !== error.message) {
+      return `${error.message} (cause: ${causeMessage})`;
+    }
+
+    return error.message;
+  }
+
+  return String(error);
+}
+
+async function fetchWithRetries(
+  input: URL | string,
+  init: RequestInit,
+  options: {
+    label: string;
+    attempts: number;
+    retryDelayMs: number;
+  },
+): Promise<Response> {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      lastError = error;
+      console.warn(`${options.label} failed on attempt ${attempt}/${options.attempts}: ${describeError(error)}`);
+
+      if (attempt < options.attempts) {
+        await delay(options.retryDelayMs);
+      }
+    }
+  }
+
+  throw new Error(`${options.label} failed after ${options.attempts} attempts: ${describeError(lastError)}`);
 }
 
 async function fetchAllRows<T>(table: string, select: string): Promise<T[]> {
@@ -250,7 +296,15 @@ async function fetchRemoteRunOutcome(
   }
 
   try {
-    const response = await fetch(new URL(`/api/calls/${encodeURIComponent(attempt.callSid)}`, baseUrl));
+    const response = await fetchWithRetries(
+      new URL(`/api/calls/${encodeURIComponent(attempt.callSid)}`, baseUrl),
+      {},
+      {
+        label: `Fetch hosted outcome for ${attempt.venueName}`,
+        attempts: REMOTE_OUTCOME_FETCH_RETRY_ATTEMPTS,
+        retryDelayMs: REMOTE_OUTCOME_FETCH_RETRY_DELAY_MS,
+      },
+    );
 
     if (!response.ok) {
       return null;
@@ -278,7 +332,8 @@ async function fetchRemoteRunOutcome(
       parseStatus: call.parseStatus,
       errorMessage: call.errorMessage ?? null,
     };
-  } catch {
+  } catch (error) {
+    console.warn(`Falling back to local call state for ${attempt.venueName}: ${describeError(error)}`);
     return null;
   }
 }
@@ -584,13 +639,34 @@ async function main() {
 
       console.log(`Calling ${index + 1}/${state.total}: ${venue.venueName} (${payload.phoneNumber})`);
 
-      const response = await fetch(new URL("/api/calls/outbound", baseUrl), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      let response: Response;
+
+      try {
+        response = await fetchWithRetries(
+          new URL("/api/calls/outbound", baseUrl),
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+          },
+          {
+            label: `Queue call for ${venue.venueName}`,
+            attempts: OUTBOUND_FETCH_RETRY_ATTEMPTS,
+            retryDelayMs: OUTBOUND_FETCH_RETRY_DELAY_MS,
+          },
+        );
+      } catch (error) {
+        state.failureCount += 1;
+        state.consecutiveBadOutcomes += 1;
+        state.status = "paused";
+        state.updatedAt = nowIso();
+        state.stopReason = `Network error while queueing ${venue.venueName}: ${describeError(error)}`;
+        writeState(statePath, state);
+        console.error(state.stopReason);
+        break;
+      }
 
       const body = await response.json().catch(() => null);
       const attempt = buildAttemptRecord(venue, response.status, body, response.ok);
