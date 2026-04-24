@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import type { TargetBeerKey } from "../src/constants/beers.js";
 import { getBeerByKey, normalizeTargetBeerKey } from "../src/constants/beers.js";
+import { isEligibleForFollowUpBeer } from "../src/lib/callback-batch.js";
 
 interface ReviewVenueRow {
   venueId: string;
@@ -57,17 +58,6 @@ interface HostedCallView {
   isTest: boolean;
 }
 
-const NON_PICKUP_PATTERNS = [
-  /automated menu or ivr detected/i,
-  /ivr detected/i,
-  /voicemail detected/i,
-  /out-of-hours recording detected/i,
-  /wrong business reached/i,
-  /no clear human response detected/i,
-  /parsing produced no useful data/i,
-  /staff needed to check price but no answer returned/i,
-] as const;
-
 function getArg(name: string, fallback?: string): string | undefined {
   const prefix = `--${name}=`;
   const match = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
@@ -83,23 +73,7 @@ function readJsonFile<T>(filePath: string): T {
 }
 
 function isHumanPickup(call: HostedCallView): boolean {
-  if (call.isTest) {
-    return false;
-  }
-
-  if (call.callStatus !== "completed") {
-    return false;
-  }
-
-  if (!call.rawTranscript || call.rawTranscript.trim().length === 0) {
-    return false;
-  }
-
-  if (NON_PICKUP_PATTERNS.some((pattern) => pattern.test(call.errorMessage ?? ""))) {
-    return false;
-  }
-
-  return true;
+  return isEligibleForFollowUpBeer(call);
 }
 
 async function fetchCall(callSid: string, baseUrl: string): Promise<HostedCallView | null> {
