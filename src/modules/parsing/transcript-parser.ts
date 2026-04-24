@@ -137,6 +137,8 @@ const CORRECTION_SIGNAL_REGEX =
   /\b(wrong price|double-?check|have a check|let me check|let me just check|actually|pardon|sorry|i mean)\b/i;
 const NON_BEER_SERVICE_PRICE_REGEX =
   /\b(?:for|per)\s+an?\s+hour\b|\bby (?:the )?hour\b|\bhourly\b|\b(?:golf )?bay\b|\bdriving range\b|\blane hire\b/i;
+const GREETING_PRICE_PREFIX_REGEX =
+  /\b(?:thanks?|thank you)\s+for\s+calling\s*$|\byou(?:'ve| have)\s+reached\s*$|\bwelcome\s+to\s*$|\bthis\s+is\s*$/i;
 const DAY_OR_SPECIAL_CONTEXT_REGEX =
   /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekdays?|weekends?|public holidays?|sundays?|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|specials?|happy hour)\b/i;
 const REGULAR_PRICE_CONTEXT_REGEX = /\b(normally|usually|regular(?:ly)?(?:'s|s)?|standard|full price)\b/i;
@@ -273,6 +275,8 @@ function extractPriceMentions(segment: string): PriceMention[] {
     const previousCharacter = segment[numericStartIndex - 1] ?? "";
     const nextCharacter = segment[numericEndIndex] ?? "";
     const currencyCharacter = segment[startIndex] ?? "";
+    const beforeWindow = segment.slice(Math.max(0, numericStartIndex - 40), numericStartIndex);
+    const afterWindow = segment.slice(numericEndIndex, Math.min(segment.length, numericEndIndex + 40));
 
     if (
       previousCharacter === ":" ||
@@ -281,6 +285,14 @@ function extractPriceMentions(segment: string): PriceMention[] {
       /[£€¥]/.test(currencyCharacter) ||
       /[A-Za-z0-9]/.test(previousCharacter) ||
       /[A-Za-z0-9]/.test(nextCharacter)
+    ) {
+      continue;
+    }
+
+    if (
+      !/\$|dollar|buck/i.test(fullMatch) &&
+      GREETING_PRICE_PREFIX_REGEX.test(beforeWindow) &&
+      /^\s*[A-Za-z]/.test(afterWindow)
     ) {
       continue;
     }

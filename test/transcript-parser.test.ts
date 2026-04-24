@@ -389,6 +389,26 @@ describe("parseBeerPrices", () => {
     ]);
     expect(results[0]?.confidence).toBe(0.05);
   });
+
+  it("does not treat venue-name numbers in a greeting as a beer price", () => {
+    const results = parseBeerPrices(
+      "Thanks for calling 81 Bay. Meagan speaking. Hello? Hey Meagan, quick one, how much is a pint of Carlton Draft there? Good.",
+      {
+        assumeBeerContext: true,
+        targetBeers: [getBeerByKey("carlton_draft")],
+      },
+    );
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draft",
+        priceNumeric: null,
+        needsReview: true,
+        isUnavailable: false,
+      }),
+    ]);
+    expect(results[0]?.confidence).toBe(0.24);
+  });
 });
 
 describe("parseHappyHourInfo", () => {
