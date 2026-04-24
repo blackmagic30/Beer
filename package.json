@@ -7,7 +7,7 @@
   "main": "dist/src/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "rm -rf dist && tsc --project tsconfig.json",
+    "build": "rm -rf dist && tsc --project tsconfig.json && mkdir -p dist/src/db && cp src/db/schema.sql dist/src/db/schema.sql",
     "start": "node dist/src/server.js",
     "venues:import": "tsx scripts/import-melbourne-venues.ts",
     "venues:import:city": "tsx scripts/import-melbourne-venues.ts --city-backfill --city-only",
