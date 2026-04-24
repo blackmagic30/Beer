@@ -14,6 +14,8 @@
     "venues:import:inner-ring": "tsx scripts/import-melbourne-venues.ts --inner-ring-backfill --inner-ring-only",
     "venues:review": "tsx scripts/export-call-review.ts",
     "venues:call": "tsx scripts/batch-call-venues.ts",
+    "venues:call:until-complete": "tsx scripts/run-batch-until-complete.ts",
+    "venues:callbacks:build": "tsx scripts/build-callback-batch-from-state.ts",
     "calls:recover-stale": "tsx scripts/recover-stale-call-runs.ts",
     "results:reparse": "tsx scripts/reparse-call-runs.ts",
     "results:reparse:hosted": "tsx scripts/reparse-hosted-call-results.ts",
