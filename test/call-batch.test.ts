@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyBatchAttemptOutcome, isRetryableVenueOutcome } from "../src/lib/call-batch.js";
+import {
+  buildSuppressedPhoneSet,
+  classifyBatchAttemptOutcome,
+  isRetryableVenueOutcome,
+  shouldSuppressPhoneFromFutureDialing,
+} from "../src/lib/call-batch.js";
 
 describe("isRetryableVenueOutcome", () => {
   it("does not retry resolved parsed outcomes", () => {
@@ -83,5 +88,92 @@ describe("classifyBatchAttemptOutcome", () => {
         errorMessage: null,
       }),
     ).toBe("pending");
+  });
+});
+
+describe("shouldSuppressPhoneFromFutureDialing", () => {
+  it("suppresses strongly automated outcomes after one clear detection", () => {
+    expect(
+      shouldSuppressPhoneFromFutureDialing([
+        {
+          callStatus: "completed",
+          parseStatus: "failed",
+          errorMessage: "Automated menu or IVR detected",
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("suppresses repeated ambiguous low-signal outcomes", () => {
+    expect(
+      shouldSuppressPhoneFromFutureDialing([
+        {
+          callStatus: "completed",
+          parseStatus: "failed",
+          errorMessage: "Parsing produced no useful data",
+        },
+        {
+          callStatus: "completed",
+          parseStatus: "failed",
+          errorMessage: "No clear human response detected",
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("does not suppress a phone if it later had a real human pickup", () => {
+    expect(
+      shouldSuppressPhoneFromFutureDialing([
+        {
+          callStatus: "completed",
+          parseStatus: "failed",
+          errorMessage: "Voicemail detected",
+        },
+        {
+          callStatus: "completed",
+          parseStatus: "parsed",
+          errorMessage: null,
+        },
+      ]),
+    ).toBe(false);
+  });
+});
+
+describe("buildSuppressedPhoneSet", () => {
+  it("builds a phone-level suppression set from recent outcomes", () => {
+    const suppressed = buildSuppressedPhoneSet([
+      {
+        phoneNumber: "+61399990001",
+        callStatus: "completed",
+        parseStatus: "failed",
+        errorMessage: "Automated menu or IVR detected",
+        isTest: false,
+      },
+      {
+        phoneNumber: "+61399990002",
+        callStatus: "completed",
+        parseStatus: "failed",
+        errorMessage: "Parsing produced no useful data",
+        isTest: false,
+      },
+      {
+        phoneNumber: "+61399990002",
+        callStatus: "completed",
+        parseStatus: "failed",
+        errorMessage: "No clear human response detected",
+        isTest: false,
+      },
+      {
+        phoneNumber: "+61399990003",
+        callStatus: "completed",
+        parseStatus: "parsed",
+        errorMessage: null,
+        isTest: false,
+      },
+    ]);
+
+    expect(suppressed.has("+61399990001")).toBe(true);
+    expect(suppressed.has("+61399990002")).toBe(true);
+    expect(suppressed.has("+61399990003")).toBe(false);
   });
 });

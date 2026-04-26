@@ -12,7 +12,12 @@ import { CallRunsRepository } from "../src/db/call-runs.repository.js";
 import { createDatabase } from "../src/db/database.js";
 import type { CallRunRecord, CallStatus, ParseStatus } from "../src/db/models.js";
 import { getCallingWindowStatus } from "../src/lib/business-hours.js";
-import { classifyBatchAttemptOutcome, isRetryableVenueOutcome, type BatchAttemptOutcome } from "../src/lib/call-batch.js";
+import {
+  buildSuppressedPhoneSet,
+  classifyBatchAttemptOutcome,
+  isRetryableVenueOutcome,
+  type BatchAttemptOutcome,
+} from "../src/lib/call-batch.js";
 import { normalizeAustralianPhoneToE164 } from "../src/lib/phone.js";
 import {
   buildAreaFilterTerms,
@@ -35,12 +40,21 @@ interface VenueRow {
 }
 
 interface LocalCallRunRow {
+  phoneNumber: string;
   venueId: string | null;
   requestedBeer: string | null;
   callStatus: CallStatus;
   parseStatus: ParseStatus;
   errorMessage: string | null;
   createdAt: string;
+}
+
+interface HostedCallListRow {
+  phoneNumber: string | null;
+  callStatus: CallStatus;
+  parseStatus: ParseStatus;
+  errorMessage: string | null;
+  isTest: boolean;
 }
 
 interface BatchAttemptRecord {
@@ -191,6 +205,37 @@ async function fetchAllRows<T>(table: string, select: string): Promise<T[]> {
   }
 
   return rows;
+}
+
+async function fetchRecentHostedCalls(baseUrl: string): Promise<HostedCallListRow[]> {
+  try {
+    const response = await fetchWithRetries(
+      new URL("/api/calls?limit=200", baseUrl),
+      {},
+      {
+        label: "Fetch recent hosted calls",
+        attempts: REMOTE_OUTCOME_FETCH_RETRY_ATTEMPTS,
+        retryDelayMs: REMOTE_OUTCOME_FETCH_RETRY_DELAY_MS,
+      },
+    );
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const body = (await response.json().catch(() => null)) as
+      | {
+          data?: {
+            calls?: HostedCallListRow[];
+          };
+        }
+      | null;
+
+    return body?.data?.calls ?? [];
+  } catch (error) {
+    console.warn(`Could not fetch recent hosted calls for suppression: ${describeError(error)}`);
+    return [];
+  }
 }
 
 function getStatePath(): string {
@@ -415,6 +460,7 @@ async function refreshResolvedAttempts(
 
 async function buildSelectedVenues(
   database: ReturnType<typeof createDatabase>,
+  baseUrl: string,
   targetBeer: TargetBeerKey,
   includeAlreadyCalled: boolean,
   suburbFilterTerms: string[],
@@ -429,6 +475,7 @@ async function buildSelectedVenues(
     : (database
         .prepare(
           `SELECT
+             phone_number AS phoneNumber,
              venue_id AS venueId,
              requested_beer AS requestedBeer,
              call_status AS callStatus,
@@ -452,6 +499,18 @@ async function buildSelectedVenues(
 
     latestLocalRunByVenueId.set(row.venueId, row);
   }
+
+  const recentHostedCalls = includeAlreadyCalled ? [] : await fetchRecentHostedCalls(baseUrl);
+  const suppressedPhones = buildSuppressedPhoneSet([
+    ...localRuns.map((row) => ({
+      phoneNumber: row.phoneNumber,
+      callStatus: row.callStatus,
+      parseStatus: row.parseStatus,
+      errorMessage: row.errorMessage,
+      isTest: false,
+    })),
+    ...recentHostedCalls,
+  ]);
 
   const candidates = venues
     .map((venue) => {
@@ -482,11 +541,47 @@ async function buildSelectedVenues(
     })
     .filter((venue) => venue.callEligible)
     .filter((venue) => matchesAreaFilter({ suburb: venue.suburb, address: venue.address }, suburbFilterTerms))
+    .filter((venue) => !venue.normalizedPhone || !suppressedPhones.has(venue.normalizedPhone))
     .sort((left, right) => left.venueName.localeCompare(right.venueName));
 
   const dedupedCandidates = dedupeReviewVenueRowsByPhone(candidates);
 
   return limit > 0 ? dedupedCandidates.slice(0, limit) : dedupedCandidates;
+}
+
+function pruneRemainingVenuesOnResume(state: BatchRunState): number {
+  const attemptedPhones = new Set(
+    state.attempts
+      .map((attempt) => attempt.phoneNumber?.trim())
+      .filter((phoneNumber): phoneNumber is string => Boolean(phoneNumber)),
+  );
+  const seenRemainingPhones = new Set<string>();
+  const attemptedVenues = state.venues.slice(0, state.cursor);
+  const remainingVenues = state.venues.slice(state.cursor);
+  const dedupedRemaining: ReviewVenueRow[] = [];
+  let removed = 0;
+
+  for (const venue of remainingVenues) {
+    const phoneNumber = venue.normalizedPhone?.trim() ?? null;
+
+    if (phoneNumber && (attemptedPhones.has(phoneNumber) || seenRemainingPhones.has(phoneNumber))) {
+      removed += 1;
+      continue;
+    }
+
+    if (phoneNumber) {
+      seenRemainingPhones.add(phoneNumber);
+    }
+
+    dedupedRemaining.push(venue);
+  }
+
+  if (removed > 0) {
+    state.venues = [...attemptedVenues, ...dedupedRemaining];
+    state.total = state.venues.length;
+  }
+
+  return removed;
 }
 
 function createNewState(input: {
@@ -588,7 +683,13 @@ async function main() {
           consecutiveBadOutcomes: 0,
           consecutiveLowSignalOutcomes: existingState.consecutiveLowSignalOutcomes ?? 0,
         };
+        const removedDuplicatePhones = pruneRemainingVenuesOnResume(state);
         await refreshResolvedAttempts(callRunsRepository, baseUrl, state);
+
+        if (removedDuplicatePhones > 0) {
+          console.log(`Pruned ${removedDuplicatePhones} duplicate or already-attempted phone numbers from the remaining queue.`);
+        }
+
         writeState(statePath, state);
         console.log(
           `Resuming ${getBeerByKey(state.targetBeer).name} batch ${state.runId} at ${state.cursor + 1}/${state.total}.`,
@@ -599,6 +700,7 @@ async function main() {
     if (!state) {
       const selected = await buildSelectedVenues(
         database,
+        baseUrl,
         targetBeer,
         includeAlreadyCalled,
         suburbFilterTerms,
