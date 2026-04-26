@@ -17,6 +17,7 @@ import { normalizeAustralianPhoneToE164 } from "../src/lib/phone.js";
 import {
   buildAreaFilterTerms,
   buildReviewVenueRow,
+  dedupeReviewVenueRowsByPhone,
   matchesAreaFilter,
   type ReviewVenueRow,
 } from "../src/lib/venue-directory.js";
@@ -483,7 +484,9 @@ async function buildSelectedVenues(
     .filter((venue) => matchesAreaFilter({ suburb: venue.suburb, address: venue.address }, suburbFilterTerms))
     .sort((left, right) => left.venueName.localeCompare(right.venueName));
 
-  return limit > 0 ? candidates.slice(0, limit) : candidates;
+  const dedupedCandidates = dedupeReviewVenueRowsByPhone(candidates);
+
+  return limit > 0 ? dedupedCandidates.slice(0, limit) : dedupedCandidates;
 }
 
 function createNewState(input: {

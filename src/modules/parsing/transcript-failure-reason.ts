@@ -1,6 +1,8 @@
 const WRONG_BUSINESS_REGEX =
   /\b(?:thank you for calling|you've reached|you have reached)\b[^.\n]{0,80}\b(?:bedding|furniture|warehouse|clinic|medical|dental|physio|physiotherapy|storage|tyres?|motors?|auto|plumbing|electrical|driving range|golf square)\b|\b(?:bedding|furniture|warehouse|clinic|medical|dental|physio|physiotherapy|storage|tyres?|motors?|auto|plumbing|electrical)\b[^.\n]{0,40}\b(?:how can i help|how may i help)\b/i;
 const UNINFORMATIVE_RESPONSE_REGEX = /^(?:(?:what|yeah|yes|hello|hi|sorry|pardon|come again)[\s.?!,]*)+$/i;
+const IVR_KEYPAD_PROMPT_REGEX =
+  /\bpress (?:(?:zero|one|two|three|four|five|six|seven|eight|nine)|[0-9]|pound|hash|star)\b|\bto connect your call\b|\bselect from the following options\b|\bfor general (?:hotel )?inquiries\b|\bfor .* press (?:(?:zero|one|two|three|four|five|six|seven|eight|nine)|[0-9]|pound|hash|star)\b/i;
 
 export function detectTranscriptFailureReason(userTranscript: string, rawTranscript: string): string | null {
   const transcript = `${userTranscript}\n${rawTranscript}`.toLowerCase();
@@ -35,7 +37,8 @@ export function detectTranscriptFailureReason(userTranscript: string, rawTranscr
   }
 
   if (
-    /\bpress (?:one|1|two|2|three|3|four|4)\b|\bmenu options\b|\bplease listen carefully\b|\bfunctions and events\b|\bfor reservations\b|\bmake a reservation\b|\brunning a little late for your reservation\b|\bplease hold the line\b|\bautomated receptionist\b|\bvirtual assistant\b/.test(
+    IVR_KEYPAD_PROMPT_REGEX.test(transcript) ||
+    /\bmenu options\b|\bplease listen carefully\b|\bfunctions and events\b|\bfor reservations\b|\bmake a reservation\b|\brunning a little late for your reservation\b|\bplease hold the line\b|\bautomated receptionist\b|\bvirtual assistant\b/.test(
       transcript,
     )
   ) {

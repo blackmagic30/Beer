@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildReviewVenueRow,
+  dedupeReviewVenueRowsByPhone,
   hasStrongBarOrPubNameSignal,
   isStrictBarOrPubPlace,
   isRestaurantLedVenueName,
@@ -220,5 +221,41 @@ describe("buildReviewVenueRow", () => {
 
     expect(row.callEligible).toBe(false);
     expect(row.issues).toContain("suspicious_venue_name");
+  });
+});
+
+describe("dedupeReviewVenueRowsByPhone", () => {
+  it("keeps only the first venue for duplicate normalized phones", () => {
+    const rows = dedupeReviewVenueRowsByPhone([
+      buildReviewVenueRow({
+        id: "venue-1",
+        name: "Loop Roof",
+        suburb: "Melbourne",
+        address: "3 Example St, Melbourne VIC 3000, Australia",
+        phone: "(03) 9999 1111",
+        normalizedPhone: "+61399991111",
+        latitude: -37.81,
+        longitude: 144.97,
+        source: "google_places_bar_pub",
+        alreadyCalled: false,
+        latestCallAt: null,
+      }),
+      buildReviewVenueRow({
+        id: "venue-2",
+        name: "Loop Roof Duplicate",
+        suburb: "Melbourne",
+        address: "5 Example St, Melbourne VIC 3000, Australia",
+        phone: "(03) 9999 1111",
+        normalizedPhone: "+61399991111",
+        latitude: -37.81,
+        longitude: 144.97,
+        source: "google_places_bar_pub",
+        alreadyCalled: false,
+        latestCallAt: null,
+      }),
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.venueName).toBe("Loop Roof");
   });
 });

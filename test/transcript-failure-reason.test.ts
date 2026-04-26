@@ -114,6 +114,15 @@ describe("detectTranscriptFailureReason", () => {
     expect(result).toBe("Automated menu or IVR detected");
   });
 
+  it("detects higher-number keypad prompts as IVR", () => {
+    const result = detectTranscriptFailureReason(
+      "To connect your call, press eight. To connect your call, press nine.",
+      "USER: To connect your call, press eight. To connect your call, press nine.",
+    );
+
+    expect(result).toBe("Automated menu or IVR detected");
+  });
+
   it("detects wrong-business greetings", () => {
     const result = detectTranscriptFailureReason(
       "... . Huffman Bedding, how can I help?. Oh, we don't have Guinness, so zero.",

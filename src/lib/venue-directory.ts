@@ -34,6 +34,27 @@ export interface ReviewVenueRow {
   issues: string[];
 }
 
+export function dedupeReviewVenueRowsByPhone(rows: ReviewVenueRow[]): ReviewVenueRow[] {
+  const seenPhones = new Set<string>();
+  const deduped: ReviewVenueRow[] = [];
+
+  for (const row of rows) {
+    if (!row.normalizedPhone) {
+      deduped.push(row);
+      continue;
+    }
+
+    if (seenPhones.has(row.normalizedPhone)) {
+      continue;
+    }
+
+    seenPhones.add(row.normalizedPhone);
+    deduped.push(row);
+  }
+
+  return deduped;
+}
+
 const AREA_FILTER_ALIASES: Record<string, string[]> = {
   cbd: ["melbourne"],
   "melbourne cbd": ["melbourne"],
