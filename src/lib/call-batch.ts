@@ -15,10 +15,12 @@ export type BatchAttemptOutcome = "good" | "bad" | "soft" | "pending";
 
 const NON_RETRYABLE_FAILURE_PATTERNS = [
   /wrong business reached/i,
+  /booking line or switchboard reached/i,
   /call challenged by staff/i,
 ] as const;
 
 const SOFT_FAILURE_PATTERNS = [
+  /booking line or switchboard reached/i,
   /automated menu or ivr detected/i,
   /ivr detected/i,
   /voicemail detected/i,
@@ -30,6 +32,7 @@ const SOFT_FAILURE_PATTERNS = [
 
 const STRONGLY_SUPPRESSIBLE_FAILURE_PATTERNS = [
   /wrong business reached/i,
+  /booking line or switchboard reached/i,
   /automated menu or ivr detected/i,
   /ivr detected/i,
   /automated recording detected/i,

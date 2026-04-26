@@ -45,6 +45,16 @@ describe("isEligibleForFollowUpBeer", () => {
         isTest: false,
       }),
     ).toBe(false);
+
+    expect(
+      isEligibleForFollowUpBeer({
+        callStatus: "completed",
+        parseStatus: "failed",
+        rawTranscript: "USER: You've reached the reservations team.",
+        errorMessage: "Booking line or switchboard reached",
+        isTest: false,
+      }),
+    ).toBe(false);
   });
 
   it("excludes test calls from follow-up beer batches", () => {
@@ -59,4 +69,3 @@ describe("isEligibleForFollowUpBeer", () => {
     ).toBe(false);
   });
 });
-

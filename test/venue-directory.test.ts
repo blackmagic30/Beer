@@ -146,6 +146,7 @@ describe("buildReviewVenueRow", () => {
   it("marks rows with normalized phone and coordinates as call-eligible", () => {
     const row = buildReviewVenueRow({
       id: "venue-1",
+      googlePlaceId: null,
       name: "The Local",
       suburb: "Richmond",
       address: "1 Swan St, Richmond VIC 3121, Australia",
@@ -165,6 +166,7 @@ describe("buildReviewVenueRow", () => {
   it("marks already-called or incomplete rows for review", () => {
     const row = buildReviewVenueRow({
       id: "venue-2",
+      googlePlaceId: null,
       name: "Another Venue",
       suburb: "Melbourne",
       address: "2 Example St, Melbourne VIC 3000, Australia",
@@ -188,6 +190,7 @@ describe("buildReviewVenueRow", () => {
   it("marks suspicious venue names as not call-eligible", () => {
     const row = buildReviewVenueRow({
       id: "venue-3",
+      googlePlaceId: null,
       name: "Golf Square Sunshine",
       suburb: "Sunshine North",
       address: "8 Annastasia Way, Sunshine North VIC 3020",
@@ -207,6 +210,7 @@ describe("buildReviewVenueRow", () => {
   it("marks pickle-club names as suspicious for calling", () => {
     const row = buildReviewVenueRow({
       id: "venue-4",
+      googlePlaceId: null,
       name: "Royal Pickle Club Carrum Downs",
       suburb: "Carrum Downs",
       address: "Test",
@@ -229,6 +233,7 @@ describe("dedupeReviewVenueRowsByPhone", () => {
     const rows = dedupeReviewVenueRowsByPhone([
       buildReviewVenueRow({
         id: "venue-1",
+        googlePlaceId: null,
         name: "Loop Roof",
         suburb: "Melbourne",
         address: "3 Example St, Melbourne VIC 3000, Australia",
@@ -242,6 +247,7 @@ describe("dedupeReviewVenueRowsByPhone", () => {
       }),
       buildReviewVenueRow({
         id: "venue-2",
+        googlePlaceId: null,
         name: "Loop Roof Duplicate",
         suburb: "Melbourne",
         address: "5 Example St, Melbourne VIC 3000, Australia",

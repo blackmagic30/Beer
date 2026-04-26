@@ -7,6 +7,7 @@ export interface CallbackEligibleCallLike {
 }
 
 const NON_PICKUP_PATTERNS = [
+  /booking line or switchboard reached/i,
   /automated menu or ivr detected/i,
   /ivr detected/i,
   /voicemail detected/i,
@@ -36,4 +37,3 @@ export function isEligibleForFollowUpBeer(call: CallbackEligibleCallLike): boole
 
   return ["parsed", "partial", "needs_review", "failed"].includes(call.parseStatus);
 }
-

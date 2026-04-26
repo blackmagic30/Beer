@@ -3,6 +3,8 @@ const WRONG_BUSINESS_REGEX =
 const UNINFORMATIVE_RESPONSE_REGEX = /^(?:(?:what|yeah|yes|hello|hi|sorry|pardon|come again)[\s.?!,]*)+$/i;
 const IVR_KEYPAD_PROMPT_REGEX =
   /\bpress (?:(?:zero|one|two|three|four|five|six|seven|eight|nine)|[0-9]|pound|hash|star)\b|\bto connect your call\b|\bselect from the following options\b|\bfor general (?:hotel )?inquiries\b|\bfor .* press (?:(?:zero|one|two|three|four|five|six|seven|eight|nine)|[0-9]|pound|hash|star)\b/i;
+const BOOKING_LINE_OR_SWITCHBOARD_REGEX =
+  /\b(?:reservations?|reservation team|reservations office|events office|functions and events|private dining|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|dial an extension|if you know your party'?s extension|book online|booking enquiries?|booking line|bookings? team|central reservations?)\b/i;
 
 export function detectTranscriptFailureReason(userTranscript: string, rawTranscript: string): string | null {
   const transcript = `${userTranscript}\n${rawTranscript}`.toLowerCase();
@@ -69,12 +71,17 @@ export function detectTranscriptFailureReason(userTranscript: string, rawTranscr
     return "Voicemail detected";
   }
 
+  if (BOOKING_LINE_OR_SWITCHBOARD_REGEX.test(transcript)) {
+    return "Booking line or switchboard reached";
+  }
+
   return null;
 }
 
 export function shouldOverrideParsedOutcome(failureReason: string | null): boolean {
   return [
     "Wrong business reached",
+    "Booking line or switchboard reached",
     "Automated menu or IVR detected",
     "Automated recording detected",
     "Out-of-hours recording detected",

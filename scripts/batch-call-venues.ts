@@ -26,10 +26,12 @@ import {
   matchesAreaFilter,
   type ReviewVenueRow,
 } from "../src/lib/venue-directory.js";
+import { getVenueLikelyOpenMap } from "../src/lib/venue-open-hours.js";
 import { recoverStaleCallRuns } from "../src/modules/calls/stale-call-recovery.js";
 
 interface VenueRow {
   id: string;
+  google_place_id: string | null;
   name: string;
   address: string | null;
   suburb: string | null;
@@ -95,6 +97,11 @@ interface BatchRunState {
   consecutiveLowSignalOutcomes: number;
   venues: ReviewVenueRow[];
   attempts: BatchAttemptRecord[];
+}
+
+interface VenueOpenFilterResult {
+  venues: ReviewVenueRow[];
+  skippedClosedCount: number;
 }
 
 const ACTIVE_STALE_MINUTES = 20;
@@ -468,7 +475,7 @@ async function buildSelectedVenues(
 ): Promise<ReviewVenueRow[]> {
   const venues = await fetchAllRows<VenueRow>(
     "venues",
-    "id, name, address, suburb, phone, latitude, longitude, source",
+    "id, google_place_id, name, address, suburb, phone, latitude, longitude, source",
   );
   const localRuns = includeAlreadyCalled
     ? []
@@ -527,6 +534,7 @@ async function buildSelectedVenues(
 
       return buildReviewVenueRow({
         id: venue.id,
+        googlePlaceId: venue.google_place_id,
         name: venue.name,
         suburb: venue.suburb,
         address: venue.address,
@@ -545,8 +553,55 @@ async function buildSelectedVenues(
     .sort((left, right) => left.venueName.localeCompare(right.venueName));
 
   const dedupedCandidates = dedupeReviewVenueRowsByPhone(candidates);
+  const openFilteredCandidates = await filterLikelyClosedVenues(dedupedCandidates);
 
-  return limit > 0 ? dedupedCandidates.slice(0, limit) : dedupedCandidates;
+  if (openFilteredCandidates.skippedClosedCount > 0) {
+    console.log(`Skipped ${openFilteredCandidates.skippedClosedCount} venues that look closed right now.`);
+  }
+
+  return limit > 0 ? openFilteredCandidates.venues.slice(0, limit) : openFilteredCandidates.venues;
+}
+
+async function filterLikelyClosedVenues(venues: ReviewVenueRow[]): Promise<VenueOpenFilterResult> {
+  const googleApiKey = process.env.GOOGLE_PLACES_API_KEY ?? process.env.GOOGLE_MAPS_API_KEY;
+
+  if (!googleApiKey) {
+    return {
+      venues,
+      skippedClosedCount: 0,
+    };
+  }
+
+  const likelyOpenByPlaceId = await getVenueLikelyOpenMap(
+    venues
+      .map((venue) => venue.googlePlaceId)
+      .filter((googlePlaceId): googlePlaceId is string => Boolean(googlePlaceId)),
+    {
+      apiKey: googleApiKey,
+      timezone: env.OUTBOUND_CALL_TIMEZONE,
+    },
+  );
+
+  let skippedClosedCount = 0;
+  const filteredVenues = venues.filter((venue) => {
+    if (!venue.googlePlaceId) {
+      return true;
+    }
+
+    const likelyOpen = likelyOpenByPlaceId.get(venue.googlePlaceId);
+
+    if (likelyOpen === false) {
+      skippedClosedCount += 1;
+      return false;
+    }
+
+    return true;
+  });
+
+  return {
+    venues: filteredVenues,
+    skippedClosedCount,
+  };
 }
 
 function pruneRemainingVenuesOnResume(state: BatchRunState): number {

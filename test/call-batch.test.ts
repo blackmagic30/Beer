@@ -37,6 +37,16 @@ describe("isRetryableVenueOutcome", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not retry booking-line failures", () => {
+    expect(
+      isRetryableVenueOutcome({
+        callStatus: "completed",
+        parseStatus: "failed",
+        errorMessage: "Booking line or switchboard reached",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("classifyBatchAttemptOutcome", () => {
@@ -99,6 +109,18 @@ describe("shouldSuppressPhoneFromFutureDialing", () => {
           callStatus: "completed",
           parseStatus: "failed",
           errorMessage: "Automated menu or IVR detected",
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("suppresses booking-line outcomes after one clear detection", () => {
+    expect(
+      shouldSuppressPhoneFromFutureDialing([
+        {
+          callStatus: "completed",
+          parseStatus: "failed",
+          errorMessage: "Booking line or switchboard reached",
         },
       ]),
     ).toBe(true);

@@ -20,6 +20,7 @@ export interface GooglePlaceCandidate {
 
 export interface ReviewVenueRow {
   venueId: string;
+  googlePlaceId: string | null;
   venueName: string;
   suburb: string | null;
   address: string | null;
@@ -231,6 +232,7 @@ export function shouldImportBarOrPubPlace(place: GooglePlaceCandidate): boolean 
 
 export function buildReviewVenueRow(input: {
   id: string;
+  googlePlaceId: string | null;
   name: string;
   suburb: string | null;
   address: string | null;
@@ -262,6 +264,7 @@ export function buildReviewVenueRow(input: {
 
   return {
     venueId: input.id,
+    googlePlaceId: input.googlePlaceId,
     venueName: input.name,
     suburb: input.suburb,
     address: input.address,

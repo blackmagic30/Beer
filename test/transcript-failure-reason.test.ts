@@ -123,6 +123,15 @@ describe("detectTranscriptFailureReason", () => {
     expect(result).toBe("Automated menu or IVR detected");
   });
 
+  it("detects booking-line and switchboard greetings", () => {
+    const result = detectTranscriptFailureReason(
+      "You've reached the reservations team. For accommodation or functions, please hold for our front desk.",
+      "USER: You've reached the reservations team. For accommodation or functions, please hold for our front desk.",
+    );
+
+    expect(result).toBe("Booking line or switchboard reached");
+  });
+
   it("detects wrong-business greetings", () => {
     const result = detectTranscriptFailureReason(
       "... . Huffman Bedding, how can I help?. Oh, we don't have Guinness, so zero.",
@@ -134,6 +143,7 @@ describe("detectTranscriptFailureReason", () => {
 
   it("overrides parsed outcomes for wrong-business calls", () => {
     expect(shouldOverrideParsedOutcome("Wrong business reached")).toBe(true);
+    expect(shouldOverrideParsedOutcome("Booking line or switchboard reached")).toBe(true);
     expect(shouldOverrideParsedOutcome("Automated menu or IVR detected")).toBe(true);
     expect(shouldOverrideParsedOutcome("Voicemail detected")).toBe(true);
     expect(shouldOverrideParsedOutcome("Call challenged by staff")).toBe(false);

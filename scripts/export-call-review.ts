@@ -15,6 +15,7 @@ import { buildAreaFilterTerms, buildReviewVenueRow, matchesAreaFilter } from "..
 
 interface VenueRow {
   id: string;
+  google_place_id: string | null;
   name: string;
   suburb: string | null;
   address: string | null;
@@ -107,7 +108,7 @@ async function main() {
   try {
     const venues = await fetchAllRows<VenueRow>(
       "venues",
-      "id, name, suburb, address, phone, latitude, longitude, source",
+      "id, google_place_id, name, suburb, address, phone, latitude, longitude, source",
     );
     const latestCallByVenueId = new Map<string, string>();
     const localRuns = database
@@ -146,6 +147,7 @@ async function main() {
       .map((venue) =>
         buildReviewVenueRow({
           id: venue.id,
+          googlePlaceId: venue.google_place_id,
           name: venue.name,
           suburb: venue.suburb,
           address: venue.address,
