@@ -60,7 +60,7 @@ interface BuildManualCallResultRowInput {
   venue: AdminVenueSnapshot;
   latestResult: ExistingCallResultSnapshot | null;
   beers: ManualBeerInput[];
-  source: "manual_entry" | "menu_photo_ocr";
+  source: "manual_entry" | "menu_photo_ocr" | "source_ingestion";
   note?: string | null;
   savedAt: string;
 }

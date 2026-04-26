@@ -85,3 +85,30 @@ CREATE INDEX IF NOT EXISTS idx_beer_price_results_timestamp
 
 CREATE INDEX IF NOT EXISTS idx_beer_price_results_needs_review
   ON beer_price_results (needs_review, timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS admin_ingestion_queue (
+  id TEXT PRIMARY KEY,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_url TEXT,
+  image_data_url TEXT,
+  note TEXT,
+  status TEXT NOT NULL DEFAULT 'pending_review',
+  venue_name_guess TEXT,
+  captured_notes TEXT,
+  overall_confidence REAL,
+  extracted_beers_json TEXT NOT NULL DEFAULT '[]',
+  review_beers_json TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  published_at TEXT,
+  rejected_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_status_created
+  ON admin_ingestion_queue (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_venue_status
+  ON admin_ingestion_queue (venue_id, status, created_at DESC);

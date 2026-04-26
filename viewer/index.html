@@ -381,6 +381,48 @@
       </section>
 
       <section class="adminCard">
+        <h3>Source ingestion queue</h3>
+        <div class="adminNotice" style="margin-bottom:12px;">
+          Queue venue-owned menu images or source screenshots for OCR. We score the extraction, hold it for manual review, and only publish to the map after approval.
+        </div>
+
+        <div class="adminGrid">
+          <label class="adminField adminField--full" style="grid-column: 1 / -1;">
+            <span>Source image URL (optional)</span>
+            <input id="adminSourceUrl" type="url" placeholder="https://venue-site/menu.jpg" />
+          </label>
+          <label class="adminField">
+            <span>Upload source image</span>
+            <input id="adminSourceImage" type="file" accept="image/*" capture="environment" />
+          </label>
+          <label class="adminField">
+            <span>Source notes (optional)</span>
+            <input id="adminSourceNote" type="text" placeholder="Venue website menu, April 2026" />
+          </label>
+        </div>
+
+        <div class="adminActions">
+          <button id="adminQueueSource" class="adminButton" type="button">Queue source for review</button>
+          <button id="adminRefreshQueue" class="adminButton" type="button">Refresh pending queue</button>
+        </div>
+        <div id="adminSourceQueueStatus" class="adminHint" style="margin-top:10px;"></div>
+
+        <div style="margin-top:16px;">
+          <div style="font-weight:700; margin-bottom:8px;">Pending review</div>
+          <div id="adminQueueList" class="adminHint">No queued sources loaded yet.</div>
+        </div>
+
+        <div id="adminQueueReview" class="adminHint" style="margin-top:16px;">
+          Choose a queued source to review its OCR result.
+        </div>
+        <div class="adminActions">
+          <button id="adminPublishQueued" class="adminButton adminButton--primary" type="button">Publish reviewed source</button>
+          <button id="adminRejectQueued" class="adminButton adminButton--danger" type="button">Reject queued source</button>
+        </div>
+        <div id="adminQueuePublishStatus" class="adminHint" style="margin-top:10px;"></div>
+      </section>
+
+      <section class="adminCard">
         <h3>Add new pub/bar</h3>
         <div class="adminNotice" style="margin-bottom:12px;">
           Enter the official venue name and a location hint like <strong>South Melbourne</strong> or <strong>123 Clarendon St, South Melbourne</strong>. We will look up the proper address and map coordinates for you.
@@ -488,6 +530,17 @@
     const adminCaptureNoteEl = document.getElementById("adminCaptureNote");
     const adminSaveBeersEl = document.getElementById("adminSaveBeers");
     const adminCaptureStatusEl = document.getElementById("adminCaptureStatus");
+    const adminSourceUrlEl = document.getElementById("adminSourceUrl");
+    const adminSourceImageEl = document.getElementById("adminSourceImage");
+    const adminSourceNoteEl = document.getElementById("adminSourceNote");
+    const adminQueueSourceEl = document.getElementById("adminQueueSource");
+    const adminRefreshQueueEl = document.getElementById("adminRefreshQueue");
+    const adminSourceQueueStatusEl = document.getElementById("adminSourceQueueStatus");
+    const adminQueueListEl = document.getElementById("adminQueueList");
+    const adminQueueReviewEl = document.getElementById("adminQueueReview");
+    const adminPublishQueuedEl = document.getElementById("adminPublishQueued");
+    const adminRejectQueuedEl = document.getElementById("adminRejectQueued");
+    const adminQueuePublishStatusEl = document.getElementById("adminQueuePublishStatus");
     const adminNewVenueNameEl = document.getElementById("adminNewVenueName");
     const adminNewVenueLocationEl = document.getElementById("adminNewVenueLocation");
     const adminVenueLookupSummaryEl = document.getElementById("adminVenueLookupSummary");
@@ -511,10 +564,13 @@
     let adminStatus = {
       enabled: false,
       ocrEnabled: false,
+      queueEnabled: false,
     };
     let adminVenues = [];
+    let adminQueuedIngestions = [];
     let selectedAdminVenueId = null;
     let adminCaptureSource = "manual_entry";
+    let selectedQueuedIngestionId = null;
     let geocoder = null;
     let placesService = null;
     let venueLookupCandidates = [];
@@ -550,6 +606,9 @@
       syncAdminPanelState();
       try {
         await ensureAdminVenuesLoaded();
+        if (adminStatus.queueEnabled && getAdminSecret()) {
+          await refreshQueuedIngestions();
+        }
       } catch (error) {
         setHint(
           adminBannerEl,
@@ -977,20 +1036,32 @@
         return "Admin write tools are disabled on this deployment. Set ADMIN_SHARED_SECRET on the server to enable manual venue and beer entry.";
       }
 
+      if (!adminStatus.queueEnabled) {
+        return "Admin write tools are live. The source ingestion review queue still needs the server queue feature enabled.";
+      }
+
       if (!adminStatus.ocrEnabled) {
         return "Admin write tools are live. Menu-photo OCR still needs OPENAI_API_KEY on the server.";
       }
 
-      return "Admin write tools and menu-photo OCR are ready.";
+      return "Admin write tools, OCR, and the review queue are ready.";
     }
 
     function syncAdminBanner() {
       const tone = !adminStatus.enabled
         ? "warning"
-        : adminStatus.ocrEnabled
+        : adminStatus.ocrEnabled && adminStatus.queueEnabled
           ? "success"
           : "warning";
       setHint(adminBannerEl, getAdminStatusMessage(), tone);
+    }
+
+    function setQueueReviewSummary(message, tone = null) {
+      setHint(adminQueueReviewEl, message, tone);
+    }
+
+    function getSelectedQueuedIngestion() {
+      return adminQueuedIngestions.find((item) => item.id === selectedQueuedIngestionId) || null;
     }
 
     function buildAvailabilityFields(choice) {
@@ -1063,6 +1134,12 @@
     function createBeerRowElement(beer = {}) {
       const row = document.createElement("div");
       row.className = "adminBeerRow";
+      const confidenceSummary = Number.isFinite(Number(beer.confidence))
+        ? `${Math.round(Number(beer.confidence) * 100)}% OCR confidence`
+        : null;
+      const ocrNotesSummary = typeof beer.notes === "string" && beer.notes.trim().length > 0
+        ? beer.notes.trim()
+        : null;
       row.innerHTML = `
         <label class="adminField adminField--full">
           <span>Beer name</span>
@@ -1131,6 +1208,11 @@
           hint = "On-tap beers need the pint number before they can be saved.";
         }
 
+        const extraParts = [confidenceSummary, ocrNotesSummary].filter(Boolean);
+        if (extraParts.length > 0) {
+          hint = `${hint} • ${extraParts.join(" • ")}`;
+        }
+
         pricePreviewEl.value = preview;
         rowHintEl.textContent = hint;
       }
@@ -1193,6 +1275,99 @@
         .filter(Boolean);
     }
 
+    function getQueueItemSummary(item) {
+      const confidence = item.overallConfidence == null
+        ? "No score"
+        : `${Math.round(Number(item.overallConfidence) * 100)}% confidence`;
+      const beers = Array.isArray(item.extractedBeers) ? item.extractedBeers.length : 0;
+      return `${confidence} • ${beers} beer item${beers === 1 ? "" : "s"}`;
+    }
+
+    function renderQueuedIngestions() {
+      if (!adminQueuedIngestions.length) {
+        setHint(adminQueueListEl, "No pending source items right now.", null);
+        setQueueReviewSummary("Choose a queued source to review its OCR result.", null);
+        return;
+      }
+
+      adminQueueListEl.className = "adminHint adminHint--success";
+      adminQueueListEl.innerHTML = `
+        <div style="display:grid; gap:8px;">
+          ${adminQueuedIngestions
+            .map((item) => {
+              const selected = item.id === selectedQueuedIngestionId;
+              return `
+                <button
+                  type="button"
+                  class="adminButton ${selected ? "adminButton--primary" : ""}"
+                  data-role="queueItem"
+                  data-ingestion-id="${escapeHtml(item.id)}"
+                  style="justify-content:flex-start; text-align:left;"
+                >
+                  <span style="display:block; font-weight:700;">${escapeHtml(item.venueName)}</span>
+                  <span style="display:block; opacity:0.85;">
+                    ${escapeHtml(item.sourceType.replaceAll("_", " "))} • ${escapeHtml(getQueueItemSummary(item))}
+                  </span>
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+
+      adminQueueListEl.querySelectorAll('[data-role="queueItem"]').forEach((button) => {
+        button.addEventListener("click", () => {
+          const id = button.getAttribute("data-ingestion-id");
+          const item = adminQueuedIngestions.find((candidate) => candidate.id === id);
+
+          if (!item) {
+            return;
+          }
+
+          selectedQueuedIngestionId = item.id;
+          adminCaptureSource = "source_ingestion";
+          selectedAdminVenueId = item.venueId;
+          adminVenueSearchEl.value = item.venueName;
+          renderAdminVenueOptions();
+          setBeerRows(item.reviewBeers || item.extractedBeers || []);
+          adminCaptureNoteEl.value = [
+            item.note,
+            item.capturedNotes,
+            item.sourceUrl ? `Source: ${item.sourceUrl}` : null,
+          ].filter(Boolean).join("\n");
+
+          setQueueReviewSummary(
+            `${item.venueName} • ${getQueueItemSummary(item)}${item.venueNameGuess ? ` • OCR guessed ${item.venueNameGuess}` : ""}`,
+            item.overallConfidence != null && Number(item.overallConfidence) >= 0.82 ? "success" : "warning",
+          );
+          setHint(
+            adminQueuePublishStatusEl,
+            "Queued OCR loaded into the beer editor. Review and publish when it looks right.",
+            "success",
+          );
+          renderQueuedIngestions();
+        });
+      });
+    }
+
+    async function refreshQueuedIngestions() {
+      if (!adminStatus.queueEnabled) {
+        setHint(adminQueueListEl, "The review queue is not enabled on this deployment yet.", "warning");
+        return;
+      }
+
+      const result = await authorizedJsonRequest("/api/admin/ingestions?status=pending_review&limit=40", {
+        method: "GET",
+      });
+      adminQueuedIngestions = Array.isArray(result.items) ? result.items : [];
+
+      if (!adminQueuedIngestions.some((item) => item.id === selectedQueuedIngestionId)) {
+        selectedQueuedIngestionId = adminQueuedIngestions[0]?.id || null;
+      }
+
+      renderQueuedIngestions();
+    }
+
     function getSelectedAdminVenue() {
       return adminVenues.find((venue) => venue.id === selectedAdminVenueId) || null;
     }
@@ -1247,16 +1422,20 @@
 
     async function fetchAdminStatus() {
       try {
-        const response = await fetch("/api/admin/status");
-        const payload = await response.json();
-        adminStatus = payload && payload.ok && payload.data
+      const response = await fetch("/api/admin/status");
+      const payload = await response.json();
+      adminStatus = payload && payload.ok && payload.data
           ? payload.data
-          : { enabled: false, ocrEnabled: false };
+          : { enabled: false, ocrEnabled: false, queueEnabled: false };
       } catch (_error) {
-        adminStatus = { enabled: false, ocrEnabled: false };
+        adminStatus = { enabled: false, ocrEnabled: false, queueEnabled: false };
       }
 
       syncAdminBanner();
+
+      if (!adminStatus.queueEnabled) {
+        setHint(adminQueueListEl, "The review queue is not enabled on this deployment yet.", "warning");
+      }
     }
 
     async function ensureAdminVenuesLoaded() {
@@ -1280,20 +1459,26 @@
       renderDuplicateWarning();
     }
 
-    async function authorizedJsonFetch(url, body) {
+    async function authorizedJsonRequest(url, options = {}) {
       const secret = getAdminSecret();
 
       if (!secret) {
         throw new Error("Add the admin secret first.");
       }
 
+      const { method = "POST", body } = options;
+      const headers = {
+        "x-admin-secret": secret,
+      };
+
+      if (body !== undefined) {
+        headers["Content-Type"] = "application/json";
+      }
+
       const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-secret": secret,
-        },
-        body: JSON.stringify(body),
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
       });
       const payload = await response.json().catch(() => null);
 
@@ -1302,6 +1487,10 @@
       }
 
       return payload.data;
+    }
+
+    async function authorizedJsonFetch(url, body) {
+      return authorizedJsonRequest(url, { method: "POST", body });
     }
 
     function readFileAsDataUrl(file) {
@@ -1608,7 +1797,7 @@
           });
         }).catch(() => null);
       } else {
-        detailResult = await geocodeAddress(query).catch(() => null);
+        detailResult = await geocodeAddress([trimmedName, trimmedLocation].filter(Boolean).join(", ")).catch(() => null);
       }
 
       const geometrySource = detailResult?.geometry?.location || candidate.geometry?.location;
@@ -1677,7 +1866,71 @@
 
     adminAddBeerRowEl.addEventListener("click", () => {
       adminCaptureSource = "manual_entry";
+      selectedQueuedIngestionId = null;
+      setQueueReviewSummary("Manual beer entry selected. Queue publishing is not active.", null);
       adminBeerRowsEl.appendChild(createBeerRowElement());
+    });
+
+    adminQueueSourceEl.addEventListener("click", async () => {
+      try {
+        if (!adminStatus.queueEnabled) {
+          throw new Error("The source ingestion queue is not enabled on this deployment yet.");
+        }
+
+        const venue = getSelectedAdminVenue();
+        if (!venue) {
+          throw new Error("Choose a venue before queueing a source.");
+        }
+
+        const sourceUrl = adminSourceUrlEl.value.trim() || null;
+        const file = adminSourceImageEl.files?.[0];
+        const imageDataUrl = file ? await compressImageFile(file) : null;
+
+        if (!sourceUrl && !imageDataUrl) {
+          throw new Error("Add a direct source image URL or upload an image first.");
+        }
+
+        setHint(adminSourceQueueStatusEl, "Queueing source and running OCR...", null);
+        const result = await authorizedJsonFetch("/api/admin/ingestions/queue", {
+          venueId: venue.id,
+          sourceType: imageDataUrl
+            ? (sourceUrl ? "source_image_url" : "menu_photo_upload")
+            : "source_reference",
+          sourceUrl,
+          imageDataUrl,
+          note: adminSourceNoteEl.value.trim() || null,
+        });
+
+        adminSourceUrlEl.value = "";
+        adminSourceImageEl.value = "";
+        adminSourceNoteEl.value = "";
+        setHint(
+          adminSourceQueueStatusEl,
+          `Queued source for ${result.queueItem.venueName}. OCR found ${result.queueItem.extractedBeers.length} beer item${result.queueItem.extractedBeers.length === 1 ? "" : "s"}.`,
+          "success",
+        );
+        await refreshQueuedIngestions();
+      } catch (error) {
+        setHint(
+          adminSourceQueueStatusEl,
+          error instanceof Error ? error.message : "Could not queue the source.",
+          "error",
+        );
+      }
+    });
+
+    adminRefreshQueueEl.addEventListener("click", async () => {
+      try {
+        setHint(adminSourceQueueStatusEl, "Refreshing pending review queue...", null);
+        await refreshQueuedIngestions();
+        setHint(adminSourceQueueStatusEl, `Loaded ${adminQueuedIngestions.length} pending source item${adminQueuedIngestions.length === 1 ? "" : "s"}.`, "success");
+      } catch (error) {
+        setHint(
+          adminSourceQueueStatusEl,
+          error instanceof Error ? error.message : "Could not refresh the queue.",
+          "error",
+        );
+      }
     });
 
     adminOcrButtonEl.addEventListener("click", async () => {
@@ -1704,6 +1957,7 @@
         });
 
         adminCaptureSource = "menu_photo_ocr";
+        selectedQueuedIngestionId = null;
         setBeerRows(result.beers || []);
 
         if (result.capturedNotes && !adminCaptureNoteEl.value.trim()) {
@@ -1712,7 +1966,7 @@
 
         setHint(
           adminOcrResultEl,
-          `OCR found ${result.beers.length} beer item${result.beers.length === 1 ? "" : "s"}${result.venueNameGuess ? ` • venue guess: ${result.venueNameGuess}` : ""}`,
+          `OCR found ${result.beers.length} beer item${result.beers.length === 1 ? "" : "s"}${result.venueNameGuess ? ` • venue guess: ${result.venueNameGuess}` : ""}${result.overallConfidence != null ? ` • ${Math.round(Number(result.overallConfidence) * 100)}% confidence` : ""}`,
           result.beers.length > 0 ? "success" : "warning",
         );
       } catch (error) {
@@ -1726,6 +1980,10 @@
 
     adminSaveBeersEl.addEventListener("click", async () => {
       try {
+        if (selectedQueuedIngestionId) {
+          throw new Error("This editor is currently showing a queued source. Use Publish reviewed source instead.");
+        }
+
         const venue = getSelectedAdminVenue();
         if (!venue) {
           throw new Error("Choose a venue before saving beers.");
@@ -1757,6 +2015,72 @@
         setHint(
           adminCaptureStatusEl,
           error instanceof Error ? error.message : "Failed to save beers.",
+          "error",
+        );
+      }
+    });
+
+    adminPublishQueuedEl.addEventListener("click", async () => {
+      try {
+        const queueItem = getSelectedQueuedIngestion();
+        if (!queueItem) {
+          throw new Error("Choose a queued source first.");
+        }
+
+        const beers = collectBeerRows();
+        if (!beers.length) {
+          throw new Error("Review and keep at least one beer before publishing.");
+        }
+
+        setHint(adminQueuePublishStatusEl, "Publishing reviewed source into the venue snapshot...", null);
+        const result = await authorizedJsonFetch(`/api/admin/ingestions/${encodeURIComponent(queueItem.id)}/publish`, {
+          beers,
+          note: adminCaptureNoteEl.value.trim() || null,
+        });
+
+        selectedQueuedIngestionId = null;
+        adminCaptureSource = "manual_entry";
+        setHint(
+          adminQueuePublishStatusEl,
+          `Published ${result.beerCount} beer item${result.beerCount === 1 ? "" : "s"} for ${result.venue.name}. Refreshing the map...`,
+          "success",
+        );
+        await refreshQueuedIngestions();
+        window.setTimeout(() => {
+          window.location.reload();
+        }, 900);
+      } catch (error) {
+        setHint(
+          adminQueuePublishStatusEl,
+          error instanceof Error ? error.message : "Could not publish the queued source.",
+          "error",
+        );
+      }
+    });
+
+    adminRejectQueuedEl.addEventListener("click", async () => {
+      try {
+        const queueItem = getSelectedQueuedIngestion();
+        if (!queueItem) {
+          throw new Error("Choose a queued source first.");
+        }
+
+        setHint(adminQueuePublishStatusEl, "Rejecting queued source...", null);
+        await authorizedJsonFetch(`/api/admin/ingestions/${encodeURIComponent(queueItem.id)}/reject`, {
+          note: adminCaptureNoteEl.value.trim() || null,
+        });
+
+        selectedQueuedIngestionId = null;
+        adminCaptureSource = "manual_entry";
+        setBeerRows([]);
+        adminCaptureNoteEl.value = "";
+        setQueueReviewSummary("Queued source rejected.", "warning");
+        setHint(adminQueuePublishStatusEl, `Rejected queued source for ${queueItem.venueName}.`, "success");
+        await refreshQueuedIngestions();
+      } catch (error) {
+        setHint(
+          adminQueuePublishStatusEl,
+          error instanceof Error ? error.message : "Could not reject the queued source.",
           "error",
         );
       }
@@ -1850,6 +2174,8 @@
     setBeerRows([]);
     setVenueLookupMatchesMessage("No Google Maps match selected yet.", null);
     setDuplicateWarning("No likely duplicate venues detected yet.", null);
+    setHint(adminQueueListEl, "No queued sources loaded yet.", null);
+    setQueueReviewSummary("Choose a queued source to review its OCR result.", null);
     syncAdminPanelState();
 
     window.gm_authFailure = function gmAuthFailure() {

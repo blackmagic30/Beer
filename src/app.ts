@@ -26,6 +26,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
 
   const [
     { createDatabase },
+    { AdminIngestionQueueRepository },
     { BeerPriceResultsRepository },
     { CallRunsRepository },
     { ElevenLabsService },
@@ -41,6 +42,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     { WebhooksService },
   ] = await Promise.all([
     import("./db/database.js"),
+    import("./db/admin-ingestion-queue.repository.js"),
     import("./db/beer-price-results.repository.js"),
     import("./db/call-runs.repository.js"),
     import("./lib/elevenlabs.js"),
@@ -57,6 +59,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   ]);
 
   const database = createDatabase();
+  const adminIngestionQueueRepository = new AdminIngestionQueueRepository(database);
   const callRunsRepository = new CallRunsRepository(database);
   const beerPriceResultsRepository = new BeerPriceResultsRepository(database);
   const twilioService = new TwilioService(
@@ -83,6 +86,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.PARSE_CONFIDENCE_THRESHOLD,
   );
   const adminService = new AdminService(
+    adminIngestionQueueRepository,
     env.SUPABASE_URL,
     env.SUPABASE_SERVICE_ROLE_KEY,
     env.SUPABASE_RESULTS_TABLE,

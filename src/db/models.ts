@@ -164,3 +164,42 @@ export interface ResultFilters {
   testMode?: boolean | undefined;
   limit: number;
 }
+
+export type AdminIngestionStatus = "pending_review" | "published" | "rejected" | "failed";
+
+export type AdminIngestionSourceType = "menu_photo_upload" | "source_image_url" | "source_reference";
+
+export interface AdminIngestionBeerRecord {
+  name: string;
+  servingSize: "pint";
+  priceNumeric: number | null;
+  priceText: string | null;
+  availabilityStatus: BeerAvailabilityStatus;
+  availableOnTap: boolean | null;
+  availablePackageOnly: boolean;
+  unavailableReason: BeerUnavailableReason;
+  confidence: number;
+  needsReview: boolean;
+  notes: string | null;
+}
+
+export interface AdminIngestionQueueRecord {
+  id: string;
+  venueId: string;
+  venueName: string;
+  sourceType: AdminIngestionSourceType;
+  sourceUrl: string | null;
+  imageDataUrl: string | null;
+  note: string | null;
+  status: AdminIngestionStatus;
+  venueNameGuess: string | null;
+  capturedNotes: string | null;
+  overallConfidence: number | null;
+  extractedBeers: AdminIngestionBeerRecord[];
+  reviewBeers: AdminIngestionBeerRecord[] | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt: string | null;
+  rejectedAt: string | null;
+}

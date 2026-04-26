@@ -136,7 +136,7 @@ export const adminBeerInputSchema = z.object({
 
 export const adminManualCaptureSchema = z.object({
   venueId: z.string().uuid(),
-  source: z.enum(["manual_entry", "menu_photo_ocr"]).default("manual_entry"),
+  source: z.enum(["manual_entry", "menu_photo_ocr", "source_ingestion"]).default("manual_entry"),
   note: nullableTrimmedStringSchema.default(null),
   beers: z.array(adminBeerInputSchema).min(1),
 });
@@ -146,7 +146,41 @@ export const adminMenuPhotoOcrSchema = z.object({
   imageDataUrl: z.string().regex(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "imageDataUrl must be a base64 data URL"),
 });
 
+export const adminSourceIngestionQueueSchema = z
+  .object({
+    venueId: z.string().uuid(),
+    sourceType: z.enum(["menu_photo_upload", "source_image_url", "source_reference"]),
+    sourceUrl: nullableTrimmedStringSchema.default(null),
+    imageDataUrl: z
+      .string()
+      .regex(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "imageDataUrl must be a base64 data URL")
+      .nullable()
+      .default(null),
+    note: nullableTrimmedStringSchema.default(null),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.sourceUrl && !value.imageDataUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide a source URL or an uploaded image.",
+        path: ["sourceUrl"],
+      });
+    }
+  });
+
+export const adminPublishQueuedIngestionSchema = z.object({
+  beers: z.array(adminBeerInputSchema).min(1),
+  note: nullableTrimmedStringSchema.default(null),
+});
+
+export const adminRejectQueuedIngestionSchema = z.object({
+  note: nullableTrimmedStringSchema.default(null),
+});
+
 export type AdminVenueInput = z.infer<typeof adminVenueSchema>;
 export type AdminBeerInput = z.infer<typeof adminBeerInputSchema>;
 export type AdminManualCaptureInput = z.infer<typeof adminManualCaptureSchema>;
 export type AdminMenuPhotoOcrInput = z.infer<typeof adminMenuPhotoOcrSchema>;
+export type AdminSourceIngestionQueueInput = z.infer<typeof adminSourceIngestionQueueSchema>;
+export type AdminPublishQueuedIngestionInput = z.infer<typeof adminPublishQueuedIngestionSchema>;
+export type AdminRejectQueuedIngestionInput = z.infer<typeof adminRejectQueuedIngestionSchema>;
