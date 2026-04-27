@@ -250,10 +250,286 @@
       display: none;
     }
 
-    #map {
-      width: 100%;
+    #mapShell {
+      position: relative;
       flex: 1 1 auto;
       min-height: 420px;
+    }
+
+    #map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #mapLegend {
+      position: absolute;
+      left: 20px;
+      bottom: 20px;
+      z-index: 3;
+      width: min(320px, calc(100% - 40px));
+      padding: 14px 16px;
+      border-radius: 20px;
+      background: rgba(10, 18, 32, 0.88);
+      color: #e2e8f0;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      backdrop-filter: blur(18px);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .legend__eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #7dd3fc;
+      margin-bottom: 6px;
+    }
+
+    .legend__title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffffff;
+      margin: 0 0 4px;
+    }
+
+    .legend__subtitle {
+      font-size: 13px;
+      line-height: 1.55;
+      color: #94a3b8;
+      margin: 0 0 12px;
+    }
+
+    .legend__stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .legend__stat {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.82);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .legend__list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .legend__item {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .legend__swatch {
+      width: 14px;
+      height: 14px;
+      margin-top: 3px;
+      border-radius: 999px;
+      border: 2px solid rgba(15, 23, 42, 0.92);
+      box-shadow: 0 0 0 1px rgba(226, 232, 240, 0.2);
+      background: #334155;
+    }
+
+    .legend__swatch--neutral {
+      background: #334155;
+    }
+
+    .legend__swatch--green {
+      background: #15803d;
+    }
+
+    .legend__swatch--teal {
+      background: #0f766e;
+    }
+
+    .legend__swatch--amber {
+      background: #b45309;
+    }
+
+    .legend__swatch--orange {
+      background: #c2410c;
+    }
+
+    .legend__swatch--red {
+      background: #b91c1c;
+    }
+
+    .legend__itemTitle {
+      font-size: 13px;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 2px;
+    }
+
+    .legend__itemCopy {
+      font-size: 12px;
+      line-height: 1.5;
+      color: #94a3b8;
+    }
+
+    .legend__hint {
+      margin-top: 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #94a3b8;
+      padding-top: 12px;
+      border-top: 1px solid rgba(148, 163, 184, 0.12);
+    }
+
+    .beerPopup {
+      max-width: 320px;
+      padding: 6px 4px 2px;
+      color: #0f172a;
+      font-family: "Avenir Next", "Segoe UI Variable", "Segoe UI", sans-serif;
+    }
+
+    .beerPopup__title {
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 8px;
+      color: #0f172a;
+    }
+
+    .beerPopup__address {
+      font-size: 13px;
+      line-height: 1.5;
+      color: #475569;
+      margin-bottom: 14px;
+    }
+
+    .beerPopup__featured {
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: linear-gradient(160deg, #0f172a 0%, #172554 100%);
+      color: #e2e8f0;
+    }
+
+    .beerPopup__featuredLabel {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #93c5fd;
+      margin-bottom: 8px;
+    }
+
+    .beerPopup__featuredRow {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .beerPopup__featuredPrice {
+      font-size: 20px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .beerPopup__featuredMeta {
+      font-size: 12px;
+      color: #cbd5e1;
+      margin-top: 4px;
+    }
+
+    .beerPopup__pill {
+      display: inline-flex;
+      align-self: flex-start;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .beerPopup__section {
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      background: #ffffff;
+      overflow: hidden;
+    }
+
+    .beerPopup__sectionHeader {
+      padding: 10px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #64748b;
+      background: #f8fafc;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .beerPopup__beerRow {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .beerPopup__beerRow:last-child {
+      border-bottom: none;
+    }
+
+    .beerPopup__beerName {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 4px;
+    }
+
+    .beerPopup__beerMeta {
+      display: inline-flex;
+      align-self: flex-start;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .beerPopup__beerPrice {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
+      text-align: right;
+    }
+
+    .beerPopup__notice {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      line-height: 1.55;
+      color: #475569;
+      background: #f8fafc;
+    }
+
+    .beerPopup__notice--blue {
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .beerPopup__footer {
+      padding-top: 10px;
+      margin-top: 12px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 12px;
+      color: #64748b;
     }
 
     #adminOverlay {
@@ -451,6 +727,13 @@
         grid-template-columns: 1fr;
       }
 
+      #mapLegend {
+        left: 12px;
+        right: 12px;
+        width: auto;
+        bottom: 12px;
+      }
+
       .toolbar__right,
       #statusBar {
         justify-content: flex-start;
@@ -517,8 +800,18 @@
     </div>
   </div>
 
-  <div id="debug" class="hidden">Starting viewer...</div>
-  <div id="map"></div>
+    <div id="debug" class="hidden">Starting viewer...</div>
+    <div id="mapShell">
+      <div id="map"></div>
+      <aside id="mapLegend" aria-live="polite">
+        <div class="legend__eyebrow">Map guide</div>
+        <div id="legendTitle" class="legend__title">All venues</div>
+        <p id="legendSubtitle" class="legend__subtitle">Every imported bar and pub stays visible here, even before we’ve captured beer data.</p>
+        <div id="legendStats" class="legend__stats"></div>
+        <div id="legendItems" class="legend__list"></div>
+        <div id="legendHint" class="legend__hint"></div>
+      </aside>
+    </div>
   <div id="adminOverlay" class="hidden"></div>
   <aside id="adminPanel" class="hidden" aria-hidden="true">
     <div class="adminPanel__header">
@@ -719,6 +1012,11 @@
     const clearFiltersEl = document.getElementById("clearFilters");
     const resultsSummaryEl = document.getElementById("resultsSummary");
     const viewSummaryEl = document.getElementById("viewSummary");
+    const legendTitleEl = document.getElementById("legendTitle");
+    const legendSubtitleEl = document.getElementById("legendSubtitle");
+    const legendStatsEl = document.getElementById("legendStats");
+    const legendItemsEl = document.getElementById("legendItems");
+    const legendHintEl = document.getElementById("legendHint");
     const scopeChipEls = Array.from(document.querySelectorAll("[data-scope]"));
     const beerChipEls = Array.from(document.querySelectorAll("[data-beer-chip]"));
     const debugToggleEl = document.getElementById("debugToggle");
@@ -1339,6 +1637,82 @@
       viewSummaryEl.textContent = getViewSummaryText(viewState);
       syncScopeChipState();
       syncBeerChipState();
+    }
+
+    function getLegendConfig(filteredRows, viewState) {
+      const capturedCount = filteredRows.filter((row) => hasCapturedBeerData(row)).length;
+      const missingCount = filteredRows.length - capturedCount;
+
+      if (viewState.beerQuery) {
+        return {
+          title: viewState.beerQuery,
+          subtitle: viewState.onTapOnly
+            ? "Markers are now tuned for venues where that beer is on tap, with colour helping you scan price and availability fast."
+            : "Markers are now colour-coded for the beer you searched, so you can spot price and availability without opening every venue.",
+          stats: [
+            `${filteredRows.length} matching venues`,
+            `${capturedCount} with captured prices or status`,
+          ],
+          items: [
+            ["green", "Lower price", "Cheaper pint result, usually the best-value stop in the current view."],
+            ["teal", "Mid price", "Solid on-tap result sitting in the middle of the pack."],
+            ["amber", "Higher price", "Still available on tap, but at the warmer end of the price range."],
+            ["orange", "Package or no pints", "The venue has the beer, but only in cans, bottles, schooners, or without pints."],
+            ["red", "Unavailable", "The venue told us the beer is not on tap or not available."],
+          ],
+          hint: "Click any marker to open the venue card and read the full beer list, not just the searched beer."
+        };
+      }
+
+      if (viewState.scope === "needs_data") {
+        return {
+          title: "Needs data",
+          subtitle: "These venues are on the map, but we still need a call, OCR source, or manual entry before prices appear.",
+          stats: [
+            `${filteredRows.length} venues still to fill`,
+            `${capturedCount} already captured are hidden`,
+          ],
+          items: [
+            ["neutral", "Mapped venue", "The pub or bar exists in our venue list and is ready for beer data capture."],
+          ],
+          hint: "Use Admin tools to add beer data manually, or let the call workflow fill these in over time."
+        };
+      }
+
+      return {
+        title: "All venues",
+        subtitle: "This is the full venue footprint. Neutral markers keep the map calm, and the details live inside each venue card.",
+        stats: [
+          `${filteredRows.length} mapped venues`,
+          `${missingCount} still need data`,
+        ],
+        items: [
+          ["neutral", "Mapped venue", "A pub or bar already in the directory. Click through to see captured beers and prices."],
+        ],
+        hint: "Switch to a beer search when you want colour, price-led markers, and faster comparison."
+      };
+    }
+
+    function renderLegend(filteredRows, viewState) {
+      const config = getLegendConfig(filteredRows, viewState);
+
+      legendTitleEl.textContent = config.title;
+      legendSubtitleEl.textContent = config.subtitle;
+      legendStatsEl.innerHTML = config.stats
+        .map((stat) => `<div class="legend__stat">${escapeHtml(stat)}</div>`)
+        .join("");
+      legendItemsEl.innerHTML = config.items
+        .map(([tone, title, copy]) => `
+          <div class="legend__item">
+            <span class="legend__swatch legend__swatch--${escapeHtml(tone)}"></span>
+            <div>
+              <div class="legend__itemTitle">${escapeHtml(title)}</div>
+              <div class="legend__itemCopy">${escapeHtml(copy)}</div>
+            </div>
+          </div>
+        `)
+        .join("");
+      legendHintEl.textContent = config.hint;
     }
 
     function getHappyHourSummary(row) {
@@ -2857,14 +3231,14 @@
             const safeAddress = escapeHtml(address || "Address unavailable");
             const safeCreatedAt = escapeHtml(createdAt);
             const featuredBeerMarkup = featuredBeer ? `
-              <div style="margin-bottom:12px; padding:12px 14px; border-radius:14px; background:#0f172a; color:#e2e8f0;">
-                <div style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:#93c5fd; margin-bottom:6px;">Featured beer</div>
-                <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+              <div class="beerPopup__featured">
+                <div class="beerPopup__featuredLabel">Featured beer</div>
+                <div class="beerPopup__featuredRow">
                   <div>
-                    <div style="font-size:18px; font-weight:700; color:#ffffff;">${escapeHtml(featuredBeer.priceText)}</div>
-                    <div style="font-size:12px; color:#cbd5e1; margin-top:4px;">${escapeHtml(featuredBeer.availabilityLabel)}</div>
+                    <div class="beerPopup__featuredPrice">${escapeHtml(featuredBeer.priceText)}</div>
+                    <div class="beerPopup__featuredMeta">${escapeHtml(featuredBeer.availabilityLabel)}</div>
                   </div>
-                  <div style="padding:6px 10px; border-radius:999px; background:${featuredBeer.availabilityTone.background}; color:${featuredBeer.availabilityTone.color}; font-size:11px; font-weight:700;">
+                  <div class="beerPopup__pill" style="background:${featuredBeer.availabilityTone.background}; color:${featuredBeer.availabilityTone.color};">
                     ${escapeHtml(featuredBeer.label)}
                   </div>
                 </div>
@@ -2872,50 +3246,49 @@
             ` : "";
             const beerMarkup = beerItems.length > 0
               ? beerItems.map((beer) => `
-              <div style="display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid #e2e8f0;">
+              <div class="beerPopup__beerRow">
                 <div style="display:flex; flex-direction:column; gap:4px;">
-                  <span style="font-size:13px; font-weight:600; color:#0f172a;">${escapeHtml(beer.label)}</span>
-                  <span style="display:inline-flex; align-self:flex-start; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:${beer.availabilityTone.background}; color:${beer.availabilityTone.color};">
+                  <span class="beerPopup__beerName">${escapeHtml(beer.label)}</span>
+                  <span class="beerPopup__beerMeta" style="background:${beer.availabilityTone.background}; color:${beer.availabilityTone.color};">
                     ${escapeHtml(beer.availabilityLabel)}
                   </span>
                 </div>
-                <span style="font-size:13px; color:${beer.needsReview ? "#b45309" : "#0f172a"}; font-weight:700; text-align:right;">${escapeHtml(beer.priceText)}</span>
+                <span class="beerPopup__beerPrice" style="color:${beer.needsReview ? "#b45309" : "#0f172a"};">${escapeHtml(beer.priceText)}</span>
               </div>
             `).join("")
               : `
-              <div style="padding:12px 0; font-size:13px; color:#64748b;">
+              <div style="padding:14px 12px; font-size:13px; color:#64748b;">
                 No synced beer data yet.
               </div>
             `;
             const captureStatusMarkup = hasCapturedData
               ? ""
               : `
-              <div style="margin-top:12px; padding:10px 12px; background:#f8fafc; border-radius:12px; font-size:12px; color:#475569;">
+              <div class="beerPopup__notice">
                 This venue is on the map, but beer prices have not been captured yet.
               </div>
             `;
             const happyHourMarkup = happyHourSummary ? `
-              <div style="margin-top:12px; padding:10px 12px; background:#eff6ff; border-radius:12px; font-size:12px; color:#1d4ed8;">
+              <div class="beerPopup__notice beerPopup__notice--blue">
                 <strong>Happy hour</strong><br>
                 ${escapeHtml(happyHourSummary)}
               </div>
             ` : "";
 
             const content = `
-              <div style="max-width:300px; padding:6px 4px 2px; font-family: Arial, sans-serif; color:#0f172a;">
-                <div style="font-size:18px; font-weight:700; line-height:1.2; margin-bottom:8px;">
+              <div class="beerPopup">
+                <div class="beerPopup__title">
                   ${venueName}
                 </div>
-              <div style="font-size:13px; line-height:1.45; color:#475569; margin-bottom:14px;">
-                ${safeAddress}
-              </div>
-              ${featuredBeerMarkup}
-              <div style="border:1px solid #e2e8f0; border-radius:14px; padding:0 12px; background:#ffffff;">
-                ${beerMarkup}
-              </div>
+                <div class="beerPopup__address">${safeAddress}</div>
+                ${featuredBeerMarkup}
+                <div class="beerPopup__section">
+                  <div class="beerPopup__sectionHeader">Beer list</div>
+                  ${beerMarkup}
+                </div>
                 ${captureStatusMarkup}
                 ${happyHourMarkup}
-                <div style="padding-top:10px; border-top:1px solid #e2e8f0; font-size:12px; color:#64748b;">
+                <div class="beerPopup__footer">
                   Logged ${safeCreatedAt}
                 </div>
               </div>
@@ -2936,6 +3309,7 @@
           }
 
           syncStatusPills(filteredRows, viewState);
+          renderLegend(filteredRows, viewState);
           debug(`Map ready. Markers: ${markerCount}. View: ${getViewSummaryText(viewState)}`);
         }
 
