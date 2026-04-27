@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Melbourne Beer Map</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer/dist/index.min.js"></script>
   <script src="./config.js"></script>
   <style>
     :root {
@@ -254,6 +255,42 @@
       position: relative;
       flex: 1 1 auto;
       min-height: 420px;
+    }
+
+    #mapOverlayTabs {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 4;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 6px;
+      border-radius: 999px;
+      background: rgba(10, 18, 32, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      backdrop-filter: blur(18px);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .overlayTab {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: #cbd5e1;
+      padding: 9px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 140ms ease, color 140ms ease;
+    }
+
+    .overlayTab.is-active {
+      background: linear-gradient(135deg, #f59e0b 0%, #fb7185 100%);
+      color: #0f172a;
     }
 
     #map {
@@ -920,6 +957,36 @@
         grid-template-columns: 1fr;
       }
     }
+
+    @media (max-width: 900px) {
+      #mapOverlayTabs {
+        display: inline-flex;
+      }
+
+      #venueRail,
+      #mapLegend {
+        transition: opacity 140ms ease, transform 140ms ease;
+      }
+
+      .overlayPanel.is-mobile-hidden {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(8px);
+      }
+
+      #venueRail {
+        top: auto;
+        right: 12px;
+        left: 12px;
+        bottom: 12px;
+        width: auto;
+        max-height: 40%;
+      }
+
+      #mapLegend {
+        right: 12px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -975,7 +1042,11 @@
     <div id="debug" class="hidden">Starting viewer...</div>
     <div id="mapShell">
       <div id="map"></div>
-      <aside id="venueRail" aria-live="polite">
+      <div id="mapOverlayTabs" aria-label="Map overlays">
+        <button class="overlayTab is-active" type="button" data-overlay-mode="list">Visible venues</button>
+        <button class="overlayTab" type="button" data-overlay-mode="legend">Map guide</button>
+      </div>
+      <aside id="venueRail" class="overlayPanel" aria-live="polite">
         <div class="venueRail__header">
           <div class="venueRail__eyebrow">Visible now</div>
           <div class="venueRail__titleRow">
@@ -986,7 +1057,7 @@
         </div>
         <div id="venueRailBody" class="venueRail__body"></div>
       </aside>
-      <aside id="mapLegend" aria-live="polite">
+      <aside id="mapLegend" class="overlayPanel" aria-live="polite">
         <div class="legend__eyebrow">Map guide</div>
         <div id="legendTitle" class="legend__title">All venues</div>
         <p id="legendSubtitle" class="legend__subtitle">Every imported bar and pub stays visible here, even before we’ve captured beer data.</p>
@@ -1200,10 +1271,13 @@
     const legendStatsEl = document.getElementById("legendStats");
     const legendItemsEl = document.getElementById("legendItems");
     const legendHintEl = document.getElementById("legendHint");
+    const mapLegendEl = document.getElementById("mapLegend");
+    const venueRailEl = document.getElementById("venueRail");
     const venueRailTitleEl = document.getElementById("venueRailTitle");
     const venueRailCountEl = document.getElementById("venueRailCount");
     const venueRailSubtitleEl = document.getElementById("venueRailSubtitle");
     const venueRailBodyEl = document.getElementById("venueRailBody");
+    const overlayTabEls = Array.from(document.querySelectorAll("[data-overlay-mode]"));
     const scopeChipEls = Array.from(document.querySelectorAll("[data-scope]"));
     const beerChipEls = Array.from(document.querySelectorAll("[data-beer-chip]"));
     const debugToggleEl = document.getElementById("debugToggle");
@@ -1273,7 +1347,9 @@
     let venueLookupCandidates = [];
     let selectedVenueLookupPlaceId = null;
     let activeScope = "all";
+    let mobileOverlayMode = "list";
     const ADMIN_SECRET_STORAGE_KEY = "melbBeerBotAdminSecret";
+    const mobileOverlayQuery = window.matchMedia("(max-width: 900px)");
 
     function syncDebugState() {
       debugEl.classList.toggle("hidden", !debugEnabled);
@@ -1298,6 +1374,30 @@
       adminPanelEl.classList.toggle("hidden", !adminPanelOpen);
       adminPanelEl.setAttribute("aria-hidden", adminPanelOpen ? "false" : "true");
     }
+
+    function syncMobileOverlayPanels() {
+      const isMobile = mobileOverlayQuery.matches;
+      venueRailEl.classList.toggle("is-mobile-hidden", isMobile && mobileOverlayMode !== "list");
+      mapLegendEl.classList.toggle("is-mobile-hidden", isMobile && mobileOverlayMode !== "legend");
+      overlayTabEls.forEach((tabEl) => {
+        tabEl.classList.toggle("is-active", tabEl.dataset.overlayMode === mobileOverlayMode);
+      });
+    }
+
+    overlayTabEls.forEach((tabEl) => {
+      tabEl.addEventListener("click", () => {
+        mobileOverlayMode = tabEl.dataset.overlayMode || "list";
+        syncMobileOverlayPanels();
+      });
+    });
+
+    if (typeof mobileOverlayQuery.addEventListener === "function") {
+      mobileOverlayQuery.addEventListener("change", syncMobileOverlayPanels);
+    } else if (typeof mobileOverlayQuery.addListener === "function") {
+      mobileOverlayQuery.addListener(syncMobileOverlayPanels);
+    }
+
+    syncMobileOverlayPanels();
 
     adminToggleEl.addEventListener("click", async () => {
       adminPanelOpen = true;
@@ -2019,11 +2119,22 @@
             cardEl.classList.toggle("is-active", cardEl === buttonEl);
           });
           map.panTo(record.marker.getPosition());
-          if (typeof map.setZoom === "function" && map.getZoom() < 15) {
+          const shouldZoomIn = typeof map.getZoom === "function" && map.getZoom() < 15;
+
+          if (typeof map.setZoom === "function" && shouldZoomIn) {
             map.setZoom(15);
           }
-          record.infoWindow.setContent(record.content);
-          record.infoWindow.open(map, record.marker);
+
+          const openInfoWindow = () => {
+            record.infoWindow.setContent(record.content);
+            record.infoWindow.open(map, record.marker);
+          };
+
+          if (shouldZoomIn && google.maps && google.maps.event && typeof google.maps.event.addListenerOnce === "function") {
+            google.maps.event.addListenerOnce(map, "idle", openInfoWindow);
+          } else {
+            openInfoWindow();
+          }
         });
       });
     }
@@ -3475,8 +3586,13 @@
 
         let liveMarkers = [];
         let markerRecords = [];
+        let markerCluster = null;
 
         function clearMarkers() {
+          if (markerCluster && typeof markerCluster.clearMarkers === "function") {
+            markerCluster.clearMarkers();
+          }
+          markerCluster = null;
           liveMarkers.forEach((marker) => marker.setMap(null));
           liveMarkers = [];
           markerRecords = [];
@@ -3633,6 +3749,17 @@
 
           if (markerCount > 0) {
             map.fitBounds(bounds);
+          }
+
+          if (
+            liveMarkers.length > 0 &&
+            window.markerClusterer &&
+            typeof window.markerClusterer.MarkerClusterer === "function"
+          ) {
+            markerCluster = new window.markerClusterer.MarkerClusterer({
+              map,
+              markers: liveMarkers,
+            });
           }
 
           syncStatusPills(filteredRows, viewState);
