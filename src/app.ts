@@ -6,6 +6,7 @@ import helmet from "helmet";
 import type { RequestHandler } from "express";
 
 import { env } from "./config/env.js";
+import { VIEWER_TRACKED_BEERS } from "./constants/beers.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
@@ -184,6 +185,7 @@ export function createApp() {
       supabaseAnonKey: env.SUPABASE_ANON_KEY ?? "",
       googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
       googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
+      trackedBeers: VIEWER_TRACKED_BEERS,
     };
 
     res.type("application/javascript").send(

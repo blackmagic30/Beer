@@ -7,6 +7,7 @@ import type {
   AdminIngestionQueueRecord,
   AdminIngestionStatus,
 } from "../../db/models.js";
+import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 
@@ -122,6 +123,10 @@ function normalizeOcrResponse(value: unknown): MenuPhotoOcrModelResponse {
           confidence: normalizeConfidence(beer.confidence, null),
         }))
         .filter((beer) => beer.name.length > 0)
+        .map((beer) => ({
+          ...beer,
+          name: canonicalizeTrackedBeerName(beer.name),
+        }))
     : [];
 
   return {
@@ -386,6 +391,7 @@ export class AdminService {
       "  ]",
       "}",
       "Only include beer products that appear readable and useful for a pub beer map.",
+      `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${VIEWER_TRACKED_BEERS.map((beer) => beer.name).join(", ")}.`,
       "Use confidence values from 0 to 1 based on how readable and reliable each beer item looks.",
       "If a beer has a visible price, put the numeric value in price_numeric and preserve the menu wording in price_text.",
       "If tap or package format is not clear, use availability_status 'unknown'.",

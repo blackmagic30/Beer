@@ -939,6 +939,34 @@
       margin-bottom: 12px;
     }
 
+    .chipRow__inline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .chipRow__inline--dense {
+      gap: 8px;
+    }
+
+    .chipRow__inline .filterChip,
+    .chipRow__inline .adminChip {
+      margin: 0;
+    }
+
+    .adminBeerQuickAdd {
+      margin-bottom: 12px;
+    }
+
+    .adminBeerQuickAdd__label {
+      margin: 0 0 8px;
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
     .adminBeerRow {
       border: 1px solid #334155;
       border-radius: 16px;
@@ -955,6 +983,126 @@
 
     .adminBeerRow .adminField--full {
       grid-column: 1 / -1;
+    }
+
+    .adminBeerRow__meta {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: -2px;
+    }
+
+    .adminBeerRow__badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      border: 1px solid #334155;
+      background: rgba(15, 23, 42, 0.82);
+      color: #cbd5e1;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      padding: 5px 9px;
+    }
+
+    .adminBeerRow__badge--tracked {
+      border-color: rgba(245, 158, 11, 0.45);
+      color: #fde68a;
+    }
+
+    .adminBeerRow__badge--confidence {
+      border-color: rgba(59, 130, 246, 0.4);
+      color: #bfdbfe;
+    }
+
+    .adminBeerRow__badge--warning {
+      border-color: rgba(245, 158, 11, 0.45);
+      color: #fcd34d;
+    }
+
+    .adminBeerRow__badge--custom {
+      color: #94a3b8;
+    }
+
+    .adminChip {
+      appearance: none;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .adminChip--tracked {
+      border-color: rgba(59, 130, 246, 0.45);
+      background: rgba(30, 64, 175, 0.18);
+      color: #dbeafe;
+    }
+
+    .adminChip--subtle {
+      color: #94a3b8;
+    }
+
+    .adminQueueCards {
+      display: grid;
+      gap: 10px;
+    }
+
+    .adminQueueCard {
+      appearance: none;
+      width: 100%;
+      text-align: left;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 16px;
+      padding: 12px;
+      cursor: pointer;
+    }
+
+    .adminQueueCard.is-selected {
+      border-color: #60a5fa;
+      box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.45);
+      background: rgba(30, 41, 59, 0.95);
+    }
+
+    .adminQueueCard__title {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 5px;
+    }
+
+    .adminQueueCard__meta,
+    .adminQueueReviewSummary__meta {
+      color: #94a3b8;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .adminQueueCard__badges,
+    .adminQueueReviewSummary__badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .adminQueueReviewSummary {
+      border: 1px solid #334155;
+      border-radius: 16px;
+      background: #0f172a;
+      padding: 14px;
+    }
+
+    .adminQueueReviewSummary__title {
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 6px;
     }
 
     .adminGrid {
@@ -1068,9 +1216,7 @@
     <div class="chipRow" id="scopeChips">
       <button class="filterChip is-active" type="button" data-scope="all">All venues</button>
       <button class="filterChip" type="button" data-scope="needs_data">Needs data</button>
-      <button class="filterChip" type="button" data-beer-chip="Guinness">Guinness</button>
-      <button class="filterChip" type="button" data-beer-chip="Carlton Draft">Carlton Draft</button>
-      <button class="filterChip" type="button" data-beer-chip="Stone &amp; Wood">Stone &amp; Wood</button>
+      <div id="beerChipHost" class="chipRow__inline"></div>
     </div>
 
     <div id="statusBar">
@@ -1139,7 +1285,7 @@
       <section class="adminCard">
         <h3>Add beers to a pub/bar</h3>
         <div class="adminNotice" style="margin-bottom:12px;">
-          Manual beer entries are standardized as <strong>pint prices</strong>. For on-tap beers, enter the pint number only and the app will save it in the shared map format.
+          Manual beer entries are standardized as <strong>pint prices</strong>. For on-tap beers, enter the pint number only and the app will save it in the shared map format. Tracked beers are quick-addable here and OCR will try to normalize matching names automatically.
         </div>
         <label class="adminField">
           <span>Search venues</span>
@@ -1160,6 +1306,11 @@
         </div>
         <div id="adminOcrResult" class="adminHint" style="margin:10px 0 12px;"></div>
 
+        <div class="adminBeerQuickAdd">
+          <div class="adminBeerQuickAdd__label">Quick add tracked beers</div>
+          <div id="adminBeerQuickAdd" class="chipRow__inline chipRow__inline--dense"></div>
+        </div>
+        <datalist id="adminBeerNameSuggestions"></datalist>
         <div id="adminBeerRows" class="adminBeerRows"></div>
         <div class="adminActions">
           <button id="adminAddBeerRow" class="adminButton" type="button">Add beer row</button>
@@ -1179,7 +1330,7 @@
       <section class="adminCard">
         <h3>Source ingestion queue</h3>
         <div class="adminNotice" style="margin-bottom:12px;">
-          Queue venue-owned menu images or source screenshots for OCR. We score the extraction, hold it for manual review, and only publish to the map after approval.
+          Queue venue-owned menu images or source screenshots for OCR. We score the extraction, normalize known beer names, hold it for manual review, and only publish to the map after approval.
         </div>
 
         <div class="adminGrid">
@@ -1299,6 +1450,20 @@
     const SUPABASE_KEY = viewerConfig.supabaseAnonKey || "";
     const DEFAULT_GOOGLE_MAPS_KEY = viewerConfig.googleMapsApiKey || "";
     const GOOGLE_MAPS_MAP_ID = viewerConfig.googleMapsMapId || "";
+    const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers)
+      ? viewerConfig.trackedBeers
+          .filter((beer) => beer && typeof beer === "object")
+          .map((beer) => ({
+            key: String(beer.key || "").trim(),
+            name: String(beer.name || "").trim(),
+            aliases: Array.isArray(beer.aliases)
+              ? beer.aliases
+                  .map((alias) => String(alias || "").trim())
+                  .filter(Boolean)
+              : [],
+          }))
+          .filter((beer) => beer.name)
+      : [];
     const GOOGLE_MAPS_KEY =
       params.get("googleMapsKey") ||
       window.localStorage.getItem("googleMapsKey") ||
@@ -1307,6 +1472,7 @@
     const venueSearchEl = document.getElementById("venueSearch");
     const beerSearchEl = document.getElementById("beerSearch");
     const beerSuggestionsEl = document.getElementById("beerSuggestions");
+    const beerChipHostEl = document.getElementById("beerChipHost");
     const onTapOnlyEl = document.getElementById("onTapOnly");
     const clearFiltersEl = document.getElementById("clearFilters");
     const resultsSummaryEl = document.getElementById("resultsSummary");
@@ -1326,7 +1492,7 @@
     const venueRailBodyEl = document.getElementById("venueRailBody");
     const overlayTabEls = Array.from(document.querySelectorAll("[data-overlay-mode]"));
     const scopeChipEls = Array.from(document.querySelectorAll("[data-scope]"));
-    const beerChipEls = Array.from(document.querySelectorAll("[data-beer-chip]"));
+    let beerChipEls = [];
     const debugToggleEl = document.getElementById("debugToggle");
     const adminToggleEl = document.getElementById("adminToggle");
     const adminOverlayEl = document.getElementById("adminOverlay");
@@ -1343,6 +1509,8 @@
     const adminMenuPhotoEl = document.getElementById("adminMenuPhoto");
     const adminOcrButtonEl = document.getElementById("adminOcrButton");
     const adminOcrResultEl = document.getElementById("adminOcrResult");
+    const adminBeerQuickAddEl = document.getElementById("adminBeerQuickAdd");
+    const adminBeerNameSuggestionsEl = document.getElementById("adminBeerNameSuggestions");
     const adminBeerRowsEl = document.getElementById("adminBeerRows");
     const adminAddBeerRowEl = document.getElementById("adminAddBeerRow");
     const adminCaptureNoteEl = document.getElementById("adminCaptureNote");
@@ -1398,6 +1566,19 @@
     let venueRailSortMode = "smart";
     const ADMIN_SECRET_STORAGE_KEY = "melbBeerBotAdminSecret";
     const mobileOverlayQuery = window.matchMedia("(max-width: 900px)");
+    const TRACKED_BEER_BY_KEY = new Map();
+    TRACKED_BEERS.forEach((beer) => {
+      [beer.key, beer.name, ...(beer.aliases || [])].forEach((value) => {
+        const normalized = toSearchKey(value);
+        if (normalized) {
+          TRACKED_BEER_BY_KEY.set(normalized, beer);
+        }
+      });
+    });
+
+    if (TRACKED_BEERS.length >= 3) {
+      beerSearchEl.placeholder = `Search ${TRACKED_BEERS.slice(0, 3).map((beer) => beer.name).join(", ")}…`;
+    }
 
     function syncDebugState() {
       debugEl.classList.toggle("hidden", !debugEnabled);
@@ -1446,6 +1627,103 @@
     }
 
     syncMobileOverlayPanels();
+
+    function getTrackedBeerMeta(name) {
+      return TRACKED_BEER_BY_KEY.get(toSearchKey(name)) || null;
+    }
+
+    function isTrackedBeerName(name) {
+      return Boolean(getTrackedBeerMeta(name));
+    }
+
+    function getTrackedBeerDisplayName(name) {
+      return getTrackedBeerMeta(name)?.name || String(name || "").trim();
+    }
+
+    function renderTrackedBeerChips() {
+      if (!beerChipHostEl) {
+        return;
+      }
+
+      const featuredBeers = TRACKED_BEERS.slice(0, 6);
+
+      beerChipHostEl.innerHTML = featuredBeers
+        .map(
+          (beer) => `
+            <button class="filterChip" type="button" data-beer-chip="${escapeHtml(beer.name)}">
+              ${escapeHtml(beer.name)}
+            </button>
+          `,
+        )
+        .join("") + (TRACKED_BEERS.length > featuredBeers.length
+          ? '<span class="adminChip adminChip--subtle" aria-hidden="true">Search for more beers…</span>'
+          : "");
+
+      beerChipEls = Array.from(document.querySelectorAll("[data-beer-chip]"));
+    }
+
+    function renderAdminBeerQuickAdd() {
+      if (!adminBeerQuickAddEl) {
+        return;
+      }
+
+      if (!TRACKED_BEERS.length) {
+        adminBeerQuickAddEl.innerHTML = '<span class="adminHint">Tracked beer presets will appear here when they are configured.</span>';
+        return;
+      }
+
+      adminBeerQuickAddEl.innerHTML = TRACKED_BEERS
+        .map(
+          (beer) => `
+            <button
+              class="adminChip adminChip--tracked"
+              type="button"
+              data-quick-beer="${escapeHtml(beer.name)}"
+            >
+              ${escapeHtml(beer.name)}
+            </button>
+          `,
+        )
+        .join("");
+
+      adminBeerQuickAddEl.querySelectorAll("[data-quick-beer]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const beerName = button.getAttribute("data-quick-beer") || "";
+          const existingRow = Array.from(adminBeerRowsEl.querySelectorAll(".adminBeerRow")).find((row) => {
+            const input = row.querySelector('[data-role="name"]');
+            return input && toSearchKey(input.value) === toSearchKey(beerName);
+          });
+
+          if (existingRow) {
+            existingRow.scrollIntoView({ behavior: "smooth", block: "center" });
+            existingRow.querySelector('[data-role="priceNumeric"]')?.focus();
+            return;
+          }
+
+          const row = createBeerRowElement({ name: beerName });
+          adminBeerRowsEl.appendChild(row);
+          row.scrollIntoView({ behavior: "smooth", block: "center" });
+          row.querySelector('[data-role="priceNumeric"]')?.focus();
+        });
+      });
+    }
+
+    function buildAdminBeerNameSuggestionList(rows = []) {
+      const labels = new Set(TRACKED_BEERS.map((beer) => beer.name));
+
+      rows.forEach((row) => {
+        getBeerItems(row).forEach((beer) => {
+          if (beer.label) {
+            labels.add(getTrackedBeerDisplayName(beer.label));
+          }
+        });
+      });
+
+      adminBeerNameSuggestionsEl.innerHTML = Array.from(labels)
+        .sort((left, right) => left.localeCompare(right))
+        .map((label) => `<option value="${escapeHtml(label)}"></option>`)
+        .join("");
+    }
 
     venueRailSortSmartEl.addEventListener("click", () => {
       venueRailSortMode = "smart";
@@ -1930,12 +2208,12 @@
     }
 
     function buildBeerSuggestionList(rows) {
-      const labels = new Set();
+      const labels = new Set(TRACKED_BEERS.map((beer) => beer.name));
 
       rows.forEach((row) => {
         getBeerItems(row).forEach((beer) => {
           if (beer.label) {
-            labels.add(beer.label);
+            labels.add(getTrackedBeerDisplayName(beer.label));
           }
         });
       });
@@ -2383,16 +2661,11 @@
     function createBeerRowElement(beer = {}) {
       const row = document.createElement("div");
       row.className = "adminBeerRow";
-      const confidenceSummary = Number.isFinite(Number(beer.confidence))
-        ? `${Math.round(Number(beer.confidence) * 100)}% OCR confidence`
-        : null;
-      const ocrNotesSummary = typeof beer.notes === "string" && beer.notes.trim().length > 0
-        ? beer.notes.trim()
-        : null;
       row.innerHTML = `
+        <div class="adminBeerRow__meta" data-role="meta"></div>
         <label class="adminField adminField--full">
           <span>Beer name</span>
-          <input data-role="name" type="text" placeholder="Guinness" value="${escapeHtml(beer.name || "")}" />
+          <input data-role="name" list="adminBeerNameSuggestions" type="text" placeholder="Guinness" value="${escapeHtml(getTrackedBeerDisplayName(beer.name || ""))}" />
         </label>
         <label class="adminField">
           <span>Pint price</span>
@@ -2430,14 +2703,50 @@
       `;
 
       const availabilityEl = row.querySelector('[data-role="availability"]');
+      const nameEl = row.querySelector('[data-role="name"]');
       const priceNumericEl = row.querySelector('[data-role="priceNumeric"]');
       const pricePreviewEl = row.querySelector('[data-role="pricePreview"]');
       const rowHintEl = row.querySelector('[data-role="rowHint"]');
+      const metaEl = row.querySelector('[data-role="meta"]');
+
+      function buildBeerRowBadges() {
+        const badges = [];
+        const beerName = nameEl.value.trim();
+        const trackedBeer = getTrackedBeerMeta(beerName);
+        const confidenceValue = Number(beer.confidence);
+        const confidenceSummary = Number.isFinite(confidenceValue)
+          ? `${Math.round(confidenceValue * 100)}% OCR confidence`
+          : null;
+        const needsReview = row.querySelector('[data-role="needsReview"]').value === "true";
+
+        badges.push(
+          trackedBeer
+            ? `<span class="adminBeerRow__badge adminBeerRow__badge--tracked">Tracked beer</span>`
+            : `<span class="adminBeerRow__badge adminBeerRow__badge--custom">Custom beer</span>`,
+        );
+
+        if (confidenceSummary) {
+          badges.push(`<span class="adminBeerRow__badge adminBeerRow__badge--confidence">${escapeHtml(confidenceSummary)}</span>`);
+        }
+
+        if (needsReview) {
+          badges.push('<span class="adminBeerRow__badge adminBeerRow__badge--warning">Needs review</span>');
+        }
+
+        metaEl.innerHTML = badges.join("");
+      }
 
       function syncBeerRowPreview() {
         const priceNumericRaw = priceNumericEl.value.trim();
         const priceNumeric = priceNumericRaw ? Number(priceNumericRaw) : null;
         const availability = buildAvailabilityFields(availabilityEl.value);
+        const confidenceValue = Number(beer.confidence);
+        const confidenceSummary = Number.isFinite(confidenceValue)
+          ? `${Math.round(confidenceValue * 100)}% OCR confidence`
+          : null;
+        const ocrNotesSummary = typeof beer.notes === "string" && beer.notes.trim().length > 0
+          ? beer.notes.trim()
+          : null;
 
         let preview = "Price unavailable";
         let hint = "Saved as a pint entry.";
@@ -2470,11 +2779,14 @@
 
         pricePreviewEl.value = preview;
         rowHintEl.textContent = hint;
+        buildBeerRowBadges();
       }
 
       availabilityEl.value = availabilityChoiceFromBeer(beer);
       row.querySelector('[data-role="needsReview"]').value = beer.needsReview ? "true" : "false";
       availabilityEl.addEventListener("change", syncBeerRowPreview);
+      nameEl.addEventListener("input", syncBeerRowPreview);
+      row.querySelector('[data-role="needsReview"]').addEventListener("change", syncBeerRowPreview);
       priceNumericEl.addEventListener("input", syncBeerRowPreview);
       row.querySelector('[data-role="removeRow"]').addEventListener("click", () => {
         row.remove();
@@ -2507,7 +2819,7 @@
 
       return rows
         .map((row) => {
-          const name = row.querySelector('[data-role="name"]').value.trim();
+          const name = getTrackedBeerDisplayName(row.querySelector('[data-role="name"]').value.trim());
 
           if (!name) {
             return null;
@@ -2530,38 +2842,108 @@
         .filter(Boolean);
     }
 
-    function getQueueItemSummary(item) {
-      const confidence = item.overallConfidence == null
-        ? "No score"
+    function getQueueBeerSet(item) {
+      if (Array.isArray(item.reviewBeers) && item.reviewBeers.length) {
+        return item.reviewBeers;
+      }
+
+      return Array.isArray(item.extractedBeers) ? item.extractedBeers : [];
+    }
+
+    function summarizeQueueItem(item) {
+      const beers = getQueueBeerSet(item);
+      const reviewCount = beers.filter((beer) => beer.needsReview).length;
+      const confidentCount = beers.filter((beer) => Number.isFinite(Number(beer.confidence)) && Number(beer.confidence) >= 0.82).length;
+      const trackedNames = Array.from(
+        new Set(
+          beers
+            .map((beer) => getTrackedBeerMeta(beer.name)?.name)
+            .filter(Boolean),
+        ),
+      );
+      const confidenceText = item.overallConfidence == null
+        ? "No OCR score"
         : `${Math.round(Number(item.overallConfidence) * 100)}% confidence`;
-      const beers = Array.isArray(item.extractedBeers) ? item.extractedBeers.length : 0;
-      return `${confidence} • ${beers} beer item${beers === 1 ? "" : "s"}`;
+
+      return {
+        beers,
+        beerCount: beers.length,
+        reviewCount,
+        confidentCount,
+        trackedNames,
+        confidenceText,
+      };
+    }
+
+    function getQueueItemSummary(item) {
+      const summary = summarizeQueueItem(item);
+      return `${summary.confidenceText} • ${summary.beerCount} beer item${summary.beerCount === 1 ? "" : "s"}${summary.reviewCount ? ` • ${summary.reviewCount} to review` : ""}`;
+    }
+
+    function renderQueueReviewSummaryContent(item) {
+      if (!item) {
+        setQueueReviewSummary("Choose a queued source to review its OCR result.", null);
+        return;
+      }
+
+      const summary = summarizeQueueItem(item);
+      const sourceLabel = item.sourceType.replaceAll("_", " ");
+      adminQueueReviewEl.className = "adminHint adminHint--success";
+      adminQueueReviewEl.removeAttribute("data-tone");
+      adminQueueReviewEl.innerHTML = `
+        <div class="adminQueueReviewSummary">
+          <div class="adminQueueReviewSummary__title">${escapeHtml(item.venueName)}</div>
+          <div class="adminQueueReviewSummary__meta">
+            ${escapeHtml(sourceLabel)}${item.venueNameGuess ? ` • OCR guessed ${escapeHtml(item.venueNameGuess)}` : ""}${item.sourceUrl ? ` • ${escapeHtml(item.sourceUrl)}` : ""}
+          </div>
+          <div class="adminQueueReviewSummary__badges">
+            <span class="adminBeerRow__badge adminBeerRow__badge--confidence">${escapeHtml(summary.confidenceText)}</span>
+            <span class="adminBeerRow__badge">${summary.beerCount} extracted</span>
+            <span class="adminBeerRow__badge ${summary.reviewCount ? "adminBeerRow__badge--warning" : ""}">${summary.reviewCount} need review</span>
+            <span class="adminBeerRow__badge">${summary.confidentCount} high confidence</span>
+          </div>
+          ${summary.trackedNames.length ? `
+            <div class="adminQueueReviewSummary__meta" style="margin-top:10px;">
+              Tracked beer matches: ${escapeHtml(summary.trackedNames.join(" • "))}
+            </div>
+          ` : `
+            <div class="adminQueueReviewSummary__meta" style="margin-top:10px;">
+              No tracked beers matched yet. You can still review and publish custom beers from this source.
+            </div>
+          `}
+        </div>
+      `;
     }
 
     function renderQueuedIngestions() {
       if (!adminQueuedIngestions.length) {
         setHint(adminQueueListEl, "No pending source items right now.", null);
-        setQueueReviewSummary("Choose a queued source to review its OCR result.", null);
+        renderQueueReviewSummaryContent(null);
         return;
       }
 
       adminQueueListEl.className = "adminHint adminHint--success";
       adminQueueListEl.innerHTML = `
-        <div style="display:grid; gap:8px;">
+        <div class="adminQueueCards">
           ${adminQueuedIngestions
             .map((item) => {
               const selected = item.id === selectedQueuedIngestionId;
+              const summary = summarizeQueueItem(item);
               return `
                 <button
                   type="button"
-                  class="adminButton ${selected ? "adminButton--primary" : ""}"
+                  class="adminQueueCard ${selected ? "is-selected" : ""}"
                   data-role="queueItem"
                   data-ingestion-id="${escapeHtml(item.id)}"
-                  style="justify-content:flex-start; text-align:left;"
                 >
-                  <span style="display:block; font-weight:700;">${escapeHtml(item.venueName)}</span>
-                  <span style="display:block; opacity:0.85;">
-                    ${escapeHtml(item.sourceType.replaceAll("_", " "))} • ${escapeHtml(getQueueItemSummary(item))}
+                  <span class="adminQueueCard__title">${escapeHtml(item.venueName)}</span>
+                  <span class="adminQueueCard__meta">
+                    ${escapeHtml(item.sourceType.replaceAll("_", " "))} • ${escapeHtml(summary.confidenceText)}
+                  </span>
+                  <span class="adminQueueCard__badges">
+                    <span class="adminBeerRow__badge">${summary.beerCount} beer${summary.beerCount === 1 ? "" : "s"}</span>
+                    <span class="adminBeerRow__badge ${summary.reviewCount ? "adminBeerRow__badge--warning" : ""}">${summary.reviewCount} review</span>
+                    ${summary.trackedNames.slice(0, 2).map((name) => `<span class="adminBeerRow__badge adminBeerRow__badge--tracked">${escapeHtml(name)}</span>`).join("")}
                   </span>
                 </button>
               `;
@@ -2591,10 +2973,7 @@
             item.sourceUrl ? `Source: ${item.sourceUrl}` : null,
           ].filter(Boolean).join("\n");
 
-          setQueueReviewSummary(
-            `${item.venueName} • ${getQueueItemSummary(item)}${item.venueNameGuess ? ` • OCR guessed ${item.venueNameGuess}` : ""}`,
-            item.overallConfidence != null && Number(item.overallConfidence) >= 0.82 ? "success" : "warning",
-          );
+          renderQueueReviewSummaryContent(item);
           setHint(
             adminQueuePublishStatusEl,
             "Queued OCR loaded into the beer editor. Review and publish when it looks right.",
@@ -2621,6 +3000,7 @@
       }
 
       renderQueuedIngestions();
+      renderQueueReviewSummaryContent(getSelectedQueuedIngestion());
     }
 
     function getSelectedAdminVenue() {
@@ -3876,6 +4256,10 @@
           activeScope = "all";
           renderMarkers();
         });
+        renderTrackedBeerChips();
+        renderAdminBeerQuickAdd();
+        buildAdminBeerNameSuggestionList(venueRows);
+
         scopeChipEls.forEach((chipEl) => {
           chipEl.addEventListener("click", () => {
             activeScope = chipEl.dataset.scope || "all";
@@ -3884,6 +4268,7 @@
             renderMarkers();
           });
         });
+
         beerChipEls.forEach((chipEl) => {
           chipEl.addEventListener("click", () => {
             const chipBeer = chipEl.dataset.beerChip || "";
