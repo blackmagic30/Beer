@@ -109,4 +109,29 @@ describe("manual capture helpers", () => {
       }),
     );
   });
+
+  it("formats no-pints entries as a distinct unavailable outcome", () => {
+    const entry = buildManualBeerEntry({
+      name: "Carlton Draft",
+      servingSize: "pint",
+      priceNumeric: null,
+      priceText: null,
+      availabilityStatus: "unavailable",
+      availableOnTap: true,
+      availablePackageOnly: false,
+      unavailableReason: "no_pints",
+      needsReview: false,
+    });
+
+    expect(entry).toEqual(
+      expect.objectContaining({
+        price_text: "No pints",
+        available_on_tap: true,
+        unavailable_reason: "no_pints",
+        availability: expect.objectContaining({
+          label: "No pints",
+        }),
+      }),
+    );
+  });
 });

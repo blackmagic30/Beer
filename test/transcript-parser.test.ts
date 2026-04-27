@@ -138,6 +138,45 @@ describe("parseBeerPrices", () => {
     expect(results[0]?.confidence).toBeGreaterThan(0.72);
   });
 
+  it("treats schooners-only wording as a strong no-pints result", () => {
+    const results = parseBeerPrices("Carlton Draft? We only do schooners for that one.", {
+      assumeBeerContext: true,
+      targetBeers: [getBeerByKey("carlton_draft")],
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draft",
+        priceNumeric: null,
+        needsReview: false,
+        isUnavailable: true,
+        availabilityStatus: "unavailable",
+        availableOnTap: true,
+        unavailableReason: "no_pints",
+      }),
+    ]);
+    expect(results[0]?.confidence).toBeGreaterThan(0.8);
+  });
+
+  it("prefers cans-only over no-pints when both are mentioned", () => {
+    const results = parseBeerPrices("We don't have Guinness in pints, only cans.", {
+      assumeBeerContext: true,
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Guinness",
+        priceNumeric: null,
+        needsReview: false,
+        isUnavailable: true,
+        availabilityStatus: "package_only",
+        availableOnTap: false,
+        availablePackageOnly: true,
+        unavailableReason: "cans_only",
+      }),
+    ]);
+  });
+
   it("keeps the main price when a day-specific special is also mentioned", () => {
     const results = parseBeerPrices("Um, 15 bucks, 12 on Sundays.", {
       assumeBeerContext: true,

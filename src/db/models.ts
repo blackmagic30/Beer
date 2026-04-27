@@ -4,6 +4,7 @@ export type BeerAvailabilityStatus = "on_tap" | "package_only" | "unavailable" |
 export type BeerUnavailableReason =
   | "cans_only"
   | "bottles_only"
+  | "no_pints"
   | "not_on_tap"
   | "not_stocked"
   | "unknown"

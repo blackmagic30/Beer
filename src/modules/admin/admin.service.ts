@@ -44,7 +44,7 @@ interface MenuPhotoOcrModelItem {
   availability_status: "on_tap" | "package_only" | "unavailable" | "unknown";
   available_on_tap: boolean | null;
   available_package_only: boolean;
-  unavailable_reason: "cans_only" | "bottles_only" | "not_on_tap" | "not_stocked" | "unknown" | null;
+  unavailable_reason: "cans_only" | "bottles_only" | "no_pints" | "not_on_tap" | "not_stocked" | "unknown" | null;
   notes: string | null;
   confidence: number | null;
 }
@@ -115,7 +115,7 @@ function normalizeOcrResponse(value: unknown): MenuPhotoOcrModelResponse {
           available_package_only: Boolean(beer.available_package_only),
           unavailable_reason:
             typeof beer.unavailable_reason === "string" &&
-            ["cans_only", "bottles_only", "not_on_tap", "not_stocked", "unknown"].includes(beer.unavailable_reason)
+            ["cans_only", "bottles_only", "no_pints", "not_on_tap", "not_stocked", "unknown"].includes(beer.unavailable_reason)
               ? (beer.unavailable_reason as MenuPhotoOcrModelItem["unavailable_reason"])
               : null,
           notes: typeof beer.notes === "string" ? beer.notes.trim() : null,
@@ -379,7 +379,7 @@ export class AdminService {
       '      "availability_status": "on_tap" | "package_only" | "unavailable" | "unknown",',
       '      "available_on_tap": boolean | null,',
       '      "available_package_only": boolean,',
-      '      "unavailable_reason": "cans_only" | "bottles_only" | "not_on_tap" | "not_stocked" | "unknown" | null,',
+      '      "unavailable_reason": "cans_only" | "bottles_only" | "no_pints" | "not_on_tap" | "not_stocked" | "unknown" | null,',
       '      "notes": string | null,',
       '      "confidence": number | null',
       "    }",

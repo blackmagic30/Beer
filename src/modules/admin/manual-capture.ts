@@ -86,6 +86,10 @@ function formatPriceText(input: {
   }
 
   if (input.availabilityStatus === "unavailable") {
+    if (input.unavailableReason === "no_pints") {
+      return "No pints";
+    }
+
     return input.unavailableReason === "not_on_tap" ? "Not on tap" : "Unavailable";
   }
 

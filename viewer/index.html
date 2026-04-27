@@ -760,6 +760,10 @@
 
           return "Cans only";
         case "unavailable":
+          if (source.unavailable_reason === "no_pints") {
+            return "No pints";
+          }
+
           return source.unavailable_reason === "not_on_tap" ? "Not on tap" : "Unavailable";
         default:
           return "Unknown";
@@ -775,6 +779,7 @@
           };
         case "Cans only":
         case "Bottles only":
+        case "No pints":
         case "Not on tap":
           return {
             background: "#fef3c7",
@@ -812,6 +817,10 @@
               Number.isFinite(Number(source.price_numeric ?? source.price))
                 ? Number(source.price_numeric ?? source.price)
                 : null,
+            availableOnTap:
+              source.available_on_tap == null
+                ? null
+                : Boolean(source.available_on_tap),
             needsReview: Boolean(source.needs_review),
             availabilityLabel,
             availabilityTone: getAvailabilityTone(availabilityLabel),
@@ -901,7 +910,11 @@
         return "#b91c1c";
       }
 
-      if (beer.availabilityLabel === "Cans only" || beer.availabilityLabel === "Bottles only") {
+      if (
+        beer.availabilityLabel === "Cans only" ||
+        beer.availabilityLabel === "Bottles only" ||
+        beer.availabilityLabel === "No pints"
+      ) {
         return "#c2410c";
       }
 
@@ -939,6 +952,10 @@
 
       if (beer.availabilityLabel === "Bottles only") {
         return "BTL";
+      }
+
+      if (beer.availabilityLabel === "No pints") {
+        return "NOP";
       }
 
       if (beer.availabilityLabel === "Unavailable" || beer.availabilityLabel === "Not on tap") {
@@ -984,7 +1001,7 @@
       }
 
       if (filterValue === "guinness_on_tap") {
-        return guinnessItems.some((beer) => beer.availabilityLabel === "On tap");
+        return guinnessItems.some((beer) => beer.availableOnTap === true);
       }
 
       return true;
@@ -1080,6 +1097,13 @@
             availablePackageOnly: true,
             unavailableReason: "bottles_only",
           };
+        case "no_pints":
+          return {
+            availabilityStatus: "unavailable",
+            availableOnTap: true,
+            availablePackageOnly: false,
+            unavailableReason: "no_pints",
+          };
         case "not_on_tap":
           return {
             availabilityStatus: "unavailable",
@@ -1121,6 +1145,10 @@
       }
 
       if (beer.availabilityStatus === "unavailable") {
+        if (beer.unavailableReason === "no_pints") {
+          return "no_pints";
+        }
+
         return beer.unavailableReason === "not_on_tap" ? "not_on_tap" : "unavailable";
       }
 
@@ -1159,6 +1187,7 @@
             <option value="on_tap">On tap</option>
             <option value="cans_only">Cans only</option>
             <option value="bottles_only">Bottles only</option>
+            <option value="no_pints">No pints</option>
             <option value="not_on_tap">Not on tap</option>
             <option value="unavailable">Unavailable</option>
             <option value="unknown">Unknown</option>
@@ -1196,8 +1225,13 @@
           preview = availability.unavailableReason === "bottles_only" ? "Bottles only" : "Cans only";
           hint = "This saves as a package-only beer, not an on-tap pint.";
         } else if (availability.availabilityStatus === "unavailable") {
-          preview = availability.unavailableReason === "not_on_tap" ? "Not on tap" : "Unavailable";
-          hint = "This saves as unavailable for pint pricing.";
+          if (availability.unavailableReason === "no_pints") {
+            preview = "No pints";
+            hint = "This saves as on tap, but not available in pint pours.";
+          } else {
+            preview = availability.unavailableReason === "not_on_tap" ? "Not on tap" : "Unavailable";
+            hint = "This saves as unavailable for pint pricing.";
+          }
         } else if (availability.availabilityStatus === "unknown") {
           preview = "Price unavailable";
           hint = "Use Unknown only when the menu is unclear and needs review.";
