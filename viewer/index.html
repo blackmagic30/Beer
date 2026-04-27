@@ -1871,6 +1871,40 @@
       return value == null ? "Price unavailable" : `$${value}`;
     }
 
+    function normalizeBeerPriceNumeric(source) {
+      const availabilityStatus =
+        source && typeof source.availability_status === "string"
+          ? source.availability_status
+          : "unknown";
+      const rawValue = source ? (source.price_numeric ?? source.price) : null;
+      const numeric = Number(rawValue);
+
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        return null;
+      }
+
+      return availabilityStatus === "on_tap" ? numeric : null;
+    }
+
+    function getBeerPriceText(source, availabilityLabel, priceNumeric) {
+      const explicitText =
+        source && typeof source.price_text === "string" && source.price_text.trim().length > 0
+          ? source.price_text.trim()
+          : null;
+
+      if (priceNumeric !== null) {
+        return explicitText && explicitText !== "$0"
+          ? explicitText
+          : formatPriceValue(priceNumeric);
+      }
+
+      if (explicitText && explicitText !== "$0") {
+        return explicitText;
+      }
+
+      return availabilityLabel === "Unknown" ? "Price unavailable" : availabilityLabel;
+    }
+
     function titleizeKey(value) {
       return String(value || "")
         .split(/[_\s]+/)
@@ -1945,16 +1979,12 @@
         .filter(([, source]) => source && typeof source === "object")
         .map(([key, source]) => {
           const availabilityLabel = getAvailabilityLabel(source);
+          const priceNumeric = normalizeBeerPriceNumeric(source);
 
           return {
             label: source.label || titleizeKey(key),
-            priceText:
-              source.price_text ||
-              formatPriceValue(source.price_numeric ?? source.price),
-            priceNumeric:
-              Number.isFinite(Number(source.price_numeric ?? source.price))
-                ? Number(source.price_numeric ?? source.price)
-                : null,
+            priceText: getBeerPriceText(source, availabilityLabel, priceNumeric),
+            priceNumeric,
             availableOnTap:
               source.available_on_tap == null
                 ? null
