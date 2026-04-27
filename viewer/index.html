@@ -492,6 +492,46 @@
       color: #94a3b8;
     }
 
+    .venueRail__sortRow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    .venueRail__sortLabel {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #64748b;
+    }
+
+    .venueRail__sortChip {
+      appearance: none;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(15, 23, 42, 0.82);
+      color: #cbd5e1;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+    }
+
+    .venueRail__sortChip.is-active {
+      background: linear-gradient(135deg, #f59e0b 0%, #fb7185 100%);
+      border-color: transparent;
+      color: #0f172a;
+    }
+
+    .venueRail__sortChip:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
     .venueRail__body {
       padding: 10px;
       overflow: auto;
@@ -1054,6 +1094,11 @@
             <div id="venueRailCount" class="venueRail__count">0 visible</div>
           </div>
           <div id="venueRailSubtitle" class="venueRail__subtitle">Pan or zoom the map, or use the filters above, to focus the venue list.</div>
+          <div class="venueRail__sortRow">
+            <span class="venueRail__sortLabel">Sort</span>
+            <button id="venueRailSortSmart" class="venueRail__sortChip is-active" type="button">Best match</button>
+            <button id="venueRailSortCheapest" class="venueRail__sortChip" type="button">Cheapest first</button>
+          </div>
         </div>
         <div id="venueRailBody" class="venueRail__body"></div>
       </aside>
@@ -1276,6 +1321,8 @@
     const venueRailTitleEl = document.getElementById("venueRailTitle");
     const venueRailCountEl = document.getElementById("venueRailCount");
     const venueRailSubtitleEl = document.getElementById("venueRailSubtitle");
+    const venueRailSortSmartEl = document.getElementById("venueRailSortSmart");
+    const venueRailSortCheapestEl = document.getElementById("venueRailSortCheapest");
     const venueRailBodyEl = document.getElementById("venueRailBody");
     const overlayTabEls = Array.from(document.querySelectorAll("[data-overlay-mode]"));
     const scopeChipEls = Array.from(document.querySelectorAll("[data-scope]"));
@@ -1348,6 +1395,7 @@
     let selectedVenueLookupPlaceId = null;
     let activeScope = "all";
     let mobileOverlayMode = "list";
+    let venueRailSortMode = "smart";
     const ADMIN_SECRET_STORAGE_KEY = "melbBeerBotAdminSecret";
     const mobileOverlayQuery = window.matchMedia("(max-width: 900px)");
 
@@ -1398,6 +1446,20 @@
     }
 
     syncMobileOverlayPanels();
+
+    venueRailSortSmartEl.addEventListener("click", () => {
+      venueRailSortMode = "smart";
+      if (typeof window.__melbBeerMapRefreshVisibleRail === "function") {
+        window.__melbBeerMapRefreshVisibleRail();
+      }
+    });
+
+    venueRailSortCheapestEl.addEventListener("click", () => {
+      venueRailSortMode = "cheapest";
+      if (typeof window.__melbBeerMapRefreshVisibleRail === "function") {
+        window.__melbBeerMapRefreshVisibleRail();
+      }
+    });
 
     adminToggleEl.addEventListener("click", async () => {
       adminPanelOpen = true;
@@ -2014,6 +2076,7 @@
           metaPill: "Venue mapped",
           copy: "No beer prices captured yet. Good candidate for a call, OCR source, or manual entry.",
           sortWeight: 0,
+          numericPrice: null,
           suburb,
         };
       }
@@ -2025,6 +2088,7 @@
           metaPill: featuredBeer.availabilityLabel,
           copy: `${featuredBeer.label} · ${featuredBeer.availabilityLabel}`,
           sortWeight: hasNumericPrice(featuredBeer) ? -featuredBeer.priceNumeric : 0,
+          numericPrice: hasNumericPrice(featuredBeer) ? featuredBeer.priceNumeric : null,
           suburb,
         };
       }
@@ -2036,6 +2100,7 @@
           metaPill: featuredBeer.label,
           copy: `${featuredBeer.availabilityLabel} · ${featuredBeer.priceText}`,
           sortWeight: hasNumericPrice(featuredBeer) ? -featuredBeer.priceNumeric : 0,
+          numericPrice: hasNumericPrice(featuredBeer) ? featuredBeer.priceNumeric : null,
           suburb,
         };
       }
@@ -2046,6 +2111,7 @@
         metaPill: "Venue mapped",
         copy: "Venue is on the map and ready for beer data.",
         sortWeight: 0,
+        numericPrice: null,
         suburb,
       };
     }
@@ -2061,6 +2127,23 @@
           summary: getVenueRailSummary(record, viewState),
         }))
         .sort((left, right) => {
+          if (viewState.beerQuery && venueRailSortMode === "cheapest") {
+            const leftPrice = left.summary.numericPrice;
+            const rightPrice = right.summary.numericPrice;
+
+            if (leftPrice != null && rightPrice != null && leftPrice !== rightPrice) {
+              return leftPrice - rightPrice;
+            }
+
+            if (leftPrice != null && rightPrice == null) {
+              return -1;
+            }
+
+            if (leftPrice == null && rightPrice != null) {
+              return 1;
+            }
+          }
+
           if (left.summary.sortWeight !== right.summary.sortWeight) {
             return left.summary.sortWeight - right.summary.sortWeight;
           }
@@ -2079,6 +2162,12 @@
       venueRailSubtitleEl.textContent = viewState.beerQuery
         ? "The shortlist below follows your beer search and updates as you move around the map."
         : "Tap a venue below to jump straight to its marker and open the venue card.";
+      if (!viewState.beerQuery && venueRailSortMode !== "smart") {
+        venueRailSortMode = "smart";
+      }
+      venueRailSortSmartEl.classList.toggle("is-active", venueRailSortMode === "smart");
+      venueRailSortCheapestEl.classList.toggle("is-active", venueRailSortMode === "cheapest");
+      venueRailSortCheapestEl.disabled = !viewState.beerQuery;
 
       if (visibleRecords.length === 0) {
         venueRailBodyEl.innerHTML = `
@@ -3663,7 +3752,7 @@
             const safeCreatedAt = escapeHtml(createdAt);
             const featuredBeerMarkup = featuredBeer ? `
               <div class="beerPopup__featured">
-                <div class="beerPopup__featuredLabel">Featured beer</div>
+                <div class="beerPopup__featuredLabel">${escapeHtml(viewState.beerQuery ? "Best match" : "Best captured beer")}</div>
                 <div class="beerPopup__featuredRow">
                   <div>
                     <div class="beerPopup__featuredPrice">${escapeHtml(featuredBeer.priceText)}</div>
@@ -3689,14 +3778,14 @@
             `).join("")
               : `
               <div style="padding:14px 12px; font-size:13px; color:#64748b;">
-                No synced beer data yet.
+                No beer prices captured yet.
               </div>
             `;
             const captureStatusMarkup = hasCapturedData
               ? ""
               : `
               <div class="beerPopup__notice">
-                This venue is on the map, but beer prices have not been captured yet.
+                This venue is already mapped, but the beer list still needs to be filled.
               </div>
             `;
             const happyHourMarkup = happyHourSummary ? `
@@ -3714,13 +3803,13 @@
                 <div class="beerPopup__address">${safeAddress}</div>
                 ${featuredBeerMarkup}
                 <div class="beerPopup__section">
-                  <div class="beerPopup__sectionHeader">Beer list</div>
+                  <div class="beerPopup__sectionHeader">Captured beers</div>
                   ${beerMarkup}
                 </div>
                 ${captureStatusMarkup}
                 ${happyHourMarkup}
                 <div class="beerPopup__footer">
-                  Logged ${safeCreatedAt}
+                  Last synced ${safeCreatedAt}
                 </div>
               </div>
             `;
@@ -3767,6 +3856,10 @@
           renderVenueRail(markerRecords, viewState);
           debug(`Map ready. Markers: ${markerCount}. View: ${getViewSummaryText(viewState)}`);
         }
+
+        window.__melbBeerMapRefreshVisibleRail = () => {
+          renderVenueRail(markerRecords, getViewState());
+        };
 
         map.addListener("idle", () => {
           renderVenueRail(markerRecords, getViewState());
