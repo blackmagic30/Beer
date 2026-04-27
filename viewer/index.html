@@ -263,7 +263,7 @@
       left: 50%;
       transform: translateX(-50%);
       z-index: 4;
-      display: none;
+      display: inline-flex;
       align-items: center;
       gap: 8px;
       padding: 6px;
@@ -293,6 +293,10 @@
       color: #0f172a;
     }
 
+    .overlayTab:not(.is-active) {
+      opacity: 0.92;
+    }
+
     #map {
       position: absolute;
       inset: 0;
@@ -313,6 +317,46 @@
       border: 1px solid rgba(148, 163, 184, 0.18);
       backdrop-filter: blur(18px);
       box-shadow: var(--shadow-lg);
+    }
+
+    .overlayPanel {
+      transition: opacity 140ms ease, transform 140ms ease;
+    }
+
+    .overlayPanel.is-hidden-panel {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+    }
+
+    .overlayPanel__close {
+      appearance: none;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(15, 23, 42, 0.82);
+      color: #cbd5e1;
+      border-radius: 999px;
+      width: 32px;
+      height: 32px;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+
+    .overlayPanel__close:hover {
+      border-color: rgba(56, 189, 248, 0.42);
+      color: #ffffff;
+    }
+
+    .legend__header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 2px;
     }
 
     .legend__eyebrow {
@@ -448,6 +492,14 @@
       padding: 14px 16px 12px;
       border-bottom: 1px solid rgba(148, 163, 184, 0.12);
       background: rgba(2, 6, 23, 0.24);
+    }
+
+    .venueRail__headerTop {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
     }
 
     .venueRail__eyebrow {
@@ -1147,28 +1199,13 @@
     }
 
     @media (max-width: 900px) {
-      #mapOverlayTabs {
-        display: inline-flex;
-      }
-
-      #venueRail,
-      #mapLegend {
-        transition: opacity 140ms ease, transform 140ms ease;
-      }
-
-      .overlayPanel.is-mobile-hidden {
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(8px);
-      }
-
       #venueRail {
         top: auto;
         right: 12px;
         left: 12px;
         bottom: 12px;
         width: auto;
-        max-height: 40%;
+        max-height: 32%;
       }
 
       #mapLegend {
@@ -1229,15 +1266,20 @@
     <div id="mapShell">
       <div id="map"></div>
       <div id="mapOverlayTabs" aria-label="Map overlays">
-        <button class="overlayTab is-active" type="button" data-overlay-mode="list">Visible venues</button>
-        <button class="overlayTab" type="button" data-overlay-mode="legend">Map guide</button>
+        <button class="overlayTab is-active" type="button" data-overlay-panel="list">Visible venues</button>
+        <button class="overlayTab is-active" type="button" data-overlay-panel="legend">Map guide</button>
       </div>
       <aside id="venueRail" class="overlayPanel" aria-live="polite">
         <div class="venueRail__header">
-          <div class="venueRail__eyebrow">Visible now</div>
-          <div class="venueRail__titleRow">
-            <div id="venueRailTitle" class="venueRail__title">On this part of the map</div>
-            <div id="venueRailCount" class="venueRail__count">0 visible</div>
+          <div class="venueRail__headerTop">
+            <div>
+              <div class="venueRail__eyebrow">Visible now</div>
+              <div class="venueRail__titleRow">
+                <div id="venueRailTitle" class="venueRail__title">On this part of the map</div>
+                <div id="venueRailCount" class="venueRail__count">0 visible</div>
+              </div>
+            </div>
+            <button id="closeVenueRail" class="overlayPanel__close" type="button" aria-label="Hide visible venues panel">×</button>
           </div>
           <div id="venueRailSubtitle" class="venueRail__subtitle">Pan or zoom the map, or use the filters above, to focus the venue list.</div>
           <div class="venueRail__sortRow">
@@ -1249,8 +1291,13 @@
         <div id="venueRailBody" class="venueRail__body"></div>
       </aside>
       <aside id="mapLegend" class="overlayPanel" aria-live="polite">
-        <div class="legend__eyebrow">Map guide</div>
-        <div id="legendTitle" class="legend__title">All venues</div>
+        <div class="legend__header">
+          <div>
+            <div class="legend__eyebrow">Map guide</div>
+            <div id="legendTitle" class="legend__title">All venues</div>
+          </div>
+          <button id="closeMapLegend" class="overlayPanel__close" type="button" aria-label="Hide map guide panel">×</button>
+        </div>
         <p id="legendSubtitle" class="legend__subtitle">Every imported bar and pub stays visible here, even before we’ve captured beer data.</p>
         <div id="legendStats" class="legend__stats"></div>
         <div id="legendItems" class="legend__list"></div>
@@ -1490,7 +1537,9 @@
     const venueRailSortSmartEl = document.getElementById("venueRailSortSmart");
     const venueRailSortCheapestEl = document.getElementById("venueRailSortCheapest");
     const venueRailBodyEl = document.getElementById("venueRailBody");
-    const overlayTabEls = Array.from(document.querySelectorAll("[data-overlay-mode]"));
+    const overlayTabEls = Array.from(document.querySelectorAll("[data-overlay-panel]"));
+    const closeVenueRailEl = document.getElementById("closeVenueRail");
+    const closeMapLegendEl = document.getElementById("closeMapLegend");
     const scopeChipEls = Array.from(document.querySelectorAll("[data-scope]"));
     let beerChipEls = [];
     const debugToggleEl = document.getElementById("debugToggle");
@@ -1562,9 +1611,9 @@
     let venueLookupCandidates = [];
     let selectedVenueLookupPlaceId = null;
     let activeScope = "all";
-    let mobileOverlayMode = "list";
     let venueRailSortMode = "smart";
     const ADMIN_SECRET_STORAGE_KEY = "melbBeerBotAdminSecret";
+    const MAP_OVERLAY_STORAGE_KEY = "melbBeerMapOverlayState";
     const mobileOverlayQuery = window.matchMedia("(max-width: 900px)");
     const TRACKED_BEER_BY_KEY = new Map();
     TRACKED_BEERS.forEach((beer) => {
@@ -1604,29 +1653,104 @@
       adminPanelEl.setAttribute("aria-hidden", adminPanelOpen ? "false" : "true");
     }
 
-    function syncMobileOverlayPanels() {
+    function readOverlayState() {
+      try {
+        const raw = window.localStorage.getItem(MAP_OVERLAY_STORAGE_KEY);
+        if (!raw) {
+          return null;
+        }
+
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          return null;
+        }
+
+        return {
+          list: parsed.list !== false,
+          legend: parsed.legend !== false,
+        };
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    const savedOverlayState = readOverlayState();
+    let overlayPanelState = savedOverlayState || {
+      list: !mobileOverlayQuery.matches,
+      legend: !mobileOverlayQuery.matches,
+    };
+
+    function persistOverlayState() {
+      window.localStorage.setItem(MAP_OVERLAY_STORAGE_KEY, JSON.stringify(overlayPanelState));
+    }
+
+    function syncOverlayPanels() {
       const isMobile = mobileOverlayQuery.matches;
-      venueRailEl.classList.toggle("is-mobile-hidden", isMobile && mobileOverlayMode !== "list");
-      mapLegendEl.classList.toggle("is-mobile-hidden", isMobile && mobileOverlayMode !== "legend");
+      if (isMobile && overlayPanelState.list && overlayPanelState.legend) {
+        overlayPanelState = {
+          list: true,
+          legend: false,
+        };
+        persistOverlayState();
+      }
+
+      const listVisible = Boolean(overlayPanelState.list);
+      const legendVisible = Boolean(overlayPanelState.legend);
+
+      venueRailEl.classList.toggle("is-hidden-panel", !listVisible);
+      mapLegendEl.classList.toggle("is-hidden-panel", !legendVisible);
       overlayTabEls.forEach((tabEl) => {
-        tabEl.classList.toggle("is-active", tabEl.dataset.overlayMode === mobileOverlayMode);
+        const panel = tabEl.dataset.overlayPanel;
+        const isActive = panel === "list" ? listVisible : legendVisible;
+        tabEl.classList.toggle("is-active", isActive);
+        tabEl.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
     }
 
     overlayTabEls.forEach((tabEl) => {
       tabEl.addEventListener("click", () => {
-        mobileOverlayMode = tabEl.dataset.overlayMode || "list";
-        syncMobileOverlayPanels();
+        const panel = tabEl.dataset.overlayPanel || "list";
+        const isMobile = mobileOverlayQuery.matches;
+
+        if (isMobile) {
+          const isOpen = panel === "list" ? overlayPanelState.list : overlayPanelState.legend;
+          overlayPanelState = isOpen
+            ? { list: false, legend: false }
+            : {
+                list: panel === "list",
+                legend: panel === "legend",
+              };
+        } else {
+          overlayPanelState = {
+            ...overlayPanelState,
+            [panel]: !overlayPanelState[panel],
+          };
+        }
+
+        persistOverlayState();
+        syncOverlayPanels();
       });
     });
 
+    closeVenueRailEl.addEventListener("click", () => {
+      overlayPanelState = { ...overlayPanelState, list: false };
+      persistOverlayState();
+      syncOverlayPanels();
+    });
+
+    closeMapLegendEl.addEventListener("click", () => {
+      overlayPanelState = { ...overlayPanelState, legend: false };
+      persistOverlayState();
+      syncOverlayPanels();
+    });
+
     if (typeof mobileOverlayQuery.addEventListener === "function") {
-      mobileOverlayQuery.addEventListener("change", syncMobileOverlayPanels);
+      mobileOverlayQuery.addEventListener("change", syncOverlayPanels);
     } else if (typeof mobileOverlayQuery.addListener === "function") {
-      mobileOverlayQuery.addListener(syncMobileOverlayPanels);
+      mobileOverlayQuery.addListener(syncOverlayPanels);
     }
 
-    syncMobileOverlayPanels();
+    syncOverlayPanels();
 
     function getTrackedBeerMeta(name) {
       return TRACKED_BEER_BY_KEY.get(toSearchKey(name)) || null;
