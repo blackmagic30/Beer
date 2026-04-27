@@ -7,12 +7,29 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="./config.js"></script>
   <style>
+    :root {
+      --page-bg: #06101f;
+      --panel-bg: rgba(10, 18, 32, 0.9);
+      --panel-border: rgba(148, 163, 184, 0.16);
+      --panel-muted: #94a3b8;
+      --panel-text: #f8fafc;
+      --chip-bg: rgba(15, 23, 42, 0.85);
+      --chip-active-bg: linear-gradient(135deg, #f59e0b 0%, #fb7185 100%);
+      --chip-active-text: #0f172a;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56, 189, 248, 0.16);
+      --shadow-lg: 0 24px 60px rgba(2, 6, 23, 0.38);
+    }
+
     html, body {
       margin: 0;
       padding: 0;
       height: 100%;
-      background: #0f172a;
-      font-family: Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.14), transparent 28%),
+        radial-gradient(circle at top right, rgba(251, 113, 133, 0.12), transparent 24%),
+        linear-gradient(180deg, #08111f 0%, #0f172a 100%);
+      font-family: "Avenir Next", "Segoe UI Variable", "Segoe UI", sans-serif;
     }
 
     body {
@@ -22,38 +39,199 @@
 
     #topbar {
       box-sizing: border-box;
-      padding: 16px 20px 12px;
-      background: #111827;
-      color: white;
-      border-bottom: 1px solid #1f2937;
+      padding: 18px 20px 16px;
+      background: var(--panel-bg);
+      color: var(--panel-text);
+      border-bottom: 1px solid var(--panel-border);
+      backdrop-filter: blur(18px);
+      display: grid;
+      gap: 14px;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+      z-index: 2;
+    }
+
+    .topbar__header {
       display: flex;
-      align-items: flex-end;
+      align-items: flex-start;
       justify-content: space-between;
-      gap: 16px;
+      gap: 18px;
       flex-wrap: wrap;
     }
 
+    .topbar__eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #bae6fd;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
     #topbar h1 {
-      margin: 0;
-      font-size: 24px;
+      margin: 10px 0 0;
+      font-size: 34px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+
+    .topbar__subtitle {
+      margin: 10px 0 0;
+      max-width: 680px;
+      color: var(--panel-muted);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .topbar__actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     #toolbar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: #cbd5e1;
-      font-size: 14px;
+      display: grid;
+      grid-template-columns: minmax(200px, 1.1fr) minmax(200px, 1.1fr) auto auto;
+      gap: 12px;
+      align-items: end;
     }
 
-    #beerFilter {
+    .controlGroup {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      color: var(--panel-muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .controlInput {
       appearance: none;
-      border: 1px solid #334155;
-      background: #0f172a;
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(15, 23, 42, 0.86);
       color: white;
-      border-radius: 10px;
-      padding: 8px 12px;
+      border-radius: 14px;
+      padding: 12px 14px;
       font-size: 14px;
+      font-family: inherit;
+      transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+    }
+
+    .controlInput::placeholder {
+      color: #64748b;
+    }
+
+    .controlInput:focus {
+      outline: none;
+      border-color: rgba(56, 189, 248, 0.55);
+      box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.12);
+      transform: translateY(-1px);
+    }
+
+    .chipRow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .filterChip,
+    .utilityButton,
+    #debugToggle,
+    #adminToggle {
+      appearance: none;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: var(--chip-bg);
+      color: #e2e8f0;
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    .filterChip:hover,
+    .utilityButton:hover,
+    #debugToggle:hover,
+    #adminToggle:hover {
+      transform: translateY(-1px);
+      border-color: rgba(56, 189, 248, 0.42);
+    }
+
+    .filterChip.is-active {
+      background: var(--chip-active-bg);
+      border-color: transparent;
+      color: var(--chip-active-text);
+    }
+
+    #adminToggle {
+      background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
+      border-color: transparent;
+      color: white;
+    }
+
+    .toolbar__right {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .togglePill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.86);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      color: #e2e8f0;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .togglePill input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: #38bdf8;
+    }
+
+    #statusBar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .statusPill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.74);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      color: #cbd5e1;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .statusPill strong {
+      color: #ffffff;
     }
 
     #debug {
@@ -63,35 +241,13 @@
       white-space: pre-wrap;
       font-size: 14px;
       box-sizing: border-box;
-      max-height: 168px;
+      max-height: 144px;
       overflow: auto;
       flex: 0 0 auto;
     }
 
     #debug.hidden {
       display: none;
-    }
-
-    #debugToggle {
-      appearance: none;
-      border: 1px solid #334155;
-      background: #0f172a;
-      color: #cbd5e1;
-      border-radius: 10px;
-      padding: 8px 12px;
-      font-size: 14px;
-      cursor: pointer;
-    }
-
-    #adminToggle {
-      appearance: none;
-      border: 1px solid #334155;
-      background: #1d4ed8;
-      color: white;
-      border-radius: 10px;
-      padding: 8px 12px;
-      font-size: 14px;
-      cursor: pointer;
     }
 
     #map {
@@ -291,6 +447,19 @@
     }
 
     @media (max-width: 640px) {
+      #toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar__right,
+      #statusBar {
+        justify-content: flex-start;
+      }
+
+      #topbar h1 {
+        font-size: 30px;
+      }
+
       .adminBeerRow,
       .adminGrid {
         grid-template-columns: 1fr;
@@ -300,16 +469,51 @@
 </head>
 <body>
   <div id="topbar">
-    <h1>Melbourne Beer Map</h1>
+    <div class="topbar__header">
+      <div>
+        <div class="topbar__eyebrow">Live beer map</div>
+        <h1>Melbourne Beer Map</h1>
+        <p class="topbar__subtitle">Search a venue, search a beer, or flip to the venues that still need data. The map stays simple, and the detail only shows up when you need it.</p>
+      </div>
+      <div class="topbar__actions">
+        <button id="adminToggle" type="button">Admin tools</button>
+        <button id="debugToggle" type="button">Show debug</button>
+      </div>
+    </div>
+
     <div id="toolbar">
-      <label for="beerFilter">Show</label>
-      <select id="beerFilter">
-        <option value="all">All venues</option>
-        <option value="guinness_only">Guinness only</option>
-        <option value="guinness_on_tap">Guinness on tap only</option>
-      </select>
-      <button id="adminToggle" type="button">Admin tools</button>
-      <button id="debugToggle" type="button">Show debug</button>
+      <label class="controlGroup" for="venueSearch">
+        <span>Venue or suburb</span>
+        <input id="venueSearch" class="controlInput" type="search" placeholder="Search Rooftop Bar, Fitzroy, Brighton…" />
+      </label>
+
+      <label class="controlGroup" for="beerSearch">
+        <span>Beer</span>
+        <input id="beerSearch" class="controlInput" list="beerSuggestions" type="search" placeholder="Search Guinness, Carlton Draft, Stone &amp; Wood…" />
+        <datalist id="beerSuggestions"></datalist>
+      </label>
+
+      <label class="togglePill" for="onTapOnly">
+        <input id="onTapOnly" type="checkbox" />
+        <span>On tap only</span>
+      </label>
+
+      <div class="toolbar__right">
+        <button id="clearFilters" class="utilityButton" type="button">Clear</button>
+      </div>
+    </div>
+
+    <div class="chipRow" id="scopeChips">
+      <button class="filterChip is-active" type="button" data-scope="all">All venues</button>
+      <button class="filterChip" type="button" data-scope="needs_data">Needs data</button>
+      <button class="filterChip" type="button" data-beer-chip="Guinness">Guinness</button>
+      <button class="filterChip" type="button" data-beer-chip="Carlton Draft">Carlton Draft</button>
+      <button class="filterChip" type="button" data-beer-chip="Stone &amp; Wood">Stone &amp; Wood</button>
+    </div>
+
+    <div id="statusBar">
+      <div id="resultsSummary" class="statusPill">Loading venues…</div>
+      <div id="viewSummary" class="statusPill">All venues</div>
     </div>
   </div>
 
@@ -508,7 +712,15 @@
       window.localStorage.getItem("googleMapsKey") ||
       DEFAULT_GOOGLE_MAPS_KEY;
     const debugEl = document.getElementById("debug");
-    const beerFilterEl = document.getElementById("beerFilter");
+    const venueSearchEl = document.getElementById("venueSearch");
+    const beerSearchEl = document.getElementById("beerSearch");
+    const beerSuggestionsEl = document.getElementById("beerSuggestions");
+    const onTapOnlyEl = document.getElementById("onTapOnly");
+    const clearFiltersEl = document.getElementById("clearFilters");
+    const resultsSummaryEl = document.getElementById("resultsSummary");
+    const viewSummaryEl = document.getElementById("viewSummary");
+    const scopeChipEls = Array.from(document.querySelectorAll("[data-scope]"));
+    const beerChipEls = Array.from(document.querySelectorAll("[data-beer-chip]"));
     const debugToggleEl = document.getElementById("debugToggle");
     const adminToggleEl = document.getElementById("adminToggle");
     const adminOverlayEl = document.getElementById("adminOverlay");
@@ -575,6 +787,7 @@
     let placesService = null;
     let venueLookupCandidates = [];
     let selectedVenueLookupPlaceId = null;
+    let activeScope = "all";
     const ADMIN_SECRET_STORAGE_KEY = "melbBeerBotAdminSecret";
 
     function syncDebugState() {
@@ -876,29 +1089,10 @@
       return score;
     }
 
-    function getGuinnessItems(row) {
-      return getBeerItems(row).filter((beer) =>
-        String(beer.label || "").toLowerCase().includes("guinness") &&
-        isMeaningfulBeerItem(beer)
-      ).sort((left, right) => getBeerPriority(right) - getBeerPriority(left));
-    }
-
     function getHeadlineBeer(row) {
-      const guinnessItems = getGuinnessItems(row);
-
-      if (guinnessItems.length > 0) {
-        return guinnessItems[0];
-      }
-
-      const beerItems = getBeerItems(row);
-
-      return (
-        beerItems.find((beer) => beer.availabilityLabel === "On tap" && beer.priceText !== "Price unavailable") ||
-        beerItems.find((beer) => beer.priceText !== "Price unavailable") ||
-        beerItems.find((beer) => isMeaningfulBeerItem(beer)) ||
-        beerItems[0] ||
-        null
-      );
+      return getBeerItems(row)
+        .slice()
+        .sort((left, right) => getBeerPriority(right) - getBeerPriority(left))[0] || null;
     }
 
     function getMarkerColor(beer) {
@@ -973,12 +1167,67 @@
       return 15;
     }
 
-    function usesStyledBeerMarkers(filterValue) {
-      return filterValue !== "all";
+    function toSearchKey(value) {
+      return String(value || "")
+        .toLowerCase()
+        .replaceAll("&", " and ")
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
     }
 
-    function getMarkerVisual(filterValue, beer) {
-      if (!usesStyledBeerMarkers(filterValue)) {
+    function getVenueSearchText(row) {
+      const venue = getVenueRecord(row.venues) || {};
+
+      return [
+        venue.name,
+        row.venue_name,
+        venue.address,
+        venue.suburb,
+        venue.state,
+        venue.postcode,
+      ].filter(Boolean).join(" ");
+    }
+
+    function hasCapturedBeerData(row) {
+      return getBeerItems(row).some((beer) => isMeaningfulBeerItem(beer));
+    }
+
+    function getMatchingBeerItems(row, beerQuery, onTapOnly = false) {
+      const beerQueryKey = toSearchKey(beerQuery);
+
+      if (!beerQueryKey) {
+        return [];
+      }
+
+      return getBeerItems(row)
+        .filter((beer) => toSearchKey(beer.label).includes(beerQueryKey))
+        .filter((beer) => !onTapOnly || beer.availableOnTap === true)
+        .sort((left, right) => getBeerPriority(right) - getBeerPriority(left));
+    }
+
+    function getViewState() {
+      return {
+        scope: activeScope,
+        venueQuery: venueSearchEl.value.trim(),
+        beerQuery: beerSearchEl.value.trim(),
+        onTapOnly: onTapOnlyEl.checked,
+      };
+    }
+
+    function usesStyledBeerMarkers(viewState) {
+      return Boolean(viewState.beerQuery);
+    }
+
+    function getNeutralMarkerVisual() {
+      return {
+        fillColor: "#334155",
+        strokeColor: "#e2e8f0",
+        scale: 9,
+      };
+    }
+
+    function getMarkerVisual(viewState, beer) {
+      if (!usesStyledBeerMarkers(viewState)) {
         return null;
       }
 
@@ -989,22 +1238,107 @@
       };
     }
 
-    function rowMatchesFilter(row, filterValue) {
-      if (filterValue === "all") {
-        return true;
+    function rowMatchesView(row, viewState) {
+      const venueSearchKey = toSearchKey(viewState.venueQuery);
+
+      if (venueSearchKey && !toSearchKey(getVenueSearchText(row)).includes(venueSearchKey)) {
+        return false;
       }
 
-      const guinnessItems = getGuinnessItems(row);
-
-      if (filterValue === "guinness_only") {
-        return guinnessItems.length > 0;
+      if (viewState.beerQuery) {
+        return getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly).length > 0;
       }
 
-      if (filterValue === "guinness_on_tap") {
-        return guinnessItems.some((beer) => beer.availableOnTap === true);
+      if (viewState.scope === "needs_data") {
+        return !hasCapturedBeerData(row);
       }
 
       return true;
+    }
+
+    function getFeaturedBeer(row, viewState) {
+      const matchedBeerItems = getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly);
+
+      if (matchedBeerItems.length > 0) {
+        return matchedBeerItems[0];
+      }
+
+      return getHeadlineBeer(row);
+    }
+
+    function getDisplayBeerItems(row, viewState) {
+      const allBeerItems = getBeerItems(row);
+
+      if (!viewState.beerQuery) {
+        return allBeerItems;
+      }
+
+      const matchedBeerItems = getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly);
+      const matchedLabels = new Set(matchedBeerItems.map((beer) => beer.label));
+
+      return [
+        ...matchedBeerItems,
+        ...allBeerItems.filter((beer) => !matchedLabels.has(beer.label)),
+      ];
+    }
+
+    function buildBeerSuggestionList(rows) {
+      const labels = new Set();
+
+      rows.forEach((row) => {
+        getBeerItems(row).forEach((beer) => {
+          if (beer.label) {
+            labels.add(beer.label);
+          }
+        });
+      });
+
+      beerSuggestionsEl.innerHTML = Array.from(labels)
+        .sort((left, right) => left.localeCompare(right))
+        .map((label) => `<option value="${escapeHtml(label)}"></option>`)
+        .join("");
+    }
+
+    function getViewSummaryText(viewState) {
+      if (viewState.beerQuery) {
+        return `${viewState.beerQuery}${viewState.onTapOnly ? " · on tap only" : ""}`;
+      }
+
+      if (viewState.scope === "needs_data") {
+        return "Needs data";
+      }
+
+      return "All venues";
+    }
+
+    function syncScopeChipState() {
+      scopeChipEls.forEach((chipEl) => {
+        const isActive = !beerSearchEl.value.trim() && chipEl.dataset.scope === activeScope;
+        chipEl.classList.toggle("is-active", isActive);
+      });
+    }
+
+    function syncBeerChipState() {
+      const activeBeerKey = toSearchKey(beerSearchEl.value);
+
+      beerChipEls.forEach((chipEl) => {
+        const chipKey = toSearchKey(chipEl.dataset.beerChip || "");
+        chipEl.classList.toggle("is-active", Boolean(activeBeerKey) && chipKey === activeBeerKey);
+      });
+    }
+
+    function syncStatusPills(filteredRows, viewState) {
+      const visibleCount = filteredRows.length;
+      const capturedCount = filteredRows.filter((row) => hasCapturedBeerData(row)).length;
+      const missingCount = visibleCount - capturedCount;
+
+      resultsSummaryEl.innerHTML = `
+        <strong>${visibleCount}</strong> ${visibleCount === 1 ? "venue" : "venues"}
+        <span style="opacity:0.72;">· ${capturedCount} with beer data · ${missingCount} still to fill</span>
+      `;
+      viewSummaryEl.textContent = getViewSummaryText(viewState);
+      syncScopeChipState();
+      syncBeerChipState();
     }
 
     function getHappyHourSummary(row) {
@@ -2463,27 +2797,25 @@
           clearMarkers();
 
           const bounds = new google.maps.LatLngBounds();
-          const filterValue = beerFilterEl.value;
-          const sourceRows = filterValue === "all" ? allVenueRows : venueRows;
-          const filteredRows = sourceRows.filter((item) => rowMatchesFilter(item, filterValue));
+          const viewState = getViewState();
+          const filteredRows = allVenueRows.filter((item) => rowMatchesView(item, viewState));
           let markerCount = 0;
 
           filteredRows.forEach((item) => {
             const venue = getVenueRecord(item.venues);
             const lat = Number(venue.latitude);
             const lng = Number(venue.longitude);
-            const guinnessItems = getGuinnessItems(item);
-            const beerItems = getBeerItems(item);
+            const beerItems = getDisplayBeerItems(item, viewState);
             const happyHourSummary = getHappyHourSummary(item);
-            const headlineBeer = getHeadlineBeer(item);
-            const markerVisual = getMarkerVisual(filterValue, headlineBeer);
-            const hasCapturedData = Boolean(item.saved_at || item.created_at);
+            const featuredBeer = getFeaturedBeer(item, viewState);
+            const markerVisual = getMarkerVisual(viewState, featuredBeer);
+            const hasCapturedData = hasCapturedBeerData(item);
 
             const markerOptions = {
               position: { lat, lng },
               map,
               title: `${venue.name || item.venue_name || "Unknown venue"}${
-                headlineBeer ? ` - ${headlineBeer.label}: ${headlineBeer.priceText}` : ""
+                featuredBeer ? ` - ${featuredBeer.label}: ${featuredBeer.priceText}` : ""
               }`,
             };
 
@@ -2502,6 +2834,17 @@
                 fontSize: "11px",
                 fontWeight: "700",
               };
+            } else {
+              const neutralMarkerVisual = getNeutralMarkerVisual();
+
+              markerOptions.icon = {
+                path: google.maps.SymbolPath.CIRCLE,
+                fillColor: neutralMarkerVisual.fillColor,
+                fillOpacity: 0.92,
+                strokeColor: neutralMarkerVisual.strokeColor,
+                strokeWeight: 1.5,
+                scale: neutralMarkerVisual.scale,
+              };
             }
 
             const marker = new google.maps.Marker(markerOptions);
@@ -2513,16 +2856,16 @@
             const venueName = escapeHtml(venue.name || item.venue_name || "Unknown venue");
             const safeAddress = escapeHtml(address || "Address unavailable");
             const safeCreatedAt = escapeHtml(createdAt);
-            const featuredBeerMarkup = guinnessItems.length > 0 ? `
+            const featuredBeerMarkup = featuredBeer ? `
               <div style="margin-bottom:12px; padding:12px 14px; border-radius:14px; background:#0f172a; color:#e2e8f0;">
-                <div style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:#93c5fd; margin-bottom:6px;">Guinness</div>
+                <div style="font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:#93c5fd; margin-bottom:6px;">Featured beer</div>
                 <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
                   <div>
-                    <div style="font-size:18px; font-weight:700; color:#ffffff;">${escapeHtml(guinnessItems[0].priceText)}</div>
-                    <div style="font-size:12px; color:#cbd5e1; margin-top:4px;">${escapeHtml(guinnessItems[0].availabilityLabel)}</div>
+                    <div style="font-size:18px; font-weight:700; color:#ffffff;">${escapeHtml(featuredBeer.priceText)}</div>
+                    <div style="font-size:12px; color:#cbd5e1; margin-top:4px;">${escapeHtml(featuredBeer.availabilityLabel)}</div>
                   </div>
-                  <div style="padding:6px 10px; border-radius:999px; background:${guinnessItems[0].availabilityTone.background}; color:${guinnessItems[0].availabilityTone.color}; font-size:11px; font-weight:700;">
-                    ${escapeHtml(guinnessItems[0].label)}
+                  <div style="padding:6px 10px; border-radius:999px; background:${featuredBeer.availabilityTone.background}; color:${featuredBeer.availabilityTone.color}; font-size:11px; font-weight:700;">
+                    ${escapeHtml(featuredBeer.label)}
                   </div>
                 </div>
               </div>
@@ -2592,10 +2935,47 @@
             map.fitBounds(bounds);
           }
 
-          debug(`Map ready. Markers: ${markerCount}. Filter: ${filterValue}`);
+          syncStatusPills(filteredRows, viewState);
+          debug(`Map ready. Markers: ${markerCount}. View: ${getViewSummaryText(viewState)}`);
         }
 
-        beerFilterEl.addEventListener("change", renderMarkers);
+        venueSearchEl.addEventListener("input", renderMarkers);
+        beerSearchEl.addEventListener("input", renderMarkers);
+        beerSearchEl.addEventListener("change", renderMarkers);
+        onTapOnlyEl.addEventListener("change", renderMarkers);
+        clearFiltersEl.addEventListener("click", () => {
+          venueSearchEl.value = "";
+          beerSearchEl.value = "";
+          onTapOnlyEl.checked = false;
+          activeScope = "all";
+          renderMarkers();
+        });
+        scopeChipEls.forEach((chipEl) => {
+          chipEl.addEventListener("click", () => {
+            activeScope = chipEl.dataset.scope || "all";
+            beerSearchEl.value = "";
+            onTapOnlyEl.checked = false;
+            renderMarkers();
+          });
+        });
+        beerChipEls.forEach((chipEl) => {
+          chipEl.addEventListener("click", () => {
+            const chipBeer = chipEl.dataset.beerChip || "";
+            const chipBeerKey = toSearchKey(chipBeer);
+            const currentBeerKey = toSearchKey(beerSearchEl.value);
+
+            if (chipBeerKey && chipBeerKey === currentBeerKey) {
+              beerSearchEl.value = "";
+              onTapOnlyEl.checked = false;
+            } else {
+              beerSearchEl.value = chipBeer;
+              activeScope = "all";
+            }
+
+            renderMarkers();
+          });
+        });
+        buildBeerSuggestionList(venueRows);
         renderMarkers();
       } catch (error) {
         fail("Viewer failed", error);
