@@ -68,6 +68,7 @@ interface Candidate {
 interface HappyHourDayMatch {
   value: string;
   index: number;
+  raw: string;
 }
 
 interface HappyHourTimeRange {
@@ -157,10 +158,16 @@ const HAPPY_HOUR_SPECIALS_KEYWORD_REGEX =
   /\b(specials?|deals?|discount|discounted|off|two for one|2 for 1|half price|pints?|schooners?|pots?|midd(?:y|ies)|cocktails?|spritz(?:es)?|beer|wine|wings?|pizza|parma|burgers?|oysters?|tacos?|snacks?|jugs?)\b/i;
 const DAY_RANGE_REGEX =
   /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:-|to)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+const DAY_LIST_REGEX =
+  /\b(mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?)\s*(?:,|and|&)\s*(mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?)\b/i;
 const DAY_ONLY_REGEX = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+only\b/i;
 const SINGLE_DAY_REGEX = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const TIME_RANGE_REGEX =
-  /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|to|til|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/gi;
+  /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|to|til|till|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/gi;
+
+function singularizeDay(day: string): string {
+  return day.replace(/s$/i, "");
+}
 
 function clamp(value: number, min = 0, max = 0.99): number {
   return Math.max(min, Math.min(max, Number(value.toFixed(2))));
@@ -602,6 +609,7 @@ function extractDayMatch(text: string): HappyHourDayMatch | null {
     return {
       value: "daily",
       index: dailyMatch.index,
+      raw: dailyMatch[0],
     };
   }
 
@@ -611,6 +619,7 @@ function extractDayMatch(text: string): HappyHourDayMatch | null {
     return {
       value: "weekdays",
       index: weekdaysMatch.index,
+      raw: weekdaysMatch[0],
     };
   }
 
@@ -620,6 +629,7 @@ function extractDayMatch(text: string): HappyHourDayMatch | null {
     return {
       value: "weekends",
       index: weekendsMatch.index,
+      raw: weekendsMatch[0],
     };
   }
 
@@ -629,6 +639,19 @@ function extractDayMatch(text: string): HappyHourDayMatch | null {
     return {
       value: `${titleCaseDay(dayRangeMatch[1]!)}-${titleCaseDay(dayRangeMatch[2]!)}`,
       index: dayRangeMatch.index,
+      raw: dayRangeMatch[0],
+    };
+  }
+
+  const dayListMatch = text.match(DAY_LIST_REGEX);
+
+  if (dayListMatch && dayListMatch.index !== undefined) {
+    const firstDay = singularizeDay(dayListMatch[1]!);
+    const secondDay = singularizeDay(dayListMatch[2]!);
+    return {
+      value: `${titleCaseDay(firstDay)}, ${titleCaseDay(secondDay)}`,
+      index: dayListMatch.index,
+      raw: dayListMatch[0],
     };
   }
 
@@ -638,6 +661,7 @@ function extractDayMatch(text: string): HappyHourDayMatch | null {
     return {
       value: `${titleCaseDay(dayOnlyMatch[1]!)} only`,
       index: dayOnlyMatch.index,
+      raw: dayOnlyMatch[0],
     };
   }
 
@@ -647,6 +671,7 @@ function extractDayMatch(text: string): HappyHourDayMatch | null {
     return {
       value: titleCaseDay(singleDayMatch[1]!),
       index: singleDayMatch.index,
+      raw: singleDayMatch[0],
     };
   }
 
@@ -855,8 +880,8 @@ function extractHappyHourSpecials(
   );
   let specialsSource = explicitMatch?.[1] ?? candidateText;
 
-  if (dayMatch?.value) {
-    specialsSource = specialsSource.replace(new RegExp(dayMatch.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
+  if (dayMatch?.raw) {
+    specialsSource = specialsSource.replace(new RegExp(dayMatch.raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
   }
 
   if (timeRange?.raw) {
@@ -865,7 +890,7 @@ function extractHappyHourSpecials(
 
   specialsSource = specialsSource
     .replace(/\bhappy hour\b/gi, " ")
-    .replace(/\b(?:we do|we've got|we have|there's|there is|it is|it's|available|from|then|during that|during it)\b/gi, " ")
+    .replace(/\b(?:we do|we've got|we have|there's|there is|it is|it's|available|from|then|during that|during it|usually)\b/gi, " ")
     .replace(/\band\b/gi, " ")
     .replace(/^with\b/i, " ")
     .replace(/^the\b/i, " ")
