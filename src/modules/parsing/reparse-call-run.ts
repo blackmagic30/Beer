@@ -36,6 +36,7 @@ export interface ReparsableCallRunLike
     | "conversationId"
     | "venueId"
     | "requestedBeer"
+    | "scriptVariant"
     | "venueName"
     | "phoneNumber"
     | "suburb"

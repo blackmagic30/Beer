@@ -13,6 +13,7 @@ interface HostedCallRunView {
   callSid: string | null;
   venueId: string | null;
   requestedBeer?: string | null;
+  scriptVariant?: string | null;
   venueName: string;
   phoneNumber: string;
   suburb: string;
@@ -62,6 +63,7 @@ function toReparsableCallRun(call: HostedCallRunView): ReparsableCallRunLike {
     conversationId: null,
     venueId: call.venueId,
     requestedBeer: normalizeRequestedBeer(call.requestedBeer),
+    scriptVariant: call.scriptVariant ?? null,
     venueName: call.venueName,
     phoneNumber: call.phoneNumber,
     suburb: call.suburb,
@@ -164,6 +166,7 @@ async function main() {
       run: {
         ...reparsableCall,
         requestedBeer: reparse.requestedBeer,
+        scriptVariant: reparsableCall.scriptVariant,
       },
       callSid: call.callSid ?? `missing-${call.id}`,
       conversationId: null,

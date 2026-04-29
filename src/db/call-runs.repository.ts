@@ -41,6 +41,7 @@ export class CallRunsRepository {
           id,
           venue_id,
           requested_beer,
+          script_variant,
           venue_name,
           phone_number,
           suburb,
@@ -54,6 +55,7 @@ export class CallRunsRepository {
           @id,
           @venueId,
           @requestedBeer,
+          @scriptVariant,
           @venueName,
           @phoneNumber,
           @suburb,
@@ -68,6 +70,7 @@ export class CallRunsRepository {
       .run({
         ...input,
         requestedBeer: input.requestedBeer ?? null,
+        scriptVariant: input.scriptVariant ?? null,
         isTest: input.isTest ? 1 : 0,
       });
 
@@ -212,6 +215,27 @@ export class CallRunsRepository {
     return Boolean(row);
   }
 
+  getScriptVariantCounts(requestedBeer: string): Record<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT script_variant AS scriptVariant, COUNT(*) AS count
+         FROM call_runs
+         WHERE requested_beer = ?
+           AND script_variant IS NOT NULL
+           AND is_test = 0
+         GROUP BY script_variant`,
+      )
+      .all(requestedBeer) as Array<{ scriptVariant: string | null; count: number }>;
+
+    return rows.reduce<Record<string, number>>((counts, row) => {
+      if (row.scriptVariant) {
+        counts[row.scriptVariant] = row.count;
+      }
+
+      return counts;
+    }, {});
+  }
+
   list(filters: CallRunsFilters): CallRunRecord[] {
     const clauses: string[] = [];
     const params: Array<string | number> = [];
@@ -231,6 +255,16 @@ export class CallRunsRepository {
       params.push(`%${filters.suburb}%`);
     }
 
+    if (filters.requestedBeer) {
+      clauses.push("requested_beer = ?");
+      params.push(filters.requestedBeer);
+    }
+
+    if (filters.scriptVariant) {
+      clauses.push("script_variant = ?");
+      params.push(filters.scriptVariant);
+    }
+
     if (filters.testMode !== undefined) {
       clauses.push("is_test = ?");
       params.push(filters.testMode ? 1 : 0);
@@ -246,6 +280,7 @@ export class CallRunsRepository {
           conversation_id AS conversationId,
           venue_id AS venueId,
           requested_beer AS requestedBeer,
+          script_variant AS scriptVariant,
           venue_name AS venueName,
           phone_number AS phoneNumber,
           suburb,
@@ -279,6 +314,7 @@ export class CallRunsRepository {
           conversation_id AS conversationId,
           venue_id AS venueId,
           requested_beer AS requestedBeer,
+          script_variant AS scriptVariant,
           venue_name AS venueName,
           phone_number AS phoneNumber,
           suburb,

@@ -1,11 +1,58 @@
 import { ACTIVE_TARGET_BEER, type BeerDefinition } from "./beers.js";
 
+export const HAPPY_HOUR_SCRIPT_VARIANT_KEYS = [
+  "days_times_first",
+  "single_shot",
+  "when_is_it",
+] as const;
+
+export type HappyHourScriptVariantKey = (typeof HAPPY_HOUR_SCRIPT_VARIANT_KEYS)[number];
+
+interface HappyHourScriptVariantDefinition {
+  key: HappyHourScriptVariantKey;
+  label: string;
+  firstMessage: string;
+  followUpPrompt: string;
+  followUps: string[];
+}
+
+const HAPPY_HOUR_SCRIPT_VARIANTS: Record<HappyHourScriptVariantKey, HappyHourScriptVariantDefinition> = {
+  days_times_first: {
+    key: "days_times_first",
+    label: "Days and times first",
+    firstMessage: "Hey mate, just wondering what days and times are your happy hours?",
+    followUpPrompt:
+      "If they answer with days or times but not the special, ask one short follow-up to get the specials.",
+    followUps: ['And what are the happy hour specials?'],
+  },
+  single_shot: {
+    key: "single_shot",
+    label: "Single-shot ask",
+    firstMessage: "Hey mate, just wondering what days and times your happy hour is, and what the specials are?",
+    followUpPrompt:
+      "If they only answer part of it, ask one short follow-up for the missing detail, preferably the specials first.",
+    followUps: ['No stress, what are the specials on during it?', "No stress, which days and times is that?"],
+  },
+  when_is_it: {
+    key: "when_is_it",
+    label: "When is it",
+    firstMessage: "Hey mate, just wondering when your happy hour is?",
+    followUpPrompt:
+      "After they answer, ask one short follow-up to get any missing piece, especially the specials.",
+    followUps: ['And what specials are on during it?', "Sweet, what days and times is that exactly?"],
+  },
+};
+
+export const DEFAULT_HAPPY_HOUR_SCRIPT_VARIANT: HappyHourScriptVariantKey = "days_times_first";
+
 function buildBeerFirstMessage(beerName: string): string {
   return `Hey mate, quick one, how much is a pint of ${beerName} there?`;
 }
 
-function buildHappyHourFirstMessage(): string {
-  return "Hey mate, quick one, what days and times is your happy hour, and what specials do you run during it?";
+function getHappyHourScriptVariant(
+  variant: HappyHourScriptVariantKey | null | undefined,
+): HappyHourScriptVariantDefinition {
+  return HAPPY_HOUR_SCRIPT_VARIANTS[normalizeHappyHourScriptVariant(variant)];
 }
 
 function buildBeerPrompt(beerName: string): string {
@@ -31,18 +78,21 @@ function buildBeerPrompt(beerName: string): string {
   ].join("\n");
 }
 
-function buildHappyHourPrompt(): string {
+function buildHappyHourPrompt(variant: HappyHourScriptVariantKey | null | undefined): string {
+  const scriptVariant = getHappyHourScriptVariant(variant);
+
   return [
     "You are calling Melbourne pubs to collect their current happy hour details.",
     "Be concise, polite, and sound like a normal human caller.",
     "Aim to finish the call very quickly.",
-    `Open with this exact line once: "${buildHappyHourFirstMessage()}"`,
-    "If a real person says hello, asks how they can help, or asks you to repeat yourself, repeat the happy hour question once in a natural way.",
+    `Open with this exact line once: "${scriptVariant.firstMessage}"`,
+    "Keep your talking short. Let the staff member talk more than you do.",
+    "You are trying to capture three things: which days, what times, and what the specials actually are.",
+    scriptVariant.followUpPrompt,
+    `Prefer short follow-ups like: ${scriptVariant.followUps.map((line) => `"${line}"`).join(" or ")}.`,
+    "If a real person says hello, asks how they can help, or asks you to repeat yourself, repeat the same question once in a natural way.",
     'If the venue does not answer clearly or you genuinely cannot understand them, say exactly once: "Sorry, what was that mate?"',
     "If it is still unclear after that one clarification, end the call politely.",
-    "You are trying to capture three things: which days, what times, and what the specials actually are.",
-    "If they only answer one part, ask one very short follow-up to fill the most important missing detail.",
-    'Useful follow-ups include: "No stress, which days and times is that?" or "And what specials are on during it?"',
     "If they say they do not run happy hour or do not have recurring specials, accept that answer and move on.",
     "If they ask you to hold while they check, you may wait silently once for a short moment.",
     'Never say "Are you still there?".',
@@ -54,12 +104,49 @@ function buildHappyHourPrompt(): string {
   ].join("\n");
 }
 
-export function buildAgentFirstMessage(target: BeerDefinition): string {
-  return target.kind === "happy_hour" ? buildHappyHourFirstMessage() : buildBeerFirstMessage(target.name);
+export function normalizeHappyHourScriptVariant(
+  value: string | null | undefined,
+): HappyHourScriptVariantKey {
+  if (!value) {
+    return DEFAULT_HAPPY_HOUR_SCRIPT_VARIANT;
+  }
+
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  return HAPPY_HOUR_SCRIPT_VARIANT_KEYS.includes(normalized as HappyHourScriptVariantKey)
+    ? (normalized as HappyHourScriptVariantKey)
+    : DEFAULT_HAPPY_HOUR_SCRIPT_VARIANT;
 }
 
-export function buildAgentPrompt(target: BeerDefinition): string {
-  return target.kind === "happy_hour" ? buildHappyHourPrompt() : buildBeerPrompt(target.name);
+export function chooseHappyHourScriptVariant(
+  counts: Partial<Record<HappyHourScriptVariantKey, number>>,
+): HappyHourScriptVariantKey {
+  return [...HAPPY_HOUR_SCRIPT_VARIANT_KEYS]
+    .sort((left, right) => {
+      const leftCount = counts[left] ?? 0;
+      const rightCount = counts[right] ?? 0;
+
+      if (leftCount !== rightCount) {
+        return leftCount - rightCount;
+      }
+
+      return HAPPY_HOUR_SCRIPT_VARIANT_KEYS.indexOf(left) - HAPPY_HOUR_SCRIPT_VARIANT_KEYS.indexOf(right);
+    })[0]!;
+}
+
+export function buildAgentFirstMessage(
+  target: BeerDefinition,
+  scriptVariant?: HappyHourScriptVariantKey | null,
+): string {
+  return target.kind === "happy_hour"
+    ? getHappyHourScriptVariant(scriptVariant).firstMessage
+    : buildBeerFirstMessage(target.name);
+}
+
+export function buildAgentPrompt(
+  target: BeerDefinition,
+  scriptVariant?: HappyHourScriptVariantKey | null,
+): string {
+  return target.kind === "happy_hour" ? buildHappyHourPrompt(scriptVariant) : buildBeerPrompt(target.name);
 }
 
 export const AGENT_FIRST_MESSAGE = buildAgentFirstMessage(ACTIVE_TARGET_BEER);

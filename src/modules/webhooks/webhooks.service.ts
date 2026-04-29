@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import { buildAgentFirstMessage, buildAgentPrompt } from "../../constants/agent-script.js";
+import {
+  buildAgentFirstMessage,
+  buildAgentPrompt,
+  normalizeHappyHourScriptVariant,
+} from "../../constants/agent-script.js";
 import { getBeerByKey, normalizeTargetBeerKey } from "../../constants/beers.js";
 import { BeerPriceResultsRepository } from "../../db/beer-price-results.repository.js";
 import { CallRunsRepository } from "../../db/call-runs.repository.js";
@@ -742,6 +746,10 @@ export class WebhooksService {
       requestedBeer: normalizeTargetBeerKey(
         this.getOptionalDynamicString(dynamicVariables.requested_beer, dynamicVariables.requestedBeer),
       ),
+      scriptVariant: this.getOptionalDynamicString(
+        dynamicVariables.script_variant,
+        dynamicVariables.scriptVariant,
+      ),
       venueName: this.getDynamicString(dynamicVariables.venue_name, "Unknown venue"),
       phoneNumber: this.getDynamicString(
         dynamicVariables.phone_number,
@@ -774,6 +782,10 @@ export class WebhooksService {
 
   private buildConversationInitiationData(run: CallRunRecord): Record<string, unknown> {
     const targetBeer = getBeerByKey(run.requestedBeer ?? normalizeTargetBeerKey(undefined));
+    const scriptVariant =
+      targetBeer.kind === "happy_hour"
+        ? normalizeHappyHourScriptVariant(run.scriptVariant)
+        : null;
     const promptSuffix = run.isTest
       ? "\nThis is a test call to the owner's own number. Still ask the normal questions so the call flow can be verified."
       : "";
@@ -789,15 +801,16 @@ export class WebhooksService {
         requested_beer: targetBeer.key,
         requested_target_label: targetBeer.name,
         requested_beers: targetBeer.kind === "beer" ? targetBeer.name : "",
+        ...(scriptVariant ? { script_variant: scriptVariant } : {}),
         test_mode: run.isTest ? "true" : "false",
         call_run_id: run.id,
       },
       conversation_config_override: {
         agent: {
           language: "en",
-          first_message: buildAgentFirstMessage(targetBeer),
+          first_message: buildAgentFirstMessage(targetBeer, scriptVariant),
           prompt: {
-            prompt: `${buildAgentPrompt(targetBeer)}\nVenue name: ${run.venueName}\nSuburb: ${run.suburb}${promptSuffix}`,
+            prompt: `${buildAgentPrompt(targetBeer, scriptVariant)}\nVenue name: ${run.venueName}\nSuburb: ${run.suburb}${promptSuffix}`,
           },
         },
       },

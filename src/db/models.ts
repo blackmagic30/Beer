@@ -91,6 +91,7 @@ export interface CallRunRecord {
   conversationId: string | null;
   venueId: string | null;
   requestedBeer: TargetBeerKey | null;
+  scriptVariant: string | null;
   venueName: string;
   phoneNumber: string;
   suburb: string;
@@ -111,6 +112,7 @@ export interface NewCallRunInput {
   id: string;
   venueId: string | null;
   requestedBeer: TargetBeerKey;
+  scriptVariant: string | null;
   venueName: string;
   phoneNumber: string;
   suburb: string;
@@ -126,6 +128,8 @@ export interface CallRunsFilters {
   callSid?: string | undefined;
   venueName?: string | undefined;
   suburb?: string | undefined;
+  requestedBeer?: TargetBeerKey | undefined;
+  scriptVariant?: string | undefined;
   testMode?: boolean | undefined;
   limit: number;
 }

@@ -34,6 +34,7 @@ const callRunsColumns = [
   { name: "conversation_id", definition: "TEXT UNIQUE" },
   { name: "venue_id", definition: "TEXT" },
   { name: "requested_beer", definition: "TEXT" },
+  { name: "script_variant", definition: "TEXT" },
   { name: "is_test", definition: "INTEGER NOT NULL DEFAULT 0" },
 ] as const;
 

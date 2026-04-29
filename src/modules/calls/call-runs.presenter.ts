@@ -6,6 +6,7 @@ export interface CallRunView {
   callSid: string | null;
   venueId: string | null;
   requestedBeer: string | null;
+  scriptVariant: string | null;
   venueName: string;
   phoneNumber: string;
   suburb: string;
@@ -101,6 +102,7 @@ export function buildCallRunViews(
       callSid: callRun.callSid,
       venueId: callRun.venueId,
       requestedBeer: callRun.requestedBeer,
+      scriptVariant: callRun.scriptVariant,
       venueName: callRun.venueName,
       phoneNumber: callRun.phoneNumber,
       suburb: callRun.suburb,

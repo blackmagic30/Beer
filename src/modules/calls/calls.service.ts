@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { chooseHappyHourScriptVariant, normalizeHappyHourScriptVariant } from "../../constants/agent-script.js";
+import { getBeerByKey } from "../../constants/beers.js";
 import { AppError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { nowIso } from "../../lib/time.js";
@@ -24,6 +26,15 @@ export class CallsService {
 
   async createOutboundCall(input: OutboundCallBody) {
     const requestedBeer = input.requestedBeer ?? env.TARGET_BEER;
+    const targetBeer = getBeerByKey(requestedBeer);
+    const scriptVariant =
+      targetBeer.kind === "happy_hour"
+        ? input.scriptVariant
+          ? normalizeHappyHourScriptVariant(input.scriptVariant)
+          : chooseHappyHourScriptVariant(
+              this.callRunsRepository.getScriptVariantCounts(requestedBeer),
+            )
+        : null;
 
     if (!env.OUTBOUND_CALLS_ENABLED && !input.testMode) {
       throw new AppError("Outbound calling is currently paused.", 503, {
@@ -79,6 +90,7 @@ export class CallsService {
       id: callRunId,
       venueId: input.venueId,
       requestedBeer,
+      scriptVariant,
       venueName: input.venueName,
       phoneNumber: input.phoneNumber,
       suburb: input.suburb,
@@ -109,6 +121,7 @@ export class CallsService {
         callSid: call.sid,
         callStatus: normaliseTwilioCallStatus(call.status),
         requestedBeer,
+        scriptVariant,
         venueId: input.venueId,
         venueName: input.venueName,
         suburb: input.suburb,
@@ -127,6 +140,7 @@ export class CallsService {
         callRunId,
         phoneNumber: input.phoneNumber,
         requestedBeer,
+        scriptVariant,
         testMode: input.testMode,
         error: message,
       });
@@ -140,6 +154,8 @@ export class CallsService {
     const callRuns = this.callRunsRepository.list({
       venueName: query.venueName,
       suburb: query.suburb,
+      requestedBeer: query.requestedBeer,
+      scriptVariant: query.scriptVariant,
       testMode: query.testMode,
       limit: fetchLimit,
     });
