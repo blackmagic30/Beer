@@ -55,10 +55,11 @@ export class BeerPriceResultsRepository {
         happy_hour_end,
         happy_hour_price,
         happy_hour_confidence,
+        happy_hour_specials,
         call_sid,
         conversation_id,
         needs_review
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     const transaction = this.db.transaction(() => {
@@ -86,6 +87,7 @@ export class BeerPriceResultsRepository {
           input.happyHour.happyHourEnd,
           input.happyHour.happyHourPrice,
           input.happyHour.happyHourConfidence,
+          input.happyHour.happyHourSpecials,
           input.callSid,
           input.conversationId,
           item.needsReview ? 1 : 0,
@@ -147,6 +149,7 @@ export class BeerPriceResultsRepository {
         happy_hour_end AS happyHourEnd,
         happy_hour_price AS happyHourPrice,
         happy_hour_confidence AS happyHourConfidence,
+        happy_hour_specials AS happyHourSpecials,
         call_sid AS callSid,
         conversation_id AS conversationId,
         needs_review AS needsReview,
@@ -195,10 +198,11 @@ export class BeerPriceResultsRepository {
           happy_hour AS happyHour,
           happy_hour_days AS happyHourDays,
           happy_hour_start AS happyHourStart,
-          happy_hour_end AS happyHourEnd,
-          happy_hour_price AS happyHourPrice,
-          happy_hour_confidence AS happyHourConfidence,
-          call_sid AS callSid,
+        happy_hour_end AS happyHourEnd,
+        happy_hour_price AS happyHourPrice,
+        happy_hour_confidence AS happyHourConfidence,
+        happy_hour_specials AS happyHourSpecials,
+        call_sid AS callSid,
           conversation_id AS conversationId,
           needs_review AS needsReview,
           created_at AS createdAt

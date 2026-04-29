@@ -1,28 +1,39 @@
 import { env } from "../config/env.js";
 
-export const SUPPORTED_BEER_KEYS = ["guinness", "carlton_draft", "stone_and_wood"] as const;
+export const SUPPORTED_TARGET_KEYS = ["guinness", "carlton_draft", "stone_and_wood", "happy_hour"] as const;
+export const SUPPORTED_BEER_KEYS = SUPPORTED_TARGET_KEYS;
 
 export const SUPPORTED_BEERS = {
   guinness: {
     key: "guinness",
     name: "Guinness",
     aliases: ["guinness"],
+    kind: "beer",
   },
   carlton_draft: {
     key: "carlton_draft",
     name: "Carlton Draft",
     aliases: ["carlton draft", "carlton draught"],
+    kind: "beer",
   },
   stone_and_wood: {
     key: "stone_and_wood",
     name: "Stone & Wood",
     aliases: ["stone and wood", "stone & wood"],
+    kind: "beer",
+  },
+  happy_hour: {
+    key: "happy_hour",
+    name: "Happy Hour",
+    aliases: ["happy hour", "happyhour", "happy-hour"],
+    kind: "happy_hour",
   },
 } as const;
 
 export type TargetBeerKey = keyof typeof SUPPORTED_BEERS;
 export type BeerDefinition = (typeof SUPPORTED_BEERS)[TargetBeerKey];
-export type BeerName = BeerDefinition["name"];
+export type TrackedBeerDefinition = Extract<BeerDefinition, { kind: "beer" }>;
+export type BeerName = TrackedBeerDefinition["name"];
 export interface ViewerTrackedBeerDefinition {
   key: string;
   name: string;
@@ -32,14 +43,15 @@ export interface ViewerTrackedBeerDefinition {
 export const DEFAULT_TARGET_BEER_KEY: TargetBeerKey = "guinness";
 export const ACTIVE_TARGET_BEER_KEY: TargetBeerKey = env.TARGET_BEER;
 export const ACTIVE_TARGET_BEER: BeerDefinition = SUPPORTED_BEERS[ACTIVE_TARGET_BEER_KEY];
-export const TARGET_BEERS: readonly BeerDefinition[] = [ACTIVE_TARGET_BEER];
-export const VIEWER_TRACKED_BEERS: readonly ViewerTrackedBeerDefinition[] = Object.values(SUPPORTED_BEERS).map(
-  (beer) => ({
+export const TARGET_BEERS: readonly TrackedBeerDefinition[] =
+  ACTIVE_TARGET_BEER.kind === "beer" ? [ACTIVE_TARGET_BEER] : [SUPPORTED_BEERS[DEFAULT_TARGET_BEER_KEY]];
+export const VIEWER_TRACKED_BEERS: readonly ViewerTrackedBeerDefinition[] = Object.values(SUPPORTED_BEERS)
+  .filter((beer) => beer.kind === "beer")
+  .map((beer) => ({
     key: beer.key,
     name: beer.name,
     aliases: [...beer.aliases],
-  }),
-);
+  }));
 const TRACKED_BEER_LOOKUP = new Map<string, ViewerTrackedBeerDefinition>();
 
 for (const beer of VIEWER_TRACKED_BEERS) {
@@ -74,7 +86,7 @@ export function canonicalizeTrackedBeerName(value: string | null | undefined): s
 }
 
 export function isTargetBeerKey(value: string): value is TargetBeerKey {
-  return SUPPORTED_BEER_KEYS.includes(value as TargetBeerKey);
+  return SUPPORTED_TARGET_KEYS.includes(value as TargetBeerKey);
 }
 
 export function normalizeTargetBeerKey(value: string | null | undefined): TargetBeerKey {

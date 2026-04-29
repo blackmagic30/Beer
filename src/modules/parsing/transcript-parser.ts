@@ -1,4 +1,4 @@
-import { TARGET_BEERS, type BeerDefinition, type BeerName } from "../../constants/beers.js";
+import { TARGET_BEERS, type BeerName, type TrackedBeerDefinition } from "../../constants/beers.js";
 import type {
   BeerAvailabilityStatus,
   BeerUnavailableReason,
@@ -32,6 +32,7 @@ export interface ParsedHappyHour {
   happyHourStart: string | null;
   happyHourEnd: string | null;
   happyHourPrice: number | null;
+  happyHourSpecials: string | null;
   confidence: number;
   needsReview: boolean;
   evidence: string | null;
@@ -45,7 +46,7 @@ export interface ParseOutcomeSummary {
 
 interface ParseBeerOptions {
   assumeBeerContext?: boolean;
-  targetBeers?: readonly BeerDefinition[];
+  targetBeers?: readonly TrackedBeerDefinition[];
 }
 
 interface PriceMention {
@@ -78,6 +79,10 @@ interface HappyHourTimeRange {
 
 interface ParseHappyHourOptions {
   assumeHappyHourContext?: boolean;
+}
+
+interface ExtractTimeRangeOptions {
+  preferPm?: boolean;
 }
 
 const PRICE_REGEX = /\$?\s*(\d{1,2}(?:\.\d{1,2})?)(?:\s*(?:dollars?|bucks?))?/gi;
@@ -148,6 +153,8 @@ const REGULAR_PRICE_CONTEXT_REGEX = /\b(normally|usually|regular(?:ly)?(?:'s|s)?
 const HAPPY_HOUR_KEYWORD_REGEX = /\b(happy hour|deal|deals|special|specials|promo|promotion|discount)\b/i;
 const HAPPY_HOUR_NEGATIVE_REGEX =
   /\b(no happy hour|no deals?|no specials?|not at the moment|nothing at the moment|nothing right now|not currently)\b|\b(?:don't|dont)\s+have\b(?:[^.!?\n]{0,30})\b(?:happy hour|deals?|specials?)\b|\b(?:nah|nope|none)\b(?:[^.!?\n]{0,25})\b(?:happy hour|deals?|specials?)\b/i;
+const HAPPY_HOUR_SPECIALS_KEYWORD_REGEX =
+  /\b(specials?|deals?|discount|discounted|off|two for one|2 for 1|half price|pints?|schooners?|pots?|midd(?:y|ies)|cocktails?|spritz(?:es)?|beer|wine|wings?|pizza|parma|burgers?|oysters?|tacos?|snacks?|jugs?)\b/i;
 const DAY_RANGE_REGEX =
   /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:-|to)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const DAY_ONLY_REGEX = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+only\b/i;
@@ -296,6 +303,16 @@ function extractPriceMentions(segment: string): PriceMention[] {
       !/\$|dollar|buck/i.test(fullMatch) &&
       GREETING_PRICE_PREFIX_REGEX.test(beforeWindow) &&
       /^\s*[A-Za-z]/.test(afterWindow)
+    ) {
+      continue;
+    }
+
+    if (
+      !/\$|dollar|buck/i.test(fullMatch) &&
+      (
+        /^\s*(?:-|to|til|until)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i.test(afterWindow) ||
+        /\b\d{1,2}(?::\d{2})?\s*(?:-|to|til|until)\s*$/.test(beforeWindow)
+      )
     ) {
       continue;
     }
@@ -636,7 +653,7 @@ function extractDayMatch(text: string): HappyHourDayMatch | null {
   return null;
 }
 
-function extractTimeRange(text: string): HappyHourTimeRange | null {
+function extractTimeRange(text: string, options: ExtractTimeRangeOptions = {}): HappyHourTimeRange | null {
   let bestMatch: HappyHourTimeRange | null = null;
 
   for (const match of text.matchAll(TIME_RANGE_REGEX)) {
@@ -652,12 +669,24 @@ function extractTimeRange(text: string): HappyHourTimeRange | null {
       continue;
     }
 
-    const inferredStartMeridian = startMeridianRaw ?? inferMissingMeridian(
-      Number.parseInt(startHourRaw, 10),
-      Number.parseInt(endHourRaw, 10),
-      endMeridianRaw ?? undefined,
-    );
-    const inferredEndMeridian = endMeridianRaw ?? startMeridianRaw ?? undefined;
+    const startHour = Number.parseInt(startHourRaw, 10);
+    const endHour = Number.parseInt(endHourRaw, 10);
+    const inferPmRange =
+      options.preferPm === true &&
+      !startMeridianRaw &&
+      !endMeridianRaw &&
+      startHour >= 3 &&
+      startHour <= 11 &&
+      endHour >= 3 &&
+      endHour <= 11;
+    const inferredStartMeridian =
+      startMeridianRaw ??
+      (inferPmRange ? "pm" : inferMissingMeridian(
+        startHour,
+        endHour,
+        endMeridianRaw ?? undefined,
+      ));
+    const inferredEndMeridian = endMeridianRaw ?? startMeridianRaw ?? (inferPmRange ? "pm" : undefined);
     const start = normaliseTimePart(startHourRaw, startMinuteRaw ?? undefined, inferredStartMeridian);
     const end = normaliseTimePart(endHourRaw, endMinuteRaw ?? undefined, inferredEndMeridian);
 
@@ -703,7 +732,15 @@ function extractHappyHourPrice(
   primaryAnchor: number,
   timeRange: HappyHourTimeRange | null,
 ): PriceMention | null {
-  const allMentions = extractPriceMentions(text);
+  const allMentions = extractPriceMentions(text).filter((mention) => {
+    if (!timeRange) {
+      return true;
+    }
+
+    const timeRangeStart = timeRange.index;
+    const timeRangeEnd = timeRange.index + timeRange.raw.length;
+    return !(mention.index >= timeRangeStart && mention.index < timeRangeEnd);
+  });
 
   if (allMentions.length === 0) {
     return null;
@@ -804,6 +841,49 @@ function buildHappyHourCandidateText(transcriptText: string, assumeHappyHourCont
     .join(". ");
 }
 
+function extractHappyHourSpecials(
+  candidateText: string,
+  dayMatch: HappyHourDayMatch | null,
+  timeRange: HappyHourTimeRange | null,
+): string | null {
+  if (!candidateText.trim()) {
+    return null;
+  }
+
+  const explicitMatch = candidateText.match(
+    /\b(?:specials?|deals?)\s*(?:are|is|include|includes|during(?: that| it)?)?\s+(.+)$/i,
+  );
+  let specialsSource = explicitMatch?.[1] ?? candidateText;
+
+  if (dayMatch?.value) {
+    specialsSource = specialsSource.replace(new RegExp(dayMatch.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
+  }
+
+  if (timeRange?.raw) {
+    specialsSource = specialsSource.replace(new RegExp(timeRange.raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
+  }
+
+  specialsSource = specialsSource
+    .replace(/\bhappy hour\b/gi, " ")
+    .replace(/\b(?:we do|we've got|we have|there's|there is|it is|it's|available|from|then|during that|during it)\b/gi, " ")
+    .replace(/\band\b/gi, " ")
+    .replace(/^with\b/i, " ")
+    .replace(/^the\b/i, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[,:;.\-\s]+|[,:;.\-\s]+$/g, "");
+
+  if (!specialsSource) {
+    return null;
+  }
+
+  if (!HAPPY_HOUR_SPECIALS_KEYWORD_REGEX.test(specialsSource) && extractPriceMentions(specialsSource).length === 0) {
+    return null;
+  }
+
+  return specialsSource;
+}
+
 function buildNoHappyHourResult(confidence: number, evidence: string | null): ParsedHappyHour {
   return {
     happyHour: false,
@@ -811,6 +891,7 @@ function buildNoHappyHourResult(confidence: number, evidence: string | null): Pa
     happyHourStart: null,
     happyHourEnd: null,
     happyHourPrice: null,
+    happyHourSpecials: null,
     confidence,
     needsReview: false,
     evidence,
@@ -821,7 +902,7 @@ function getTurnText(turn: TranscriptTurnLike): string {
   return turn.message?.trim() || turn.originalMessage?.trim() || "";
 }
 
-function containsTargetBeerReference(text: string, beers: readonly BeerDefinition[] = TARGET_BEERS): boolean {
+function containsTargetBeerReference(text: string, beers: readonly TrackedBeerDefinition[] = TARGET_BEERS): boolean {
   const lowerText = text.toLowerCase();
 
   return beers.some((beer) =>
@@ -829,7 +910,7 @@ function containsTargetBeerReference(text: string, beers: readonly BeerDefinitio
   );
 }
 
-function isBeerQuestionTurn(turn: TranscriptTurnLike, beers: readonly BeerDefinition[] = TARGET_BEERS): boolean {
+function isBeerQuestionTurn(turn: TranscriptTurnLike, beers: readonly TrackedBeerDefinition[] = TARGET_BEERS): boolean {
   const message = getTurnText(turn);
 
   if (!message || turn.role?.toLowerCase() !== "agent") {
@@ -869,7 +950,7 @@ function isClosingAgentTurn(turn: TranscriptTurnLike): boolean {
   return CLOSING_AGENT_TURN_REGEX.test(message);
 }
 
-function scoreBeerContextSequence(sequence: string, beers: readonly BeerDefinition[] = TARGET_BEERS): number {
+function scoreBeerContextSequence(sequence: string, beers: readonly TrackedBeerDefinition[] = TARGET_BEERS): number {
   const evidence = normaliseTranscript(sequence);
 
   if (!evidence) {
@@ -1009,7 +1090,7 @@ function buildAssumedContextCandidate(transcriptText: string, beerName: BeerName
 
 export function extractBeerContextText(
   turns: TranscriptTurnLike[],
-  beers: readonly BeerDefinition[] = TARGET_BEERS,
+  beers: readonly TrackedBeerDefinition[] = TARGET_BEERS,
 ): string {
   const sequences: string[] = [];
   let collected: string[] = [];
@@ -1067,7 +1148,8 @@ export function extractBeerContextText(
 }
 
 export function extractHappyHourContextText(turns: TranscriptTurnLike[]): string {
-  const collected: string[] = [];
+  const sequences: string[] = [];
+  let collected: string[] = [];
   let capturing = false;
 
   for (const turn of turns) {
@@ -1077,7 +1159,12 @@ export function extractHappyHourContextText(turns: TranscriptTurnLike[]): string
       continue;
     }
 
-    if (turn.role?.toLowerCase() === "agent" && /happy hour/i.test(message)) {
+    if (turn.role?.toLowerCase() === "agent" && /happy hour|specials?|days? and times?/i.test(message)) {
+      if (collected.length > 0) {
+        sequences.push(collected.join(". ").trim());
+        collected = [];
+      }
+
       capturing = true;
       continue;
     }
@@ -1091,12 +1178,25 @@ export function extractHappyHourContextText(turns: TranscriptTurnLike[]): string
       continue;
     }
 
+    if (
+      collected.length > 0 &&
+      (isClarificationTurn(turn) || isNonSubstantiveAgentTurn(turn) || isClosingAgentTurn(turn))
+    ) {
+      continue;
+    }
+
     if (collected.length > 0 && turn.role?.toLowerCase() === "agent") {
-      break;
+      sequences.push(collected.join(". ").trim());
+      collected = [];
+      capturing = false;
     }
   }
 
-  return collected.join(". ").trim();
+  if (collected.length > 0) {
+    sequences.push(collected.join(". ").trim());
+  }
+
+  return sequences.join(". ").trim();
 }
 
 export function parseBeerPrices(
@@ -1166,7 +1266,9 @@ export function parseHappyHourInfo(
 
   const isNegative = HAPPY_HOUR_NEGATIVE_REGEX.test(candidateText);
   const dayMatch = extractDayMatch(candidateText);
-  const timeRange = extractTimeRange(candidateText);
+  const timeRange = extractTimeRange(candidateText, {
+    preferPm: true,
+  });
   const keywordIndex = findHappyHourKeywordIndex(candidateText);
   const primaryAnchor =
     keywordIndex ??
@@ -1175,12 +1277,14 @@ export function parseHappyHourInfo(
     (options.assumeHappyHourContext ? 0 : null) ??
     0;
   const happyHourPrice = extractHappyHourPrice(candidateText, primaryAnchor, timeRange);
+  const happyHourSpecials = extractHappyHourSpecials(candidateText, dayMatch, timeRange);
   const hasPositiveSignals =
     Boolean(options.assumeHappyHourContext) ||
     HAPPY_HOUR_KEYWORD_REGEX.test(candidateText) ||
     dayMatch !== null ||
     timeRange !== null ||
-    happyHourPrice !== null;
+    happyHourPrice !== null ||
+    happyHourSpecials !== null;
 
   if (isNegative && !dayMatch && !timeRange && !happyHourPrice) {
     return buildNoHappyHourResult(0.93, candidateText);
@@ -1212,6 +1316,10 @@ export function parseHappyHourInfo(
     confidence += 0.18;
   }
 
+  if (happyHourSpecials) {
+    confidence += 0.12;
+  }
+
   if (UNCERTAINTY_REGEX.test(candidateText)) {
     confidence -= 0.16;
   }
@@ -1228,8 +1336,9 @@ export function parseHappyHourInfo(
     happyHourStart: timeRange?.start ?? null,
     happyHourEnd: timeRange?.end ?? null,
     happyHourPrice: happyHourPrice?.value ?? null,
+    happyHourSpecials,
     confidence,
-    needsReview: confidence < 0.72 || timeRange === null || happyHourPrice === null,
+    needsReview: confidence < 0.72 || timeRange === null || happyHourSpecials === null,
     evidence: candidateText,
   };
 }
@@ -1259,8 +1368,7 @@ export function summariseParseOutcome(
   const happyHourPartial =
     happyHour
       ? (happyHour.happyHour &&
-          (happyHour.happyHourPrice === null ||
-            happyHour.happyHourStart === null ||
+          (happyHour.happyHourStart === null ||
             happyHour.happyHourEnd === null)) ||
         (!happyHour.happyHour && happyHour.confidence < confidenceThreshold)
       : false;

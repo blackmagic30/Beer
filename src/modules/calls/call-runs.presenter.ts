@@ -1,4 +1,5 @@
 import type { BeerPriceResultRecord, CallRunRecord } from "../../db/models.js";
+import { extractHappyHourContextText, parseHappyHourInfo } from "../parsing/transcript-parser.js";
 
 export interface CallRunView {
   id: string;
@@ -38,7 +39,35 @@ export interface CallRunView {
     happyHourEnd: string | null;
     happyHourPrice: number | null;
     confidence: number | null;
+    happyHourSpecials: string | null;
   } | null;
+}
+
+interface PresenterTranscriptTurn {
+  role: string | undefined;
+  message: string;
+  originalMessage: string;
+}
+
+function parseTurns(rawTranscript: string) {
+  return rawTranscript
+    .split(/\n+/)
+    .map((line) => {
+      const match = line.match(/^([A-Z]+):\s*(.*)$/);
+
+      if (!match) {
+        return null;
+      }
+
+      const message = match[2] ?? "";
+
+      return {
+        role: match[1]?.toLowerCase(),
+        message,
+        originalMessage: message,
+      };
+    })
+    .filter((turn): turn is PresenterTranscriptTurn => turn !== null);
 }
 
 export function buildCallRunViews(
@@ -57,6 +86,12 @@ export function buildCallRunViews(
   return callRuns.map((callRun) => {
     const callRows = callRun.callSid ? resultsByCallSid.get(callRun.callSid) ?? [] : [];
     const happyHourSource = callRows[0];
+    const derivedHappyHour =
+      !happyHourSource && callRun.requestedBeer === "happy_hour" && callRun.rawTranscript
+        ? parseHappyHourInfo(extractHappyHourContextText(parseTurns(callRun.rawTranscript)) || callRun.rawTranscript, {
+            assumeHappyHourContext: true,
+          })
+        : null;
     const needsReview =
       callRun.parseStatus !== "parsed" ||
       (callRun.parseConfidence !== null && callRun.parseConfidence < confidenceThreshold);
@@ -100,8 +135,19 @@ export function buildCallRunViews(
             happyHourEnd: happyHourSource.happyHourEnd,
             happyHourPrice: happyHourSource.happyHourPrice,
             confidence: happyHourSource.happyHourConfidence,
+            happyHourSpecials: happyHourSource.happyHourSpecials,
           }
-        : null,
+        : derivedHappyHour
+          ? {
+              happyHour: derivedHappyHour.happyHour,
+              happyHourDays: derivedHappyHour.happyHourDays,
+              happyHourStart: derivedHappyHour.happyHourStart,
+              happyHourEnd: derivedHappyHour.happyHourEnd,
+              happyHourPrice: derivedHappyHour.happyHourPrice,
+              confidence: derivedHappyHour.confidence,
+              happyHourSpecials: derivedHappyHour.happyHourSpecials,
+            }
+          : null,
     };
   });
 }

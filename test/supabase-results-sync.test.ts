@@ -10,6 +10,7 @@ describe("buildSupabaseCallResultRow", () => {
         callSid: "CA123",
         conversationId: "conv-1",
         venueId: "27b97227-2735-4a9c-ad7c-d1047f3f225e",
+        requestedBeer: "carlton_draft",
         venueName: "The Duke of Wellington",
         phoneNumber: "+61398100066",
         suburb: "Melbourne",
@@ -64,6 +65,7 @@ describe("buildSupabaseCallResultRow", () => {
         happyHourEnd: "18:00",
         happyHourPrice: 7,
         happyHourConfidence: 0.88,
+        happyHourSpecials: "$7 pints and half-price wings",
       },
     });
 
@@ -104,6 +106,7 @@ describe("buildSupabaseCallResultRow", () => {
           start: "16:00",
           end: "18:00",
           price: 7,
+          specials: "$7 pints and half-price wings",
         }),
       }),
     );

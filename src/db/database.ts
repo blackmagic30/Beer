@@ -27,6 +27,7 @@ const beerPriceResultsColumns = [
   { name: "happy_hour_end", definition: "TEXT" },
   { name: "happy_hour_price", definition: "REAL" },
   { name: "happy_hour_confidence", definition: "REAL NOT NULL DEFAULT 0" },
+  { name: "happy_hour_specials", definition: "TEXT" },
 ] as const;
 
 const callRunsColumns = [

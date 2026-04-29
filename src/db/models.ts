@@ -70,6 +70,7 @@ export interface PersistedHappyHourInput {
   happyHourEnd: string | null;
   happyHourPrice: number | null;
   happyHourConfidence: number;
+  happyHourSpecials: string | null;
 }
 
 export type CallStatus =
@@ -151,6 +152,7 @@ export interface BeerPriceResultRecord {
   happyHourEnd: string | null;
   happyHourPrice: number | null;
   happyHourConfidence: number;
+  happyHourSpecials: string | null;
   callSid: string;
   conversationId: string | null;
   needsReview: boolean;

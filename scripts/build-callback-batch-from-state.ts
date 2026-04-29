@@ -91,7 +91,7 @@ async function main() {
   const root = process.cwd();
   const sourceStatePath = path.resolve(root, getArg("source-state-file", "./data/runs/priority-areas-carlton-draft-batch.json")!);
   const outputStatePath = path.resolve(root, getArg("output-state-file", "./data/runs/callback-batch.json")!);
-  const targetBeer = normalizeTargetBeerKey(getArg("beer", "stone_and_wood"));
+  const targetBeer = normalizeTargetBeerKey(getArg("beer", "happy_hour"));
   const baseUrl = getArg("base-url", "https://beer-production-aad4.up.railway.app")!;
 
   const sourceState = readJsonFile<SourceBatchState>(sourceStatePath);

@@ -2678,6 +2678,7 @@
         happyHour.days || happyHour.days_times || null,
         happyHour.start && happyHour.end ? `${happyHour.start}-${happyHour.end}` : null,
         happyHour.price != null ? `$${happyHour.price}` : null,
+        happyHour.specials ? `Specials: ${happyHour.specials}` : null,
       ].filter(Boolean);
 
       return parts.length ? parts.join(" • ") : "Happy hour available";

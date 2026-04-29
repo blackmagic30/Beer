@@ -192,6 +192,7 @@ async function main() {
           confidence: item.confidence,
           needsReview: item.needsReview,
         })),
+        happyHour: reparse.happyHour,
       }),
     );
   }

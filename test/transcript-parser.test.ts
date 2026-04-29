@@ -463,6 +463,7 @@ describe("parseHappyHourInfo", () => {
         happyHourStart: "16:00",
         happyHourEnd: "18:00",
         happyHourPrice: 7,
+        happyHourSpecials: expect.stringContaining("pints"),
         needsReview: false,
       }),
     );
@@ -481,7 +482,23 @@ describe("parseHappyHourInfo", () => {
         happyHourStart: "16:00",
         happyHourEnd: "18:00",
         happyHourPrice: null,
+        happyHourSpecials: null,
         needsReview: true,
+      }),
+    );
+  });
+
+  it("treats descriptive happy hour specials as usable even without a numeric price", () => {
+    const result = parseHappyHourInfo("Happy hour daily 4-6pm with half-price cocktails and discounted wines.");
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: true,
+        happyHourStart: "16:00",
+        happyHourEnd: "18:00",
+        happyHourPrice: null,
+        happyHourSpecials: expect.stringContaining("half-price cocktails"),
+        needsReview: false,
       }),
     );
   });
@@ -504,6 +521,33 @@ describe("parseHappyHourInfo", () => {
 });
 
 describe("extractHappyHourContextText", () => {
+  it("captures a follow-up answer with happy hour specials", () => {
+    const result = extractHappyHourContextText([
+      {
+        role: "agent",
+        message: "Hey mate, quick one, what days and times is your happy hour, and what specials do you run during it?",
+      },
+      {
+        role: "user",
+        message: "Weekdays 4 to 6.",
+      },
+      {
+        role: "agent",
+        message: "And what specials are on during it?",
+      },
+      {
+        role: "user",
+        message: "Seven dollar pints and half-price wings.",
+      },
+      {
+        role: "agent",
+        message: "Thanks, bye.",
+      },
+    ]);
+
+    expect(result).toBe("Weekdays 4 to 6.. Seven dollar pints and half-price wings.");
+  });
+
   it("pulls the user answer after the agent beer question", () => {
     const result = extractBeerContextText([
       {

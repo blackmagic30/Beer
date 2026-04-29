@@ -46,6 +46,7 @@ function toBeerKey(beerName: string): string {
 export function buildSupabaseCallResultRow(
   input: SyncSupabaseCallResultInput,
 ): SupabaseCallResultRow {
+  const isHappyHourCampaign = input.run.requestedBeer === "happy_hour";
   const beerEntries = Object.fromEntries(
     input.items.map((item) => {
       const key = toBeerKey(item.beerName);
@@ -75,9 +76,9 @@ export function buildSupabaseCallResultRow(
 
   const happyHourNeedsReview = input.happyHour.happyHour
     ? input.happyHour.happyHourConfidence < 0.72 ||
-      input.happyHour.happyHourPrice == null ||
       !input.happyHour.happyHourStart ||
-      !input.happyHour.happyHourEnd
+      !input.happyHour.happyHourEnd ||
+      !input.happyHour.happyHourSpecials
     : false;
 
   return {
@@ -85,7 +86,7 @@ export function buildSupabaseCallResultRow(
     venue_name: input.run.venueName,
     suburb: input.run.suburb,
     saved_at: input.savedAt,
-    raw: {
+      raw: {
       call_run_id: input.run.id,
       call_sid: input.callSid,
       conversation_id: input.conversationId,
@@ -105,7 +106,7 @@ export function buildSupabaseCallResultRow(
       beer_results: input.items,
       menu_capture: {
         source: "phone_agent",
-        completeness: "single_beer_probe",
+        completeness: isHappyHourCampaign ? "happy_hour_probe" : "single_beer_probe",
         known_items_count: input.items.length,
         crowdsource_full_menu_planned: true,
       },
@@ -116,7 +117,7 @@ export function buildSupabaseCallResultRow(
       beers: beerEntries,
       menu_capture: {
         source: "phone_agent",
-        completeness: "single_beer_probe",
+        completeness: isHappyHourCampaign ? "happy_hour_probe" : "single_beer_probe",
         known_items_count: input.items.length,
         crowdsource_full_menu_planned: true,
       },
@@ -139,6 +140,7 @@ export function buildSupabaseCallResultRow(
         start: input.happyHour.happyHourStart,
         end: input.happyHour.happyHourEnd,
         price: input.happyHour.happyHourPrice,
+        specials: input.happyHour.happyHourSpecials,
         confidence: input.happyHour.happyHourConfidence,
         needs_review: happyHourNeedsReview,
         days_times: [input.happyHour.happyHourDays, input.happyHour.happyHourStart, input.happyHour.happyHourEnd]

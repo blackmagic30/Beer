@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS beer_price_results (
   happy_hour_end TEXT,
   happy_hour_price REAL,
   happy_hour_confidence REAL NOT NULL DEFAULT 0,
+  happy_hour_specials TEXT,
   call_sid TEXT NOT NULL,
   conversation_id TEXT,
   needs_review INTEGER NOT NULL DEFAULT 0,

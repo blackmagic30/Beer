@@ -12,7 +12,9 @@ import { SupabaseResultsSyncService } from "../../lib/supabase-results-sync.js";
 import { nowIso, unixSecondsToIso } from "../../lib/time.js";
 import {
   extractBeerContextText,
+  extractHappyHourContextText,
   parseBeerPrices,
+  parseHappyHourInfo,
   summariseParseOutcome,
 } from "../parsing/transcript-parser.js";
 import {
@@ -442,18 +444,37 @@ export class WebhooksService {
         this.getOptionalDynamicString(
           event.data.dynamicVariables.requested_beer,
           event.data.dynamicVariables.requestedBeer,
+          event.data.dynamicVariables.requested_target,
+          event.data.dynamicVariables.requestedTarget,
         ),
       );
       const targetBeer = getBeerByKey(targetBeerKey);
-      const beerTranscript = extractBeerContextText(transcript, [targetBeer]);
-      const parsedPrices = parseBeerPrices(beerTranscript || userTranscript || rawTranscript, {
-        assumeBeerContext: Boolean(beerTranscript),
-        targetBeers: [targetBeer],
-      });
+      const isHappyHourCampaign = targetBeer.kind === "happy_hour";
+      const beerTarget = targetBeer.kind === "beer" ? targetBeer : null;
+      const beerTranscript = beerTarget ? extractBeerContextText(transcript, [beerTarget]) : "";
+      const happyHourTranscript = isHappyHourCampaign ? extractHappyHourContextText(transcript) : userTranscript || rawTranscript;
+      const parsedPrices = isHappyHourCampaign
+        ? []
+        : parseBeerPrices(
+            beerTranscript || userTranscript || rawTranscript,
+            beerTarget
+              ? {
+                  assumeBeerContext: Boolean(beerTranscript),
+                  targetBeers: [beerTarget],
+                }
+              : {
+                  assumeBeerContext: Boolean(beerTranscript),
+                },
+          );
+      const parsedHappyHour = isHappyHourCampaign
+        ? parseHappyHourInfo(happyHourTranscript || userTranscript || rawTranscript, {
+            assumeHappyHourContext: Boolean(happyHourTranscript),
+          })
+        : null;
       const detectedFailureReason = detectTranscriptFailureReason(userTranscript, rawTranscript);
       const baseParseSummary = summariseParseOutcome(
         parsedPrices,
-        null,
+        parsedHappyHour,
         this.parseConfidenceThreshold,
       );
       const overrideParsedOutcome = shouldOverrideParsedOutcome(detectedFailureReason);
@@ -508,12 +529,13 @@ export class WebhooksService {
           needsReview: item.needsReview || parseSummary.needsReview,
         })),
         happyHour: {
-          happyHour: false,
-          happyHourDays: null,
-          happyHourStart: null,
-          happyHourEnd: null,
-          happyHourPrice: null,
-          happyHourConfidence: 0,
+          happyHour: parsedHappyHour?.happyHour ?? false,
+          happyHourDays: parsedHappyHour?.happyHourDays ?? null,
+          happyHourStart: parsedHappyHour?.happyHourStart ?? null,
+          happyHourEnd: parsedHappyHour?.happyHourEnd ?? null,
+          happyHourPrice: parsedHappyHour?.happyHourPrice ?? null,
+          happyHourConfidence: parsedHappyHour?.confidence ?? 0,
+          happyHourSpecials: parsedHappyHour?.happyHourSpecials ?? null,
         },
       });
 
@@ -534,12 +556,13 @@ export class WebhooksService {
               needsReview: item.needsReview || parseSummary.needsReview,
             })),
             happyHour: {
-              happyHour: false,
-              happyHourDays: null,
-              happyHourStart: null,
-              happyHourEnd: null,
-              happyHourPrice: null,
-              happyHourConfidence: 0,
+              happyHour: parsedHappyHour?.happyHour ?? false,
+              happyHourDays: parsedHappyHour?.happyHourDays ?? null,
+              happyHourStart: parsedHappyHour?.happyHourStart ?? null,
+              happyHourEnd: parsedHappyHour?.happyHourEnd ?? null,
+              happyHourPrice: parsedHappyHour?.happyHourPrice ?? null,
+              happyHourConfidence: parsedHappyHour?.confidence ?? 0,
+              happyHourSpecials: parsedHappyHour?.happyHourSpecials ?? null,
             },
           });
         } catch (error) {
@@ -762,17 +785,19 @@ export class WebhooksService {
         venue_name: run.venueName,
         suburb: run.suburb,
         phone_number: run.phoneNumber,
+        requested_target: targetBeer.key,
         requested_beer: targetBeer.key,
-        requested_beers: targetBeer.name,
+        requested_target_label: targetBeer.name,
+        requested_beers: targetBeer.kind === "beer" ? targetBeer.name : "",
         test_mode: run.isTest ? "true" : "false",
         call_run_id: run.id,
       },
       conversation_config_override: {
         agent: {
           language: "en",
-          first_message: buildAgentFirstMessage(targetBeer.name),
+          first_message: buildAgentFirstMessage(targetBeer),
           prompt: {
-            prompt: `${buildAgentPrompt(targetBeer.name)}\nVenue name: ${run.venueName}\nSuburb: ${run.suburb}${promptSuffix}`,
+            prompt: `${buildAgentPrompt(targetBeer)}\nVenue name: ${run.venueName}\nSuburb: ${run.suburb}${promptSuffix}`,
           },
         },
       },

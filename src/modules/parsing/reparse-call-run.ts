@@ -17,7 +17,9 @@ import {
 } from "./transcript-failure-reason.js";
 import {
   extractBeerContextText,
+  extractHappyHourContextText,
   parseBeerPrices,
+  parseHappyHourInfo,
   summariseParseOutcome,
   type TranscriptTurnLike,
 } from "./transcript-parser.js";
@@ -149,6 +151,7 @@ function buildHappyHourDefaults(): PersistedHappyHourInput {
     happyHourEnd: null,
     happyHourPrice: null,
     happyHourConfidence: 0,
+    happyHourSpecials: null,
   };
 }
 
@@ -163,14 +166,31 @@ export function buildReparseCallRunResult(
   const requestedBeer = inferRequestedBeerKey(run);
   const targetBeer = getBeerByKey(requestedBeer);
   const turns = parseTurns(run.rawTranscript);
-  const beerTranscript = extractBeerContextText(turns, [targetBeer]);
+  const beerTarget = targetBeer.kind === "beer" ? targetBeer : null;
+  const isHappyHourCampaign = targetBeer.kind === "happy_hour";
+  const beerTranscript = beerTarget ? extractBeerContextText(turns, [beerTarget]) : "";
+  const happyHourTranscript = isHappyHourCampaign ? extractHappyHourContextText(turns) : "";
   const userTranscript = flattenRoleTranscript(turns, "user");
-  const parsedPrices = parseBeerPrices(beerTranscript || userTranscript || run.rawTranscript, {
-    assumeBeerContext: Boolean(beerTranscript),
-    targetBeers: [targetBeer],
-  });
+  const parsedPrices = isHappyHourCampaign
+    ? []
+    : parseBeerPrices(
+        beerTranscript || userTranscript || run.rawTranscript,
+        beerTarget
+          ? {
+              assumeBeerContext: Boolean(beerTranscript),
+              targetBeers: [beerTarget],
+            }
+          : {
+              assumeBeerContext: Boolean(beerTranscript),
+            },
+      );
+  const parsedHappyHour = isHappyHourCampaign
+    ? parseHappyHourInfo(happyHourTranscript || userTranscript || run.rawTranscript, {
+        assumeHappyHourContext: Boolean(happyHourTranscript),
+      })
+    : null;
   const detectedFailureReason = detectTranscriptFailureReason(userTranscript, run.rawTranscript);
-  const baseParseSummary = summariseParseOutcome(parsedPrices, null, parseConfidenceThreshold);
+  const baseParseSummary = summariseParseOutcome(parsedPrices, parsedHappyHour, parseConfidenceThreshold);
   const overrideParsedOutcome = shouldOverrideParsedOutcome(detectedFailureReason);
   const parseSummary = overrideParsedOutcome
     ? {
@@ -210,6 +230,16 @@ export function buildReparseCallRunResult(
     needsReview: parseSummary.needsReview,
     errorMessage: failureReason,
     items,
-    happyHour: buildHappyHourDefaults(),
+    happyHour: parsedHappyHour
+      ? {
+          happyHour: parsedHappyHour.happyHour,
+          happyHourDays: parsedHappyHour.happyHourDays,
+          happyHourStart: parsedHappyHour.happyHourStart,
+          happyHourEnd: parsedHappyHour.happyHourEnd,
+          happyHourPrice: parsedHappyHour.happyHourPrice,
+          happyHourConfidence: parsedHappyHour.confidence,
+          happyHourSpecials: parsedHappyHour.happyHourSpecials,
+        }
+      : buildHappyHourDefaults(),
   };
 }
