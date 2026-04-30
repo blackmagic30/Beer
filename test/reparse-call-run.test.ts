@@ -81,6 +81,86 @@ describe("buildReparseCallRunResult", () => {
     );
   });
 
+  it("falls back to the full staff transcript when the first beer-context answer is only clarification", () => {
+    const result = buildReparseCallRunResult(
+      {
+        id: "run-clarification-price",
+        callSid: "CAPRICE",
+        conversationId: null,
+        venueId: "venue-price",
+        requestedBeer: "carlton_draft",
+        venueName: "The Oxford Scholar",
+        phoneNumber: "+61300000002",
+        suburb: "Melbourne",
+        startedAt: "2026-04-29T08:00:00.000Z",
+        endedAt: "2026-04-29T08:00:50.000Z",
+        durationSeconds: 50,
+        callStatus: "completed",
+        rawTranscript:
+          "AGENT: Hey mate, quick one, how much is a pint of Carlton Draft there?\nUSER: Sorry, what was that?\nAGENT: Just the regular pint price, thanks mate.\nUSER: The regular pint is 16.50. With the discount, it's 14.05.",
+        parseConfidence: 0.05,
+        parseStatus: "failed",
+        errorMessage: "Parsing produced no useful data",
+        isTest: false,
+        createdAt: "2026-04-29T08:00:00.000Z",
+        updatedAt: "2026-04-29T08:00:50.000Z",
+      },
+      0.72,
+    );
+
+    expect(result.parseStatus).toBe("parsed");
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          beerName: "Carlton Draft",
+          priceNumeric: 16.5,
+          needsReview: false,
+        }),
+      ]),
+    );
+  });
+
+  it("reparses explicit don't-stock replies as useful unavailable results", () => {
+    const result = buildReparseCallRunResult(
+      {
+        id: "run-not-stocked",
+        callSid: "CANOSTOCK",
+        conversationId: null,
+        venueId: "venue-not-stocked",
+        requestedBeer: "carlton_draft",
+        venueName: "The Elysian Whisky Bar",
+        phoneNumber: "+61300000003",
+        suburb: "Fitzroy",
+        startedAt: "2026-04-29T08:00:00.000Z",
+        endedAt: "2026-04-29T08:00:40.000Z",
+        durationSeconds: 40,
+        callStatus: "completed",
+        rawTranscript:
+          "AGENT: Hey mate, quick one, how much is a pint of Carlton Draft there?\nUSER: We don't stock our own draft there.\nAGENT: Sorry, do you have Carlton Draft at all?\nUSER: No, we just don't do Carlton Draft yet.",
+        parseConfidence: 0.05,
+        parseStatus: "failed",
+        errorMessage: "Parsing produced no useful data",
+        isTest: false,
+        createdAt: "2026-04-29T08:00:00.000Z",
+        updatedAt: "2026-04-29T08:00:40.000Z",
+      },
+      0.72,
+    );
+
+    expect(result.parseStatus).toBe("parsed");
+    expect(result.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          beerName: "Carlton Draft",
+          priceNumeric: null,
+          availabilityStatus: "unavailable",
+          unavailableReason: "not_stocked",
+          needsReview: false,
+        }),
+      ]),
+    );
+  });
+
   it("reparses happy hour campaign calls into happy hour details without beer items", () => {
     const result = buildReparseCallRunResult(
       {

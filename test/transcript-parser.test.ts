@@ -327,6 +327,47 @@ describe("parseBeerPrices", () => {
     expect(results[0]?.confidence).toBeGreaterThan(0.8);
   });
 
+  it("treats bottled-beer-only phrasing as package-only", () => {
+    const results = parseBeerPrices("We only do bottled beer here, no draft.", {
+      assumeBeerContext: true,
+      targetBeers: [getBeerByKey("carlton_draft")],
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draft",
+        priceNumeric: null,
+        needsReview: false,
+        isUnavailable: true,
+        availabilityStatus: "package_only",
+        availableOnTap: false,
+        availablePackageOnly: true,
+        unavailableReason: "bottles_only",
+      }),
+    ]);
+    expect(results[0]?.confidence).toBeGreaterThan(0.8);
+  });
+
+  it("treats don't-stock phrasing as unavailable", () => {
+    const results = parseBeerPrices("No, we just don't stock Carlton Draft yet.", {
+      assumeBeerContext: true,
+      targetBeers: [getBeerByKey("carlton_draft")],
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draft",
+        priceNumeric: null,
+        needsReview: false,
+        isUnavailable: true,
+        availabilityStatus: "unavailable",
+        availableOnTap: false,
+        unavailableReason: "not_stocked",
+      }),
+    ]);
+    expect(results[0]?.confidence).toBeGreaterThan(0.8);
+  });
+
   it("treats do-not-have phrasing as unavailable", () => {
     const results = parseBeerPrices("Uh, we do not have Guinness.", {
       assumeBeerContext: true,

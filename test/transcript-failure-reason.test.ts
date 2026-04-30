@@ -42,6 +42,15 @@ describe("detectTranscriptFailureReason", () => {
     expect(result).toBe("Staff needed to check price but no answer returned");
   });
 
+  it("detects transfer-to-venue responses that never answer the price", () => {
+    const result = detectTranscriptFailureReason(
+      "I'm not too sure exactly. Someone at the restaurant will be able to help. I can get back to you, or you can call the venue.",
+      "AGENT: Hey mate, quick one, how much is a pint of Carlton Draft there?\nUSER: I'm not too sure exactly. Someone at the restaurant will be able to help. I can get back to you, or you can call the venue.",
+    );
+
+    expect(result).toBe("Staff needed to check price but no answer returned");
+  });
+
   it("detects challenge transcripts", () => {
     const result = detectTranscriptFailureReason(
       "Excuse me? Is this an AI?",
@@ -49,6 +58,24 @@ describe("detectTranscriptFailureReason", () => {
     );
 
     expect(result).toBe("Call challenged by staff");
+  });
+
+  it("detects repeated clarification or audio breakdowns", () => {
+    const result = detectTranscriptFailureReason(
+      "What was that? I can't hear you. Say again, sorry.",
+      "AGENT: Hey mate, quick one, how much is a pint of Carlton Draft there?\nUSER: What was that? I can't hear you. Say again, sorry.",
+    );
+
+    expect(result).toBe("Call audio or clarification loop");
+  });
+
+  it("labels unanswered beer-price calls without using the generic parser fallback", () => {
+    const result = detectTranscriptFailureReason(
+      "Sorry, how much was that?",
+      "AGENT: Hey mate, quick one, how much is a pint of Carlton Draft there?\nUSER: Sorry, how much was that?",
+    );
+
+    expect(result).toBe("No price answer detected");
   });
 
   it("detects voicemail-style booking recordings", () => {
@@ -121,6 +148,24 @@ describe("detectTranscriptFailureReason", () => {
     );
 
     expect(result).toBe("Automated menu or IVR detected");
+  });
+
+  it("detects customer-support queue recordings as IVR", () => {
+    const result = detectTranscriptFailureReason(
+      "Please stay on the line. Calls may be monitored. We are transferring you to customer support. Calls are answered in the order it was received.",
+      "USER: Please stay on the line. Calls may be monitored. We are transferring you to customer support. Calls are answered in the order it was received.",
+    );
+
+    expect(result).toBe("Automated menu or IVR detected");
+  });
+
+  it("detects website-only recordings as out-of-hours style", () => {
+    const result = detectTranscriptFailureReason(
+      "Please jump online to make a booking. Please do not leave us a message.",
+      "USER: Please jump online to make a booking. Please do not leave us a message.",
+    );
+
+    expect(result).toBe("Out-of-hours recording detected");
   });
 
   it("detects booking-line and switchboard greetings", () => {

@@ -121,17 +121,18 @@ const UNCERTAINTY_REGEX = /\b(not sure|don't know|dont know|unsure|maybe|around|
 const DO_NOT_DISFLUENT_HAVE_PATTERN = "do not(?:,?\\s*(?:uh|um|ah|er),?)?\\s+have";
 const DO_NOT_DISFLUENT_SELL_PATTERN = "do not(?:,?\\s*(?:uh|um|ah|er),?)?\\s+sell";
 const DO_NOT_DISFLUENT_DO_PATTERN = "do not(?:,?\\s*(?:uh|um|ah|er),?)?\\s+do";
+const DO_NOT_DISFLUENT_STOCK_PATTERN = "do not(?:,?\\s*(?:uh|um|ah|er),?)?\\s+stock";
 const SMALL_TAP_POUR_PATTERN = "(?:schooners?|pots?|midd(?:y|ies)|halves?)";
 const NO_PINTS_PATTERN =
   `(?:don't do(?: [^.!?\\n]{0,24})?pints?|dont do(?: [^.!?\\n]{0,24})?pints?|${DO_NOT_DISFLUENT_DO_PATTERN}(?: [^.!?\\n]{0,24})?pints?|no pints?(?: of)?|${SMALL_TAP_POUR_PATTERN} only|only (?:do|have|serve)(?: [^.!?\\n]{0,18})?${SMALL_TAP_POUR_PATTERN}|just (?:do|have|serve)(?: [^.!?\\n]{0,18})?${SMALL_TAP_POUR_PATTERN}|only in ${SMALL_TAP_POUR_PATTERN})`;
 const UNAVAILABLE_REGEX =
   new RegExp(
-    `\\b(unavailable|don't have|dont have|${DO_NOT_DISFLUENT_HAVE_PATTERN}|don't sell|dont sell|${DO_NOT_DISFLUENT_SELL_PATTERN}|don't do|dont do|${DO_NOT_DISFLUENT_DO_PATTERN}|not available|out of stock|no idea|${NO_PINTS_PATTERN})\\b`,
+    `\\b(unavailable|don't have|dont have|${DO_NOT_DISFLUENT_HAVE_PATTERN}|don't sell|dont sell|${DO_NOT_DISFLUENT_SELL_PATTERN}|don't do|dont do|${DO_NOT_DISFLUENT_DO_PATTERN}|don't stock|dont stock|${DO_NOT_DISFLUENT_STOCK_PATTERN}|not available|out of stock|no idea|${NO_PINTS_PATTERN})\\b`,
     "i",
   );
 const STRONG_UNAVAILABLE_REGEX =
   new RegExp(
-    `\\b(don't have(?: it)? on tap|dont have(?: it)? on tap|${DO_NOT_DISFLUENT_HAVE_PATTERN}(?: it)? on tap|don't sell|dont sell|${DO_NOT_DISFLUENT_SELL_PATTERN}|not on tap|only got (?:cans?|bottles?)|only have (?:cans?|bottles?)|(?:just |only )?do(?: it)? (?:on|in) the (?:cans?|bottles?)|(?:only )?do(?: like)? (?:the )?(?:big )?(?:cans?|bottles?)|${NO_PINTS_PATTERN})\\b`,
+    `\\b(don't have(?: it)? on tap|dont have(?: it)? on tap|${DO_NOT_DISFLUENT_HAVE_PATTERN}(?: it)? on tap|don't sell|dont sell|${DO_NOT_DISFLUENT_SELL_PATTERN}|don't stock|dont stock|${DO_NOT_DISFLUENT_STOCK_PATTERN}|not on tap|only got (?:cans?|bottles?)|only have (?:cans?|bottles?)|only (?:do |have )?(?:bottled|canned) beer|(?:just |only )?do(?: it)? (?:on|in) the (?:cans?|bottles?)|(?:only )?do(?: like)? (?:the )?(?:big )?(?:cans?|bottles?)|${NO_PINTS_PATTERN})\\b`,
     "i",
   );
 const RECORDING_UNAVAILABLE_REGEX =

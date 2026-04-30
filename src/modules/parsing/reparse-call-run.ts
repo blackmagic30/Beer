@@ -2,6 +2,7 @@ import {
   DEFAULT_TARGET_BEER_KEY,
   SUPPORTED_BEERS,
   getBeerByKey,
+  type TrackedBeerDefinition,
   type TargetBeerKey,
 } from "../../constants/beers.js";
 import type {
@@ -156,6 +157,61 @@ function buildHappyHourDefaults(): PersistedHappyHourInput {
   };
 }
 
+function summariseBeerParse(
+  parsedPrices: ReturnType<typeof parseBeerPrices>,
+  threshold: number,
+) {
+  return summariseParseOutcome(parsedPrices, null, threshold);
+}
+
+function chooseBeerParse(
+  beerTranscript: string,
+  userTranscript: string,
+  rawTranscript: string,
+  beerTarget: TrackedBeerDefinition,
+  parseConfidenceThreshold: number,
+) {
+  const transcriptCandidates = [
+    {
+      transcript: beerTranscript,
+      assumeBeerContext: Boolean(beerTranscript),
+    },
+    {
+      transcript: userTranscript,
+      assumeBeerContext: true,
+    },
+    {
+      transcript: rawTranscript,
+      assumeBeerContext: true,
+    },
+  ].filter((candidate) => candidate.transcript.trim().length > 0);
+
+  return transcriptCandidates
+    .map((candidate) => {
+      const prices = parseBeerPrices(candidate.transcript, {
+        assumeBeerContext: candidate.assumeBeerContext,
+        targetBeers: [beerTarget],
+      });
+      const summary = summariseBeerParse(prices, parseConfidenceThreshold);
+
+      return {
+        prices,
+        summary,
+      };
+    })
+    .sort((left, right) => {
+      const statusScore = (summary: ReturnType<typeof summariseBeerParse>) =>
+        summary.parseStatus === "parsed" ? 2 : summary.parseStatus === "needs_review" ? 1 : 0;
+      const statusDifference = statusScore(right.summary) - statusScore(left.summary);
+
+      if (statusDifference !== 0) {
+        return statusDifference;
+      }
+
+      return right.summary.parseConfidence - left.summary.parseConfidence;
+    })[0];
+}
+
 export function buildReparseCallRunResult(
   run: ReparsableCallRunLike,
   parseConfidenceThreshold: number,
@@ -172,26 +228,17 @@ export function buildReparseCallRunResult(
   const beerTranscript = beerTarget ? extractBeerContextText(turns, [beerTarget]) : "";
   const happyHourTranscript = isHappyHourCampaign ? extractHappyHourContextText(turns) : "";
   const userTranscript = flattenRoleTranscript(turns, "user");
-  const parsedPrices = isHappyHourCampaign
-    ? []
-    : parseBeerPrices(
-        beerTranscript || userTranscript || run.rawTranscript,
-        beerTarget
-          ? {
-              assumeBeerContext: Boolean(beerTranscript),
-              targetBeers: [beerTarget],
-            }
-          : {
-              assumeBeerContext: Boolean(beerTranscript),
-            },
-      );
+  const beerParse = !isHappyHourCampaign && beerTarget
+    ? chooseBeerParse(beerTranscript, userTranscript, run.rawTranscript, beerTarget, parseConfidenceThreshold)
+    : null;
+  const parsedPrices = beerParse?.prices ?? [];
   const parsedHappyHour = isHappyHourCampaign
     ? parseHappyHourInfo(happyHourTranscript || userTranscript || run.rawTranscript, {
         assumeHappyHourContext: Boolean(happyHourTranscript),
       })
     : null;
   const detectedFailureReason = detectTranscriptFailureReason(userTranscript, run.rawTranscript);
-  const baseParseSummary = summariseParseOutcome(parsedPrices, parsedHappyHour, parseConfidenceThreshold);
+  const baseParseSummary = beerParse?.summary ?? summariseParseOutcome(parsedPrices, parsedHappyHour, parseConfidenceThreshold);
   const overrideParsedOutcome = shouldOverrideParsedOutcome(detectedFailureReason);
   const parseSummary = overrideParsedOutcome
     ? {

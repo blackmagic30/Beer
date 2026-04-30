@@ -23,18 +23,22 @@ function selectRuns(
   callSids: string[],
   failedOnly: boolean,
   limit: number,
+  includeTests: boolean,
 ): CallRunRecord[] {
   if (callSids.length > 0) {
     return callSids
       .map((callSid) => repository.getByCallSid(callSid))
-      .filter((run): run is CallRunRecord => Boolean(run));
+      .filter((run): run is CallRunRecord => Boolean(run))
+      .filter((run) => includeTests || !run.isTest);
   }
 
   const runs = repository.list({
     limit: Math.max(limit * 5, limit),
   });
 
-  const filtered = runs.filter((run) => Boolean(run.rawTranscript) && (failedOnly ? run.parseStatus === "failed" : true));
+  const filtered = runs.filter(
+    (run) => Boolean(run.rawTranscript) && (includeTests || !run.isTest) && (failedOnly ? run.parseStatus === "failed" : true),
+  );
   return filtered.slice(0, limit);
 }
 
@@ -44,6 +48,7 @@ async function main() {
     .map((value) => value.trim())
     .filter(Boolean);
   const failedOnly = hasFlag("failed-only");
+  const includeTests = hasFlag("include-tests");
   const limit = Number.parseInt(getArg("limit", "25") ?? "25", 10);
 
   const db = createDatabase();
@@ -55,7 +60,7 @@ async function main() {
     process.env.SUPABASE_RESULTS_TABLE,
   );
 
-  const runs = selectRuns(callRunsRepository, callSids, failedOnly, limit);
+  const runs = selectRuns(callRunsRepository, callSids, failedOnly, limit, includeTests);
 
   console.log(`Reparsing ${runs.length} call runs.`);
 

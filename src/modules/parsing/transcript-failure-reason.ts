@@ -1,6 +1,8 @@
 const WRONG_BUSINESS_REGEX =
   /\b(?:thank you for calling|you've reached|you have reached)\b[^.\n]{0,80}\b(?:bedding|furniture|warehouse|clinic|medical|dental|physio|physiotherapy|storage|tyres?|motors?|auto|plumbing|electrical|driving range|golf square)\b|\b(?:bedding|furniture|warehouse|clinic|medical|dental|physio|physiotherapy|storage|tyres?|motors?|auto|plumbing|electrical)\b[^.\n]{0,40}\b(?:how can i help|how may i help)\b/i;
 const UNINFORMATIVE_RESPONSE_REGEX = /^(?:(?:what|yeah|yes|hello|hi|sorry|pardon|come again)[\s.?!,]*)+$/i;
+const CLARIFICATION_BREAKDOWN_REGEX =
+  /\b(?:can't hear you|cant hear you|i can hear you|say again|what was that|how much is what|did you say|how can i help you|are you calling from|you calling from|connection(?:s)? (?:is|are)n?'?t great)\b/gi;
 const IVR_KEYPAD_PROMPT_REGEX =
   /\bpress (?:(?:zero|one|two|three|four|five|six|seven|eight|nine)|[0-9]|pound|hash|star)\b|\bto connect your call\b|\bselect from the following options\b|\bfor general (?:hotel )?inquiries\b|\bfor .* press (?:(?:zero|one|two|three|four|five|six|seven|eight|nine)|[0-9]|pound|hash|star)\b/i;
 const BOOKING_LINE_OR_SWITCHBOARD_REGEX =
@@ -23,7 +25,7 @@ export function detectTranscriptFailureReason(userTranscript: string, rawTranscr
   }
 
   if (
-    /\b(i (?:actually )?don't know|i dont know|not at that bar|let me (?:try and )?find out|let me have a look|give me (?:(?:a |one |two )?(?:sec|second|seconds))|i can quickly have a look for you|hold on (?:for )?(?:a |one )?(?:second|minute)|i'll just wait|ill just wait)\b/.test(
+    /\b(i (?:actually )?don't know|i dont know|not at that bar|not too sure exactly|i can get back to you|someone at the (?:restaurant|bar|venue) (?:will|would) be able to help|i'?ll have to transfer you|transfer you to (?:my )?colleague|call the venue|let me (?:try and )?find out|let me have a look|give me (?:(?:a |one |two )?(?:sec|second|seconds))|i can quickly have a look for you|hold on (?:for )?(?:a |one )?(?:second|minute)|i'll just wait|ill just wait)\b/.test(
       transcript,
     )
   ) {
@@ -34,13 +36,17 @@ export function detectTranscriptFailureReason(userTranscript: string, rawTranscr
     return "Call challenged by staff";
   }
 
+  if ((transcript.match(CLARIFICATION_BREAKDOWN_REGEX) ?? []).length >= 2) {
+    return "Call audio or clarification loop";
+  }
+
   if (WRONG_BUSINESS_REGEX.test(transcript)) {
     return "Wrong business reached";
   }
 
   if (
     IVR_KEYPAD_PROMPT_REGEX.test(transcript) ||
-    /\bmenu options\b|\bplease listen carefully\b|\bfunctions and events\b|\bfor reservations\b|\bmake a reservation\b|\brunning a little late for your reservation\b|\bplease hold the line\b|\bautomated receptionist\b|\bvirtual assistant\b/.test(
+    /\bmenu options\b|\bplease listen carefully\b|\bfunctions and events\b|\bfor reservations\b|\bmake a reservation\b|\brunning a little late for your reservation\b|\bplease hold the line\b|\bplease stay on the line\b|\bno person is available\b|\bcalls may be monitored\b|\btransferring to customer support\b|\banswered in the order it was received\b|\bautomated receptionist\b|\bvirtual assistant\b/.test(
       transcript,
     )
   ) {
@@ -56,7 +62,7 @@ export function detectTranscriptFailureReason(userTranscript: string, rawTranscr
   }
 
   if (
-    /\bout of hours\b|\boffice hours\b|\boffice is open\b|\bunable to make bookings over the phone\b|\bvia our website\b|\bexcluding public holidays\b|\breservations and events office\b/.test(
+    /\bout of hours\b|\boffice hours\b|\boffice is open\b|\bunable to make bookings over the phone\b|\bvia our website\b|\bplease (?:jump online|visit our website)\b|\bdo not leave us a message\b|\bexcluding public holidays\b|\breservations and events office\b/.test(
       transcript,
     )
   ) {
@@ -73,6 +79,10 @@ export function detectTranscriptFailureReason(userTranscript: string, rawTranscr
 
   if (BOOKING_LINE_OR_SWITCHBOARD_REGEX.test(transcript)) {
     return "Booking line or switchboard reached";
+  }
+
+  if (/\bhow much\s+(?:is|was)\b[^.!?\n]{0,100}\bpint\b|\bpint of\b/.test(transcript)) {
+    return "No price answer detected";
   }
 
   return null;

@@ -9,9 +9,9 @@ export interface BeerAvailabilityDetails {
 
 const SMALL_TAP_POUR_PATTERN = "(?:schooners?|pots?|midd(?:y|ies)|halves?)";
 const CANS_ONLY_REGEX =
-  /\b(?:only got (?:the )?(?:big )?cans?|only have (?:the )?(?:big )?cans?|(?:just |only )?do(?: it)? (?:like )?(?:on|in)? ?(?:the )?(?:big )?cans?|cans? only|only in cans?|only cans?)\b/i;
+  /\b(?:only got (?:the )?(?:big )?cans?|only have (?:the )?(?:big )?cans?|(?:just |only )?do(?: it)? (?:like )?(?:on|in)? ?(?:the )?(?:big )?cans?|cans? only|only in cans?|only cans?|only (?:do |have )?canned beer|canned beer only)\b/i;
 const BOTTLES_ONLY_REGEX =
-  /\b(?:only got bottles?|only have bottles?|(?:just |only )?do(?: it)? (?:on|in)? ?(?:the )?bottles?|bottles? only|only in bottles?|only bottles?)\b/i;
+  /\b(?:only got bottles?|only have bottles?|(?:just |only )?do(?: it)? (?:on|in)? ?(?:the )?bottles?|bottles? only|only in bottles?|only bottles?|only (?:do |have )?bottled beer|bottled beer only)\b/i;
 const NO_PINTS_REGEX = new RegExp(
   `\\b(?:don't do(?: [^.!?\\n]{0,24})?pints?|dont do(?: [^.!?\\n]{0,24})?pints?|do not do(?: [^.!?\\n]{0,24})?pints?|no pints?(?: of)?|${SMALL_TAP_POUR_PATTERN} only|only (?:do|have|serve)(?: [^.!?\\n]{0,18})?${SMALL_TAP_POUR_PATTERN}|just (?:do|have|serve)(?: [^.!?\\n]{0,18})?${SMALL_TAP_POUR_PATTERN}|only in ${SMALL_TAP_POUR_PATTERN})\\b`,
   "i",
@@ -19,7 +19,7 @@ const NO_PINTS_REGEX = new RegExp(
 const NOT_ON_TAP_REGEX =
   /\b(?:don't have(?: [^.!?\n]{0,24})? on tap|dont have(?: [^.!?\n]{0,24})? on tap|do not have(?: [^.!?\n]{0,24})? on tap|not on tap)\b/i;
 const NOT_STOCKED_REGEX =
-  /\b(?:don't have|dont have|don't sell|dont sell|do not have|do not sell|unavailable|not available|out of stock)\b/i;
+  /\b(?:don't have|dont have|don't sell|dont sell|don't stock|dont stock|do not have|do not sell|do not stock|unavailable|not available|out of stock)\b/i;
 
 export function inferBeerAvailability(input: {
   evidence: string | null;
