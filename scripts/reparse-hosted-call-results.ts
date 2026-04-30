@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-import { getBeerByKey, isTargetBeerKey } from "../src/constants/beers.js";
+import { getBeerByKey, isTargetBeerKey, normalizeTargetBeerKey } from "../src/constants/beers.js";
 import { SupabaseResultsSyncService } from "../src/lib/supabase-results-sync.js";
 import { buildReparseCallRunResult, type ReparsableCallRunLike } from "../src/modules/parsing/reparse-call-run.js";
 
@@ -122,6 +122,8 @@ async function main() {
     .filter(Boolean);
   const failedOnly = hasFlag("failed-only");
   const includeTests = hasFlag("include-tests");
+  const requestedBeerFilter = getArg("requested-beer") ?? getArg("beer");
+  const normalizedRequestedBeerFilter = requestedBeerFilter ? normalizeTargetBeerKey(requestedBeerFilter) : null;
   const threshold = getParseThreshold();
 
   const supabaseResultsSyncService = new SupabaseResultsSyncService(
@@ -141,6 +143,10 @@ async function main() {
     }
 
     if (call.rawTranscript == null) {
+      return false;
+    }
+
+    if (normalizedRequestedBeerFilter && normalizeRequestedBeer(call.requestedBeer) !== normalizedRequestedBeerFilter) {
       return false;
     }
 
