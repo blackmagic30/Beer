@@ -117,6 +117,10 @@ const WORD_PRICE_REGEX = new RegExp(
   `\\b(${NUMBER_WORD_PHRASE_PATTERN})(?:\\s+(?:dollars?|bucks?))(?:\\s+and\\s+(${NUMBER_WORD_PHRASE_PATTERN})\\s+cents?)?\\b`,
   "gi",
 );
+const SPOKEN_DECIMAL_PRICE_REGEX = new RegExp(
+  `\\b(${NUMBER_WORD_PHRASE_PATTERN})\\s+(ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\\b`,
+  "gi",
+);
 const UNCERTAINTY_REGEX = /\b(not sure|don't know|dont know|unsure|maybe|around|about|probably|i think)\b/i;
 const DO_NOT_DISFLUENT_HAVE_PATTERN = "do not(?:,?\\s*(?:uh|um|ah|er),?)?\\s+have";
 const DO_NOT_DISFLUENT_SELL_PATTERN = "do not(?:,?\\s*(?:uh|um|ah|er),?)?\\s+sell";
@@ -369,6 +373,49 @@ function extractPriceMentions(segment: string): PriceMention[] {
       value,
       text: wholeMatch.trim(),
       hasCurrencySignal: true,
+    });
+  }
+
+  for (const match of segment.matchAll(SPOKEN_DECIMAL_PRICE_REGEX)) {
+    const wholeMatch = match[0];
+    const dollarsRaw = match[1];
+    const centsRaw = match[2];
+    const startIndex = match.index;
+
+    if (!wholeMatch || !dollarsRaw || !centsRaw || startIndex === undefined) {
+      continue;
+    }
+
+    const dollars = parseNumberWordPhrase(dollarsRaw);
+    const cents = parseNumberWordPhrase(centsRaw);
+    const endIndex = startIndex + wholeMatch.length;
+    const afterWindow = segment.slice(endIndex, Math.min(segment.length, endIndex + 16));
+
+    if (dollars === null || cents === null || dollars < 4 || dollars > 35) {
+      continue;
+    }
+
+    if (/^\s*(?:am|pm|a\.m\.|p\.m\.|-|to|til|till|until)\b/i.test(afterWindow)) {
+      continue;
+    }
+
+    const value = Number.parseFloat(`${dollars}.${String(cents).padStart(2, "0")}`);
+
+    if (
+      mentions.some(
+        (mention) =>
+          mention.index === startIndex &&
+          mention.value === value,
+      )
+    ) {
+      continue;
+    }
+
+    mentions.push({
+      index: startIndex,
+      value,
+      text: wholeMatch.trim(),
+      hasCurrencySignal: false,
     });
   }
 

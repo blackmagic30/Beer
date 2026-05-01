@@ -419,6 +419,40 @@ describe("parseBeerPrices", () => {
     expect(results[0]?.confidence).toBeGreaterThan(0.72);
   });
 
+  it("captures spoken decimal prices without a dollar word", () => {
+    const results = parseBeerPrices("Happy hour is twelve, but the regular pint is fifteen fifty.", {
+      assumeBeerContext: true,
+      targetBeers: [getBeerByKey("carlton_draft")],
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draft",
+        priceNumeric: 15.5,
+        priceText: expect.stringContaining("fifteen fifty"),
+        needsReview: false,
+        isUnavailable: false,
+      }),
+    ]);
+    expect(results[0]?.confidence).toBeGreaterThanOrEqual(0.72);
+  });
+
+  it("does not treat spoken clock times as prices", () => {
+    const results = parseBeerPrices("The kitchen opens at five thirty pm.", {
+      assumeBeerContext: true,
+      targetBeers: [getBeerByKey("carlton_draft")],
+    });
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draft",
+        priceNumeric: null,
+        needsReview: true,
+        isUnavailable: false,
+      }),
+    ]);
+  });
+
   it("prefers a later corrected price over an earlier guess", () => {
     const results = parseBeerPrices(
       "Uh, 15, 15 I guess. Let me just have a check. Don't wanna give you the wrong price. Uh.... Pardon? Uh, 15.50, yeah.",
