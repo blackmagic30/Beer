@@ -690,6 +690,23 @@ describe("parseHappyHourInfo", () => {
     );
   });
 
+  it("parses spoken happy-hour time ranges from transcripts", () => {
+    const result = parseHappyHourInfo("Monday to Thursday, five to seven, with $8 pints.", {
+      assumeHappyHourContext: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: true,
+        happyHourDays: "Monday-Thursday",
+        happyHourStart: "17:00",
+        happyHourEnd: "19:00",
+        happyHourPrice: 8,
+        happyHourSpecials: expect.stringContaining("$8 pints"),
+      }),
+    );
+  });
+
   it("removes transcript filler from happy-hour specials", () => {
     const result = parseHappyHourInfo(
       "Sorry? Uh, our happy hours are Wednesday to Friday, 3 to 6. Uh, I've got $8 house wines and $8 house beer.",

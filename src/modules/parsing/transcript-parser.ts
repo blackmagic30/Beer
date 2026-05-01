@@ -171,6 +171,11 @@ const DAY_ONLY_REGEX = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sun
 const SINGLE_DAY_REGEX = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const TIME_RANGE_REGEX =
   /\b(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\s*(?:-|to|til|till|until)\s*(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\b/gi;
+const HOUR_WORD_PATTERN = "(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)";
+const WORD_TIME_RANGE_REGEX = new RegExp(
+  `\\b(${HOUR_WORD_PATTERN})\\s*([ap]\\.?\\s*m\\.?)?\\s*(?:-|to|til|till|until)\\s*(${HOUR_WORD_PATTERN})\\s*([ap]\\.?\\s*m\\.?)?\\b`,
+  "gi",
+);
 
 function singularizeDay(day: string): string {
   return day.replace(/s$/i, "");
@@ -788,6 +793,74 @@ function extractTimeRange(text: string, options: ExtractTimeRangeOptions = {}): 
       Number.parseInt(endHourRaw, 10) > 12,
     );
     const bestHasMeridian = /am|pm|:/.test(bestMatch.raw);
+
+    if (currentHasMeridian && !bestHasMeridian) {
+      bestMatch = timeRange;
+    }
+  }
+
+  for (const match of text.matchAll(WORD_TIME_RANGE_REGEX)) {
+    const raw = match[0];
+    const startHourWord = match[1];
+    const startMeridianRaw = match[2];
+    const endHourWord = match[3];
+    const endMeridianRaw = match[4];
+
+    if (!raw || !startHourWord || !endHourWord || match.index === undefined) {
+      continue;
+    }
+
+    const startHour = parseNumberWordPhrase(startHourWord);
+    const endHour = parseNumberWordPhrase(endHourWord);
+
+    if (
+      startHour === null ||
+      endHour === null ||
+      startHour < 1 ||
+      startHour > 12 ||
+      endHour < 1 ||
+      endHour > 12
+    ) {
+      continue;
+    }
+
+    const inferPmRange =
+      options.preferPm === true &&
+      !startMeridianRaw &&
+      !endMeridianRaw &&
+      startHour >= 3 &&
+      startHour <= 11 &&
+      endHour >= 3 &&
+      endHour <= 11;
+    const inferredStartMeridian =
+      startMeridianRaw ??
+      (inferPmRange ? "pm" : inferMissingMeridian(
+        startHour,
+        endHour,
+        endMeridianRaw ?? undefined,
+      ));
+    const inferredEndMeridian = endMeridianRaw ?? startMeridianRaw ?? (inferPmRange ? "pm" : undefined);
+    const start = normaliseTimePart(String(startHour), undefined, inferredStartMeridian);
+    const end = normaliseTimePart(String(endHour), undefined, inferredEndMeridian);
+
+    if (!start || !end) {
+      continue;
+    }
+
+    const timeRange: HappyHourTimeRange = {
+      start,
+      end,
+      index: match.index,
+      raw: raw.trim(),
+    };
+
+    if (!bestMatch) {
+      bestMatch = timeRange;
+      continue;
+    }
+
+    const currentHasMeridian = Boolean(startMeridianRaw || endMeridianRaw);
+    const bestHasMeridian = /am|pm|:|\d/.test(bestMatch.raw);
 
     if (currentHasMeridian && !bestHasMeridian) {
       bestMatch = timeRange;
