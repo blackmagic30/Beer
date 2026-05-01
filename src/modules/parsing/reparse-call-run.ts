@@ -270,6 +270,17 @@ export function buildReparseCallRunResult(
       needsReview: item.needsReview || parseSummary.needsReview,
     }),
   );
+  const happyHour = !parsedHappyHour || overrideParsedOutcome
+    ? buildHappyHourDefaults()
+    : {
+        happyHour: parsedHappyHour.happyHour,
+        happyHourDays: parsedHappyHour.happyHourDays,
+        happyHourStart: parsedHappyHour.happyHourStart,
+        happyHourEnd: parsedHappyHour.happyHourEnd,
+        happyHourPrice: parsedHappyHour.happyHourPrice,
+        happyHourConfidence: parsedHappyHour.confidence,
+        happyHourSpecials: parsedHappyHour.happyHourSpecials,
+      };
 
   return {
     requestedBeer,
@@ -278,16 +289,6 @@ export function buildReparseCallRunResult(
     needsReview: parseSummary.needsReview,
     errorMessage: failureReason,
     items,
-    happyHour: parsedHappyHour
-      ? {
-          happyHour: parsedHappyHour.happyHour,
-          happyHourDays: parsedHappyHour.happyHourDays,
-          happyHourStart: parsedHappyHour.happyHourStart,
-          happyHourEnd: parsedHappyHour.happyHourEnd,
-          happyHourPrice: parsedHappyHour.happyHourPrice,
-          happyHourConfidence: parsedHappyHour.confidence,
-          happyHourSpecials: parsedHappyHour.happyHourSpecials,
-        }
-      : buildHappyHourDefaults(),
+    happyHour,
   };
 }

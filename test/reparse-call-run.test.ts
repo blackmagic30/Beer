@@ -202,4 +202,44 @@ describe("buildReparseCallRunResult", () => {
       }),
     );
   });
+
+  it("clears happy hour fields when a recording is overridden as IVR", () => {
+    const result = buildReparseCallRunResult(
+      {
+        id: "run-happy-hour-ivr",
+        callSid: "CAIVR",
+        conversationId: null,
+        venueId: "venue-ivr",
+        requestedBeer: "happy_hour",
+        venueName: "Bar Airo",
+        phoneNumber: "+61300000004",
+        suburb: "Melbourne",
+        startedAt: "2026-05-01T09:00:00.000Z",
+        endedAt: "2026-05-01T09:00:45.000Z",
+        durationSeconds: 45,
+        callStatus: "completed",
+        rawTranscript:
+          "AGENT: Hey mate, quick one, what days and times is your happy hour, and what specials do you run during it?\nUSER: Please hold the line until one becomes available. Elevate your next meeting or event to extraordinary heights at Parkroyal Melbourne Airport with 14 meeting rooms and complimentary Wi-Fi.",
+        parseConfidence: 0.44,
+        parseStatus: "needs_review",
+        errorMessage: null,
+        isTest: false,
+        createdAt: "2026-05-01T09:00:00.000Z",
+        updatedAt: "2026-05-01T09:00:45.000Z",
+      },
+      0.72,
+    );
+
+    expect(result.parseStatus).toBe("failed");
+    expect(result.errorMessage).toBe("Automated menu or IVR detected");
+    expect(result.happyHour).toEqual({
+      happyHour: false,
+      happyHourDays: null,
+      happyHourStart: null,
+      happyHourEnd: null,
+      happyHourPrice: null,
+      happyHourConfidence: 0,
+      happyHourSpecials: null,
+    });
+  });
 });

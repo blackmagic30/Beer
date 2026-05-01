@@ -157,6 +157,8 @@ const HAPPY_HOUR_NEGATIVE_REGEX =
   /\b(no happy hour|no deals?|no specials?|not at the moment|nothing at the moment|nothing right now|not currently)\b|\b(?:don't|dont)\s+have\b(?:[^.!?\n]{0,30})\b(?:happy hour|deals?|specials?)\b|\b(?:nah|nope|none)\b(?:[^.!?\n]{0,25})\b(?:happy hour|deals?|specials?)\b/i;
 const HAPPY_HOUR_SPECIALS_KEYWORD_REGEX =
   /\b(specials?|deals?|discount|discounted|off|two for one|2 for 1|half price|pints?|schooners?|pots?|midd(?:y|ies)|cocktails?|spritz(?:es)?|beer|wine|wings?|pizza|parma|burgers?|oysters?|tacos?|snacks?|jugs?)\b/i;
+const HAPPY_HOUR_RECORDING_NOISE_REGEX =
+  /\b(please hold the line|please stay on the line|calls may be monitored|transferring to customer support|answered in the order it was received|automated receptionist|virtual assistant|no person is available|office hours|out of hours|please (?:jump online|visit our website)|do not leave us a message|reservations?|booking enquiries?|bookings? team|booking line|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|meeting or event|complimentary wi-?fi|conference|functions? and events|leave (?:your )?(?:message|name and number)|after the beep|voicemail|mailbox|record your message|at the tone)\b/i;
 const DAY_RANGE_REGEX =
   /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:-|to)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const DAY_LIST_REGEX =
@@ -164,7 +166,7 @@ const DAY_LIST_REGEX =
 const DAY_ONLY_REGEX = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+only\b/i;
 const SINGLE_DAY_REGEX = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const TIME_RANGE_REGEX =
-  /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|to|til|till|until)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/gi;
+  /\b(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\s*(?:-|to|til|till|until)\s*(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\b/gi;
 
 function singularizeDay(day: string): string {
   return day.replace(/s$/i, "");
@@ -584,7 +586,7 @@ function normaliseTimePart(hourRaw: string, minuteRaw?: string, meridianRaw?: st
     return null;
   }
 
-  const meridian = meridianRaw?.toLowerCase();
+  const meridian = meridianRaw?.toLowerCase().replace(/[.\s]/g, "");
   let hour24 = hour;
 
   if (meridian === "am") {
@@ -890,16 +892,31 @@ function extractHappyHourSpecials(
   }
 
   specialsSource = specialsSource
-    .replace(/\bhappy hour\b/gi, " ")
-    .replace(/\b(?:we do|we've got|we have|there's|there is|it is|it's|available|from|then|during that|during it|usually)\b/gi, " ")
+    .replace(/\b(?:happy hours? pretty much|our happy hours? (?:are|is)|happy hours? (?:are|is))\b/gi, " ")
+    .replace(/\bhappy hours?\b/gi, " ")
+    .replace(/\b(?:uh|um|ah|er|sorry|yeah|yep|oh)\b/gi, " ")
+    .replace(/\b(?:so|i got|i've got|i have got|for those|that's|pretty much)\b/gi, " ")
+    .replace(/\ball pi-\s*all,?\s*/gi, "all ")
+    .replace(/\b(?:what was the question|you there)\b/gi, " ")
+    .replace(/\b(?:we do|we've got|we have|we also have|there's|there is|it is|it's|available|from|then|during that|during it|usually)\b/gi, " ")
+    .replace(/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:-|to|til|till|until)\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/gi, " ")
     .replace(/\band\b/gi, " ")
     .replace(/^with\b/i, " ")
     .replace(/^the\b/i, " ")
+    .replace(/[?!]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
+    .replace(/(?:\s*[,.]\s*){2,}/g, ". ")
+    .replace(/\s+([,.])/g, "$1")
+    .replace(/^[,:;.\-\s]+|[,:;.\-\s]+$/g, "")
+    .replace(/^(?:are|is)\b[.\s,]*/i, "")
     .replace(/^[,:;.\-\s]+|[,:;.\-\s]+$/g, "");
 
   if (!specialsSource) {
+    return null;
+  }
+
+  if (HAPPY_HOUR_RECORDING_NOISE_REGEX.test(specialsSource)) {
     return null;
   }
 
@@ -1295,6 +1312,8 @@ export function parseHappyHourInfo(
   const timeRange = extractTimeRange(candidateText, {
     preferPm: true,
   });
+  const hasHappyHourKeyword = HAPPY_HOUR_KEYWORD_REGEX.test(candidateText);
+  const hasRecordingNoise = HAPPY_HOUR_RECORDING_NOISE_REGEX.test(candidateText);
   const keywordIndex = findHappyHourKeywordIndex(candidateText);
   const primaryAnchor =
     keywordIndex ??
@@ -1304,19 +1323,26 @@ export function parseHappyHourInfo(
     0;
   const happyHourPrice = extractHappyHourPrice(candidateText, primaryAnchor, timeRange);
   const happyHourSpecials = extractHappyHourSpecials(candidateText, dayMatch, timeRange);
-  const hasPositiveSignals =
-    Boolean(options.assumeHappyHourContext) ||
-    HAPPY_HOUR_KEYWORD_REGEX.test(candidateText) ||
-    dayMatch !== null ||
-    timeRange !== null ||
-    happyHourPrice !== null ||
-    happyHourSpecials !== null;
+  const hasConcreteHappyHourDetail =
+    dayMatch !== null || timeRange !== null || happyHourPrice !== null || happyHourSpecials !== null;
 
   if (isNegative && !dayMatch && !timeRange && !happyHourPrice) {
     return buildNoHappyHourResult(0.93, candidateText);
   }
 
-  if (!hasPositiveSignals) {
+  if (
+    options.assumeHappyHourContext === true &&
+    /\b(no|nah|nope|none|nothing)\b/i.test(candidateText) &&
+    !hasConcreteHappyHourDetail
+  ) {
+    return buildNoHappyHourResult(0.78, candidateText);
+  }
+
+  if (hasRecordingNoise && !hasHappyHourKeyword) {
+    return buildNoHappyHourResult(0.1, null);
+  }
+
+  if (!hasConcreteHappyHourDetail) {
     return buildNoHappyHourResult(0.18, null);
   }
 
@@ -1326,7 +1352,7 @@ export function parseHappyHourInfo(
     confidence += 0.18;
   }
 
-  if (HAPPY_HOUR_KEYWORD_REGEX.test(candidateText)) {
+  if (hasHappyHourKeyword) {
     confidence += 0.14;
   }
 

@@ -559,6 +559,113 @@ describe("parseHappyHourInfo", () => {
     );
     expect(result.confidence).toBeGreaterThan(0.85);
   });
+
+  it("does not turn hold-line hotel recordings into happy hour specials", () => {
+    const result = parseHappyHourInfo(
+      "Please hold the line until one becomes available. Elevate your next meeting or event to extraordinary heights at Parkroyal Melbourne Airport with 14 meeting rooms and complimentary Wi-Fi.",
+      {
+        assumeHappyHourContext: true,
+      },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: false,
+        happyHourDays: null,
+        happyHourStart: null,
+        happyHourEnd: null,
+        happyHourPrice: null,
+        happyHourSpecials: null,
+        needsReview: false,
+      }),
+    );
+    expect(result.confidence).toBeLessThan(0.2);
+  });
+
+  it("does not infer happy hour from out-of-hours booking recordings", () => {
+    const result = parseHappyHourInfo(
+      "Please jump online to make a booking. Our office is open Monday to Friday excluding public holidays.",
+      {
+        assumeHappyHourContext: true,
+      },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: false,
+        happyHourDays: null,
+        happyHourStart: null,
+        happyHourEnd: null,
+        happyHourPrice: null,
+        happyHourSpecials: null,
+      }),
+    );
+  });
+
+  it("still parses concise staff answers after the happy-hour question", () => {
+    const result = parseHappyHourInfo("Yes, Wednesday to Friday 3 to 6, $8 house wines and $8 house beer.", {
+      assumeHappyHourContext: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: true,
+        happyHourDays: "Wednesday-Friday",
+        happyHourStart: "15:00",
+        happyHourEnd: "18:00",
+        happyHourPrice: 8,
+        happyHourSpecials: expect.stringContaining("house wines"),
+      }),
+    );
+  });
+
+  it("does not publish a positive happy-hour answer without details", () => {
+    const result = parseHappyHourInfo("Yeah, we do.", {
+      assumeHappyHourContext: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: false,
+        happyHourDays: null,
+        happyHourStart: null,
+        happyHourEnd: null,
+        happyHourPrice: null,
+        happyHourSpecials: null,
+      }),
+    );
+  });
+
+  it("parses dotted meridian time ranges from transcripts", () => {
+    const result = parseHappyHourInfo(
+      "Wednesday to Sunday except Saturday, 4:00 p.m. to 8:00 p.m. with $7 pints and $7 spirits.",
+      {
+        assumeHappyHourContext: true,
+      },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: true,
+        happyHourDays: "Wednesday-Sunday",
+        happyHourStart: "16:00",
+        happyHourEnd: "20:00",
+        happyHourPrice: 7,
+        happyHourSpecials: expect.stringContaining("$7 pints"),
+      }),
+    );
+  });
+
+  it("removes transcript filler from happy-hour specials", () => {
+    const result = parseHappyHourInfo(
+      "Sorry? Uh, our happy hours are Wednesday to Friday, 3 to 6. Uh, I've got $8 house wines and $8 house beer.",
+      {
+        assumeHappyHourContext: true,
+      },
+    );
+
+    expect(result.happyHourSpecials).toBe("$8 house wines $8 house beer");
+  });
 });
 
 describe("extractHappyHourContextText", () => {
