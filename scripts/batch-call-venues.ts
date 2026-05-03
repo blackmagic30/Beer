@@ -433,7 +433,7 @@ function recomputeConsecutiveBadOutcomes(state: BatchRunState): void {
   let lowSignalStreak = 0;
 
   for (const attempt of state.attempts) {
-    if (attempt.resolvedOutcome === "good") {
+    if (attempt.resolvedOutcome === "good" || attempt.resolvedOutcome === "settled_no_data") {
       badStreak = 0;
       lowSignalStreak = 0;
     } else if (attempt.resolvedOutcome === "soft") {
@@ -455,7 +455,11 @@ async function refreshResolvedAttempts(
   state: BatchRunState,
 ): Promise<void> {
   for (const attempt of state.attempts) {
-    if (attempt.resolvedOutcome === "good" || attempt.resolvedOutcome === "bad") {
+    if (
+      attempt.resolvedOutcome === "good" ||
+      attempt.resolvedOutcome === "bad" ||
+      attempt.resolvedOutcome === "settled_no_data"
+    ) {
       continue;
     }
 
@@ -918,7 +922,7 @@ async function main() {
         }
       }
 
-      if (resolvedOutcome === "good") {
+      if (resolvedOutcome === "good" || resolvedOutcome === "settled_no_data") {
         state.consecutiveBadOutcomes = 0;
         state.consecutiveLowSignalOutcomes = 0;
       } else if (resolvedOutcome === "soft") {

@@ -15,6 +15,15 @@ describe("detectTranscriptFailureReason", () => {
     expect(result).toBe("Staff needed to check price but no answer returned");
   });
 
+  it("detects phone audio-message prompts as voicemail", () => {
+    const result = detectTranscriptFailureReason(
+      "A short message and it will be sent as an audio message.",
+      "AGENT: Hey mate, quick one, what days and times are your happy hours?\nUSER: A short message and it will be sent as an audio message.",
+    );
+
+    expect(result).toBe("Voicemail detected");
+  });
+
   it("detects brief hold-to-check responses", () => {
     const result = detectTranscriptFailureReason(
       "I can quickly have a look for you, just can you hold on for a second?",

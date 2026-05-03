@@ -60,12 +60,22 @@ describe("classifyBatchAttemptOutcome", () => {
     ).toBe("good");
   });
 
-  it("treats failed outcomes as bad", () => {
+  it("treats deterministic no-data outcomes as settled", () => {
     expect(
       classifyBatchAttemptOutcome({
         callStatus: "failed",
         parseStatus: "failed",
         errorMessage: "Voicemail detected",
+      }),
+    ).toBe("settled_no_data");
+  });
+
+  it("treats ambiguous low-signal parsing failures as soft", () => {
+    expect(
+      classifyBatchAttemptOutcome({
+        callStatus: "completed",
+        parseStatus: "failed",
+        errorMessage: "Parsing produced no useful data",
       }),
     ).toBe("soft");
   });

@@ -11,23 +11,35 @@ export interface PhoneOutcomeLike extends CallRunOutcomeLike {
   isTest?: boolean | null;
 }
 
-export type BatchAttemptOutcome = "good" | "bad" | "soft" | "pending";
+export type BatchAttemptOutcome = "good" | "bad" | "soft" | "settled_no_data" | "pending";
 
 const NON_RETRYABLE_FAILURE_PATTERNS = [
   /wrong business reached/i,
   /booking line or switchboard reached/i,
+  /automated menu or ivr detected/i,
+  /ivr detected/i,
+  /automated recording detected/i,
+  /voicemail detected/i,
+  /out-of-hours recording detected/i,
   /call challenged by staff/i,
 ] as const;
 
-const SOFT_FAILURE_PATTERNS = [
+const SETTLED_NO_DATA_FAILURE_PATTERNS = [
+  /wrong business reached/i,
   /booking line or switchboard reached/i,
   /automated menu or ivr detected/i,
   /ivr detected/i,
+  /automated recording detected/i,
   /voicemail detected/i,
   /out-of-hours recording detected/i,
+] as const;
+
+const SOFT_FAILURE_PATTERNS = [
   /no clear human response detected/i,
   /staff needed to check price but no answer returned/i,
   /parsing produced no useful data/i,
+  /call audio or clarification loop/i,
+  /no price answer detected/i,
 ] as const;
 
 const STRONGLY_SUPPRESSIBLE_FAILURE_PATTERNS = [
@@ -77,6 +89,13 @@ export function classifyBatchAttemptOutcome(outcome: CallRunOutcomeLike | null |
 
   if (["busy", "no-answer"].includes(outcome.callStatus)) {
     return "soft";
+  }
+
+  if (
+    outcome.parseStatus === "failed" &&
+    SETTLED_NO_DATA_FAILURE_PATTERNS.some((pattern) => pattern.test(outcome.errorMessage ?? ""))
+  ) {
+    return "settled_no_data";
   }
 
   if (

@@ -34,6 +34,8 @@ describe("happy hour script variants", () => {
     expect(prompt).toContain("Ask no more than two questions total");
     expect(prompt).toContain("days, times, and specials");
     expect(prompt).toContain("stop talking and let the staff member answer fully");
+    expect(prompt).toContain('do not restart with "Hey mate"');
+    expect(prompt).toContain("audio-message prompt");
     expect(prompt).toContain("Do not explain the project, mention AI, mention maps, mention scripts, or mention data collection");
   });
 
