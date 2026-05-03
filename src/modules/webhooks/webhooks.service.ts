@@ -8,7 +8,7 @@ import {
 import { getBeerByKey, normalizeTargetBeerKey } from "../../constants/beers.js";
 import { BeerPriceResultsRepository } from "../../db/beer-price-results.repository.js";
 import { CallRunsRepository } from "../../db/call-runs.repository.js";
-import type { CallRunRecord, CallStatus } from "../../db/models.js";
+import type { CallRunRecord, CallStatus, PersistedHappyHourInput } from "../../db/models.js";
 import { AppError } from "../../lib/errors.js";
 import { ElevenLabsService } from "../../lib/elevenlabs.js";
 import { logger } from "../../lib/logger.js";
@@ -50,6 +50,16 @@ interface NormalizedEvent {
   type: string;
   data: NormalizedEventData | undefined;
 }
+
+const EMPTY_HAPPY_HOUR: PersistedHappyHourInput = {
+  happyHour: false,
+  happyHourDays: null,
+  happyHourStart: null,
+  happyHourEnd: null,
+  happyHourPrice: null,
+  happyHourConfidence: 0,
+  happyHourSpecials: null,
+};
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -508,6 +518,18 @@ export class WebhooksService {
             unavailableReason: null,
           }))
         : parsedPrices;
+      const persistedHappyHour: PersistedHappyHourInput =
+        !parsedHappyHour || overrideParsedOutcome
+          ? EMPTY_HAPPY_HOUR
+          : {
+              happyHour: parsedHappyHour.happyHour,
+              happyHourDays: parsedHappyHour.happyHourDays,
+              happyHourStart: parsedHappyHour.happyHourStart,
+              happyHourEnd: parsedHappyHour.happyHourEnd,
+              happyHourPrice: parsedHappyHour.happyHourPrice,
+              happyHourConfidence: parsedHappyHour.confidence,
+              happyHourSpecials: parsedHappyHour.happyHourSpecials,
+            };
 
       this.callRunsRepository.saveTranscriptParseById(run.id, {
         conversationId: event.data.conversationId,
@@ -532,15 +554,7 @@ export class WebhooksService {
           ...item,
           needsReview: item.needsReview || parseSummary.needsReview,
         })),
-        happyHour: {
-          happyHour: parsedHappyHour?.happyHour ?? false,
-          happyHourDays: parsedHappyHour?.happyHourDays ?? null,
-          happyHourStart: parsedHappyHour?.happyHourStart ?? null,
-          happyHourEnd: parsedHappyHour?.happyHourEnd ?? null,
-          happyHourPrice: parsedHappyHour?.happyHourPrice ?? null,
-          happyHourConfidence: parsedHappyHour?.confidence ?? 0,
-          happyHourSpecials: parsedHappyHour?.happyHourSpecials ?? null,
-        },
+        happyHour: persistedHappyHour,
       });
 
       if (this.supabaseResultsSyncService.isConfigured()) {
@@ -559,15 +573,7 @@ export class WebhooksService {
               ...item,
               needsReview: item.needsReview || parseSummary.needsReview,
             })),
-            happyHour: {
-              happyHour: parsedHappyHour?.happyHour ?? false,
-              happyHourDays: parsedHappyHour?.happyHourDays ?? null,
-              happyHourStart: parsedHappyHour?.happyHourStart ?? null,
-              happyHourEnd: parsedHappyHour?.happyHourEnd ?? null,
-              happyHourPrice: parsedHappyHour?.happyHourPrice ?? null,
-              happyHourConfidence: parsedHappyHour?.confidence ?? 0,
-              happyHourSpecials: parsedHappyHour?.happyHourSpecials ?? null,
-            },
+            happyHour: persistedHappyHour,
           });
         } catch (error) {
           logger.error("Supabase call result sync failed", {

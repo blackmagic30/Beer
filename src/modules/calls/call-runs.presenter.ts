@@ -88,7 +88,10 @@ export function buildCallRunViews(
     const callRows = callRun.callSid ? resultsByCallSid.get(callRun.callSid) ?? [] : [];
     const happyHourSource = callRows[0];
     const derivedHappyHour =
-      !happyHourSource && callRun.requestedBeer === "happy_hour" && callRun.rawTranscript
+      !happyHourSource &&
+      callRun.requestedBeer === "happy_hour" &&
+      callRun.parseStatus !== "failed" &&
+      callRun.rawTranscript
         ? parseHappyHourInfo(extractHappyHourContextText(parseTurns(callRun.rawTranscript)) || callRun.rawTranscript, {
             assumeHappyHourContext: true,
           })
