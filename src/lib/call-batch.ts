@@ -35,6 +35,9 @@ const SETTLED_NO_DATA_FAILURE_PATTERNS = [
 ] as const;
 
 const SOFT_FAILURE_PATTERNS = [
+  /call ended with status failed/i,
+  /call ended with status canceled/i,
+  /call ended with status cancelled/i,
   /no clear human response detected/i,
   /staff needed to check price but no answer returned/i,
   /parsing produced no useful data/i,

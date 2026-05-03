@@ -95,9 +95,19 @@ describe("classifyBatchAttemptOutcome", () => {
       classifyBatchAttemptOutcome({
         callStatus: "failed",
         parseStatus: "failed",
-        errorMessage: "Call ended with status failed",
+        errorMessage: "Unexpected outbound queue failure",
       }),
     ).toBe("bad");
+  });
+
+  it("treats carrier dial failures as soft", () => {
+    expect(
+      classifyBatchAttemptOutcome({
+        callStatus: "failed",
+        parseStatus: "failed",
+        errorMessage: "Call ended with status failed",
+      }),
+    ).toBe("soft");
   });
 
   it("treats active pending outcomes as pending", () => {

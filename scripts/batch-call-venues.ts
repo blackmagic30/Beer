@@ -457,7 +457,6 @@ async function refreshResolvedAttempts(
   for (const attempt of state.attempts) {
     if (
       attempt.resolvedOutcome === "good" ||
-      attempt.resolvedOutcome === "bad" ||
       attempt.resolvedOutcome === "settled_no_data"
     ) {
       continue;
