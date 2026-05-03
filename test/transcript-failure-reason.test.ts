@@ -177,6 +177,15 @@ describe("detectTranscriptFailureReason", () => {
     expect(result).toBe("Booking line or switchboard reached");
   });
 
+  it("detects booking-only virtual assistant recordings", () => {
+    const result = detectTranscriptFailureReason(
+      "Unable to make a booking. Walk in, we always have room. We take bookings for groups of 10 or more.",
+      "At Good Heavens Rooftop, we take bookings for groups of 10 or more. How can I assist you with a booking today?",
+    );
+
+    expect(result).toBe("Booking line or switchboard reached");
+  });
+
   it("detects wrong-business greetings", () => {
     const result = detectTranscriptFailureReason(
       "... . Huffman Bedding, how can I help?. Oh, we don't have Guinness, so zero.",

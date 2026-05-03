@@ -6,7 +6,7 @@ const CLARIFICATION_BREAKDOWN_REGEX =
 const IVR_KEYPAD_PROMPT_REGEX =
   /\bpress (?:(?:zero|one|two|three|four|five|six|seven|eight|nine)|[0-9]|pound|hash|star)\b|\bto connect your call\b|\bselect from the following options\b|\bfor general (?:hotel )?inquiries\b|\bfor .* press (?:(?:zero|one|two|three|four|five|six|seven|eight|nine)|[0-9]|pound|hash|star)\b/i;
 const BOOKING_LINE_OR_SWITCHBOARD_REGEX =
-  /\b(?:reservations?|reservation team|reservations office|events office|functions and events|private dining|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|dial an extension|if you know your party'?s extension|book online|booking enquiries?|booking line|bookings? team|central reservations?)\b/i;
+  /\b(?:reservations?|reservation team|reservations office|events office|functions and events|private dining|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|dial an extension|if you know your party'?s extension|book online|make (?:a )?booking|bookings? for groups?|walk-?ins?|booking enquiries?|booking line|bookings? team|central reservations?)\b/i;
 
 export function detectTranscriptFailureReason(userTranscript: string, rawTranscript: string): string | null {
   const transcript = `${userTranscript}\n${rawTranscript}`.toLowerCase();

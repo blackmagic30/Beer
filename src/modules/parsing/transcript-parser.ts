@@ -166,7 +166,7 @@ const HAPPY_HOUR_DRINK_SPECIAL_REGEX =
 const HIGH_PRICE_FOOD_SPECIAL_REGEX =
   /\b(steaks?|porterhouses?|rib\s*eyes?|wagyu)\b/i;
 const HAPPY_HOUR_RECORDING_NOISE_REGEX =
-  /\b(please hold the line|please stay on the line|calls may be monitored|transferring to customer support|answered in the order it was received|automated receptionist|virtual assistant|no person is available|office hours|out of hours|please (?:jump online|visit our website)|do not leave us a message|reservations?|booking enquiries?|bookings? team|booking line|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|meeting or event|complimentary wi-?fi|conference|functions? and events|leave (?:your )?(?:message|name and number)|after the beep|voicemail|mailbox|record your message|at the tone)\b/i;
+  /\b(please hold the line|please stay on the line|calls may be monitored|transferring to customer support|answered in the order it was received|automated receptionist|virtual assistant|no person is available|office hours|out of hours|please (?:jump online|visit our website)|do not leave us a message|reservations?|book online|make (?:a )?booking|bookings? for groups?|walk-?ins?|booking enquiries?|bookings? team|booking line|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|meeting or event|complimentary wi-?fi|conference|functions? and events|leave (?:your )?(?:message|name and number)|after the beep|voicemail|mailbox|record your message|at the tone)\b/i;
 const DAY_RANGE_REGEX =
   /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:-|to)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const DAY_LIST_REGEX =

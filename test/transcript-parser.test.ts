@@ -636,6 +636,26 @@ describe("parseHappyHourInfo", () => {
     );
   });
 
+  it("does not infer happy hour from booking-only virtual assistant recordings", () => {
+    const result = parseHappyHourInfo(
+      "Unable to make a booking. Just walk in, we always have room. At Good Heavens Rooftop, we take bookings for groups of 10 or more.",
+      {
+        assumeHappyHourContext: true,
+      },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: false,
+        happyHourDays: null,
+        happyHourStart: null,
+        happyHourEnd: null,
+        happyHourPrice: null,
+        happyHourSpecials: null,
+      }),
+    );
+  });
+
   it("still parses concise staff answers after the happy-hour question", () => {
     const result = parseHappyHourInfo("Yes, Wednesday to Friday 3 to 6, $8 house wines and $8 house beer.", {
       assumeHappyHourContext: true,
