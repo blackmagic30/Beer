@@ -160,7 +160,17 @@ async function fetchWithRetries(
 
   for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
     try {
-      return await fetch(input, init);
+      const response = await fetch(input, init);
+
+      if (response.status >= 500 && attempt < options.attempts) {
+        console.warn(
+          `${options.label} returned ${response.status} ${response.statusText} on attempt ${attempt}/${options.attempts}`,
+        );
+        await delay(options.retryDelayMs);
+        continue;
+      }
+
+      return response;
     } catch (error) {
       lastError = error;
       console.warn(`${options.label} failed on attempt ${attempt}/${options.attempts}: ${describeError(error)}`);

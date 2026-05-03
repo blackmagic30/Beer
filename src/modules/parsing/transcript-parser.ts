@@ -140,7 +140,7 @@ const STRONG_UNAVAILABLE_REGEX =
     "i",
   );
 const RECORDING_UNAVAILABLE_REGEX =
-  /\b(this number is not available|record your message|at the tone|leave (?:your )?message|voicemail|mailbox|press any key)\b/i;
+  /\b(this number is not available|(?:\+?\d[\d\s]{6,}\d|this number|the number|number dialled)\s+is unavailable|record your message|at the tone|leave (?:your )?message|voicemail|mailbox|press any key)\b/i;
 const AUTOMATED_RECORDING_REGEX =
   /\b(emergency broadcast|this is a test of the emergency broadcast system|local radio or television station|broadcast important information)\b/i;
 const CLARIFICATION_PROMPT_REGEX =
@@ -158,7 +158,7 @@ const DAY_OR_SPECIAL_CONTEXT_REGEX =
 const REGULAR_PRICE_CONTEXT_REGEX = /\b(normally|usually|regular(?:ly)?(?:'s|s)?|standard|full price)\b/i;
 const HAPPY_HOUR_KEYWORD_REGEX = /\b(happy hour|deal|deals|special|specials|promo|promotion|discount)\b/i;
 const HAPPY_HOUR_NEGATIVE_REGEX =
-  /\b(no happy hour|no deals?|no specials?|not at the moment|nothing at the moment|nothing right now|not currently)\b|\b(?:don't|dont)\s+have\b(?:[^.!?\n]{0,30})\b(?:happy hour|deals?|specials?)\b|\b(?:nah|nope|none)\b(?:[^.!?\n]{0,25})\b(?:happy hour|deals?|specials?)\b/i;
+  /\b(no happy hours?|no deals?|no specials?|not at the moment|nothing at the moment|nothing right now|not currently)\b|\b(?:don't|dont|do not|doesn't|doesnt|does not)\s+(?:have|run|do|offer)\b(?:[^.!?\n]{0,40})\b(?:happy hours?|deals?|specials?)\b|\b(?:not doing|not running)\b(?:[^.!?\n]{0,30})\b(?:happy hours?|deals?|specials?)\b|\b(?:nah|nope|none)\b(?:[^.!?\n]{0,25})\b(?:happy hours?|deals?|specials?)\b/i;
 const HAPPY_HOUR_SPECIALS_KEYWORD_REGEX =
   /\b(specials?|deals?|discount|discounted|off|two for one|2 for 1|half price|pints?|schooners?|pots?|midd(?:y|ies)|cocktails?|spritz(?:es)?|beer|wine|wings?|pizza|parma|burgers?|oysters?|tacos?|snacks?|jugs?)\b/i;
 const HAPPY_HOUR_DRINK_SPECIAL_REGEX =
@@ -166,7 +166,7 @@ const HAPPY_HOUR_DRINK_SPECIAL_REGEX =
 const HIGH_PRICE_FOOD_SPECIAL_REGEX =
   /\b(steaks?|porterhouses?|rib\s*eyes?|wagyu)\b/i;
 const HAPPY_HOUR_RECORDING_NOISE_REGEX =
-  /\b(please hold the line|please stay on the line|calls may be monitored|transferring to customer support|answered in the order it was received|automated receptionist|virtual assistant|no person is available|office hours|out of hours|please (?:jump online|visit our website)|do not leave us a message|reservations?|book online|make (?:a )?booking|bookings? for groups?|walk-?ins?|booking enquiries?|bookings? team|booking line|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|meeting or event|complimentary wi-?fi|conference|functions? and events|leave (?:your )?(?:message|name and number)|after the beep|voicemail|mailbox|record your message|at the tone)\b/i;
+  /\b(please hold the line|please stay on the line|calls may be monitored|transferring to customer support|answered in the order it was received|automated receptionist|virtual assistant|no person is available|office hours|out of hours|please (?:jump online|visit our website)|do not leave us a message|reservations?|book online|make (?:a )?booking|bookings? for groups?|walk-?ins?|booking enquiries?|bookings? team|booking line|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|meeting or event|complimentary wi-?fi|conference|functions? and events|leave (?:your )?(?:message|name and number)|after the beep|voicemail|mailbox|record your message|at the tone|(?:\+?\d[\d\s]{6,}\d|this number|the number|number dialled)\s+is unavailable)\b/i;
 const DAY_RANGE_REGEX =
   /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:-|to)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const DAY_LIST_REGEX =

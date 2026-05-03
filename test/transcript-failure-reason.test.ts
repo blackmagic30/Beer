@@ -24,6 +24,15 @@ describe("detectTranscriptFailureReason", () => {
     expect(result).toBe("Voicemail detected");
   });
 
+  it("detects unavailable-number recordings as voicemail", () => {
+    const result = detectTranscriptFailureReason(
+      "1385978452 is unavailable.",
+      "AGENT: Hey mate, quick one, what days and times are your happy hours?\nUSER: 1385978452 is unavailable.",
+    );
+
+    expect(result).toBe("Voicemail detected");
+  });
+
   it("detects brief hold-to-check responses", () => {
     const result = detectTranscriptFailureReason(
       "I can quickly have a look for you, just can you hold on for a second?",

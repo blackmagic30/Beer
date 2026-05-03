@@ -70,7 +70,7 @@ export function detectTranscriptFailureReason(userTranscript: string, rawTranscr
   }
 
   if (
-    /\bleave a message\b|\bleave (?:your )?name and number\b|\bleave the message\b|\bbrief message\b|\bshort message\b|\bsent as an audio message\b|\baudio message\b|\bafter the beep\b|\bvoicemail\b|\bmailbox\b|\bmessage bank is full\b|\baway from the phone\b|\brecord your message\b|\bat the tone\b|\bthis number is not available\b|\bwe'?ll get back to you\b|\breturn your call as soon as possible\b|\bmessages? left on this service\b|\bcall us back again\b|\bif you'd like to make a booking\b/.test(
+    /\bleave a message\b|\bleave (?:your )?name and number\b|\bleave the message\b|\bbrief message\b|\bshort message\b|\bsent as an audio message\b|\baudio message\b|\bafter the beep\b|\bvoicemail\b|\bmailbox\b|\bmessage bank is full\b|\baway from the phone\b|\brecord your message\b|\bat the tone\b|\bthis number is not available\b|\b(?:\+?\d[\d\s]{6,}\d|this number|the number|number dialled)\s+is unavailable\b|\bwe'?ll get back to you\b|\breturn your call as soon as possible\b|\bmessages? left on this service\b|\bcall us back again\b|\bif you'd like to make a booking\b/.test(
       transcript,
     )
   ) {

@@ -594,6 +594,43 @@ describe("parseHappyHourInfo", () => {
     expect(result.confidence).toBeGreaterThan(0.85);
   });
 
+  it("captures do-not-have happy-hour answers as confident negatives", () => {
+    const result = parseHappyHourInfo("We do not have any happy hours unfortunately, mate.", {
+      assumeHappyHourContext: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: false,
+        happyHourDays: null,
+        happyHourStart: null,
+        happyHourEnd: null,
+        happyHourPrice: null,
+        needsReview: false,
+      }),
+    );
+    expect(result.confidence).toBeGreaterThan(0.85);
+  });
+
+  it("treats unavailable-number recordings as no-data recording noise", () => {
+    const result = parseHappyHourInfo("1385978452 is unavailable.", {
+      assumeHappyHourContext: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: false,
+        happyHourDays: null,
+        happyHourStart: null,
+        happyHourEnd: null,
+        happyHourPrice: null,
+        happyHourSpecials: null,
+        needsReview: false,
+      }),
+    );
+    expect(result.confidence).toBeLessThan(0.2);
+  });
+
   it("does not turn hold-line hotel recordings into happy hour specials", () => {
     const result = parseHappyHourInfo(
       "Please hold the line until one becomes available. Elevate your next meeting or event to extraordinary heights at Parkroyal Melbourne Airport with 14 meeting rooms and complimentary Wi-Fi.",

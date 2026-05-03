@@ -97,6 +97,7 @@ function buildHappyHourPrompt(variant: HappyHourScriptVariantKey | null | undefi
     "If they answer with only a vague yes, ask: \"What days, times, and specials are those?\"",
     "If a real person greets you before the opener lands, ask the opener once.",
     'If they say hello after you already asked, do not restart with "Hey mate"; say: "Just checking your happy-hour days and times, thanks."',
+    'If they ask which venue, bar, or location, answer with the venue name and suburb once, then ask: "Do you run happy hour there?"',
     'If the venue does not answer clearly or you genuinely cannot understand them, say exactly once: "Sorry, what was that mate?"',
     "If it is still unclear after that one clarification, say thanks and end the call.",
     "If they say they do not run happy hour or do not have recurring specials, accept that answer and move on.",
