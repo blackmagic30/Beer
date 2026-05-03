@@ -179,8 +179,9 @@ const BETWEEN_TIME_RANGE_REGEX =
   /\bbetween\s+(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\s+(?:and\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\b/gi;
 const NUMERIC_TIME_RANGE_REGEXES = [TIME_RANGE_REGEX, BETWEEN_TIME_RANGE_REGEX];
 const HOUR_WORD_PATTERN = "(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)";
+const TIME_WORD_PATTERN = `(?:${HOUR_WORD_PATTERN}|midnight)`;
 const WORD_TIME_RANGE_REGEX = new RegExp(
-  `\\b(${HOUR_WORD_PATTERN})\\s*([ap]\\.?\\s*m\\.?)?\\s*(?:-|to|til|till|until)\\s*(${HOUR_WORD_PATTERN})\\s*([ap]\\.?\\s*m\\.?)?\\b`,
+  `\\b(${HOUR_WORD_PATTERN})\\s*(?:o'?clock)?\\s*([ap]\\.?\\s*m\\.?)?\\s*(?:-|to|til|till|until)\\s*(${TIME_WORD_PATTERN})(?:-?ish)?\\s*(?:o'?clock)?\\s*([ap]\\.?\\s*m\\.?)?\\b`,
   "gi",
 );
 
@@ -662,6 +663,10 @@ function normaliseTimePart(hourRaw: string, minuteRaw?: string, meridianRaw?: st
   return `${String(hour24).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+function isZeroLengthTimeRange(start: string, end: string): boolean {
+  return start === end;
+}
+
 function extractDayMatch(text: string): HappyHourDayMatch | null {
   const normalised = text.toLowerCase();
 
@@ -778,7 +783,7 @@ function extractTimeRange(text: string, options: ExtractTimeRangeOptions = {}): 
       const start = normaliseTimePart(startHourRaw, startMinuteRaw ?? undefined, inferredStartMeridian);
       const end = normaliseTimePart(endHourRaw, endMinuteRaw ?? undefined, inferredEndMeridian);
 
-      if (!start || !end) {
+      if (!start || !end || isZeroLengthTimeRange(start, end)) {
         continue;
       }
 
@@ -820,14 +825,14 @@ function extractTimeRange(text: string, options: ExtractTimeRangeOptions = {}): 
     }
 
     const startHour = parseNumberWordPhrase(startHourWord);
-    const endHour = parseNumberWordPhrase(endHourWord);
+    const endHour = endHourWord.toLowerCase() === "midnight" ? 0 : parseNumberWordPhrase(endHourWord);
 
     if (
       startHour === null ||
       endHour === null ||
       startHour < 1 ||
       startHour > 12 ||
-      endHour < 1 ||
+      endHour < 0 ||
       endHour > 12
     ) {
       continue;
@@ -841,9 +846,16 @@ function extractTimeRange(text: string, options: ExtractTimeRangeOptions = {}): 
       startHour <= 11 &&
       endHour >= 3 &&
       endHour <= 11;
+    const inferMidnightEndRange =
+      options.preferPm === true &&
+      !startMeridianRaw &&
+      !endMeridianRaw &&
+      endHour === 0 &&
+      startHour >= 3 &&
+      startHour <= 11;
     const inferredStartMeridian =
       startMeridianRaw ??
-      (inferPmRange ? "pm" : inferMissingMeridian(
+      (inferPmRange || inferMidnightEndRange ? "pm" : inferMissingMeridian(
         startHour,
         endHour,
         endMeridianRaw ?? undefined,
@@ -852,7 +864,7 @@ function extractTimeRange(text: string, options: ExtractTimeRangeOptions = {}): 
     const start = normaliseTimePart(String(startHour), undefined, inferredStartMeridian);
     const end = normaliseTimePart(String(endHour), undefined, inferredEndMeridian);
 
-    if (!start || !end) {
+    if (!start || !end || isZeroLengthTimeRange(start, end)) {
       continue;
     }
 

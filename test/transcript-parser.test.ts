@@ -727,6 +727,26 @@ describe("parseHappyHourInfo", () => {
     );
   });
 
+  it("parses o'clock to midnight-ish ranges and ignores zero-length price ladders", () => {
+    const result = parseHappyHourInfo(
+      "Happy hour's every day, five o'clock to midnight-ish. Like $5 at five o'clock, six to six, seven to seven, and so forth.",
+      {
+        assumeHappyHourContext: true,
+      },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: true,
+        happyHourDays: "daily",
+        happyHourStart: "17:00",
+        happyHourEnd: "00:00",
+        happyHourPrice: 5,
+        happyHourSpecials: expect.stringContaining("$5"),
+      }),
+    );
+  });
+
   it("parses between-style shorthand time ranges from transcripts", () => {
     const result = parseHappyHourInfo(
       "Seven days a week between 5:00 6:00. You get a pint of Guinness and a dozen oysters for 30 bucks.",
