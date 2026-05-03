@@ -33,6 +33,15 @@ describe("detectTranscriptFailureReason", () => {
     expect(result).toBe("Voicemail detected");
   });
 
+  it("detects after-the-tone voicemail recordings", () => {
+    const result = detectTranscriptFailureReason(
+      "We're sorry we haven't made it to your call. Please leave us a message after the tone, and we will attend to your call as soon as possible.",
+      "AGENT: Hey mate, quick one, what days and times are your happy hours?\nUSER: We're sorry we haven't made it to your call. Please leave us a message after the tone.",
+    );
+
+    expect(result).toBe("Voicemail detected");
+  });
+
   it("detects brief hold-to-check responses", () => {
     const result = detectTranscriptFailureReason(
       "I can quickly have a look for you, just can you hold on for a second?",

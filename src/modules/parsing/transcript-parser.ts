@@ -140,7 +140,7 @@ const STRONG_UNAVAILABLE_REGEX =
     "i",
   );
 const RECORDING_UNAVAILABLE_REGEX =
-  /\b(this number is not available|(?:\+?\d[\d\s]{6,}\d|this number|the number|number dialled)\s+is unavailable|record your message|at the tone|leave (?:your )?message|voicemail|mailbox|press any key)\b/i;
+  /\b(this number is not available|(?:\+?\d[\d\s]{6,}\d|this number|the number|number dialled)\s+is unavailable|record your message|(?:at|after) the tone|leave (?:us|your)?\s*(?:a )?message|voicemail|mailbox|press any key)\b/i;
 const AUTOMATED_RECORDING_REGEX =
   /\b(emergency broadcast|this is a test of the emergency broadcast system|local radio or television station|broadcast important information)\b/i;
 const CLARIFICATION_PROMPT_REGEX =
@@ -166,7 +166,7 @@ const HAPPY_HOUR_DRINK_SPECIAL_REGEX =
 const HIGH_PRICE_FOOD_SPECIAL_REGEX =
   /\b(steaks?|porterhouses?|rib\s*eyes?|wagyu)\b/i;
 const HAPPY_HOUR_RECORDING_NOISE_REGEX =
-  /\b(please hold the line|please stay on the line|calls may be monitored|transferring to customer support|answered in the order it was received|automated receptionist|virtual assistant|no person is available|office hours|out of hours|please (?:jump online|visit our website)|do not leave us a message|reservations?|book online|make (?:a )?booking|bookings? for groups?|walk-?ins?|booking enquiries?|bookings? team|booking line|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|meeting or event|complimentary wi-?fi|conference|functions? and events|leave (?:your )?(?:message|name and number)|after the beep|voicemail|mailbox|record your message|at the tone|(?:\+?\d[\d\s]{6,}\d|this number|the number|number dialled)\s+is unavailable)\b/i;
+  /\b(please hold the line|please stay on the line|calls may be monitored|transferring to customer support|answered in the order it was received|automated receptionist|virtual assistant|no person is available|office hours|out of hours|please (?:jump online|visit our website)|do not leave us a message|reservations?|book online|make (?:a )?booking|bookings? for groups?|walk-?ins?|booking enquiries?|bookings? team|booking line|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|meeting or event|complimentary wi-?fi|conference|functions? and events|leave (?:us|your)?\s*(?:a )?(?:message|name and number)|after the (?:beep|tone)|voicemail|mailbox|record your message|at the tone|(?:\+?\d[\d\s]{6,}\d|this number|the number|number dialled)\s+is unavailable)\b/i;
 const DAY_RANGE_REGEX =
   /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*(?:-|to)\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const DAY_LIST_REGEX =
