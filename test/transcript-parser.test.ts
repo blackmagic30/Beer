@@ -707,6 +707,44 @@ describe("parseHappyHourInfo", () => {
     );
   });
 
+  it("parses between-style shorthand time ranges from transcripts", () => {
+    const result = parseHappyHourInfo(
+      "Seven days a week between 5:00 6:00. You get a pint of Guinness and a dozen oysters for 30 bucks.",
+      {
+        assumeHappyHourContext: true,
+      },
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: true,
+        happyHourDays: "daily",
+        happyHourStart: "17:00",
+        happyHourEnd: "18:00",
+        happyHourPrice: 30,
+        happyHourSpecials: expect.stringContaining("pint of Guinness"),
+      }),
+    );
+  });
+
+  it("downgrades high-price food-only specials to review instead of publishing the price", () => {
+    const result = parseHappyHourInfo("Thursday 4-7pm, steak special, $25 porterhouses and $63 Wagyu rib eye.", {
+      assumeHappyHourContext: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        happyHour: true,
+        happyHourDays: "Thursday",
+        happyHourStart: "16:00",
+        happyHourEnd: "19:00",
+        happyHourPrice: null,
+        needsReview: true,
+        happyHourSpecials: expect.stringContaining("steak"),
+      }),
+    );
+  });
+
   it("removes transcript filler from happy-hour specials", () => {
     const result = parseHappyHourInfo(
       "Sorry? Uh, our happy hours are Wednesday to Friday, 3 to 6. Uh, I've got $8 house wines and $8 house beer.",

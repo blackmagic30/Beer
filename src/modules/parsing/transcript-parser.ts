@@ -161,6 +161,10 @@ const HAPPY_HOUR_NEGATIVE_REGEX =
   /\b(no happy hour|no deals?|no specials?|not at the moment|nothing at the moment|nothing right now|not currently)\b|\b(?:don't|dont)\s+have\b(?:[^.!?\n]{0,30})\b(?:happy hour|deals?|specials?)\b|\b(?:nah|nope|none)\b(?:[^.!?\n]{0,25})\b(?:happy hour|deals?|specials?)\b/i;
 const HAPPY_HOUR_SPECIALS_KEYWORD_REGEX =
   /\b(specials?|deals?|discount|discounted|off|two for one|2 for 1|half price|pints?|schooners?|pots?|midd(?:y|ies)|cocktails?|spritz(?:es)?|beer|wine|wings?|pizza|parma|burgers?|oysters?|tacos?|snacks?|jugs?)\b/i;
+const HAPPY_HOUR_DRINK_SPECIAL_REGEX =
+  /\b(pints?|schooners?|pots?|midd(?:y|ies)|cocktails?|spritz(?:es)?|beer|beers|lager|ale|stout|guinness|ciders?|wine|wines|spirits?|margaritas?|negronis?|martinis?|tap)\b/i;
+const HIGH_PRICE_FOOD_SPECIAL_REGEX =
+  /\b(steaks?|porterhouses?|rib\s*eyes?|wagyu)\b/i;
 const HAPPY_HOUR_RECORDING_NOISE_REGEX =
   /\b(please hold the line|please stay on the line|calls may be monitored|transferring to customer support|answered in the order it was received|automated receptionist|virtual assistant|no person is available|office hours|out of hours|please (?:jump online|visit our website)|do not leave us a message|reservations?|booking enquiries?|bookings? team|booking line|guest services|front desk|hotel reception|switchboard|concierge|accommodation|rooms? division|meeting or event|complimentary wi-?fi|conference|functions? and events|leave (?:your )?(?:message|name and number)|after the beep|voicemail|mailbox|record your message|at the tone)\b/i;
 const DAY_RANGE_REGEX =
@@ -171,6 +175,9 @@ const DAY_ONLY_REGEX = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sun
 const SINGLE_DAY_REGEX = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 const TIME_RANGE_REGEX =
   /\b(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\s*(?:-|to|til|till|until)\s*(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\b/gi;
+const BETWEEN_TIME_RANGE_REGEX =
+  /\bbetween\s+(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\s+(?:and\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s*m\.?)?\b/gi;
+const NUMERIC_TIME_RANGE_REGEXES = [TIME_RANGE_REGEX, BETWEEN_TIME_RANGE_REGEX];
 const HOUR_WORD_PATTERN = "(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)";
 const WORD_TIME_RANGE_REGEX = new RegExp(
   `\\b(${HOUR_WORD_PATTERN})\\s*([ap]\\.?\\s*m\\.?)?\\s*(?:-|to|til|till|until)\\s*(${HOUR_WORD_PATTERN})\\s*([ap]\\.?\\s*m\\.?)?\\b`,
@@ -736,66 +743,68 @@ function extractDayMatch(text: string): HappyHourDayMatch | null {
 function extractTimeRange(text: string, options: ExtractTimeRangeOptions = {}): HappyHourTimeRange | null {
   let bestMatch: HappyHourTimeRange | null = null;
 
-  for (const match of text.matchAll(TIME_RANGE_REGEX)) {
-    const raw = match[0];
-    const startHourRaw = match[1];
-    const startMinuteRaw = match[2];
-    const startMeridianRaw = match[3];
-    const endHourRaw = match[4];
-    const endMinuteRaw = match[5];
-    const endMeridianRaw = match[6];
+  for (const timeRangeRegex of NUMERIC_TIME_RANGE_REGEXES) {
+    for (const match of text.matchAll(timeRangeRegex)) {
+      const raw = match[0];
+      const startHourRaw = match[1];
+      const startMinuteRaw = match[2];
+      const startMeridianRaw = match[3];
+      const endHourRaw = match[4];
+      const endMinuteRaw = match[5];
+      const endMeridianRaw = match[6];
 
-    if (!raw || !startHourRaw || !endHourRaw || match.index === undefined) {
-      continue;
-    }
+      if (!raw || !startHourRaw || !endHourRaw || match.index === undefined) {
+        continue;
+      }
 
-    const startHour = Number.parseInt(startHourRaw, 10);
-    const endHour = Number.parseInt(endHourRaw, 10);
-    const inferPmRange =
-      options.preferPm === true &&
-      !startMeridianRaw &&
-      !endMeridianRaw &&
-      startHour >= 3 &&
-      startHour <= 11 &&
-      endHour >= 3 &&
-      endHour <= 11;
-    const inferredStartMeridian =
-      startMeridianRaw ??
-      (inferPmRange ? "pm" : inferMissingMeridian(
-        startHour,
-        endHour,
-        endMeridianRaw ?? undefined,
-      ));
-    const inferredEndMeridian = endMeridianRaw ?? startMeridianRaw ?? (inferPmRange ? "pm" : undefined);
-    const start = normaliseTimePart(startHourRaw, startMinuteRaw ?? undefined, inferredStartMeridian);
-    const end = normaliseTimePart(endHourRaw, endMinuteRaw ?? undefined, inferredEndMeridian);
+      const startHour = Number.parseInt(startHourRaw, 10);
+      const endHour = Number.parseInt(endHourRaw, 10);
+      const inferPmRange =
+        options.preferPm === true &&
+        !startMeridianRaw &&
+        !endMeridianRaw &&
+        startHour >= 3 &&
+        startHour <= 11 &&
+        endHour >= 3 &&
+        endHour <= 11;
+      const inferredStartMeridian =
+        startMeridianRaw ??
+        (inferPmRange ? "pm" : inferMissingMeridian(
+          startHour,
+          endHour,
+          endMeridianRaw ?? undefined,
+        ));
+      const inferredEndMeridian = endMeridianRaw ?? startMeridianRaw ?? (inferPmRange ? "pm" : undefined);
+      const start = normaliseTimePart(startHourRaw, startMinuteRaw ?? undefined, inferredStartMeridian);
+      const end = normaliseTimePart(endHourRaw, endMinuteRaw ?? undefined, inferredEndMeridian);
 
-    if (!start || !end) {
-      continue;
-    }
+      if (!start || !end) {
+        continue;
+      }
 
-    const timeRange: HappyHourTimeRange = {
-      start,
-      end,
-      index: match.index,
-      raw: raw.trim(),
-    };
+      const timeRange: HappyHourTimeRange = {
+        start,
+        end,
+        index: match.index,
+        raw: raw.trim(),
+      };
 
-    if (!bestMatch) {
-      bestMatch = timeRange;
-      continue;
-    }
+      if (!bestMatch) {
+        bestMatch = timeRange;
+        continue;
+      }
 
-    const currentHasMeridian = Boolean(
-      startMeridianRaw ||
-      endMeridianRaw ||
-      Number.parseInt(startHourRaw, 10) > 12 ||
-      Number.parseInt(endHourRaw, 10) > 12,
-    );
-    const bestHasMeridian = /am|pm|:/.test(bestMatch.raw);
+      const currentHasMeridian = Boolean(
+        startMeridianRaw ||
+        endMeridianRaw ||
+        Number.parseInt(startHourRaw, 10) > 12 ||
+        Number.parseInt(endHourRaw, 10) > 12,
+      );
+      const bestHasMeridian = /am|pm|:/.test(bestMatch.raw);
 
-    if (currentHasMeridian && !bestHasMeridian) {
-      bestMatch = timeRange;
+      if (currentHasMeridian && !bestHasMeridian) {
+        bestMatch = timeRange;
+      }
     }
   }
 
@@ -1045,6 +1054,20 @@ function extractHappyHourSpecials(
   }
 
   return specialsSource;
+}
+
+function isSuspiciousHighPriceFoodOnlySpecial(
+  specials: string | null,
+  priceMention: PriceMention | null,
+): boolean {
+  if (!specials || !HIGH_PRICE_FOOD_SPECIAL_REGEX.test(specials) || HAPPY_HOUR_DRINK_SPECIAL_REGEX.test(specials)) {
+    return false;
+  }
+
+  const maxSpecialPrice = Math.max(0, ...extractPriceMentions(specials).map((mention) => mention.value));
+  const primaryPrice = priceMention?.value ?? 0;
+
+  return Math.max(primaryPrice, maxSpecialPrice) >= 40;
 }
 
 function buildNoHappyHourResult(confidence: number, evidence: string | null): ParsedHappyHour {
@@ -1443,6 +1466,7 @@ export function parseHappyHourInfo(
     0;
   const happyHourPrice = extractHappyHourPrice(candidateText, primaryAnchor, timeRange);
   const happyHourSpecials = extractHappyHourSpecials(candidateText, dayMatch, timeRange);
+  const hasSuspiciousFoodOnlySpecial = isSuspiciousHighPriceFoodOnlySpecial(happyHourSpecials, happyHourPrice);
   const hasConcreteHappyHourDetail =
     dayMatch !== null || timeRange !== null || happyHourPrice !== null || happyHourSpecials !== null;
 
@@ -1484,7 +1508,7 @@ export function parseHappyHourInfo(
     confidence += 0.18;
   }
 
-  if (happyHourPrice) {
+  if (happyHourPrice && !hasSuspiciousFoodOnlySpecial) {
     confidence += 0.18;
   }
 
@@ -1500,6 +1524,10 @@ export function parseHappyHourInfo(
     confidence -= 0.22;
   }
 
+  if (hasSuspiciousFoodOnlySpecial) {
+    confidence -= 0.18;
+  }
+
   confidence = clamp(confidence);
 
   return {
@@ -1507,10 +1535,10 @@ export function parseHappyHourInfo(
     happyHourDays: dayMatch?.value ?? null,
     happyHourStart: timeRange?.start ?? null,
     happyHourEnd: timeRange?.end ?? null,
-    happyHourPrice: happyHourPrice?.value ?? null,
+    happyHourPrice: hasSuspiciousFoodOnlySpecial ? null : happyHourPrice?.value ?? null,
     happyHourSpecials,
     confidence,
-    needsReview: confidence < 0.72 || timeRange === null || happyHourSpecials === null,
+    needsReview: confidence < 0.72 || timeRange === null || happyHourSpecials === null || hasSuspiciousFoodOnlySpecial,
     evidence: candidateText,
   };
 }
