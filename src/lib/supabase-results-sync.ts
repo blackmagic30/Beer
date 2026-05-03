@@ -143,6 +143,8 @@ export function buildSupabaseCallResultRow(
         specials: input.happyHour.happyHourSpecials,
         confidence: input.happyHour.happyHourConfidence,
         needs_review: happyHourNeedsReview,
+        captured_at: input.resultTimestamp,
+        saved_at: input.savedAt,
         days_times: [input.happyHour.happyHourDays, input.happyHour.happyHourStart, input.happyHour.happyHourEnd]
           .filter(Boolean)
           .join(" "),

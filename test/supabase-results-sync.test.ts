@@ -107,6 +107,8 @@ describe("buildSupabaseCallResultRow", () => {
           end: "18:00",
           price: 7,
           specials: "$7 pints and half-price wings",
+          captured_at: "2026-04-13T10:00:00.000Z",
+          saved_at: "2026-04-13T10:03:05.000Z",
         }),
       }),
     );

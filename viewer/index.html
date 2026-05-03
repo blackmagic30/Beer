@@ -817,6 +817,83 @@
       color: #1d4ed8;
     }
 
+    .beerPopup__happy {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #bfdbfe;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #eff6ff, #eef2ff);
+      color: #0f172a;
+    }
+
+    .beerPopup__happy--negative {
+      border-color: #e2e8f0;
+      background: #f8fafc;
+    }
+
+    .beerPopup__happyHeader {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .beerPopup__happyEyebrow {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #2563eb;
+    }
+
+    .beerPopup__happyStatus {
+      margin-top: 2px;
+      font-size: 15px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .beerPopup__happyCaptured {
+      flex: 0 0 auto;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #1e40af;
+      background: rgba(191, 219, 254, 0.8);
+      white-space: nowrap;
+    }
+
+    .beerPopup__happyGrid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .beerPopup__happyRow {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr);
+      gap: 10px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .beerPopup__happyLabel {
+      font-weight: 800;
+      color: #475569;
+    }
+
+    .beerPopup__happyValue {
+      color: #0f172a;
+      font-weight: 650;
+    }
+
+    .beerPopup__happyEmpty {
+      font-size: 12px;
+      line-height: 1.5;
+      color: #475569;
+    }
+
     .beerPopup__footer {
       padding-top: 10px;
       margin-top: 12px;
@@ -1991,8 +2068,203 @@
         : {};
     }
 
+    function isObjectRecord(value) {
+      return Boolean(value && typeof value === "object" && !Array.isArray(value));
+    }
+
     function formatPriceValue(value) {
       return value == null ? "Price unavailable" : `$${value}`;
+    }
+
+    function normalizePositiveNumber(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+    }
+
+    function getMenuCaptureRecord(row) {
+      const cleaned = getCleanedRecord(row);
+      return isObjectRecord(cleaned.menu_capture) ? cleaned.menu_capture : {};
+    }
+
+    function getHappyHourRecord(row) {
+      const cleaned = getCleanedRecord(row);
+      return isObjectRecord(cleaned.happy_hour) ? cleaned.happy_hour : null;
+    }
+
+    function hasHappyHourProbe(row) {
+      return getMenuCaptureRecord(row).completeness === "happy_hour_probe";
+    }
+
+    function hasHappyHourValueData(happyHour) {
+      if (!isObjectRecord(happyHour)) {
+        return false;
+      }
+
+      const confidence = Number(happyHour.confidence);
+
+      return Boolean(
+        happyHour.exists === true ||
+        happyHour.days ||
+        happyHour.days_times ||
+        happyHour.start ||
+        happyHour.end ||
+        normalizePositiveNumber(happyHour.price) !== null ||
+        happyHour.specials ||
+        (Number.isFinite(confidence) && confidence > 0)
+      );
+    }
+
+    function hasHappyHourData(row) {
+      const happyHour = getHappyHourRecord(row);
+      return Boolean(happyHour && (hasHappyHourProbe(row) || hasHappyHourValueData(happyHour)));
+    }
+
+    function formatDateLabel(value) {
+      if (!value) {
+        return null;
+      }
+
+      const date = new Date(value);
+
+      if (Number.isNaN(date.getTime())) {
+        return null;
+      }
+
+      return date.toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+    }
+
+    function getHappyHourDetails(row) {
+      const happyHour = getHappyHourRecord(row);
+
+      if (!happyHour || !hasHappyHourData(row)) {
+        return null;
+      }
+
+      const exists = happyHour.exists === true;
+      const days = typeof happyHour.days === "string" && happyHour.days.trim()
+        ? happyHour.days.trim()
+        : null;
+      const daysTimes = typeof happyHour.days_times === "string" && happyHour.days_times.trim()
+        ? happyHour.days_times.trim()
+        : null;
+      const start = typeof happyHour.start === "string" && happyHour.start.trim()
+        ? happyHour.start.trim()
+        : null;
+      const end = typeof happyHour.end === "string" && happyHour.end.trim()
+        ? happyHour.end.trim()
+        : null;
+      const timeRange = start && end ? `${start} to ${end}` : null;
+      const when = [days, timeRange].filter(Boolean).join(", ") || daysTimes || null;
+      const priceNumeric = normalizePositiveNumber(happyHour.price);
+      const priceText = priceNumeric === null ? null : formatPriceValue(priceNumeric);
+      const specials = typeof happyHour.specials === "string" && happyHour.specials.trim()
+        ? happyHour.specials.trim()
+        : null;
+      const confidence = Number(happyHour.confidence);
+      const confidenceText = Number.isFinite(confidence) && confidence > 0
+        ? `${Math.round(confidence * 100)}% confidence`
+        : null;
+      const needsReview = Boolean(happyHour.needs_review);
+      const capturedAt =
+        row.happy_hour_synced_at ||
+        happyHour.checked_at ||
+        happyHour.captured_at ||
+        happyHour.saved_at ||
+        row.saved_at ||
+        row.created_at ||
+        null;
+      const capturedDate = formatDateLabel(capturedAt);
+      const summaryParts = exists
+        ? [
+            when,
+            priceText,
+            specials ? `Specials: ${specials}` : null,
+          ].filter(Boolean)
+        : [];
+      const summary = exists
+        ? summaryParts.length
+          ? summaryParts.join(" • ")
+          : "Happy hour available"
+        : "No happy hour listed";
+
+      return {
+        exists,
+        when,
+        priceText,
+        specials,
+        confidenceText,
+        needsReview,
+        capturedDate,
+        summary: [
+          summary,
+          needsReview ? "Needs review" : null,
+          capturedDate ? `Checked ${capturedDate}` : null,
+        ].filter(Boolean).join(" • "),
+      };
+    }
+
+    function getHappyHourBrief(details) {
+      if (!details) {
+        return null;
+      }
+
+      if (!details.exists) {
+        return details.capturedDate
+          ? `No happy hour listed · checked ${details.capturedDate}`
+          : "No happy hour listed";
+      }
+
+      return details.when || details.priceText || details.specials || "Happy hour available";
+    }
+
+    function renderHappyHourField(label, value) {
+      if (!value) {
+        return "";
+      }
+
+      return `
+        <div class="beerPopup__happyRow">
+          <div class="beerPopup__happyLabel">${escapeHtml(label)}</div>
+          <div class="beerPopup__happyValue">${escapeHtml(value)}</div>
+        </div>
+      `;
+    }
+
+    function renderHappyHourPopupMarkup(details) {
+      if (!details) {
+        return "";
+      }
+
+      const quality = [
+        details.confidenceText,
+        details.needsReview ? "Needs review" : null,
+      ].filter(Boolean).join(" · ");
+      const rows = [
+        renderHappyHourField("When", details.when),
+        renderHappyHourField("Specials", details.specials),
+        renderHappyHourField("Price", details.priceText),
+        renderHappyHourField("Quality", quality),
+      ].filter(Boolean).join("");
+      const emptyCopy = details.exists
+        ? "Happy hour was mentioned, but we still need the exact timing or specials."
+        : "We checked this venue and no current happy hour was listed.";
+
+      return `
+        <div class="beerPopup__happy ${details.exists ? "" : "beerPopup__happy--negative"}">
+          <div class="beerPopup__happyHeader">
+            <div>
+              <div class="beerPopup__happyEyebrow">Happy hour</div>
+              <div class="beerPopup__happyStatus">${escapeHtml(details.exists ? "Available" : "Not listed")}</div>
+            </div>
+            ${details.capturedDate ? `<div class="beerPopup__happyCaptured">Checked ${escapeHtml(details.capturedDate)}</div>` : ""}
+          </div>
+          ${rows ? `<div class="beerPopup__happyGrid">${rows}</div>` : `<div class="beerPopup__happyEmpty">${escapeHtml(emptyCopy)}</div>`}
+        </div>
+      `;
     }
 
     function normalizeBeerPriceNumeric(source) {
@@ -2271,6 +2543,83 @@
       return getBeerItems(row).some((beer) => isMeaningfulBeerItem(beer));
     }
 
+    function getRowSyncedAt(row) {
+      return row ? row.saved_at || row.created_at || null : null;
+    }
+
+    function getRowTimestamp(row) {
+      const syncedAt = getRowSyncedAt(row);
+
+      if (!syncedAt) {
+        return 0;
+      }
+
+      const timestamp = new Date(syncedAt).getTime();
+      return Number.isFinite(timestamp) ? timestamp : 0;
+    }
+
+    function setLatestRow(map, venueId, row) {
+      const existing = map.get(venueId);
+
+      if (!existing || getRowTimestamp(row) >= getRowTimestamp(existing)) {
+        map.set(venueId, row);
+      }
+    }
+
+    function buildEmptyVenueRow(venue) {
+      return {
+        id: `venue:${venue.id}`,
+        venue_id: venue.id,
+        venue_name: venue.name,
+        suburb: venue.suburb,
+        created_at: null,
+        saved_at: null,
+        beer_synced_at: null,
+        happy_hour_synced_at: null,
+        cleaned: {},
+        venues: venue,
+      };
+    }
+
+    function buildMergedVenueRow(venue, latestRow, beerRow, happyHourRow) {
+      const baseRow = beerRow || latestRow || happyHourRow;
+
+      if (!baseRow) {
+        return buildEmptyVenueRow(venue);
+      }
+
+      const newestRow = [latestRow, beerRow, happyHourRow, baseRow]
+        .filter(Boolean)
+        .sort((left, right) => getRowTimestamp(right) - getRowTimestamp(left))[0];
+      const mergedCleaned = {
+        ...getCleanedRecord(baseRow),
+      };
+      const happyHour = happyHourRow ? getHappyHourRecord(happyHourRow) : null;
+
+      if (happyHour && hasHappyHourData(happyHourRow)) {
+        mergedCleaned.happy_hour = {
+          ...happyHour,
+          captured_at: happyHour.captured_at || getRowSyncedAt(happyHourRow),
+        };
+      } else {
+        delete mergedCleaned.happy_hour;
+      }
+
+      return {
+        ...baseRow,
+        id: newestRow?.id || baseRow.id || `venue:${venue.id}`,
+        venue_id: venue.id || baseRow.venue_id,
+        venue_name: baseRow.venue_name || venue.name,
+        suburb: baseRow.suburb || venue.suburb,
+        created_at: newestRow?.created_at || baseRow.created_at || null,
+        saved_at: getRowSyncedAt(newestRow) || getRowSyncedAt(baseRow),
+        beer_synced_at: getRowSyncedAt(beerRow),
+        happy_hour_synced_at: getRowSyncedAt(happyHourRow),
+        cleaned: mergedCleaned,
+        venues: venue,
+      };
+    }
+
     function getMatchingBeerItems(row, beerQuery, onTapOnly = false) {
       const beerQueryKey = toSearchKey(beerQuery);
 
@@ -2409,11 +2758,15 @@
     function syncStatusPills(filteredRows, viewState) {
       const visibleCount = filteredRows.length;
       const capturedCount = filteredRows.filter((row) => hasCapturedBeerData(row)).length;
+      const happyHourCount = filteredRows.filter((row) => getHappyHourDetails(row)).length;
       const missingCount = visibleCount - capturedCount;
+      const happyHourCopy = happyHourCount > 0
+        ? ` · ${happyHourCount} with happy hour info`
+        : "";
 
       resultsSummaryEl.innerHTML = `
         <strong>${visibleCount}</strong> ${visibleCount === 1 ? "venue" : "venues"}
-        <span style="opacity:0.72;">· ${capturedCount} with beer data · ${missingCount} still to fill</span>
+        <span style="opacity:0.72;">· ${capturedCount} with beer data${happyHourCopy} · ${missingCount} still to fill</span>
       `;
       viewSummaryEl.textContent = getViewSummaryText(viewState);
       syncScopeChipState();
@@ -2500,13 +2853,17 @@
       const venue = getVenueRecord(record.row.venues) || {};
       const suburb = venue.suburb || "Melbourne";
       const featuredBeer = record.featuredBeer;
+      const happyHourDetails = getHappyHourDetails(record.row);
+      const happyHourBrief = getHappyHourBrief(happyHourDetails);
 
       if (!hasCapturedBeerData(record.row)) {
         return {
-          badgeLabel: "Needs data",
-          badgeStyle: "background:#1e293b; color:#e2e8f0;",
-          metaPill: "Venue mapped",
-          copy: "No beer prices captured yet. Good candidate for a call, OCR source, or manual entry.",
+          badgeLabel: happyHourDetails ? "HH" : "Needs data",
+          badgeStyle: happyHourDetails
+            ? "background:#dbeafe; color:#1d4ed8;"
+            : "background:#1e293b; color:#e2e8f0;",
+          metaPill: happyHourDetails ? "Happy hour checked" : "Venue mapped",
+          copy: happyHourBrief || "No beer prices captured yet. Good candidate for a call, OCR source, or manual entry.",
           sortWeight: 0,
           numericPrice: null,
           suburb,
@@ -2518,7 +2875,10 @@
           badgeLabel: featuredBeer.priceText,
           badgeStyle: `background:${featuredBeer.availabilityTone.background}; color:${featuredBeer.availabilityTone.color};`,
           metaPill: featuredBeer.availabilityLabel,
-          copy: `${featuredBeer.label} · ${featuredBeer.availabilityLabel}`,
+          copy: [
+            `${featuredBeer.label} · ${featuredBeer.availabilityLabel}`,
+            happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
+          ].filter(Boolean).join(" · "),
           sortWeight: hasNumericPrice(featuredBeer) ? -featuredBeer.priceNumeric : 0,
           numericPrice: hasNumericPrice(featuredBeer) ? featuredBeer.priceNumeric : null,
           suburb,
@@ -2530,7 +2890,10 @@
           badgeLabel: featuredBeer.priceText,
           badgeStyle: `background:${featuredBeer.availabilityTone.background}; color:${featuredBeer.availabilityTone.color};`,
           metaPill: featuredBeer.label,
-          copy: `${featuredBeer.availabilityLabel} · ${featuredBeer.priceText}`,
+          copy: [
+            `${featuredBeer.availabilityLabel} · ${featuredBeer.priceText}`,
+            happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
+          ].filter(Boolean).join(" · "),
           sortWeight: hasNumericPrice(featuredBeer) ? -featuredBeer.priceNumeric : 0,
           numericPrice: hasNumericPrice(featuredBeer) ? featuredBeer.priceNumeric : null,
           suburb,
@@ -2538,10 +2901,12 @@
       }
 
       return {
-        badgeLabel: "Mapped",
-        badgeStyle: "background:#1e293b; color:#e2e8f0;",
-        metaPill: "Venue mapped",
-        copy: "Venue is on the map and ready for beer data.",
+        badgeLabel: happyHourDetails ? "HH" : "Mapped",
+        badgeStyle: happyHourDetails
+          ? "background:#dbeafe; color:#1d4ed8;"
+          : "background:#1e293b; color:#e2e8f0;",
+        metaPill: happyHourDetails ? "Happy hour checked" : "Venue mapped",
+        copy: happyHourBrief || "Venue is on the map and ready for beer data.",
         sortWeight: 0,
         numericPrice: null,
         suburb,
@@ -2658,30 +3023,6 @@
           }
         });
       });
-    }
-
-    function getHappyHourSummary(row) {
-      const cleaned = getCleanedRecord(row);
-      const happyHour = cleaned.happy_hour;
-
-      if (!happyHour || typeof happyHour !== "object") {
-        return null;
-      }
-
-      const exists = Boolean(happyHour.exists);
-
-      if (!exists) {
-        return "No happy hour listed";
-      }
-
-      const parts = [
-        happyHour.days || happyHour.days_times || null,
-        happyHour.start && happyHour.end ? `${happyHour.start}-${happyHour.end}` : null,
-        happyHour.price != null ? `$${happyHour.price}` : null,
-        happyHour.specials ? `Specials: ${happyHour.specials}` : null,
-      ].filter(Boolean);
-
-      return parts.length ? parts.join(" • ") : "Happy hour available";
     }
 
     function formatAddress(venue) {
@@ -4149,29 +4490,26 @@
 
         const infoWindow = new google.maps.InfoWindow();
         const latestRowsByVenue = new Map();
+        const latestBeerRowsByVenue = new Map();
+        const latestHappyHourRowsByVenue = new Map();
 
         rows.forEach((item) => {
           const venue = getVenueRecord(item.venues);
           const venueId = item.venue_id || venue?.id;
 
-          if (!venueId || latestRowsByVenue.has(venueId)) {
+          if (!venueId) {
             return;
           }
 
-          latestRowsByVenue.set(venueId, item);
-        });
+          setLatestRow(latestRowsByVenue, venueId, item);
 
-        const venueRows = Array.from(latestRowsByVenue.values()).filter((item) => {
-          const venue = getVenueRecord(item.venues);
-
-          if (!venue) {
-            return false;
+          if (hasCapturedBeerData(item)) {
+            setLatestRow(latestBeerRowsByVenue, venueId, item);
           }
 
-          const lat = Number(venue.latitude);
-          const lng = Number(venue.longitude);
-
-          return Number.isFinite(lat) && Number.isFinite(lng);
+          if (hasHappyHourData(item)) {
+            setLatestRow(latestHappyHourRowsByVenue, venueId, item);
+          }
         });
 
         const allVenueRows = allVenues
@@ -4181,23 +4519,14 @@
             return Number.isFinite(lat) && Number.isFinite(lng);
           })
           .map((venue) => {
-            const existing = latestRowsByVenue.get(venue.id);
-
-            if (existing) {
-              return existing;
-            }
-
-            return {
-              id: `venue:${venue.id}`,
-              venue_id: venue.id,
-              venue_name: venue.name,
-              suburb: venue.suburb,
-              created_at: null,
-              saved_at: null,
-              cleaned: {},
-              venues: venue,
-            };
+            return buildMergedVenueRow(
+              venue,
+              latestRowsByVenue.get(venue.id),
+              latestBeerRowsByVenue.get(venue.id),
+              latestHappyHourRowsByVenue.get(venue.id),
+            );
           });
+        const venueRows = allVenueRows.filter((item) => hasCapturedBeerData(item) || hasHappyHourData(item));
 
         debug(`Markerable captured row count: ${venueRows.length}`);
         debug(`Markerable all-venue row count: ${allVenueRows.length}`);
@@ -4235,7 +4564,7 @@
             const lat = Number(venue.latitude);
             const lng = Number(venue.longitude);
             const beerItems = getDisplayBeerItems(item, viewState);
-            const happyHourSummary = getHappyHourSummary(item);
+            const happyHourDetails = getHappyHourDetails(item);
             const featuredBeer = getFeaturedBeer(item, viewState);
             const markerVisual = getMarkerVisual(viewState, featuredBeer);
             const hasCapturedData = hasCapturedBeerData(item);
@@ -4323,12 +4652,7 @@
                 This venue is already mapped, but the beer list still needs to be filled.
               </div>
             `;
-            const happyHourMarkup = happyHourSummary ? `
-              <div class="beerPopup__notice beerPopup__notice--blue">
-                <strong>Happy hour</strong><br>
-                ${escapeHtml(happyHourSummary)}
-              </div>
-            ` : "";
+            const happyHourMarkup = renderHappyHourPopupMarkup(happyHourDetails);
 
             const content = `
               <div class="beerPopup">
