@@ -66,7 +66,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       const query = typeof req.query.q === "string" ? req.query.q : undefined;
       const limit =
         typeof req.query.limit === "string" && Number.isFinite(Number(req.query.limit))
-          ? Math.min(100, Math.max(1, Number(req.query.limit)))
+          ? Math.min(1000, Math.max(1, Number(req.query.limit)))
           : 50;
       const venues = await businessService.listVenues(query, limit);
       res.json(success({ venues }));
@@ -161,4 +161,3 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   return router;
 }
-

@@ -2868,6 +2868,24 @@
       };
     }
 
+    async function fetchBusinessViewerVenues(limit = 1000) {
+      if (!window.MelbBeerBusiness) {
+        return [];
+      }
+
+      const response = await window.MelbBeerBusiness.apiFetch(`/api/business/venues?limit=${limit}`);
+      return Array.isArray(response.venues) ? response.venues : [];
+    }
+
+    async function fetchBusinessPriceRecords() {
+      if (!window.MelbBeerBusiness) {
+        return [];
+      }
+
+      const response = await window.MelbBeerBusiness.apiFetch("/api/business/price-records");
+      return Array.isArray(response.records) ? response.records : [];
+    }
+
     function getMatchingBeerItems(row, beerQuery, onTapOnly = false) {
       const beerQueryKey = toSearchKey(beerQuery);
 
@@ -4636,20 +4654,25 @@
 
     async function init() {
       try {
-        if (!window.supabase || typeof window.supabase.createClient !== "function") {
-          throw new Error("Supabase browser client failed to load");
-        }
-
-        if (!SUPABASE_URL || !SUPABASE_KEY) {
-          throw new Error("Viewer config is missing Supabase browser values. Check viewer/config.js");
-        }
-
         await refreshBusinessAccess();
-        debug("Creating Supabase client...");
-        debug(`Supabase URL: ${SUPABASE_URL}`);
+        const hasSupabaseBrowserConfig = Boolean(
+          window.supabase &&
+          typeof window.supabase.createClient === "function" &&
+          SUPABASE_URL &&
+          SUPABASE_KEY,
+        );
+
         debug(`Viewer origin: ${window.location.origin}`);
         debug(`Google Maps key in use: ...${GOOGLE_MAPS_KEY.slice(-6)}`);
-        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        if (hasSupabaseBrowserConfig) {
+          debug("Creating Supabase client...");
+          debug(`Supabase URL: ${SUPABASE_URL}`);
+          supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        } else {
+          debug("Supabase browser config missing. Using local business API venue fallback.");
+        }
+
         await fetchAdminStatus();
 
         debug("Loading Google Maps...");
@@ -4676,19 +4699,54 @@
           ...(GOOGLE_MAPS_MAP_ID ? { mapId: GOOGLE_MAPS_MAP_ID } : {}),
         });
 
-        debug("Fetching call_results rows...");
+        let rows = [];
+        let allVenues = [];
 
-        const { data, error } = await supabaseClient
-          .from("call_results")
-          .select(`
-            id,
-            venue_id,
-            venue_name,
-            suburb,
-            created_at,
-            saved_at,
-            cleaned,
-            venues!left (
+        if (hasSupabaseBrowserConfig) {
+          debug("Fetching call_results rows...");
+
+          const { data, error } = await supabaseClient
+            .from("call_results")
+            .select(`
+              id,
+              venue_id,
+              venue_name,
+              suburb,
+              created_at,
+              saved_at,
+              cleaned,
+              venues!left (
+                id,
+                name,
+                address,
+                suburb,
+                state,
+                postcode,
+                latitude,
+                longitude
+              )
+            `)
+            .order("created_at", { ascending: false });
+
+          debugJson("Fetch error", error ? {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          } : null);
+
+          if (error) {
+            throw error;
+          }
+
+          rows = Array.isArray(data) ? data : [];
+          debug(`Fetched row count: ${rows.length}`);
+          debugJson("Sample returned row", rows[0] || null);
+
+          debug("Fetching venues rows...");
+          const { data: venuesData, error: venuesError } = await supabaseClient
+            .from("venues")
+            .select(`
               id,
               name,
               address,
@@ -4697,61 +4755,34 @@
               postcode,
               latitude,
               longitude
-            )
-          `)
-          .order("created_at", { ascending: false });
+            `)
+            .order("name", { ascending: true });
 
-        debugJson("Fetch error", error ? {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        } : null);
+          debugJson("Venue fetch error", venuesError ? {
+            message: venuesError.message,
+            details: venuesError.details,
+            hint: venuesError.hint,
+            code: venuesError.code,
+          } : null);
 
-        if (error) {
-          throw error;
+          if (venuesError) {
+            throw venuesError;
+          }
+
+          allVenues = Array.isArray(venuesData) ? venuesData : [];
+        } else {
+          debug("Fetching venues through local business API...");
+          allVenues = await fetchBusinessViewerVenues();
+          debug(`Fetched fallback venue count: ${allVenues.length}`);
+          debugJson("Sample fallback venue row", allVenues[0] || null);
         }
 
-        const rows = Array.isArray(data) ? data : [];
-        debug(`Fetched row count: ${rows.length}`);
-        debugJson("Sample returned row", rows[0] || null);
-
-        debug("Fetching venues rows...");
-        const { data: venuesData, error: venuesError } = await supabaseClient
-          .from("venues")
-          .select(`
-            id,
-            name,
-            address,
-            suburb,
-            state,
-            postcode,
-            latitude,
-            longitude
-          `)
-          .order("name", { ascending: true });
-
-        debugJson("Venue fetch error", venuesError ? {
-          message: venuesError.message,
-          details: venuesError.details,
-          hint: venuesError.hint,
-          code: venuesError.code,
-        } : null);
-
-        if (venuesError) {
-          throw venuesError;
-        }
-
-        const allVenues = Array.isArray(venuesData) ? venuesData : [];
         debug(`Fetched venue count: ${allVenues.length}`);
         debugJson("Sample venue row", allVenues[0] || null);
 
         let businessPriceRecords = [];
         try {
-          const businessPriceResponse = await window.MelbBeerBusiness.apiFetch("/api/business/price-records");
-          businessPriceRecords = Array.isArray(businessPriceResponse.records)
-            ? businessPriceResponse.records
-            : [];
+          businessPriceRecords = await fetchBusinessPriceRecords();
           debug(`Fetched approved submission price records: ${businessPriceRecords.length}`);
         } catch (error) {
           debug(`Approved submission price records unavailable: ${error instanceof Error ? error.message : String(error)}`);
