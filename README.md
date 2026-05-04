@@ -32,6 +32,7 @@
   - `failed`
 - Supports `testMode: true` so you can safely place a test call to your own number and clearly distinguish it from real venue calls.
 - Provides review endpoints for recent calls and per-call inspection.
+- Adds a Melbourne-only business-model demo with free preview access, paid premium access, contributor unlocks, public submissions, missions, admin review, and aggregate analytics.
 
 ## Main Routes
 
@@ -43,6 +44,45 @@
 - `POST /webhooks/twilio/status`
 - `POST /webhooks/elevenlabs/post-call`
 - `GET /health`
+- `GET /api/business/config`
+- `POST /api/business/auth/signup`
+- `POST /api/business/auth/login`
+- `GET /api/business/account`
+- `GET /api/business/access`
+- `GET /api/business/missions`
+- `POST /api/business/submissions`
+- `POST /api/business/submissions/:id/review`
+- `POST /api/business/billing/checkout`
+- `POST /api/business/billing/webhook`
+- `GET /api/business/analytics/preview`
+
+## Business Model Demo
+
+The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
+
+- Free users can view the map, venue pins, suburbs, data freshness, missions, and a limited number of exact price reveals per day.
+- Premium users can unlock full map utility at A$1.99/month or A$19/year.
+- Contributors can earn temporary premium access through approved venue data. Defaults are 5 points for a valid full venue update and 15 approved monthly points for 30 days of access.
+- Public submissions are queued as `pending` and do not become trusted map data until reviewed.
+- Approved submissions publish `venue_price_records`, which the map merges into existing venue data for existing venues.
+- Mission points are weighted by usefulness, not by number of bars visited. Repeated same-venue submissions in the same month are capped.
+- Admin review lives at `/admin.html` and is protected by account role checks via `ADMIN_EMAILS`.
+- Analytics are captured as aggregate events only. No venue dashboard or individual clickstream export is live yet.
+
+Business demo pages:
+
+- `/pricing.html`: free, monthly, yearly, and contributor access copy.
+- `/account.html`: signup/login, 18+ confirmation, access status, points, submission status.
+- `/missions.html`: Needs Data mission board.
+- `/submit.html`: venue data submission with manual rows and photo/source queue.
+- `/admin.html`: admin-only submission review and aggregate analytics preview.
+
+Responsible-alcohol guardrails:
+
+- 18+ confirmation is required for account signup and full price/submission flows.
+- The demo does not collect government ID documents.
+- Copy is intentionally neutral: verified prices, data accuracy, and responsible use.
+- Partner venue credit/rewards are marked as coming soon and are disabled.
 
 ## Exact Environment Variables
 
@@ -85,6 +125,16 @@ TWILIO_VALIDATE_SIGNATURES=false
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ELEVENLABS_AGENT_ID=agent_XXXXXXXXXXXXXXXX
 ELEVENLABS_WEBHOOK_SECRET=optional_shared_secret_from_elevenlabs
+ADMIN_EMAILS=you@example.com
+FREE_PRICE_REVEALS_PER_DAY=5
+CONTRIBUTOR_UNLOCK_POINTS=15
+CONTRIBUTOR_UNLOCK_DAYS=30
+DEMO_BILLING_MODE=true
+STRIPE_SECRET_KEY=sk_test_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_PRICE_MONTHLY=price_monthly_199_aud
+STRIPE_PRICE_YEARLY=price_yearly_19_aud
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_xxx
 ```
 
 What each one does:
@@ -113,6 +163,16 @@ What each one does:
 - `ELEVENLABS_API_KEY`: required for live ElevenLabs call connection.
 - `ELEVENLABS_AGENT_ID`: required for live ElevenLabs agent routing.
 - `ELEVENLABS_WEBHOOK_SECRET`: optional but recommended for verifying ElevenLabs post-call webhooks.
+- `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup.
+- `FREE_PRICE_REVEALS_PER_DAY`: configurable daily exact-price previews for free users.
+- `CONTRIBUTOR_UNLOCK_POINTS`: approved monthly contribution points required for contributor access.
+- `CONTRIBUTOR_UNLOCK_DAYS`: number of premium days granted for contributor unlocks.
+- `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe.
+- `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.
+- `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.
+- `STRIPE_PRICE_MONTHLY`: Stripe price ID for the A$1.99/month plan.
+- `STRIPE_PRICE_YEARLY`: Stripe price ID for the A$19/year plan.
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`: browser publishable key placeholder for future embedded Stripe UI.
 
 ## Exact ngrok Workflow
 

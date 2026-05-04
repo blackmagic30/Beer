@@ -1,0 +1,269 @@
+import fs from "node:fs";
+import path from "node:path";
+
+import BetterSqlite3 from "better-sqlite3";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { BusinessRepository, type SubmissionType } from "../src/db/business.repository.js";
+
+const NOW = "2026-05-04T08:00:00.000Z";
+const MONTH_KEY = "2026-05";
+const PREMIUM_UNTIL = "2026-06-03T08:00:00.000Z";
+
+let openDatabases: BetterSqlite3.Database[] = [];
+
+function createRepository() {
+  const database = new BetterSqlite3(":memory:");
+  const schemaPath = path.resolve(process.cwd(), "src/db/schema.sql");
+  database.exec(fs.readFileSync(schemaPath, "utf8"));
+  openDatabases.push(database);
+
+  return {
+    database,
+    repository: new BusinessRepository(database),
+  };
+}
+
+function createAccount(repository: BusinessRepository, id: string, role: "user" | "admin" = "user") {
+  const account = repository.createAccount({
+    id,
+    email: `${id}@example.com`,
+    passwordHash: "hash",
+    role,
+    subscriptionStatus: role === "admin" ? "admin" : "free",
+    now: NOW,
+  });
+
+  return repository.updateAgeConfirmed(account.id, NOW);
+}
+
+function createSubmission(
+  repository: BusinessRepository,
+  input: {
+    id: string;
+    userId: string;
+    venueId: string;
+    venueName?: string;
+    submissionType?: SubmissionType;
+    beerName?: string;
+    price?: number | null;
+    sourcePhotoUrl?: string | null;
+  },
+) {
+  return repository.createSubmission({
+    id: input.id,
+    userId: input.userId,
+    venueId: input.venueId,
+    venueName: input.venueName ?? "Test Bar",
+    suburb: "Melbourne",
+    submissionType: input.submissionType ?? "full_venue_update",
+    observedAt: NOW,
+    sourcePhotoUrl: input.sourcePhotoUrl ?? "data:image/jpeg;base64,abc",
+    notes: "Menu board photo supplied.",
+    now: NOW,
+    items: [
+      {
+        id: `${input.id}:item-1`,
+        beerName: input.beerName ?? "Carlton Draft",
+        normalizedBeerId: null,
+        servingSize: "pint",
+        price: input.price ?? 14,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+        confidence: 0.88,
+      },
+    ],
+  });
+}
+
+function approve(
+  repository: BusinessRepository,
+  submissionId: string,
+  reviewerId: string,
+  pointsAwarded = 5,
+) {
+  return repository.reviewSubmission({
+    submissionId,
+    reviewerId,
+    status: "approved",
+    rejectionReason: null,
+    fraudFlagged: false,
+    pointsAwarded,
+    confidence: "photo_verified",
+    now: NOW,
+    monthKey: MONTH_KEY,
+    premiumUntil: PREMIUM_UNTIL,
+    contributorUnlockPoints: 15,
+  });
+}
+
+function flagFraud(repository: BusinessRepository, submissionId: string, reviewerId: string) {
+  return repository.reviewSubmission({
+    submissionId,
+    reviewerId,
+    status: "fraud_flagged",
+    rejectionReason: "Fraud flagged in review.",
+    fraudFlagged: true,
+    pointsAwarded: 0,
+    confidence: "disputed",
+    now: NOW,
+    monthKey: MONTH_KEY,
+    premiumUntil: PREMIUM_UNTIL,
+    contributorUnlockPoints: 15,
+  });
+}
+
+afterEach(() => {
+  openDatabases.forEach((database) => database.close());
+  openDatabases = [];
+});
+
+describe("business demo contribution model", () => {
+  it("unlocks contributor access after enough approved unique-venue points", () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "contributor");
+    const admin = createAccount(repository, "admin", "admin");
+
+    ["venue-1", "venue-2", "venue-3"].forEach((venueId, index) => {
+      const submission = createSubmission(repository, {
+        id: `submission-${index + 1}`,
+        userId: user.id,
+        venueId,
+        venueName: `Venue ${index + 1}`,
+      });
+
+      const result = approve(repository, submission.id, admin.id);
+      expect(result.pointsAwarded).toBe(5);
+    });
+
+    const updated = repository.getAccountById(user.id);
+    expect(updated?.contributionPointsCurrentMonth).toBe(15);
+    expect(updated?.subscriptionStatus).toBe("contributor_unlocked");
+    expect(updated?.premiumUntil).toBe(PREMIUM_UNTIL);
+  });
+
+  it("caps reward points to one approved submission per user, venue, and month", () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "repeat-user");
+    const admin = createAccount(repository, "admin", "admin");
+    const first = createSubmission(repository, { id: "submission-1", userId: user.id, venueId: "venue-1" });
+    const second = createSubmission(repository, { id: "submission-2", userId: user.id, venueId: "venue-1" });
+
+    expect(approve(repository, first.id, admin.id).pointsAwarded).toBe(5);
+    expect(approve(repository, second.id, admin.id).pointsAwarded).toBe(0);
+    expect(repository.getAccountById(user.id)?.contributionPointsCurrentMonth).toBe(5);
+  });
+
+  it("publishes approved submission items as photo-verified public price records", () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "submitter");
+    const admin = createAccount(repository, "admin", "admin");
+    const submission = createSubmission(repository, {
+      id: "submission-1",
+      userId: user.id,
+      venueId: "venue-1",
+      beerName: "Stone & Wood",
+      price: 15.5,
+    });
+
+    approve(repository, submission.id, admin.id);
+
+    expect(repository.listLatestPriceRecords(10)).toEqual([
+      expect.objectContaining({
+        venueId: "venue-1",
+        beerName: "Stone & Wood",
+        servingSize: "pint",
+        price: 15.5,
+        confidence: "photo_verified",
+        sourceSubmissionId: submission.id,
+      }),
+    ]);
+  });
+
+  it("increments fraud strikes and suspends reward earning after three fraud flags", () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "fraud-user");
+    const admin = createAccount(repository, "admin", "admin");
+
+    ["venue-1", "venue-2", "venue-3"].forEach((venueId, index) => {
+      const submission = createSubmission(repository, {
+        id: `submission-${index + 1}`,
+        userId: user.id,
+        venueId,
+      });
+      flagFraud(repository, submission.id, admin.id);
+    });
+
+    const updated = repository.getAccountById(user.id);
+    expect(updated?.fraudStrikeCount).toBe(3);
+    expect(updated?.status).toBe("suspended");
+    expect(updated?.contributionPointsCurrentMonth).toBe(0);
+  });
+
+  it("sorts high-value missions by weighted points", () => {
+    const { repository } = createRepository();
+
+    repository.createMission({
+      id: "mission-normal",
+      venueId: "venue-1",
+      venueName: "Known Venue",
+      suburb: "Fitzroy",
+      reason: "stale prices",
+      priority: "normal",
+      points: 2,
+      multiplier: 1,
+      lastVerifiedAt: "2026-04-01T00:00:00.000Z",
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    repository.createMission({
+      id: "mission-high",
+      venueId: "venue-2",
+      venueName: "Missing Venue",
+      suburb: "South Melbourne",
+      reason: "no prices",
+      priority: "high",
+      points: 5,
+      multiplier: 2,
+      lastVerifiedAt: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const missions = repository.listMissions({ activeOnly: true, limit: 10 });
+    expect(missions.map((mission) => mission.id)).toEqual(["mission-high", "mission-normal"]);
+  });
+
+  it("stores only aggregate analytics preview counts for admin review", () => {
+    const { repository } = createRepository();
+
+    repository.recordEvent({
+      id: "event-1",
+      userId: null,
+      anonymousSessionId: "anon-1",
+      eventType: "beer_search_performed",
+      venueId: null,
+      beerId: "carlton_draft",
+      suburb: "Richmond",
+      metadata: { query: "Carlton Draft" },
+      createdAt: NOW,
+    });
+    repository.recordEvent({
+      id: "event-2",
+      userId: null,
+      anonymousSessionId: "anon-2",
+      eventType: "venue_detail_opened",
+      venueId: "venue-1",
+      beerId: null,
+      suburb: "Richmond",
+      metadata: {},
+      createdAt: NOW,
+    });
+
+    const preview = repository.getAnalyticsPreview();
+    expect(preview.topSearchedBeers).toEqual([{ key: "carlton_draft", count: 1 }]);
+    expect(preview.topClickedVenues).toEqual([{ key: "venue-1", count: 1 }]);
+    expect(preview.topSuburbs).toEqual([{ key: "Richmond", count: 2 }]);
+  });
+});

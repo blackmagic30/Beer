@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pricing | Melbourne Beer Map</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+    <section class="hero">
+      <div class="eyebrow">Premium access</div>
+      <h1>Full Melbourne beer-price access, or earn it by helping keep data accurate.</h1>
+      <p class="lead">Browse the map for free, reveal a few exact prices each day, or unlock unlimited exact prices, beer search, cheapest-first sorting, verified-only filters, and happy-hour details.</p>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>Free</h2>
+        <div class="price">A$0</div>
+        <p class="muted">See venue pins, suburbs, data freshness, and limited exact price reveals.</p>
+        <a class="button" href="/">Open map</a>
+      </article>
+      <article class="card">
+        <h2>Monthly</h2>
+        <div class="price">A$1.99</div>
+        <p class="muted">Unlimited exact prices and premium filters for one month at a time.</p>
+        <button class="button button--primary" data-plan="monthly">Start monthly</button>
+      </article>
+      <article class="card">
+        <h2>Yearly</h2>
+        <div class="price">A$19</div>
+        <p class="muted">Best value for regular checking across Melbourne and Victoria venues.</p>
+        <button class="button button--primary" data-plan="yearly">Start yearly</button>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+      <h2>Contributor access</h2>
+      <p class="muted">Submit verified venue data and approved points can unlock premium access for 30 days. A full venue update is worth up to 5 points, and 15 approved points in the month unlocks access.</p>
+      <a class="button" href="/missions.html">Find venues needing data</a>
+      <a class="button" href="/submit.html">Submit venue data</a>
+      <p class="footerCopy">Partner venue credit is coming soon and is not live in this demo. Melbourne Beer Map is 18+ only. Prices may change and availability is not guaranteed.</p>
+    </section>
+
+    <div id="status" class="notice" style="margin-top:16px;">Choose a plan to start checkout. Stripe test mode is used when configured; otherwise demo mode simulates checkout.</div>
+  </main>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("pricing");
+      document.querySelectorAll("[data-plan]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          try {
+            const plan = button.dataset.plan;
+            const result = await MelbBeerBusiness.apiFetch("/api/business/billing/checkout", {
+              method: "POST",
+              body: JSON.stringify({ plan }),
+            });
+            await MelbBeerBusiness.trackEvent("checkout_started", { plan });
+            if (result.mode === "demo") {
+              await MelbBeerBusiness.apiFetch("/api/business/billing/demo-subscribe", {
+                method: "POST",
+                body: JSON.stringify({ plan }),
+              });
+              await MelbBeerBusiness.trackEvent("subscription_created", { plan, mode: "demo" });
+              MelbBeerBusiness.setStatus(status, "Demo subscription activated. Your account now has premium access.");
+              return;
+            }
+            window.location.href = result.checkoutUrl;
+          } catch (error) {
+            MelbBeerBusiness.setStatus(status, error.message || "Checkout failed. Log in and confirm 18+ first.", true);
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Account | Melbourne Beer Map</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+    <section class="hero">
+      <div class="eyebrow">Account</div>
+      <h1>Your access, points, and submissions.</h1>
+      <p class="lead">Create a demo account, confirm you are 18+, then submit venue data or start premium access.</p>
+    </section>
+
+    <section class="grid grid--two">
+      <form id="signupForm" class="panel form">
+        <h2>Create account</h2>
+        <label class="field">Email <input name="email" type="email" required /></label>
+        <label class="field">Password <input name="password" type="password" minlength="8" required /></label>
+        <label class="field"><span><input name="ageConfirmed" type="checkbox" required /> I confirm I am 18 years or older.</span></label>
+        <button class="button button--primary" type="submit">Sign up</button>
+      </form>
+
+      <form id="loginForm" class="panel form">
+        <h2>Log in</h2>
+        <label class="field">Email <input name="email" type="email" required /></label>
+        <label class="field">Password <input name="password" type="password" required /></label>
+        <button class="button button--primary" type="submit">Log in</button>
+        <button id="logoutButton" class="button button--danger" type="button">Log out</button>
+      </form>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+      <h2>Current status</h2>
+      <div id="accountSummary" class="notice">Not logged in yet.</div>
+      <button id="confirmAgeButton" class="button" type="button" style="margin-top:12px;">Confirm I am 18+</button>
+      <div id="submissionList" class="list" style="margin-top:14px;"></div>
+    </section>
+
+    <p class="footerCopy">18+ only. Community data is verified where possible. Prices may change, venues may refuse service under RSA obligations, and availability is not guaranteed.</p>
+  </main>
+
+  <script>
+    async function loadAccount() {
+      const token = MelbBeerBusiness.getAuthToken();
+      if (!token) {
+        accountSummary.textContent = "Not logged in yet.";
+        confirmAgeButton.style.display = "none";
+        submissionList.innerHTML = "";
+        return;
+      }
+
+      try {
+        const result = await MelbBeerBusiness.apiFetch("/api/business/account");
+        const account = result.account;
+        confirmAgeButton.style.display = account.ageConfirmedAt ? "none" : "inline-flex";
+        accountSummary.innerHTML = `
+          <strong>${account.email}</strong><br>
+          Access: ${account.subscriptionStatus}<br>
+          Premium until: ${MelbBeerBusiness.formatDate(account.premiumUntil)}<br>
+          Points this month: ${account.contributionPointsCurrentMonth}<br>
+          Trust score: ${account.trustScore} · Status: ${account.status}<br>
+          Approved submissions: ${account.approvedSubmissionCount} · Rejected: ${account.rejectedSubmissionCount} · Fraud strikes: ${account.fraudStrikeCount}
+        `;
+        submissionList.innerHTML = result.submissions.length
+          ? result.submissions.map((submission) => `
+            <div class="listItem">
+              <strong>${submission.venueName}</strong>
+              <span class="pill">${submission.status}</span>
+              <div class="muted">${submission.submissionType} · observed ${MelbBeerBusiness.formatDate(submission.observedAt)} · ${submission.pointsAwarded} points</div>
+            </div>
+          `).join("")
+          : '<div class="listItem muted">No submissions yet.</div>';
+      } catch (error) {
+        MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+      }
+    }
+
+    async function handleAuth(event, path) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const body = Object.fromEntries(new FormData(form).entries());
+      body.ageConfirmed = body.ageConfirmed === "on";
+
+      try {
+        const result = await MelbBeerBusiness.apiFetch(path, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        MelbBeerBusiness.setAuthToken(result.token);
+        form.reset();
+        await loadAccount();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("account");
+      signupForm.addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
+      loginForm.addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
+      confirmAgeButton.addEventListener("click", async () => {
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/account/age-confirm", {
+            method: "POST",
+            body: JSON.stringify({ ageConfirmed: true }),
+          });
+          await loadAccount();
+        } catch (error) {
+          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+        }
+      });
+      logoutButton.addEventListener("click", () => {
+        MelbBeerBusiness.setAuthToken(null);
+        loadAccount();
+      });
+      loadAccount();
+    });
+  </script>
+</body>
+</html>

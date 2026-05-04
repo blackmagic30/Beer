@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin | Melbourne Beer Map</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+    <section class="hero">
+      <div class="eyebrow">Admin review</div>
+      <h1>Review submissions, protect data quality, and watch aggregate demand.</h1>
+      <p class="lead">This page uses account role checks. Admin emails are configured with `ADMIN_EMAILS`; the public map no longer needs an admin secret entry.</p>
+    </section>
+
+    <section class="grid grid--two">
+      <div class="panel">
+        <h2>Pending submissions</h2>
+        <div id="pendingSubmissions" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2>Aggregate analytics preview</h2>
+        <div id="analyticsPreview" class="list"></div>
+      </div>
+    </section>
+
+    <div id="status" class="notice" style="margin-top:16px;">Log in as an admin account to review submissions.</div>
+  </main>
+
+  <script>
+    function renderAnalytics(data) {
+      const group = (title, rows) => `
+        <div class="listItem">
+          <strong>${title}</strong>
+          <div class="muted">${rows.length ? rows.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No events yet"}</div>
+        </div>
+      `;
+      analyticsPreview.innerHTML = [
+        group("Top searched beers", data.topSearchedBeers),
+        group("Top clicked venues", data.topClickedVenues),
+        group("Top suburbs", data.topSuburbs),
+        `<div class="listItem"><strong>Mission conversion count</strong><div class="muted">${data.missionConversionCount}</div></div>`,
+      ].join("");
+    }
+
+    async function reviewSubmission(id, status) {
+      try {
+        const body = status === "approved"
+          ? { status, confidence: "photo_verified" }
+          : { status, rejectionReason: status === "fraud_flagged" ? "Fraud flagged by admin." : "Rejected during demo review.", fraudFlagged: status === "fraud_flagged" };
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/submissions/${id}/review`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        MelbBeerBusiness.setStatus(statusEl, `Reviewed ${result.submission.venueName}. Awarded ${result.pointsAwarded} points.`);
+        await loadAdmin();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message, true);
+      }
+    }
+
+    async function loadAdmin() {
+      const submissions = await MelbBeerBusiness.apiFetch("/api/business/submissions?status=pending&limit=100");
+      pendingSubmissions.innerHTML = submissions.submissions.length
+        ? submissions.submissions.map((submission) => `
+          <article class="listItem">
+            <strong>${submission.venueName}</strong>
+            <span class="pill">${submission.submissionType}</span>
+            <div class="muted">${submission.suburb || "Melbourne"} · observed ${MelbBeerBusiness.formatDate(submission.observedAt)}</div>
+            <div class="muted">${submission.notes || "No notes"}</div>
+            <button class="button button--primary" data-approve="${submission.id}">Approve</button>
+            <button class="button" data-evidence="${submission.id}">Needs evidence</button>
+            <button class="button button--danger" data-reject="${submission.id}">Reject</button>
+            <button class="button button--danger" data-fraud="${submission.id}">Flag fraud</button>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No pending submissions.</div>';
+      pendingSubmissions.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.approve, "approved")));
+      pendingSubmissions.querySelectorAll("[data-evidence]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.evidence, "needs_more_evidence")));
+      pendingSubmissions.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.reject, "rejected")));
+      pendingSubmissions.querySelectorAll("[data-fraud]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.fraud, "fraud_flagged")));
+
+      const analytics = await MelbBeerBusiness.apiFetch("/api/business/analytics/preview");
+      renderAnalytics(analytics);
+      MelbBeerBusiness.setStatus(statusEl, "Admin tools loaded.");
+    }
+
+    let statusEl;
+    window.addEventListener("DOMContentLoaded", async () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("admin");
+      statusEl = document.getElementById("status");
+      try {
+        await loadAdmin();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message, true);
+      }
+    });
+  </script>
+</body>
+</html>
+

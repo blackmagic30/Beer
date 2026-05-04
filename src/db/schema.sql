@@ -114,3 +114,175 @@ CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_status_created
 
 CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_venue_status
   ON admin_ingestion_queue (venue_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user',
+  age_confirmed_at TEXT,
+  subscription_status TEXT NOT NULL DEFAULT 'free',
+  stripe_customer_id TEXT,
+  premium_until TEXT,
+  trust_score INTEGER NOT NULL DEFAULT 50,
+  contribution_points_current_month INTEGER NOT NULL DEFAULT 0,
+  approved_submission_count INTEGER NOT NULL DEFAULT 0,
+  rejected_submission_count INTEGER NOT NULL DEFAULT 0,
+  fraud_strike_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_email
+  ON accounts (email);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_stripe_customer
+  ON accounts (stripe_customer_id);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+  ON auth_sessions (user_id, expires_at DESC);
+
+CREATE TABLE IF NOT EXISTS submissions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  suburb TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  submission_type TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  source_photo_url TEXT,
+  notes TEXT,
+  points_awarded INTEGER NOT NULL DEFAULT 0,
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  rejection_reason TEXT,
+  fraud_flagged INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id),
+  FOREIGN KEY (reviewed_by) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_submissions_status_created
+  ON submissions (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_submissions_user_created
+  ON submissions (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_submissions_user_venue_month
+  ON submissions (user_id, venue_id, observed_at);
+
+CREATE TABLE IF NOT EXISTS submission_items (
+  id TEXT PRIMARY KEY,
+  submission_id TEXT NOT NULL,
+  beer_name TEXT NOT NULL,
+  normalized_beer_id TEXT,
+  serving_size TEXT NOT NULL,
+  price REAL,
+  is_happy_hour_price INTEGER NOT NULL DEFAULT 0,
+  happy_hour_details TEXT,
+  is_on_tap TEXT NOT NULL DEFAULT 'unknown',
+  confidence REAL NOT NULL DEFAULT 0.5,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (submission_id) REFERENCES submissions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_submission_items_submission
+  ON submission_items (submission_id);
+
+CREATE TABLE IF NOT EXISTS venue_price_records (
+  id TEXT PRIMARY KEY,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  suburb TEXT,
+  beer_name TEXT NOT NULL,
+  normalized_beer_id TEXT,
+  serving_size TEXT NOT NULL,
+  price REAL,
+  is_happy_hour_price INTEGER NOT NULL DEFAULT 0,
+  happy_hour_details TEXT,
+  is_on_tap TEXT NOT NULL DEFAULT 'unknown',
+  confidence TEXT NOT NULL DEFAULT 'user_reported_pending',
+  source_type TEXT NOT NULL,
+  source_submission_id TEXT,
+  last_verified_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (source_submission_id) REFERENCES submissions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_venue
+  ON venue_price_records (venue_id, last_verified_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_beer
+  ON venue_price_records (normalized_beer_id, last_verified_at DESC);
+
+CREATE TABLE IF NOT EXISTS missions (
+  id TEXT PRIMARY KEY,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  suburb TEXT,
+  reason TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  points INTEGER NOT NULL,
+  multiplier REAL NOT NULL DEFAULT 1,
+  active INTEGER NOT NULL DEFAULT 1,
+  sponsor_flag INTEGER NOT NULL DEFAULT 0,
+  last_verified_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_missions_active_priority
+  ON missions (active, priority, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS contribution_ledger (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  submission_id TEXT,
+  venue_id TEXT NOT NULL,
+  points INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  month_key TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id),
+  FOREIGN KEY (submission_id) REFERENCES submissions(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contribution_ledger_user_venue_month
+  ON contribution_ledger (user_id, venue_id, month_key);
+
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  anonymous_session_id TEXT,
+  event_type TEXT NOT NULL,
+  venue_id TEXT,
+  beer_id TEXT,
+  suburb TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_type_created
+  ON events (event_type, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_events_venue_created
+  ON events (venue_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+  id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  processed_at TEXT NOT NULL
+);

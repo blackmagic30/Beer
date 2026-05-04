@@ -18,6 +18,7 @@ type LazyRouters = {
   resultsRouter: RequestHandler;
   webhooksRouter: RequestHandler;
   adminRouter: RequestHandler;
+  businessRouter: RequestHandler;
 };
 
 let lazyRoutersPromise: Promise<LazyRouters> | undefined;
@@ -28,6 +29,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   const [
     { createDatabase },
     { AdminIngestionQueueRepository },
+    { BusinessRepository },
     { BeerPriceResultsRepository },
     { CallRunsRepository },
     { ElevenLabsService },
@@ -37,6 +39,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     { CallsService },
     { createAdminRouter },
     { AdminService },
+    { createBusinessRouter },
+    { BusinessService },
     { createResultsRouter },
     { ResultsService },
     { createWebhooksRouter },
@@ -44,6 +48,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   ] = await Promise.all([
     import("./db/database.js"),
     import("./db/admin-ingestion-queue.repository.js"),
+    import("./db/business.repository.js"),
     import("./db/beer-price-results.repository.js"),
     import("./db/call-runs.repository.js"),
     import("./lib/elevenlabs.js"),
@@ -53,6 +58,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     import("./modules/calls/calls.service.js"),
     import("./modules/admin/admin.routes.js"),
     import("./modules/admin/admin.service.js"),
+    import("./modules/business/business.routes.js"),
+    import("./modules/business/business.service.js"),
     import("./modules/results/results.routes.js"),
     import("./modules/results/results.service.js"),
     import("./modules/webhooks/webhooks.routes.js"),
@@ -61,6 +68,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
 
   const database = createDatabase();
   const adminIngestionQueueRepository = new AdminIngestionQueueRepository(database);
+  const businessRepository = new BusinessRepository(database);
   const callRunsRepository = new CallRunsRepository(database);
   const beerPriceResultsRepository = new BeerPriceResultsRepository(database);
   const twilioService = new TwilioService(
@@ -107,6 +115,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.ELEVENLABS_AGENT_ID,
     env.PARSE_CONFIDENCE_THRESHOLD,
   );
+  const businessService = new BusinessService(businessRepository, env);
+  businessService.logStartupSummary();
 
   console.info("Backend services initialized.");
 
@@ -119,6 +129,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       validateTwilioSignatures: env.TWILIO_VALIDATE_SIGNATURES,
     }),
     adminRouter: createAdminRouter(adminService),
+    businessRouter: createBusinessRouter(businessService),
   };
 }
 
@@ -186,6 +197,15 @@ export function createApp() {
       googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
       googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
       trackedBeers: VIEWER_TRACKED_BEERS,
+      business: {
+        freePriceRevealsPerDay: env.FREE_PRICE_REVEALS_PER_DAY,
+        contributorUnlockPoints: env.CONTRIBUTOR_UNLOCK_POINTS,
+        contributorUnlockDays: env.CONTRIBUTOR_UNLOCK_DAYS,
+        pricing: {
+          monthly: "A$1.99/month",
+          yearly: "A$19/year",
+        },
+      },
     };
 
     res.type("application/javascript").send(
@@ -194,6 +214,7 @@ export function createApp() {
   });
 
   app.use("/api/calls", createLazyMount((routers) => routers.callsRouter));
+  app.use("/api/business", createLazyMount((routers) => routers.businessRouter));
   app.use("/api/admin", createLazyMount((routers) => routers.adminRouter));
   app.use("/api/results", createLazyMount((routers) => routers.resultsRouter));
   app.use("/webhooks", createLazyMount((routers) => routers.webhooksRouter));

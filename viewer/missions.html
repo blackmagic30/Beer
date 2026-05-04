@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Missions | Melbourne Beer Map</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+    <section class="hero">
+      <div class="eyebrow">Needs data</div>
+      <h1>Venue missions for a more accurate Melbourne beer map.</h1>
+      <p class="lead">Pick venues with missing, stale, disputed, or high-demand data. Points are weighted by usefulness, not by encouraging more drinking.</p>
+    </section>
+
+    <section class="panel">
+      <div class="grid grid--two">
+        <label class="field">Suburb filter <input id="suburbFilter" placeholder="Fitzroy, Brighton, South Melbourne…" /></label>
+        <label class="field">Sort guide <input value="Highest points first" readonly /></label>
+      </div>
+      <div id="missionsList" class="list" style="margin-top:16px;"></div>
+    </section>
+
+    <p class="footerCopy">Mission points use a simple anti-gaming model: stale, missing, high-demand, and less dense-area venues get more weight, while repeated same-venue submissions in a month do not stack points.</p>
+  </main>
+
+  <script>
+    async function loadMissions() {
+      const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?suburb=${encodeURIComponent(suburbFilter.value)}&limit=100`);
+      await MelbBeerBusiness.trackEvent("needs_data_viewed", { suburb: suburbFilter.value || null });
+      missionsList.innerHTML = data.missions.length
+        ? data.missions.map((mission) => `
+          <article class="listItem">
+            <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+              <div>
+                <strong>${mission.venueName}</strong>
+                <div class="muted">${mission.suburb || "Melbourne"} · ${mission.reason}</div>
+              </div>
+              <div>
+                <span class="pill">${Math.round(mission.points * mission.multiplier)} pts</span>
+                ${mission.multiplier > 1 ? `<span class="pill">${mission.multiplier}x bonus</span>` : ""}
+              </div>
+            </div>
+            <div class="muted">Last verified: ${MelbBeerBusiness.formatDate(mission.lastVerifiedAt)}</div>
+            <a class="button button--primary" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}" data-mission="${mission.id}">Submit update</a>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No active missions found for that filter.</div>';
+
+      missionsList.querySelectorAll("[data-mission]").forEach((link) => {
+        link.addEventListener("click", () => MelbBeerBusiness.trackEvent("mission_opened", { missionId: link.dataset.mission }));
+      });
+    }
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("missions");
+      suburbFilter.addEventListener("change", loadMissions);
+      await loadMissions();
+    });
+  </script>
+</body>
+</html>

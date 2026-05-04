@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Submit Data | Melbourne Beer Map</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+    <section class="hero">
+      <div class="eyebrow">Submit venue data</div>
+      <h1>Help keep Melbourne beer prices accurate.</h1>
+      <p class="lead">Submit manual beer-price rows or attach a menu/tap-list/photo source. Public data stays pending until reviewed or sufficiently verified.</p>
+    </section>
+
+    <section class="panel">
+      <form id="submissionForm" class="form">
+        <div class="grid grid--two">
+          <label class="field">Search venue <input id="venueSearchInput" type="search" placeholder="Rooftop Bar, Fitzroy…" /></label>
+          <label class="field">Choose venue <select id="venueSelect" required></select></label>
+        </div>
+        <div class="grid grid--two">
+          <label class="field">Submission type
+            <select name="submissionType">
+              <option value="full_venue_update">Full venue update</option>
+              <option value="single_beer_price">Single beer price</option>
+              <option value="happy_hour_update">Happy-hour update</option>
+              <option value="photo_upload">Photo/source upload</option>
+            </select>
+          </label>
+          <label class="field">Observed date/time <input name="observedAt" type="datetime-local" required /></label>
+        </div>
+        <label class="field">Source photo/menu/receipt/happy-hour board <input id="sourcePhoto" type="file" accept="image/*" /></label>
+        <div id="beerRows" class="list"></div>
+        <button id="addBeerRowButton" class="button" type="button">Add beer row</button>
+        <label class="field">Notes <textarea name="notes" placeholder="Optional notes, conditions, or source details"></textarea></label>
+        <button class="button button--primary" type="submit">Submit for review</button>
+      </form>
+      <div id="status" class="notice" style="margin-top:16px;">Submissions are reviewed before trusted publication. Full venue updates can earn up to 5 points.</div>
+    </section>
+
+    <p class="footerCopy">18+ only. Submit accurate observations, not drinking challenges. Prices may change and venues may refuse service under RSA obligations.</p>
+  </main>
+
+  <script>
+    let venues = [];
+
+    function rowTemplate() {
+      const wrapper = document.createElement("div");
+      wrapper.className = "listItem";
+      wrapper.innerHTML = `
+        <div class="grid grid--two">
+          <label class="field">Beer name <input data-field="beerName" placeholder="Carlton Draft" required /></label>
+          <label class="field">Serving size
+            <select data-field="servingSize">
+              <option value="pint">Pint</option>
+              <option value="pot">Pot</option>
+              <option value="schooner">Schooner</option>
+              <option value="jug">Jug</option>
+              <option value="bottle">Bottle</option>
+              <option value="can">Can</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label class="field">Price <input data-field="price" type="number" step="0.01" min="0" placeholder="14" /></label>
+          <label class="field">On tap
+            <select data-field="isOnTap">
+              <option value="unknown">Unknown</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </label>
+        </div>
+        <label class="field"><span><input data-field="isHappyHourPrice" type="checkbox" /> Happy-hour price</span></label>
+        <label class="field">Happy-hour details <input data-field="happyHourDetails" placeholder="Mon-Fri 4pm-6pm, house pints only" /></label>
+        <button class="button button--danger" type="button" data-remove>Remove row</button>
+      `;
+      wrapper.querySelector("[data-remove]").addEventListener("click", () => wrapper.remove());
+      return wrapper;
+    }
+
+    function appendBeerRow() {
+      beerRows.appendChild(rowTemplate());
+    }
+
+    function collectItems() {
+      return Array.from(beerRows.querySelectorAll(".listItem")).map((row) => {
+        const get = (field) => row.querySelector(`[data-field="${field}"]`);
+        const price = get("price").value.trim();
+        return {
+          beerName: get("beerName").value.trim(),
+          servingSize: get("servingSize").value,
+          price: price ? Number(price) : null,
+          isHappyHourPrice: get("isHappyHourPrice").checked,
+          happyHourDetails: get("happyHourDetails").value.trim() || null,
+          isOnTap: get("isOnTap").value,
+        };
+      });
+    }
+
+    function readPhotoDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        if (!file) {
+          resolve(null);
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Could not read source photo."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function loadVenues(query = "") {
+      const data = await MelbBeerBusiness.apiFetch(`/api/business/venues?q=${encodeURIComponent(query)}&limit=50`);
+      venues = data.venues;
+      venueSelect.innerHTML = venues.map((venue) => `
+        <option value="${venue.id}">${venue.name}${venue.suburb ? `, ${venue.suburb}` : ""}</option>
+      `).join("");
+    }
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("submit");
+      const params = new URLSearchParams(window.location.search);
+      const initialVenueId = params.get("venueId");
+      const initialVenueName = params.get("venueName") || "";
+      appendBeerRow();
+      document.querySelector('[name="observedAt"]').value = new Date().toISOString().slice(0, 16);
+      addBeerRowButton.addEventListener("click", appendBeerRow);
+      venueSearchInput.addEventListener("change", () => loadVenues(venueSearchInput.value));
+      venueSearchInput.value = initialVenueName;
+      await loadVenues(initialVenueName);
+      if (initialVenueId && Array.from(venueSelect.options).some((option) => option.value === initialVenueId)) {
+        venueSelect.value = initialVenueId;
+      }
+      await MelbBeerBusiness.trackEvent("submission_started");
+
+      submissionForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const selected = venues.find((venue) => venue.id === venueSelect.value);
+        if (!selected) {
+          MelbBeerBusiness.setStatus(status, "Choose a venue first.", true);
+          return;
+        }
+
+        try {
+          const formData = new FormData(submissionForm);
+          const observedLocal = String(formData.get("observedAt"));
+          const observedAt = new Date(observedLocal).toISOString();
+          const sourcePhotoDataUrl = await readPhotoDataUrl(sourcePhoto.files[0]);
+          const result = await MelbBeerBusiness.apiFetch("/api/business/submissions", {
+            method: "POST",
+            body: JSON.stringify({
+              venueId: selected.id,
+              venueName: selected.name,
+              suburb: selected.suburb || null,
+              submissionType: formData.get("submissionType"),
+              observedAt,
+              sourcePhotoDataUrl,
+              notes: formData.get("notes") || null,
+              items: collectItems(),
+            }),
+          });
+          await MelbBeerBusiness.trackEvent("submission_completed", {
+            venueId: selected.id,
+            venueName: selected.name,
+            suburb: selected.suburb || null,
+            submissionType: formData.get("submissionType"),
+          });
+          MelbBeerBusiness.setStatus(status, `${result.submission.venueName} submitted and pending review.`);
+          submissionForm.reset();
+          beerRows.innerHTML = "";
+          appendBeerRow();
+        } catch (error) {
+          MelbBeerBusiness.setStatus(status, error.message, true);
+        }
+      });
+    });
+  </script>
+</body>
+</html>
