@@ -38,19 +38,144 @@
       <h2>Current status</h2>
       <div id="accountSummary" class="notice">Not logged in yet.</div>
       <button id="confirmAgeButton" class="button" type="button" style="margin-top:12px;">Confirm I am 18+</button>
-      <div id="submissionList" class="list" style="margin-top:14px;"></div>
+    </section>
+
+    <section class="grid grid--two" style="margin-top:16px;">
+      <form id="preferencesForm" class="panel form">
+        <h2>Optional onboarding</h2>
+        <p class="muted">Save a few defaults so the map and missions feel more local to you.</p>
+        <label class="field">Favourite suburbs/areas <input name="preferredSuburbs" placeholder="Fitzroy, Richmond, St Kilda" /></label>
+        <label class="field">Favourite beers <input name="preferredBeers" placeholder="Guinness, Carlton Draft, Stone & Wood" /></label>
+        <label class="field">Mostly interested in
+          <select name="preferredUseCases" multiple size="5">
+            <option value="cheapest_beer">Cheapest beer</option>
+            <option value="happy_hours">Happy hours</option>
+            <option value="specific_beers">Specific beers</option>
+            <option value="recently_verified">Recently verified prices</option>
+            <option value="contributing_data">Contributing data to unlock access</option>
+          </select>
+        </label>
+        <button class="button button--primary" type="submit">Save preferences</button>
+      </form>
+
+      <form id="saveItemForm" class="panel form">
+        <h2>Save a shortcut</h2>
+        <p class="muted">Keep venues, beers, and suburbs handy. Alerts can come later; for now this is your in-app watchlist.</p>
+        <label class="field">Type
+          <select name="itemType">
+            <option value="venue">Venue</option>
+            <option value="beer">Beer</option>
+            <option value="suburb">Suburb</option>
+          </select>
+        </label>
+        <label class="field">Name <input name="label" placeholder="Rooftop Bar or Carlton Draft" required /></label>
+        <label class="field">Suburb, if relevant <input name="suburb" placeholder="Melbourne" /></label>
+        <button class="button button--primary" type="submit">Save</button>
+      </form>
+    </section>
+
+    <section class="grid grid--two" style="margin-top:16px;">
+      <div class="panel">
+        <h2>Saved items and searches</h2>
+        <div id="savedItemsList" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2>Suggested missions</h2>
+        <div id="suggestedMissions" class="list"></div>
+      </div>
+    </section>
+
+    <section class="grid grid--two" style="margin-top:16px;">
+      <form id="requestForm" class="panel form">
+        <h2>Request a venue or beer</h2>
+        <label class="field">Request type
+          <select name="requestType">
+            <option value="missing_venue">Add a missing venue</option>
+            <option value="missing_beer">Add a missing beer</option>
+            <option value="verify_venue">Verify a venue</option>
+            <option value="verify_beer_at_venue">Verify a beer at a venue</option>
+          </select>
+        </label>
+        <label class="field">Venue <input name="venueName" placeholder="Venue name" /></label>
+        <label class="field">Beer <input name="beerName" placeholder="Beer name, if relevant" /></label>
+        <label class="field">Suburb <input name="suburb" placeholder="Melbourne" /></label>
+        <label class="field">Notes <textarea name="notes" placeholder="What should we check?"></textarea></label>
+        <button class="button button--primary" type="submit">Send request</button>
+      </form>
+
+      <form id="feedbackForm" class="panel form">
+        <h2>Send feedback</h2>
+        <label class="field">Type
+          <select name="feedbackType">
+            <option value="general_feedback">General feedback</option>
+            <option value="bug">Bug</option>
+            <option value="wrong_data">Wrong data</option>
+            <option value="feature_idea">Feature idea</option>
+            <option value="venue_suggestion">Venue suggestion</option>
+          </select>
+        </label>
+        <label class="field">Message <textarea name="message" required placeholder="What should we improve?"></textarea></label>
+        <button class="button button--primary" type="submit">Send feedback</button>
+      </form>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+      <h2>Your submissions</h2>
+      <div id="submissionList" class="list"></div>
     </section>
 
     <p class="footerCopy">18+ only. Community data is verified where possible. Prices may change, venues may refuse service under RSA obligations, and availability is not guaranteed.</p>
   </main>
 
   <script>
+    function splitCsv(value) {
+      return String(value || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+
+    function renderSavedItems(items, recentSearches) {
+      const groups = {
+        venue: items.filter((item) => item.itemType === "venue"),
+        beer: items.filter((item) => item.itemType === "beer"),
+        suburb: items.filter((item) => item.itemType === "suburb"),
+      };
+      const section = (title, rows) => `
+        <div class="listItem">
+          <strong>${title}</strong>
+          <div class="muted">${rows.length ? rows.map((item) => item.label).join(" · ") : "None saved yet"}</div>
+        </div>
+      `;
+      savedItemsList.innerHTML = [
+        section("Saved venues", groups.venue),
+        section("Saved beers", groups.beer),
+        section("Saved suburbs", groups.suburb),
+        `<div class="listItem"><strong>Recent searches</strong><div class="muted">${recentSearches.length ? recentSearches.map((item) => item.label).join(" · ") : "No recent searches yet"}</div></div>`,
+      ].join("");
+    }
+
+    function renderSuggestedMissions(missions) {
+      suggestedMissions.innerHTML = missions.length
+        ? missions.map((mission) => `
+          <div class="listItem">
+            <strong>${mission.venueName}</strong>
+            <span class="pill">${Math.round(mission.points * mission.multiplier)} pts</span>
+            <div class="muted">${mission.suburb || "Melbourne"} · ${mission.reason}</div>
+            <a class="button" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}">Submit update</a>
+          </div>
+        `).join("")
+        : '<div class="listItem muted">Save a suburb or open Missions to get suggested venues.</div>';
+    }
+
     async function loadAccount() {
       const token = MelbBeerBusiness.getAuthToken();
       if (!token) {
         accountSummary.textContent = "Not logged in yet.";
         confirmAgeButton.style.display = "none";
         submissionList.innerHTML = "";
+        savedItemsList.innerHTML = "";
+        suggestedMissions.innerHTML = "";
         return;
       }
 
@@ -62,10 +187,17 @@
           <strong>${account.email}</strong><br>
           Access: ${account.subscriptionStatus}<br>
           Premium until: ${MelbBeerBusiness.formatDate(account.premiumUntil)}<br>
-          Points this month: ${account.contributionPointsCurrentMonth}<br>
+          Points this month: ${account.contributionPointsCurrentMonth} · ${result.contributorProgress.pointsNeeded} points until next contributor unlock<br>
           Trust score: ${account.trustScore} · Status: ${account.status}<br>
           Approved submissions: ${account.approvedSubmissionCount} · Rejected: ${account.rejectedSubmissionCount} · Fraud strikes: ${account.fraudStrikeCount}
         `;
+        preferencesForm.preferredSuburbs.value = (result.preferences.preferredSuburbs || []).join(", ");
+        preferencesForm.preferredBeers.value = (result.preferences.preferredBeers || []).join(", ");
+        Array.from(preferencesForm.preferredUseCases.options).forEach((option) => {
+          option.selected = (result.preferences.preferredUseCases || []).includes(option.value);
+        });
+        renderSavedItems(result.savedItems || [], result.recentSearches || []);
+        renderSuggestedMissions(result.suggestedMissions || []);
         submissionList.innerHTML = result.submissions.length
           ? result.submissions.map((submission) => `
             <div class="listItem">
@@ -87,6 +219,9 @@
       body.ageConfirmed = body.ageConfirmed === "on";
 
       try {
+        if (path.includes("signup")) {
+          await MelbBeerBusiness.trackEvent("signup_started", { source: "account_page" });
+        }
         const result = await MelbBeerBusiness.apiFetch(path, {
           method: "POST",
           body: JSON.stringify(body),
@@ -117,6 +252,82 @@
       logoutButton.addEventListener("click", () => {
         MelbBeerBusiness.setAuthToken(null);
         loadAccount();
+      });
+      preferencesForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/account/preferences", {
+            method: "POST",
+            body: JSON.stringify({
+              preferredSuburbs: splitCsv(preferencesForm.preferredSuburbs.value),
+              preferredBeers: splitCsv(preferencesForm.preferredBeers.value),
+              preferredUseCases: Array.from(preferencesForm.preferredUseCases.selectedOptions).map((option) => option.value),
+              onboardingCompleted: true,
+            }),
+          });
+          MelbBeerBusiness.setStatus(accountSummary, "Preferences saved. Your suggested missions will use these areas.");
+          await loadAccount();
+        } catch (error) {
+          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+        }
+      });
+      saveItemForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const body = Object.fromEntries(new FormData(saveItemForm).entries());
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
+            method: "POST",
+            body: JSON.stringify({
+              itemType: body.itemType,
+              itemId: String(body.label).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+              label: body.label,
+              suburb: body.suburb || null,
+              metadata: {},
+            }),
+          });
+          saveItemForm.reset();
+          await loadAccount();
+        } catch (error) {
+          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+        }
+      });
+      requestForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const body = Object.fromEntries(new FormData(requestForm).entries());
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/requests", {
+            method: "POST",
+            body: JSON.stringify({
+              ...body,
+              anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
+              venueName: body.venueName || null,
+              beerName: body.beerName || null,
+              suburb: body.suburb || null,
+              notes: body.notes || null,
+            }),
+          });
+          requestForm.reset();
+          MelbBeerBusiness.setStatus(accountSummary, "Request saved. High-demand requests can become missions.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+        }
+      });
+      feedbackForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const body = Object.fromEntries(new FormData(feedbackForm).entries());
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/feedback", {
+            method: "POST",
+            body: JSON.stringify({
+              ...body,
+              anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
+            }),
+          });
+          feedbackForm.reset();
+          MelbBeerBusiness.setStatus(accountSummary, "Feedback saved for review. Thank you.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+        }
       });
       loadAccount();
     });

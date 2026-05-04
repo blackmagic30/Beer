@@ -4,6 +4,8 @@ import { success } from "../../lib/http.js";
 import { parseWithSchema } from "../../lib/validation.js";
 
 import {
+  accountPreferencesSchema,
+  adminDashboardQuerySchema,
   adminUserStatusSchema,
   ageConfirmSchema,
   authLoginSchema,
@@ -12,9 +14,15 @@ import {
   createMissionSchema,
   createSubmissionSchema,
   eventTrackSchema,
+  feedbackSchema,
   missionsQuerySchema,
+  removeSavedItemSchema,
+  retentionQuerySchema,
   reviewSubmissionSchema,
+  saveItemSchema,
   submissionsQuerySchema,
+  venueRequestSchema,
+  wrongPriceReportSchema,
 } from "./business.schemas.js";
 import type { BusinessService } from "./business.service.js";
 
@@ -54,6 +62,24 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.confirmAge(account)));
   });
 
+  router.post("/account/preferences", (req, res) => {
+    const account = businessService.requireAccount(getAuthorization(req));
+    const body = parseWithSchema(accountPreferencesSchema, req.body, "Invalid preferences payload");
+    res.json(success(businessService.savePreferences(account, body)));
+  });
+
+  router.post("/account/saved-items", (req, res) => {
+    const account = businessService.requireAccount(getAuthorization(req));
+    const body = parseWithSchema(saveItemSchema, req.body, "Invalid saved item payload");
+    res.status(201).json(success(businessService.saveItem(account, body)));
+  });
+
+  router.delete("/account/saved-items", (req, res) => {
+    const account = businessService.requireAccount(getAuthorization(req));
+    const body = parseWithSchema(removeSavedItemSchema, req.body, "Invalid saved item removal payload");
+    res.json(success(businessService.removeSavedItem(account, body)));
+  });
+
   router.get("/access", (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const anonymousSessionId =
@@ -80,6 +106,24 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid submission payload");
     const result = businessService.createSubmission(account, body);
     res.status(201).json(success(result));
+  });
+
+  router.post("/feedback", (req, res) => {
+    const account = getOptionalAccount(req, businessService);
+    const body = parseWithSchema(feedbackSchema, req.body, "Invalid feedback payload");
+    res.status(201).json(success(businessService.submitFeedback(account, body)));
+  });
+
+  router.post("/wrong-price-reports", (req, res) => {
+    const account = getOptionalAccount(req, businessService);
+    const body = parseWithSchema(wrongPriceReportSchema, req.body, "Invalid wrong price report payload");
+    res.status(201).json(success(businessService.reportWrongPrice(account, body)));
+  });
+
+  router.post("/requests", (req, res) => {
+    const account = getOptionalAccount(req, businessService);
+    const body = parseWithSchema(venueRequestSchema, req.body, "Invalid request payload");
+    res.status(201).json(success(businessService.createVenueRequest(account, body)));
   });
 
   router.get("/submissions", (req, res) => {
@@ -123,6 +167,38 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/analytics/preview", (req, res) => {
     const admin = businessService.requireAdmin(getAuthorization(req));
     res.json(success(businessService.getAnalyticsPreview(admin)));
+  });
+
+  router.get("/admin/kpis", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    const query = parseWithSchema(adminDashboardQuerySchema, req.query, "Invalid KPI dashboard query");
+    res.json(success(businessService.getAdminKpis(admin, query)));
+  });
+
+  router.get("/admin/retention", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    const query = parseWithSchema(retentionQuerySchema, req.query, "Invalid retention query");
+    res.json(success(businessService.getRetentionCohorts(admin, query)));
+  });
+
+  router.get("/admin/coverage", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    res.json(success(businessService.getCoverageDashboard(admin)));
+  });
+
+  router.get("/admin/partner-leads", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    res.json(success(businessService.getPotentialPartnerLeads(admin)));
+  });
+
+  router.get("/admin/queues", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    res.json(success(businessService.getAdminQueues(admin)));
+  });
+
+  router.post("/admin/requests/:id/mission", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    res.status(201).json(success(businessService.createMissionFromRequest(admin, req.params.id)));
   });
 
   router.post("/billing/checkout", async (req, res, next) => {

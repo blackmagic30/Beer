@@ -52,6 +52,17 @@
 - `GET /api/business/missions`
 - `POST /api/business/submissions`
 - `POST /api/business/submissions/:id/review`
+- `POST /api/business/account/preferences`
+- `POST /api/business/account/saved-items`
+- `DELETE /api/business/account/saved-items`
+- `POST /api/business/feedback`
+- `POST /api/business/wrong-price-reports`
+- `POST /api/business/requests`
+- `GET /api/business/admin/kpis`
+- `GET /api/business/admin/retention`
+- `GET /api/business/admin/coverage`
+- `GET /api/business/admin/partner-leads`
+- `GET /api/business/admin/queues`
 - `POST /api/business/billing/checkout`
 - `POST /api/business/billing/webhook`
 - `GET /api/business/analytics/preview`
@@ -68,14 +79,17 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 - Mission points are weighted by usefulness, not by number of bars visited. Repeated same-venue submissions in the same month are capped.
 - Admin review lives at `/admin.html` and is protected by account role checks via `ADMIN_EMAILS`.
 - Analytics are captured as aggregate events only. No venue dashboard or individual clickstream export is live yet.
+- The admin KPI dashboard tracks early validation metrics, retention cohorts, data coverage, and potential partner leads from aggregated demand.
+- Users can save venues, beers, and suburbs, submit feedback, report wrong prices, and request missing venues or beers.
+- The public map includes retention filter chips, active happy-hour previews, recently verified price previews, and wrong-price reporting.
 
 Business demo pages:
 
 - `/pricing.html`: free, monthly, yearly, and contributor access copy.
-- `/account.html`: signup/login, 18+ confirmation, access status, points, submission status.
-- `/missions.html`: Needs Data mission board.
+- `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, preferences, requests, feedback, and submission status.
+- `/missions.html`: Needs Data mission board with sorting, quick-win guidance, and points.
 - `/submit.html`: venue data submission with manual rows and photo/source queue.
-- `/admin.html`: admin-only submission review and aggregate analytics preview.
+- `/admin.html`: admin-only submission review, KPI dashboard, cohorts, coverage, partner leads, and review queues.
 
 Responsible-alcohol guardrails:
 

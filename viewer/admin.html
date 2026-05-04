@@ -16,14 +16,57 @@
       <p class="lead">This page uses account role checks. Admin emails are configured with `ADMIN_EMAILS`; the public map no longer needs an admin secret entry.</p>
     </section>
 
+    <section class="panel" style="margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center;">
+        <div>
+          <h2>Early validation KPI dashboard</h2>
+          <p class="muted">Aggregated only. No individual clickstream is exposed to venues.</p>
+        </div>
+        <label class="field" style="max-width:220px;">Range
+          <select id="rangeSelect">
+            <option value="today">Today</option>
+            <option value="7d" selected>Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="month">This month</option>
+            <option value="all">All time</option>
+          </select>
+        </label>
+      </div>
+      <div id="headlineMetrics" class="metricGrid" style="margin-top:16px;"></div>
+      <h3 style="margin-top:18px;">Early validation scorecard</h3>
+      <div id="scorecard" class="list"></div>
+    </section>
+
+    <section class="grid grid--two" style="margin-bottom:16px;">
+      <div class="panel">
+        <h2>Retention cohorts</h2>
+        <div id="retentionCohorts" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2>Coverage</h2>
+        <div id="coverageDashboard" class="list"></div>
+      </div>
+    </section>
+
+    <section class="grid grid--two" style="margin-bottom:16px;">
+      <div class="panel">
+        <h2>Demand signals</h2>
+        <div id="demandSignals" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2>Potential partner leads</h2>
+        <div id="partnerLeads" class="list"></div>
+      </div>
+    </section>
+
     <section class="grid grid--two">
       <div class="panel">
         <h2>Pending submissions</h2>
         <div id="pendingSubmissions" class="list"></div>
       </div>
       <div class="panel">
-        <h2>Aggregate analytics preview</h2>
-        <div id="analyticsPreview" class="list"></div>
+        <h2>Review queues</h2>
+        <div id="reviewQueues" class="list"></div>
       </div>
     </section>
 
@@ -31,19 +74,94 @@
   </main>
 
   <script>
-    function renderAnalytics(data) {
-      const group = (title, rows) => `
-        <div class="listItem">
-          <strong>${title}</strong>
-          <div class="muted">${rows.length ? rows.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No events yet"}</div>
+    function formatPercent(value) {
+      return `${Math.round(Number(value || 0) * 100)}%`;
+    }
+
+    function renderMetric(label, value) {
+      return `
+        <div class="metricCard">
+          <div class="metricValue">${value}</div>
+          <div class="metricLabel">${label}</div>
         </div>
       `;
-      analyticsPreview.innerHTML = [
-        group("Top searched beers", data.topSearchedBeers),
-        group("Top clicked venues", data.topClickedVenues),
-        group("Top suburbs", data.topSuburbs),
-        `<div class="listItem"><strong>Mission conversion count</strong><div class="muted">${data.missionConversionCount}</div></div>`,
+    }
+
+    function renderRows(rows, empty = "No data yet") {
+      return rows.length
+        ? rows.map((row) => `<div class="listItem"><strong>${row.key || row.label}</strong><div class="muted">${row.count ?? row.value ?? ""}</div></div>`).join("")
+        : `<div class="listItem muted">${empty}</div>`;
+    }
+
+    function renderKpis(data) {
+      const metrics = data.metrics;
+      headlineMetrics.innerHTML = [
+        renderMetric("Total users", metrics.totalUsers),
+        renderMetric("New users", metrics.newUsers),
+        renderMetric("WAU / MAU", `${metrics.weeklyActiveUsers} / ${metrics.monthlyActiveUsers}`),
+        renderMetric("Returning users", metrics.returningUsers),
+        renderMetric("Paid users", metrics.paidUsers),
+        renderMetric("Contributor unlocked", metrics.contributorUnlockedUsers),
+        renderMetric("Beer searches", metrics.totalBeerSearches),
+        renderMetric("Exact price reveals", metrics.totalExactPriceReveals),
+        renderMetric("Submission completions", metrics.totalSubmissionCompletions),
+        renderMetric("Approval rate", formatPercent(metrics.submissionApprovalRate)),
+        renderMetric("Verified venues", metrics.venuesWithVerifiedData),
+        renderMetric("Active missions", metrics.activeMissions),
       ].join("");
+      scorecard.innerHTML = data.scorecard.map((item) => `
+        <div class="listItem">
+          <strong>${item.label}</strong>
+          <span class="pill">${item.status}</span>
+          <div class="progressTrack"><div class="progressBar" style="width:${Math.round(item.progress * 100)}%;"></div></div>
+          <div class="muted">${item.current} of ${item.target} · ${Math.round(item.progress * 100)}%</div>
+        </div>
+      `).join("");
+      demandSignals.innerHTML = [
+        `<div class="listItem"><strong>Top searched beers</strong><div class="muted">${data.topSearchedBeers.length ? data.topSearchedBeers.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No beer searches yet"}</div></div>`,
+        `<div class="listItem"><strong>Top searched suburbs</strong><div class="muted">${data.topSearchedSuburbs.length ? data.topSearchedSuburbs.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No suburb searches yet"}</div></div>`,
+        `<div class="listItem"><strong>Top clicked venues</strong><div class="muted">${data.topClickedVenues.length ? data.topClickedVenues.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No venue clicks yet"}</div></div>`,
+        `<div class="listItem"><strong>High-demand venues with stale/missing data</strong><div class="muted">${data.highDemandVenuesWithStaleOrMissingData.length ? data.highDemandVenuesWithStaleOrMissingData.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No stale demand yet"}</div></div>`,
+      ].join("");
+    }
+
+    function renderRetention(data) {
+      retentionCohorts.innerHTML = data.cohorts.length
+        ? data.cohorts.map((cohort) => `
+          <div class="listItem">
+            <strong>${cohort.cohort}</strong>
+            <div class="muted">${cohort.users} users · 7-day ${formatPercent(cohort.retention7)} (${cohort.returned7}) · 30-day ${formatPercent(cohort.retention30)} (${cohort.returned30})</div>
+          </div>
+        `).join("")
+        : '<div class="listItem muted">No cohorts yet.</div>';
+    }
+
+    function renderCoverage(data) {
+      coverageDashboard.innerHTML = [
+        `<div class="listItem"><strong>Venue coverage</strong><div class="muted">${data.venuesWithAtLeastOneVerifiedPrice} verified · ${data.venuesWithThreePlusVerifiedPrices} with 3+ prices · ${data.venuesWithNoData} with no data</div></div>`,
+        `<div class="listItem"><strong>Freshness</strong><div class="muted">${data.venuesWithStaleData} stale venues · average price age ${data.averagePriceRecordAgeDays} days · ${data.disputedRecords} disputed records</div></div>`,
+        `<div class="listItem"><strong>Coverage by suburb</strong><div class="muted">${data.coverageBySuburb.length ? data.coverageBySuburb.map((row) => `${row.suburb}: ${row.venuesWithPrices}`).join(" · ") : "No price coverage yet"}</div></div>`,
+      ].join("");
+    }
+
+    function renderQueues(data) {
+      reviewQueues.innerHTML = [
+        `<div class="listItem"><strong>Wrong price reports</strong><div class="muted">${data.wrongPriceReports.length ? data.wrongPriceReports.slice(0, 6).map((row) => `${row.venueName}: ${row.reason}`).join(" · ") : "None open"}</div></div>`,
+        `<div class="listItem"><strong>Venue and beer requests</strong><div class="muted">${data.venueRequests.length ? data.venueRequests.slice(0, 6).map((row) => `${row.requestType}: ${row.venueName || row.beerName || row.suburb || "request"}`).join(" · ") : "None open"}</div></div>`,
+        `<div class="listItem"><strong>Feedback</strong><div class="muted">${data.feedback.length ? data.feedback.slice(0, 6).map((row) => `${row.feedbackType}: ${row.message.slice(0, 80)}`).join(" · ") : "No feedback yet"}</div></div>`,
+      ].join("");
+    }
+
+    function renderPartnerLeads(data) {
+      partnerLeads.innerHTML = data.leads.length
+        ? data.leads.map((lead) => `
+          <div class="listItem">
+            <strong>${lead.venueName}</strong>
+            <span class="pill">${lead.suggestedReason}</span>
+            <div class="muted">${lead.suburb} · clicks ${lead.venueClicks} · searches nearby ${lead.searchesNearby} · requests ${lead.requests} · ${lead.dataFreshness}</div>
+          </div>
+        `).join("")
+        : '<div class="listItem muted">No partner-lead signals yet.</div>';
     }
 
     async function reviewSubmission(id, status) {
@@ -83,8 +201,18 @@
       pendingSubmissions.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.reject, "rejected")));
       pendingSubmissions.querySelectorAll("[data-fraud]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.fraud, "fraud_flagged")));
 
-      const analytics = await MelbBeerBusiness.apiFetch("/api/business/analytics/preview");
-      renderAnalytics(analytics);
+      const [kpis, retention, coverage, leads, queues] = await Promise.all([
+        MelbBeerBusiness.apiFetch(`/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`),
+        MelbBeerBusiness.apiFetch("/api/business/admin/retention?groupBy=week&limit=12"),
+        MelbBeerBusiness.apiFetch("/api/business/admin/coverage"),
+        MelbBeerBusiness.apiFetch("/api/business/admin/partner-leads"),
+        MelbBeerBusiness.apiFetch("/api/business/admin/queues"),
+      ]);
+      renderKpis(kpis);
+      renderRetention(retention);
+      renderCoverage(coverage);
+      renderPartnerLeads(leads);
+      renderQueues(queues);
       MelbBeerBusiness.setStatus(statusEl, "Admin tools loaded.");
     }
 
@@ -92,6 +220,7 @@
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("admin");
       statusEl = document.getElementById("status");
+      rangeSelect.addEventListener("change", loadAdmin);
       try {
         await loadAdmin();
       } catch (error) {
@@ -101,4 +230,3 @@
   </script>
 </body>
 </html>
-

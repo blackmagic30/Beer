@@ -266,4 +266,153 @@ describe("business demo contribution model", () => {
     expect(preview.topClickedVenues).toEqual([{ key: "venue-1", count: 1 }]);
     expect(preview.topSuburbs).toEqual([{ key: "Richmond", count: 2 }]);
   });
+
+  it("stores onboarding preferences and saved items for retention shortcuts", () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "saved-user");
+
+    const preferences = repository.upsertAccountPreferences({
+      userId: user.id,
+      preferredSuburbs: ["Fitzroy", "Richmond"],
+      preferredBeers: ["Guinness"],
+      preferredUseCases: ["happy_hours"],
+      onboardingCompletedAt: NOW,
+      now: NOW,
+    });
+    const saved = repository.saveItem({
+      id: "saved-1",
+      userId: user.id,
+      itemType: "suburb",
+      itemId: "fitzroy",
+      label: "Fitzroy",
+      suburb: "Fitzroy",
+      metadata: {},
+      now: NOW,
+    });
+
+    expect(preferences.preferredSuburbs).toEqual(["Fitzroy", "Richmond"]);
+    expect(saved.label).toBe("Fitzroy");
+    expect(repository.listSavedItems(user.id)).toHaveLength(1);
+    expect(repository.removeSavedItem({ userId: user.id, itemType: "suburb", itemId: "fitzroy" })).toBe(true);
+    expect(repository.listSavedItems(user.id)).toHaveLength(0);
+  });
+
+  it("marks a price record disputed after multiple wrong-price reports", () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "wrong-price-user");
+    const otherUser = createAccount(repository, "wrong-price-user-2");
+    const admin = createAccount(repository, "admin", "admin");
+    const submission = createSubmission(repository, {
+      id: "submission-price-report",
+      userId: user.id,
+      venueId: "venue-1",
+      venueName: "Price Report Bar",
+    });
+
+    approve(repository, submission.id, admin.id);
+    const priceRecord = repository.listLatestPriceRecords(1)[0]!;
+    repository.createWrongPriceReport({
+      id: "report-1",
+      userId: user.id,
+      anonymousSessionId: null,
+      venueId: "venue-1",
+      venueName: "Price Report Bar",
+      priceRecordId: priceRecord.id,
+      beerName: priceRecord.beerName,
+      reason: "price_changed",
+      notes: "Board showed a different price.",
+      sourcePhotoUrl: null,
+      now: NOW,
+    });
+    const second = repository.createWrongPriceReport({
+      id: "report-2",
+      userId: otherUser.id,
+      anonymousSessionId: null,
+      venueId: "venue-1",
+      venueName: "Price Report Bar",
+      priceRecordId: priceRecord.id,
+      beerName: priceRecord.beerName,
+      reason: "price_changed",
+      notes: "Confirmed changed.",
+      sourcePhotoUrl: null,
+      now: NOW,
+    });
+
+    expect(second.markedDisputed).toBe(true);
+    expect(repository.listLatestPriceRecords(1)[0]?.confidence).toBe("disputed");
+  });
+
+  it("records requests, KPI counts, retention cohorts, and partner lead signals", () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "retention-user");
+
+    repository.createVenueRequest({
+      id: "request-1",
+      userId: user.id,
+      anonymousSessionId: null,
+      requestType: "verify_venue",
+      venueId: "venue-1",
+      venueName: "Requested Bar",
+      beerName: null,
+      suburb: "Richmond",
+      notes: "Popular venue.",
+      now: NOW,
+    });
+    repository.recordEvent({
+      id: "event-map",
+      userId: user.id,
+      anonymousSessionId: null,
+      eventType: "map_viewed",
+      venueId: "venue-1",
+      beerId: null,
+      suburb: "Richmond",
+      metadata: {},
+      createdAt: NOW,
+    });
+    repository.recordEvent({
+      id: "event-beer",
+      userId: user.id,
+      anonymousSessionId: null,
+      eventType: "beer_search_performed",
+      venueId: "venue-1",
+      beerId: "guinness",
+      suburb: "Richmond",
+      metadata: { query: "Guinness" },
+      createdAt: "2026-05-06T08:00:00.000Z",
+    });
+    repository.recordEvent({
+      id: "event-detail",
+      userId: user.id,
+      anonymousSessionId: null,
+      eventType: "venue_detail_opened",
+      venueId: "venue-1",
+      beerId: null,
+      suburb: "Richmond",
+      metadata: {},
+      createdAt: "2026-05-06T08:05:00.000Z",
+    });
+
+    const dashboard = repository.getAdminKpiDashboard({
+      since: null,
+      sevenDaysAgo: "2026-04-27T00:00:00.000Z",
+      thirtyDaysAgo: "2026-04-04T00:00:00.000Z",
+      staleBefore: "2026-02-04T00:00:00.000Z",
+      totalVenues: 3,
+    });
+    const cohorts = repository.getRetentionCohorts({ groupBy: "week", limit: 4 });
+    const leads = repository.getPotentialPartnerLeads({
+      staleBefore: "2026-02-04T00:00:00.000Z",
+      limit: 5,
+    });
+
+    expect(repository.listVenueRequests(10)).toHaveLength(1);
+    expect(dashboard.metrics.totalBeerSearches).toBe(1);
+    expect(dashboard.topSearchedBeers).toEqual([{ key: "guinness", count: 1 }]);
+    expect(cohorts[0]).toEqual(expect.objectContaining({ users: 1, returned7: 1, returned30: 1 }));
+    expect(leads[0]).toEqual(expect.objectContaining({
+      venueId: "venue-1",
+      requests: 1,
+      dataFreshness: "stale_or_missing",
+    }));
+  });
 });

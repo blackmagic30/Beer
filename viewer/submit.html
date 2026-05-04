@@ -164,12 +164,6 @@
               items: collectItems(),
             }),
           });
-          await MelbBeerBusiness.trackEvent("submission_completed", {
-            venueId: selected.id,
-            venueName: selected.name,
-            suburb: selected.suburb || null,
-            submissionType: formData.get("submissionType"),
-          });
           MelbBeerBusiness.setStatus(status, `${result.submission.venueName} submitted and pending review.`);
           submissionForm.reset();
           beerRows.innerHTML = "";

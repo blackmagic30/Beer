@@ -19,7 +19,17 @@
     <section class="panel">
       <div class="grid grid--two">
         <label class="field">Suburb filter <input id="suburbFilter" placeholder="Fitzroy, Brighton, South Melbourne…" /></label>
-        <label class="field">Sort guide <input value="Highest points first" readonly /></label>
+        <label class="field">Sort
+          <select id="missionSort">
+            <option value="points">Highest points</option>
+            <option value="saved">My saved suburbs</option>
+            <option value="stale">Stale data</option>
+            <option value="no_data">No data</option>
+            <option value="missing_happy_hour">Missing happy hour</option>
+            <option value="most_requested">Most requested</option>
+            <option value="high_demand">High demand</option>
+          </select>
+        </label>
       </div>
       <div id="missionsList" class="list" style="margin-top:16px;"></div>
     </section>
@@ -29,8 +39,8 @@
 
   <script>
     async function loadMissions() {
-      const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?suburb=${encodeURIComponent(suburbFilter.value)}&limit=100`);
-      await MelbBeerBusiness.trackEvent("needs_data_viewed", { suburb: suburbFilter.value || null });
+      const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?suburb=${encodeURIComponent(suburbFilter.value)}&sort=${encodeURIComponent(missionSort.value)}&limit=100`);
+      await MelbBeerBusiness.trackEvent("mission_board_viewed", { suburb: suburbFilter.value || null, sort: missionSort.value });
       missionsList.innerHTML = data.missions.length
         ? data.missions.map((mission) => `
           <article class="listItem">
@@ -45,6 +55,7 @@
               </div>
             </div>
             <div class="muted">Last verified: ${MelbBeerBusiness.formatDate(mission.lastVerifiedAt)}</div>
+            <div class="muted">Suggested action: ${mission.reason.toLowerCase().includes("happy") ? "confirm happy hour details or upload a board photo" : mission.lastVerifiedAt ? "confirm one stale price or upload a menu photo" : "add 3 beer prices with a source photo"}</div>
             <a class="button button--primary" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}" data-mission="${mission.id}">Submit update</a>
           </article>
         `).join("")
@@ -58,6 +69,7 @@
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("missions");
       suburbFilter.addEventListener("change", loadMissions);
+      missionSort.addEventListener("change", loadMissions);
       await loadMissions();
     });
   </script>

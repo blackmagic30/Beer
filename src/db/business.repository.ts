@@ -18,6 +18,9 @@ export type SubmissionStatus =
 export type SubmissionType = "single_beer_price" | "full_venue_update" | "happy_hour_update" | "photo_upload";
 export type ServingSize = "pint" | "pot" | "schooner" | "jug" | "bottle" | "can" | "other";
 export type TapStatus = "yes" | "no" | "unknown";
+export type SavedItemType = "venue" | "beer" | "suburb";
+export type FeedbackType = "bug" | "wrong_data" | "feature_idea" | "venue_suggestion" | "general_feedback";
+export type RequestType = "missing_venue" | "missing_beer" | "verify_venue" | "verify_beer_at_venue";
 export type ConfidenceLabel =
   | "venue_confirmed"
   | "photo_verified"
@@ -115,6 +118,72 @@ export interface PublicVenuePriceRecord {
   updatedAt: string;
 }
 
+export interface AccountPreferences {
+  userId: string;
+  preferredSuburbs: string[];
+  preferredBeers: string[];
+  preferredUseCases: string[];
+  onboardingCompletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedItem {
+  id: string;
+  userId: string;
+  itemType: SavedItemType;
+  itemId: string;
+  label: string;
+  suburb: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface FeedbackItem {
+  id: string;
+  userId: string | null;
+  anonymousSessionId: string | null;
+  feedbackType: FeedbackType;
+  message: string;
+  venueId: string | null;
+  venueName: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WrongPriceReport {
+  id: string;
+  userId: string | null;
+  anonymousSessionId: string | null;
+  venueId: string;
+  venueName: string;
+  priceRecordId: string | null;
+  beerName: string | null;
+  reason: string;
+  notes: string | null;
+  sourcePhotoUrl: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VenueRequest {
+  id: string;
+  userId: string | null;
+  anonymousSessionId: string | null;
+  requestType: RequestType;
+  venueId: string | null;
+  venueName: string | null;
+  beerName: string | null;
+  suburb: string | null;
+  notes: string | null;
+  status: string;
+  missionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface AccountRow {
   id: string;
   email: string;
@@ -200,6 +269,72 @@ interface PriceRecordRow {
   source_type: string;
   source_submission_id: string | null;
   last_verified_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AccountPreferencesRow {
+  user_id: string;
+  preferred_suburbs_json: string;
+  preferred_beers_json: string;
+  preferred_use_cases_json: string;
+  onboarding_completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SavedItemRow {
+  id: string;
+  user_id: string;
+  item_type: SavedItemType;
+  item_id: string;
+  label: string;
+  suburb: string | null;
+  metadata_json: string;
+  created_at: string;
+}
+
+interface FeedbackRow {
+  id: string;
+  user_id: string | null;
+  anonymous_session_id: string | null;
+  feedback_type: FeedbackType;
+  message: string;
+  venue_id: string | null;
+  venue_name: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface WrongPriceReportRow {
+  id: string;
+  user_id: string | null;
+  anonymous_session_id: string | null;
+  venue_id: string;
+  venue_name: string;
+  price_record_id: string | null;
+  beer_name: string | null;
+  reason: string;
+  notes: string | null;
+  source_photo_url: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface VenueRequestRow {
+  id: string;
+  user_id: string | null;
+  anonymous_session_id: string | null;
+  request_type: RequestType;
+  venue_id: string | null;
+  venue_name: string | null;
+  beer_name: string | null;
+  suburb: string | null;
+  notes: string | null;
+  status: string;
+  mission_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -298,6 +433,100 @@ function toPriceRecord(row: PriceRecordRow): PublicVenuePriceRecord {
     sourceType: row.source_type,
     sourceSubmissionId: row.source_submission_id,
     lastVerifiedAt: row.last_verified_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function parseJsonArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function toAccountPreferences(row: AccountPreferencesRow): AccountPreferences {
+  return {
+    userId: row.user_id,
+    preferredSuburbs: parseJsonArray(row.preferred_suburbs_json),
+    preferredBeers: parseJsonArray(row.preferred_beers_json),
+    preferredUseCases: parseJsonArray(row.preferred_use_cases_json),
+    onboardingCompletedAt: row.onboarding_completed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toSavedItem(row: SavedItemRow): SavedItem {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    itemType: row.item_type,
+    itemId: row.item_id,
+    label: row.label,
+    suburb: row.suburb,
+    metadata: parseJsonObject(row.metadata_json),
+    createdAt: row.created_at,
+  };
+}
+
+function toFeedback(row: FeedbackRow): FeedbackItem {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    anonymousSessionId: row.anonymous_session_id,
+    feedbackType: row.feedback_type,
+    message: row.message,
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toWrongPriceReport(row: WrongPriceReportRow): WrongPriceReport {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    anonymousSessionId: row.anonymous_session_id,
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    priceRecordId: row.price_record_id,
+    beerName: row.beer_name,
+    reason: row.reason,
+    notes: row.notes,
+    sourcePhotoUrl: row.source_photo_url,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toVenueRequest(row: VenueRequestRow): VenueRequest {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    anonymousSessionId: row.anonymous_session_id,
+    requestType: row.request_type,
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    beerName: row.beer_name,
+    suburb: row.suburb,
+    notes: row.notes,
+    status: row.status,
+    missionId: row.mission_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -815,6 +1044,295 @@ export class BusinessRepository {
     return rows.map(toPriceRecord);
   }
 
+  getAccountPreferences(userId: string): AccountPreferences | null {
+    const row = this.database
+      .prepare("SELECT * FROM account_preferences WHERE user_id = ?")
+      .get(userId) as AccountPreferencesRow | undefined;
+    return row ? toAccountPreferences(row) : null;
+  }
+
+  upsertAccountPreferences(input: {
+    userId: string;
+    preferredSuburbs: string[];
+    preferredBeers: string[];
+    preferredUseCases: string[];
+    onboardingCompletedAt: string | null;
+    now: string;
+  }): AccountPreferences {
+    const existing = this.getAccountPreferences(input.userId);
+    this.database
+      .prepare(
+        `INSERT INTO account_preferences (
+          user_id, preferred_suburbs_json, preferred_beers_json, preferred_use_cases_json,
+          onboarding_completed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          preferred_suburbs_json = excluded.preferred_suburbs_json,
+          preferred_beers_json = excluded.preferred_beers_json,
+          preferred_use_cases_json = excluded.preferred_use_cases_json,
+          onboarding_completed_at = excluded.onboarding_completed_at,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.userId,
+        JSON.stringify(input.preferredSuburbs),
+        JSON.stringify(input.preferredBeers),
+        JSON.stringify(input.preferredUseCases),
+        input.onboardingCompletedAt ?? existing?.onboardingCompletedAt ?? null,
+        existing?.createdAt ?? input.now,
+        input.now,
+      );
+    return this.getAccountPreferences(input.userId)!;
+  }
+
+  saveItem(input: {
+    id: string;
+    userId: string;
+    itemType: SavedItemType;
+    itemId: string;
+    label: string;
+    suburb: string | null;
+    metadata: Record<string, unknown>;
+    now: string;
+  }): SavedItem {
+    this.database
+      .prepare(
+        `INSERT INTO saved_items (
+          id, user_id, item_type, item_id, label, suburb, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, item_type, item_id) DO UPDATE SET
+          label = excluded.label,
+          suburb = excluded.suburb,
+          metadata_json = excluded.metadata_json`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.itemType,
+        input.itemId,
+        input.label,
+        input.suburb,
+        JSON.stringify(input.metadata),
+        input.now,
+      );
+
+    const row = this.database
+      .prepare("SELECT * FROM saved_items WHERE user_id = ? AND item_type = ? AND item_id = ?")
+      .get(input.userId, input.itemType, input.itemId) as SavedItemRow;
+    return toSavedItem(row);
+  }
+
+  removeSavedItem(input: { userId: string; itemType: SavedItemType; itemId: string }): boolean {
+    const result = this.database
+      .prepare("DELETE FROM saved_items WHERE user_id = ? AND item_type = ? AND item_id = ?")
+      .run(input.userId, input.itemType, input.itemId);
+    return result.changes > 0;
+  }
+
+  listSavedItems(userId: string): SavedItem[] {
+    const rows = this.database
+      .prepare("SELECT * FROM saved_items WHERE user_id = ? ORDER BY created_at DESC")
+      .all(userId) as SavedItemRow[];
+    return rows.map(toSavedItem);
+  }
+
+  listRecentSearches(userId: string, limit: number): Array<{ eventType: string; label: string; suburb: string | null; createdAt: string }> {
+    const rows = this.database
+      .prepare(
+        `SELECT event_type, suburb, metadata_json, created_at
+         FROM events
+         WHERE user_id = ?
+           AND event_type IN ('search_performed', 'beer_search_performed', 'suburb_search_performed')
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(userId, limit) as Array<{ event_type: string; suburb: string | null; metadata_json: string; created_at: string }>;
+
+    return rows.map((row) => {
+      const metadata = parseJsonObject(row.metadata_json);
+      return {
+        eventType: row.event_type,
+        label: String(metadata.query || metadata.label || row.suburb || row.event_type),
+        suburb: row.suburb,
+        createdAt: row.created_at,
+      };
+    });
+  }
+
+  createFeedback(input: {
+    id: string;
+    userId: string | null;
+    anonymousSessionId: string | null;
+    feedbackType: FeedbackType;
+    message: string;
+    venueId: string | null;
+    venueName: string | null;
+    now: string;
+  }): FeedbackItem {
+    this.database
+      .prepare(
+        `INSERT INTO feedback (
+          id, user_id, anonymous_session_id, feedback_type, message, venue_id, venue_name, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.anonymousSessionId,
+        input.feedbackType,
+        input.message,
+        input.venueId,
+        input.venueName,
+        input.now,
+        input.now,
+      );
+    const row = this.database.prepare("SELECT * FROM feedback WHERE id = ?").get(input.id) as FeedbackRow;
+    return toFeedback(row);
+  }
+
+  listFeedback(limit: number): FeedbackItem[] {
+    const rows = this.database
+      .prepare("SELECT * FROM feedback ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as FeedbackRow[];
+    return rows.map(toFeedback);
+  }
+
+  createWrongPriceReport(input: {
+    id: string;
+    userId: string | null;
+    anonymousSessionId: string | null;
+    venueId: string;
+    venueName: string;
+    priceRecordId: string | null;
+    beerName: string | null;
+    reason: string;
+    notes: string | null;
+    sourcePhotoUrl: string | null;
+    now: string;
+  }): { report: WrongPriceReport; markedDisputed: boolean } {
+    this.database
+      .prepare(
+        `INSERT INTO wrong_price_reports (
+          id, user_id, anonymous_session_id, venue_id, venue_name, price_record_id, beer_name,
+          reason, notes, source_photo_url, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.anonymousSessionId,
+        input.venueId,
+        input.venueName,
+        input.priceRecordId,
+        input.beerName,
+        input.reason,
+        input.notes,
+        input.sourcePhotoUrl,
+        input.now,
+        input.now,
+      );
+
+    let markedDisputed = false;
+    if (input.priceRecordId) {
+      const row = this.database
+        .prepare("SELECT count(*) AS count FROM wrong_price_reports WHERE price_record_id = ? AND status = 'open'")
+        .get(input.priceRecordId) as { count: number } | undefined;
+
+      if (Number(row?.count ?? 0) >= 2) {
+        this.database
+          .prepare("UPDATE venue_price_records SET confidence = 'disputed', updated_at = ? WHERE id = ? AND confidence != 'venue_confirmed'")
+          .run(input.now, input.priceRecordId);
+        markedDisputed = true;
+      }
+    }
+
+    const reportRow = this.database.prepare("SELECT * FROM wrong_price_reports WHERE id = ?").get(input.id) as WrongPriceReportRow;
+    return { report: toWrongPriceReport(reportRow), markedDisputed };
+  }
+
+  listWrongPriceReports(limit: number): WrongPriceReport[] {
+    const rows = this.database
+      .prepare("SELECT * FROM wrong_price_reports ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as WrongPriceReportRow[];
+    return rows.map(toWrongPriceReport);
+  }
+
+  createVenueRequest(input: {
+    id: string;
+    userId: string | null;
+    anonymousSessionId: string | null;
+    requestType: RequestType;
+    venueId: string | null;
+    venueName: string | null;
+    beerName: string | null;
+    suburb: string | null;
+    notes: string | null;
+    now: string;
+  }): VenueRequest {
+    this.database
+      .prepare(
+        `INSERT INTO venue_requests (
+          id, user_id, anonymous_session_id, request_type, venue_id, venue_name,
+          beer_name, suburb, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.anonymousSessionId,
+        input.requestType,
+        input.venueId,
+        input.venueName,
+        input.beerName,
+        input.suburb,
+        input.notes,
+        input.now,
+        input.now,
+      );
+    const row = this.database.prepare("SELECT * FROM venue_requests WHERE id = ?").get(input.id) as VenueRequestRow;
+    return toVenueRequest(row);
+  }
+
+  markVenueRequestMission(input: { requestId: string; missionId: string; now: string }): VenueRequest {
+    this.database
+      .prepare("UPDATE venue_requests SET status = 'mission_created', mission_id = ?, updated_at = ? WHERE id = ?")
+      .run(input.missionId, input.now, input.requestId);
+    const row = this.database.prepare("SELECT * FROM venue_requests WHERE id = ?").get(input.requestId) as VenueRequestRow;
+    return toVenueRequest(row);
+  }
+
+  listVenueRequests(limit: number): VenueRequest[] {
+    const rows = this.database
+      .prepare("SELECT * FROM venue_requests ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as VenueRequestRow[];
+    return rows.map(toVenueRequest);
+  }
+
+  getVenueRequestById(id: string): VenueRequest | null {
+    const row = this.database.prepare("SELECT * FROM venue_requests WHERE id = ?").get(id) as
+      | VenueRequestRow
+      | undefined;
+    return row ? toVenueRequest(row) : null;
+  }
+
+  countKnownVenues(): number {
+    const row = this.database
+      .prepare(
+        `SELECT count(DISTINCT venue_id) AS count
+         FROM (
+           SELECT venue_id FROM missions WHERE venue_id IS NOT NULL AND venue_id != ''
+           UNION ALL
+           SELECT venue_id FROM venue_price_records WHERE venue_id IS NOT NULL AND venue_id != ''
+           UNION ALL
+           SELECT venue_id FROM events WHERE venue_id IS NOT NULL AND venue_id != ''
+           UNION ALL
+           SELECT venue_id FROM venue_requests WHERE venue_id IS NOT NULL AND venue_id != ''
+         )`,
+      )
+      .get() as { count: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
   recordEvent(input: {
     id: string;
     userId: string | null;
@@ -910,6 +1428,335 @@ export class BusinessRepository {
       ),
       missionConversionCount: Number(missionRow?.count ?? 0),
     };
+  }
+
+  getAdminKpiDashboard(input: {
+    since: string | null;
+    sevenDaysAgo: string;
+    thirtyDaysAgo: string;
+    staleBefore: string;
+    totalVenues: number;
+  }) {
+    const rangeFor = (column: string) => input.since ? `AND ${column} >= ?` : "";
+    const rangeClause = rangeFor("created_at");
+    const rangeValues = input.since ? [input.since] : [];
+    const count = (sql: string, values: unknown[] = []) => {
+      const row = this.database.prepare(sql).get(...values) as { count: number } | undefined;
+      return Number(row?.count ?? 0);
+    };
+    const scalar = (sql: string, values: unknown[] = []) => {
+      const row = this.database.prepare(sql).get(...values) as { value: number } | undefined;
+      return Number(row?.value ?? 0);
+    };
+    const grouped = (sql: string, values: unknown[] = []) =>
+      this.database.prepare(sql).all(...values) as Array<{ key: string; count: number }>;
+    const eventCount = (eventTypes: string[]) => {
+      const placeholders = eventTypes.map(() => "?").join(", ");
+      return count(
+        `SELECT count(*) AS count FROM events WHERE event_type IN (${placeholders}) ${rangeClause}`,
+        [...eventTypes, ...rangeValues],
+      );
+    };
+    const topEventGroup = (eventTypes: string[], column: "beer_id" | "venue_id" | "suburb", limit = 8) => {
+      const placeholders = eventTypes.map(() => "?").join(", ");
+      return grouped(
+        `SELECT ${column} AS key, count(*) AS count
+         FROM events
+         WHERE event_type IN (${placeholders})
+           AND ${column} IS NOT NULL
+           AND ${column} != ''
+           ${rangeFor("created_at")}
+         GROUP BY ${column}
+         ORDER BY count DESC
+         LIMIT ?`,
+        [...eventTypes, ...rangeValues, limit],
+      );
+    };
+
+    const totalUsers = count("SELECT count(*) AS count FROM accounts");
+    const newUsers = count(`SELECT count(*) AS count FROM accounts WHERE 1=1 ${rangeClause}`, rangeValues);
+    const subscriptionConversions = eventCount(["subscription_created"]);
+    const verifiedVenueCount = count(
+      `SELECT count(DISTINCT venue_id) AS count
+       FROM venue_price_records
+       WHERE confidence IN ('venue_confirmed', 'photo_verified', 'community_confirmed')`,
+    );
+    const staleVenueCount = count(
+      `SELECT count(DISTINCT venue_id) AS count
+       FROM venue_price_records
+       WHERE last_verified_at < ? OR confidence IN ('stale', 'disputed')`,
+      [input.staleBefore],
+    );
+    const noDataVenueCount = Math.max(0, input.totalVenues - verifiedVenueCount);
+    const approvedSubmissionCount = count(
+      `SELECT count(*) AS count FROM submissions WHERE status = 'approved' ${input.since ? "AND reviewed_at >= ?" : ""}`,
+      rangeValues,
+    );
+    const rejectedSubmissionCount = count(
+      `SELECT count(*) AS count FROM submissions WHERE status IN ('rejected', 'fraud_flagged') ${input.since ? "AND reviewed_at >= ?" : ""}`,
+      rangeValues,
+    );
+    const totalReviewed = approvedSubmissionCount + rejectedSubmissionCount;
+    const yearlyPaidUsers = count("SELECT count(*) AS count FROM accounts WHERE subscription_status = 'premium_yearly'");
+    const usersTried = count("SELECT count(DISTINCT COALESCE(user_id, anonymous_session_id)) AS count FROM events");
+    const returnedThirtyDays = count(
+      `SELECT count(DISTINCT a.id) AS count
+       FROM accounts a
+       JOIN events e ON e.user_id = a.id
+       WHERE julianday(e.created_at) > julianday(a.created_at)
+         AND julianday(e.created_at) <= julianday(a.created_at) + 30
+         AND e.event_type IN (
+           'search_performed', 'beer_search_performed', 'venue_detail_opened',
+           'price_view_revealed', 'submission_completed', 'mission_opened', 'map_filter_used'
+         )`,
+    );
+
+    const topVenuesNeedingData = grouped(
+      `SELECT venue_name AS key, CAST(points * multiplier AS INTEGER) AS count
+       FROM missions
+       WHERE active = 1
+       ORDER BY (points * multiplier) DESC, updated_at DESC
+       LIMIT 8`,
+    );
+    const highDemandMissing = grouped(
+      `SELECT e.venue_id AS key, count(*) AS count
+       FROM events e
+       LEFT JOIN venue_price_records r ON r.venue_id = e.venue_id
+       WHERE e.event_type IN ('venue_card_viewed', 'venue_detail_opened', 'price_view_revealed')
+         AND e.venue_id IS NOT NULL
+         AND e.venue_id != ''
+         ${rangeFor("e.created_at")}
+       GROUP BY e.venue_id
+       HAVING max(r.last_verified_at) IS NULL OR max(r.last_verified_at) < ?
+       ORDER BY count DESC
+       LIMIT 8`,
+      [...rangeValues, input.staleBefore],
+    );
+
+    const metrics = {
+      totalUsers,
+      newUsers,
+      weeklyActiveUsers: count("SELECT count(DISTINCT user_id) AS count FROM events WHERE user_id IS NOT NULL AND created_at >= ?", [input.sevenDaysAgo]),
+      monthlyActiveUsers: count("SELECT count(DISTINCT user_id) AS count FROM events WHERE user_id IS NOT NULL AND created_at >= ?", [input.thirtyDaysAgo]),
+      returningUsers: count(
+        `SELECT count(DISTINCT e.user_id) AS count
+         FROM events e
+         JOIN accounts a ON a.id = e.user_id
+         WHERE e.user_id IS NOT NULL
+           AND julianday(e.created_at) > julianday(a.created_at)
+           ${rangeFor("e.created_at")}`,
+        rangeValues,
+      ),
+      freeUsers: count("SELECT count(*) AS count FROM accounts WHERE subscription_status = 'free'"),
+      paidUsers: count("SELECT count(*) AS count FROM accounts WHERE subscription_status IN ('premium_monthly', 'premium_yearly')"),
+      contributorUnlockedUsers: count("SELECT count(*) AS count FROM accounts WHERE subscription_status = 'contributor_unlocked'"),
+      subscriptionConversionCount: subscriptionConversions,
+      subscriptionConversionRate: newUsers > 0 ? subscriptionConversions / newUsers : totalUsers > 0 ? subscriptionConversions / totalUsers : 0,
+      totalVenueSearches: eventCount(["search_performed", "suburb_search_performed"]),
+      totalBeerSearches: eventCount(["beer_search_performed"]),
+      totalVenueDetailViews: eventCount(["venue_card_viewed", "venue_detail_opened"]),
+      totalExactPriceReveals: eventCount(["price_view_revealed"]),
+      totalMapFilterUses: eventCount(["map_filter_used", "cheapest_sort_used", "happy_hour_active_now_used", "verified_only_filter_used", "under_10_filter_used"]),
+      totalSubmissionStarts: eventCount(["submission_started"]),
+      totalSubmissionCompletions: eventCount(["submission_completed"]),
+      totalPendingSubmissions: count("SELECT count(*) AS count FROM submissions WHERE status = 'pending'"),
+      totalApprovedSubmissions: approvedSubmissionCount,
+      totalRejectedSubmissions: rejectedSubmissionCount,
+      submissionApprovalRate: totalReviewed > 0 ? approvedSubmissionCount / totalReviewed : 0,
+      totalContributorPointsAwarded: scalar(`SELECT COALESCE(sum(points), 0) AS value FROM contribution_ledger WHERE 1=1 ${rangeClause}`, rangeValues),
+      contributorAccessEarnedUsers: count("SELECT count(*) AS count FROM accounts WHERE subscription_status = 'contributor_unlocked'"),
+      venuesWithVerifiedData: verifiedVenueCount,
+      venuesWithStaleData: staleVenueCount,
+      venuesWithNoBeerPriceData: noDataVenueCount,
+      activeMissions: count("SELECT count(*) AS count FROM missions WHERE active = 1"),
+      missionCompletionCount: eventCount(["submission_completed"]),
+      potentialPartnerLeadCount: count("SELECT count(DISTINCT venue_id) AS count FROM events WHERE venue_id IS NOT NULL AND event_type IN ('venue_detail_opened', 'venue_card_viewed')"),
+      yearlyPaidUsers,
+      usersTried,
+      returnedThirtyDays,
+      usersSubmitted: count("SELECT count(DISTINCT user_id) AS count FROM submissions"),
+      verifiedPricesAdded: count("SELECT count(*) AS count FROM venue_price_records WHERE confidence IN ('venue_confirmed', 'photo_verified', 'community_confirmed')"),
+    };
+
+    return {
+      metrics,
+      scorecard: [
+        { label: "100 users tried the app", current: metrics.usersTried, target: 100 },
+        { label: "30 users returned within 30 days", current: returnedThirtyDays, target: 30 },
+        { label: "20 users submitted data", current: metrics.usersSubmitted, target: 20 },
+        { label: "100 verified prices added", current: metrics.verifiedPricesAdded, target: 100 },
+        { label: "10 users paid for yearly access", current: yearlyPaidUsers, target: 10 },
+        { label: "3 venues flagged as potential partner leads", current: metrics.potentialPartnerLeadCount, target: 3 },
+      ].map((item) => ({
+        ...item,
+        progress: item.target > 0 ? Math.min(1, item.current / item.target) : 0,
+        status: item.current <= 0 ? "not started" : item.current >= item.target ? "hit" : "in progress",
+      })),
+      topSearchedBeers: topEventGroup(["beer_search_performed"], "beer_id"),
+      topSearchedSuburbs: topEventGroup(["search_performed", "suburb_search_performed", "beer_search_performed"], "suburb"),
+      topClickedVenues: topEventGroup(["venue_card_viewed", "venue_detail_opened"], "venue_id"),
+      topVenuesNeedingData,
+      highDemandVenuesWithStaleOrMissingData: highDemandMissing,
+    };
+  }
+
+  getRetentionCohorts(input: { groupBy: "week" | "month"; limit: number }) {
+    const bucketExpression = input.groupBy === "week" ? "strftime('%Y-W%W', created_at)" : "strftime('%Y-%m', created_at)";
+    const cohorts = this.database
+      .prepare(
+        `SELECT ${bucketExpression} AS cohort, count(*) AS users
+         FROM accounts
+         GROUP BY cohort
+         ORDER BY cohort DESC
+         LIMIT ?`,
+      )
+      .all(input.limit) as Array<{ cohort: string; users: number }>;
+
+    return cohorts.map((cohort) => {
+      const returned = (days: number) => {
+        const row = this.database
+          .prepare(
+            `SELECT count(DISTINCT a.id) AS count
+             FROM accounts a
+             JOIN events e ON e.user_id = a.id
+             WHERE ${input.groupBy === "week" ? "strftime('%Y-W%W', a.created_at)" : "strftime('%Y-%m', a.created_at)"} = ?
+               AND julianday(e.created_at) > julianday(a.created_at)
+               AND julianday(e.created_at) <= julianday(a.created_at) + ?
+               AND e.event_type IN (
+                 'search_performed', 'beer_search_performed', 'venue_detail_opened',
+                 'price_view_revealed', 'submission_completed', 'mission_opened', 'map_filter_used'
+               )`,
+          )
+          .get(cohort.cohort, days) as { count: number } | undefined;
+        return Number(row?.count ?? 0);
+      };
+      const returned7 = returned(7);
+      const returned30 = returned(30);
+
+      return {
+        cohort: cohort.cohort,
+        users: cohort.users,
+        returned7,
+        returned30,
+        retention7: cohort.users > 0 ? returned7 / cohort.users : 0,
+        retention30: cohort.users > 0 ? returned30 / cohort.users : 0,
+      };
+    });
+  }
+
+  getCoverageDashboard(input: { staleBefore: string; totalVenues: number }) {
+    const count = (sql: string, values: unknown[] = []) => {
+      const row = this.database.prepare(sql).get(...values) as { count: number } | undefined;
+      return Number(row?.count ?? 0);
+    };
+    const rows = this.database
+      .prepare(
+        `SELECT COALESCE(suburb, 'Melbourne') AS suburb,
+                count(DISTINCT venue_id) AS venues_with_prices,
+                count(*) AS price_records
+         FROM venue_price_records
+         GROUP BY COALESCE(suburb, 'Melbourne')
+         ORDER BY venues_with_prices DESC
+         LIMIT 20`,
+      )
+      .all() as Array<{ suburb: string; venues_with_prices: number; price_records: number }>;
+    const avgAgeRow = this.database
+      .prepare("SELECT avg(julianday('now') - julianday(last_verified_at)) AS value FROM venue_price_records")
+      .get() as { value: number | null } | undefined;
+    const venuesWithVerified = count(
+      "SELECT count(DISTINCT venue_id) AS count FROM venue_price_records WHERE confidence IN ('venue_confirmed', 'photo_verified', 'community_confirmed')",
+    );
+
+    return {
+      totalVenues: input.totalVenues,
+      venuesWithAtLeastOneVerifiedPrice: venuesWithVerified,
+      venuesWithThreePlusVerifiedPrices: count(
+        `SELECT count(*) AS count
+         FROM (
+           SELECT venue_id
+           FROM venue_price_records
+           WHERE confidence IN ('venue_confirmed', 'photo_verified', 'community_confirmed')
+           GROUP BY venue_id
+           HAVING count(*) >= 3
+         )`,
+      ),
+      venuesWithHappyHourData: count("SELECT count(DISTINCT venue_id) AS count FROM venue_price_records WHERE is_happy_hour_price = 1 OR happy_hour_details IS NOT NULL"),
+      venuesWithStaleData: count("SELECT count(DISTINCT venue_id) AS count FROM venue_price_records WHERE last_verified_at < ? OR confidence IN ('stale', 'disputed')", [input.staleBefore]),
+      venuesWithNoData: Math.max(0, input.totalVenues - venuesWithVerified),
+      averagePriceRecordAgeDays: Math.round(Number(avgAgeRow?.value ?? 0) * 10) / 10,
+      disputedRecords: count("SELECT count(*) AS count FROM venue_price_records WHERE confidence = 'disputed'"),
+      coverageBySuburb: rows.map((row) => ({
+        suburb: row.suburb,
+        venuesWithPrices: row.venues_with_prices,
+        priceRecords: row.price_records,
+      })),
+    };
+  }
+
+  getPotentialPartnerLeads(input: { staleBefore: string; limit: number }) {
+    const rows = this.database
+      .prepare(
+        `SELECT e.venue_id,
+                COALESCE(
+                  max(json_extract(e.metadata_json, '$.venueName')),
+                  max(r.venue_name),
+                  max(req.venue_name),
+                  e.venue_id
+                ) AS venue_name,
+                COALESCE(max(e.suburb), max(r.suburb), 'Melbourne') AS suburb,
+                count(CASE WHEN e.event_type = 'map_viewed' THEN 1 END) AS map_views,
+                count(CASE WHEN e.event_type IN ('venue_card_viewed', 'venue_detail_opened') THEN 1 END) AS venue_clicks,
+                count(CASE WHEN e.event_type IN ('beer_search_performed', 'happy_hour_active_now_used') THEN 1 END) AS searches_nearby,
+                COALESCE(req.request_count, 0) AS requests,
+                max(r.last_verified_at) AS last_verified_at,
+                COALESCE(max(r.confidence), 'missing') AS confidence
+         FROM events e
+         LEFT JOIN venue_price_records r ON r.venue_id = e.venue_id
+         LEFT JOIN (
+           SELECT COALESCE(venue_id, venue_name) AS request_key, max(venue_name) AS venue_name, count(*) AS request_count
+           FROM venue_requests
+           GROUP BY COALESCE(venue_id, venue_name)
+         ) req ON req.request_key = e.venue_id
+         WHERE e.venue_id IS NOT NULL AND e.venue_id != ''
+         GROUP BY e.venue_id
+         ORDER BY (venue_clicks + searches_nearby + requests) DESC
+         LIMIT ?`,
+      )
+      .all(input.limit) as Array<{
+        venue_id: string;
+        venue_name: string;
+        suburb: string;
+        map_views: number;
+        venue_clicks: number;
+        searches_nearby: number;
+        requests: number;
+        last_verified_at: string | null;
+        confidence: string;
+      }>;
+
+    return rows.map((row) => {
+      const stale = !row.last_verified_at || row.last_verified_at < input.staleBefore || row.confidence === "disputed";
+      const suggestedReason = row.requests > 0
+        ? "users requested this"
+        : row.searches_nearby > row.venue_clicks
+          ? "popular happy hour or beer interest"
+          : stale
+            ? "missing data"
+            : "high demand";
+
+      return {
+        venueId: row.venue_id,
+        venueName: row.venue_name,
+        suburb: row.suburb,
+        mapViews: row.map_views,
+        venueClicks: row.venue_clicks,
+        searchesNearby: row.searches_nearby,
+        requests: row.requests,
+        dataFreshness: stale ? "stale_or_missing" : "fresh",
+        currentConfidence: row.confidence,
+        suggestedReason,
+      };
+    });
   }
 
   rememberStripeEvent(input: { id: string; eventType: string; processedAt: string }): boolean {

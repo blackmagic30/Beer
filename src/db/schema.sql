@@ -281,6 +281,88 @@ CREATE INDEX IF NOT EXISTS idx_events_type_created
 CREATE INDEX IF NOT EXISTS idx_events_venue_created
   ON events (venue_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS account_preferences (
+  user_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+  preferred_suburbs_json TEXT NOT NULL DEFAULT '[]',
+  preferred_beers_json TEXT NOT NULL DEFAULT '[]',
+  preferred_use_cases_json TEXT NOT NULL DEFAULT '[]',
+  onboarding_completed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS saved_items (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  suburb TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE (user_id, item_type, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_items_user_type
+  ON saved_items (user_id, item_type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  anonymous_session_id TEXT,
+  feedback_type TEXT NOT NULL,
+  message TEXT NOT NULL,
+  venue_id TEXT,
+  venue_name TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_status_created
+  ON feedback (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS wrong_price_reports (
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  anonymous_session_id TEXT,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  price_record_id TEXT REFERENCES venue_price_records(id) ON DELETE SET NULL,
+  beer_name TEXT,
+  reason TEXT NOT NULL,
+  notes TEXT,
+  source_photo_url TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_record
+  ON wrong_price_reports (price_record_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS venue_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  anonymous_session_id TEXT,
+  request_type TEXT NOT NULL,
+  venue_id TEXT,
+  venue_name TEXT,
+  beer_name TEXT,
+  suburb TEXT,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  mission_id TEXT REFERENCES missions(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_venue_requests_type_status
+  ON venue_requests (request_type, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_requests_venue
+  ON venue_requests (venue_id, venue_name, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS stripe_webhook_events (
   id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,

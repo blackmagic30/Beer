@@ -51,6 +51,7 @@
   <script>
     window.addEventListener("DOMContentLoaded", () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("pricing");
+      void MelbBeerBusiness.trackEvent("pricing_page_viewed");
       document.querySelectorAll("[data-plan]").forEach((button) => {
         button.addEventListener("click", async () => {
           try {
@@ -59,13 +60,11 @@
               method: "POST",
               body: JSON.stringify({ plan }),
             });
-            await MelbBeerBusiness.trackEvent("checkout_started", { plan });
             if (result.mode === "demo") {
               await MelbBeerBusiness.apiFetch("/api/business/billing/demo-subscribe", {
                 method: "POST",
                 body: JSON.stringify({ plan }),
               });
-              await MelbBeerBusiness.trackEvent("subscription_created", { plan, mode: "demo" });
               MelbBeerBusiness.setStatus(status, "Demo subscription activated. Your account now has premium access.");
               return;
             }
