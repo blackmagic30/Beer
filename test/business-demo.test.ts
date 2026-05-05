@@ -5,6 +5,7 @@ import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BusinessRepository, type SubmissionType } from "../src/db/business.repository.js";
+import { createSubmissionSchema } from "../src/modules/business/business.schemas.js";
 
 const NOW = "2026-05-04T08:00:00.000Z";
 const MONTH_KEY = "2026-05";
@@ -117,6 +118,49 @@ function flagFraud(repository: BusinessRepository, submissionId: string, reviewe
 afterEach(() => {
   openDatabases.forEach((database) => database.close());
   openDatabases = [];
+});
+
+describe("submission payload validation", () => {
+  const baseSubmission = {
+    venueId: "venue-1",
+    venueName: "Test Bar",
+    suburb: "Melbourne",
+    observedAt: NOW,
+    sourcePhotoDataUrl: "data:image/jpeg;base64,abc",
+    sourcePhotoUrl: null,
+    notes: null,
+  };
+
+  it("allows photo/source uploads without manual beer rows", () => {
+    const parsed = createSubmissionSchema.parse({
+      ...baseSubmission,
+      submissionType: "photo_upload",
+      items: [],
+    });
+
+    expect(parsed.items).toEqual([]);
+  });
+
+  it("still requires a beer row for single beer price submissions", () => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      submissionType: "single_beer_price",
+      items: [],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("requires source evidence for photo/source uploads", () => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      submissionType: "photo_upload",
+      sourcePhotoDataUrl: null,
+      items: [],
+    });
+
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("business demo contribution model", () => {

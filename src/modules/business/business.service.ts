@@ -838,8 +838,20 @@ export class BusinessService {
 
   async listVenues(query: string | undefined, limit: number): Promise<VenueRow[]> {
     if (!this.supabase) {
+      const normalizedQuery = query?.trim().toLowerCase();
       return this.repository
         .listMissions({ activeOnly: true, limit, suburb: undefined })
+        .filter((mission) => {
+          if (!normalizedQuery) {
+            return true;
+          }
+
+          return [mission.venueName, mission.suburb, mission.reason]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(normalizedQuery);
+        })
         .map((mission) => ({
           id: mission.venueId,
           name: mission.venueName,
@@ -858,7 +870,10 @@ export class BusinessService {
       .limit(limit);
 
     if (query && query.trim().length > 0) {
-      request = request.ilike("name", `%${query.trim()}%`);
+      const safeQuery = query.trim().replace(/[%,()]/g, " ").replace(/\s+/g, " ").trim();
+      if (safeQuery) {
+        request = request.or(`name.ilike.%${safeQuery}%,suburb.ilike.%${safeQuery}%,address.ilike.%${safeQuery}%`);
+      }
     }
 
     const { data, error } = await request.order("name", { ascending: true });

@@ -290,6 +290,28 @@ h3 {
   margin: -2px 0 16px;
 }
 
+.submitModeBlock {
+  display: grid;
+  gap: 12px;
+}
+
+.submitSectionHeader {
+  display: grid;
+  gap: 4px;
+}
+
+.submitSectionHeader h3 {
+  margin: 0;
+}
+
+.submitSectionHeader p {
+  margin: 0;
+}
+
+.is-hidden {
+  display: none !important;
+}
+
 .field input,
 .field select,
 .field textarea {

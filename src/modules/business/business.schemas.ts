@@ -113,14 +113,38 @@ export const createSubmissionSchema = z.object({
   sourcePhotoDataUrl: dataImageUrlSchema.nullable().default(null),
   sourcePhotoUrl: nullableTrimmedStringSchema.default(null),
   notes: nullableTrimmedStringSchema.default(null),
-  items: z.array(submissionItemSchema).min(1).max(20),
+  items: z.array(submissionItemSchema).max(20).default([]),
 }).superRefine((value, ctx) => {
   const hasPhoto = Boolean(value.sourcePhotoDataUrl || value.sourcePhotoUrl);
+
+  if (value.submissionType === "single_beer_price" && value.items.length < 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A single beer price submission needs one beer row.",
+      path: ["items"],
+    });
+  }
 
   if (value.submissionType === "full_venue_update" && !hasPhoto && value.items.length < 3) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "A full venue update needs either source evidence or at least 3 beer rows.",
+      path: ["items"],
+    });
+  }
+
+  if (value.submissionType === "photo_upload" && !hasPhoto) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Photo/source uploads need a source photo, menu, receipt, or screenshot.",
+      path: ["sourcePhotoDataUrl"],
+    });
+  }
+
+  if (value.submissionType === "happy_hour_update" && value.items.length < 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Happy-hour updates need days, times, specials, and conditions.",
       path: ["items"],
     });
   }
