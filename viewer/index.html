@@ -1363,6 +1363,278 @@
       gap: 10px;
     }
 
+    /* Premium polish layer: keeps the existing map/product structure, upgrades the finish. */
+    :root {
+      --page-bg: #050914;
+      --panel-bg: rgba(8, 13, 26, 0.78);
+      --panel-border: rgba(244, 214, 150, 0.18);
+      --panel-muted: #a8b0bf;
+      --panel-text: #fbf7ef;
+      --chip-bg: rgba(255, 255, 255, 0.055);
+      --chip-active-bg: linear-gradient(135deg, #f5c76b 0%, #ff7b68 100%);
+      --chip-active-text: #17120a;
+      --accent: #f5c76b;
+      --accent-soft: rgba(245, 199, 107, 0.12);
+      --shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.48);
+      --display-font: "Fraunces", "Iowan Old Style", "New York", Georgia, serif;
+      --body-font: "Avenir Next", "SF Pro Text", "Segoe UI Variable", sans-serif;
+    }
+
+    html,
+    body {
+      background:
+        radial-gradient(circle at 12% 8%, rgba(245, 199, 107, 0.18), transparent 26%),
+        radial-gradient(circle at 84% 4%, rgba(119, 217, 255, 0.14), transparent 24%),
+        radial-gradient(circle at 54% 90%, rgba(255, 123, 104, 0.12), transparent 28%),
+        linear-gradient(145deg, #030712 0%, #08111f 46%, #111827 100%);
+      color: var(--panel-text);
+      font-family: var(--body-font);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+      background-size: 68px 68px;
+      mask-image: radial-gradient(circle at top, black, transparent 72%);
+    }
+
+    #topbar,
+    #mapShell {
+      position: relative;
+      z-index: 1;
+    }
+
+    #topbar {
+      margin: 12px 12px 0;
+      padding: clamp(18px, 2.6vw, 28px);
+      border: 1px solid var(--panel-border);
+      border-radius: 30px 30px 22px 22px;
+      background:
+        radial-gradient(circle at 8% 10%, rgba(245, 199, 107, 0.16), transparent 34%),
+        radial-gradient(circle at 92% 0%, rgba(119, 217, 255, 0.12), transparent 32%),
+        linear-gradient(145deg, rgba(13, 20, 36, 0.94), rgba(5, 9, 20, 0.84));
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+    }
+
+    #topbar::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      border-radius: inherit;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.13), transparent 35%);
+      opacity: 0.55;
+    }
+
+    #topbar > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .topbar__eyebrow {
+      border: 1px solid rgba(245, 199, 107, 0.3);
+      background: rgba(245, 199, 107, 0.11);
+      color: #ffe4a8;
+      font-weight: 950;
+      letter-spacing: 0.16em;
+    }
+
+    #topbar h1 {
+      font-family: var(--display-font);
+      font-size: clamp(36px, 4.4vw, 62px);
+      letter-spacing: -0.065em;
+      color: #fff8eb;
+      text-shadow: 0 16px 42px rgba(0, 0, 0, 0.4);
+    }
+
+    .topbar__subtitle {
+      max-width: 760px;
+      color: #cdd5e2;
+      font-size: 16px;
+    }
+
+    .topbar__businessLinks a,
+    .filterChip,
+    .utilityButton,
+    .togglePill,
+    #debugToggle,
+    #adminToggle,
+    .venueRail__sortChip,
+    .overlayTab {
+      border-color: rgba(244, 214, 150, 0.16);
+      background: rgba(255, 255, 255, 0.06);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      transition: transform 150ms ease, border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+    }
+
+    .topbar__businessLinks a:hover,
+    .filterChip:hover,
+    .utilityButton:hover,
+    .togglePill:hover,
+    .overlayTab:hover,
+    .venueRail__sortChip:hover {
+      transform: translateY(-1px);
+      border-color: rgba(245, 199, 107, 0.45);
+      background: rgba(255, 255, 255, 0.1);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+    }
+
+    .topbar__businessLinks a.primary,
+    .filterChip.is-active,
+    .overlayTab.is-active,
+    .venueRail__sortChip.is-active {
+      background: var(--chip-active-bg);
+      color: var(--chip-active-text);
+      box-shadow: 0 16px 34px rgba(242, 169, 59, 0.22);
+    }
+
+    .controlGroup {
+      color: #d7deea;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    .controlInput {
+      min-height: 50px;
+      border-color: rgba(244, 214, 150, 0.17);
+      background: rgba(3, 7, 18, 0.52);
+      border-radius: 18px;
+      color: #fbf7ef;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+    }
+
+    .controlInput:focus {
+      border-color: rgba(245, 199, 107, 0.55);
+      box-shadow: 0 0 0 4px rgba(245, 199, 107, 0.12);
+    }
+
+    .businessBanner {
+      border-color: rgba(245, 199, 107, 0.28);
+      background:
+        linear-gradient(135deg, rgba(245, 199, 107, 0.16), rgba(255, 123, 104, 0.08)),
+        rgba(3, 7, 18, 0.38);
+      color: #ffe4a8;
+    }
+
+    .highlightPanel,
+    .statusPill,
+    #mapOverlayTabs,
+    #venueRail,
+    #mapLegend {
+      border-color: rgba(244, 214, 150, 0.18);
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.026)),
+        rgba(7, 12, 24, 0.86);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .highlightPanel {
+      border-radius: 22px;
+    }
+
+    .highlightPanel__title,
+    .legend__eyebrow,
+    .venueRail__eyebrow {
+      color: #f5c76b;
+    }
+
+    .highlightCard,
+    .venueRail__card {
+      border-color: rgba(244, 214, 150, 0.13);
+      background: rgba(255, 255, 255, 0.055);
+    }
+
+    .highlightCard:hover,
+    .venueRail__card:hover {
+      border-color: rgba(245, 199, 107, 0.38);
+      background: rgba(255, 255, 255, 0.095);
+    }
+
+    #mapShell {
+      margin: 12px;
+      border: 1px solid rgba(244, 214, 150, 0.16);
+      border-radius: 30px;
+      overflow: hidden;
+      box-shadow: 0 24px 90px rgba(0, 0, 0, 0.5);
+      background: #0b1220;
+    }
+
+    #map {
+      border-radius: inherit;
+    }
+
+    #mapOverlayTabs {
+      padding: 7px;
+      border-radius: 999px;
+      backdrop-filter: blur(22px);
+    }
+
+    #venueRail,
+    #mapLegend {
+      border-radius: 26px;
+      backdrop-filter: blur(24px);
+    }
+
+    .legend__title,
+    .venueRail__title {
+      font-family: var(--display-font);
+      letter-spacing: -0.035em;
+    }
+
+    .legend__stat,
+    .venueRail__count,
+    .venueRail__metaPill {
+      border-color: rgba(244, 214, 150, 0.15);
+      background: rgba(245, 199, 107, 0.09);
+      color: #ffe4a8;
+    }
+
+    .overlayPanel__close {
+      border-color: rgba(244, 214, 150, 0.18);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .beerPopup {
+      max-width: 360px;
+      font-family: var(--body-font);
+    }
+
+    .beerPopup__title {
+      font-family: var(--display-font);
+      font-size: 22px;
+      letter-spacing: -0.04em;
+    }
+
+    .beerPopup__featured {
+      border: 1px solid rgba(245, 199, 107, 0.2);
+      background:
+        radial-gradient(circle at 8% 0%, rgba(245, 199, 107, 0.16), transparent 45%),
+        linear-gradient(145deg, #101827 0%, #050914 100%);
+      box-shadow: 0 18px 38px rgba(15, 23, 42, 0.18);
+    }
+
+    .beerPopup__section,
+    .beerPopup__happy,
+    .beerPopup__notice {
+      border-radius: 18px;
+    }
+
+    .gm-style .gm-style-iw-c {
+      border-radius: 24px !important;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28) !important;
+    }
+
+    .gm-style .gm-style-iw-d {
+      overflow: auto !important;
+    }
+
     @media (max-width: 640px) {
       #toolbar {
         grid-template-columns: 1fr;
@@ -1394,6 +1666,16 @@
 
       #topbar h1 {
         font-size: 30px;
+      }
+
+      #topbar {
+        margin: 8px 8px 0;
+        border-radius: 24px 24px 18px 18px;
+      }
+
+      #mapShell {
+        margin: 8px;
+        border-radius: 22px;
       }
 
       .adminBeerRow,
