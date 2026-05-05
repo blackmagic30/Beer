@@ -93,6 +93,29 @@
       return `${venue.name}${venue.suburb ? `, ${venue.suburb}` : ""}${venue.address ? ` · ${venue.address}` : ""}`;
     }
 
+    function normalizeVenueText(value) {
+      return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+    }
+
+    function findVenueFromSearchValue(value) {
+      const normalized = normalizeVenueText(value);
+      if (!normalized) {
+        return null;
+      }
+
+      return venues.find((venue) => normalizeVenueText(venueLabel(venue)) === normalized) || null;
+    }
+
+    function selectVenue(venue) {
+      if (!venue) {
+        return;
+      }
+
+      venueSelect.value = venue.id;
+      venueSearchHelp.textContent = `Selected ${venueLabel(venue)}.`;
+      venueChoiceHelp.textContent = "Venue selected. Continue with the submission type and details below.";
+    }
+
     function rowTemplate() {
       const wrapper = document.createElement("div");
       wrapper.className = "listItem";
@@ -305,17 +328,29 @@
       applySubmissionType();
       addBeerRowButton.addEventListener("click", appendBeerRow);
       submissionTypeSelect.addEventListener("change", applySubmissionType);
+      venueSelect.addEventListener("change", () => {
+        const selected = venues.find((venue) => venue.id === venueSelect.value);
+        if (selected) {
+          venueSearchInput.value = venueLabel(selected);
+          selectVenue(selected);
+        }
+      });
       venueSearchInput.addEventListener("input", () => {
         window.clearTimeout(venueSearchTimer);
+        const selectedSuggestion = findVenueFromSearchValue(venueSearchInput.value);
+        if (selectedSuggestion) {
+          selectVenue(selectedSuggestion);
+          return;
+        }
+
         venueSearchHelp.textContent = venueSearchInput.value.trim()
           ? "Searching venues. Pick a suggestion or choose the best match from the venue list."
           : "Start typing a venue name, suburb, or street. Suggestions update as you type.";
         venueSearchTimer = window.setTimeout(async () => {
           await loadVenues(venueSearchInput.value);
-          const typed = venueSearchInput.value.trim();
-          const matched = venues.find((venue) => venueLabel(venue).toLowerCase() === typed.toLowerCase());
+          const matched = findVenueFromSearchValue(venueSearchInput.value);
           if (matched) {
-            venueSelect.value = matched.id;
+            selectVenue(matched);
           }
         }, 180);
       });
@@ -323,6 +358,7 @@
       await loadVenues(initialVenueName);
       if (initialVenueId && Array.from(venueSelect.options).some((option) => option.value === initialVenueId)) {
         venueSelect.value = initialVenueId;
+        selectVenue(venues.find((venue) => venue.id === initialVenueId));
       }
       await MelbBeerBusiness.trackEvent("submission_started");
 

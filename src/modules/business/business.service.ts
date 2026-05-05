@@ -838,7 +838,9 @@ export class BusinessService {
 
   async listVenues(query: string | undefined, limit: number): Promise<VenueRow[]> {
     if (!this.supabase) {
-      const normalizedQuery = query?.trim().toLowerCase();
+      const rawQuery = query?.trim();
+      const labelStem = rawQuery?.split("·")[0] ?? "";
+      const normalizedQuery = (labelStem.split(",")[0] ?? "").trim().toLowerCase();
       return this.repository
         .listMissions({ activeOnly: true, limit, suburb: undefined })
         .filter((mission) => {
@@ -870,7 +872,9 @@ export class BusinessService {
       .limit(limit);
 
     if (query && query.trim().length > 0) {
-      const safeQuery = query.trim().replace(/[%,()]/g, " ").replace(/\s+/g, " ").trim();
+      const labelStem = query.trim().split("·")[0] ?? "";
+      const searchQuery = (labelStem.split(",")[0] ?? "").trim();
+      const safeQuery = searchQuery.replace(/[%,()]/g, " ").replace(/\s+/g, " ").trim();
       if (safeQuery) {
         request = request.or(`name.ilike.%${safeQuery}%,suburb.ilike.%${safeQuery}%,address.ilike.%${safeQuery}%`);
       }
