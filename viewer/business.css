@@ -274,6 +274,22 @@ h3 {
   font-size: 13px;
 }
 
+.fieldHint,
+.helperCopy {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.fieldHint {
+  margin-top: -2px;
+}
+
+.helperCopy {
+  margin: -2px 0 16px;
+}
+
 .field input,
 .field select,
 .field textarea {
@@ -324,6 +340,58 @@ h3 {
   position: relative;
   border-radius: var(--radius-lg);
   padding: 15px;
+}
+
+.emptyState {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.emptyState strong {
+  color: var(--text);
+}
+
+.missionCard {
+  display: grid;
+  gap: 10px;
+  align-items: start;
+}
+
+.missionCard__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.missionCard__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.missionCard__title strong {
+  line-height: 1.25;
+}
+
+.missionCard__badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.missionCard__meta,
+.missionCard__actionCopy {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.missionCard__action {
+  justify-self: start;
+  margin-top: 2px;
 }
 
 .metricGrid {

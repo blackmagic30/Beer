@@ -18,7 +18,10 @@
 
     <section class="panel">
       <div class="grid grid--two">
-        <label class="field">Suburb filter <input id="suburbFilter" placeholder="Fitzroy, Brighton, South Melbourne…" /></label>
+        <label class="field">Search suburb, venue, or reason
+          <input id="suburbFilter" placeholder="Try Sandringham, Rooftop Bar, happy hour, South Melb…" autocomplete="off" />
+          <span class="fieldHint">Partial names work. Search by suburb, venue name, or data need.</span>
+        </label>
         <label class="field">Sort
           <select id="missionSort">
             <option value="points">Highest points</option>
@@ -31,6 +34,7 @@
           </select>
         </label>
       </div>
+      <p id="missionsHelp" class="helperCopy" style="margin-top:14px;">Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.</p>
       <div id="missionsList" class="list" style="margin-top:16px;"></div>
     </section>
 
@@ -38,37 +42,110 @@
   </main>
 
   <script>
-    async function loadMissions() {
-      const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?suburb=${encodeURIComponent(suburbFilter.value)}&sort=${encodeURIComponent(missionSort.value)}&limit=100`);
-      await MelbBeerBusiness.trackEvent("mission_board_viewed", { suburb: suburbFilter.value || null, sort: missionSort.value });
-      missionsList.innerHTML = data.missions.length
-        ? data.missions.map((mission) => `
-          <article class="listItem">
-            <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-              <div>
-                <strong>${mission.venueName}</strong>
-                <div class="muted">${mission.suburb || "Melbourne"} · ${mission.reason}</div>
+    let missionCache = [];
+    let searchTimer = null;
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function normalizeSearch(value) {
+      return String(value || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    }
+
+    function missionMatches(mission, query) {
+      const terms = normalizeSearch(query).split(" ").filter(Boolean);
+
+      if (!terms.length) {
+        return true;
+      }
+
+      const searchable = normalizeSearch([
+        mission.venueName,
+        mission.suburb,
+        mission.reason,
+      ].join(" "));
+
+      return terms.every((term) => searchable.includes(term));
+    }
+
+    function suggestedSearches() {
+      const suburbs = [...new Set(missionCache.map((mission) => mission.suburb).filter(Boolean))].slice(0, 4);
+      const venues = [...new Set(missionCache.map((mission) => mission.venueName).filter(Boolean))].slice(0, 3);
+      return [...suburbs, ...venues].filter(Boolean);
+    }
+
+    function renderMissions() {
+      const query = suburbFilter.value.trim();
+      const missions = missionCache.filter((mission) => missionMatches(mission, query));
+
+      missionsHelp.textContent = query
+        ? `Showing missions matching "${query}". You can search partial suburb names, venue names, or reasons like stale prices and happy hour.`
+        : "Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.";
+
+      missionsList.innerHTML = missions.length
+        ? missions.map((mission) => {
+          const points = Math.round(Number(mission.points || 0) * Number(mission.multiplier || 1));
+          const reason = String(mission.reason || "");
+          const suggestedAction = reason.toLowerCase().includes("happy")
+            ? "confirm happy hour details or upload a board photo"
+            : mission.lastVerifiedAt
+              ? "confirm one stale price or upload a menu photo"
+              : "add 3 beer prices with a source photo";
+
+          return `
+            <article class="listItem missionCard">
+              <div class="missionCard__top">
+                <div>
+                  <div class="missionCard__title">
+                    <strong>${escapeHtml(mission.venueName)}</strong>
+                    <span class="pill">${points} pts</span>
+                  </div>
+                  <div class="missionCard__meta">${escapeHtml(mission.suburb || "Melbourne")} · ${escapeHtml(reason)}</div>
+                </div>
+                <div class="missionCard__badges">
+                  ${Number(mission.multiplier || 1) > 1 ? `<span class="pill">${escapeHtml(mission.multiplier)}x bonus</span>` : ""}
+                </div>
               </div>
-              <div>
-                <span class="pill">${Math.round(mission.points * mission.multiplier)} pts</span>
-                ${mission.multiplier > 1 ? `<span class="pill">${mission.multiplier}x bonus</span>` : ""}
-              </div>
-            </div>
-            <div class="muted">Last verified: ${MelbBeerBusiness.formatDate(mission.lastVerifiedAt)}</div>
-            <div class="muted">Suggested action: ${mission.reason.toLowerCase().includes("happy") ? "confirm happy hour details or upload a board photo" : mission.lastVerifiedAt ? "confirm one stale price or upload a menu photo" : "add 3 beer prices with a source photo"}</div>
-            <a class="button button--primary" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}" data-mission="${mission.id}">Submit update</a>
-          </article>
-        `).join("")
-        : '<div class="listItem muted">No active missions found for that filter.</div>';
+              <div class="missionCard__actionCopy">Last verified: ${escapeHtml(MelbBeerBusiness.formatDate(mission.lastVerifiedAt))}</div>
+              <div class="missionCard__actionCopy">Suggested action: ${escapeHtml(suggestedAction)}</div>
+              <a class="button button--primary missionCard__action" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}" data-mission="${escapeHtml(mission.id)}">Submit update</a>
+            </article>
+          `;
+        }).join("")
+        : `
+          <div class="listItem emptyState">
+            <strong>No active missions matched "${escapeHtml(query || "that search")}".</strong>
+            Try a shorter suburb or venue name, such as ${suggestedSearches().map((item) => `<strong>${escapeHtml(item)}</strong>`).join(", ") || "<strong>Fitzroy</strong>, <strong>Richmond</strong>, or <strong>South Melbourne</strong>"}.
+          </div>
+        `;
 
       missionsList.querySelectorAll("[data-mission]").forEach((link) => {
         link.addEventListener("click", () => MelbBeerBusiness.trackEvent("mission_opened", { missionId: link.dataset.mission }));
       });
     }
 
+    async function loadMissions() {
+      const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?sort=${encodeURIComponent(missionSort.value)}&limit=200`);
+      missionCache = data.missions || [];
+      await MelbBeerBusiness.trackEvent("mission_board_viewed", { search: suburbFilter.value || null, sort: missionSort.value });
+      renderMissions();
+    }
+
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("missions");
-      suburbFilter.addEventListener("change", loadMissions);
+      suburbFilter.addEventListener("input", () => {
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(renderMissions, 90);
+      });
       missionSort.addEventListener("change", loadMissions);
       await loadMissions();
     });

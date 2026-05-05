@@ -1635,6 +1635,90 @@
       overflow: auto !important;
     }
 
+    @media (min-width: 901px) {
+      #topbar {
+        gap: 10px;
+        padding: clamp(14px, 1.6vw, 20px);
+      }
+
+      .topbar__header {
+        align-items: center;
+      }
+
+      #topbar h1 {
+        margin-top: 7px;
+        font-size: clamp(32px, 3.2vw, 48px);
+      }
+
+      .topbar__subtitle {
+        margin-top: 8px;
+        max-width: 720px;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .topbar__businessLinks a,
+      .filterChip,
+      .utilityButton,
+      #debugToggle,
+      #adminToggle {
+        padding: 8px 12px;
+        font-size: 13px;
+      }
+
+      .businessBanner {
+        padding: 9px 12px;
+        border-radius: 16px;
+      }
+
+      #toolbar {
+        gap: 10px;
+      }
+
+      .controlGroup {
+        gap: 5px;
+        font-size: 11px;
+      }
+
+      .controlInput {
+        min-height: 44px;
+        padding: 10px 12px;
+        border-radius: 15px;
+      }
+
+      .togglePill {
+        padding: 9px 12px;
+      }
+
+      .retentionHighlights {
+        gap: 8px;
+      }
+
+      .highlightPanel {
+        padding: 10px;
+        border-radius: 18px;
+      }
+
+      .highlightPanel__title {
+        margin-bottom: 6px;
+        font-size: 11px;
+      }
+
+      .highlightCard {
+        padding: 7px 9px;
+      }
+
+      .statusPill {
+        padding: 7px 10px;
+        font-size: 12px;
+      }
+
+      #mapShell {
+        margin-top: 8px;
+        min-height: 58vh;
+      }
+    }
+
     @media (max-width: 640px) {
       #toolbar {
         grid-template-columns: 1fr;
@@ -1728,12 +1812,12 @@
     <div id="toolbar">
       <label class="controlGroup" for="venueSearch">
         <span>Venue or suburb</span>
-        <input id="venueSearch" class="controlInput" type="search" placeholder="Search Rooftop Bar, Fitzroy, Brighton…" />
+        <input id="venueSearch" class="controlInput" type="search" placeholder="Try partial names: Rooftop, Sandrin, Fitzroy…" />
       </label>
 
       <label class="controlGroup" for="beerSearch">
         <span>Beer</span>
-        <input id="beerSearch" class="controlInput" list="beerSuggestions" type="search" placeholder="Search Guinness, Carlton Draft, Stone &amp; Wood…" />
+        <input id="beerSearch" class="controlInput" list="beerSuggestions" type="search" placeholder="Try Guinness, Carlton, Stone &amp; Wood…" />
         <datalist id="beerSuggestions"></datalist>
       </label>
 

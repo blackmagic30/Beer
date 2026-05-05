@@ -81,6 +81,7 @@
       </div>
       <div class="panel">
         <h2>Suggested missions</h2>
+        <p class="helperCopy">Quick ways to earn points and help keep Melbourne venue data accurate.</p>
         <div id="suggestedMissions" class="list"></div>
       </div>
     </section>
@@ -158,14 +159,18 @@
     function renderSuggestedMissions(missions) {
       suggestedMissions.innerHTML = missions.length
         ? missions.map((mission) => `
-          <div class="listItem">
-            <strong>${mission.venueName}</strong>
-            <span class="pill">${Math.round(mission.points * mission.multiplier)} pts</span>
-            <div class="muted">${mission.suburb || "Melbourne"} · ${mission.reason}</div>
-            <a class="button" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}">Submit update</a>
+          <div class="listItem missionCard">
+            <div class="missionCard__top">
+              <div class="missionCard__title">
+                <strong>${mission.venueName}</strong>
+                <span class="pill">${Math.round(mission.points * mission.multiplier)} pts</span>
+              </div>
+            </div>
+            <div class="missionCard__meta">${mission.suburb || "Melbourne"} · ${mission.reason}</div>
+            <a class="button missionCard__action" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}">Submit update</a>
           </div>
         `).join("")
-        : '<div class="listItem muted">Save a suburb or open Missions to get suggested venues.</div>';
+        : '<div class="listItem emptyState">Save a suburb or open Missions to get suggested venues. Try areas like <strong>Fitzroy</strong>, <strong>Sandringham</strong>, or <strong>South Melbourne</strong>.</div>';
     }
 
     async function loadAccount() {
