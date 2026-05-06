@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { BusinessRepository, type SubmissionType } from "../src/db/business.repository.js";
 import { createSubmissionSchema } from "../src/modules/business/business.schemas.js";
+import { BusinessService } from "../src/modules/business/business.service.js";
 
 const NOW = "2026-05-04T08:00:00.000Z";
 const MONTH_KEY = "2026-05";
@@ -23,6 +24,24 @@ function createRepository() {
     database,
     repository: new BusinessRepository(database),
   };
+}
+
+function createBusinessService(repository: BusinessRepository) {
+  return new BusinessService(repository, {
+    PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+    FREE_PRICE_REVEALS_PER_DAY: 5,
+    CONTRIBUTOR_UNLOCK_POINTS: 15,
+    CONTRIBUTOR_UNLOCK_DAYS: 30,
+    DEMO_BILLING_MODE: true,
+    STRIPE_SECRET_KEY: undefined,
+    STRIPE_WEBHOOK_SECRET: undefined,
+    STRIPE_PRICE_MONTHLY: undefined,
+    STRIPE_PRICE_YEARLY: undefined,
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: undefined,
+    SUPABASE_URL: undefined,
+    SUPABASE_SERVICE_ROLE_KEY: undefined,
+    ADMIN_EMAILS: "admin@example.com",
+  });
 }
 
 function createAccount(repository: BusinessRepository, id: string, role: "user" | "admin" = "user") {
@@ -160,6 +179,31 @@ describe("submission payload validation", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("submission queue access checks", () => {
+  it("defaults non-admin submission listing to the caller's own queue", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "user");
+    const otherUser = createAccount(repository, "other-user");
+    const admin = createAccount(repository, "admin", "admin");
+
+    const ownSubmission = createSubmission(repository, {
+      id: "own-submission",
+      userId: user.id,
+      venueId: "venue-1",
+    });
+    createSubmission(repository, {
+      id: "other-submission",
+      userId: otherUser.id,
+      venueId: "venue-2",
+    });
+
+    expect(() => service.listSubmissions(null, { mine: false, limit: 10 })).toThrow("Login required.");
+    expect(service.listSubmissions(user, { mine: false, limit: 10 })).toEqual([ownSubmission]);
+    expect(service.listSubmissions(admin, { mine: false, limit: 10 })).toHaveLength(2);
   });
 });
 

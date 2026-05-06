@@ -736,20 +736,17 @@ export class BusinessService {
   }
 
   listSubmissions(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number }) {
-    if (input.mine) {
-      if (!account) {
-        throw new AppError("Login required.", 401);
-      }
+    if (!account) {
+      throw new AppError("Login required.", 401);
+    }
 
+    const isAdmin = account.role === "admin" || account.subscriptionStatus === "admin";
+    if (input.mine || !isAdmin) {
       return this.repository.listSubmissions({
         userId: account.id,
         status: input.status as never,
         limit: input.limit,
       });
-    }
-
-    if (!account || (account.role !== "admin" && account.subscriptionStatus !== "admin")) {
-      throw new AppError("Admin access required.", 403);
     }
 
     return this.repository.listSubmissions({
