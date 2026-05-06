@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Submit Data | Melbourne Beer Map</title>
   <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -49,9 +50,30 @@
           <span id="sourcePhotoHint" class="fieldHint">Optional evidence helps reviewers approve the update faster.</span>
         </label>
         <div id="happyHourSection" class="submitModeBlock is-hidden">
-          <label class="field">Happy-hour days, times, and specials
-            <textarea id="happyHourDetailsInput" placeholder="Example: Mon-Fri 4pm-6pm, $9 house pints, excludes public holidays"></textarea>
-            <span class="fieldHint">Keep it neutral and exact: days, times, prices or specials, and any conditions.</span>
+          <div class="field">
+            <span>Days happy hour is on</span>
+            <div id="happyHourDays" class="dayChecklist" aria-label="Happy-hour days">
+              <label class="dayChip"><input type="checkbox" value="Mon" /> Mon</label>
+              <label class="dayChip"><input type="checkbox" value="Tue" /> Tue</label>
+              <label class="dayChip"><input type="checkbox" value="Wed" /> Wed</label>
+              <label class="dayChip"><input type="checkbox" value="Thu" /> Thu</label>
+              <label class="dayChip"><input type="checkbox" value="Fri" /> Fri</label>
+              <label class="dayChip"><input type="checkbox" value="Sat" /> Sat</label>
+              <label class="dayChip"><input type="checkbox" value="Sun" /> Sun</label>
+            </div>
+            <span class="fieldHint">Tick every day the venue says the happy hour applies.</span>
+          </div>
+          <div class="grid grid--two">
+            <label class="field">Start time
+              <input id="happyHourStartTime" type="time" />
+            </label>
+            <label class="field">Finish time
+              <input id="happyHourEndTime" type="time" />
+            </label>
+          </div>
+          <label class="field">What is included
+            <textarea id="happyHourSpecialsInput" placeholder="Example: $9 house pints, $12 selected cocktails, excludes public holidays"></textarea>
+            <span class="fieldHint">Write the specials and conditions only. The selected days and times are saved with it.</span>
           </label>
         </div>
         <div id="beerRowsSection" class="submitModeBlock">
@@ -60,6 +82,7 @@
             <p id="beerRowsHint" class="muted">Add the beers and pint prices you saw at this venue.</p>
           </div>
           <div id="beerRows" class="list"></div>
+          <datalist id="trackedBeerSuggestions"></datalist>
           <button id="addBeerRowButton" class="button" type="button">Add beer row</button>
         </div>
         <label class="field">Notes <textarea name="notes" placeholder="Optional notes, conditions, or source details"></textarea></label>
@@ -74,6 +97,15 @@
   <script>
     let venues = [];
     let venueSearchTimer = null;
+    const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
+    const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
+      ? viewerConfig.trackedBeers
+      : [
+        { key: "guinness", name: "Guinness", aliases: ["guinness"] },
+        { key: "carlton_draft", name: "Carlton Draft", aliases: ["carlton draft", "carlton draught"] },
+        { key: "stone_and_wood", name: "Stone & Wood", aliases: ["stone and wood", "stone & wood"] },
+      ];
+    const trackedBeerLookup = new Map();
 
     function localDatetimeValue(date = new Date()) {
       const localTime = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -91,6 +123,42 @@
 
     function venueLabel(venue) {
       return `${venue.name}${venue.suburb ? `, ${venue.suburb}` : ""}${venue.address ? ` · ${venue.address}` : ""}`;
+    }
+
+    function normalizeBeerSearchKey(value) {
+      return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    }
+
+    function seedTrackedBeerLookup() {
+      trackedBeerLookup.clear();
+      TRACKED_BEERS.forEach((beer) => {
+        [beer.key, beer.name, ...(beer.aliases || [])].forEach((candidate) => {
+          const key = normalizeBeerSearchKey(candidate);
+          if (key) {
+            trackedBeerLookup.set(key, beer);
+          }
+        });
+      });
+    }
+
+    function findTrackedBeer(value) {
+      return trackedBeerLookup.get(normalizeBeerSearchKey(value)) || null;
+    }
+
+    function populateTrackedBeerSuggestions() {
+      const labels = new Set();
+      TRACKED_BEERS.forEach((beer) => {
+        labels.add(beer.name);
+        (beer.aliases || []).forEach((alias) => labels.add(alias));
+      });
+      trackedBeerSuggestions.innerHTML = Array.from(labels)
+        .sort((left, right) => left.localeCompare(right))
+        .map((label) => `<option value="${escapeHtml(label)}"></option>`)
+        .join("");
     }
 
     function normalizeVenueText(value) {
@@ -121,7 +189,10 @@
       wrapper.className = "listItem";
       wrapper.innerHTML = `
         <div class="grid grid--two">
-          <label class="field">Beer name <input data-field="beerName" placeholder="Carlton Draft" /></label>
+          <label class="field">Beer name
+            <input data-field="beerName" list="trackedBeerSuggestions" placeholder="Start typing Guinness, Carlton Draft..." />
+            <span data-role="beerHint" class="fieldHint">Choose a tracked beer from suggestions, or tick Add new beer below.</span>
+          </label>
           <label class="field">Serving size
             <select data-field="servingSize">
               <option value="pint">Pint</option>
@@ -142,10 +213,25 @@
             </select>
           </label>
         </div>
+        <label class="field"><span><input data-field="isNewBeer" type="checkbox" /> Add new beer not in the system</span></label>
         <label class="field"><span><input data-field="isHappyHourPrice" type="checkbox" /> Happy-hour price</span></label>
         <label class="field">Happy-hour details <input data-field="happyHourDetails" placeholder="Mon-Fri 4pm-6pm, house pints only" /></label>
         <button class="button button--danger" type="button" data-remove>Remove row</button>
       `;
+      const beerNameInput = wrapper.querySelector('[data-field="beerName"]');
+      const isNewBeerInput = wrapper.querySelector('[data-field="isNewBeer"]');
+      const beerHint = wrapper.querySelector('[data-role="beerHint"]');
+      isNewBeerInput.addEventListener("change", () => {
+        beerHint.textContent = isNewBeerInput.checked
+          ? "New beer mode: type the label exactly as it appears on the menu or tap list."
+          : "Choose a tracked beer from suggestions, or tick Add new beer below.";
+      });
+      beerNameInput.addEventListener("change", () => {
+        const trackedBeer = findTrackedBeer(beerNameInput.value);
+        if (trackedBeer && !isNewBeerInput.checked) {
+          beerNameInput.value = trackedBeer.name;
+        }
+      });
       wrapper.querySelector("[data-remove]").addEventListener("click", () => {
         wrapper.remove();
         updateRowControls();
@@ -186,7 +272,9 @@
       happyHourSection.classList.toggle("is-hidden", !isHappyHour);
       addBeerRowButton.classList.toggle("is-hidden", isSingle);
       sourcePhoto.required = isHappyHour || isPhotoOnly;
-      happyHourDetailsInput.required = isHappyHour;
+      happyHourStartTime.required = isHappyHour;
+      happyHourEndTime.required = isHappyHour;
+      happyHourSpecialsInput.required = isHappyHour;
       setSectionEnabled(beerRowsSection, usesBeerRows);
       setSectionEnabled(happyHourSection, isHappyHour);
 
@@ -212,7 +300,7 @@
           rowsHint: "Add one beer, serving size, and price. Pint is the standard default.",
         },
         happy_hour_update: {
-          guidance: "Happy-hour update: add the days, times, specials, and conditions from a current source photo.",
+          guidance: "Happy-hour update: tick the days, add the start and finish time, then describe the specials from a current source photo.",
           source: "Required for happy-hour updates so reviewers can verify the days, times, and conditions.",
           rowsTitle: "",
           rowsHint: "",
@@ -232,6 +320,35 @@
       updateRowControls();
     }
 
+    function getHappyHourDays() {
+      return Array.from(happyHourDays.querySelectorAll("input:checked")).map((input) => input.value);
+    }
+
+    function formatTimeForCopy(value) {
+      if (!value) {
+        return "";
+      }
+
+      const [hourPart, minutePart] = value.split(":");
+      const date = new Date();
+      date.setHours(Number(hourPart || 0), Number(minutePart || 0), 0, 0);
+      return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).toLowerCase();
+    }
+
+    function formatHappyHourDetails() {
+      const days = getHappyHourDays();
+      const start = happyHourStartTime.value;
+      const end = happyHourEndTime.value;
+      const specials = happyHourSpecialsInput.value.trim();
+      const dayCopy = days.length === 7 ? "Every day" : days.join(", ");
+      const timeCopy = start && end ? `${formatTimeForCopy(start)}-${formatTimeForCopy(end)}` : "";
+
+      return [
+        dayCopy && timeCopy ? `${dayCopy} ${timeCopy}` : dayCopy || timeCopy,
+        specials ? `Specials: ${specials}` : "",
+      ].filter(Boolean).join(". ");
+    }
+
     function collectItems() {
       const type = submissionTypeSelect.value;
 
@@ -241,7 +358,7 @@
           servingSize: "pint",
           price: null,
           isHappyHourPrice: true,
-          happyHourDetails: happyHourDetailsInput.value.trim(),
+          happyHourDetails: formatHappyHourDetails(),
           isOnTap: "unknown",
         }];
       }
@@ -253,8 +370,10 @@
       return Array.from(beerRows.querySelectorAll(".listItem")).map((row) => {
         const get = (field) => row.querySelector(`[data-field="${field}"]`);
         const price = get("price").value.trim();
+        const rawBeerName = get("beerName").value.trim();
+        const trackedBeer = findTrackedBeer(rawBeerName);
         return {
-          beerName: get("beerName").value.trim(),
+          beerName: trackedBeer && !get("isNewBeer").checked ? trackedBeer.name : rawBeerName,
           servingSize: get("servingSize").value,
           price: price ? Number(price) : null,
           isHappyHourPrice: get("isHappyHourPrice").checked,
@@ -281,13 +400,44 @@
         return "Attach a clear source photo, menu, receipt, or screenshot for this submission type.";
       }
 
-      if (type === "happy_hour_update" && !happyHourDetailsInput.value.trim()) {
-        return "Add the happy-hour days, times, specials, and conditions.";
+      if (type === "happy_hour_update") {
+        if (!getHappyHourDays().length) {
+          return "Tick at least one day for the happy-hour update.";
+        }
+
+        if (!happyHourStartTime.value || !happyHourEndTime.value) {
+          return "Add both the happy-hour start and finish time.";
+        }
+
+        if (!happyHourSpecialsInput.value.trim()) {
+          return "Write what the happy-hour special includes.";
+        }
       }
 
       const incompleteBeer = items.find((item) => !item.beerName && type !== "photo_upload");
       if (incompleteBeer) {
         return "Every beer row with details needs a beer name.";
+      }
+
+      if (type !== "happy_hour_update" && type !== "photo_upload") {
+        const rows = Array.from(beerRows.querySelectorAll(".listItem"));
+        const invalidTrackedBeer = rows.find((row) => {
+          const beerName = row.querySelector('[data-field="beerName"]').value.trim();
+          const isNewBeer = row.querySelector('[data-field="isNewBeer"]').checked;
+          const hasAnyBeerData =
+            beerName ||
+            row.querySelector('[data-field="price"]').value.trim() ||
+            row.querySelector('[data-field="isOnTap"]').value !== "unknown" ||
+            row.querySelector('[data-field="isHappyHourPrice"]').checked ||
+            row.querySelector('[data-field="happyHourDetails"]').value.trim();
+
+          return hasAnyBeerData && beerName && !isNewBeer && !findTrackedBeer(beerName);
+        });
+
+        if (invalidTrackedBeer) {
+          const beerName = invalidTrackedBeer.querySelector('[data-field="beerName"]').value.trim();
+          return `"${beerName}" is not in the tracked beer list. Choose a suggestion or tick Add new beer.`;
+        }
       }
 
       return null;
@@ -323,6 +473,8 @@
       const params = new URLSearchParams(window.location.search);
       const initialVenueId = params.get("venueId");
       const initialVenueName = params.get("venueName") || "";
+      seedTrackedBeerLookup();
+      populateTrackedBeerSuggestions();
       appendBeerRow();
       observedAtInput.value = localDatetimeValue();
       applySubmissionType();

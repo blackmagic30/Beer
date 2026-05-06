@@ -308,6 +308,32 @@ h3 {
   margin: 0;
 }
 
+.dayChecklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dayChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(244, 214, 150, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #d9dfeb;
+  padding: 9px 11px;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.dayChip input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--gold);
+}
+
 .is-hidden {
   display: none !important;
 }

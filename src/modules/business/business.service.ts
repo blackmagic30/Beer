@@ -12,7 +12,7 @@ import {
   type ConfidenceLabel,
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
-import { VIEWER_TRACKED_BEERS } from "../../constants/beers.js";
+import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 
@@ -506,24 +506,28 @@ export class BusinessService {
       sourcePhotoUrl,
       notes: input.notes,
       now,
-      items: input.items.map((item) => ({
-        id: crypto.randomUUID(),
-        beerName: item.beerName.trim(),
-        normalizedBeerId: normalizeBeerId(item.beerName),
-        servingSize: item.servingSize,
-        price: item.price,
-        isHappyHourPrice: item.isHappyHourPrice,
-        happyHourDetails: item.happyHourDetails,
-        isOnTap: item.isOnTap,
-        confidence: sourcePhotoUrl ? 0.72 : 0.52,
-      })),
+      items: input.items.map((item) => {
+        const beerName = canonicalizeTrackedBeerName(item.beerName);
+        return {
+          id: crypto.randomUUID(),
+          beerName,
+          normalizedBeerId: normalizeBeerId(beerName),
+          servingSize: item.servingSize,
+          price: item.price,
+          isHappyHourPrice: item.isHappyHourPrice,
+          happyHourDetails: item.happyHourDetails,
+          isOnTap: item.isOnTap,
+          confidence: sourcePhotoUrl ? 0.72 : 0.52,
+        };
+      }),
     });
 
+    const firstItemBeerName = input.items[0] ? canonicalizeTrackedBeerName(input.items[0].beerName) : null;
     this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "submission_completed",
       venueId: submission.venueId,
-      beerId: input.items[0] ? normalizeBeerId(input.items[0].beerName) : null,
+      beerId: firstItemBeerName ? normalizeBeerId(firstItemBeerName) : null,
       suburb: submission.suburb,
       metadata: {
         submissionId: submission.id,
