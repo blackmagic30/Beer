@@ -13,21 +13,10 @@ import {
   adminVenueSchema,
 } from "./admin.schemas.js";
 import type { AdminService } from "./admin.service.js";
+import type { BusinessService } from "../business/business.service.js";
 
-function getAdminSecretHeader(req: Request): string | undefined {
-  const headerSecret = req.header("x-admin-secret");
-
-  if (headerSecret && headerSecret.trim().length > 0) {
-    return headerSecret.trim();
-  }
-
-  const authHeader = req.header("authorization");
-  if (!authHeader) {
-    return undefined;
-  }
-
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  return match?.[1]?.trim();
+function requireRoleAdmin(req: Request, businessService: BusinessService): void {
+  businessService.requireAdmin(req.header("authorization") ?? undefined);
 }
 
 function parseIngestionStatus(value: unknown): AdminIngestionStatus | undefined {
@@ -47,8 +36,17 @@ function parseIngestionStatus(value: unknown): AdminIngestionStatus | undefined 
   }
 }
 
-export function createAdminRouter(adminService: AdminService): Router {
+export function createAdminRouter(adminService: AdminService, businessService: BusinessService): Router {
   const router = Router();
+
+  router.use((req, _res, next) => {
+    try {
+      requireRoleAdmin(req, businessService);
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.get("/status", (_req, res) => {
     res.json(success(adminService.getStatus()));
@@ -56,7 +54,6 @@ export function createAdminRouter(adminService: AdminService): Router {
 
   router.get("/ingestions", async (req, res, next) => {
     try {
-      adminService.assertAuthorized(getAdminSecretHeader(req));
       const status = parseIngestionStatus(req.query.status);
       const limit =
         typeof req.query.limit === "string" && Number.isFinite(Number(req.query.limit))
@@ -71,7 +68,6 @@ export function createAdminRouter(adminService: AdminService): Router {
 
   router.post("/venues", async (req, res, next) => {
     try {
-      adminService.assertAuthorized(getAdminSecretHeader(req));
       const body = parseWithSchema(adminVenueSchema, req.body, "Invalid admin venue payload");
       const venue = await adminService.createVenue(body);
       res.status(201).json(success({ venue }));
@@ -82,7 +78,6 @@ export function createAdminRouter(adminService: AdminService): Router {
 
   router.post("/captures/manual", async (req, res, next) => {
     try {
-      adminService.assertAuthorized(getAdminSecretHeader(req));
       const body = parseWithSchema(
         adminManualCaptureSchema,
         req.body,
@@ -97,7 +92,6 @@ export function createAdminRouter(adminService: AdminService): Router {
 
   router.post("/captures/menu-photo-ocr", async (req, res, next) => {
     try {
-      adminService.assertAuthorized(getAdminSecretHeader(req));
       const body = parseWithSchema(
         adminMenuPhotoOcrSchema,
         req.body,
@@ -112,7 +106,6 @@ export function createAdminRouter(adminService: AdminService): Router {
 
   router.post("/ingestions/queue", async (req, res, next) => {
     try {
-      adminService.assertAuthorized(getAdminSecretHeader(req));
       const body = parseWithSchema(
         adminSourceIngestionQueueSchema,
         req.body,
@@ -127,7 +120,6 @@ export function createAdminRouter(adminService: AdminService): Router {
 
   router.post("/ingestions/:id/publish", async (req, res, next) => {
     try {
-      adminService.assertAuthorized(getAdminSecretHeader(req));
       const body = parseWithSchema(
         adminPublishQueuedIngestionSchema,
         req.body,
@@ -142,7 +134,6 @@ export function createAdminRouter(adminService: AdminService): Router {
 
   router.post("/ingestions/:id/reject", async (req, res, next) => {
     try {
-      adminService.assertAuthorized(getAdminSecretHeader(req));
       const body = parseWithSchema(
         adminRejectQueuedIngestionSchema,
         req.body,

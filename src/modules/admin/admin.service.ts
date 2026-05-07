@@ -207,9 +207,9 @@ export class AdminService {
 
   getStatus() {
     return {
-      enabled: Boolean(this.supabase && this.adminSharedSecret),
-      ocrEnabled: Boolean(this.supabase && this.adminSharedSecret && this.openai),
-      queueEnabled: Boolean(this.supabase && this.adminSharedSecret && this.ingestionQueueRepository),
+      enabled: Boolean(this.supabase),
+      ocrEnabled: Boolean(this.supabase && this.openai),
+      queueEnabled: Boolean(this.supabase && this.ingestionQueueRepository),
     };
   }
 

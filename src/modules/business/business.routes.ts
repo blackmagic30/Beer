@@ -2,6 +2,7 @@ import { Router, type Request } from "express";
 
 import { success } from "../../lib/http.js";
 import { parseWithSchema } from "../../lib/validation.js";
+import { createRateLimiter } from "../../middleware/rate-limit.js";
 
 import {
   accountPreferencesSchema,
@@ -35,6 +36,52 @@ function getOptionalAccount(req: Request, businessService: BusinessService) {
   return businessService.getAccountFromAuthorization(getAuthorization(req));
 }
 
+function rateLimitIdentity(req: Request): string {
+  const authorization = getAuthorization(req) ?? "";
+  const anonymousSessionId =
+    typeof req.query.anonymousSessionId === "string"
+      ? req.query.anonymousSessionId
+      : typeof req.body?.anonymousSessionId === "string"
+        ? req.body.anonymousSessionId
+        : "";
+  return [req.ip ?? req.socket.remoteAddress ?? "unknown-ip", authorization, anonymousSessionId].join(":");
+}
+
+const priceReadLimiter = createRateLimiter({
+  keyPrefix: "business:price-records",
+  windowMs: 60_000,
+  max: 180,
+  keyGenerator: rateLimitIdentity,
+});
+
+const writeLimiter = createRateLimiter({
+  keyPrefix: "business:writes",
+  windowMs: 10 * 60_000,
+  max: 45,
+  keyGenerator: rateLimitIdentity,
+});
+
+const authLimiter = createRateLimiter({
+  keyPrefix: "business:auth",
+  windowMs: 10 * 60_000,
+  max: 25,
+  keyGenerator: rateLimitIdentity,
+});
+
+const billingLimiter = createRateLimiter({
+  keyPrefix: "business:billing",
+  windowMs: 10 * 60_000,
+  max: 20,
+  keyGenerator: rateLimitIdentity,
+});
+
+const eventLimiter = createRateLimiter({
+  keyPrefix: "business:events",
+  windowMs: 10 * 60_000,
+  max: 240,
+  keyGenerator: rateLimitIdentity,
+});
+
 export function createBusinessRouter(businessService: BusinessService): Router {
   const router = Router();
 
@@ -42,12 +89,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getPublicConfig()));
   });
 
-  router.post("/auth/signup", (req, res) => {
+  router.post("/auth/signup", authLimiter, (req, res) => {
     const body = parseWithSchema(authSignupSchema, req.body, "Invalid signup payload");
     res.status(201).json(success(businessService.signup(body)));
   });
 
-  router.post("/auth/login", (req, res) => {
+  router.post("/auth/login", authLimiter, (req, res) => {
     const body = parseWithSchema(authLoginSchema, req.body, "Invalid login payload");
     res.json(success(businessService.login(body)));
   });
@@ -102,26 +149,26 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.post("/submissions", (req, res) => {
+  router.post("/submissions", writeLimiter, (req, res) => {
     const account = businessService.requireAccount(getAuthorization(req));
     const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid submission payload");
     const result = businessService.createSubmission(account, body);
     res.status(201).json(success(result));
   });
 
-  router.post("/feedback", (req, res) => {
+  router.post("/feedback", writeLimiter, (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const body = parseWithSchema(feedbackSchema, req.body, "Invalid feedback payload");
     res.status(201).json(success(businessService.submitFeedback(account, body)));
   });
 
-  router.post("/wrong-price-reports", (req, res) => {
+  router.post("/wrong-price-reports", writeLimiter, (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const body = parseWithSchema(wrongPriceReportSchema, req.body, "Invalid wrong price report payload");
     res.status(201).json(success(businessService.reportWrongPrice(account, body)));
   });
 
-  router.post("/requests", (req, res) => {
+  router.post("/requests", writeLimiter, (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const body = parseWithSchema(venueRequestSchema, req.body, "Invalid request payload");
     res.status(201).json(success(businessService.createVenueRequest(account, body)));
@@ -154,7 +201,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.status(201).json(success({ mission }));
   });
 
-  router.get("/price-records", (req, res) => {
+  router.get("/price-records", priceReadLimiter, (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const query = parseWithSchema(priceRecordsQuerySchema, req.query, "Invalid price records query");
     res.json(success(businessService.listPriceRecords(account, {
@@ -163,7 +210,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     })));
   });
 
-  router.post("/events", (req, res) => {
+  router.post("/events", eventLimiter, (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const body = parseWithSchema(eventTrackSchema, req.body, "Invalid analytics event payload");
     businessService.trackEvent(account, body);
@@ -207,7 +254,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.status(201).json(success(businessService.createMissionFromRequest(admin, req.params.id)));
   });
 
-  router.post("/billing/checkout", async (req, res, next) => {
+  router.post("/billing/checkout", billingLimiter, async (req, res, next) => {
     try {
       const account = businessService.requireAccount(getAuthorization(req));
       const body = parseWithSchema(checkoutSchema, req.body, "Invalid checkout payload");
@@ -218,7 +265,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.post("/billing/demo-subscribe", (req, res) => {
+  router.post("/billing/demo-subscribe", billingLimiter, (req, res) => {
     const account = businessService.requireAccount(getAuthorization(req));
     const body = parseWithSchema(checkoutSchema, req.body, "Invalid demo subscription payload");
     res.json(success(businessService.handleDemoSubscription(account, body.plan)));

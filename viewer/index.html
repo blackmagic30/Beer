@@ -75,6 +75,22 @@
       text-transform: uppercase;
     }
 
+    .fieldTestBadge {
+      display: none;
+      border: 1px solid rgba(119, 217, 255, 0.24);
+      border-radius: 999px;
+      background: rgba(119, 217, 255, 0.12);
+      color: #caefff;
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    body.fieldTestMode .fieldTestBadge {
+      display: inline-flex;
+    }
+
     #topbar h1 {
       margin: 10px 0 0;
       font-size: 34px;
@@ -1720,6 +1736,32 @@
     }
 
     @media (max-width: 640px) {
+      body {
+        min-height: 100vh;
+      }
+
+      .topbar__businessLinks {
+        flex-wrap: nowrap;
+        max-width: 100%;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+
+      .topbar__businessLinks a,
+      .filterChip,
+      .utilityButton,
+      .togglePill {
+        min-height: 40px;
+        white-space: nowrap;
+      }
+
+      .chipRow {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        padding-bottom: 3px;
+        -webkit-overflow-scrolling: touch;
+      }
+
       #toolbar {
         grid-template-columns: 1fr;
       }
@@ -1749,17 +1791,36 @@
       }
 
       #topbar h1 {
-        font-size: 30px;
+        font-size: 28px;
       }
 
       #topbar {
         margin: 8px 8px 0;
+        padding: 16px;
         border-radius: 24px 24px 18px 18px;
+      }
+
+      .topbar__subtitle {
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .businessBanner {
+        align-items: flex-start;
+        flex-direction: column;
+        font-size: 12px;
       }
 
       #mapShell {
         margin: 8px;
         border-radius: 22px;
+        min-height: 58vh;
+      }
+
+      #mapOverlayTabs {
+        top: 8px;
+        max-width: calc(100% - 20px);
+        overflow-x: auto;
       }
 
       .adminBeerRow,
@@ -1788,7 +1849,7 @@
   <div id="topbar">
     <div class="topbar__header">
       <div>
-        <div class="topbar__eyebrow">Live beer map</div>
+        <div class="topbar__eyebrow">Live beer map <span class="fieldTestBadge">Beta</span></div>
         <h1>Melbourne Beer Map</h1>
         <p class="topbar__subtitle">Search a venue, search a beer, or flip to the venues that still need data. The map stays simple, and the detail only shows up when you need it.</p>
       </div>
@@ -1804,7 +1865,7 @@
 
     <div id="businessBanner" class="businessBanner">
       <span>Free preview: venue pins stay visible. Exact prices, beer search, cheapest sorting, and full happy-hour details unlock with premium or approved contributor access.</span>
-      <span><a href="/pricing.html">Unlock</a> · <a href="/missions.html">Earn access</a></span>
+      <span><a href="/pricing.html">Unlock</a> · <a href="/missions.html">Earn access</a> · <a href="/privacy.html">Privacy</a></span>
     </div>
 
     <div id="toolbar">
@@ -2052,7 +2113,6 @@
       canUseVerifiedOnly: false,
     };
     const revealedVenueIds = new Set(readJsonArray(PRICE_REVEAL_STORAGE_KEY));
-    const ADMIN_SECRET_STORAGE_KEY = "melbBeerBotAdminSecret";
     const MAP_OVERLAY_STORAGE_KEY = "melbBeerMapOverlayState";
     const mobileOverlayQuery = window.matchMedia("(max-width: 900px)");
     const TRACKED_BEER_BY_KEY = new Map();
@@ -2196,8 +2256,6 @@
     if (params.get("googleMapsKey")) {
       window.localStorage.setItem("googleMapsKey", params.get("googleMapsKey"));
     }
-
-    adminSecretEl.value = window.localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) || "";
 
     function syncAdminPanelState() {
       adminOverlayEl.classList.toggle("hidden", !adminPanelOpen);
@@ -2488,29 +2546,15 @@
     }
 
     function syncAdminSecretState() {
-      if (getAdminSecret()) {
-        setHint(adminSecretStateEl, "Admin credential is ready in this browser.", "success");
-        return;
-      }
-
-      setHint(adminSecretStateEl, "Enter your admin credential to enable write actions.", null);
+      setHint(adminSecretStateEl, "Legacy map write tools have moved to the protected admin page.", null);
     }
 
     adminSaveSecretEl.addEventListener("click", () => {
-      const secret = getAdminSecret();
-
-      if (!secret) {
-        setHint(adminSecretStateEl, "Enter a secret first.", "warning");
-        return;
-      }
-
-      window.localStorage.setItem(ADMIN_SECRET_STORAGE_KEY, secret);
-      setHint(adminSecretStateEl, "Admin credential saved in this browser.", "success");
+      setHint(adminSecretStateEl, "Use /admin.html for protected admin review.", "warning");
     });
 
     adminClearSecretEl.addEventListener("click", () => {
       adminSecretEl.value = "";
-      window.localStorage.removeItem(ADMIN_SECRET_STORAGE_KEY);
       syncAdminSecretState();
     });
 
@@ -2536,14 +2580,14 @@
 
     function renderMapFailure(message) {
       const mapEl = document.getElementById("map");
-
-      mapEl.innerHTML = `
-        <div style="height:100%; display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box; background:#0f172a;">
-          <div style="max-width:680px; width:100%; background:#111827; color:#e5e7eb; border:1px solid #1f2937; border-radius:20px; padding:24px; box-sizing:border-box;">
-            <div style="font-size:22px; font-weight:700; margin-bottom:12px;">Google Maps could not load</div>
-            <div style="font-size:14px; line-height:1.6; color:#cbd5e1; margin-bottom:16px;">
-              ${escapeHtml(message)}
+      const fieldTestMode = window.MelbBeerBusiness && window.MelbBeerBusiness.isFieldTestMode();
+      const detailMarkup = fieldTestMode
+        ? `
+            <div style="font-size:13px; line-height:1.7; color:#93c5fd;">
+              Refresh the page once. If it still fails, send feedback and we’ll check the map key/referrer setup.
             </div>
+          `
+        : `
             <div style="font-size:13px; line-height:1.7; color:#93c5fd;">
               Current origin: ${escapeHtml(window.location.origin || "unknown")}<br>
               Try allowing these browser referrers on the Google Maps browser key:<br>
@@ -2552,6 +2596,16 @@
               <code>http://localhost:*/*</code><br>
               <code>http://127.0.0.1:*/*</code>
             </div>
+          `;
+
+      mapEl.innerHTML = `
+        <div style="height:100%; display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box; background:#0f172a;">
+          <div style="max-width:680px; width:100%; background:#111827; color:#e5e7eb; border:1px solid #1f2937; border-radius:20px; padding:24px; box-sizing:border-box;">
+            <div style="font-size:22px; font-weight:700; margin-bottom:12px;">Google Maps could not load</div>
+            <div style="font-size:14px; line-height:1.6; color:#cbd5e1; margin-bottom:16px;">
+              ${escapeHtml(message)}
+            </div>
+            ${detailMarkup}
           </div>
         </div>
       `;
@@ -3891,7 +3945,7 @@
 
     function getAdminStatusMessage() {
       if (!adminStatus.enabled) {
-        return "Admin write tools are disabled on this deployment. Set ADMIN_SHARED_SECRET on the server to enable manual venue and beer entry.";
+        return "Legacy map write tools are disabled. Use the protected admin page for review and publishing.";
       }
 
       if (!adminStatus.queueEnabled) {
@@ -4332,7 +4386,7 @@
         return;
       }
 
-      const result = await authorizedJsonRequest("/api/admin/ingestions?status=pending_review&limit=40", {
+      const result = await authorizedJsonRequest("/admin.html#legacy-review", {
         method: "GET",
       });
       adminQueuedIngestions = Array.isArray(result.items) ? result.items : [];
@@ -4398,16 +4452,7 @@
     }
 
     async function fetchAdminStatus() {
-      try {
-      const response = await fetch("/api/admin/status");
-      const payload = await response.json();
-      adminStatus = payload && payload.ok && payload.data
-          ? payload.data
-          : { enabled: false, ocrEnabled: false, queueEnabled: false };
-      } catch (_error) {
-        adminStatus = { enabled: false, ocrEnabled: false, queueEnabled: false };
-      }
-
+      adminStatus = { enabled: false, ocrEnabled: false, queueEnabled: false };
       syncAdminBanner();
 
       if (!adminStatus.queueEnabled) {
@@ -4437,33 +4482,9 @@
     }
 
     async function authorizedJsonRequest(url, options = {}) {
-      const secret = getAdminSecret();
-
-      if (!secret) {
-        throw new Error("Add the admin credential first.");
-      }
-
-      const { method = "POST", body } = options;
-      const headers = {
-        "x-admin-secret": secret,
-      };
-
-      if (body !== undefined) {
-        headers["Content-Type"] = "application/json";
-      }
-
-      const response = await fetch(url, {
-        method,
-        headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-      const payload = await response.json().catch(() => null);
-
-      if (!response.ok || !payload?.ok) {
-        throw new Error(payload?.error?.message || `Request failed with status ${response.status}`);
-      }
-
-      return payload.data;
+      void url;
+      void options;
+      throw new Error("Legacy map write tools have moved to the protected admin page.");
     }
 
     async function authorizedJsonFetch(url, body) {
@@ -4868,7 +4889,7 @@
         }
 
         setHint(adminSourceQueueStatusEl, "Queueing source and running OCR...", null);
-        const result = await authorizedJsonFetch("/api/admin/ingestions/queue", {
+        const result = await authorizedJsonFetch("/admin.html#legacy-review", {
           venueId: venue.id,
           sourceType: imageDataUrl
             ? (sourceUrl ? "source_image_url" : "menu_photo_upload")
@@ -4928,7 +4949,7 @@
 
         setHint(adminOcrResultEl, "Reading menu photo...", null);
         const imageDataUrl = await compressImageFile(file);
-          const result = await authorizedJsonFetch("/api/admin/captures/menu-photo-ocr", {
+          const result = await authorizedJsonFetch("/admin.html#legacy-review", {
           venueNameHint: venue.name,
           imageDataUrl,
         });
@@ -4972,7 +4993,7 @@
         }
 
         setHint(adminCaptureStatusEl, "Saving beers into the venue snapshot...", null);
-        const result = await authorizedJsonFetch("/api/admin/captures/manual", {
+        const result = await authorizedJsonFetch("/admin.html#legacy-review", {
           venueId: venue.id,
           source: adminCaptureSource,
           note: adminCaptureNoteEl.value.trim() || null,
@@ -5010,7 +5031,7 @@
         }
 
         setHint(adminQueuePublishStatusEl, "Publishing reviewed source into the venue snapshot...", null);
-        const result = await authorizedJsonFetch(`/api/admin/ingestions/${encodeURIComponent(queueItem.id)}/publish`, {
+        const result = await authorizedJsonFetch("/admin.html#legacy-review", {
           beers,
           note: adminCaptureNoteEl.value.trim() || null,
         });
@@ -5043,7 +5064,7 @@
         }
 
         setHint(adminQueuePublishStatusEl, "Rejecting queued source...", null);
-        await authorizedJsonFetch(`/api/admin/ingestions/${encodeURIComponent(queueItem.id)}/reject`, {
+        await authorizedJsonFetch("/admin.html#legacy-review", {
           note: adminCaptureNoteEl.value.trim() || null,
         });
 
@@ -5122,7 +5143,7 @@
         }
 
         setHint(adminCreateVenueStatusEl, "Creating venue...", null);
-        const result = await authorizedJsonFetch("/api/admin/venues", payload);
+        const result = await authorizedJsonFetch("/admin.html#legacy-review", payload);
         const venue = result.venue;
         adminVenues.unshift(venue);
         selectedAdminVenueId = venue.id;

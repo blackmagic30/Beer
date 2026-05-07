@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pricing | Melbourne Beer Map</title>
   <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -42,15 +43,20 @@
       <p class="muted">Submit verified venue data and approved points can unlock premium access for 30 days. A full venue update is worth up to 5 points, and 15 approved points in the month unlocks access.</p>
       <a class="button" href="/missions.html">Find venues needing data</a>
       <a class="button" href="/submit.html">Submit venue data</a>
-      <p class="footerCopy">Partner venue credit is coming soon and is not live in this demo. Melbourne Beer Map is 18+ only. Prices may change and availability is not guaranteed.</p>
+      <p class="footerCopy">Partner venue credit is not active for this field test. Melbourne Beer Map is 18+ only. Prices may change and availability is not guaranteed. <a href="/terms.html">Beta terms</a> · <a href="/privacy.html">Privacy</a></p>
     </section>
 
-    <div id="status" class="notice" style="margin-top:16px;">Choose a plan to start checkout. Stripe test mode is used when configured; otherwise demo mode simulates checkout.</div>
+    <div id="billingModeNotice" class="notice" style="margin-top:16px;">Choose a plan to start checkout.</div>
+    <div id="status" class="notice" style="margin-top:16px;">Log in and confirm 18+ before starting checkout.</div>
   </main>
 
   <script>
     window.addEventListener("DOMContentLoaded", () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("pricing");
+      const businessConfig = MelbBeerBusiness.getBusinessConfig();
+      billingModeNotice.textContent = businessConfig.demoBillingMode
+        ? "Field-test billing is in demo mode: no live payment will be taken."
+        : "Stripe checkout is enabled. Use configured Stripe test mode until live payments are intentionally switched on.";
       void MelbBeerBusiness.trackEvent("pricing_page_viewed");
       document.querySelectorAll("[data-plan]").forEach((button) => {
         button.addEventListener("click", async () => {

@@ -1571,6 +1571,7 @@ export class BusinessRepository {
       totalBeerSearches: eventCount(["beer_search_performed"]),
       totalVenueDetailViews: eventCount(["venue_card_viewed", "venue_detail_opened"]),
       totalExactPriceReveals: eventCount(["price_view_revealed"]),
+      totalBlockedPriceReveals: eventCount(["price_view_blocked_free_limit"]),
       totalMapFilterUses: eventCount(["map_filter_used", "cheapest_sort_used", "happy_hour_active_now_used", "verified_only_filter_used", "under_10_filter_used"]),
       totalSubmissionStarts: eventCount(["submission_started"]),
       totalSubmissionCompletions: eventCount(["submission_completed"]),

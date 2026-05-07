@@ -24,6 +24,18 @@ function getAnonymousSessionId() {
   return value;
 }
 
+function getViewerConfig() {
+  return window.MELB_BEER_BOT_VIEWER_CONFIG || {};
+}
+
+function getBusinessConfig() {
+  return getViewerConfig().business || {};
+}
+
+function isFieldTestMode() {
+  return Boolean(getBusinessConfig().fieldTestMode);
+}
+
 async function apiFetch(path, options = {}) {
   const headers = {
     "Content-Type": "application/json",
@@ -49,21 +61,39 @@ async function apiFetch(path, options = {}) {
 }
 
 function renderNav(active = "") {
+  const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
+  const feedbackLink = isFieldTestMode() ? '<a href="/account.html#feedbackForm">Feedback</a>' : "";
   return `
     <nav class="topNav">
       <a class="brand" href="/">
         <strong>Melbourne Beer Map</strong>
         <span>Verified local price index</span>
       </a>
+      ${betaPill}
       <div class="navLinks">
         <a ${active === "map" ? 'class="pill"' : ""} href="/">Map</a>
         <a ${active === "pricing" ? 'class="pill"' : ""} href="/pricing.html">Pricing</a>
         <a ${active === "missions" ? 'class="pill"' : ""} href="/missions.html">Missions</a>
         <a ${active === "submit" ? 'class="pill"' : ""} href="/submit.html">Submit data</a>
         <a ${active === "account" ? 'class="pill"' : ""} href="/account.html">Account</a>
+        ${feedbackLink}
       </div>
     </nav>
   `;
+}
+
+function installFieldTestChrome() {
+  if (!isFieldTestMode() || document.getElementById("fieldTestFeedbackButton")) {
+    return;
+  }
+
+  document.body.classList.add("fieldTestMode");
+  const feedbackButton = document.createElement("a");
+  feedbackButton.id = "fieldTestFeedbackButton";
+  feedbackButton.className = "floatingFeedback";
+  feedbackButton.href = "/account.html#feedbackForm";
+  feedbackButton.textContent = "Send feedback";
+  document.body.appendChild(feedbackButton);
 }
 
 function formatDate(value) {
@@ -103,9 +133,15 @@ window.MelbBeerBusiness = {
   getAuthToken,
   setAuthToken,
   getAnonymousSessionId,
+  getViewerConfig,
+  getBusinessConfig,
+  isFieldTestMode,
   apiFetch,
   renderNav,
+  installFieldTestChrome,
   formatDate,
   setStatus,
   trackEvent,
 };
+
+window.addEventListener("DOMContentLoaded", installFieldTestChrome);

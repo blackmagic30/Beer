@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Admin | Melbourne Beer Map</title>
   <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -13,10 +14,17 @@
     <section class="hero">
       <div class="eyebrow">Admin review</div>
       <h1>Review submissions, protect data quality, and watch aggregate demand.</h1>
-      <p class="lead">This page uses account role checks. Admin emails are configured with `ADMIN_EMAILS`; the public map no longer needs an admin secret entry.</p>
+      <p class="lead">This page uses account role checks. Admin content only loads after a valid admin session is confirmed.</p>
     </section>
 
     <div id="adminContent" hidden>
+    <section id="fieldTestPanel" class="panel" style="margin-bottom:16px;" hidden>
+      <div class="eyebrow">Field-test today</div>
+      <h2>Tomorrow-ready signal check</h2>
+      <p class="muted">A quick daily view for private tests: usage, blocked reveals, submissions, reports, feedback, and demand signals.</p>
+      <div id="fieldTestMetrics" class="metricGrid" style="margin-top:16px;"></div>
+      <div id="fieldTestSignals" class="list" style="margin-top:12px;"></div>
+    </section>
     <section class="panel" style="margin-bottom:16px;">
       <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center;">
         <div>
@@ -127,6 +135,25 @@
       ].join("");
     }
 
+    function renderFieldTestSummary(data, queues) {
+      const metrics = data.metrics;
+      fieldTestMetrics.innerHTML = [
+        renderMetric("Users today", metrics.newUsers),
+        renderMetric("Searches today", metrics.totalVenueSearches + metrics.totalBeerSearches),
+        renderMetric("Price reveals", metrics.totalExactPriceReveals),
+        renderMetric("Blocked reveals", metrics.totalBlockedPriceReveals || 0),
+        renderMetric("Submissions", metrics.totalSubmissionCompletions),
+        renderMetric("Pending approvals", metrics.totalPendingSubmissions),
+        renderMetric("Wrong-price reports", queues.wrongPriceReports.length),
+        renderMetric("Feedback", queues.feedback.length),
+      ].join("");
+      fieldTestSignals.innerHTML = [
+        `<div class="listItem"><strong>Top clicked venues today</strong><div class="muted">${data.topClickedVenues.length ? data.topClickedVenues.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No venue clicks today"}</div></div>`,
+        `<div class="listItem"><strong>Top searched beers today</strong><div class="muted">${data.topSearchedBeers.length ? data.topSearchedBeers.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No beer searches today"}</div></div>`,
+      ].join("");
+      fieldTestPanel.hidden = !MelbBeerBusiness.isFieldTestMode();
+    }
+
     function renderRetention(data) {
       retentionCohorts.innerHTML = data.cohorts.length
         ? data.cohorts.map((cohort) => `
@@ -203,14 +230,16 @@
       pendingSubmissions.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.reject, "rejected")));
       pendingSubmissions.querySelectorAll("[data-fraud]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.fraud, "fraud_flagged")));
 
-      const [kpis, retention, coverage, leads, queues] = await Promise.all([
+      const [kpis, todayKpis, retention, coverage, leads, queues] = await Promise.all([
         MelbBeerBusiness.apiFetch(`/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`),
+        MelbBeerBusiness.apiFetch("/api/business/admin/kpis?range=today"),
         MelbBeerBusiness.apiFetch("/api/business/admin/retention?groupBy=week&limit=12"),
         MelbBeerBusiness.apiFetch("/api/business/admin/coverage"),
         MelbBeerBusiness.apiFetch("/api/business/admin/partner-leads"),
         MelbBeerBusiness.apiFetch("/api/business/admin/queues"),
       ]);
       renderKpis(kpis);
+      renderFieldTestSummary(todayKpis, queues);
       renderRetention(retention);
       renderCoverage(coverage);
       renderPartnerLeads(leads);

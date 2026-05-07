@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Beta Terms | Melbourne Beer Map</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+    <section class="hero">
+      <div class="eyebrow">Beta terms</div>
+      <h1>Melbourne-only field-test terms.</h1>
+      <p class="lead">This private beta helps test whether verified local price data is useful. Keep submissions accurate, current, and responsible.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Use responsibly</h2>
+      <p class="muted">Melbourne Beer Map is for adults 18+ in Victoria. Prices, happy hours, and availability may change. Check with the venue before ordering, and venues may refuse service under RSA obligations.</p>
+      <h2>Community data</h2>
+      <p class="muted">Data is community-submitted and verified where possible. Submissions stay pending until reviewed or sufficiently verified. False or abusive submissions can be rejected, fraud-flagged, or lose contribution eligibility.</p>
+      <h2>Billing and rewards</h2>
+      <p class="muted">Demo billing may be enabled during field testing and does not take live payment. Do not use live payments unless Stripe test mode has passed. Partner venue credits and free-beer redemption are not active.</p>
+    </section>
+
+    <p class="footerCopy"><a href="/privacy.html">Privacy summary</a> · <a href="/">Back to map</a></p>
+  </main>
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("");
+    });
+  </script>
+</body>
+</html>

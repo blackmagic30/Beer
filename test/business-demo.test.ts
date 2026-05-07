@@ -37,6 +37,7 @@ function createBusinessService(
     CONTRIBUTOR_UNLOCK_POINTS: 15,
     CONTRIBUTOR_UNLOCK_DAYS: 30,
     DEMO_BILLING_MODE: true,
+    FIELD_TEST_MODE: false,
     STRIPE_SECRET_KEY: undefined,
     STRIPE_WEBHOOK_SECRET: undefined,
     STRIPE_PRICE_MONTHLY: undefined,
@@ -350,9 +351,13 @@ describe("production hardening", () => {
   it("keeps exact price reads behind the business API in the public viewer", () => {
     const viewerHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
     const adminHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/admin.html"), "utf8");
+    const legacyMapHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/google-map.html"), "utf8");
 
     expect(viewerHtml).not.toContain(".from(\"call_results\")");
     expect(viewerHtml).not.toContain("Admin secret");
+    expect(viewerHtml).not.toContain("ADMIN_SHARED_SECRET");
+    expect(viewerHtml).not.toContain("x-admin-secret");
+    expect(viewerHtml).not.toContain("/api/admin");
     expect(viewerHtml).not.toContain("Unlock admin actions");
     expect(viewerHtml).not.toMatch(/<aside[^>]+id="adminPanel"/);
     expect(viewerHtml).not.toMatch(/<button[^>]+id="adminToggle"/);
@@ -361,6 +366,8 @@ describe("production hardening", () => {
     expect(adminHtml).toMatch(/<div[^>]+id="adminContent" hidden>/);
     expect(adminHtml).not.toContain("Admin secret");
     expect(adminHtml).not.toContain("Unlock admin actions");
+    expect(legacyMapHtml).not.toContain("Fetching venues from Supabase");
+    expect(legacyMapHtml).not.toContain("<div id=\"debug\"");
   });
 
   it("validates source photo type and size before storing demo uploads", () => {
@@ -388,6 +395,63 @@ describe("production hardening", () => {
       ...baseSubmission,
       sourcePhotoDataUrl: oversizedImage,
     }))).toThrow("6MB or smaller");
+  });
+
+  it("rejects unsafe external source URLs before review storage", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "url-source-user");
+    const baseSubmission = {
+      venueId: "venue-url",
+      venueName: "URL Source Bar",
+      suburb: "Melbourne",
+      submissionType: "photo_upload" as const,
+      observedAt: NOW,
+      sourcePhotoDataUrl: null,
+      notes: null,
+      items: [],
+    };
+
+    expect(() => service.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      sourcePhotoUrl: "javascript:alert(1)",
+    }))).toThrow("HTTP or HTTPS");
+    expect(() => service.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      sourcePhotoUrl: "https://example.com/menu.svg",
+    }))).toThrow("safe image source");
+
+    expect(service.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      sourcePhotoUrl: "https://example.com/menu-photo.jpg",
+    })).submission.sourcePhotoUrl).toBe("https://example.com/menu-photo.jpg");
+  });
+
+  it("returns clean access errors for self-review and already-reviewed submissions", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "admin", "admin");
+    const otherAdmin = createAccount(repository, "other-admin", "admin");
+    const ownSubmission = createSubmission(repository, {
+      id: "own-admin-submission",
+      userId: admin.id,
+      venueId: "venue-own",
+    });
+    const submission = createSubmission(repository, {
+      id: "reviewed-submission",
+      userId: createAccount(repository, "submitter").id,
+      venueId: "venue-reviewed",
+    });
+    const approvePayload = {
+      status: "approved" as const,
+      rejectionReason: null,
+      fraudFlagged: false,
+      confidence: "photo_verified" as const,
+    };
+
+    expect(() => service.reviewSubmission(admin, ownSubmission.id, approvePayload)).toThrow("Admins cannot review their own submissions");
+    service.reviewSubmission(admin, submission.id, approvePayload);
+    expect(() => service.reviewSubmission(otherAdmin, submission.id, approvePayload)).toThrow("Submission has already been reviewed");
   });
 
   it("does not expose another user's source upload through the non-admin submission queue", () => {

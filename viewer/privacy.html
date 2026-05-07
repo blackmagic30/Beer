@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy | Melbourne Beer Map</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+    <section class="hero">
+      <div class="eyebrow">Privacy summary</div>
+      <h1>Simple, honest beta data use.</h1>
+      <p class="lead">We collect only what helps the field test work: accounts, submissions, searches, clicks, feedback, and aggregate usage events.</p>
+    </section>
+
+    <section class="panel">
+      <h2>What we collect</h2>
+      <p class="muted">Account email, 18+ confirmation timestamp, saved items, venue submissions, reports, requests, feedback, and app usage events such as searches, filters, venue views, and price reveals.</p>
+      <h2>How it is used</h2>
+      <p class="muted">We use aggregated analytics to improve venue coverage, understand demand, and decide which Melbourne venues need verification next. We do not track continuous GPS movement or store exact user movement trails.</p>
+      <h2>What is not sold</h2>
+      <p class="muted">Individual user clickstream is not sold or exposed to venues. Admin dashboards show aggregate counts only. You can request deletion or corrections through the feedback form during the beta.</p>
+    </section>
+
+    <p class="footerCopy"><a href="/terms.html">Beta terms</a> · <a href="/account.html#feedbackForm">Contact through feedback</a></p>
+  </main>
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("");
+    });
+  </script>
+</body>
+</html>

@@ -170,6 +170,8 @@ function getSourcePhotoMimeType(dataUrl: string): string | null {
   return match?.[1]?.toLowerCase() ?? null;
 }
 
+const BLOCKED_SOURCE_URL_EXTENSIONS = /\.(?:svg|html?|xhtml|xml|js|mjs|css)(?:[?#].*)?$/i;
+
 function getBearerToken(header: string | undefined): string | null {
   if (!header) {
     return null;
@@ -278,6 +280,7 @@ export class BusinessService {
       | "CONTRIBUTOR_UNLOCK_POINTS"
       | "CONTRIBUTOR_UNLOCK_DAYS"
       | "DEMO_BILLING_MODE"
+      | "FIELD_TEST_MODE"
       | "STRIPE_SECRET_KEY"
       | "STRIPE_WEBHOOK_SECRET"
       | "STRIPE_PRICE_MONTHLY"
@@ -306,6 +309,7 @@ export class BusinessService {
       contributorUnlockDays: this.config.CONTRIBUTOR_UNLOCK_DAYS,
       stripePublishableKey: this.config.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? null,
       demoBillingMode: this.config.DEMO_BILLING_MODE,
+      fieldTestMode: this.config.FIELD_TEST_MODE,
       rewards: {
         partnerVenueCredit: "disabled",
         copy: "Partner venue credit is coming soon and is not active in this demo.",
@@ -576,7 +580,26 @@ export class BusinessService {
       return input.sourcePhotoDataUrl;
     }
 
-    return input.sourcePhotoUrl;
+    if (!input.sourcePhotoUrl) {
+      return null;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(input.sourcePhotoUrl);
+    } catch {
+      throw new AppError("Source photo URL must be a valid HTTP or HTTPS URL.", 400);
+    }
+
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new AppError("Source photo URL must use HTTP or HTTPS.", 400);
+    }
+
+    if (BLOCKED_SOURCE_URL_EXTENSIONS.test(parsed.pathname)) {
+      throw new AppError("Source photo URL must point to a safe image source, not HTML, SVG, script, or style content.", 400);
+    }
+
+    return parsed.toString();
   }
 
   savePreferences(account: BusinessAccount, input: AccountPreferencesInput) {
@@ -776,6 +799,14 @@ export class BusinessService {
 
     if (!submission) {
       throw new AppError("Submission not found.", 404);
+    }
+
+    if (submission.submission.userId === admin.id) {
+      throw new AppError("Admins cannot review their own submissions.", 403);
+    }
+
+    if (submission.submission.status !== "pending" && submission.submission.status !== "needs_more_evidence") {
+      throw new AppError("Submission has already been reviewed.", 409);
     }
 
     const points = input.pointsAwarded ?? this.calculatePoints(submission.submission, submission.items);
@@ -1424,6 +1455,7 @@ export class BusinessService {
       freePriceRevealsPerDay: this.config.FREE_PRICE_REVEALS_PER_DAY,
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
       demoBillingMode: this.config.DEMO_BILLING_MODE,
+      fieldTestMode: this.config.FIELD_TEST_MODE,
     });
   }
 }

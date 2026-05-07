@@ -1,12 +1,12 @@
 import path from "node:path";
 
 import express from "express";
-import cors from "cors";
 import helmet from "helmet";
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler } from "express";
 
 import { env } from "./config/env.js";
 import { VIEWER_TRACKED_BEERS } from "./constants/beers.js";
+import { AppError } from "./lib/errors.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
@@ -128,7 +128,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       twilioService,
       validateTwilioSignatures: env.TWILIO_VALIDATE_SIGNATURES,
     }),
-    adminRouter: createAdminRouter(adminService),
+    adminRouter: createAdminRouter(adminService, businessService),
     businessRouter: createBusinessRouter(businessService),
   };
 }
@@ -156,19 +156,144 @@ function createLazyMount(selector: (routers: LazyRouters) => RequestHandler): Re
   };
 }
 
+function getAllowedOrigins(): Set<string> {
+  const origins = new Set<string>();
+
+  try {
+    origins.add(new URL(env.PUBLIC_BASE_URL).origin);
+  } catch {
+    // Env validation should catch this; keep the helper fail-closed if reused in tests.
+  }
+
+  if (env.NODE_ENV !== "production") {
+    [
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "http://localhost:8080",
+      "http://127.0.0.1:8080",
+    ].forEach((origin) => origins.add(origin));
+  }
+
+  return origins;
+}
+
+function getRequestOrigin(req: Request): string | null {
+  const host = req.get("host");
+  if (!host) {
+    return null;
+  }
+
+  return `${req.protocol}://${host}`;
+}
+
+function isTrustedOrigin(req: Request, origin: string | undefined, allowedOrigins: Set<string>): boolean {
+  if (!origin) {
+    return true;
+  }
+
+  if (allowedOrigins.has(origin)) {
+    return true;
+  }
+
+  return origin === getRequestOrigin(req);
+}
+
 export function createApp() {
   const app = express();
   const viewerDirectory = path.resolve(process.cwd(), "viewer");
+  const allowedOrigins = getAllowedOrigins();
 
   app.set("trust proxy", env.TRUST_PROXY);
-  // The hosted viewer loads Google Maps, Supabase, and inline bootstrap code in the browser.
-  // Helmet's default CSP blocks those resources, which leaves the page stuck on "Starting viewer...".
   app.use(
     helmet({
-      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          "default-src": ["'self'"],
+          "base-uri": ["'self'"],
+          "object-src": ["'none'"],
+          "frame-ancestors": ["'self'"],
+          "form-action": ["'self'", "https://checkout.stripe.com"],
+          "script-src": [
+            "'self'",
+            "'unsafe-inline'",
+            "https://maps.googleapis.com",
+            "https://maps.gstatic.com",
+            "https://cdn.jsdelivr.net",
+          ],
+          "script-src-elem": [
+            "'self'",
+            "'unsafe-inline'",
+            "https://maps.googleapis.com",
+            "https://maps.gstatic.com",
+            "https://cdn.jsdelivr.net",
+          ],
+          "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          "img-src": [
+            "'self'",
+            "data:",
+            "blob:",
+            "https://maps.gstatic.com",
+            "https://maps.googleapis.com",
+            "https://*.googleapis.com",
+            "https://*.google.com",
+            "https://*.gstatic.com",
+            "https://*.ggpht.com",
+            "https://*.googleusercontent.com",
+          ],
+          "connect-src": [
+            "'self'",
+            "https://maps.googleapis.com",
+            "https://*.googleapis.com",
+            "https://*.google.com",
+            "https://*.gstatic.com",
+          ],
+          "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
+        },
+      },
+      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
     }),
   );
-  app.use(cors());
+  app.use((_req, res, next) => {
+    res.setHeader("Permissions-Policy", "camera=(self), geolocation=(self), microphone=(), payment=(self)");
+    next();
+  });
+  app.use((req, res, next) => {
+    const origin = req.get("origin");
+
+    if (origin && isTrustedOrigin(req, origin, allowedOrigins)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Stripe-Signature,X-Requested-With");
+    }
+
+    if (req.method === "OPTIONS") {
+      if (!origin || isTrustedOrigin(req, origin, allowedOrigins)) {
+        res.sendStatus(204);
+        return;
+      }
+
+      next(new AppError("CORS origin not allowed.", 403));
+      return;
+    }
+
+    next();
+  });
+  app.use((req, _res, next) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+      next();
+      return;
+    }
+
+    if (!isTrustedOrigin(req, req.get("origin"), allowedOrigins)) {
+      next(new AppError("Untrusted request origin.", 403));
+      return;
+    }
+
+    next();
+  });
   app.use((req, _res, next) => {
     if (req.path === "/health" || req.path === "/" || req.path === "/config.js") {
       logger.info("Inbound request", {
@@ -203,6 +328,8 @@ export function createApp() {
         freePriceRevealsPerDay: env.FREE_PRICE_REVEALS_PER_DAY,
         contributorUnlockPoints: env.CONTRIBUTOR_UNLOCK_POINTS,
         contributorUnlockDays: env.CONTRIBUTOR_UNLOCK_DAYS,
+        demoBillingMode: env.DEMO_BILLING_MODE,
+        fieldTestMode: env.FIELD_TEST_MODE,
         pricing: {
           monthly: "A$1.99/month",
           yearly: "A$19/year",

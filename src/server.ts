@@ -24,7 +24,12 @@ function getBoundAddress(): string {
     : String(address ?? "unknown");
 }
 
-function getNetworkTargets(port: number): Array<{ name: string; url: string }> {
+function getNetworkTargets(port: number, boundHost?: string): Array<{ name: string; url: string }> {
+  if (boundHost && !["::", "0.0.0.0"].includes(boundHost)) {
+    const host = boundHost.includes(":") ? `[${boundHost}]` : boundHost;
+    return [{ name: `bound-host-${boundHost}`, url: `http://${host}:${port}/health` }];
+  }
+
   const targets: Array<{ name: string; url: string }> = [
     { name: "loopback-ipv4", url: `http://127.0.0.1:${port}/health` },
     { name: "loopback-ipv6", url: `http://[::1]:${port}/health` },
@@ -101,7 +106,7 @@ async function boot(): Promise<void> {
     }, 30_000);
 
     selfCheckInterval = setInterval(async () => {
-      for (const target of getNetworkTargets(env.PORT)) {
+      for (const target of getNetworkTargets(env.PORT, listenHost)) {
         try {
           const response = await fetch(target.url);
           logger.info(
