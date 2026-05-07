@@ -178,6 +178,13 @@ export const missionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(100),
 });
 
+export const priceRecordsQuerySchema = z.object({
+  venueId: optionalTrimmedStringSchema,
+  anonymousSessionId: nullableTrimmedStringSchema.default(null),
+  reveal: z.preprocess((value) => value === "true" || value === true, z.boolean()).default(false),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+});
+
 export const createMissionSchema = z.object({
   venueId: z.string().min(1),
   venueName: z.string().trim().min(1).max(180),
@@ -330,3 +337,4 @@ export type VenueRequestInput = z.infer<typeof venueRequestSchema>;
 export type AdminDashboardQuery = z.infer<typeof adminDashboardQuerySchema>;
 export type RetentionQuery = z.infer<typeof retentionQuerySchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
+export type PriceRecordsQuery = z.infer<typeof priceRecordsQuerySchema>;

@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BusinessRepository, type SubmissionType } from "../src/db/business.repository.js";
+import { BusinessRepository, type SubmissionType, type SubscriptionStatus } from "../src/db/business.repository.js";
 import { createSubmissionSchema } from "../src/modules/business/business.schemas.js";
 import { BusinessService } from "../src/modules/business/business.service.js";
 
@@ -26,7 +27,10 @@ function createRepository() {
   };
 }
 
-function createBusinessService(repository: BusinessRepository) {
+function createBusinessService(
+  repository: BusinessRepository,
+  overrides: Partial<ConstructorParameters<typeof BusinessService>[1]> = {},
+) {
   return new BusinessService(repository, {
     PUBLIC_BASE_URL: "http://127.0.0.1:3000",
     FREE_PRICE_REVEALS_PER_DAY: 5,
@@ -41,6 +45,7 @@ function createBusinessService(repository: BusinessRepository) {
     SUPABASE_URL: undefined,
     SUPABASE_SERVICE_ROLE_KEY: undefined,
     ADMIN_EMAILS: "admin@example.com",
+    ...overrides,
   });
 }
 
@@ -134,6 +139,33 @@ function flagFraud(repository: BusinessRepository, submissionId: string, reviewe
   });
 }
 
+function updateSubscription(
+  repository: BusinessRepository,
+  userId: string,
+  subscriptionStatus: SubscriptionStatus,
+  premiumUntil: string | null = null,
+) {
+  return repository.updateSubscription({
+    userId,
+    subscriptionStatus,
+    premiumUntil,
+    now: NOW,
+  });
+}
+
+function createStripeSignature(payload: object, secret: string, timestamp = "1777881600") {
+  const body = Buffer.from(JSON.stringify(payload));
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(`${timestamp}.${body.toString("utf8")}`)
+    .digest("hex");
+
+  return {
+    body,
+    header: `t=${timestamp},v1=${signature}`,
+  };
+}
+
 afterEach(() => {
   openDatabases.forEach((database) => database.close());
   openDatabases = [];
@@ -204,6 +236,219 @@ describe("submission queue access checks", () => {
     expect(() => service.listSubmissions(null, { mine: false, limit: 10 })).toThrow("Login required.");
     expect(service.listSubmissions(user, { mine: false, limit: 10 })).toEqual([ownSubmission]);
     expect(service.listSubmissions(admin, { mine: false, limit: 10 })).toHaveLength(2);
+  });
+});
+
+describe("production hardening", () => {
+  it("redacts price records by default and enforces anonymous daily reveals server-side", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, { FREE_PRICE_REVEALS_PER_DAY: 1 });
+    const submitter = createAccount(repository, "submitter");
+    const admin = createAccount(repository, "admin", "admin");
+    const first = createSubmission(repository, { id: "submission-1", userId: submitter.id, venueId: "venue-1", price: 14 });
+    const second = createSubmission(repository, { id: "submission-2", userId: submitter.id, venueId: "venue-2", price: 16 });
+
+    approve(repository, first.id, admin.id);
+    approve(repository, second.id, admin.id);
+
+    const preview = service.listPriceRecords(null, {
+      anonymousSessionId: "anon-price-test",
+      reveal: false,
+      limit: 20,
+      venueId: null,
+    });
+    expect(preview.records).toHaveLength(2);
+    expect(preview.records.every((record) => record.price === null)).toBe(true);
+    expect(preview.records.every((record) => Boolean((record as { priceRedacted?: boolean }).priceRedacted))).toBe(true);
+
+    const revealed = service.listPriceRecords(null, {
+      anonymousSessionId: "anon-price-test",
+      reveal: true,
+      limit: 20,
+      venueId: "venue-1",
+    });
+    expect(revealed.revealed).toBe(true);
+    expect(revealed.blocked).toBe(false);
+    expect(revealed.records[0]?.price).toBe(14);
+
+    const blocked = service.listPriceRecords(null, {
+      anonymousSessionId: "anon-price-test",
+      reveal: true,
+      limit: 20,
+      venueId: "venue-2",
+    });
+    expect(blocked.revealed).toBe(false);
+    expect(blocked.blocked).toBe(true);
+    expect(blocked.records[0]?.price).toBeNull();
+    expect((blocked.records[0] as { priceRedacted?: boolean } | undefined)?.priceRedacted).toBe(true);
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    expect(repository.countEvents({
+      eventType: "price_view_revealed",
+      userId: null,
+      anonymousSessionId: "anon-price-test",
+      since: todayStart.toISOString(),
+    })).toBe(1);
+    expect(repository.countEvents({
+      eventType: "price_view_blocked_free_limit",
+      userId: null,
+      anonymousSessionId: "anon-price-test",
+      since: todayStart.toISOString(),
+    })).toBe(1);
+  });
+
+  it("limits free users while allowing premium, contributor, and admin exact price access", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, { FREE_PRICE_REVEALS_PER_DAY: 1 });
+    const submitter = createAccount(repository, "submitter");
+    const freeUser = createAccount(repository, "free-user");
+    let premiumUser = createAccount(repository, "premium-user");
+    let contributor = createAccount(repository, "contributor-user");
+    const admin = createAccount(repository, "admin", "admin");
+    const first = createSubmission(repository, { id: "submission-1", userId: submitter.id, venueId: "venue-1", price: 12 });
+    const second = createSubmission(repository, { id: "submission-2", userId: submitter.id, venueId: "venue-2", price: 17 });
+
+    approve(repository, first.id, admin.id);
+    approve(repository, second.id, admin.id);
+    premiumUser = updateSubscription(repository, premiumUser.id, "premium_monthly");
+    contributor = updateSubscription(repository, contributor.id, "contributor_unlocked", PREMIUM_UNTIL);
+
+    expect(service.listPriceRecords(freeUser, {
+      anonymousSessionId: null,
+      reveal: true,
+      limit: 20,
+      venueId: "venue-1",
+    }).records[0]?.price).toBe(12);
+    expect(service.listPriceRecords(freeUser, {
+      anonymousSessionId: null,
+      reveal: true,
+      limit: 20,
+      venueId: "venue-2",
+    }).records[0]?.price).toBeNull();
+
+    expect(service.listPriceRecords(premiumUser, {
+      anonymousSessionId: null,
+      reveal: false,
+      limit: 20,
+      venueId: "venue-2",
+    }).records[0]?.price).toBe(17);
+    expect(service.listPriceRecords(contributor, {
+      anonymousSessionId: null,
+      reveal: false,
+      limit: 20,
+      venueId: "venue-2",
+    }).records[0]?.price).toBe(17);
+    expect(service.listPriceRecords(admin, {
+      anonymousSessionId: null,
+      reveal: false,
+      limit: 20,
+      venueId: "venue-2",
+    }).records[0]?.price).toBe(17);
+  });
+
+  it("keeps exact price reads behind the business API in the public viewer", () => {
+    const viewerHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
+    const adminHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/admin.html"), "utf8");
+
+    expect(viewerHtml).not.toContain(".from(\"call_results\")");
+    expect(viewerHtml).not.toContain("Admin secret");
+    expect(viewerHtml).not.toContain("Unlock admin actions");
+    expect(viewerHtml).not.toMatch(/<aside[^>]+id="adminPanel"/);
+    expect(viewerHtml).not.toMatch(/<button[^>]+id="adminToggle"/);
+    expect(viewerHtml).not.toMatch(/<div[^>]+id="debug"/);
+    expect(viewerHtml).not.toMatch(/<button[^>]+id="debugToggle"/);
+    expect(adminHtml).toMatch(/<div[^>]+id="adminContent" hidden>/);
+    expect(adminHtml).not.toContain("Admin secret");
+    expect(adminHtml).not.toContain("Unlock admin actions");
+  });
+
+  it("validates source photo type and size before storing demo uploads", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "photo-user");
+    const baseSubmission = {
+      venueId: "venue-photo",
+      venueName: "Photo Bar",
+      suburb: "Melbourne",
+      submissionType: "photo_upload" as const,
+      observedAt: NOW,
+      sourcePhotoUrl: null,
+      notes: null,
+      items: [],
+    };
+
+    expect(() => service.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      sourcePhotoDataUrl: "data:image/gif;base64,abc",
+    }))).toThrow("Upload must be a JPEG");
+
+    const oversizedImage = `data:image/png;base64,${Buffer.alloc((6 * 1024 * 1024) + 64).toString("base64")}`;
+    expect(() => service.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      sourcePhotoDataUrl: oversizedImage,
+    }))).toThrow("6MB or smaller");
+  });
+
+  it("does not expose another user's source upload through the non-admin submission queue", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "source-owner");
+    const otherUser = createAccount(repository, "source-viewer");
+    createSubmission(repository, {
+      id: "source-submission",
+      userId: user.id,
+      venueId: "venue-source",
+      sourcePhotoUrl: "data:image/png;base64,private-source",
+    });
+
+    expect(service.listSubmissions(otherUser, { mine: false, limit: 10 })).toEqual([]);
+  });
+
+  it("supports demo billing without Stripe keys and requires Stripe config when demo billing is off", async () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "billing-user");
+    const demoService = createBusinessService(repository);
+    const stripeService = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: undefined,
+      STRIPE_PRICE_MONTHLY: undefined,
+    });
+
+    await expect(demoService.createCheckout(user, { plan: "monthly" })).resolves.toMatchObject({ mode: "demo" });
+    await expect(stripeService.createCheckout(user, { plan: "monthly" })).rejects.toThrow("Stripe checkout is not configured");
+  });
+
+  it("verifies Stripe webhook signatures before updating subscriptions", () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "stripe-user");
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_WEBHOOK_SECRET: "whsec_test",
+    });
+    const payload = {
+      id: "evt_checkout_completed",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          customer: "cus_test",
+          metadata: {
+            user_id: user.id,
+            subscription_status: "premium_yearly",
+          },
+        },
+      },
+    };
+    const signed = createStripeSignature(payload, "whsec_test");
+
+    expect(service.handleStripeWebhook(signed.body, signed.header)).toEqual({ received: true });
+    expect(repository.getAccountById(user.id)?.subscriptionStatus).toBe("premium_yearly");
+    expect(repository.getAccountById(user.id)?.stripeCustomerId).toBe("cus_test");
+    expect(() => service.handleStripeWebhook(signed.body, "t=1777881600,v1=bad")).toThrow("Invalid Stripe webhook signature");
+    expect(() => createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_WEBHOOK_SECRET: undefined,
+    }).handleStripeWebhook(signed.body, signed.header)).toThrow("Stripe webhook secret is not configured");
   });
 });
 

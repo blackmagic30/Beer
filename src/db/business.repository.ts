@@ -1037,10 +1037,12 @@ export class BusinessRepository {
     return rows.map(toMission);
   }
 
-  listLatestPriceRecords(limit: number): PublicVenuePriceRecord[] {
+  listLatestPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {
+    const where = venueId ? "WHERE venue_id = ?" : "";
+    const values = venueId ? [venueId, limit] : [limit];
     const rows = this.database
-      .prepare("SELECT * FROM venue_price_records ORDER BY last_verified_at DESC LIMIT ?")
-      .all(limit) as PriceRecordRow[];
+      .prepare(`SELECT * FROM venue_price_records ${where} ORDER BY last_verified_at DESC LIMIT ?`)
+      .all(...values) as PriceRecordRow[];
     return rows.map(toPriceRecord);
   }
 
@@ -1363,7 +1365,26 @@ export class BusinessRepository {
       );
   }
 
-  countEvents(input: { eventType: string; userId: string | null; anonymousSessionId: string | null; since: string }): number {
+  countEvents(input: {
+    eventType: string;
+    userId: string | null;
+    anonymousSessionId: string | null;
+    since: string;
+    venueId?: string | null;
+  }): number {
+    const venueClause = input.venueId ? "AND venue_id = ?" : "";
+    const values: unknown[] = [
+      input.eventType,
+      input.since,
+      input.userId,
+      input.userId,
+      input.anonymousSessionId,
+      input.anonymousSessionId,
+    ];
+    if (input.venueId) {
+      values.push(input.venueId);
+    }
+
     const row = this.database
       .prepare(
         `SELECT count(*) AS count
@@ -1373,16 +1394,10 @@ export class BusinessRepository {
            AND (
              (? IS NOT NULL AND user_id = ?)
              OR (? IS NOT NULL AND anonymous_session_id = ?)
-           )`,
+           )
+           ${venueClause}`,
       )
-      .get(
-        input.eventType,
-        input.since,
-        input.userId,
-        input.userId,
-        input.anonymousSessionId,
-        input.anonymousSessionId,
-      ) as { count: number } | undefined;
+      .get(...values) as { count: number } | undefined;
     return Number(row?.count ?? 0);
   }
 

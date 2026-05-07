@@ -16,6 +16,7 @@ import {
   eventTrackSchema,
   feedbackSchema,
   missionsQuerySchema,
+  priceRecordsQuerySchema,
   removeSavedItemSchema,
   retentionQuerySchema,
   reviewSubmissionSchema,
@@ -153,8 +154,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.status(201).json(success({ mission }));
   });
 
-  router.get("/price-records", (_req, res) => {
-    res.json(success({ records: businessService.listPriceRecords() }));
+  router.get("/price-records", (req, res) => {
+    const account = getOptionalAccount(req, businessService);
+    const query = parseWithSchema(priceRecordsQuerySchema, req.query, "Invalid price records query");
+    res.json(success(businessService.listPriceRecords(account, {
+      ...query,
+      clientIp: req.ip,
+    })));
   });
 
   router.post("/events", (req, res) => {

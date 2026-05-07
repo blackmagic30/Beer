@@ -12,7 +12,7 @@
 - Accepts ElevenLabs post-call transcript webhooks.
 - Persists raw transcripts to `call_runs`.
 - Parses the current target beer flow, configurable as Guinness, Carlton Draft, or Stone & Wood.
-- Syncs completed venue-linked call results into Supabase `call_results` so the viewer can render them on the map.
+- Syncs completed venue-linked call results into Supabase `call_results`; the public viewer reads approved venue/price data through server-gated business APIs.
 - Stores structured per-beer availability fields for map use:
   - `availability_status`
   - `available_on_tap`
@@ -78,6 +78,8 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 - Approved submissions publish `venue_price_records`, which the map merges into existing venue data for existing venues.
 - Mission points are weighted by usefulness, not by number of bars visited. Repeated same-venue submissions in the same month are capped.
 - Admin review lives at `/admin.html` and is protected by account role checks via `ADMIN_EMAILS`.
+- The public map no longer exposes legacy admin controls or direct browser reads of exact price records.
+- Exact price records are redacted by default and only revealed through server-side access checks and daily free reveal limits.
 - Analytics are captured as aggregate events only. No venue dashboard or individual clickstream export is live yet.
 - The admin KPI dashboard tracks early validation metrics, retention cohorts, data coverage, and potential partner leads from aggregated demand.
 - Users can save venues, beers, and suburbs, submit feedback, report wrong prices, and request missing venues or beers.
@@ -97,6 +99,54 @@ Responsible-alcohol guardrails:
 - The demo does not collect government ID documents.
 - Copy is intentionally neutral: verified prices, data accuracy, and responsible use.
 - Partner venue credit/rewards are marked as coming soon and are disabled.
+
+## Small Public Beta Hardening
+
+For the Melbourne beta, exact prices must flow through the Express API, not direct browser database reads.
+
+- `/api/business/price-records` returns redacted price records unless the caller has admin, premium, contributor, or remaining free reveal access.
+- Free exact-price reveal limits are counted server-side using the logged-in user where possible, or the anonymous session/IP fallback for anonymous users.
+- The map gets venue pins and preview metadata by default, then requests an exact venue reveal only when a user opens a venue detail.
+- Admin tools live on `/admin.html` and `/api/business/admin/*`; public map HTML should not include admin unlock forms or secret-entry UI.
+- Demo photo/source uploads are validated for image MIME type and 6MB max size, then stored with pending submissions for review. For production, move these to private object storage and render review links through signed URLs.
+- `DEMO_BILLING_MODE=true` is for local/demo only. Production blocks demo billing unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` is explicitly set.
+
+Suggested production beta values:
+
+```dotenv
+NODE_ENV=production
+PUBLIC_BASE_URL=https://beer.splitseconds.app
+DEMO_BILLING_MODE=false
+ALLOW_DEMO_BILLING_IN_PRODUCTION=false
+FREE_PRICE_REVEALS_PER_DAY=5
+ADMIN_EMAILS=you@example.com
+STRIPE_SECRET_KEY=sk_test_or_live_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_PRICE_MONTHLY=price_monthly_199_aud
+STRIPE_PRICE_YEARLY=price_yearly_19_aud
+```
+
+Stripe test-mode webhook check:
+
+1. Set `DEMO_BILLING_MODE=false` and Stripe test keys in `.env`.
+2. Run `npm run dev`.
+3. In another terminal, run:
+
+```bash
+stripe listen --forward-to localhost:3000/api/business/billing/webhook
+```
+
+4. Copy the printed `whsec_...` value into `STRIPE_WEBHOOK_SECRET`.
+5. Start checkout from `/pricing.html` or `/account.html` and complete it with a Stripe test card.
+6. Confirm `/account.html` shows premium access after the webhook is delivered.
+
+Local MVP flow checks:
+
+- Free map: open `http://localhost:3000`, confirm pins appear and exact prices are limited.
+- Signup/age gate: create an account, confirm 18+, then submit venue data at `/submit.html`.
+- Admin approval: sign up with an email in `ADMIN_EMAILS`, open `/admin.html`, approve the pending submission, and confirm points are awarded.
+- Contributor unlock: approve enough unique-venue points to reach `CONTRIBUTOR_UNLOCK_POINTS`, then confirm full access and map price visibility.
+- KPI tracking: open `/admin.html` and confirm KPI, retention, coverage, partner lead, and queue sections load for admin only.
 
 ## Exact Environment Variables
 
@@ -144,6 +194,7 @@ FREE_PRICE_REVEALS_PER_DAY=5
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
 DEMO_BILLING_MODE=true
+ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_199_aud
@@ -165,7 +216,7 @@ What each one does:
 - `PARSE_CONFIDENCE_THRESHOLD`: threshold used for review decisions.
 - `BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD`: pauses the batch after this many consecutive bad outcomes.
 - `SUPABASE_URL`: Supabase project URL used for venue imports and map-sync result writes.
-- `SUPABASE_ANON_KEY`: browser-safe Supabase anon key used by the viewer.
+- `SUPABASE_ANON_KEY`: optional for legacy standalone/static viewer experiments. The hosted beta viewer does not expose this key.
 - `SUPABASE_SERVICE_ROLE_KEY`: required for inserting venues and syncing call results.
 - `SUPABASE_RESULTS_TABLE`: Supabase table used for synced call results. Defaults to `call_results`.
 - `GOOGLE_MAPS_API_KEY`: browser-safe Google Maps key used by the hosted viewer.
@@ -181,7 +232,8 @@ What each one does:
 - `FREE_PRICE_REVEALS_PER_DAY`: configurable daily exact-price previews for free users.
 - `CONTRIBUTOR_UNLOCK_POINTS`: approved monthly contribution points required for contributor access.
 - `CONTRIBUTOR_UNLOCK_DAYS`: number of premium days granted for contributor unlocks.
-- `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe.
+- `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe. Keep this `false` for production beta.
+- `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.
 - `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.
 - `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.
 - `STRIPE_PRICE_MONTHLY`: Stripe price ID for the A$1.99/month plan.
@@ -269,9 +321,11 @@ Recommended hosted environment values:
 ```dotenv
 PUBLIC_BASE_URL=https://beer.splitseconds.app
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your_supabase_anon_browser_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 GOOGLE_MAPS_API_KEY=your_google_maps_browser_key
 GOOGLE_MAPS_MAP_ID=optional_google_maps_map_id
+DEMO_BILLING_MODE=false
+ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 ```
 
 ## Railway Deployment
@@ -307,12 +361,12 @@ When the viewer is hosted through the Express app, the browser config is served 
 
 and uses these safe env vars:
 
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
 - `GOOGLE_MAPS_API_KEY`
 - `GOOGLE_MAPS_MAP_ID`
 
-For standalone local use, the viewer can still use:
+The hosted public viewer intentionally does not receive Supabase browser credentials. Venue and price data comes through `/api/business/viewer/venues` and `/api/business/price-records` so exact-price access can be enforced server-side.
+
+For legacy standalone local use, the viewer can still use:
 
 - `viewer/config.js`
 
@@ -326,8 +380,8 @@ Then set:
 
 ```js
 window.MELB_BEER_BOT_VIEWER_CONFIG = {
-  supabaseUrl: "https://your-project.supabase.co",
-  supabaseAnonKey: "your_supabase_anon_browser_key",
+  supabaseUrl: "",
+  supabaseAnonKey: "",
   googleMapsApiKey: "your_google_maps_browser_key",
   googleMapsMapId: "",
 };
@@ -335,7 +389,7 @@ window.MELB_BEER_BOT_VIEWER_CONFIG = {
 
 Notes:
 
-- `supabaseAnonKey` should be your public browser anon key, not the service role key
+- Do not use standalone static mode for public beta price data, because it cannot enforce server-side price gating.
 - `googleMapsApiKey` should be a browser key restricted by HTTP referrers
 - `googleMapsMapId` is optional for now, but it gives you a clean path to branded vector map styling later
 
@@ -507,7 +561,14 @@ If a batch pauses, rerun the same command and it will resume from the saved stat
 
 ## Viewer Data Source
 
-`viewer/index.html` now reads the latest rows from Supabase `call_results`, joins them to `venues`, and renders one marker per venue using the newest synced call result.
+The hosted `viewer/index.html` now reads venue pins and approved price previews through the local Express business API:
+
+- `GET /api/business/viewer/venues`
+- `GET /api/business/price-records`
+
+`/api/business/price-records` returns redacted records by default. The viewer requests `reveal=true&venueId=...` only when a user opens a venue detail, and the server decides whether exact prices can be returned.
+
+Call-derived data can still sync into Supabase `call_results` for the calling pipeline, but the public browser should not read that table directly for beta use.
 
 The viewer expects its browser config in:
 
@@ -532,7 +593,8 @@ That means the end-to-end loop is:
 2. export and review the call-ready venue list
 3. batch call venues through the local app
 4. let ElevenLabs post-call processing sync results into Supabase `call_results`
-5. refresh `viewer/index.html` and see the map update
+5. review or publish trusted rows into `venue_price_records`
+6. refresh the hosted viewer and see the server-gated map update
 
 ## Future Menu Roadmap
 

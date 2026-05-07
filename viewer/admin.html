@@ -16,6 +16,7 @@
       <p class="lead">This page uses account role checks. Admin emails are configured with `ADMIN_EMAILS`; the public map no longer needs an admin secret entry.</p>
     </section>
 
+    <div id="adminContent" hidden>
     <section class="panel" style="margin-bottom:16px;">
       <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center;">
         <div>
@@ -69,6 +70,7 @@
         <div id="reviewQueues" class="list"></div>
       </div>
     </section>
+    </div>
 
     <div id="status" class="notice" style="margin-top:16px;">Log in as an admin account to review submissions.</div>
   </main>
@@ -213,17 +215,21 @@
       renderCoverage(coverage);
       renderPartnerLeads(leads);
       renderQueues(queues);
+      adminContentEl.hidden = false;
       MelbBeerBusiness.setStatus(statusEl, "Admin tools loaded.");
     }
 
     let statusEl;
+    let adminContentEl;
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("admin");
       statusEl = document.getElementById("status");
+      adminContentEl = document.getElementById("adminContent");
       rangeSelect.addEventListener("change", loadAdmin);
       try {
         await loadAdmin();
       } catch (error) {
+        adminContentEl.hidden = true;
         MelbBeerBusiness.setStatus(statusEl, error.message, true);
       }
     });

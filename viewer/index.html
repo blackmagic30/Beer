@@ -1799,8 +1799,6 @@
           <a href="/submit.html" class="primary">Submit data</a>
           <a href="/account.html">Account</a>
         </div>
-        <button id="adminToggle" type="button" hidden>Admin tools</button>
-        <button id="debugToggle" type="button" hidden>Show debug</button>
       </div>
     </div>
 
@@ -1852,7 +1850,6 @@
     </div>
   </div>
 
-    <div id="debug" class="hidden">Starting viewer...</div>
     <div id="mapShell">
       <div id="map"></div>
       <div id="mapOverlayTabs" aria-label="Map overlays">
@@ -1894,188 +1891,6 @@
         <div id="legendHint" class="legend__hint"></div>
       </aside>
     </div>
-  <div id="adminOverlay" class="hidden"></div>
-  <aside id="adminPanel" class="hidden" aria-hidden="true">
-    <div class="adminPanel__header">
-      <div>
-        <h2>Admin tools</h2>
-        <p>Add new venues, attach more beers to existing bars and pubs, or read a menu photo with OCR before saving.</p>
-      </div>
-      <button id="adminClose" type="button">Close</button>
-    </div>
-    <div class="adminPanel__body">
-      <div id="adminBanner" class="adminNotice">Checking admin availability...</div>
-
-      <section class="adminCard">
-        <h3>Unlock admin actions</h3>
-        <label class="adminField">
-          <span>Admin secret</span>
-          <input id="adminSecret" type="password" autocomplete="current-password" placeholder="Enter the shared secret" />
-        </label>
-        <div class="adminActions">
-          <button id="adminSaveSecret" class="adminButton adminButton--primary" type="button">Save secret</button>
-          <button id="adminClearSecret" class="adminButton adminButton--danger" type="button">Clear</button>
-        </div>
-        <div id="adminSecretState" class="adminHint" style="margin-top:10px;"></div>
-      </section>
-
-      <section class="adminCard">
-        <h3>Add beers to a pub/bar</h3>
-        <div class="adminNotice" style="margin-bottom:12px;">
-          Manual beer entries are standardized as <strong>pint prices</strong>. For on-tap beers, enter the pint number only and the app will save it in the shared map format. Tracked beers are quick-addable here and OCR will try to normalize matching names automatically.
-        </div>
-        <label class="adminField">
-          <span>Search venues</span>
-          <input id="adminVenueSearch" type="search" placeholder="Search by venue, suburb, or address" />
-        </label>
-        <label class="adminField">
-          <span>Choose venue</span>
-          <select id="adminVenueSelect" size="8"></select>
-        </label>
-        <div id="adminSelectedVenue" class="adminHint" style="margin-bottom:12px;">No venue selected yet.</div>
-
-        <label class="adminField">
-          <span>Menu photo OCR</span>
-          <input id="adminMenuPhoto" type="file" accept="image/*" capture="environment" />
-        </label>
-        <div class="adminActions">
-          <button id="adminOcrButton" class="adminButton" type="button">Read menu photo</button>
-        </div>
-        <div id="adminOcrResult" class="adminHint" style="margin:10px 0 12px;"></div>
-
-        <div class="adminBeerQuickAdd">
-          <div class="adminBeerQuickAdd__label">Quick add tracked beers</div>
-          <div id="adminBeerQuickAdd" class="chipRow__inline chipRow__inline--dense"></div>
-        </div>
-        <datalist id="adminBeerNameSuggestions"></datalist>
-        <div id="adminBeerRows" class="adminBeerRows"></div>
-        <div class="adminActions">
-          <button id="adminAddBeerRow" class="adminButton" type="button">Add beer row</button>
-        </div>
-
-        <label class="adminField" style="margin-top:12px;">
-          <span>Notes</span>
-          <textarea id="adminCaptureNote" placeholder="Optional notes about the menu or manual entry"></textarea>
-        </label>
-
-        <div class="adminActions">
-          <button id="adminSaveBeers" class="adminButton adminButton--primary" type="button">Save beers to venue</button>
-        </div>
-        <div id="adminCaptureStatus" class="adminHint" style="margin-top:10px;"></div>
-      </section>
-
-      <section class="adminCard">
-        <h3>Source ingestion queue</h3>
-        <div class="adminNotice" style="margin-bottom:12px;">
-          Queue venue-owned menu images or source screenshots for OCR. We score the extraction, normalize known beer names, hold it for manual review, and only publish to the map after approval.
-        </div>
-
-        <div class="adminGrid">
-          <label class="adminField adminField--full" style="grid-column: 1 / -1;">
-            <span>Source image URL (optional)</span>
-            <input id="adminSourceUrl" type="url" placeholder="https://venue-site/menu.jpg" />
-          </label>
-          <label class="adminField">
-            <span>Upload source image</span>
-            <input id="adminSourceImage" type="file" accept="image/*" capture="environment" />
-          </label>
-          <label class="adminField">
-            <span>Source notes (optional)</span>
-            <input id="adminSourceNote" type="text" placeholder="Venue website menu, April 2026" />
-          </label>
-        </div>
-
-        <div class="adminActions">
-          <button id="adminQueueSource" class="adminButton" type="button">Queue source for review</button>
-          <button id="adminRefreshQueue" class="adminButton" type="button">Refresh pending queue</button>
-        </div>
-        <div id="adminSourceQueueStatus" class="adminHint" style="margin-top:10px;"></div>
-
-        <div style="margin-top:16px;">
-          <div style="font-weight:700; margin-bottom:8px;">Pending review</div>
-          <div id="adminQueueList" class="adminHint">No queued sources loaded yet.</div>
-        </div>
-
-        <div id="adminQueueReview" class="adminHint" style="margin-top:16px;">
-          Choose a queued source to review its OCR result.
-        </div>
-        <div class="adminActions">
-          <button id="adminPublishQueued" class="adminButton adminButton--primary" type="button">Publish reviewed source</button>
-          <button id="adminRejectQueued" class="adminButton adminButton--danger" type="button">Reject queued source</button>
-        </div>
-        <div id="adminQueuePublishStatus" class="adminHint" style="margin-top:10px;"></div>
-      </section>
-
-      <section class="adminCard">
-        <h3>Add new pub/bar</h3>
-        <div class="adminNotice" style="margin-bottom:12px;">
-          Enter the official venue name and a location hint like <strong>South Melbourne</strong> or <strong>123 Clarendon St, South Melbourne</strong>. We will look up the proper address and map coordinates for you.
-        </div>
-        <div class="adminGrid">
-          <label class="adminField">
-            <span>Name</span>
-            <input id="adminNewVenueName" type="text" placeholder="The Duke of Wellington" />
-          </label>
-          <label class="adminField">
-            <span>Location</span>
-            <input id="adminNewVenueLocation" type="text" placeholder="South Melbourne or 123 Clarendon St, South Melbourne" />
-          </label>
-        </div>
-
-        <div id="adminVenueLookupSummary" class="adminHint" style="margin:10px 0 12px;">
-          We will fill the address and map coordinates from the name + location when you create the venue.
-        </div>
-
-        <div id="adminDuplicateWarning" class="adminHint" style="margin:10px 0 12px;"></div>
-        <div id="adminVenueLookupMatches" class="adminHint" style="margin:10px 0 12px;"></div>
-
-        <details style="margin-top:8px;">
-          <summary style="cursor:pointer; font-weight:600;">Advanced details (optional overrides)</summary>
-          <div class="adminGrid" style="margin-top:12px;">
-            <label class="adminField adminField--full" style="grid-column: 1 / -1;">
-              <span>Resolved address</span>
-              <input id="adminNewVenueAddress" type="text" placeholder="146 Flinders St" />
-            </label>
-            <label class="adminField">
-              <span>Suburb</span>
-              <input id="adminNewVenueSuburb" type="text" placeholder="Melbourne" />
-            </label>
-            <label class="adminField">
-              <span>State</span>
-              <input id="adminNewVenueState" type="text" value="VIC" />
-            </label>
-            <label class="adminField">
-              <span>Postcode</span>
-              <input id="adminNewVenuePostcode" type="text" placeholder="3000" />
-            </label>
-            <label class="adminField">
-              <span>Phone (optional)</span>
-              <input id="adminNewVenuePhone" type="text" placeholder="(03) 9123 4567" />
-            </label>
-            <label class="adminField">
-              <span>Website (optional)</span>
-              <input id="adminNewVenueWebsite" type="url" placeholder="https://..." />
-            </label>
-            <label class="adminField">
-              <span>Latitude</span>
-              <input id="adminNewVenueLatitude" type="number" step="any" placeholder="-37.8136" />
-            </label>
-            <label class="adminField">
-              <span>Longitude</span>
-              <input id="adminNewVenueLongitude" type="number" step="any" placeholder="144.9631" />
-            </label>
-          </div>
-        </details>
-
-        <div class="adminActions">
-          <button id="adminLookupVenue" class="adminButton" type="button">Look up venue details</button>
-          <button id="adminCreateVenue" class="adminButton adminButton--primary" type="button">Create venue</button>
-        </div>
-        <div id="adminCreateVenueStatus" class="adminHint" style="margin-top:10px;"></div>
-      </section>
-    </div>
-  </aside>
-
   <script>
     const viewerConfig =
       window.MELB_BEER_BOT_VIEWER_CONFIG &&
@@ -2111,7 +1926,17 @@
     const DEFAULT_BEER_SEARCH_PLACEHOLDER = TRACKED_BEERS.length >= 3
       ? `Search ${TRACKED_BEERS.slice(0, 3).map((beer) => beer.name).join(", ")}…`
       : "Search a beer";
-    const debugEl = document.getElementById("debug");
+    function optionalElement(id, tagName = "div") {
+      return document.getElementById(id) || document.createElement(tagName);
+    }
+    function optionalInputElement(id, type = "text") {
+      const element = optionalElement(id, "input");
+      if ("type" in element) {
+        element.type = type;
+      }
+      return element;
+    }
+    const debugEl = optionalElement("debug");
     const businessBannerEl = document.getElementById("businessBanner");
     const venueSearchEl = document.getElementById("venueSearch");
     const beerSearchEl = document.getElementById("beerSearch");
@@ -2141,56 +1966,56 @@
     const highValueChipEls = Array.from(document.querySelectorAll("[data-filter-chip]"));
     const retentionHighlightsEl = document.getElementById("retentionHighlights");
     let beerChipEls = [];
-    const debugToggleEl = document.getElementById("debugToggle");
-    const adminToggleEl = document.getElementById("adminToggle");
-    const adminOverlayEl = document.getElementById("adminOverlay");
-    const adminPanelEl = document.getElementById("adminPanel");
-    const adminCloseEl = document.getElementById("adminClose");
-    const adminBannerEl = document.getElementById("adminBanner");
-    const adminSecretEl = document.getElementById("adminSecret");
-    const adminSaveSecretEl = document.getElementById("adminSaveSecret");
-    const adminClearSecretEl = document.getElementById("adminClearSecret");
-    const adminSecretStateEl = document.getElementById("adminSecretState");
-    const adminVenueSearchEl = document.getElementById("adminVenueSearch");
-    const adminVenueSelectEl = document.getElementById("adminVenueSelect");
-    const adminSelectedVenueEl = document.getElementById("adminSelectedVenue");
-    const adminMenuPhotoEl = document.getElementById("adminMenuPhoto");
-    const adminOcrButtonEl = document.getElementById("adminOcrButton");
-    const adminOcrResultEl = document.getElementById("adminOcrResult");
-    const adminBeerQuickAddEl = document.getElementById("adminBeerQuickAdd");
-    const adminBeerNameSuggestionsEl = document.getElementById("adminBeerNameSuggestions");
-    const adminBeerRowsEl = document.getElementById("adminBeerRows");
-    const adminAddBeerRowEl = document.getElementById("adminAddBeerRow");
-    const adminCaptureNoteEl = document.getElementById("adminCaptureNote");
-    const adminSaveBeersEl = document.getElementById("adminSaveBeers");
-    const adminCaptureStatusEl = document.getElementById("adminCaptureStatus");
-    const adminSourceUrlEl = document.getElementById("adminSourceUrl");
-    const adminSourceImageEl = document.getElementById("adminSourceImage");
-    const adminSourceNoteEl = document.getElementById("adminSourceNote");
-    const adminQueueSourceEl = document.getElementById("adminQueueSource");
-    const adminRefreshQueueEl = document.getElementById("adminRefreshQueue");
-    const adminSourceQueueStatusEl = document.getElementById("adminSourceQueueStatus");
-    const adminQueueListEl = document.getElementById("adminQueueList");
-    const adminQueueReviewEl = document.getElementById("adminQueueReview");
-    const adminPublishQueuedEl = document.getElementById("adminPublishQueued");
-    const adminRejectQueuedEl = document.getElementById("adminRejectQueued");
-    const adminQueuePublishStatusEl = document.getElementById("adminQueuePublishStatus");
-    const adminNewVenueNameEl = document.getElementById("adminNewVenueName");
-    const adminNewVenueLocationEl = document.getElementById("adminNewVenueLocation");
-    const adminVenueLookupSummaryEl = document.getElementById("adminVenueLookupSummary");
-    const adminDuplicateWarningEl = document.getElementById("adminDuplicateWarning");
-    const adminVenueLookupMatchesEl = document.getElementById("adminVenueLookupMatches");
-    const adminNewVenueAddressEl = document.getElementById("adminNewVenueAddress");
-    const adminNewVenueSuburbEl = document.getElementById("adminNewVenueSuburb");
-    const adminNewVenueStateEl = document.getElementById("adminNewVenueState");
-    const adminNewVenuePostcodeEl = document.getElementById("adminNewVenuePostcode");
-    const adminNewVenuePhoneEl = document.getElementById("adminNewVenuePhone");
-    const adminNewVenueWebsiteEl = document.getElementById("adminNewVenueWebsite");
-    const adminNewVenueLatitudeEl = document.getElementById("adminNewVenueLatitude");
-    const adminNewVenueLongitudeEl = document.getElementById("adminNewVenueLongitude");
-    const adminLookupVenueEl = document.getElementById("adminLookupVenue");
-    const adminCreateVenueEl = document.getElementById("adminCreateVenue");
-    const adminCreateVenueStatusEl = document.getElementById("adminCreateVenueStatus");
+    const debugToggleEl = optionalElement("debugToggle", "button");
+    const adminToggleEl = optionalElement("adminToggle", "button");
+    const adminOverlayEl = optionalElement("adminOverlay");
+    const adminPanelEl = optionalElement("adminPanel", "aside");
+    const adminCloseEl = optionalElement("adminClose", "button");
+    const adminBannerEl = optionalElement("adminBanner");
+    const adminSecretEl = optionalInputElement("adminSecret", "password");
+    const adminSaveSecretEl = optionalElement("adminSaveSecret", "button");
+    const adminClearSecretEl = optionalElement("adminClearSecret", "button");
+    const adminSecretStateEl = optionalElement("adminSecretState");
+    const adminVenueSearchEl = optionalInputElement("adminVenueSearch", "search");
+    const adminVenueSelectEl = optionalElement("adminVenueSelect", "select");
+    const adminSelectedVenueEl = optionalElement("adminSelectedVenue");
+    const adminMenuPhotoEl = optionalInputElement("adminMenuPhoto", "file");
+    const adminOcrButtonEl = optionalElement("adminOcrButton", "button");
+    const adminOcrResultEl = optionalElement("adminOcrResult");
+    const adminBeerQuickAddEl = optionalElement("adminBeerQuickAdd");
+    const adminBeerNameSuggestionsEl = optionalElement("adminBeerNameSuggestions", "datalist");
+    const adminBeerRowsEl = optionalElement("adminBeerRows");
+    const adminAddBeerRowEl = optionalElement("adminAddBeerRow", "button");
+    const adminCaptureNoteEl = optionalElement("adminCaptureNote", "textarea");
+    const adminSaveBeersEl = optionalElement("adminSaveBeers", "button");
+    const adminCaptureStatusEl = optionalElement("adminCaptureStatus");
+    const adminSourceUrlEl = optionalInputElement("adminSourceUrl", "url");
+    const adminSourceImageEl = optionalInputElement("adminSourceImage", "file");
+    const adminSourceNoteEl = optionalInputElement("adminSourceNote", "text");
+    const adminQueueSourceEl = optionalElement("adminQueueSource", "button");
+    const adminRefreshQueueEl = optionalElement("adminRefreshQueue", "button");
+    const adminSourceQueueStatusEl = optionalElement("adminSourceQueueStatus");
+    const adminQueueListEl = optionalElement("adminQueueList");
+    const adminQueueReviewEl = optionalElement("adminQueueReview");
+    const adminPublishQueuedEl = optionalElement("adminPublishQueued", "button");
+    const adminRejectQueuedEl = optionalElement("adminRejectQueued", "button");
+    const adminQueuePublishStatusEl = optionalElement("adminQueuePublishStatus");
+    const adminNewVenueNameEl = optionalInputElement("adminNewVenueName", "text");
+    const adminNewVenueLocationEl = optionalInputElement("adminNewVenueLocation", "text");
+    const adminVenueLookupSummaryEl = optionalElement("adminVenueLookupSummary");
+    const adminDuplicateWarningEl = optionalElement("adminDuplicateWarning");
+    const adminVenueLookupMatchesEl = optionalElement("adminVenueLookupMatches");
+    const adminNewVenueAddressEl = optionalInputElement("adminNewVenueAddress", "text");
+    const adminNewVenueSuburbEl = optionalInputElement("adminNewVenueSuburb", "text");
+    const adminNewVenueStateEl = optionalInputElement("adminNewVenueState", "text");
+    const adminNewVenuePostcodeEl = optionalInputElement("adminNewVenuePostcode", "text");
+    const adminNewVenuePhoneEl = optionalInputElement("adminNewVenuePhone", "text");
+    const adminNewVenueWebsiteEl = optionalInputElement("adminNewVenueWebsite", "url");
+    const adminNewVenueLatitudeEl = optionalInputElement("adminNewVenueLatitude", "number");
+    const adminNewVenueLongitudeEl = optionalInputElement("adminNewVenueLongitude", "number");
+    const adminLookupVenueEl = optionalElement("adminLookupVenue", "button");
+    const adminCreateVenueEl = optionalElement("adminCreateVenue", "button");
+    const adminCreateVenueStatusEl = optionalElement("adminCreateVenueStatus");
     let googleMapsAuthFailed = false;
     let debugEnabled = params.get("debug") === "1";
     let adminPanelOpen = false;
@@ -2322,30 +2147,37 @@
       if (
         businessAccess.hasFullAccess ||
         revealedVenueIds.has(markerId) ||
-        !getBeerItems(row).some(hasNumericPrice)
+        !rowHasRevealablePrice(row)
       ) {
         return;
       }
 
-      if (!businessAccess.canRevealPrice || businessAccess.freePriceRevealsRemainingToday <= 0) {
-        void trackBusinessEvent("price_view_blocked_free_limit", {
-          venueId: row.venue_id || null,
-          venueName: row.venue_name || null,
-        });
+      const venue = getVenueRecord(row.venues) || {};
+      const venueId = row.venue_id || venue.id || null;
+
+      if (!venueId) {
         return;
       }
 
-      revealedVenueIds.add(markerId);
-      persistRevealedVenueIds();
-      businessAccess.freePriceRevealsUsedToday += 1;
-      businessAccess.freePriceRevealsRemainingToday = Math.max(0, businessAccess.freePriceRevealsRemainingToday - 1);
-      businessAccess.canRevealPrice = businessAccess.hasFullAccess || businessAccess.freePriceRevealsRemainingToday > 0;
-
-      await trackBusinessEvent("price_view_revealed", {
-        venueId: row.venue_id || null,
-        venueName: row.venue_name || null,
-        remaining: businessAccess.freePriceRevealsRemainingToday,
+      const response = await fetchBusinessPriceRecords({
+        venueId,
+        reveal: true,
+        limit: 100,
       });
+
+      if (response.access) {
+        businessAccess = {
+          ...businessAccess,
+          ...response.access,
+        };
+      }
+
+      if (response.revealed) {
+        applyBusinessPriceRecordsToRow(row, response.records);
+        revealedVenueIds.add(markerId);
+        persistRevealedVenueIds();
+      }
+
       syncBusinessAccessUi();
     }
 
@@ -2657,11 +2489,11 @@
 
     function syncAdminSecretState() {
       if (getAdminSecret()) {
-        setHint(adminSecretStateEl, "Admin secret is ready in this browser.", "success");
+        setHint(adminSecretStateEl, "Admin credential is ready in this browser.", "success");
         return;
       }
 
-      setHint(adminSecretStateEl, "Enter the shared admin secret to enable write actions.", null);
+      setHint(adminSecretStateEl, "Enter your admin credential to enable write actions.", null);
     }
 
     adminSaveSecretEl.addEventListener("click", () => {
@@ -2673,7 +2505,7 @@
       }
 
       window.localStorage.setItem(ADMIN_SECRET_STORAGE_KEY, secret);
-      setHint(adminSecretStateEl, "Admin secret saved in this browser.", "success");
+      setHint(adminSecretStateEl, "Admin credential saved in this browser.", "success");
     });
 
     adminClearSecretEl.addEventListener("click", () => {
@@ -3060,6 +2892,7 @@
             label: source.label || titleizeKey(key),
             priceText: getBeerPriceText(source, availabilityLabel, priceNumeric),
             priceNumeric,
+            priceRedacted: Boolean(source.price_redacted),
             priceRecordId: source.price_record_id || null,
             confidenceLabel: source.confidence_label || null,
             sourceType: source.source_type || null,
@@ -3084,6 +2917,14 @@
 
     function hasNumericPrice(beer) {
       return beer && Number.isFinite(Number(beer.priceNumeric));
+    }
+
+    function hasRedactedPrice(beer) {
+      return Boolean(beer && beer.priceRedacted);
+    }
+
+    function rowHasRevealablePrice(row) {
+      return getBeerItems(row).some((beer) => hasNumericPrice(beer) || hasRedactedPrice(beer));
     }
 
     function getLowestBeerPrice(row) {
@@ -3417,11 +3258,13 @@
       const isNotOnTap = record.isOnTap === "no";
       const availabilityStatus = isOnTap ? "on_tap" : isNotOnTap ? "unavailable" : "unknown";
       const price = normalizePositiveNumber(record.price);
+      const isRedacted = Boolean(record.priceRedacted);
 
       return {
         label: record.beerName,
         price_numeric: isOnTap ? price : null,
-        price_text: price === null ? "Price unavailable" : formatPriceValue(price),
+        price_text: isRedacted ? "Unlock exact price" : price === null ? "Price unavailable" : formatPriceValue(price),
+        price_redacted: isRedacted,
         availability_status: availabilityStatus,
         available_on_tap: record.isOnTap === "unknown" ? null : isOnTap,
         serving_size: record.servingSize,
@@ -3470,6 +3313,16 @@
       };
     }
 
+    function applyBusinessPriceRecordsToRow(row, records = []) {
+      if (!row || !records.length) {
+        return row;
+      }
+
+      const merged = mergeBusinessPriceRecords(row, records);
+      Object.assign(row, merged);
+      return row;
+    }
+
     async function fetchBusinessViewerVenues(limit = 1000) {
       if (!window.MelbBeerBusiness) {
         return [];
@@ -3479,13 +3332,31 @@
       return Array.isArray(response.venues) ? response.venues : [];
     }
 
-    async function fetchBusinessPriceRecords() {
+    async function fetchBusinessPriceRecords(options = {}) {
       if (!window.MelbBeerBusiness) {
-        return [];
+        return { records: [], access: null, revealed: false, blocked: false };
       }
 
-      const response = await window.MelbBeerBusiness.apiFetch("/api/business/price-records");
-      return Array.isArray(response.records) ? response.records : [];
+      const query = new URLSearchParams();
+      query.set("anonymousSessionId", window.MelbBeerBusiness.getAnonymousSessionId());
+
+      if (options.venueId) {
+        query.set("venueId", options.venueId);
+      }
+
+      if (options.reveal) {
+        query.set("reveal", "true");
+      }
+
+      if (options.limit) {
+        query.set("limit", String(options.limit));
+      }
+
+      const response = await window.MelbBeerBusiness.apiFetch(`/api/business/price-records?${query.toString()}`);
+      return {
+        ...response,
+        records: Array.isArray(response.records) ? response.records : [],
+      };
     }
 
     function getMatchingBeerItems(row, beerQuery, onTapOnly = false) {
@@ -4569,7 +4440,7 @@
       const secret = getAdminSecret();
 
       if (!secret) {
-        throw new Error("Add the admin secret first.");
+        throw new Error("Add the admin credential first.");
       }
 
       const { method = "POST", body } = options;
@@ -5355,23 +5226,9 @@
     async function init() {
       try {
         await refreshBusinessAccess();
-        const hasSupabaseBrowserConfig = Boolean(
-          window.supabase &&
-          typeof window.supabase.createClient === "function" &&
-          SUPABASE_URL &&
-          SUPABASE_KEY,
-        );
-
         debug(`Viewer origin: ${window.location.origin}`);
         debug(`Google Maps key in use: ...${GOOGLE_MAPS_KEY.slice(-6)}`);
-
-        if (hasSupabaseBrowserConfig) {
-          debug("Creating Supabase client...");
-          debug(`Supabase URL: ${SUPABASE_URL}`);
-          supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-        } else {
-          debug("Supabase browser config missing. Using local business API venue fallback.");
-        }
+        debug("Using local business API venue data and server-gated price records.");
 
         await fetchAdminStatus();
 
@@ -5403,87 +5260,25 @@
         let rows = [];
         let allVenues = [];
 
-        if (hasSupabaseBrowserConfig) {
-          debug("Fetching call_results rows...");
-
-          const { data, error } = await supabaseClient
-            .from("call_results")
-            .select(`
-              id,
-              venue_id,
-              venue_name,
-              suburb,
-              created_at,
-              saved_at,
-              cleaned,
-              venues!left (
-                id,
-                name,
-                address,
-                suburb,
-                state,
-                postcode,
-                latitude,
-                longitude
-              )
-            `)
-            .order("created_at", { ascending: false });
-
-          debugJson("Fetch error", error ? {
-            message: error.message,
-            details: error.details,
-            hint: error.hint,
-            code: error.code,
-          } : null);
-
-          if (error) {
-            throw error;
-          }
-
-          rows = Array.isArray(data) ? data : [];
-          debug(`Fetched row count: ${rows.length}`);
-          debugJson("Sample returned row", rows[0] || null);
-
-          debug("Fetching venues rows...");
-          const { data: venuesData, error: venuesError } = await supabaseClient
-            .from("venues")
-            .select(`
-              id,
-              name,
-              address,
-              suburb,
-              state,
-              postcode,
-              latitude,
-              longitude
-            `)
-            .order("name", { ascending: true });
-
-          debugJson("Venue fetch error", venuesError ? {
-            message: venuesError.message,
-            details: venuesError.details,
-            hint: venuesError.hint,
-            code: venuesError.code,
-          } : null);
-
-          if (venuesError) {
-            throw venuesError;
-          }
-
-          allVenues = Array.isArray(venuesData) ? venuesData : [];
-        } else {
-          debug("Fetching venues through local business API...");
-          allVenues = await fetchBusinessViewerVenues();
-          debug(`Fetched fallback venue count: ${allVenues.length}`);
-          debugJson("Sample fallback venue row", allVenues[0] || null);
-        }
+        debug("Fetching venues through local business API...");
+        allVenues = await fetchBusinessViewerVenues();
+        debug(`Fetched venue API row count: ${allVenues.length}`);
+        debugJson("Sample venue API row", allVenues[0] || null);
 
         debug(`Fetched venue count: ${allVenues.length}`);
         debugJson("Sample venue row", allVenues[0] || null);
 
         let businessPriceRecords = [];
         try {
-          businessPriceRecords = await fetchBusinessPriceRecords();
+          const priceRecordResponse = await fetchBusinessPriceRecords();
+          businessPriceRecords = priceRecordResponse.records;
+          if (priceRecordResponse.access) {
+            businessAccess = {
+              ...businessAccess,
+              ...priceRecordResponse.access,
+            };
+            syncBusinessAccessUi();
+          }
           debug(`Fetched approved submission price records: ${businessPriceRecords.length}`);
         } catch (error) {
           debug(`Approved submission price records unavailable: ${error instanceof Error ? error.message : String(error)}`);
@@ -5544,11 +5339,7 @@
         debug(`Markerable captured row count: ${venueRows.length}`);
         debug(`Markerable all-venue row count: ${allVenueRows.length}`);
 
-        if (rows.length === 0) {
-          debug(
-            "call_results returned zero public rows. This usually means no synced call data exists yet."
-          );
-        }
+        debug("Legacy call-derived rows are not read directly by the browser.");
 
         let liveMarkers = [];
         let markerRecords = [];
@@ -5576,11 +5367,8 @@
             const venue = getVenueRecord(item.venues);
             const lat = Number(venue.latitude);
             const lng = Number(venue.longitude);
-            const beerItems = getDisplayBeerItems(item, viewState);
-            const happyHourDetails = getHappyHourDetails(item);
             const featuredBeer = getFeaturedBeer(item, viewState);
             const markerVisual = getMarkerVisual(viewState, featuredBeer);
-            const hasCapturedData = hasCapturedBeerData(item);
             const markerId = getVenueMarkerId(item, venue, lat, lng);
 
             const markerOptions = {
@@ -5629,22 +5417,26 @@
             const safeAddress = escapeHtml(address || "Address unavailable");
             const safeCreatedAt = escapeHtml(createdAt);
             const getContent = () => {
-              const featuredBeerMarkup = featuredBeer ? `
+              const liveBeerItems = getDisplayBeerItems(item, viewState);
+              const liveHappyHourDetails = getHappyHourDetails(item);
+              const liveFeaturedBeer = getFeaturedBeer(item, viewState);
+              const liveHasCapturedData = hasCapturedBeerData(item);
+              const featuredBeerMarkup = liveFeaturedBeer ? `
                 <div class="beerPopup__featured">
                   <div class="beerPopup__featuredLabel">${escapeHtml(viewState.beerQuery ? "Best match" : "Best captured beer")}</div>
                   <div class="beerPopup__featuredRow">
                     <div>
-                      <div class="beerPopup__featuredPrice">${escapeHtml(getDisplayBeerPriceText(featuredBeer, markerId))}</div>
-                      <div class="beerPopup__featuredMeta">${escapeHtml(featuredBeer.availabilityLabel)}</div>
+                      <div class="beerPopup__featuredPrice">${escapeHtml(getDisplayBeerPriceText(liveFeaturedBeer, markerId))}</div>
+                      <div class="beerPopup__featuredMeta">${escapeHtml(liveFeaturedBeer.availabilityLabel)}</div>
                     </div>
-                    <div class="beerPopup__pill" style="background:${featuredBeer.availabilityTone.background}; color:${featuredBeer.availabilityTone.color};">
-                      ${escapeHtml(featuredBeer.label)}
+                    <div class="beerPopup__pill" style="background:${liveFeaturedBeer.availabilityTone.background}; color:${liveFeaturedBeer.availabilityTone.color};">
+                      ${escapeHtml(liveFeaturedBeer.label)}
                     </div>
                   </div>
                 </div>
               ` : "";
-              const beerMarkup = beerItems.length > 0
-                ? beerItems.map((beer) => `
+              const beerMarkup = liveBeerItems.length > 0
+                ? liveBeerItems.map((beer) => `
                 <div class="beerPopup__beerRow">
                   <div style="display:flex; flex-direction:column; gap:4px;">
                     <span class="beerPopup__beerName">${escapeHtml(beer.label)}</span>
@@ -5672,17 +5464,17 @@
                   No beer prices captured yet.
                 </div>
               `;
-              const captureStatusMarkup = hasCapturedData
+              const captureStatusMarkup = liveHasCapturedData
                 ? ""
                 : `
                 <div class="beerPopup__notice">
                   This venue is already mapped, but the beer list still needs to be filled.
                 </div>
               `;
-              const happyHourMarkup = !happyHourDetails
+              const happyHourMarkup = !liveHappyHourDetails
                 ? ""
                 : businessAccess.hasFullAccess
-                  ? renderHappyHourPopupMarkup(happyHourDetails)
+                  ? renderHappyHourPopupMarkup(liveHappyHourDetails)
                   : `
                 <div class="beerPopup__notice">
                   Happy-hour data exists for this venue. Unlock full access to view the days, times, and specials.

@@ -10,6 +10,7 @@ import {
   type BusinessSubmission,
   type BusinessSubmissionItem,
   type ConfidenceLabel,
+  type PublicVenuePriceRecord,
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../../constants/beers.js";
@@ -25,6 +26,7 @@ import type {
   CreateSubmissionInput,
   EventTrackInput,
   FeedbackInput,
+  PriceRecordsQuery,
   RemoveSavedItemInput,
   ReviewSubmissionInput,
   RetentionQuery,
@@ -201,6 +203,20 @@ function isFullAccess(account: BusinessAccount | null): boolean {
   return false;
 }
 
+function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceRecord & { priceRedacted: true } {
+  return {
+    ...record,
+    price: null,
+    happyHourDetails: null,
+    sourceSubmissionId: null,
+    priceRedacted: true,
+  };
+}
+
+function hashAnonymousFallback(value: string): string {
+  return `ip:${crypto.createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
+}
+
 function formEncode(value: Record<string, string>): URLSearchParams {
   const params = new URLSearchParams();
 
@@ -289,7 +305,7 @@ export class BusinessService {
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
       contributorUnlockDays: this.config.CONTRIBUTOR_UNLOCK_DAYS,
       stripePublishableKey: this.config.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? null,
-      demoBillingMode: this.config.DEMO_BILLING_MODE || !this.config.STRIPE_SECRET_KEY,
+      demoBillingMode: this.config.DEMO_BILLING_MODE,
       rewards: {
         partnerVenueCredit: "disabled",
         copy: "Partner venue credit is coming soon and is not active in this demo.",
@@ -981,8 +997,89 @@ export class BusinessService {
     });
   }
 
-  listPriceRecords() {
-    return this.repository.listLatestPriceRecords(200);
+  listPriceRecords(
+    account: BusinessAccount | null,
+    input: PriceRecordsQuery & { clientIp?: string | undefined },
+  ) {
+    const anonymousSessionId = input.anonymousSessionId
+      || (account ? null : hashAnonymousFallback(input.clientIp || "unknown-client"));
+    const records = this.repository.listLatestPriceRecords(input.limit, input.venueId);
+    const hasFullAccess = isFullAccess(account);
+
+    if (hasFullAccess) {
+      return {
+        records,
+        access: this.getAccessState(account, anonymousSessionId),
+        revealed: true,
+        blocked: false,
+      };
+    }
+
+    const redactedRecords = records.map(redactPriceRecord);
+    if (!input.reveal || !input.venueId || records.length === 0) {
+      return {
+        records: redactedRecords,
+        access: this.getAccessState(account, anonymousSessionId),
+        revealed: false,
+        blocked: false,
+      };
+    }
+
+    const identity = {
+      userId: account?.id ?? null,
+      anonymousSessionId,
+    };
+    const since = startOfTodayIso();
+    const alreadyRevealed = this.repository.countEvents({
+      eventType: "price_view_revealed",
+      userId: identity.userId,
+      anonymousSessionId: identity.anonymousSessionId,
+      venueId: input.venueId,
+      since,
+    }) > 0;
+    const accessBeforeReveal = this.getAccessState(account, anonymousSessionId);
+
+    if (alreadyRevealed || accessBeforeReveal.freePriceRevealsRemainingToday > 0) {
+      if (!alreadyRevealed) {
+        this.trackEvent(account, {
+          anonymousSessionId,
+          eventType: "price_view_revealed",
+          venueId: input.venueId,
+          beerId: null,
+          suburb: records[0]?.suburb ?? null,
+          metadata: {
+            source: "server_price_records",
+            recordCount: records.length,
+          },
+        });
+      }
+
+      return {
+        records,
+        access: this.getAccessState(account, anonymousSessionId),
+        revealed: true,
+        blocked: false,
+      };
+    }
+
+    this.trackEvent(account, {
+      anonymousSessionId,
+      eventType: "price_view_blocked_free_limit",
+      venueId: input.venueId,
+      beerId: null,
+      suburb: records[0]?.suburb ?? null,
+      metadata: {
+        source: "server_price_records",
+        recordCount: records.length,
+      },
+    });
+
+    return {
+      records: redactedRecords,
+      access: this.getAccessState(account, anonymousSessionId),
+      revealed: false,
+      blocked: true,
+    };
   }
 
   trackEvent(account: BusinessAccount | null, input: EventTrackInput): void {
@@ -1132,12 +1229,16 @@ export class BusinessService {
       metadata: { plan: input.plan },
     });
 
-    if (this.config.DEMO_BILLING_MODE || !this.config.STRIPE_SECRET_KEY || !priceId) {
+    if (this.config.DEMO_BILLING_MODE) {
       return {
         mode: "demo",
         checkoutUrl: `/account.html?checkout=demo&plan=${input.plan}`,
         message: "Stripe is not configured, so this demo returns a simulated checkout URL.",
       };
+    }
+
+    if (!this.config.STRIPE_SECRET_KEY || !priceId) {
+      throw new AppError("Stripe checkout is not configured for this plan.", 503);
     }
 
     const successUrl = new URL("/account.html?checkout=success", this.config.PUBLIC_BASE_URL).toString();
@@ -1322,7 +1423,7 @@ export class BusinessService {
     logger.info("Business demo service ready", {
       freePriceRevealsPerDay: this.config.FREE_PRICE_REVEALS_PER_DAY,
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
-      demoBillingMode: this.config.DEMO_BILLING_MODE || !this.config.STRIPE_SECRET_KEY,
+      demoBillingMode: this.config.DEMO_BILLING_MODE,
     });
   }
 }

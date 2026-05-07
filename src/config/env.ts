@@ -130,6 +130,7 @@ const envSchema = z.object({
   CONTRIBUTOR_UNLOCK_POINTS: z.coerce.number().int().min(1).default(15),
   CONTRIBUTOR_UNLOCK_DAYS: z.coerce.number().int().min(1).default(30),
   DEMO_BILLING_MODE: booleanFromEnv.default(true),
+  ALLOW_DEMO_BILLING_IN_PRODUCTION: booleanFromEnv.default(false),
   STRIPE_SECRET_KEY: optionalStringFromEnv,
   STRIPE_WEBHOOK_SECRET: optionalStringFromEnv,
   STRIPE_PRICE_MONTHLY: optionalStringFromEnv,
@@ -149,6 +150,14 @@ const parsedEnv = envSchema.safeParse(process.env);
 
 if (!parsedEnv.success) {
   throw new Error(`Invalid environment configuration: ${JSON.stringify(parsedEnv.error.flatten(), null, 2)}`);
+}
+
+if (
+  parsedEnv.data.NODE_ENV === "production" &&
+  parsedEnv.data.DEMO_BILLING_MODE &&
+  !parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION
+) {
+  throw new Error("DEMO_BILLING_MODE cannot be true in production unless ALLOW_DEMO_BILLING_IN_PRODUCTION=true.");
 }
 
 export const env = {

@@ -192,8 +192,10 @@ export function createApp() {
 
   app.get("/config.js", (_req, res) => {
     const viewerConfig = {
-      supabaseUrl: env.SUPABASE_URL ?? "",
-      supabaseAnonKey: env.SUPABASE_ANON_KEY ?? "",
+      // The public viewer uses server-gated API routes for venue and price data.
+      // Do not expose Supabase browser reads here; exact price access is enforced server-side.
+      supabaseUrl: "",
+      supabaseAnonKey: "",
       googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
       googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
       trackedBeers: VIEWER_TRACKED_BEERS,
