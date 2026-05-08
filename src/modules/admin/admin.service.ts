@@ -186,7 +186,6 @@ export class AdminService {
     supabaseUrl?: string,
     supabaseServiceRoleKey?: string,
     private readonly resultsTable = "call_results",
-    private readonly adminSharedSecret?: string,
     openaiApiKey?: string,
   ) {
     if (supabaseUrl && supabaseServiceRoleKey) {
@@ -211,16 +210,6 @@ export class AdminService {
       ocrEnabled: Boolean(this.supabase && this.openai),
       queueEnabled: Boolean(this.supabase && this.ingestionQueueRepository),
     };
-  }
-
-  assertAuthorized(secret: string | undefined): void {
-    if (!this.supabase || !this.adminSharedSecret) {
-      throw new AppError("Admin tools are not configured on this deployment.", 503);
-    }
-
-    if (!secret || secret !== this.adminSharedSecret) {
-      throw new AppError("Invalid admin secret.", 401);
-    }
   }
 
   private getSupabase(): SupabaseClient {

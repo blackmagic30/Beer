@@ -9,9 +9,19 @@ import {
   outboundCallBodySchema,
 } from "./calls.schemas.js";
 import type { CallsService } from "./calls.service.js";
+import type { BusinessService } from "../business/business.service.js";
 
-export function createCallsRouter(callsService: CallsService): Router {
+export function createCallsRouter(callsService: CallsService, businessService: BusinessService): Router {
   const router = Router();
+
+  router.use((req, _res, next) => {
+    try {
+      businessService.requireAdmin(req.header("authorization") ?? undefined);
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.post("/outbound", async (req, res) => {
     const body = parseWithSchema(outboundCallBodySchema, req.body, "Invalid outbound call payload");

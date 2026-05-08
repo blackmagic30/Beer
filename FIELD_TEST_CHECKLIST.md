@@ -14,7 +14,7 @@ Use this before showing the app to real Melbourne users.
 
 ```dotenv
 FIELD_TEST_MODE=true
-DEMO_BILLING_MODE=true
+DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 FREE_PRICE_REVEALS_PER_DAY=3
 CONTRIBUTOR_UNLOCK_POINTS=15
@@ -22,7 +22,7 @@ CONTRIBUTOR_UNLOCK_DAYS=30
 ADMIN_EMAILS=your-admin-email@example.com
 ```
 
-Keep `DEMO_BILLING_MODE=true` for the private test unless Stripe test-mode checkout and webhooks have passed end to end.
+For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you intentionally set `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` and clearly tell testers checkout is simulated. If Stripe test-mode checkout and webhooks have not passed end to end, use free limits, contributor unlocks, or explicit admin overrides instead of live payment claims.
 
 ## 3. Test Accounts
 
@@ -37,6 +37,7 @@ Keep `DEMO_BILLING_MODE=true` for the private test unless Stripe test-mode check
 - Click monthly or yearly.
 - Confirm the account page shows premium access.
 - Do not use live payments unless Stripe test mode has passed.
+- Do not enable demo billing in production unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` is intentionally set for this private beta.
 
 ## 5. Admin Access
 

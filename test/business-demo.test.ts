@@ -1,13 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 
 import BetterSqlite3 from "better-sqlite3";
+import express from "express";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BusinessRepository, type SubmissionType, type SubscriptionStatus } from "../src/db/business.repository.js";
+import { AppError } from "../src/lib/errors.js";
+import { errorHandler } from "../src/middleware/error-handler.js";
+import { createCallsRouter } from "../src/modules/calls/calls.routes.js";
 import { createSubmissionSchema } from "../src/modules/business/business.schemas.js";
 import { BusinessService } from "../src/modules/business/business.service.js";
+import { createResultsRouter } from "../src/modules/results/results.routes.js";
 
 const NOW = "2026-05-04T08:00:00.000Z";
 const MONTH_KEY = "2026-05";
@@ -165,6 +172,25 @@ function createStripeSignature(payload: object, secret: string, timestamp = "177
     body,
     header: `t=${timestamp},v1=${signature}`,
   };
+}
+
+async function withHttpServer(
+  app: express.Express,
+  callback: (baseUrl: string) => Promise<void>,
+) {
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+
+  const address = server.address() as AddressInfo;
+  try {
+    await callback(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
 }
 
 afterEach(() => {
@@ -354,10 +380,16 @@ describe("production hardening", () => {
     const legacyMapHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/google-map.html"), "utf8");
 
     expect(viewerHtml).not.toContain(".from(\"call_results\")");
+    expect(viewerHtml).not.toContain("@supabase/supabase-js");
+    expect(viewerHtml).not.toContain("supabaseAnonKey");
     expect(viewerHtml).not.toContain("Admin secret");
     expect(viewerHtml).not.toContain("ADMIN_SHARED_SECRET");
     expect(viewerHtml).not.toContain("x-admin-secret");
     expect(viewerHtml).not.toContain("/api/admin");
+    expect(viewerHtml).not.toContain("adminPanel");
+    expect(viewerHtml).not.toContain("adminSecret");
+    expect(viewerHtml).not.toContain("debugToggle");
+    expect(viewerHtml).not.toContain("legacy-review");
     expect(viewerHtml).not.toContain("Unlock admin actions");
     expect(viewerHtml).not.toMatch(/<aside[^>]+id="adminPanel"/);
     expect(viewerHtml).not.toMatch(/<button[^>]+id="adminToggle"/);
@@ -368,6 +400,50 @@ describe("production hardening", () => {
     expect(adminHtml).not.toContain("Unlock admin actions");
     expect(legacyMapHtml).not.toContain("Fetching venues from Supabase");
     expect(legacyMapHtml).not.toContain("<div id=\"debug\"");
+  });
+
+  it("protects legacy call and result APIs behind admin auth", async () => {
+    const businessService = {
+      requireAdmin(authorization: string | undefined) {
+        if (!authorization) {
+          throw new AppError("Login required.", 401);
+        }
+
+        if (authorization !== "Bearer admin-token") {
+          throw new AppError("Admin access required.", 403);
+        }
+
+        return { id: "admin", role: "admin", subscriptionStatus: "admin" };
+      },
+    } as unknown as BusinessService;
+    const app = express();
+    app.use(express.json());
+    app.use("/api/calls", createCallsRouter({
+      listCallRuns: () => [],
+      getCallRun: () => null,
+      createOutboundCall: async () => ({ callRun: null }),
+    } as never, businessService));
+    app.use("/api/results", createResultsRouter({
+      list: () => [],
+    } as never, businessService));
+    app.use(errorHandler);
+
+    await withHttpServer(app, async (baseUrl) => {
+      expect((await fetch(`${baseUrl}/api/calls`)).status).toBe(401);
+      expect((await fetch(`${baseUrl}/api/results`)).status).toBe(401);
+      expect((await fetch(`${baseUrl}/api/calls`, {
+        headers: { Authorization: "Bearer user-token" },
+      })).status).toBe(403);
+      expect((await fetch(`${baseUrl}/api/results`, {
+        headers: { Authorization: "Bearer user-token" },
+      })).status).toBe(403);
+      expect((await fetch(`${baseUrl}/api/calls`, {
+        headers: { Authorization: "Bearer admin-token" },
+      })).status).toBe(200);
+      expect((await fetch(`${baseUrl}/api/results`, {
+        headers: { Authorization: "Bearer admin-token" },
+      })).status).toBe(200);
+    });
   });
 
   it("validates source photo type and size before storing demo uploads", () => {
@@ -480,7 +556,9 @@ describe("production hardening", () => {
     });
 
     await expect(demoService.createCheckout(user, { plan: "monthly" })).resolves.toMatchObject({ mode: "demo" });
+    expect(demoService.handleDemoSubscription(user, "monthly").account.subscriptionStatus).toBe("premium_monthly");
     await expect(stripeService.createCheckout(user, { plan: "monthly" })).rejects.toThrow("Stripe checkout is not configured");
+    expect(() => stripeService.handleDemoSubscription(user, "monthly")).toThrow("Demo billing is not enabled");
   });
 
   it("verifies Stripe webhook signatures before updating subscriptions", () => {
@@ -509,6 +587,7 @@ describe("production hardening", () => {
     expect(repository.getAccountById(user.id)?.subscriptionStatus).toBe("premium_yearly");
     expect(repository.getAccountById(user.id)?.stripeCustomerId).toBe("cus_test");
     expect(() => service.handleStripeWebhook(signed.body, "t=1777881600,v1=bad")).toThrow("Invalid Stripe webhook signature");
+    expect(() => service.handleStripeWebhook(signed.body, `t=1777881600,v1=${"z".repeat(64)}`)).toThrow("Invalid Stripe webhook signature");
     expect(() => createBusinessService(repository, {
       DEMO_BILLING_MODE: false,
       STRIPE_WEBHOOK_SECRET: undefined,

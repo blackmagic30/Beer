@@ -99,7 +99,6 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.SUPABASE_URL,
     env.SUPABASE_SERVICE_ROLE_KEY,
     env.SUPABASE_RESULTS_TABLE,
-    env.ADMIN_SHARED_SECRET,
     env.OPENAI_API_KEY,
   );
   const supabaseResultsSyncService = new SupabaseResultsSyncService(
@@ -121,8 +120,8 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   console.info("Backend services initialized.");
 
   return {
-    callsRouter: createCallsRouter(callsService),
-    resultsRouter: createResultsRouter(resultsService),
+    callsRouter: createCallsRouter(callsService, businessService),
+    resultsRouter: createResultsRouter(resultsService, businessService),
     webhooksRouter: createWebhooksRouter({
       webhooksService,
       twilioService,
@@ -319,8 +318,6 @@ export function createApp() {
     const viewerConfig = {
       // The public viewer uses server-gated API routes for venue and price data.
       // Do not expose Supabase browser reads here; exact price access is enforced server-side.
-      supabaseUrl: "",
-      supabaseAnonKey: "",
       googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
       googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
       trackedBeers: VIEWER_TRACKED_BEERS,

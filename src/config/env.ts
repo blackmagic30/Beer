@@ -121,7 +121,6 @@ const envSchema = z.object({
   SUPABASE_ANON_KEY: optionalStringFromEnv,
   SUPABASE_SERVICE_ROLE_KEY: optionalStringFromEnv,
   SUPABASE_RESULTS_TABLE: optionalStringFromEnv.default("call_results"),
-  ADMIN_SHARED_SECRET: optionalStringFromEnv,
   ADMIN_EMAILS: optionalStringFromEnv,
   GOOGLE_MAPS_API_KEY: optionalStringFromEnv,
   GOOGLE_MAPS_MAP_ID: optionalStringFromEnv,

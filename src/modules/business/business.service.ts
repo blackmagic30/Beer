@@ -1308,6 +1308,10 @@ export class BusinessService {
   }
 
   handleDemoSubscription(account: BusinessAccount, plan: "monthly" | "yearly") {
+    if (!this.config.DEMO_BILLING_MODE) {
+      throw new AppError("Demo billing is not enabled.", 503);
+    }
+
     const now = nowIso();
     const status: SubscriptionStatus = plan === "monthly" ? "premium_monthly" : "premium_yearly";
     const updated = this.repository.updateSubscription({
@@ -1363,6 +1367,10 @@ export class BusinessService {
 
     if (!timestamp || !signed) {
       throw new AppError("Invalid Stripe webhook signature.", 400);
+    }
+
+    if (!/^[a-f0-9]{64}$/i.test(signed)) {
+      throw new AppError("Invalid Stripe webhook signature.", 401);
     }
 
     const expected = crypto

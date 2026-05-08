@@ -67,6 +67,8 @@
 - `POST /api/business/billing/webhook`
 - `GET /api/business/analytics/preview`
 
+Field-test note: legacy call-control and call-result routes are admin-only. Use a bearer token from an account listed in `ADMIN_EMAILS` for `/api/calls/*`, `/api/results`, `/api/admin/*`, and `/api/business/admin/*`.
+
 ## Business Model Demo
 
 The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
@@ -78,6 +80,7 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 - Approved submissions publish `venue_price_records`, which the map merges into existing venue data for existing venues.
 - Mission points are weighted by usefulness, not by number of bars visited. Repeated same-venue submissions in the same month are capped.
 - Admin review lives at `/admin.html` and is protected by account role checks via `ADMIN_EMAILS`.
+- Legacy call/result APIs are admin-only so transcripts and call-derived exact price rows are not exposed to anonymous users.
 - The public map no longer exposes legacy admin controls or direct browser reads of exact price records.
 - Exact price records are redacted by default and only revealed through server-side access checks and daily free reveal limits.
 - Analytics are captured as aggregate events only. No venue dashboard or individual clickstream export is live yet.
@@ -114,6 +117,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Security headers are enabled with a Google Maps-compatible CSP, `nosniff`, same-origin frame protection, strict referrer policy, and limited browser permissions.
 - `FIELD_TEST_MODE=true` adds an unobtrusive beta label, feedback entry point, and admin field-test summary without exposing debug details to public users.
 - See `FIELD_TEST_CHECKLIST.md` before showing the app to real users.
+- See `DEPLOYMENT_CHECKLIST.md` before merging to `main` or deploying the Railway beta; it includes backup, migration, smoke-test, and rollback steps.
 
 Suggested production beta values:
 
@@ -371,7 +375,7 @@ and uses these safe env vars:
 - `GOOGLE_MAPS_API_KEY`
 - `GOOGLE_MAPS_MAP_ID`
 
-The hosted public viewer intentionally does not receive Supabase browser credentials. Venue and price data comes through `/api/business/viewer/venues` and `/api/business/price-records` so exact-price access can be enforced server-side.
+The hosted public viewer intentionally does not receive Supabase browser credentials. Venue and price data comes through `/api/business/venues` and `/api/business/price-records` so exact-price access can be enforced server-side.
 
 For legacy standalone local use, the viewer can still use:
 
@@ -387,10 +391,13 @@ Then set:
 
 ```js
 window.MELB_BEER_BOT_VIEWER_CONFIG = {
-  supabaseUrl: "",
-  supabaseAnonKey: "",
   googleMapsApiKey: "your_google_maps_browser_key",
   googleMapsMapId: "",
+  trackedBeers: [],
+  business: {
+    fieldTestMode: true,
+    freePriceRevealsPerDay: 3,
+  },
 };
 ```
 
@@ -570,16 +577,14 @@ If a batch pauses, rerun the same command and it will resume from the saved stat
 
 The hosted `viewer/index.html` now reads venue pins and approved price previews through the local Express business API:
 
-- `GET /api/business/viewer/venues`
+- `GET /api/business/venues`
 - `GET /api/business/price-records`
 
 `/api/business/price-records` returns redacted records by default. The viewer requests `reveal=true&venueId=...` only when a user opens a venue detail, and the server decides whether exact prices can be returned.
 
 Call-derived data can still sync into Supabase `call_results` for the calling pipeline, but the public browser should not read that table directly for beta use.
 
-The viewer expects its browser config in:
-
-- `viewer/config.js`
+The hosted Express app serves browser config from `/config.js`. For standalone static testing only, you can copy `viewer/config.example.js` to a local ignored `viewer/config.js`; do not commit real browser keys.
 
 For quick local testing with a temporary browser key override, you can also open:
 
@@ -675,6 +680,7 @@ Use this to place a clearly marked test call to your own mobile number:
 ```bash
 curl -X POST http://localhost:3000/api/calls/outbound \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_ADMIN_SESSION_TOKEN" \
   -d '{
     "venueId": "27b97227-2735-4a9c-ad7c-d1047f3f225e",
     "venueName": "Personal Test Call",
@@ -698,25 +704,29 @@ What happens in test mode:
 List recent calls:
 
 ```bash
-curl "http://localhost:3000/api/calls"
+curl -H "Authorization: Bearer YOUR_ADMIN_SESSION_TOKEN" \
+  "http://localhost:3000/api/calls"
 ```
 
 List only review-needed calls:
 
 ```bash
-curl "http://localhost:3000/api/calls?needsReview=true"
+curl -H "Authorization: Bearer YOUR_ADMIN_SESSION_TOKEN" \
+  "http://localhost:3000/api/calls?needsReview=true"
 ```
 
 List only review-needed parsed results:
 
 ```bash
-curl "http://localhost:3000/api/results?needsReview=true"
+curl -H "Authorization: Bearer YOUR_ADMIN_SESSION_TOKEN" \
+  "http://localhost:3000/api/results?needsReview=true"
 ```
 
 Inspect one call by Twilio Call SID:
 
 ```bash
-curl "http://localhost:3000/api/calls/CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+curl -H "Authorization: Bearer YOUR_ADMIN_SESSION_TOKEN" \
+  "http://localhost:3000/api/calls/CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
 The call review responses include:
