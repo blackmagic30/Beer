@@ -1071,6 +1071,7 @@
     }
 
     #topbar {
+      flex: 0 0 auto;
       margin: 12px 12px 0;
       padding: clamp(18px, 2.6vw, 28px);
       border: 1px solid var(--panel-border);
@@ -1080,7 +1081,7 @@
         radial-gradient(circle at 92% 0%, rgba(119, 217, 255, 0.12), transparent 32%),
         linear-gradient(145deg, rgba(13, 20, 36, 0.94), rgba(5, 9, 20, 0.84));
       box-shadow: var(--shadow-lg);
-      overflow: hidden;
+      overflow: visible;
     }
 
     #topbar::after {
@@ -1216,7 +1217,8 @@
     }
 
     #mapShell {
-      margin: 12px;
+      flex: 1 0 auto;
+      margin: 18px 12px 12px;
       border: 1px solid rgba(244, 214, 150, 0.16);
       border-radius: 30px;
       overflow: hidden;
@@ -1297,6 +1299,7 @@
       #topbar {
         gap: 10px;
         padding: clamp(14px, 1.6vw, 20px);
+        padding-bottom: clamp(22px, 2vw, 28px);
       }
 
       .topbar__header {
@@ -1370,8 +1373,8 @@
       }
 
       #mapShell {
-        margin-top: 8px;
-        min-height: 58vh;
+        margin-top: 16px;
+        min-height: clamp(430px, 52vh, 560px);
       }
     }
 
@@ -1437,6 +1440,7 @@
       #topbar {
         margin: 8px 8px 0;
         padding: 16px;
+        padding-bottom: 22px;
         border-radius: 24px 24px 18px 18px;
       }
 
@@ -1452,9 +1456,9 @@
       }
 
       #mapShell {
-        margin: 8px;
+        margin: 12px 8px 8px;
         border-radius: 22px;
-        min-height: 58vh;
+        min-height: 56vh;
       }
 
       #mapOverlayTabs {
