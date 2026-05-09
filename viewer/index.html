@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Melbourne Beer Map</title>
   <script src="https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer/dist/index.min.js"></script>
+  <script src="./map-logic.js"></script>
   <script src="./config.js"></script>
   <script src="./business.js"></script>
   <style>
@@ -181,8 +182,19 @@
     .chipRow {
       display: flex;
       flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .filterGroup {
+      display: inline-flex;
+      flex-wrap: wrap;
       gap: 8px;
       align-items: center;
+      padding: 5px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 999px;
+      background: rgba(2, 6, 23, 0.24);
     }
 
     .filterChip,
@@ -295,6 +307,23 @@
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
+    }
+
+    .highlightEmpty {
+      width: 100%;
+      padding: 12px 13px;
+      border: 1px dashed rgba(244, 214, 150, 0.2);
+      border-radius: 15px;
+      background: rgba(2, 6, 23, 0.24);
+      color: #bac4d5;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .highlightEmpty strong {
+      display: block;
+      color: #fbf7ef;
+      margin-bottom: 3px;
     }
 
     .highlightCard {
@@ -513,6 +542,17 @@
 
     .legend__swatch--neutral {
       background: #334155;
+    }
+
+    .legend__swatch--unknown {
+      background: #64748b;
+      border-color: rgba(226, 232, 240, 0.82);
+      box-shadow: 0 0 0 1px rgba(226, 232, 240, 0.36), inset 0 0 0 3px rgba(15, 23, 42, 0.35);
+    }
+
+    .legend__swatch--needs {
+      background: #1d4ed8;
+      opacity: 0.74;
     }
 
     .legend__swatch--green {
@@ -887,6 +927,11 @@
       font-weight: 700;
       color: #0f172a;
       text-align: right;
+    }
+
+    .beerPopup__beerPrice--unknown {
+      color: #64748b !important;
+      font-weight: 800;
     }
 
     .beerPopup__beerActions {
@@ -1405,6 +1450,11 @@
         -webkit-overflow-scrolling: touch;
       }
 
+      .filterGroup {
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+      }
+
       #toolbar {
         grid-template-columns: 1fr;
       }
@@ -1531,16 +1581,24 @@
     </div>
 
     <div class="chipRow" id="scopeChips">
-      <button class="filterChip is-active" type="button" data-scope="all">All venues</button>
-      <button class="filterChip" type="button" data-scope="needs_data">Needs data</button>
-      <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
-      <button class="filterChip" type="button" data-filter-chip="cheapest_near_me">Cheapest near me</button>
-      <button class="filterChip" type="button" data-filter-chip="under_10">Under A$10</button>
-      <button class="filterChip" type="button" data-filter-chip="recently_verified">Recently verified</button>
-      <button class="filterChip" type="button" data-filter-chip="verified_only">Verified only</button>
-      <button class="filterChip" type="button" data-filter-chip="on_tap">On tap</button>
-      <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs">My saved suburbs</button>
-      <div id="beerChipHost" class="chipRow__inline"></div>
+      <div class="filterGroup" aria-label="Venue scope">
+        <button class="filterChip is-active" type="button" data-scope="all">All venues</button>
+        <button class="filterChip" type="button" data-scope="needs_data">Needs data</button>
+      </div>
+      <div class="filterGroup" aria-label="Freshness and verification filters">
+        <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
+        <button class="filterChip" type="button" data-filter-chip="recently_verified">Recently verified</button>
+        <button class="filterChip" type="button" data-filter-chip="verified_only">Verified only</button>
+      </div>
+      <div class="filterGroup" aria-label="Price filters">
+        <button class="filterChip" type="button" data-filter-chip="cheapest_near_me">Cheapest near me</button>
+        <button class="filterChip" type="button" data-filter-chip="under_10">Under A$10</button>
+      </div>
+      <div class="filterGroup" aria-label="Availability filters">
+        <button class="filterChip" type="button" data-filter-chip="on_tap">On tap</button>
+        <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs">My saved suburbs</button>
+      </div>
+      <div id="beerChipHost" class="filterGroup chipRow__inline" aria-label="Popular beer filters"></div>
     </div>
 
     <div id="retentionHighlights" class="retentionHighlights" aria-live="polite"></div>
@@ -2044,7 +2102,7 @@
     }
 
     function formatPriceValue(value) {
-      return value == null ? "Price unavailable" : `$${value}`;
+      return value == null ? window.MelbBeerMapLogic.UNKNOWN_PRICE_TEXT : `$${value}`;
     }
 
     function normalizePositiveNumber(value) {
@@ -2243,37 +2301,11 @@
     }
 
     function normalizeBeerPriceNumeric(source) {
-      const availabilityStatus =
-        source && typeof source.availability_status === "string"
-          ? source.availability_status
-          : "unknown";
-      const rawValue = source ? (source.price_numeric ?? source.price) : null;
-      const numeric = Number(rawValue);
-
-      if (!Number.isFinite(numeric) || numeric <= 0) {
-        return null;
-      }
-
-      return availabilityStatus === "on_tap" ? numeric : null;
+      return window.MelbBeerMapLogic.normalizeBeerPriceNumeric(source);
     }
 
     function getBeerPriceText(source, availabilityLabel, priceNumeric) {
-      const explicitText =
-        source && typeof source.price_text === "string" && source.price_text.trim().length > 0
-          ? source.price_text.trim()
-          : null;
-
-      if (priceNumeric !== null) {
-        return explicitText && explicitText !== "$0"
-          ? explicitText
-          : formatPriceValue(priceNumeric);
-      }
-
-      if (explicitText && explicitText !== "$0") {
-        return explicitText;
-      }
-
-      return availabilityLabel === "Unknown" ? "Price unavailable" : availabilityLabel;
+      return window.MelbBeerMapLogic.getBeerPriceText(source, availabilityLabel, priceNumeric);
     }
 
     function titleizeKey(value) {
@@ -2285,60 +2317,11 @@
     }
 
     function getAvailabilityLabel(source) {
-      const availability = source && typeof source.availability === "object"
-        ? source.availability
-        : null;
-
-      if (availability && availability.label) {
-        return availability.label;
-      }
-
-      switch (source.availability_status) {
-        case "on_tap":
-          return "On tap";
-        case "package_only":
-          if (source.unavailable_reason === "bottles_only") {
-            return "Bottles only";
-          }
-
-          return "Cans only";
-        case "unavailable":
-          if (source.unavailable_reason === "no_pints") {
-            return "No pints";
-          }
-
-          return source.unavailable_reason === "not_on_tap" ? "Not on tap" : "Unavailable";
-        default:
-          return "Unknown";
-      }
+      return window.MelbBeerMapLogic.getAvailabilityLabel(source);
     }
 
     function getAvailabilityTone(availabilityLabel) {
-      switch (availabilityLabel) {
-        case "On tap":
-          return {
-            background: "#dcfce7",
-            color: "#166534",
-          };
-        case "Cans only":
-        case "Bottles only":
-        case "No pints":
-        case "Not on tap":
-          return {
-            background: "#fef3c7",
-            color: "#92400e",
-          };
-        case "Unavailable":
-          return {
-            background: "#fee2e2",
-            color: "#991b1b",
-          };
-        default:
-          return {
-            background: "#e2e8f0",
-            color: "#334155",
-          };
-      }
+      return window.MelbBeerMapLogic.getAvailabilityTone(availabilityLabel);
     }
 
     function getBeerItems(row) {
@@ -2380,7 +2363,7 @@
     }
 
     function hasNumericPrice(beer) {
-      return beer && Number.isFinite(Number(beer.priceNumeric));
+      return window.MelbBeerMapLogic.hasNumericPrice(beer);
     }
 
     function hasRedactedPrice(beer) {
@@ -2392,9 +2375,7 @@
     }
 
     function getLowestBeerPrice(row) {
-      return getBeerItems(row)
-        .filter(hasNumericPrice)
-        .reduce((lowest, beer) => lowest === null ? beer.priceNumeric : Math.min(lowest, beer.priceNumeric), null);
+      return window.MelbBeerMapLogic.getLowestKnownPrice(getBeerItems(row));
     }
 
     function hasVerifiedBeerData(row) {
@@ -2501,7 +2482,7 @@
         (
           hasNumericPrice(beer) ||
           beer.availabilityLabel !== "Unknown" ||
-          beer.priceText !== "Price unavailable"
+          beer.priceText !== window.MelbBeerMapLogic.UNKNOWN_PRICE_TEXT
         )
       );
     }
@@ -2525,7 +2506,7 @@
         score += 10;
       }
 
-      if (beer.priceText !== "Price unavailable") {
+      if (beer.priceText !== window.MelbBeerMapLogic.UNKNOWN_PRICE_TEXT) {
         score += 5;
       }
 
@@ -2539,75 +2520,15 @@
     }
 
     function getMarkerColor(beer) {
-      if (!beer) {
-        return "#64748b";
-      }
-
-      if (beer.availabilityLabel === "Unavailable" || beer.availabilityLabel === "Not on tap") {
-        return "#b91c1c";
-      }
-
-      if (
-        beer.availabilityLabel === "Cans only" ||
-        beer.availabilityLabel === "Bottles only" ||
-        beer.availabilityLabel === "No pints"
-      ) {
-        return "#c2410c";
-      }
-
-      if (hasNumericPrice(beer)) {
-        if (beer.priceNumeric <= 12) {
-          return "#15803d";
-        }
-
-        if (beer.priceNumeric <= 15) {
-          return "#0f766e";
-        }
-
-        if (beer.priceNumeric <= 17) {
-          return "#b45309";
-        }
-
-        return "#b91c1c";
-      }
-
-      return "#475569";
+      return window.MelbBeerMapLogic.getMarkerColor(beer);
     }
 
     function getMarkerLabel(beer) {
-      if (!beer) {
-        return "?";
-      }
-
-      if (hasNumericPrice(beer)) {
-        return String(Number(beer.priceNumeric).toFixed(1)).replace(/\.0$/, "");
-      }
-
-      if (beer.availabilityLabel === "Cans only") {
-        return "CAN";
-      }
-
-      if (beer.availabilityLabel === "Bottles only") {
-        return "BTL";
-      }
-
-      if (beer.availabilityLabel === "No pints") {
-        return "NOP";
-      }
-
-      if (beer.availabilityLabel === "Unavailable" || beer.availabilityLabel === "Not on tap") {
-        return "NO";
-      }
-
-      return "G";
+      return window.MelbBeerMapLogic.getMarkerLabel(beer);
     }
 
     function getMarkerScale(beer) {
-      if (hasNumericPrice(beer)) {
-        return 17;
-      }
-
-      return 15;
+      return window.MelbBeerMapLogic.getMarkerScale(beer);
     }
 
     function toSearchKey(value) {
@@ -2727,7 +2648,7 @@
       return {
         label: record.beerName,
         price_numeric: isOnTap ? price : null,
-        price_text: isRedacted ? "Unlock exact price" : price === null ? "Price unavailable" : formatPriceValue(price),
+        price_text: isRedacted ? "Unlock exact price" : price === null ? "Price unknown" : formatPriceValue(price),
         price_redacted: isRedacted,
         availability_status: availabilityStatus,
         available_on_tap: record.isOnTap === "unknown" ? null : isOnTap,
@@ -2836,6 +2757,22 @@
         .sort((left, right) => getBeerPriority(right) - getBeerPriority(left));
     }
 
+    function getPriceRelevantBeerItems(row, viewState) {
+      if (viewState?.beerQuery && businessAccess.canUseBeerSearch) {
+        return getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly);
+      }
+
+      return getBeerItems(row);
+    }
+
+    function getLowestKnownPriceForView(row, viewState) {
+      return window.MelbBeerMapLogic.getLowestKnownPrice(getPriceRelevantBeerItems(row, viewState));
+    }
+
+    function hasKnownPriceForView(row, viewState) {
+      return getLowestKnownPriceForView(row, viewState) !== null;
+    }
+
     function getViewState() {
       return {
         scope: activeScope,
@@ -2863,10 +2800,15 @@
         return null;
       }
 
+      const hasKnownPrice = hasNumericPrice(beer);
+
       return {
         fillColor: getMarkerColor(beer),
         labelText: getMarkerLabel(beer),
         scale: getMarkerScale(beer),
+        fillOpacity: hasKnownPrice ? 0.96 : 0.72,
+        strokeColor: hasKnownPrice ? "#0f172a" : "#e2e8f0",
+        strokeWeight: hasKnownPrice ? 2 : 2.75,
       };
     }
 
@@ -2878,7 +2820,9 @@
       }
 
       if (viewState.beerQuery && businessAccess.canUseBeerSearch) {
-        return getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly).length > 0;
+        if (getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly).length === 0) {
+          return false;
+        }
       }
 
       if (viewState.scope === "needs_data") {
@@ -2894,13 +2838,12 @@
       }
 
       if (viewState.filters.includes("under_10")) {
-        const lowestPrice = getLowestBeerPrice(row);
-        if (lowestPrice == null || lowestPrice >= 10) {
+        if (!window.MelbBeerMapLogic.isUnderPriceThreshold(getPriceRelevantBeerItems(row, viewState), 10)) {
           return false;
         }
       }
 
-      if (viewState.filters.includes("cheapest_near_me") && getLowestBeerPrice(row) == null) {
+      if (viewState.filters.includes("cheapest_near_me") && !hasKnownPriceForView(row, viewState)) {
         return false;
       }
 
@@ -3013,14 +2956,18 @@
       const visibleCount = filteredRows.length;
       const capturedCount = filteredRows.filter((row) => hasCapturedBeerData(row)).length;
       const happyHourCount = filteredRows.filter((row) => getHappyHourDetails(row)).length;
+      const knownPriceCount = filteredRows.filter((row) => hasKnownPriceForView(row, viewState)).length;
       const missingCount = visibleCount - capturedCount;
       const happyHourCopy = happyHourCount > 0
         ? ` · ${happyHourCount} with happy hour info`
         : "";
+      const priceCopy = viewState.beerQuery
+        ? ` · ${knownPriceCount} with verified ${viewState.beerQuery} prices`
+        : "";
 
       resultsSummaryEl.innerHTML = `
         <strong>${visibleCount}</strong> ${visibleCount === 1 ? "venue" : "venues"}
-        <span style="opacity:0.72;">· ${capturedCount} with beer data${happyHourCopy} · ${missingCount} still to fill${businessAccess.hasFullAccess ? " · full access" : ` · ${businessAccess.freePriceRevealsRemainingToday} free price reveals left today`}</span>
+        <span style="opacity:0.72;">· ${capturedCount} with beer data${priceCopy}${happyHourCopy} · ${missingCount} still to fill${businessAccess.hasFullAccess ? " · full access" : ` · ${businessAccess.freePriceRevealsRemainingToday} free price reveals left today`}</span>
       `;
       viewSummaryEl.textContent = getViewSummaryText(viewState);
       syncScopeChipState();
@@ -3028,28 +2975,55 @@
       syncHighValueChipState();
     }
 
+    function getBeerResultCounts(filteredRows, viewState) {
+      return filteredRows.reduce((counts, row) => {
+        const beer = getFeaturedBeer(row, viewState);
+
+        if (!beer) {
+          counts.unknown += 1;
+          return counts;
+        }
+
+        if (hasNumericPrice(beer)) {
+          counts.priced += 1;
+          return counts;
+        }
+
+        if (["Unavailable", "Not on tap", "No pints"].includes(beer.availabilityLabel)) {
+          counts.unavailable += 1;
+          return counts;
+        }
+
+        counts.unknown += 1;
+        return counts;
+      }, { priced: 0, unknown: 0, unavailable: 0 });
+    }
+
     function getLegendConfig(filteredRows, viewState) {
       const capturedCount = filteredRows.filter((row) => hasCapturedBeerData(row)).length;
       const missingCount = filteredRows.length - capturedCount;
 
       if (viewState.beerQuery) {
+        const resultCounts = getBeerResultCounts(filteredRows, viewState);
         return {
           title: viewState.beerQuery,
           subtitle: viewState.onTapOnly
-            ? "Markers are now tuned for venues where that beer is on tap, with colour helping you scan price and availability fast."
-            : "Markers are now colour-coded for the beer you searched, so you can spot price and availability without opening every venue.",
+            ? "Markers show only matching on-tap results. Unknown prices stay neutral, never cheap."
+            : "Markers separate verified prices from unknown or unavailable results, so value calls stay honest.",
           stats: [
             `${filteredRows.length} matching venues`,
-            `${capturedCount} with captured prices or status`,
+            `${resultCounts.priced} with verified prices`,
+            `${resultCounts.unknown} price unknown`,
           ],
           items: [
-            ["green", "Lower price", "Cheaper pint result, usually the best-value stop in the current view."],
-            ["teal", "Mid price", "Solid on-tap result sitting in the middle of the pack."],
-            ["amber", "Higher price", "Still available on tap, but at the warmer end of the price range."],
+            ["green", "Lower price", "Verified price in the lower band for this beer."],
+            ["teal", "Mid price", "Verified on-tap result sitting in the middle of the pack."],
+            ["amber", "Higher price", "Verified on-tap result at the warmer end of the price range."],
+            ["unknown", "Price unknown", "The beer may be listed, but no verified price is available yet."],
             ["orange", "Package or no pints", "The venue has the beer, but only in cans, bottles, schooners, or without pints."],
             ["red", "Unavailable", "The venue told us the beer is not on tap or not available."],
           ],
-          hint: "Click any marker to open the venue card and read the full beer list, not just the searched beer."
+          hint: "Price filters ignore unknowns. Click any marker to check confidence, last verified date, and source."
         };
       }
 
@@ -3062,7 +3036,7 @@
             `${capturedCount} already captured are hidden`,
           ],
           items: [
-            ["neutral", "Mapped venue", "The pub or bar exists in our venue list and is ready for beer data capture."],
+            ["needs", "Needs data", "The pub or bar exists in our venue list and is ready for beer data capture."],
           ],
           hint: "Use Submit data to send a venue update, or let the call and OCR workflows fill these in over time."
         };
@@ -3109,13 +3083,15 @@
         .filter(hasActiveHappyHourNow)
         .slice(0, 4);
       const verifiedRows = rows
-        .filter(isRecentlyVerified)
+        .filter((row) => isRecentlyVerified(row) && getLowestBeerPrice(row) !== null)
         .sort((left, right) => new Date(right.saved_at || right.beer_synced_at || 0).getTime() - new Date(left.saved_at || left.beer_synced_at || 0).getTime())
         .slice(0, 4);
       const card = (row, action) => {
         const venue = getVenueRecord(row.venues) || {};
         const lowest = getLowestBeerPrice(row);
-        const priceCopy = businessAccess.hasFullAccess && lowest != null ? `${formatPriceValue(lowest)} cheapest captured` : "Price preview";
+        const priceCopy = lowest != null
+          ? businessAccess.hasFullAccess ? `${formatPriceValue(lowest)} cheapest captured` : "Verified price available"
+          : "No verified price yet";
         return `
           <button class="highlightCard" type="button" data-highlight-venue="${escapeHtml(getVenueMarkerId(row, venue, Number(venue.latitude), Number(venue.longitude)))}" data-action="${escapeHtml(action)}">
             <strong>${escapeHtml(venue.name || row.venue_name || "Unknown venue")}</strong>
@@ -3127,11 +3103,11 @@
       retentionHighlightsEl.innerHTML = `
         <div class="highlightPanel">
           <div class="highlightPanel__title">Happy hours active now</div>
-          <div class="highlightPanel__items">${happyRows.length ? happyRows.map((row) => card(row, "happy_hour_active_now")).join("") : '<span class="statusPill">No happy-hour matches yet</span>'}</div>
+          <div class="highlightPanel__items">${happyRows.length ? happyRows.map((row) => card(row, "happy_hour_active_now")).join("") : '<div class="highlightEmpty"><strong>No happy hours match this view yet.</strong>Try clearing filters or submit a venue update if you spot one nearby.</div>'}</div>
         </div>
         <div class="highlightPanel">
           <div class="highlightPanel__title">Recently verified prices</div>
-          <div class="highlightPanel__items">${verifiedRows.length ? verifiedRows.map((row) => card(row, "recently_verified")).join("") : '<span class="statusPill">No recent verified prices yet</span>'}</div>
+          <div class="highlightPanel__items">${verifiedRows.length ? verifiedRows.map((row) => card(row, "recently_verified")).join("") : '<div class="highlightEmpty"><strong>No recently verified prices here yet.</strong>Expand the map or help improve coverage with a fresh menu/photo source.</div>'}</div>
         </div>
       `;
 
@@ -3176,9 +3152,12 @@
       if (viewState.beerQuery && featuredBeer) {
         const displayPrice = getDisplayBeerPriceText(featuredBeer, record.id);
         const canSortByPrice = canShowExactPrices(record.id) && hasNumericPrice(featuredBeer);
+        const badgeTone = hasNumericPrice(featuredBeer)
+          ? featuredBeer.availabilityTone
+          : getAvailabilityTone("Unknown");
         return {
           badgeLabel: displayPrice,
-          badgeStyle: `background:${featuredBeer.availabilityTone.background}; color:${featuredBeer.availabilityTone.color};`,
+          badgeStyle: `background:${badgeTone.background}; color:${badgeTone.color};`,
           metaPill: featuredBeer.availabilityLabel,
           copy: [
             `${featuredBeer.label} · ${featuredBeer.availabilityLabel}`,
@@ -3193,9 +3172,12 @@
       if (featuredBeer) {
         const displayPrice = getDisplayBeerPriceText(featuredBeer, record.id);
         const canSortByPrice = canShowExactPrices(record.id) && hasNumericPrice(featuredBeer);
+        const badgeTone = hasNumericPrice(featuredBeer)
+          ? featuredBeer.availabilityTone
+          : getAvailabilityTone("Unknown");
         return {
           badgeLabel: displayPrice,
-          badgeStyle: `background:${featuredBeer.availabilityTone.background}; color:${featuredBeer.availabilityTone.color};`,
+          badgeStyle: `background:${badgeTone.background}; color:${badgeTone.color};`,
           metaPill: featuredBeer.label,
           copy: [
             `${featuredBeer.availabilityLabel} · ${displayPrice}`,
@@ -3311,6 +3293,7 @@
           venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
             cardEl.classList.toggle("is-active", cardEl === buttonEl);
           });
+          setActiveMarker(record.marker);
           map.panTo(record.marker.getPosition());
           const shouldZoomIn = typeof map.getZoom === "function" && map.getZoom() < 15;
 
@@ -3522,6 +3505,7 @@
         let liveMarkers = [];
         let markerRecords = [];
         let markerCluster = null;
+        let activeMarker = null;
 
         function clearMarkers() {
           if (markerCluster && typeof markerCluster.clearMarkers === "function") {
@@ -3531,6 +3515,24 @@
           liveMarkers.forEach((marker) => marker.setMap(null));
           liveMarkers = [];
           markerRecords = [];
+          activeMarker = null;
+        }
+
+        function setActiveMarker(marker) {
+          if (activeMarker && activeMarker.__baseIcon) {
+            activeMarker.setIcon(activeMarker.__baseIcon);
+          }
+
+          activeMarker = marker;
+
+          if (marker && marker.__baseIcon) {
+            marker.setIcon({
+              ...marker.__baseIcon,
+              strokeColor: "#f5c76b",
+              strokeWeight: Math.max(Number(marker.__baseIcon.strokeWeight || 2) + 1.5, 3.5),
+              scale: Number(marker.__baseIcon.scale || 12) + 2,
+            });
+          }
         }
 
         function renderMarkers() {
@@ -3561,9 +3563,9 @@
               markerOptions.icon = {
                 path: google.maps.SymbolPath.CIRCLE,
                 fillColor: markerVisual.fillColor,
-                fillOpacity: 0.95,
-                strokeColor: "#0f172a",
-                strokeWeight: 2,
+                fillOpacity: markerVisual.fillOpacity,
+                strokeColor: markerVisual.strokeColor,
+                strokeWeight: markerVisual.strokeWeight,
                 scale: markerVisual.scale,
               };
               markerOptions.label = {
@@ -3586,6 +3588,7 @@
             }
 
             const marker = new google.maps.Marker(markerOptions);
+            marker.__baseIcon = markerOptions.icon || null;
 
             const address = formatAddress(venue);
             const createdAt = item.saved_at || item.created_at
@@ -3624,7 +3627,7 @@
                     <span style="font-size:11px; color:#64748b;">${escapeHtml(beer.confidenceLabel ? `${beer.confidenceLabel.replaceAll("_", " ")} · ${beer.sourceType || "community source"}` : "community captured")}</span>
                   </div>
                   <div class="beerPopup__beerActions">
-                    <span class="beerPopup__beerPrice" style="color:${beer.needsReview ? "#b45309" : "#0f172a"};">${escapeHtml(getDisplayBeerPriceText(beer, markerId))}</span>
+                    <span class="beerPopup__beerPrice ${hasNumericPrice(beer) ? "" : "beerPopup__beerPrice--unknown"}" style="color:${beer.needsReview ? "#b45309" : "#0f172a"};">${escapeHtml(getDisplayBeerPriceText(beer, markerId))}</span>
                     <button
                       class="beerPopup__link"
                       type="button"
@@ -3681,6 +3684,7 @@
             const content = getContent();
 
             marker.addListener("click", async () => {
+              setActiveMarker(marker);
               await maybeRevealVenuePrices(item, markerId);
               void trackBusinessEvent("venue_detail_opened", {
                 venueId: item.venue_id || venue.id || null,
