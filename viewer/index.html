@@ -136,6 +136,73 @@
       color: #111827;
     }
 
+    .accessPill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 38px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(15, 23, 42, 0.76);
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .accessPill::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #94a3b8;
+      box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.12);
+    }
+
+    .accessPill--full::before {
+      background: #22c55e;
+      box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.14);
+    }
+
+    .accessPill--admin::before {
+      background: #f5c76b;
+      box-shadow: 0 0 0 4px rgba(245, 199, 107, 0.18);
+    }
+
+    .controlDeck {
+      display: grid;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 22px;
+      background: rgba(2, 6, 23, 0.22);
+    }
+
+    .controlDeck__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: #cbd5e1;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .controlDeck__title {
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 950;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .controlDeck__copy {
+      color: #a8b0bf;
+      text-align: right;
+    }
+
     #toolbar {
       display: grid;
       grid-template-columns: minmax(200px, 1.1fr) minmax(200px, 1.1fr) auto auto;
@@ -197,6 +264,18 @@
       background: rgba(2, 6, 23, 0.24);
     }
 
+    .filterGroup__label {
+      display: inline-flex;
+      align-items: center;
+      padding: 0 6px 0 8px;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 950;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
     .filterChip,
     .utilityButton {
       appearance: none;
@@ -221,6 +300,13 @@
       background: var(--chip-active-bg);
       border-color: transparent;
       color: var(--chip-active-text);
+    }
+
+    .filterChip:disabled,
+    .togglePill:has(input:disabled) {
+      opacity: 0.56;
+      cursor: not-allowed;
+      transform: none;
     }
 
     .businessBanner {
@@ -265,6 +351,10 @@
       white-space: nowrap;
     }
 
+    .utilityButton[hidden] {
+      display: none;
+    }
+
     .togglePill input {
       width: 16px;
       height: 16px;
@@ -273,10 +363,10 @@
     }
 
     #statusBar {
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
-      align-items: center;
+      align-items: stretch;
     }
 
     .retentionHighlights {
@@ -351,20 +441,46 @@
     }
 
     .statusPill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      border-radius: 999px;
+      display: grid;
+      gap: 4px;
+      padding: 10px 12px;
+      border-radius: 18px;
       background: rgba(15, 23, 42, 0.74);
       border: 1px solid rgba(148, 163, 184, 0.14);
       color: #cbd5e1;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
+      min-width: 0;
     }
 
     .statusPill strong {
       color: #ffffff;
+    }
+
+    .statusPill__label {
+      color: #8d99aa;
+      font-size: 10px;
+      font-weight: 950;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .statusPill__value {
+      overflow: hidden;
+      color: #fff7ed;
+      font-size: 18px;
+      font-weight: 950;
+      letter-spacing: -0.025em;
+      line-height: 1.05;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .statusPill__copy {
+      overflow: hidden;
+      color: #a8b0bf;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     #mapShell {
@@ -418,6 +534,19 @@
       inset: 0;
       width: 100%;
       height: 100%;
+    }
+
+    .responsibleNote {
+      margin: 0 16px 12px;
+      color: rgba(203, 213, 225, 0.78);
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    .responsibleNote a {
+      color: #f5c76b;
+      font-weight: 800;
     }
 
     #mapLegend {
@@ -1173,6 +1302,7 @@
     }
 
     .topbar__businessLinks a,
+    .accessPill,
     .filterChip,
     .utilityButton,
     .togglePill,
@@ -1197,12 +1327,20 @@
     }
 
     .topbar__businessLinks a.primary,
+    .topbar__businessLinks a[aria-current="page"],
     .filterChip.is-active,
     .overlayTab.is-active,
     .venueRail__sortChip.is-active {
       background: var(--chip-active-bg);
       color: var(--chip-active-text);
       box-shadow: 0 16px 34px rgba(242, 169, 59, 0.22);
+    }
+
+    .topbar__businessLinks a[aria-current="page"] {
+      background: rgba(245, 199, 107, 0.12);
+      color: #ffe4a8;
+      border-color: rgba(245, 199, 107, 0.32);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
     }
 
     .controlGroup {
@@ -1225,12 +1363,24 @@
       box-shadow: 0 0 0 4px rgba(245, 199, 107, 0.12);
     }
 
+    .controlDeck {
+      border-color: rgba(244, 214, 150, 0.14);
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+        rgba(2, 6, 23, 0.26);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+    }
+
     .businessBanner {
       border-color: rgba(245, 199, 107, 0.28);
       background:
         linear-gradient(135deg, rgba(245, 199, 107, 0.16), rgba(255, 123, 104, 0.08)),
         rgba(3, 7, 18, 0.38);
       color: #ffe4a8;
+    }
+
+    .businessBanner strong {
+      color: #fff7ed;
     }
 
     .highlightPanel,
@@ -1531,9 +1681,9 @@
 
     @media (min-width: 901px) {
       #topbar {
-        gap: 10px;
-        padding: clamp(14px, 1.6vw, 20px);
-        padding-bottom: clamp(22px, 2vw, 28px);
+        gap: 9px;
+        padding: clamp(13px, 1.4vw, 18px);
+        padding-bottom: clamp(16px, 1.6vw, 22px);
       }
 
       .topbar__header {
@@ -1541,12 +1691,12 @@
       }
 
       #topbar h1 {
-        margin-top: 7px;
-        font-size: clamp(32px, 3.2vw, 48px);
+        margin-top: 6px;
+        font-size: clamp(30px, 2.8vw, 42px);
       }
 
       .topbar__subtitle {
-        margin-top: 8px;
+        margin-top: 7px;
         max-width: 720px;
         font-size: 14px;
         line-height: 1.45;
@@ -1560,7 +1710,7 @@
       }
 
       .businessBanner {
-        padding: 9px 12px;
+        padding: 8px 12px;
         border-radius: 16px;
       }
 
@@ -1602,13 +1752,13 @@
       }
 
       .statusPill {
-        padding: 7px 10px;
+        padding: 8px 10px;
         font-size: 12px;
       }
 
       #mapShell {
-        margin-top: 16px;
-        min-height: clamp(430px, 52vh, 560px);
+        margin-top: 12px;
+        min-height: clamp(460px, 56vh, 620px);
       }
     }
 
@@ -1625,6 +1775,7 @@
       }
 
       .topbar__businessLinks a,
+      .accessPill,
       .filterChip,
       .utilityButton,
       .togglePill {
@@ -1646,6 +1797,23 @@
 
       #toolbar {
         grid-template-columns: 1fr;
+      }
+
+      .controlDeck {
+        gap: 10px;
+        padding: 10px;
+        border-radius: 18px;
+      }
+
+      .controlDeck__header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .controlDeck__copy {
+        text-align: left;
+        font-size: 12px;
       }
 
       .retentionHighlights {
@@ -1672,14 +1840,21 @@
         justify-content: flex-start;
       }
 
+      #statusBar {
+        grid-template-columns: repeat(3, minmax(165px, 1fr));
+        overflow-x: auto;
+        padding-bottom: 2px;
+        -webkit-overflow-scrolling: touch;
+      }
+
       #topbar h1 {
-        font-size: 28px;
+        font-size: 27px;
       }
 
       #topbar {
         margin: 8px 8px 0;
-        padding: 16px;
-        padding-bottom: 22px;
+        padding: 13px;
+        padding-bottom: 15px;
         border-radius: 24px 24px 18px 18px;
       }
 
@@ -1691,13 +1866,14 @@
       .businessBanner {
         align-items: flex-start;
         flex-direction: column;
+        gap: 7px;
         font-size: 12px;
       }
 
       #mapShell {
-        margin: 12px 8px 8px;
+        margin: 10px 8px 8px;
         border-radius: 22px;
-        min-height: 56vh;
+        min-height: 58vh;
       }
 
       #mapOverlayTabs {
@@ -1730,64 +1906,77 @@
       <div>
         <div class="topbar__eyebrow">Live beer map <span class="fieldTestBadge">Beta</span></div>
         <h1>Melbourne Beer Map</h1>
-        <p class="topbar__subtitle">Search a venue, search a beer, or flip to the venues that still need data. The map stays simple, and the detail only shows up when you need it.</p>
+        <p class="topbar__subtitle">Find verified beer prices and happy hours across Melbourne. Search by beer, venue, or suburb, then tap a marker for the detail.</p>
       </div>
       <div class="topbar__actions">
-        <div class="topbar__businessLinks" aria-label="Business navigation">
-          <a href="/pricing.html">Pricing</a>
+        <div id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation">
+          <a href="/" aria-current="page">Map</a>
           <a href="/missions.html">Missions</a>
           <a href="/submit.html" class="primary">Submit data</a>
+          <a href="/pricing.html">Pricing</a>
           <a href="/account.html">Account</a>
+          <span id="accessPill" class="accessPill">Free preview</span>
         </div>
       </div>
     </div>
 
     <div id="businessBanner" class="businessBanner">
-      <span>Free preview: venue pins stay visible. Exact prices, beer search, cheapest sorting, and full happy-hour details unlock with premium or approved contributor access.</span>
+      <span id="businessBannerCopy"><strong>Free preview:</strong> venue pins stay visible. Exact prices unlock with premium access or verified contributions. Prices may change.</span>
       <span><a href="/pricing.html">Unlock</a> · <a href="/missions.html">Earn access</a> · <a href="/privacy.html">Privacy</a></span>
     </div>
 
-    <div id="toolbar">
-      <label class="controlGroup" for="venueSearch">
-        <span>Venue or suburb</span>
-        <input id="venueSearch" class="controlInput" type="search" placeholder="Try partial names: Rooftop, Sandrin, Fitzroy…" />
-      </label>
+    <div class="controlDeck">
+      <div class="controlDeck__header">
+        <span class="controlDeck__title">Search Melbourne</span>
+        <span class="controlDeck__copy">Try a beer, pub, suburb, or partial venue name. Unknown prices stay separate from cheap results.</span>
+      </div>
 
-      <label class="controlGroup" for="beerSearch">
-        <span>Beer</span>
-        <input id="beerSearch" class="controlInput" list="beerSuggestions" type="search" placeholder="Try Guinness, Carlton, Stone &amp; Wood…" />
-        <datalist id="beerSuggestions"></datalist>
-      </label>
+      <div id="toolbar">
+        <label class="controlGroup" for="venueSearch">
+          <span>Venue or suburb</span>
+          <input id="venueSearch" class="controlInput" type="search" placeholder="Try Rooftop, Sandringham, Fitzroy…" />
+        </label>
 
-      <label class="togglePill" for="onTapOnly">
-        <input id="onTapOnly" type="checkbox" />
-        <span>On tap only</span>
-      </label>
+        <label class="controlGroup" for="beerSearch">
+          <span>Beer</span>
+          <input id="beerSearch" class="controlInput" list="beerSuggestions" type="search" placeholder="Try Guinness, Carlton Draught, Stone &amp; Wood…" />
+          <datalist id="beerSuggestions"></datalist>
+        </label>
 
-      <div class="toolbar__right">
-        <button id="clearFilters" class="utilityButton" type="button">Clear</button>
-      </div>
-    </div>
+        <label class="togglePill" for="onTapOnly">
+          <input id="onTapOnly" type="checkbox" />
+          <span>On tap only</span>
+        </label>
 
-    <div class="chipRow" id="scopeChips">
-      <div class="filterGroup" aria-label="Venue scope">
-        <button class="filterChip is-active" type="button" data-scope="all">All venues</button>
-        <button class="filterChip" type="button" data-scope="needs_data">Needs data</button>
+        <div class="toolbar__right">
+          <button id="clearFilters" class="utilityButton" type="button" hidden>Clear filters</button>
+        </div>
       </div>
-      <div class="filterGroup" aria-label="Freshness and verification filters">
-        <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
-        <button class="filterChip" type="button" data-filter-chip="recently_verified">Recently verified</button>
-        <button class="filterChip" type="button" data-filter-chip="verified_only">Verified only</button>
+
+      <div class="chipRow" id="scopeChips">
+        <div class="filterGroup" aria-label="Venue scope">
+          <span class="filterGroup__label">View</span>
+          <button class="filterChip is-active" type="button" data-scope="all">All venues</button>
+          <button class="filterChip" type="button" data-scope="needs_data">Needs data</button>
+        </div>
+        <div class="filterGroup" aria-label="Freshness and verification filters">
+          <span class="filterGroup__label">Fresh</span>
+          <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
+          <button class="filterChip" type="button" data-filter-chip="recently_verified">Recently verified</button>
+          <button class="filterChip" type="button" data-filter-chip="verified_only">Verified only</button>
+        </div>
+        <div class="filterGroup" aria-label="Price filters">
+          <span class="filterGroup__label">Price</span>
+          <button class="filterChip" type="button" data-filter-chip="cheapest_near_me">Cheapest near me</button>
+          <button class="filterChip" type="button" data-filter-chip="under_10">Under A$10</button>
+        </div>
+        <div class="filterGroup" aria-label="Availability filters">
+          <span class="filterGroup__label">Tap</span>
+          <button class="filterChip" type="button" data-filter-chip="on_tap">On tap</button>
+          <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs">My saved suburbs</button>
+        </div>
+        <div id="beerChipHost" class="filterGroup chipRow__inline" aria-label="Popular beer filters"></div>
       </div>
-      <div class="filterGroup" aria-label="Price filters">
-        <button class="filterChip" type="button" data-filter-chip="cheapest_near_me">Cheapest near me</button>
-        <button class="filterChip" type="button" data-filter-chip="under_10">Under A$10</button>
-      </div>
-      <div class="filterGroup" aria-label="Availability filters">
-        <button class="filterChip" type="button" data-filter-chip="on_tap">On tap</button>
-        <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs">My saved suburbs</button>
-      </div>
-      <div id="beerChipHost" class="filterGroup chipRow__inline" aria-label="Popular beer filters"></div>
     </div>
 
     <div id="retentionHighlights" class="retentionHighlights" aria-live="polite"></div>
@@ -1795,6 +1984,7 @@
     <div id="statusBar">
       <div id="resultsSummary" class="statusPill">Loading venues…</div>
       <div id="viewSummary" class="statusPill">All venues</div>
+      <div id="accessSummary" class="statusPill">Free preview</div>
     </div>
   </div>
 
@@ -1839,6 +2029,9 @@
         <div id="legendHint" class="legend__hint"></div>
       </aside>
     </div>
+    <div class="responsibleNote">
+      Prices may change. Check with the venue before ordering. Drink responsibly. <a href="/privacy.html">Privacy</a>
+    </div>
   <script>
     const viewerConfig =
       window.MELB_BEER_BOT_VIEWER_CONFIG &&
@@ -1873,6 +2066,9 @@
       ? `Search ${TRACKED_BEERS.slice(0, 3).map((beer) => beer.name).join(", ")}…`
       : "Search a beer";
     const businessBannerEl = document.getElementById("businessBanner");
+    const businessBannerCopyEl = document.getElementById("businessBannerCopy");
+    const topbarBusinessLinksEl = document.getElementById("topbarBusinessLinks");
+    const accessPillEl = document.getElementById("accessPill");
     const venueSearchEl = document.getElementById("venueSearch");
     const beerSearchEl = document.getElementById("beerSearch");
     const beerSuggestionsEl = document.getElementById("beerSuggestions");
@@ -1881,6 +2077,7 @@
     const clearFiltersEl = document.getElementById("clearFilters");
     const resultsSummaryEl = document.getElementById("resultsSummary");
     const viewSummaryEl = document.getElementById("viewSummary");
+    const accessSummaryEl = document.getElementById("accessSummary");
     const legendTitleEl = document.getElementById("legendTitle");
     const legendSubtitleEl = document.getElementById("legendSubtitle");
     const legendStatsEl = document.getElementById("legendStats");
@@ -1971,6 +2168,12 @@
     function syncBusinessAccessUi() {
       const fullAccess = Boolean(businessAccess.hasFullAccess);
       businessBannerEl.style.display = fullAccess ? "none" : "flex";
+      const accessLabel = getAccessLabel();
+      accessPillEl.textContent = accessLabel;
+      accessPillEl.classList.toggle("accessPill--full", fullAccess);
+      accessPillEl.classList.toggle("accessPill--admin", Boolean(businessAccess.isAdmin));
+      businessBannerCopyEl.innerHTML = `<strong>Free preview:</strong> venue pins stay visible. ${businessAccess.freePriceRevealsRemainingToday} exact price ${businessAccess.freePriceRevealsRemainingToday === 1 ? "reveal" : "reveals"} left today. Unlock full access or submit verified venue data. Prices may change.`;
+      syncAdminNavLink();
       beerSearchEl.disabled = !businessAccess.canUseBeerSearch;
       beerSearchEl.placeholder = fullAccess
         ? DEFAULT_BEER_SEARCH_PLACEHOLDER
@@ -1980,6 +2183,46 @@
         chipEl.disabled = !fullAccess;
         chipEl.title = fullAccess ? "" : "Beer shortcuts unlock with premium or contributor access";
       });
+    }
+
+    function getAccessLabel() {
+      if (businessAccess.isAdmin) {
+        return "Admin access";
+      }
+
+      if (!businessAccess.hasFullAccess) {
+        return "Free preview";
+      }
+
+      switch (businessAccess.status) {
+        case "premium_monthly":
+          return "Premium monthly";
+        case "premium_yearly":
+          return "Premium yearly";
+        case "contributor_unlocked":
+          return "Contributor access";
+        default:
+          return "Full access";
+      }
+    }
+
+    function syncAdminNavLink() {
+      const existingLink = document.getElementById("adminNavLink");
+
+      if (!businessAccess.isAdmin) {
+        existingLink?.remove();
+        return;
+      }
+
+      if (existingLink || !topbarBusinessLinksEl) {
+        return;
+      }
+
+      const adminLink = document.createElement("a");
+      adminLink.id = "adminNavLink";
+      adminLink.href = "/admin.html";
+      adminLink.textContent = "Admin";
+      topbarBusinessLinksEl.appendChild(adminLink);
     }
 
     async function trackBusinessEvent(eventType, metadata = {}) {
@@ -2198,7 +2441,7 @@
 
       const featuredBeers = TRACKED_BEERS.slice(0, 6);
 
-      beerChipHostEl.innerHTML = featuredBeers
+      beerChipHostEl.innerHTML = '<span class="filterGroup__label">Popular beers</span>' + featuredBeers
         .map(
           (beer) => `
             <button class="filterChip" type="button" data-beer-chip="${escapeHtml(beer.name)}">
@@ -2238,10 +2481,11 @@
     function renderMapFailure(message) {
       const mapEl = document.getElementById("map");
       const fieldTestMode = window.MelbBeerBusiness && window.MelbBeerBusiness.isFieldTestMode();
-      const detailMarkup = fieldTestMode
+      const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+      const detailMarkup = fieldTestMode || !isLocalHost
         ? `
             <div style="font-size:13px; line-height:1.7; color:#93c5fd;">
-              Refresh the page once. If it still fails, send feedback and we’ll check the map key/referrer setup.
+              Refresh the page once. If it still fails, send feedback and we’ll check the map setup.
             </div>
           `
         : `
@@ -3198,18 +3442,42 @@
       const happyHourCount = filteredRows.filter((row) => getHappyHourDetails(row)).length;
       const knownPriceCount = filteredRows.filter((row) => hasKnownPriceForView(row, viewState)).length;
       const missingCount = visibleCount - capturedCount;
-      const happyHourCopy = happyHourCount > 0
-        ? ` · ${happyHourCount} with happy hour info`
-        : "";
-      const priceCopy = viewState.beerQuery
-        ? ` · ${knownPriceCount} with verified ${viewState.beerQuery} prices`
-        : "";
+      const viewCopy = getViewSummaryText(viewState);
+      const hasActiveFilters = Boolean(
+        viewState.scope !== "all" ||
+        viewState.venueQuery ||
+        viewState.beerQuery ||
+        viewState.onTapOnly ||
+        viewState.filters.length,
+      );
+      const coverageCopy = capturedCount > 0
+        ? `${capturedCount} with beer data · ${happyHourCount} with happy-hour info`
+        : "Coverage is growing. Help verify Melbourne beer prices.";
+      const verifiedCopy = viewState.beerQuery
+        ? `${knownPriceCount} verified ${viewState.beerQuery} ${knownPriceCount === 1 ? "price" : "prices"}`
+        : `${Math.max(0, missingCount)} need data`;
+      const accessCopy = businessAccess.hasFullAccess
+        ? "Unlimited exact prices and full filters"
+        : businessAccess.freePriceRevealsRemainingToday > 0
+          ? `${businessAccess.freePriceRevealsRemainingToday}/${businessAccess.freePriceRevealsPerDay} free reveals left today`
+          : "Free reveals used. Upgrade or submit data to unlock.";
 
       resultsSummaryEl.innerHTML = `
-        <strong>${visibleCount}</strong> ${visibleCount === 1 ? "venue" : "venues"}
-        <span style="opacity:0.72;">· ${capturedCount} with beer data${priceCopy}${happyHourCopy} · ${missingCount} still to fill${businessAccess.hasFullAccess ? " · full access" : ` · ${businessAccess.freePriceRevealsRemainingToday} free price reveals left today`}</span>
+        <span class="statusPill__label">In this view</span>
+        <span class="statusPill__value">${visibleCount} ${visibleCount === 1 ? "venue" : "venues"}</span>
+        <span class="statusPill__copy">${escapeHtml(coverageCopy)}</span>
       `;
-      viewSummaryEl.textContent = getViewSummaryText(viewState);
+      viewSummaryEl.innerHTML = `
+        <span class="statusPill__label">Active filter</span>
+        <span class="statusPill__value">${escapeHtml(viewCopy)}</span>
+        <span class="statusPill__copy">${escapeHtml(verifiedCopy)}</span>
+      `;
+      accessSummaryEl.innerHTML = `
+        <span class="statusPill__label">Access</span>
+        <span class="statusPill__value">${escapeHtml(getAccessLabel())}</span>
+        <span class="statusPill__copy">${escapeHtml(accessCopy)}</span>
+      `;
+      clearFiltersEl.hidden = !hasActiveFilters;
       syncScopeChipState();
       syncBeerChipState();
       syncHighValueChipState();
