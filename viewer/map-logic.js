@@ -2,6 +2,98 @@
   const UNKNOWN_PRICE_TEXT = "Price unknown";
   const UNAVAILABLE_LABELS = new Set(["Unavailable", "Not on tap", "No pints"]);
   const PACKAGE_LABELS = new Set(["Cans only", "Bottles only"]);
+  const MARKER_STATE_STYLES = Object.freeze({
+    cheap: {
+      fillColor: "#15803d",
+      strokeColor: "#052e16",
+      labelColor: "#ffffff",
+      labelText: null,
+      scale: 17,
+      fillOpacity: 0.96,
+      strokeWeight: 2.2,
+    },
+    mid: {
+      fillColor: "#d97706",
+      strokeColor: "#451a03",
+      labelColor: "#111827",
+      labelText: null,
+      scale: 17,
+      fillOpacity: 0.95,
+      strokeWeight: 2.2,
+    },
+    high: {
+      fillColor: "#ea580c",
+      strokeColor: "#431407",
+      labelColor: "#ffffff",
+      labelText: null,
+      scale: 17,
+      fillOpacity: 0.95,
+      strokeWeight: 2.2,
+    },
+    expensive: {
+      fillColor: "#b91c1c",
+      strokeColor: "#450a0a",
+      labelColor: "#ffffff",
+      labelText: null,
+      scale: 17,
+      fillOpacity: 0.96,
+      strokeWeight: 2.2,
+    },
+    unknown: {
+      fillColor: "#475569",
+      strokeColor: "#e2e8f0",
+      labelColor: "#ffffff",
+      labelText: "?",
+      scale: 14,
+      fillOpacity: 0.74,
+      strokeWeight: 2.8,
+    },
+    needs_data: {
+      fillColor: "#2563eb",
+      strokeColor: "#bfdbfe",
+      labelColor: "#ffffff",
+      labelText: "",
+      scale: 10,
+      fillOpacity: 0.72,
+      strokeWeight: 2.4,
+    },
+    mapped: {
+      fillColor: "#334155",
+      strokeColor: "#e2e8f0",
+      labelColor: "#ffffff",
+      labelText: "",
+      scale: 9,
+      fillOpacity: 0.9,
+      strokeWeight: 1.6,
+    },
+    package_only: {
+      fillColor: "#c2410c",
+      strokeColor: "#431407",
+      labelColor: "#ffffff",
+      labelText: null,
+      scale: 15,
+      fillOpacity: 0.88,
+      strokeWeight: 2.6,
+    },
+    unavailable: {
+      fillColor: "#7f1d1d",
+      strokeColor: "#fecaca",
+      labelColor: "#ffffff",
+      labelText: "NO",
+      scale: 14,
+      fillOpacity: 0.8,
+      strokeWeight: 2.7,
+    },
+    locked: {
+      fillColor: "#7c3aed",
+      strokeColor: "#ddd6fe",
+      labelColor: "#ffffff",
+      labelText: "$",
+      scale: 15,
+      fillOpacity: 0.84,
+      strokeWeight: 2.7,
+    },
+  });
 
   function normalizePositivePrice(value) {
     const numeric = Number(value);
@@ -133,31 +225,62 @@
     return "expensive";
   }
 
-  function getMarkerColor(beer) {
-    if (!beer) {
-      return "#64748b";
+  function getMarkerState(beer, options = {}) {
+    if (options.needsData) {
+      return "needs_data";
+    }
+
+    if (options.mappedOnly || !beer) {
+      return "mapped";
+    }
+
+    if (options.locked) {
+      return "locked";
     }
 
     if (UNAVAILABLE_LABELS.has(beer.availabilityLabel)) {
-      return "#b91c1c";
+      return "unavailable";
     }
 
     if (PACKAGE_LABELS.has(beer.availabilityLabel)) {
-      return "#c2410c";
+      return "package_only";
     }
 
-    switch (getPriceTier(beer)) {
-      case "cheap":
-        return "#15803d";
-      case "mid":
-        return "#0f766e";
-      case "high":
-        return "#b45309";
-      case "expensive":
-        return "#b91c1c";
-      default:
-        return "#64748b";
+    return getPriceTier(beer);
+  }
+
+  function getMarkerVisual(beer, options = {}) {
+    const state = getMarkerState(beer, options);
+    const baseStyle = MARKER_STATE_STYLES[state] || MARKER_STATE_STYLES.unknown;
+    const labelText = baseStyle.labelText === null ? getMarkerLabel(beer) : baseStyle.labelText;
+    const visual = {
+      state,
+      fillColor: baseStyle.fillColor,
+      fillOpacity: baseStyle.fillOpacity,
+      strokeColor: baseStyle.strokeColor,
+      strokeWeight: baseStyle.strokeWeight,
+      scale: baseStyle.scale,
+      labelColor: baseStyle.labelColor,
+      labelText,
+    };
+
+    if (!options.selected) {
+      return visual;
     }
+
+    return {
+      ...visual,
+      state: `${state}_selected`,
+      strokeColor: "#f5c76b",
+      strokeWeight: Math.max(visual.strokeWeight + 1.7, 4),
+      scale: visual.scale + 2.4,
+      fillOpacity: Math.min(visual.fillOpacity + 0.06, 1),
+      selected: true,
+    };
+  }
+
+  function getMarkerColor(beer) {
+    return getMarkerVisual(beer).fillColor;
   }
 
   function getMarkerLabel(beer) {
@@ -189,7 +312,7 @@
   }
 
   function getMarkerScale(beer) {
-    return hasNumericPrice(beer) ? 17 : 14;
+    return getMarkerVisual(beer).scale;
   }
 
   function isUnderPriceThreshold(beers, threshold) {
@@ -197,8 +320,60 @@
     return lowest !== null && lowest < threshold;
   }
 
+  function getClusterVisual(count) {
+    const numericCount = Number(count);
+    const safeCount = Number.isFinite(numericCount) && numericCount > 0 ? numericCount : 1;
+
+    if (safeCount >= 100) {
+      return {
+        fillColor: "#9f1239",
+        strokeColor: "#fecdd3",
+        labelColor: "#ffffff",
+        scale: 28,
+        fillOpacity: 0.9,
+        strokeWeight: 4,
+        fontSize: "12px",
+      };
+    }
+
+    if (safeCount >= 25) {
+      return {
+        fillColor: "#b45309",
+        strokeColor: "#fde68a",
+        labelColor: "#111827",
+        scale: 24,
+        fillOpacity: 0.9,
+        strokeWeight: 4,
+        fontSize: "12px",
+      };
+    }
+
+    if (safeCount >= 10) {
+      return {
+        fillColor: "#1d4ed8",
+        strokeColor: "#bfdbfe",
+        labelColor: "#ffffff",
+        scale: 21,
+        fillOpacity: 0.88,
+        strokeWeight: 3.5,
+        fontSize: "12px",
+      };
+    }
+
+    return {
+      fillColor: "#334155",
+      strokeColor: "#e2e8f0",
+      labelColor: "#ffffff",
+      scale: 18,
+      fillOpacity: 0.86,
+      strokeWeight: 3,
+      fontSize: "12px",
+    };
+  }
+
   root.MelbBeerMapLogic = Object.freeze({
     UNKNOWN_PRICE_TEXT,
+    MARKER_STATE_STYLES,
     normalizeBeerPriceNumeric,
     getAvailabilityLabel,
     getBeerPriceText,
@@ -206,9 +381,12 @@
     hasNumericPrice,
     getLowestKnownPrice,
     getPriceTier,
+    getMarkerState,
+    getMarkerVisual,
     getMarkerColor,
     getMarkerLabel,
     getMarkerScale,
+    getClusterVisual,
     isUnderPriceThreshold,
   });
 })(typeof window !== "undefined" ? window : globalThis);

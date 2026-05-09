@@ -564,15 +564,21 @@
     }
 
     .legend__swatch--amber {
-      background: #b45309;
+      background: #d97706;
     }
 
     .legend__swatch--orange {
-      background: #c2410c;
+      background: #ea580c;
     }
 
     .legend__swatch--red {
       background: #b91c1c;
+    }
+
+    .legend__swatch--selected {
+      background: #334155;
+      border-color: #f5c76b;
+      box-shadow: 0 0 0 3px rgba(245, 199, 107, 0.2), 0 0 18px rgba(245, 199, 107, 0.35);
     }
 
     .legend__itemTitle {
@@ -1332,12 +1338,195 @@
     }
 
     .gm-style .gm-style-iw-c {
-      border-radius: 24px !important;
-      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28) !important;
+      border-radius: 26px !important;
+      background: transparent !important;
+      box-shadow: 0 30px 90px rgba(0, 0, 0, 0.42) !important;
+      padding: 0 !important;
     }
 
     .gm-style .gm-style-iw-d {
       overflow: auto !important;
+    }
+
+    .gm-style .gm-style-iw-tc::after {
+      background: #0b1220 !important;
+    }
+
+    .gm-ui-hover-effect {
+      filter: invert(1) grayscale(1);
+      opacity: 0.8;
+      top: 7px !important;
+      right: 7px !important;
+    }
+
+    .beerPopup {
+      width: min(390px, 82vw);
+      max-width: 390px;
+      padding: 16px;
+      color: #f8fafc;
+      background:
+        radial-gradient(circle at 15% 0%, rgba(245, 199, 107, 0.18), transparent 36%),
+        linear-gradient(150deg, rgba(19, 29, 47, 0.98), rgba(5, 9, 20, 0.98));
+      border: 1px solid rgba(244, 214, 150, 0.2);
+      border-radius: 26px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .beerPopup__title {
+      color: #fff7ed;
+    }
+
+    .beerPopup__address {
+      color: #a8b0bf;
+    }
+
+    .beerPopup__featured,
+    .beerPopup__section,
+    .beerPopup__happy,
+    .beerPopup__notice {
+      border-color: rgba(244, 214, 150, 0.16);
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025)),
+        rgba(8, 13, 26, 0.84);
+      color: #e5edf8;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+    }
+
+    .beerPopup__featuredLabel,
+    .beerPopup__sectionHeader,
+    .beerPopup__happyEyebrow {
+      color: #f5c76b;
+    }
+
+    .beerPopup__featuredPrice {
+      color: #ffffff;
+      font-size: 24px;
+      letter-spacing: -0.035em;
+    }
+
+    .beerPopup__featured--unknown,
+    .beerPopup__featured--unavailable {
+      background:
+        radial-gradient(circle at 8% 0%, rgba(148, 163, 184, 0.16), transparent 44%),
+        linear-gradient(145deg, rgba(30, 41, 59, 0.94), rgba(5, 9, 20, 0.98));
+    }
+
+    .beerPopup__featured--locked {
+      background:
+        radial-gradient(circle at 8% 0%, rgba(167, 139, 250, 0.22), transparent 44%),
+        linear-gradient(145deg, rgba(49, 46, 129, 0.74), rgba(5, 9, 20, 0.98));
+    }
+
+    .beerPopup__featuredMeta,
+    .beerPopup__happyEmpty,
+    .beerPopup__footer {
+      color: #a8b0bf;
+    }
+
+    .beerPopup__sectionHeader {
+      background: rgba(2, 6, 23, 0.38);
+      border-color: rgba(244, 214, 150, 0.12);
+    }
+
+    .beerPopup__beerRow {
+      align-items: center;
+      border-color: rgba(244, 214, 150, 0.1);
+      transition: background 140ms ease, border-color 140ms ease;
+    }
+
+    .beerPopup__beerRow--known {
+      background: rgba(21, 128, 61, 0.08);
+    }
+
+    .beerPopup__beerRow--locked {
+      background: rgba(124, 58, 237, 0.09);
+    }
+
+    .beerPopup__beerRow--unknown,
+    .beerPopup__beerRow--unavailable {
+      background: rgba(71, 85, 105, 0.12);
+    }
+
+    .beerPopup__beerRow--package {
+      background: rgba(234, 88, 12, 0.1);
+    }
+
+    .beerPopup__beerName {
+      color: #fff7ed;
+    }
+
+    .beerPopup__beerMeta,
+    .beerPopup__beerQuality {
+      width: fit-content;
+    }
+
+    .beerPopup__beerQuality {
+      display: inline-flex;
+      color: #a8b0bf;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .beerPopup__beerPrice {
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: 900;
+      letter-spacing: -0.015em;
+    }
+
+    .beerPopup__beerPrice--unknown {
+      color: #cbd5e1 !important;
+    }
+
+    .beerPopup__beerPrice--locked {
+      color: #ddd6fe !important;
+    }
+
+    .beerPopup__beerPrice--unavailable {
+      color: #fecaca !important;
+    }
+
+    .beerPopup__link {
+      color: #f5c76b;
+      text-underline-offset: 3px;
+    }
+
+    .beerPopup__notice {
+      color: #cbd5e1;
+    }
+
+    .beerPopup__empty {
+      padding: 14px 12px;
+      font-size: 13px;
+      color: #cbd5e1;
+      line-height: 1.55;
+      background: rgba(71, 85, 105, 0.12);
+    }
+
+    .beerPopup__notice--blue {
+      color: #bfdbfe;
+    }
+
+    .beerPopup__happy--negative {
+      background: rgba(15, 23, 42, 0.74);
+    }
+
+    .beerPopup__happyStatus,
+    .beerPopup__happyValue {
+      color: #f8fafc;
+    }
+
+    .beerPopup__happyLabel {
+      color: #f5c76b;
+    }
+
+    .beerPopup__happyCaptured {
+      color: #111827;
+      background: linear-gradient(135deg, #f5c76b, #ffb199);
+    }
+
+    .beerPopup__footer {
+      border-color: rgba(244, 214, 150, 0.12);
     }
 
     @media (min-width: 901px) {
@@ -2531,6 +2720,65 @@
       return window.MelbBeerMapLogic.getMarkerScale(beer);
     }
 
+    function getBeerDisplayState(beer, markerId) {
+      if (hasRedactedPrice(beer) || (hasNumericPrice(beer) && !canShowExactPrices(markerId))) {
+        return "locked";
+      }
+
+      const markerState = window.MelbBeerMapLogic.getMarkerState(beer);
+
+      if (markerState === "package_only") {
+        return "package";
+      }
+
+      if (markerState === "cheap" || markerState === "mid" || markerState === "high" || markerState === "expensive") {
+        return "known";
+      }
+
+      return markerState;
+    }
+
+    function getBeerRowClass(beer, markerId) {
+      return `beerPopup__beerRow--${getBeerDisplayState(beer, markerId)}`;
+    }
+
+    function getBeerPriceClass(beer, markerId) {
+      const state = getBeerDisplayState(beer, markerId);
+
+      if (state === "locked") {
+        return "beerPopup__beerPrice--locked";
+      }
+
+      if (state === "unavailable" || state === "package") {
+        return "beerPopup__beerPrice--unavailable";
+      }
+
+      return hasNumericPrice(beer) ? "" : "beerPopup__beerPrice--unknown";
+    }
+
+    function getBeerQualityCopy(beer) {
+      const confidence = beer.confidenceLabel
+        ? beer.confidenceLabel.replaceAll("_", " ")
+        : null;
+      const source = beer.sourceType || "community source";
+      const verified = beer.lastVerifiedAt ? `Last verified ${formatDateLabel(beer.lastVerifiedAt) || "recently"}` : "Verification pending";
+
+      return [confidence, verified, source].filter(Boolean).join(" · ");
+    }
+
+    function getPriceStateBadgeStyle(beer, markerId) {
+      const visual = window.MelbBeerMapLogic.getMarkerVisual(beer, {
+        locked: hasRedactedPrice(beer) || (hasNumericPrice(beer) && !canShowExactPrices(markerId)),
+      });
+
+      return [
+        `background:${visual.fillColor}`,
+        `color:${visual.labelColor || "#ffffff"}`,
+        `border:1px solid ${visual.strokeColor}`,
+        "box-shadow:0 8px 18px rgba(0,0,0,0.16)",
+      ].join(";");
+    }
+
     function toSearchKey(value) {
       return String(value || "")
         .toLowerCase()
@@ -2787,29 +3035,21 @@
       return Boolean(viewState.beerQuery);
     }
 
-    function getNeutralMarkerVisual() {
-      return {
-        fillColor: "#334155",
-        strokeColor: "#e2e8f0",
-        scale: 9,
-      };
+    function getNeutralMarkerVisual(row, viewState) {
+      return window.MelbBeerMapLogic.getMarkerVisual(null, {
+        mappedOnly: viewState.scope !== "needs_data" && hasCapturedBeerData(row),
+        needsData: viewState.scope === "needs_data" || !hasCapturedBeerData(row),
+      });
     }
 
-    function getMarkerVisual(viewState, beer) {
+    function getMarkerVisual(viewState, beer, markerId) {
       if (!usesStyledBeerMarkers(viewState)) {
         return null;
       }
 
-      const hasKnownPrice = hasNumericPrice(beer);
-
-      return {
-        fillColor: getMarkerColor(beer),
-        labelText: getMarkerLabel(beer),
-        scale: getMarkerScale(beer),
-        fillOpacity: hasKnownPrice ? 0.96 : 0.72,
-        strokeColor: hasKnownPrice ? "#0f172a" : "#e2e8f0",
-        strokeWeight: hasKnownPrice ? 2 : 2.75,
-      };
+      return window.MelbBeerMapLogic.getMarkerVisual(beer, {
+        locked: hasRedactedPrice(beer) || (hasNumericPrice(beer) && !canShowExactPrices(markerId)),
+      });
     }
 
     function rowMatchesView(row, viewState) {
@@ -3016,14 +3256,14 @@
             `${resultCounts.unknown} price unknown`,
           ],
           items: [
-            ["green", "Lower price", "Verified price in the lower band for this beer."],
-            ["teal", "Mid price", "Verified on-tap result sitting in the middle of the pack."],
-            ["amber", "Higher price", "Verified on-tap result at the warmer end of the price range."],
-            ["unknown", "Price unknown", "The beer may be listed, but no verified price is available yet."],
-            ["orange", "Package or no pints", "The venue has the beer, but only in cans, bottles, schooners, or without pints."],
-            ["red", "Unavailable", "The venue told us the beer is not on tap or not available."],
+            ["green", "Lower price", "Verified lower-band price for this beer."],
+            ["amber", "Mid price", "Verified price in the middle of the range."],
+            ["orange", "Upper range", "Verified higher-band price, or package-only/no-pint availability."],
+            ["red", "Unavailable", "The venue told us this beer is not available or not on tap."],
+            ["unknown", "Price unknown", "Listed or possible match, but no verified price yet."],
+            ["selected", "Selected venue", "Gold ring means the marker is open in the venue card."],
           ],
-          hint: "Price filters ignore unknowns. Click any marker to check confidence, last verified date, and source."
+          hint: "Unknown prices are shown separately and are not included in cheapest rankings. Click any marker to check confidence, last verified date, and source."
         };
       }
 
@@ -3037,6 +3277,7 @@
           ],
           items: [
             ["needs", "Needs data", "The pub or bar exists in our venue list and is ready for beer data capture."],
+            ["selected", "Selected venue", "Gold ring shows the active venue."],
           ],
           hint: "Use Submit data to send a venue update, or let the call and OCR workflows fill these in over time."
         };
@@ -3051,6 +3292,8 @@
         ],
         items: [
           ["neutral", "Mapped venue", "A pub or bar already in the directory. Click through to see captured beers and prices."],
+          ["needs", "Needs data", "Blue markers have no captured beer prices yet."],
+          ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
         ],
         hint: "Switch to a beer search when you want colour, price-led markers, and faster comparison."
       };
@@ -3078,7 +3321,7 @@
       legendHintEl.textContent = config.hint;
     }
 
-    function renderRetentionHighlights(rows) {
+    function renderRetentionHighlights(rows, activeMarkerRecords = [], onSelectRecord = null) {
       const happyRows = rows
         .filter(hasActiveHappyHourNow)
         .slice(0, 4);
@@ -3113,11 +3356,16 @@
 
       retentionHighlightsEl.querySelectorAll("[data-highlight-venue]").forEach((buttonEl) => {
         buttonEl.addEventListener("click", () => {
-          const record = markerRecords.find((item) => item.id === buttonEl.dataset.highlightVenue);
+          const record = activeMarkerRecords.find((item) => item.id === buttonEl.dataset.highlightVenue);
           if (!record) {
             return;
           }
-          map.panTo(record.marker.getPosition());
+
+          if (typeof onSelectRecord === "function") {
+            void onSelectRecord(record, buttonEl.dataset.action);
+            return;
+          }
+
           void trackBusinessEvent("venue_card_viewed", {
             venueId: record.row.venue_id || record.venue.id || null,
             venueName: record.venue.name || record.row.venue_name || null,
@@ -3152,12 +3400,9 @@
       if (viewState.beerQuery && featuredBeer) {
         const displayPrice = getDisplayBeerPriceText(featuredBeer, record.id);
         const canSortByPrice = canShowExactPrices(record.id) && hasNumericPrice(featuredBeer);
-        const badgeTone = hasNumericPrice(featuredBeer)
-          ? featuredBeer.availabilityTone
-          : getAvailabilityTone("Unknown");
         return {
           badgeLabel: displayPrice,
-          badgeStyle: `background:${badgeTone.background}; color:${badgeTone.color};`,
+          badgeStyle: getPriceStateBadgeStyle(featuredBeer, record.id),
           metaPill: featuredBeer.availabilityLabel,
           copy: [
             `${featuredBeer.label} · ${featuredBeer.availabilityLabel}`,
@@ -3172,12 +3417,9 @@
       if (featuredBeer) {
         const displayPrice = getDisplayBeerPriceText(featuredBeer, record.id);
         const canSortByPrice = canShowExactPrices(record.id) && hasNumericPrice(featuredBeer);
-        const badgeTone = hasNumericPrice(featuredBeer)
-          ? featuredBeer.availabilityTone
-          : getAvailabilityTone("Unknown");
         return {
           badgeLabel: displayPrice,
-          badgeStyle: `background:${badgeTone.background}; color:${badgeTone.color};`,
+          badgeStyle: getPriceStateBadgeStyle(featuredBeer, record.id),
           metaPill: featuredBeer.label,
           copy: [
             `${featuredBeer.availabilityLabel} · ${displayPrice}`,
@@ -3522,6 +3764,13 @@
           if (activeMarker && activeMarker.__baseIcon) {
             activeMarker.setIcon(activeMarker.__baseIcon);
           }
+          if (activeMarker && activeMarker.__baseLabel !== undefined) {
+            activeMarker.setLabel(activeMarker.__baseLabel);
+          }
+          if (activeMarker && typeof activeMarker.setZIndex === "function") {
+            const baseZIndex = Number(activeMarker.__baseZIndex);
+            activeMarker.setZIndex(Number.isFinite(baseZIndex) ? baseZIndex : undefined);
+          }
 
           activeMarker = marker;
 
@@ -3532,6 +3781,15 @@
               strokeWeight: Math.max(Number(marker.__baseIcon.strokeWeight || 2) + 1.5, 3.5),
               scale: Number(marker.__baseIcon.scale || 12) + 2,
             });
+            if (marker.__baseLabel && typeof marker.setLabel === "function") {
+              marker.setLabel({
+                ...marker.__baseLabel,
+                fontWeight: "900",
+              });
+            }
+            if (typeof marker.setZIndex === "function") {
+              marker.setZIndex(Number(google.maps.Marker.MAX_ZINDEX || 1000000) + 100);
+            }
           }
         }
 
@@ -3548,8 +3806,8 @@
             const lat = Number(venue.latitude);
             const lng = Number(venue.longitude);
             const featuredBeer = getFeaturedBeer(item, viewState);
-            const markerVisual = getMarkerVisual(viewState, featuredBeer);
             const markerId = getVenueMarkerId(item, venue, lat, lng);
+            const markerVisual = getMarkerVisual(viewState, featuredBeer, markerId);
 
             const markerOptions = {
               position: { lat, lng },
@@ -3570,25 +3828,35 @@
               };
               markerOptions.label = {
                 text: markerVisual.labelText,
-                color: "#ffffff",
+                color: markerVisual.labelColor || "#ffffff",
                 fontSize: "11px",
-                fontWeight: "700",
+                fontWeight: "900",
               };
             } else {
-              const neutralMarkerVisual = getNeutralMarkerVisual();
+              const neutralMarkerVisual = getNeutralMarkerVisual(item, viewState);
 
               markerOptions.icon = {
                 path: google.maps.SymbolPath.CIRCLE,
                 fillColor: neutralMarkerVisual.fillColor,
-                fillOpacity: 0.92,
+                fillOpacity: neutralMarkerVisual.fillOpacity,
                 strokeColor: neutralMarkerVisual.strokeColor,
-                strokeWeight: 1.5,
+                strokeWeight: neutralMarkerVisual.strokeWeight,
                 scale: neutralMarkerVisual.scale,
               };
+              markerOptions.label = neutralMarkerVisual.labelText
+                ? {
+                    text: neutralMarkerVisual.labelText,
+                    color: neutralMarkerVisual.labelColor || "#ffffff",
+                    fontSize: "11px",
+                    fontWeight: "900",
+                  }
+                : undefined;
             }
 
             const marker = new google.maps.Marker(markerOptions);
             marker.__baseIcon = markerOptions.icon || null;
+            marker.__baseLabel = markerOptions.label || null;
+            marker.__baseZIndex = markerOptions.zIndex || null;
 
             const address = formatAddress(venue);
             const createdAt = item.saved_at || item.created_at
@@ -3602,13 +3870,14 @@
               const liveHappyHourDetails = getHappyHourDetails(item);
               const liveFeaturedBeer = getFeaturedBeer(item, viewState);
               const liveHasCapturedData = hasCapturedBeerData(item);
+              const featuredBeerState = liveFeaturedBeer ? getBeerDisplayState(liveFeaturedBeer, markerId) : null;
               const featuredBeerMarkup = liveFeaturedBeer ? `
-                <div class="beerPopup__featured">
+                <div class="beerPopup__featured beerPopup__featured--${escapeHtml(featuredBeerState)}">
                   <div class="beerPopup__featuredLabel">${escapeHtml(viewState.beerQuery ? "Best match" : "Best captured beer")}</div>
                   <div class="beerPopup__featuredRow">
                     <div>
                       <div class="beerPopup__featuredPrice">${escapeHtml(getDisplayBeerPriceText(liveFeaturedBeer, markerId))}</div>
-                      <div class="beerPopup__featuredMeta">${escapeHtml(liveFeaturedBeer.availabilityLabel)}</div>
+                      <div class="beerPopup__featuredMeta">${escapeHtml(liveFeaturedBeer.availabilityLabel)} · ${escapeHtml(featuredBeerState === "known" ? "Verified price" : featuredBeerState === "locked" ? "Exact price locked" : featuredBeerState === "unavailable" ? "Not currently available" : "No verified price yet")}</div>
                     </div>
                     <div class="beerPopup__pill" style="background:${liveFeaturedBeer.availabilityTone.background}; color:${liveFeaturedBeer.availabilityTone.color};">
                       ${escapeHtml(liveFeaturedBeer.label)}
@@ -3618,16 +3887,16 @@
               ` : "";
               const beerMarkup = liveBeerItems.length > 0
                 ? liveBeerItems.map((beer) => `
-                <div class="beerPopup__beerRow">
+                <div class="beerPopup__beerRow ${escapeHtml(getBeerRowClass(beer, markerId))}">
                   <div style="display:flex; flex-direction:column; gap:4px;">
                     <span class="beerPopup__beerName">${escapeHtml(beer.label)}</span>
                     <span class="beerPopup__beerMeta" style="background:${beer.availabilityTone.background}; color:${beer.availabilityTone.color};">
                       ${escapeHtml(beer.availabilityLabel)}
                     </span>
-                    <span style="font-size:11px; color:#64748b;">${escapeHtml(beer.confidenceLabel ? `${beer.confidenceLabel.replaceAll("_", " ")} · ${beer.sourceType || "community source"}` : "community captured")}</span>
+                    <span class="beerPopup__beerQuality">${escapeHtml(getBeerQualityCopy(beer))}</span>
                   </div>
                   <div class="beerPopup__beerActions">
-                    <span class="beerPopup__beerPrice ${hasNumericPrice(beer) ? "" : "beerPopup__beerPrice--unknown"}" style="color:${beer.needsReview ? "#b45309" : "#0f172a"};">${escapeHtml(getDisplayBeerPriceText(beer, markerId))}</span>
+                    <span class="beerPopup__beerPrice ${escapeHtml(getBeerPriceClass(beer, markerId))}">${escapeHtml(getDisplayBeerPriceText(beer, markerId))}</span>
                     <button
                       class="beerPopup__link"
                       type="button"
@@ -3641,8 +3910,8 @@
                 </div>
               `).join("")
                 : `
-                <div style="padding:14px 12px; font-size:13px; color:#64748b;">
-                  No beer prices captured yet.
+                <div class="beerPopup__empty">
+                  No verified beer prices yet. Submit a menu photo or three beer rows to help fill this venue.
                 </div>
               `;
               const captureStatusMarkup = liveHasCapturedData
@@ -3722,16 +3991,58 @@
             window.markerClusterer &&
             typeof window.markerClusterer.MarkerClusterer === "function"
           ) {
+            const clusterRenderer = {
+              render({ count, position }) {
+                const clusterVisual = window.MelbBeerMapLogic.getClusterVisual(count);
+
+                return new google.maps.Marker({
+                  position,
+                  title: `${count} venues in this area`,
+                  icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    fillColor: clusterVisual.fillColor,
+                    fillOpacity: clusterVisual.fillOpacity,
+                    strokeColor: clusterVisual.strokeColor,
+                    strokeWeight: clusterVisual.strokeWeight,
+                    scale: clusterVisual.scale,
+                  },
+                  label: {
+                    text: String(count),
+                    color: clusterVisual.labelColor,
+                    fontSize: clusterVisual.fontSize,
+                    fontWeight: "900",
+                  },
+                  zIndex: Number(google.maps.Marker.MAX_ZINDEX || 1000000) + Number(count || 0),
+                });
+              },
+            };
+
             markerCluster = new window.markerClusterer.MarkerClusterer({
               map,
               markers: liveMarkers,
+              renderer: clusterRenderer,
             });
           }
 
           syncStatusPills(filteredRows, viewState);
           renderLegend(filteredRows, viewState);
           renderVenueRail(markerRecords, viewState);
-          renderRetentionHighlights(allVenueRows);
+          renderRetentionHighlights(filteredRows, markerRecords, async (record, source) => {
+            setActiveMarker(record.marker);
+            map.panTo(record.marker.getPosition());
+            await maybeRevealVenuePrices(record.row, record.id);
+            record.infoWindow.setContent(getVenueDetailContent(record));
+            record.infoWindow.open(map, record.marker);
+            venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
+              cardEl.classList.toggle("is-active", cardEl.dataset.markerId === record.id);
+            });
+            void trackBusinessEvent("venue_card_viewed", {
+              venueId: record.row.venue_id || record.venue.id || null,
+              venueName: record.venue.name || record.row.venue_name || null,
+              suburb: record.venue.suburb || record.row.suburb || null,
+              source,
+            });
+          });
         }
 
         window.__melbBeerMapRefreshVisibleRail = () => {
