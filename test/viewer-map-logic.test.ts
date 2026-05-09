@@ -172,6 +172,16 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("Drink responsibly");
   });
 
+  it("keeps the public map top area compact and touch-friendly on phones", () => {
+    expect(html).toContain("@media (max-width: 640px)");
+    expect(html).toContain("min-height: 100dvh");
+    expect(html).toContain("-webkit-overflow-scrolling: touch");
+    expect(html).toContain("-webkit-line-clamp: 2");
+    expect(html).toContain("font-size: 16px");
+    expect(html).toContain(".retentionHighlights {\n        display: none;");
+    expect(html).toContain("min-height: 62dvh");
+  });
+
   it("keeps admin navigation out of the static public header", () => {
     expect(html).not.toMatch(/<a[^>]*href="\/admin\.html"[^>]*>Admin<\/a>/);
     expect(html).not.toContain("Admin secret");
