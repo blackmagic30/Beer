@@ -40,6 +40,16 @@ describe("viewer map price logic", () => {
       labelColor: string;
       scale: number;
     };
+    getDistanceKm: (
+      origin: { lat?: number; lng?: number; latitude?: number; longitude?: number },
+      destination: { lat?: number; lng?: number; latitude?: number; longitude?: number },
+    ) => number | null;
+    formatDistance: (distanceKm: number | null) => string;
+    isWithinRadiusKm: (
+      origin: { lat?: number; lng?: number; latitude?: number; longitude?: number },
+      destination: { lat?: number; lng?: number; latitude?: number; longitude?: number },
+      radiusKm: number,
+    ) => boolean;
   };
 
   it("does not convert unknown, zero, unavailable, or off-tap prices into cheap numeric prices", () => {
@@ -138,6 +148,20 @@ describe("viewer map price logic", () => {
     expect(logic.getClusterVisual(40).fillColor).toBe("#b45309");
     expect(logic.getClusterVisual(120).fillColor).toBe("#9f1239");
   });
+
+  it("calculates and formats approximate venue distance", () => {
+    const flindersStreet = { lat: -37.8183, lng: 144.9671 };
+    const richmond = { latitude: -37.823, longitude: 144.998 };
+    const distanceKm = logic.getDistanceKm(flindersStreet, richmond);
+
+    expect(distanceKm).toBeGreaterThan(2);
+    expect(distanceKm).toBeLessThan(3.5);
+    expect(logic.formatDistance(0.35)).toBe("350 m");
+    expect(logic.formatDistance(1.24)).toBe("1.2 km");
+    expect(logic.formatDistance(null)).toBe("Distance unavailable");
+    expect(logic.isWithinRadiusKm(flindersStreet, richmond, 5)).toBe(true);
+    expect(logic.isWithinRadiusKm(flindersStreet, richmond, 1)).toBe(false);
+  });
 });
 
 describe("viewer map UI wiring", () => {
@@ -170,6 +194,15 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('class="filterGroup__label">Tap</span>');
     expect(html).toContain('id="accessSummary"');
     expect(html).toContain("Drink responsibly");
+  });
+
+  it("renders location-aware controls without requesting location on page load", () => {
+    expect(html).toContain('id="useLocationButton"');
+    expect(html).toContain('data-filter-chip="happy_hour_near_me"');
+    expect(html).toContain('data-filter-chip="nearest"');
+    expect(html).toContain('id="nearMeRadiusSelect"');
+    expect(html).toContain("navigator.geolocation.getCurrentPosition");
+    expect(html).not.toContain("watchPosition");
   });
 
   it("keeps the public map top area compact and touch-friendly on phones", () => {

@@ -320,6 +320,68 @@
     return lowest !== null && lowest < threshold;
   }
 
+  function normalizeLatLng(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+
+    const lat = Number(value.lat ?? value.latitude);
+    const lng = Number(value.lng ?? value.longitude);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return null;
+    }
+
+    return { lat, lng };
+  }
+
+  function getDistanceKm(origin, destination) {
+    const start = normalizeLatLng(origin);
+    const end = normalizeLatLng(destination);
+
+    if (!start || !end) {
+      return null;
+    }
+
+    const earthRadiusKm = 6371;
+    const toRadians = (degrees) => degrees * (Math.PI / 180);
+    const latDelta = toRadians(end.lat - start.lat);
+    const lngDelta = toRadians(end.lng - start.lng);
+    const startLat = toRadians(start.lat);
+    const endLat = toRadians(end.lat);
+    const haversine =
+      Math.sin(latDelta / 2) ** 2 +
+      Math.cos(startLat) * Math.cos(endLat) * Math.sin(lngDelta / 2) ** 2;
+    const centralAngle = 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+
+    return earthRadiusKm * centralAngle;
+  }
+
+  function formatDistance(distanceKm) {
+    if (distanceKm == null) {
+      return "Distance unavailable";
+    }
+
+    const numericDistance = Number(distanceKm);
+
+    if (!Number.isFinite(numericDistance) || numericDistance < 0) {
+      return "Distance unavailable";
+    }
+
+    if (numericDistance < 1) {
+      return `${Math.max(1, Math.round(numericDistance * 1000))} m`;
+    }
+
+    return `${numericDistance.toFixed(numericDistance < 10 ? 1 : 0)} km`;
+  }
+
+  function isWithinRadiusKm(origin, destination, radiusKm) {
+    const distanceKm = getDistanceKm(origin, destination);
+    const numericRadius = Number(radiusKm);
+
+    return distanceKm !== null && Number.isFinite(numericRadius) && numericRadius >= 0 && distanceKm <= numericRadius;
+  }
+
   function getClusterVisual(count) {
     const numericCount = Number(count);
     const safeCount = Number.isFinite(numericCount) && numericCount > 0 ? numericCount : 1;
@@ -388,5 +450,8 @@
     getMarkerScale,
     getClusterVisual,
     isUnderPriceThreshold,
+    getDistanceKm,
+    formatDistance,
+    isWithinRadiusKm,
   });
 })(typeof window !== "undefined" ? window : globalThis);

@@ -236,7 +236,7 @@ function cleanStringList(values: string[]): string[] {
 }
 
 function sanitizeEventMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
-  const blockedKeyPattern = /(email|phone|token|secret|password|authorization|auth|api.?key|photo|image|dataurl)/i;
+  const blockedKeyPattern = /(email|phone|token|secret|password|authorization|auth|api.?key|photo|image|dataurl|latitude|longitude|\blat\b|\blng\b|coordinates?|gps|precise.?location)/i;
   const sanitized: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(metadata).slice(0, 30)) {

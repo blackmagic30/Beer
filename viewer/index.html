@@ -343,6 +343,78 @@
       flex-wrap: wrap;
     }
 
+    .locationStrip {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .locationButton,
+    .radiusControl {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.86);
+      color: #e2e8f0;
+      padding: 8px 12px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .locationButton {
+      cursor: pointer;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    .locationButton:hover {
+      transform: translateY(-1px);
+      border-color: rgba(56, 189, 248, 0.42);
+    }
+
+    .locationButton.is-active {
+      border-color: rgba(34, 197, 94, 0.45);
+      background: rgba(20, 83, 45, 0.62);
+      color: #dcfce7;
+    }
+
+    .locationButton.is-warning {
+      border-color: rgba(251, 191, 36, 0.44);
+      background: rgba(120, 53, 15, 0.42);
+      color: #fde68a;
+    }
+
+    .radiusControl[hidden] {
+      display: none;
+    }
+
+    .radiusControl select {
+      appearance: none;
+      border: none;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff7ed;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 900;
+      padding: 4px 22px 4px 9px;
+      cursor: pointer;
+    }
+
+    .locationStatus {
+      min-width: min(100%, 280px);
+      color: #a8b0bf;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
     .togglePill {
       display: inline-flex;
       align-items: center;
@@ -1325,6 +1397,7 @@
     .topbar__businessLinks a:hover,
     .filterChip:hover,
     .utilityButton:hover,
+    .locationButton:hover,
     .togglePill:hover,
     .overlayTab:hover,
     .venueRail__sortChip:hover {
@@ -1923,6 +1996,8 @@
       }
 
       .togglePill,
+      .locationButton,
+      .radiusControl,
       .utilityButton {
         justify-content: center;
         min-width: 0;
@@ -1940,6 +2015,33 @@
 
       .utilityButton {
         width: 100%;
+      }
+
+      .locationStrip {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 6px;
+      }
+
+      .locationButton,
+      .radiusControl {
+        min-height: 36px;
+        padding: 7px 10px;
+        font-size: 12px;
+      }
+
+      .locationButton {
+        width: 100%;
+      }
+
+      .radiusControl {
+        justify-content: center;
+      }
+
+      .locationStatus {
+        grid-column: 1 / -1;
+        min-width: 0;
+        font-size: 10.5px;
       }
 
       .chipRow {
@@ -2198,6 +2300,21 @@
         </div>
       </div>
 
+      <div class="locationStrip" aria-live="polite">
+        <button id="useLocationButton" class="locationButton" type="button">Use my location</button>
+        <label id="nearMeRadiusControl" class="radiusControl" for="nearMeRadiusSelect" hidden>
+          Within
+          <select id="nearMeRadiusSelect">
+            <option value="0.5">500 m</option>
+            <option value="1">1 km</option>
+            <option value="2" selected>2 km</option>
+            <option value="5">5 km</option>
+            <option value="10">10 km</option>
+          </select>
+        </label>
+        <span id="locationStatus" class="locationStatus">Location off. Tap once to show approximate distances and nearby happy hours.</span>
+      </div>
+
       <div class="chipRow" id="scopeChips">
         <div class="filterGroup" aria-label="Venue scope">
           <span class="filterGroup__label">View</span>
@@ -2207,11 +2324,13 @@
         <div class="filterGroup" aria-label="Freshness and verification filters">
           <span class="filterGroup__label">Fresh</span>
           <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
+          <button class="filterChip" type="button" data-filter-chip="happy_hour_near_me">Happy hour near me</button>
           <button class="filterChip" type="button" data-filter-chip="recently_verified">Recently verified</button>
           <button class="filterChip" type="button" data-filter-chip="verified_only">Verified only</button>
         </div>
         <div class="filterGroup" aria-label="Price filters">
           <span class="filterGroup__label">Price</span>
+          <button class="filterChip" type="button" data-filter-chip="nearest">Nearest</button>
           <button class="filterChip" type="button" data-filter-chip="cheapest_near_me">Cheapest near me</button>
           <button class="filterChip" type="button" data-filter-chip="under_10">Under A$10</button>
         </div>
@@ -2256,6 +2375,7 @@
             <span class="venueRail__sortLabel">Sort</span>
             <button id="venueRailSortSmart" class="venueRail__sortChip is-active" type="button">Best match</button>
             <button id="venueRailSortCheapest" class="venueRail__sortChip" type="button">Cheapest first</button>
+            <button id="venueRailSortNearest" class="venueRail__sortChip" type="button">Nearest</button>
           </div>
         </div>
         <div id="venueRailBody" class="venueRail__body"></div>
@@ -2300,6 +2420,9 @@
           }))
           .filter((beer) => beer.name)
       : [];
+    const MELBOURNE_CENTER = Object.freeze({ lat: -37.8136, lng: 144.9631 });
+    const NEAR_ME_DEFAULT_RADIUS_KM = 2;
+    const MELBOURNE_COVERAGE_RADIUS_KM = 85;
     const GOOGLE_MAPS_KEY =
       params.get("googleMapsKey") ||
       window.localStorage.getItem("googleMapsKey") ||
@@ -2320,6 +2443,10 @@
     const beerChipHostEl = document.getElementById("beerChipHost");
     const onTapOnlyEl = document.getElementById("onTapOnly");
     const clearFiltersEl = document.getElementById("clearFilters");
+    const useLocationButtonEl = document.getElementById("useLocationButton");
+    const nearMeRadiusControlEl = document.getElementById("nearMeRadiusControl");
+    const nearMeRadiusSelectEl = document.getElementById("nearMeRadiusSelect");
+    const locationStatusEl = document.getElementById("locationStatus");
     const resultsSummaryEl = document.getElementById("resultsSummary");
     const viewSummaryEl = document.getElementById("viewSummary");
     const accessSummaryEl = document.getElementById("accessSummary");
@@ -2335,6 +2462,7 @@
     const venueRailSubtitleEl = document.getElementById("venueRailSubtitle");
     const venueRailSortSmartEl = document.getElementById("venueRailSortSmart");
     const venueRailSortCheapestEl = document.getElementById("venueRailSortCheapest");
+    const venueRailSortNearestEl = document.getElementById("venueRailSortNearest");
     const venueRailBodyEl = document.getElementById("venueRailBody");
     const overlayTabEls = Array.from(document.querySelectorAll("[data-overlay-panel]"));
     const closeVenueRailEl = document.getElementById("closeVenueRail");
@@ -2348,6 +2476,13 @@
     const activeFilterChips = new Set();
     let savedSuburbFilters = [];
     let venueRailSortMode = "smart";
+    const userLocationState = {
+      status: "idle",
+      coords: null,
+      radiusKm: NEAR_ME_DEFAULT_RADIUS_KM,
+      outsideMelbourne: false,
+      message: "Location off. Tap once to show approximate distances and nearby happy hours.",
+    };
     let businessAccess = {
       hasFullAccess: false,
       isAdmin: false,
@@ -2476,6 +2611,167 @@
       }
 
       await window.MelbBeerBusiness.trackEvent(eventType, metadata);
+    }
+
+    function getLocationEventMetadata(extra = {}) {
+      return {
+        locationStatus: userLocationState.status,
+        inCoverageArea: userLocationState.coords ? !userLocationState.outsideMelbourne : null,
+        radiusKm: userLocationState.radiusKm,
+        ...extra,
+      };
+    }
+
+    function hasUserLocation() {
+      return Boolean(userLocationState.coords);
+    }
+
+    function getVenueLatLng(row) {
+      const venue = getVenueRecord(row.venues) || {};
+      const lat = Number(venue.latitude);
+      const lng = Number(venue.longitude);
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return null;
+      }
+
+      return { lat, lng };
+    }
+
+    function getVenueDistanceKm(row) {
+      if (!userLocationState.coords) {
+        return null;
+      }
+
+      const venueLatLng = getVenueLatLng(row);
+
+      return venueLatLng ? window.MelbBeerMapLogic.getDistanceKm(userLocationState.coords, venueLatLng) : null;
+    }
+
+    function formatVenueDistance(row) {
+      const distanceKm = getVenueDistanceKm(row);
+
+      return distanceKm === null ? "Distance unavailable" : `${window.MelbBeerMapLogic.formatDistance(distanceKm)} away`;
+    }
+
+    function isNearMeFilter(filter) {
+      return ["nearest", "happy_hour_near_me", "cheapest_near_me"].includes(filter);
+    }
+
+    function hasNearMeFilter(viewState) {
+      return viewState.filters.some((filter) => isNearMeFilter(filter));
+    }
+
+    function isWithinSelectedRadius(row) {
+      if (!userLocationState.coords) {
+        return false;
+      }
+
+      const venueLatLng = getVenueLatLng(row);
+
+      return Boolean(
+        venueLatLng &&
+        window.MelbBeerMapLogic.isWithinRadiusKm(
+          userLocationState.coords,
+          venueLatLng,
+          userLocationState.radiusKm,
+        )
+      );
+    }
+
+    function syncLocationUi() {
+      const isEnabled = hasUserLocation();
+      nearMeRadiusControlEl.hidden = !isEnabled && !Array.from(activeFilterChips).some(isNearMeFilter);
+      locationStatusEl.textContent = userLocationState.message;
+      useLocationButtonEl.textContent =
+        userLocationState.status === "requesting"
+          ? "Finding you..."
+          : isEnabled
+            ? "Location on"
+            : "Use my location";
+      useLocationButtonEl.disabled = userLocationState.status === "requesting";
+      useLocationButtonEl.classList.toggle("is-active", isEnabled);
+      useLocationButtonEl.classList.toggle(
+        "is-warning",
+        userLocationState.status === "denied" || userLocationState.status === "unavailable",
+      );
+    }
+
+    async function requestUserLocation(reason = "manual") {
+      if (hasUserLocation()) {
+        userLocationState.message = userLocationState.outsideMelbourne
+          ? `Location on · ${userLocationState.radiusKm} km radius. Melbourne venues are still shown because this app covers Victoria only.`
+          : `Location on · showing approximate distances within ${userLocationState.radiusKm} km.`;
+        syncLocationUi();
+        return true;
+      }
+
+      if (userLocationState.status === "denied") {
+        userLocationState.message = "Location permission was denied. Search a suburb instead.";
+        syncLocationUi();
+        return false;
+      }
+
+      if (!navigator.geolocation) {
+        userLocationState.status = "unavailable";
+        userLocationState.message = "Location is unavailable on this device or browser.";
+        syncLocationUi();
+        void trackBusinessEvent("location_permission_denied", getLocationEventMetadata({ reason, status: "unavailable" }));
+        return false;
+      }
+
+      userLocationState.status = "requesting";
+      userLocationState.message = "Use your location to show nearby venues and happy hours.";
+      syncLocationUi();
+      void trackBusinessEvent("location_permission_requested", getLocationEventMetadata({ reason }));
+
+      const position = await new Promise((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          (success) => resolve({ ok: true, position: success }),
+          (error) => resolve({ ok: false, error }),
+          {
+            enableHighAccuracy: false,
+            timeout: 10000,
+            maximumAge: 5 * 60 * 1000,
+          },
+        );
+      });
+
+      if (!position.ok) {
+        userLocationState.status = position.error?.code === 1 ? "denied" : "unavailable";
+        userLocationState.coords = null;
+        userLocationState.message = position.error?.code === 1
+          ? "Location permission was denied. Search a suburb instead."
+          : "Location is unavailable right now. Search a suburb instead.";
+        syncLocationUi();
+        void trackBusinessEvent("location_permission_denied", getLocationEventMetadata({
+          reason,
+          status: userLocationState.status,
+        }));
+        return false;
+      }
+
+      const coords = {
+        lat: Number(position.position.coords.latitude),
+        lng: Number(position.position.coords.longitude),
+      };
+      const distanceFromMelbourne = window.MelbBeerMapLogic.getDistanceKm(MELBOURNE_CENTER, coords);
+
+      userLocationState.status = "granted";
+      userLocationState.coords = coords;
+      userLocationState.outsideMelbourne = distanceFromMelbourne !== null && distanceFromMelbourne > MELBOURNE_COVERAGE_RADIUS_KM;
+      userLocationState.message = userLocationState.outsideMelbourne
+        ? `Location on · this app currently covers Melbourne venues. Distances are approximate.`
+        : `Location on · showing approximate distances within ${userLocationState.radiusKm} km.`;
+      syncLocationUi();
+      void trackBusinessEvent("location_permission_granted", getLocationEventMetadata({ reason }));
+      void trackBusinessEvent("near_me_enabled", getLocationEventMetadata({ reason }));
+
+      if (typeof window.__melbBeerMapAfterLocationChange === "function") {
+        window.__melbBeerMapAfterLocationChange(reason);
+      }
+
+      return true;
     }
 
     function getVenueMarkerId(row, venue, lat, lng) {
@@ -2666,6 +2962,7 @@
     }
 
     syncOverlayPanels();
+    syncLocationUi();
 
     function getTrackedBeerMeta(name) {
       return TRACKED_BEER_BY_KEY.get(toSearchKey(name)) || null;
@@ -2714,6 +3011,23 @@
       void trackBusinessEvent("cheapest_sort_used", {
         beerQuery: beerSearchEl.value.trim() || null,
       });
+      if (typeof window.__melbBeerMapRefreshVisibleRail === "function") {
+        window.__melbBeerMapRefreshVisibleRail();
+      }
+    });
+
+    venueRailSortNearestEl.addEventListener("click", async () => {
+      if (!hasUserLocation()) {
+        const granted = await requestUserLocation("distance_sort");
+        if (!granted) {
+          return;
+        }
+      }
+
+      venueRailSortMode = "nearest";
+      void trackBusinessEvent("distance_sort_used", getLocationEventMetadata({
+        beerQuery: beerSearchEl.value.trim() || null,
+      }));
       if (typeof window.__melbBeerMapRefreshVisibleRail === "function") {
         window.__melbBeerMapRefreshVisibleRail();
       }
@@ -3566,14 +3880,26 @@
         return false;
       }
 
+      if (viewState.filters.includes("happy_hour_near_me")) {
+        if (!hasActiveHappyHourNow(row) || !isWithinSelectedRadius(row)) {
+          return false;
+        }
+      }
+
       if (viewState.filters.includes("under_10")) {
         if (!window.MelbBeerMapLogic.isUnderPriceThreshold(getPriceRelevantBeerItems(row, viewState), 10)) {
           return false;
         }
       }
 
-      if (viewState.filters.includes("cheapest_near_me") && !hasKnownPriceForView(row, viewState)) {
-        return false;
+      if (viewState.filters.includes("cheapest_near_me")) {
+        if (!hasKnownPriceForView(row, viewState)) {
+          return false;
+        }
+
+        if (hasUserLocation() && !isWithinSelectedRadius(row)) {
+          return false;
+        }
       }
 
       if (viewState.filters.includes("recently_verified") && !isRecentlyVerified(row)) {
@@ -3686,6 +4012,9 @@
       const capturedCount = filteredRows.filter((row) => hasCapturedBeerData(row)).length;
       const happyHourCount = filteredRows.filter((row) => getHappyHourDetails(row)).length;
       const knownPriceCount = filteredRows.filter((row) => hasKnownPriceForView(row, viewState)).length;
+      const distanceCount = hasUserLocation()
+        ? filteredRows.filter((row) => getVenueDistanceKm(row) !== null).length
+        : 0;
       const missingCount = visibleCount - capturedCount;
       const viewCopy = getViewSummaryText(viewState);
       const hasActiveFilters = Boolean(
@@ -3700,7 +4029,9 @@
         : "Coverage is growing. Help verify Melbourne beer prices.";
       const verifiedCopy = viewState.beerQuery
         ? `${knownPriceCount} verified ${viewState.beerQuery} ${knownPriceCount === 1 ? "price" : "prices"}`
-        : `${Math.max(0, missingCount)} need data`;
+        : hasUserLocation()
+          ? `${distanceCount} with approximate distance`
+          : `${Math.max(0, missingCount)} need data`;
       const accessCopy = businessAccess.hasFullAccess
         ? "Unlimited exact prices and full filters"
         : businessAccess.freePriceRevealsRemainingToday > 0
@@ -3755,6 +4086,23 @@
     function getLegendConfig(filteredRows, viewState) {
       const capturedCount = filteredRows.filter((row) => hasCapturedBeerData(row)).length;
       const missingCount = filteredRows.length - capturedCount;
+
+      if (viewState.filters.includes("happy_hour_near_me")) {
+        return {
+          title: "Happy hour near me",
+          subtitle: `Active happy-hour matches within ${userLocationState.radiusKm} km. Distances are approximate straight-line distances.`,
+          stats: [
+            `${filteredRows.length} nearby active matches`,
+            hasUserLocation() ? `Within ${userLocationState.radiusKm} km` : "Location off",
+          ],
+          items: [
+            ["needs", "Happy-hour venue", "Venue has active happy-hour data right now."],
+            ["unknown", "Price unknown", "Happy-hour details exist, but exact price still needs verification."],
+            ["selected", "Selected venue", "Gold ring shows the active venue."],
+          ],
+          hint: "Location is only used after you tap Use my location. We do not continuously track you."
+        };
+      }
 
       if (viewState.beerQuery) {
         const resultCounts = getBeerResultCounts(filteredRows, viewState);
@@ -3835,23 +4183,46 @@
     }
 
     function renderRetentionHighlights(rows, activeMarkerRecords = [], onSelectRecord = null) {
+      const byDistance = (left, right) => {
+        const leftDistance = getVenueDistanceKm(left);
+        const rightDistance = getVenueDistanceKm(right);
+
+        if (leftDistance !== null && rightDistance !== null) {
+          return leftDistance - rightDistance;
+        }
+
+        if (leftDistance !== null) {
+          return -1;
+        }
+
+        if (rightDistance !== null) {
+          return 1;
+        }
+
+        return 0;
+      };
       const happyRows = rows
         .filter(hasActiveHappyHourNow)
+        .sort(byDistance)
         .slice(0, 4);
       const verifiedRows = rows
         .filter((row) => isRecentlyVerified(row) && getLowestBeerPrice(row) !== null)
-        .sort((left, right) => new Date(right.saved_at || right.beer_synced_at || 0).getTime() - new Date(left.saved_at || left.beer_synced_at || 0).getTime())
+        .sort((left, right) => {
+          const distanceOrder = hasUserLocation() ? byDistance(left, right) : 0;
+          return distanceOrder || new Date(right.saved_at || right.beer_synced_at || 0).getTime() - new Date(left.saved_at || left.beer_synced_at || 0).getTime();
+        })
         .slice(0, 4);
       const card = (row, action) => {
         const venue = getVenueRecord(row.venues) || {};
         const lowest = getLowestBeerPrice(row);
+        const distanceCopy = hasUserLocation() ? formatVenueDistance(row) : null;
         const priceCopy = lowest != null
           ? businessAccess.hasFullAccess ? `${formatPriceValue(lowest)} cheapest captured` : "Verified price available"
           : "No verified price yet";
         return `
           <button class="highlightCard" type="button" data-highlight-venue="${escapeHtml(getVenueMarkerId(row, venue, Number(venue.latitude), Number(venue.longitude)))}" data-action="${escapeHtml(action)}">
             <strong>${escapeHtml(venue.name || row.venue_name || "Unknown venue")}</strong>
-            <span>${escapeHtml(venue.suburb || row.suburb || "Melbourne")} · ${escapeHtml(priceCopy)}</span>
+            <span>${escapeHtml([venue.suburb || row.suburb || "Melbourne", distanceCopy, priceCopy].filter(Boolean).join(" · "))}</span>
           </button>
         `;
       };
@@ -3895,6 +4266,9 @@
       const featuredBeer = record.featuredBeer;
       const happyHourDetails = getHappyHourDetails(record.row);
       const happyHourBrief = getHappyHourBrief(happyHourDetails);
+      const distanceKm = getVenueDistanceKm(record.row);
+      const distanceLabel = distanceKm === null ? null : `${window.MelbBeerMapLogic.formatDistance(distanceKm)} away`;
+      const withDistance = (parts) => [distanceLabel, ...parts].filter(Boolean).join(" · ");
 
       if (!hasCapturedBeerData(record.row)) {
         return {
@@ -3903,9 +4277,11 @@
             ? "background:#dbeafe; color:#1d4ed8;"
             : "background:#1e293b; color:#e2e8f0;",
           metaPill: happyHourDetails ? "Happy hour checked" : "Venue mapped",
-          copy: happyHourBrief || "No beer prices captured yet. Good candidate for a call, OCR source, or manual entry.",
+          copy: withDistance([happyHourBrief || "No beer prices captured yet. Good candidate for a call, OCR source, or manual entry."]),
           sortWeight: 0,
           numericPrice: null,
+          distanceKm,
+          distanceLabel,
           suburb,
         };
       }
@@ -3917,12 +4293,14 @@
           badgeLabel: displayPrice,
           badgeStyle: getPriceStateBadgeStyle(featuredBeer, record.id),
           metaPill: featuredBeer.availabilityLabel,
-          copy: [
+          copy: withDistance([
             `${featuredBeer.label} · ${featuredBeer.availabilityLabel}`,
             happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
-          ].filter(Boolean).join(" · "),
+          ]),
           sortWeight: canSortByPrice ? -featuredBeer.priceNumeric : 0,
           numericPrice: canSortByPrice ? featuredBeer.priceNumeric : null,
+          distanceKm,
+          distanceLabel,
           suburb,
         };
       }
@@ -3934,12 +4312,14 @@
           badgeLabel: displayPrice,
           badgeStyle: getPriceStateBadgeStyle(featuredBeer, record.id),
           metaPill: featuredBeer.label,
-          copy: [
+          copy: withDistance([
             `${featuredBeer.availabilityLabel} · ${displayPrice}`,
             happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
-          ].filter(Boolean).join(" · "),
+          ]),
           sortWeight: canSortByPrice ? -featuredBeer.priceNumeric : 0,
           numericPrice: canSortByPrice ? featuredBeer.priceNumeric : null,
+          distanceKm,
+          distanceLabel,
           suburb,
         };
       }
@@ -3950,9 +4330,11 @@
           ? "background:#dbeafe; color:#1d4ed8;"
           : "background:#1e293b; color:#e2e8f0;",
         metaPill: happyHourDetails ? "Happy hour checked" : "Venue mapped",
-        copy: happyHourBrief || "Venue is on the map and ready for beer data.",
+        copy: withDistance([happyHourBrief || "Venue is on the map and ready for beer data."]),
         sortWeight: 0,
         numericPrice: null,
+        distanceKm,
+        distanceLabel,
         suburb,
       };
     }
@@ -3968,6 +4350,28 @@
           summary: getVenueRailSummary(record, viewState),
         }))
         .sort((left, right) => {
+          const shouldSortByDistance =
+            venueRailSortMode === "nearest" ||
+            viewState.filters.includes("nearest") ||
+            viewState.filters.includes("happy_hour_near_me");
+
+          if (shouldSortByDistance) {
+            const leftDistance = left.summary.distanceKm;
+            const rightDistance = right.summary.distanceKm;
+
+            if (leftDistance != null && rightDistance != null && leftDistance !== rightDistance) {
+              return leftDistance - rightDistance;
+            }
+
+            if (leftDistance != null && rightDistance == null) {
+              return -1;
+            }
+
+            if (leftDistance == null && rightDistance != null) {
+              return 1;
+            }
+          }
+
           if ((viewState.beerQuery && venueRailSortMode === "cheapest") || viewState.filters.includes("cheapest_near_me")) {
             const leftPrice = left.summary.numericPrice;
             const rightPrice = right.summary.numericPrice;
@@ -3994,26 +4398,40 @@
           );
         });
 
-      venueRailTitleEl.textContent = viewState.beerQuery
-        ? `${viewState.beerQuery} nearby`
-        : viewState.scope === "needs_data"
-          ? "Venues to fill next"
-          : "On this part of the map";
+      venueRailTitleEl.textContent = viewState.filters.includes("happy_hour_near_me")
+        ? `Happy hours within ${userLocationState.radiusKm} km`
+        : viewState.beerQuery
+          ? `${viewState.beerQuery} nearby`
+          : viewState.scope === "needs_data"
+            ? "Venues to fill next"
+            : "On this part of the map";
       venueRailCountEl.textContent = `${visibleRecords.length} visible`;
-      venueRailSubtitleEl.textContent = viewState.beerQuery
-        ? "The shortlist below follows your beer search and updates as you move around the map."
-        : "Tap a venue below to jump straight to its marker and open the venue card.";
+      venueRailSubtitleEl.textContent = viewState.filters.includes("happy_hour_near_me")
+        ? "Active happy-hour matches are sorted by approximate straight-line distance."
+        : viewState.beerQuery
+          ? "The shortlist below follows your beer search and updates as you move around the map."
+          : hasUserLocation()
+            ? "Tap a venue below to jump to its marker. Distances are approximate."
+            : "Tap a venue below to jump straight to its marker and open the venue card.";
       if (!viewState.beerQuery && venueRailSortMode !== "smart") {
-        venueRailSortMode = "smart";
+        if (venueRailSortMode !== "nearest") {
+          venueRailSortMode = "smart";
+        }
       }
       venueRailSortSmartEl.classList.toggle("is-active", venueRailSortMode === "smart");
       venueRailSortCheapestEl.classList.toggle("is-active", venueRailSortMode === "cheapest");
+      venueRailSortNearestEl.classList.toggle("is-active", venueRailSortMode === "nearest");
       venueRailSortCheapestEl.disabled = !viewState.beerQuery || !businessAccess.canUseCheapestSort;
+      venueRailSortNearestEl.title = hasUserLocation()
+        ? "Sort visible venues by approximate distance"
+        : "Use your location to sort venues by distance";
 
       if (visibleRecords.length === 0) {
         venueRailBodyEl.innerHTML = `
           <div class="venueRail__empty">
-            Nothing is visible in this frame yet. Try zooming out, clearing a filter, or panning back toward the venue cluster.
+            ${viewState.filters.includes("happy_hour_near_me")
+              ? "No active happy hours nearby right now. Try expanding the radius or clearing filters."
+              : "Nothing is visible in this frame yet. Try zooming out, clearing a filter, or panning back toward the venue cluster."}
           </div>
         `;
         return;
@@ -4261,6 +4679,80 @@
         let markerRecords = [];
         let markerCluster = null;
         let activeMarker = null;
+        let userLocationMarker = null;
+        let userRadiusCircle = null;
+
+        function syncUserLocationOverlay(showRadius = false) {
+          if (!userLocationState.coords) {
+            if (userLocationMarker) {
+              userLocationMarker.setMap(null);
+            }
+            if (userRadiusCircle) {
+              userRadiusCircle.setMap(null);
+            }
+            return;
+          }
+
+          if (!userLocationMarker) {
+            userLocationMarker = new google.maps.Marker({
+              position: userLocationState.coords,
+              map,
+              title: "You are here",
+              icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                fillColor: "#38bdf8",
+                fillOpacity: 0.98,
+                strokeColor: "#eff6ff",
+                strokeWeight: 3,
+                scale: 9,
+              },
+              label: {
+                text: "YOU",
+                color: "#082f49",
+                fontSize: "9px",
+                fontWeight: "900",
+              },
+              zIndex: Number(google.maps.Marker.MAX_ZINDEX || 1000000) + 500,
+            });
+          } else {
+            userLocationMarker.setPosition(userLocationState.coords);
+            userLocationMarker.setMap(map);
+          }
+
+          if (!userRadiusCircle) {
+            userRadiusCircle = new google.maps.Circle({
+              map,
+              center: userLocationState.coords,
+              radius: userLocationState.radiusKm * 1000,
+              strokeColor: "#38bdf8",
+              strokeOpacity: 0.52,
+              strokeWeight: 1.5,
+              fillColor: "#38bdf8",
+              fillOpacity: 0.08,
+              clickable: false,
+            });
+          } else {
+            userRadiusCircle.setCenter(userLocationState.coords);
+            userRadiusCircle.setRadius(userLocationState.radiusKm * 1000);
+            userRadiusCircle.setMap(map);
+          }
+
+          userRadiusCircle.setVisible(Boolean(showRadius));
+        }
+
+        function focusMapAroundUser(reason = "manual") {
+          if (!userLocationState.coords) {
+            return;
+          }
+
+          syncUserLocationOverlay(true);
+          const currentZoom = typeof map.getZoom === "function" ? map.getZoom() : 13;
+          map.panTo(userLocationState.coords);
+
+          if (typeof map.setZoom === "function" && currentZoom < 14) {
+            map.setZoom(14);
+          }
+        }
 
         function clearMarkers() {
           if (markerCluster && typeof markerCluster.clearMarkers === "function") {
@@ -4312,7 +4804,10 @@
           const bounds = new google.maps.LatLngBounds();
           const viewState = getViewState();
           const filteredRows = allVenueRows.filter((item) => rowMatchesView(item, viewState));
+          const showRadius = hasUserLocation() && hasNearMeFilter(viewState);
           let markerCount = 0;
+
+          syncUserLocationOverlay(showRadius);
 
           filteredRows.forEach((item) => {
             const venue = getVenueRecord(item.venues);
@@ -4321,13 +4816,14 @@
             const featuredBeer = getFeaturedBeer(item, viewState);
             const markerId = getVenueMarkerId(item, venue, lat, lng);
             const markerVisual = getMarkerVisual(viewState, featuredBeer, markerId);
+            const markerDistanceCopy = hasUserLocation() ? ` · ${formatVenueDistance(item)}` : "";
 
             const markerOptions = {
               position: { lat, lng },
               map,
               title: `${venue.name || item.venue_name || "Unknown venue"}${
                 featuredBeer ? ` - ${featuredBeer.label}: ${getDisplayBeerPriceText(featuredBeer, markerId)}` : ""
-              }`,
+              }${markerDistanceCopy}`,
             };
 
             if (markerVisual) {
@@ -4384,6 +4880,7 @@
               const liveFeaturedBeer = getFeaturedBeer(item, viewState);
               const liveHasCapturedData = hasCapturedBeerData(item);
               const featuredBeerState = liveFeaturedBeer ? getBeerDisplayState(liveFeaturedBeer, markerId) : null;
+              const distanceCopy = hasUserLocation() ? formatVenueDistance(item) : null;
               const featuredBeerMarkup = liveFeaturedBeer ? `
                 <div class="beerPopup__featured beerPopup__featured--${escapeHtml(featuredBeerState)}">
                   <div class="beerPopup__featuredLabel">${escapeHtml(viewState.beerQuery ? "Best match" : "Best captured beer")}</div>
@@ -4450,6 +4947,7 @@
                     ${venueName}
                   </div>
                   <div class="beerPopup__address">${safeAddress}</div>
+                  ${distanceCopy ? `<div class="beerPopup__notice beerPopup__notice--blue">${escapeHtml(distanceCopy)} · straight-line distance from your location.</div>` : ""}
                   ${featuredBeerMarkup}
                   <div class="beerPopup__section">
                     <div class="beerPopup__sectionHeader">Captured beers</div>
@@ -4495,8 +4993,17 @@
             markerCount += 1;
           });
 
+          if (showRadius && userLocationState.coords) {
+            bounds.extend(userLocationState.coords);
+          }
+
           if (markerCount > 0) {
             map.fitBounds(bounds);
+          } else if (showRadius && userLocationState.coords) {
+            map.panTo(userLocationState.coords);
+            if (typeof map.setZoom === "function") {
+              map.setZoom(userLocationState.radiusKm <= 1 ? 15 : userLocationState.radiusKm <= 2 ? 14 : 12);
+            }
           }
 
           if (
@@ -4562,8 +5069,35 @@
           renderVenueRail(markerRecords, getViewState());
         };
 
+        window.__melbBeerMapAfterLocationChange = (reason) => {
+          renderMarkers();
+          focusMapAroundUser(reason);
+        };
+
         map.addListener("idle", () => {
           renderVenueRail(markerRecords, getViewState());
+        });
+
+        useLocationButtonEl.addEventListener("click", async () => {
+          const alreadyEnabled = hasUserLocation();
+          const granted = await requestUserLocation("use_location_button");
+
+          if (granted && alreadyEnabled) {
+            focusMapAroundUser("use_location_button");
+          }
+        });
+
+        nearMeRadiusSelectEl.addEventListener("change", () => {
+          userLocationState.radiusKm = Number(nearMeRadiusSelectEl.value) || NEAR_ME_DEFAULT_RADIUS_KM;
+          userLocationState.message = hasUserLocation()
+            ? `Location on · showing approximate distances within ${userLocationState.radiusKm} km.`
+            : "Choose a radius, then tap Use my location to show nearby venues.";
+          syncLocationUi();
+          syncUserLocationOverlay(hasUserLocation() && hasNearMeFilter(getViewState()));
+          void trackBusinessEvent("radius_filter_changed", getLocationEventMetadata({
+            radiusKm: userLocationState.radiusKm,
+          }));
+          renderMarkers();
         });
 
         venueSearchEl.addEventListener("input", renderMarkers);
@@ -4620,6 +5154,14 @@
               return;
             }
 
+            const isEnabling = !activeFilterChips.has(filter);
+            if (isEnabling && isNearMeFilter(filter) && !hasUserLocation()) {
+              const granted = await requestUserLocation(filter);
+              if (!granted) {
+                return;
+              }
+            }
+
             if (filter === "on_tap") {
               onTapOnlyEl.checked = !onTapOnlyEl.checked;
             }
@@ -4637,15 +5179,38 @@
                 .map((item) => item.label);
             }
 
+            if (filter === "happy_hour_near_me" && activeFilterChips.has(filter)) {
+              venueRailSortMode = "nearest";
+            } else if (
+              filter === "happy_hour_near_me" &&
+              venueRailSortMode === "nearest" &&
+              !activeFilterChips.has("nearest")
+            ) {
+              venueRailSortMode = "smart";
+            }
+
+            if (filter === "nearest" && activeFilterChips.has(filter)) {
+              venueRailSortMode = "nearest";
+            } else if (
+              filter === "nearest" &&
+              venueRailSortMode === "nearest" &&
+              !activeFilterChips.has("happy_hour_near_me")
+            ) {
+              venueRailSortMode = "smart";
+            }
+
             const eventTypeByFilter = {
               happy_hour_active_now: "happy_hour_active_now_used",
+              happy_hour_near_me: "happy_hour_near_me_used",
               under_10: "under_10_filter_used",
               verified_only: "verified_only_filter_used",
               cheapest_near_me: "cheapest_sort_used",
+              nearest: "distance_sort_used",
             };
             void trackBusinessEvent(eventTypeByFilter[filter] || "map_filter_used", {
               filter,
               enabled: activeFilterChips.has(filter),
+              ...(isNearMeFilter(filter) ? getLocationEventMetadata() : {}),
             });
             renderMarkers();
           });

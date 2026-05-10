@@ -113,6 +113,8 @@
         renderMetric("Paid users", metrics.paidUsers),
         renderMetric("Contributor unlocked", metrics.contributorUnlockedUsers),
         renderMetric("Beer searches", metrics.totalBeerSearches),
+        renderMetric("Near-me uses", metrics.totalNearMeUses || 0),
+        renderMetric("Happy-hour near me", metrics.totalHappyHourNearMeUses || 0),
         renderMetric("Exact price reveals", metrics.totalExactPriceReveals),
         renderMetric("Submission completions", metrics.totalSubmissionCompletions),
         renderMetric("Approval rate", formatPercent(metrics.submissionApprovalRate)),
@@ -140,6 +142,8 @@
       fieldTestMetrics.innerHTML = [
         renderMetric("Users today", metrics.newUsers),
         renderMetric("Searches today", metrics.totalVenueSearches + metrics.totalBeerSearches),
+        renderMetric("Near-me uses", metrics.totalNearMeUses || 0),
+        renderMetric("HH near me", metrics.totalHappyHourNearMeUses || 0),
         renderMetric("Price reveals", metrics.totalExactPriceReveals),
         renderMetric("Blocked reveals", metrics.totalBlockedPriceReveals || 0),
         renderMetric("Submissions", metrics.totalSubmissionCompletions),

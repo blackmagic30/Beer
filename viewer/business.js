@@ -112,15 +112,19 @@ function setStatus(element, message, isError = false) {
 
 async function trackEvent(eventType, metadata = {}) {
   try {
+    const safeMetadata = Object.fromEntries(
+      Object.entries(metadata || {}).filter(([key]) => !/(latitude|longitude|\blat\b|\blng\b|coordinates?|gps|precise.?location)/i.test(key)),
+    );
+
     await apiFetch("/api/business/events", {
       method: "POST",
       body: JSON.stringify({
         anonymousSessionId: getAnonymousSessionId(),
         eventType,
-        venueId: metadata.venueId || null,
-        beerId: metadata.beerId || null,
-        suburb: metadata.suburb || null,
-        metadata,
+        venueId: safeMetadata.venueId || null,
+        beerId: safeMetadata.beerId || null,
+        suburb: safeMetadata.suburb || null,
+        metadata: safeMetadata,
       }),
     });
   } catch {

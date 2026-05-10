@@ -87,6 +87,7 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 - The admin KPI dashboard tracks early validation metrics, retention cohorts, data coverage, and potential partner leads from aggregated demand.
 - Users can save venues, beers, and suburbs, submit feedback, report wrong prices, and request missing venues or beers.
 - The public map includes retention filter chips, active happy-hour previews, recently verified price previews, and wrong-price reporting.
+- The public map supports optional one-time browser location for “near me” sorting, approximate venue distances, and active happy hours nearby. Location is only requested after the user taps “Use my location”; precise coordinates are kept in browser state and are not stored in analytics.
 
 Business demo pages:
 
@@ -102,6 +103,13 @@ Responsible-alcohol guardrails:
 - The demo does not collect government ID documents.
 - Copy is intentionally neutral: verified prices, data accuracy, and responsible use.
 - Partner venue credit/rewards are marked as coming soon and are disabled.
+
+Location/privacy guardrails:
+
+- Location is opt-in only and uses one-time `getCurrentPosition`; the app does not use continuous tracking.
+- Distances are approximate straight-line distances, not walking or driving routes.
+- Analytics events for near-me actions store coarse context such as radius and status only, not exact latitude/longitude.
+- If location permission is denied or unavailable, users can still search by venue, suburb, or beer.
 
 ## Small Public Beta Hardening
 

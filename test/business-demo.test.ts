@@ -743,6 +743,55 @@ describe("business demo contribution model", () => {
     expect(preview.topSuburbs).toEqual([{ key: "Richmond", count: 2 }]);
   });
 
+  it("records near-me events without storing precise coordinates", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "near-me-user");
+
+    service.trackEvent(user, {
+      anonymousSessionId: null,
+      eventType: "near_me_enabled",
+      venueId: null,
+      beerId: null,
+      suburb: "Richmond",
+      metadata: {
+        radiusKm: 2,
+        locationStatus: "granted",
+        latitude: -37.823,
+        longitude: 144.998,
+        preciseLocation: "-37.823,144.998",
+      },
+    });
+    service.trackEvent(user, {
+      anonymousSessionId: null,
+      eventType: "happy_hour_near_me_used",
+      venueId: "venue-1",
+      beerId: null,
+      suburb: "Richmond",
+      metadata: { radiusKm: 2 },
+    });
+
+    const stored = database
+      .prepare("SELECT metadata_json FROM events WHERE event_type = 'near_me_enabled' LIMIT 1")
+      .get() as { metadata_json: string } | undefined;
+    const metadata = JSON.parse(stored?.metadata_json ?? "{}") as Record<string, unknown>;
+    const dashboard = repository.getAdminKpiDashboard({
+      since: null,
+      sevenDaysAgo: "2026-04-27T00:00:00.000Z",
+      thirtyDaysAgo: "2026-04-04T00:00:00.000Z",
+      staleBefore: "2026-02-04T00:00:00.000Z",
+      totalVenues: 3,
+    });
+
+    expect(metadata.radiusKm).toBe(2);
+    expect(metadata.locationStatus).toBe("granted");
+    expect(metadata.latitude).toBeUndefined();
+    expect(metadata.longitude).toBeUndefined();
+    expect(metadata.preciseLocation).toBeUndefined();
+    expect(dashboard.metrics.totalNearMeUses).toBe(1);
+    expect(dashboard.metrics.totalHappyHourNearMeUses).toBe(1);
+  });
+
   it("stores onboarding preferences and saved items for retention shortcuts", () => {
     const { repository } = createRepository();
     const user = createAccount(repository, "saved-user");
