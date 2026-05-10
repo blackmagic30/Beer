@@ -172,6 +172,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("Unknown prices are shown separately");
     expect(html).toContain("renderer: clusterRenderer");
     expect(html).toContain("getClusterVisual(count)");
+    expect(html).toContain("const currentViewState = getViewState();");
+    expect(html).not.toContain("buildCurrentViewState");
   });
 
   it("has distinct venue card row states for known, unknown, unavailable, package, and locked prices", () => {

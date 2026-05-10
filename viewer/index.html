@@ -4306,7 +4306,7 @@
     }
 
     function renderRetentionHighlights(rows, activeMarkerRecords = [], onSelectRecord = null) {
-      const currentViewState = buildCurrentViewState();
+      const currentViewState = getViewState();
       const byDistance = (left, right) => {
         const leftDistance = getVenueDistanceKm(left);
         const rightDistance = getVenueDistanceKm(right);
