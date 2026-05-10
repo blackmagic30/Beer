@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>For Bars | Melbourne Beer Map</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+
+    <section class="hero">
+      <div class="eyebrow">Venue partners</div>
+      <h1>Get your happy hours and tap list in front of Melbourne drinkers.</h1>
+      <p class="lead">Melbourne Beer Map helps locals find verified beer prices, happy hours and venue data. Bars can register interest now for a controlled venue-manager demo with privacy-safe aggregate insights.</p>
+      <div class="actionRow">
+        <a class="button button--primary" href="#interestForm">Register interest</a>
+        <a class="button" href="/venue-portal">View venue portal demo</a>
+      </div>
+    </section>
+
+    <section class="grid grid--two">
+      <article class="card">
+        <h2>Why bars should care</h2>
+        <ul class="featureList">
+          <li>Keep happy hours, tap-list highlights and beer prices accurate where locals are already searching.</li>
+          <li>Show verified data instead of stale listings or user guesses.</li>
+          <li>Receive wrong-price reports and update requests in one review queue.</li>
+          <li>See aggregated demand signals like venue clicks, price reveals and searched beers nearby.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>Privacy-safe insights</h2>
+        <p class="muted">Venue insights are aggregate only. We do not sell individual user clickstream, exact user location or account details to venues. Counts are directional while the beta grows.</p>
+        <p class="notice">Responsible use: prices may change, service is subject to RSA obligations, and availability is never guaranteed.</p>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top:16px;">
+      <h2>What managers can eventually update</h2>
+      <div class="grid grid--four">
+        <div class="listItem"><strong>Happy hours</strong><div class="muted">Days, times, specials and conditions.</div></div>
+        <div class="listItem"><strong>Beer prices</strong><div class="muted">Pints, pots, schooners, cans and bottles.</div></div>
+        <div class="listItem"><strong>Tap list sources</strong><div class="muted">Menu/tap-list photos routed to review.</div></div>
+        <div class="listItem"><strong>Venue notes</strong><div class="muted">Food, outdoor seating, groups and other listing tags later.</div></div>
+      </div>
+    </section>
+
+    <form id="interestForm" class="panel form" style="margin-top:16px;">
+      <h2>Register interest or claim your listing</h2>
+      <p class="helperCopy">This is not paid venue billing yet. Admin will review requests and can enable venue-manager access for assigned venues only.</p>
+      <label class="field">Venue name
+        <input name="venueName" placeholder="e.g. The local hotel or bar name" required />
+      </label>
+      <div class="grid grid--two">
+        <label class="field">Manager name
+          <input name="managerName" placeholder="Your name" required />
+        </label>
+        <label class="field">Role
+          <input name="role" placeholder="Owner, manager, venue team..." required />
+        </label>
+      </div>
+      <div class="grid grid--two">
+        <label class="field">Email
+          <input name="email" type="email" placeholder="manager@example.com" required />
+        </label>
+        <label class="field">Phone optional
+          <input name="phone" placeholder="Optional" />
+        </label>
+      </div>
+      <label class="field">Notes
+        <textarea name="notes" placeholder="Tell us what you want to update or see in a demo."></textarea>
+      </label>
+      <label class="dayChip">
+        <input name="claimListing" type="checkbox" />
+        I want to claim/manage this venue listing
+      </label>
+      <button class="button button--primary" type="submit">Register interest</button>
+      <div id="status" class="notice">We’ll save this for admin follow-up.</div>
+    </form>
+
+    <p class="footerCopy">Melbourne Beer Map is 18+ only. Community-submitted data is verified where possible. Prices may change; check with the venue before ordering. Drink responsibly. <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Beta terms</a></p>
+  </main>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("bars");
+      MelbBeerBusiness.installFieldTestChrome();
+      void MelbBeerBusiness.trackEvent("venue_partner_page_viewed");
+
+      interestForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const body = Object.fromEntries(new FormData(interestForm).entries());
+        body.claimListing = Boolean(body.claimListing);
+        body.anonymousSessionId = MelbBeerBusiness.getAnonymousSessionId();
+
+        try {
+          const result = await MelbBeerBusiness.apiFetch("/api/business/venue-interest", {
+            method: "POST",
+            body: JSON.stringify(body),
+          });
+          interestForm.reset();
+          MelbBeerBusiness.setStatus(status, result.message || "Venue interest saved for admin follow-up.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus(status, error.message || "Could not save venue interest.", true);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

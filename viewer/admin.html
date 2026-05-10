@@ -68,6 +68,67 @@
       </div>
     </section>
 
+    <section class="grid grid--two" style="margin-bottom:16px;">
+      <div class="panel">
+        <h2>Venue partner interest</h2>
+        <p class="muted">Claim requests and venue-manager interest from the For Bars page.</p>
+        <div id="venueInterestRequests" class="list"></div>
+      </div>
+      <div class="panel">
+        <h2>Venue manager assignments</h2>
+        <p class="muted">Managers can only see privacy-safe aggregates for venues assigned here.</p>
+        <div id="venueManagerAssignments" class="list"></div>
+      </div>
+    </section>
+
+    <section class="grid grid--two" style="margin-bottom:16px;">
+      <form id="managerAssignForm" class="panel form">
+        <h2>Assign venue manager</h2>
+        <label class="field">User ID
+          <input name="userId" required placeholder="account id for manager" />
+        </label>
+        <label class="field">Venue ID
+          <input name="venueId" required placeholder="venue id" />
+        </label>
+        <label class="field">Venue name
+          <input name="venueName" required placeholder="Rooftop Bar" />
+        </label>
+        <label class="field">Suburb
+          <input name="suburb" placeholder="Melbourne" />
+        </label>
+        <button class="button button--primary" type="submit">Assign manager</button>
+      </form>
+      <form id="outreachForm" class="panel form">
+        <h2>Partner outreach note</h2>
+        <label class="field">Venue ID
+          <input name="venueId" required placeholder="venue id" />
+        </label>
+        <label class="field">Venue name
+          <input name="venueName" required placeholder="Rooftop Bar" />
+        </label>
+        <label class="field">Suburb
+          <input name="suburb" placeholder="Melbourne" />
+        </label>
+        <label class="field">Status
+          <select name="status">
+            <option value="lead">Lead</option>
+            <option value="contacted">Contacted</option>
+            <option value="interested">Interested</option>
+            <option value="partner">Partner</option>
+            <option value="not_interested">Not interested</option>
+            <option value="closed">Closed</option>
+          </select>
+        </label>
+        <label class="field">Contact name
+          <input name="contactName" placeholder="Manager name" />
+        </label>
+        <label class="field">Notes
+          <textarea name="notes" rows="3" placeholder="Follow-up notes"></textarea>
+        </label>
+        <button class="button button--primary" type="submit">Save outreach</button>
+      </form>
+    </section>
+
     <section class="grid grid--two">
       <div class="panel">
         <h2>Pending submissions</h2>
@@ -84,6 +145,15 @@
   </main>
 
   <script>
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
     function formatPercent(value) {
       return `${Math.round(Number(value || 0) * 100)}%`;
     }
@@ -197,6 +267,40 @@
         : '<div class="listItem muted">No partner-lead signals yet.</div>';
     }
 
+    function renderVenuePartners(data) {
+      const statuses = ["contacted", "interested", "partner", "not_interested", "closed"];
+      venueInterestRequests.innerHTML = data.interests.length
+        ? data.interests.map((interest) => `
+          <article class="listItem">
+            <strong>${escapeHtml(interest.venueName)}</strong>
+            <span class="pill">${escapeHtml(interest.status)}</span>
+            <div class="muted">${escapeHtml(interest.managerName)} · ${escapeHtml(interest.role)} · ${escapeHtml(interest.email)}${interest.phone ? ` · ${escapeHtml(interest.phone)}` : ""}</div>
+            <div class="muted">${escapeHtml(interest.notes || "No notes supplied")}</div>
+            <div class="actionRow">
+              ${statuses.map((status) => `<button class="button button--small" type="button" data-interest-id="${escapeHtml(interest.id)}" data-interest-status="${status}">${status.replace("_", " ")}</button>`).join("")}
+            </div>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No venue interest requests yet.</div>';
+      venueInterestRequests.querySelectorAll("[data-interest-id]").forEach((button) => {
+        button.addEventListener("click", () => updateVenueInterestStatus(button.dataset.interestId, button.dataset.interestStatus));
+      });
+
+      venueManagerAssignments.innerHTML = data.assignments.length
+        ? data.assignments.map((assignment) => `
+          <article class="listItem">
+            <strong>${escapeHtml(assignment.venueName)}</strong>
+            <span class="pill">${escapeHtml(assignment.status)}</span>
+            <div class="muted">${escapeHtml(assignment.suburb || "Melbourne")} · manager ${escapeHtml(assignment.userId)}</div>
+            <button class="button button--danger" type="button" data-revoke-user="${escapeHtml(assignment.userId)}" data-revoke-venue="${escapeHtml(assignment.venueId)}">Revoke</button>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No venue managers assigned yet.</div>';
+      venueManagerAssignments.querySelectorAll("[data-revoke-user]").forEach((button) => {
+        button.addEventListener("click", () => revokeVenueManager(button.dataset.revokeUser, button.dataset.revokeVenue));
+      });
+    }
+
     async function reviewSubmission(id, status) {
       try {
         const body = status === "approved"
@@ -207,6 +311,68 @@
           body: JSON.stringify(body),
         });
         MelbBeerBusiness.setStatus(statusEl, `Reviewed ${result.submission.venueName}. Awarded ${result.pointsAwarded} points.`);
+        await loadAdmin();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message, true);
+      }
+    }
+
+    async function updateVenueInterestStatus(id, status) {
+      if (!id || !status) return;
+      try {
+        await MelbBeerBusiness.apiFetch(`/api/business/admin/venue-interest/${encodeURIComponent(id)}/status`, {
+          method: "POST",
+          body: JSON.stringify({ status }),
+        });
+        MelbBeerBusiness.setStatus(statusEl, "Venue interest status updated.");
+        await loadAdmin();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message, true);
+      }
+    }
+
+    async function revokeVenueManager(userId, venueId) {
+      if (!userId || !venueId) return;
+      try {
+        await MelbBeerBusiness.apiFetch("/api/business/admin/venue-managers/revoke", {
+          method: "POST",
+          body: JSON.stringify({ userId, venueId }),
+        });
+        MelbBeerBusiness.setStatus(statusEl, "Venue manager revoked.");
+        await loadAdmin();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message, true);
+      }
+    }
+
+    async function handleManagerAssign(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const body = Object.fromEntries(form.entries());
+      try {
+        await MelbBeerBusiness.apiFetch("/api/business/admin/venue-managers", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        event.currentTarget.reset();
+        MelbBeerBusiness.setStatus(statusEl, "Venue manager assigned.");
+        await loadAdmin();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message, true);
+      }
+    }
+
+    async function handleOutreach(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const body = Object.fromEntries(form.entries());
+      try {
+        await MelbBeerBusiness.apiFetch("/api/business/admin/venue-outreach", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        event.currentTarget.reset();
+        MelbBeerBusiness.setStatus(statusEl, "Partner outreach saved.");
         await loadAdmin();
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message, true);
@@ -234,13 +400,14 @@
       pendingSubmissions.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.reject, "rejected")));
       pendingSubmissions.querySelectorAll("[data-fraud]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.fraud, "fraud_flagged")));
 
-      const [kpis, todayKpis, retention, coverage, leads, queues] = await Promise.all([
+      const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners] = await Promise.all([
         MelbBeerBusiness.apiFetch(`/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`),
         MelbBeerBusiness.apiFetch("/api/business/admin/kpis?range=today"),
         MelbBeerBusiness.apiFetch("/api/business/admin/retention?groupBy=week&limit=12"),
         MelbBeerBusiness.apiFetch("/api/business/admin/coverage"),
         MelbBeerBusiness.apiFetch("/api/business/admin/partner-leads"),
         MelbBeerBusiness.apiFetch("/api/business/admin/queues"),
+        MelbBeerBusiness.apiFetch("/api/business/admin/venue-partners"),
       ]);
       renderKpis(kpis);
       renderFieldTestSummary(todayKpis, queues);
@@ -248,6 +415,7 @@
       renderCoverage(coverage);
       renderPartnerLeads(leads);
       renderQueues(queues);
+      renderVenuePartners(venuePartners);
       adminContentEl.hidden = false;
       MelbBeerBusiness.setStatus(statusEl, "Admin tools loaded.");
     }
@@ -259,6 +427,8 @@
       statusEl = document.getElementById("status");
       adminContentEl = document.getElementById("adminContent");
       rangeSelect.addEventListener("change", loadAdmin);
+      managerAssignForm.addEventListener("submit", handleManagerAssign);
+      outreachForm.addEventListener("submit", handleOutreach);
       try {
         await loadAdmin();
       } catch (error) {

@@ -363,6 +363,63 @@ CREATE INDEX IF NOT EXISTS idx_venue_requests_type_status
 CREATE INDEX IF NOT EXISTS idx_venue_requests_venue
   ON venue_requests (venue_id, venue_name, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS venue_interest_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  venue_id TEXT,
+  venue_name TEXT NOT NULL,
+  manager_name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  phone TEXT,
+  role TEXT NOT NULL,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_venue_interest_status_created
+  ON venue_interest_requests (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_interest_venue
+  ON venue_interest_requests (venue_id, venue_name, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS venue_manager_assignments (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  suburb TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  approved_by TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (user_id, venue_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_user
+  ON venue_manager_assignments (user_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_venue
+  ON venue_manager_assignments (venue_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS venue_partner_outreach (
+  id TEXT PRIMARY KEY,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  suburb TEXT,
+  status TEXT NOT NULL DEFAULT 'lead',
+  contact_name TEXT,
+  notes TEXT,
+  updated_by TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (venue_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_venue_partner_outreach_status
+  ON venue_partner_outreach (status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS stripe_webhook_events (
   id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,

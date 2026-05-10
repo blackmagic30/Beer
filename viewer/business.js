@@ -75,6 +75,8 @@ function renderNav(active = "") {
         <a ${active === "pricing" ? 'class="pill"' : ""} href="/pricing.html">Pricing</a>
         <a ${active === "missions" ? 'class="pill"' : ""} href="/missions.html">Missions</a>
         <a ${active === "submit" ? 'class="pill"' : ""} href="/submit.html">Submit data</a>
+        <a ${active === "bars" ? 'class="pill"' : ""} href="/for-bars">For bars</a>
+        <a ${active === "venue-portal" ? 'class="pill"' : ""} href="/venue-portal">Venue portal</a>
         <a ${active === "account" ? 'class="pill"' : ""} href="/account.html">Account</a>
         ${feedbackLink}
       </div>

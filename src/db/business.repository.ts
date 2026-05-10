@@ -1,6 +1,6 @@
 import type BetterSqlite3 from "better-sqlite3";
 
-export type AccountRole = "user" | "admin";
+export type AccountRole = "user" | "admin" | "venue_manager";
 export type AccountStatus = "active" | "warned" | "suspended";
 export type SubscriptionStatus =
   | "free"
@@ -184,6 +184,46 @@ export interface VenueRequest {
   updatedAt: string;
 }
 
+export interface VenueInterestRequest {
+  id: string;
+  userId: string | null;
+  venueId: string | null;
+  venueName: string;
+  managerName: string;
+  email: string;
+  phone: string | null;
+  role: string;
+  notes: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VenueManagerAssignment {
+  id: string;
+  userId: string;
+  venueId: string;
+  venueName: string;
+  suburb: string | null;
+  status: string;
+  approvedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VenuePartnerOutreach {
+  id: string;
+  venueId: string;
+  venueName: string;
+  suburb: string | null;
+  status: string;
+  contactName: string | null;
+  notes: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface AccountRow {
   id: string;
   email: string;
@@ -335,6 +375,46 @@ interface VenueRequestRow {
   notes: string | null;
   status: string;
   mission_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface VenueInterestRequestRow {
+  id: string;
+  user_id: string | null;
+  venue_id: string | null;
+  venue_name: string;
+  manager_name: string;
+  email: string;
+  phone: string | null;
+  role: string;
+  notes: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface VenueManagerAssignmentRow {
+  id: string;
+  user_id: string;
+  venue_id: string;
+  venue_name: string;
+  suburb: string | null;
+  status: string;
+  approved_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface VenuePartnerOutreachRow {
+  id: string;
+  venue_id: string;
+  venue_name: string;
+  suburb: string | null;
+  status: string;
+  contact_name: string | null;
+  notes: string | null;
+  updated_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -527,6 +607,52 @@ function toVenueRequest(row: VenueRequestRow): VenueRequest {
     notes: row.notes,
     status: row.status,
     missionId: row.mission_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toVenueInterestRequest(row: VenueInterestRequestRow): VenueInterestRequest {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    managerName: row.manager_name,
+    email: row.email,
+    phone: row.phone,
+    role: row.role,
+    notes: row.notes,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toVenueManagerAssignment(row: VenueManagerAssignmentRow): VenueManagerAssignment {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    suburb: row.suburb,
+    status: row.status,
+    approvedBy: row.approved_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toVenuePartnerOutreach(row: VenuePartnerOutreachRow): VenuePartnerOutreach {
+  return {
+    id: row.id,
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    suburb: row.suburb,
+    status: row.status,
+    contactName: row.contact_name,
+    notes: row.notes,
+    updatedBy: row.updated_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1317,6 +1443,185 @@ export class BusinessRepository {
     return row ? toVenueRequest(row) : null;
   }
 
+  createVenueInterestRequest(input: {
+    id: string;
+    userId: string | null;
+    venueId: string | null;
+    venueName: string;
+    managerName: string;
+    email: string;
+    phone: string | null;
+    role: string;
+    notes: string | null;
+    now: string;
+  }): VenueInterestRequest {
+    this.database
+      .prepare(
+        `INSERT INTO venue_interest_requests (
+          id, user_id, venue_id, venue_name, manager_name, email, phone, role, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.venueId,
+        input.venueName,
+        input.managerName,
+        input.email,
+        input.phone,
+        input.role,
+        input.notes,
+        input.now,
+        input.now,
+      );
+    const row = this.database.prepare("SELECT * FROM venue_interest_requests WHERE id = ?").get(input.id) as VenueInterestRequestRow;
+    return toVenueInterestRequest(row);
+  }
+
+  listVenueInterestRequests(limit: number): VenueInterestRequest[] {
+    const rows = this.database
+      .prepare("SELECT * FROM venue_interest_requests ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as VenueInterestRequestRow[];
+    return rows.map(toVenueInterestRequest);
+  }
+
+  updateVenueInterestStatus(input: { id: string; status: string; now: string }): VenueInterestRequest | null {
+    this.database
+      .prepare("UPDATE venue_interest_requests SET status = ?, updated_at = ? WHERE id = ?")
+      .run(input.status, input.now, input.id);
+    const row = this.database.prepare("SELECT * FROM venue_interest_requests WHERE id = ?").get(input.id) as
+      | VenueInterestRequestRow
+      | undefined;
+    return row ? toVenueInterestRequest(row) : null;
+  }
+
+  assignVenueManager(input: {
+    id: string;
+    userId: string;
+    venueId: string;
+    venueName: string;
+    suburb: string | null;
+    approvedBy: string;
+    now: string;
+  }): VenueManagerAssignment {
+    this.database
+      .prepare(
+        `INSERT INTO venue_manager_assignments (
+          id, user_id, venue_id, venue_name, suburb, status, approved_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
+        ON CONFLICT(user_id, venue_id) DO UPDATE SET
+          venue_name = excluded.venue_name,
+          suburb = excluded.suburb,
+          status = 'active',
+          approved_by = excluded.approved_by,
+          updated_at = excluded.updated_at`,
+      )
+      .run(input.id, input.userId, input.venueId, input.venueName, input.suburb, input.approvedBy, input.now, input.now);
+
+    this.database
+      .prepare("UPDATE accounts SET role = 'venue_manager', updated_at = ? WHERE id = ? AND role = 'user'")
+      .run(input.now, input.userId);
+
+    const row = this.database
+      .prepare("SELECT * FROM venue_manager_assignments WHERE user_id = ? AND venue_id = ?")
+      .get(input.userId, input.venueId) as VenueManagerAssignmentRow;
+    return toVenueManagerAssignment(row);
+  }
+
+  revokeVenueManager(input: { userId: string; venueId: string; now: string }): VenueManagerAssignment | null {
+    this.database
+      .prepare("UPDATE venue_manager_assignments SET status = 'revoked', updated_at = ? WHERE user_id = ? AND venue_id = ?")
+      .run(input.now, input.userId, input.venueId);
+    const row = this.database
+      .prepare("SELECT * FROM venue_manager_assignments WHERE user_id = ? AND venue_id = ?")
+      .get(input.userId, input.venueId) as VenueManagerAssignmentRow | undefined;
+    return row ? toVenueManagerAssignment(row) : null;
+  }
+
+  listVenueManagerAssignments(input: { userId?: string | undefined; venueId?: string | undefined; activeOnly?: boolean | undefined; limit: number }): VenueManagerAssignment[] {
+    const clauses: string[] = [];
+    const values: unknown[] = [];
+
+    if (input.userId) {
+      clauses.push("user_id = ?");
+      values.push(input.userId);
+    }
+
+    if (input.venueId) {
+      clauses.push("venue_id = ?");
+      values.push(input.venueId);
+    }
+
+    if (input.activeOnly) {
+      clauses.push("status = 'active'");
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.database
+      .prepare(`SELECT * FROM venue_manager_assignments ${where} ORDER BY updated_at DESC LIMIT ?`)
+      .all(...values, input.limit) as VenueManagerAssignmentRow[];
+    return rows.map(toVenueManagerAssignment);
+  }
+
+  getVenueManagerAssignment(input: { userId: string; venueId: string; activeOnly?: boolean | undefined }): VenueManagerAssignment | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM venue_manager_assignments
+         WHERE user_id = ? AND venue_id = ? ${input.activeOnly ? "AND status = 'active'" : ""}
+         LIMIT 1`,
+      )
+      .get(input.userId, input.venueId) as VenueManagerAssignmentRow | undefined;
+    return row ? toVenueManagerAssignment(row) : null;
+  }
+
+  upsertVenuePartnerOutreach(input: {
+    id: string;
+    venueId: string;
+    venueName: string;
+    suburb: string | null;
+    status: string;
+    contactName: string | null;
+    notes: string | null;
+    updatedBy: string;
+    now: string;
+  }): VenuePartnerOutreach {
+    this.database
+      .prepare(
+        `INSERT INTO venue_partner_outreach (
+          id, venue_id, venue_name, suburb, status, contact_name, notes, updated_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(venue_id) DO UPDATE SET
+          venue_name = excluded.venue_name,
+          suburb = excluded.suburb,
+          status = excluded.status,
+          contact_name = excluded.contact_name,
+          notes = excluded.notes,
+          updated_by = excluded.updated_by,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.id,
+        input.venueId,
+        input.venueName,
+        input.suburb,
+        input.status,
+        input.contactName,
+        input.notes,
+        input.updatedBy,
+        input.now,
+        input.now,
+      );
+    const row = this.database.prepare("SELECT * FROM venue_partner_outreach WHERE venue_id = ?").get(input.venueId) as VenuePartnerOutreachRow;
+    return toVenuePartnerOutreach(row);
+  }
+
+  listVenuePartnerOutreach(limit: number): VenuePartnerOutreach[] {
+    const rows = this.database
+      .prepare("SELECT * FROM venue_partner_outreach ORDER BY updated_at DESC LIMIT ?")
+      .all(limit) as VenuePartnerOutreachRow[];
+    return rows.map(toVenuePartnerOutreach);
+  }
+
   countKnownVenues(): number {
     const row = this.database
       .prepare(
@@ -1719,6 +2024,88 @@ export class BusinessRepository {
         venuesWithPrices: row.venues_with_prices,
         priceRecords: row.price_records,
       })),
+    };
+  }
+
+  getVenueManagerInsights(input: { venueId: string; suburb: string | null; staleBefore: string }) {
+    const count = (sql: string, values: unknown[] = []) => {
+      const row = this.database.prepare(sql).get(...values) as { count: number } | undefined;
+      return Number(row?.count ?? 0);
+    };
+    const priceRecords = this.listLatestPriceRecords(100, input.venueId);
+    const verifiedRecords = priceRecords.filter((record) =>
+      ["venue_confirmed", "photo_verified", "community_confirmed"].includes(record.confidence),
+    );
+    const beerIds = new Set(priceRecords.map((record) => record.normalizedBeerId).filter(Boolean));
+    const wrongPriceReports = this.database
+      .prepare("SELECT * FROM wrong_price_reports WHERE venue_id = ? ORDER BY created_at DESC LIMIT 25")
+      .all(input.venueId) as WrongPriceReportRow[];
+    const requests = this.database
+      .prepare(
+        `SELECT * FROM venue_requests
+         WHERE venue_id = ? OR lower(COALESCE(venue_name, '')) = lower(?)
+         ORDER BY created_at DESC
+         LIMIT 25`,
+      )
+      .all(input.venueId, priceRecords[0]?.venueName ?? input.venueId) as VenueRequestRow[];
+    const submissions = this.database
+      .prepare("SELECT * FROM submissions WHERE venue_id = ? ORDER BY created_at DESC LIMIT 25")
+      .all(input.venueId) as SubmissionRow[];
+    const topBeersNearby = input.suburb
+      ? this.database
+          .prepare(
+            `SELECT COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer') AS key, count(*) AS count
+             FROM events
+             WHERE event_type = 'beer_search_performed'
+               AND lower(COALESCE(suburb, '')) = lower(?)
+             GROUP BY COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer')
+             ORDER BY count DESC
+             LIMIT 8`,
+          )
+          .all(input.suburb) as Array<{ key: string; count: number }>
+      : [];
+    const missingBeerSearches = topBeersNearby.filter((row) => !beerIds.has(row.key)).slice(0, 5);
+    const latestVerifiedAt = priceRecords
+      .map((record) => record.lastVerifiedAt)
+      .sort()
+      .at(-1) ?? null;
+    const scoreItems = [
+      { label: "At least one verified price", complete: verifiedRecords.length >= 1, points: 20 },
+      { label: "At least 3 verified beers", complete: verifiedRecords.length >= 3, points: 20 },
+      { label: "Happy hour listed", complete: priceRecords.some((record) => record.isHappyHourPrice || record.happyHourDetails), points: 15 },
+      { label: "Verified within 30 days", complete: Boolean(latestVerifiedAt && new Date(latestVerifiedAt) >= new Date(input.staleBefore)), points: 15 },
+      { label: "No unresolved disputes", complete: wrongPriceReports.filter((report) => report.status === "open").length === 0, points: 15 },
+      { label: "Venue-submitted or photo source present", complete: priceRecords.some((record) => ["venue", "photo", "submission"].some((source) => record.sourceType.includes(source))), points: 10 },
+      { label: "Coordinates present in venue directory", complete: false, points: 5 },
+    ];
+    const possiblePoints = scoreItems.reduce((sum, item) => sum + item.points, 0);
+    const earnedPoints = scoreItems.reduce((sum, item) => sum + (item.complete ? item.points : 0), 0);
+
+    return {
+      venueId: input.venueId,
+      priceRecords,
+      wrongPriceReports: wrongPriceReports.map(toWrongPriceReport),
+      requests: requests.map(toVenueRequest),
+      submissions: submissions.map(toSubmission),
+      aggregateInsights: {
+        venueViews: count(
+          "SELECT count(*) AS count FROM events WHERE venue_id = ? AND event_type IN ('venue_card_viewed', 'venue_detail_opened')",
+          [input.venueId],
+        ),
+        priceReveals: count("SELECT count(*) AS count FROM events WHERE venue_id = ? AND event_type = 'price_view_revealed'", [input.venueId]),
+        happyHourClicks: count("SELECT count(*) AS count FROM events WHERE venue_id = ? AND event_type IN ('happy_hour_active_now_used', 'happy_hour_near_me_used')", [input.venueId]),
+        markerClicks: count("SELECT count(*) AS count FROM events WHERE venue_id = ? AND event_type = 'venue_card_viewed'", [input.venueId]),
+        wrongPriceReports: wrongPriceReports.length,
+        verifyRequests: requests.length,
+        updatesReceived: submissions.length,
+        topSearchedBeersNearby: topBeersNearby,
+        missingBeerSearches,
+      },
+      listingQuality: {
+        score: Math.round((earnedPoints / possiblePoints) * 100),
+        checklist: scoreItems,
+        latestVerifiedAt,
+      },
     };
   }
 

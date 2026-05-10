@@ -27,6 +27,8 @@ const tapStatusSchema = z.enum(["yes", "no", "unknown"]);
 const savedItemTypeSchema = z.enum(["venue", "beer", "suburb"]);
 const feedbackTypeSchema = z.enum(["bug", "wrong_data", "feature_idea", "venue_suggestion", "general_feedback"]);
 const requestTypeSchema = z.enum(["missing_venue", "missing_beer", "verify_venue", "verify_beer_at_venue"]);
+const partnerInterestStatusSchema = z.enum(["open", "contacted", "interested", "partner", "not_interested", "closed"]);
+const venueOutreachStatusSchema = z.enum(["lead", "contacted", "interested", "partner", "not_interested", "closed"]);
 const submissionStatusSchema = z.enum([
   "pending",
   "needs_more_evidence",
@@ -245,6 +247,25 @@ export const eventTrackSchema = z.object({
     "happy_hour_near_me_used",
     "distance_sort_used",
     "radius_filter_changed",
+    "best_options_used",
+    "cheapest_near_me_used",
+    "recently_verified_near_me_used",
+    "suburb_area_selected",
+    "share_link_copied",
+    "venue_shared",
+    "search_shared",
+    "quick_submit_started",
+    "venue_partner_page_viewed",
+    "venue_interest_submitted",
+    "venue_claim_requested",
+    "venue_portal_viewed",
+    "venue_update_submitted",
+    "venue_qr_link_copied",
+    "venue_insights_viewed",
+    "partner_lead_viewed",
+    "venue_manager_assigned",
+    "venue_manager_revoked",
+    "outreach_status_updated",
   ]),
   venueId: nullableTrimmedStringSchema.default(null),
   beerId: nullableTrimmedStringSchema.default(null),
@@ -311,6 +332,47 @@ export const venueRequestSchema = z.object({
   }
 });
 
+export const venueInterestSchema = z.object({
+  anonymousSessionId: nullableTrimmedStringSchema.default(null),
+  venueId: nullableTrimmedStringSchema.default(null),
+  venueName: z.string().trim().min(1).max(180),
+  managerName: z.string().trim().min(1).max(120),
+  email: z.string().trim().toLowerCase().email(),
+  phone: nullableTrimmedStringSchema.default(null),
+  role: z.string().trim().min(1).max(80),
+  notes: nullableTrimmedStringSchema.default(null),
+  claimListing: z.boolean().default(false),
+});
+
+export const venueManagerAssignmentSchema = z.object({
+  userId: z.string().trim().min(1),
+  venueId: z.string().trim().min(1).max(180),
+  venueName: z.string().trim().min(1).max(180),
+  suburb: nullableTrimmedStringSchema.default(null),
+});
+
+export const venueManagerRevokeSchema = z.object({
+  userId: z.string().trim().min(1),
+  venueId: z.string().trim().min(1).max(180),
+});
+
+export const venueOutreachSchema = z.object({
+  venueId: z.string().trim().min(1).max(180),
+  venueName: z.string().trim().min(1).max(180),
+  suburb: nullableTrimmedStringSchema.default(null),
+  status: venueOutreachStatusSchema.default("lead"),
+  contactName: nullableTrimmedStringSchema.default(null),
+  notes: nullableTrimmedStringSchema.default(null),
+});
+
+export const venueInterestStatusSchema = z.object({
+  status: partnerInterestStatusSchema,
+});
+
+export const venuePortalQuerySchema = z.object({
+  venueId: nullableTrimmedStringSchema.default(null),
+});
+
 export const adminDashboardQuerySchema = z.object({
   range: z.enum(["today", "7d", "30d", "month", "all"]).default("7d"),
 });
@@ -341,6 +403,12 @@ export type RemoveSavedItemInput = z.infer<typeof removeSavedItemSchema>;
 export type FeedbackInput = z.infer<typeof feedbackSchema>;
 export type WrongPriceReportInput = z.infer<typeof wrongPriceReportSchema>;
 export type VenueRequestInput = z.infer<typeof venueRequestSchema>;
+export type VenueInterestInput = z.infer<typeof venueInterestSchema>;
+export type VenueManagerAssignmentInput = z.infer<typeof venueManagerAssignmentSchema>;
+export type VenueManagerRevokeInput = z.infer<typeof venueManagerRevokeSchema>;
+export type VenueOutreachInput = z.infer<typeof venueOutreachSchema>;
+export type VenueInterestStatusInput = z.infer<typeof venueInterestStatusSchema>;
+export type VenuePortalQuery = z.infer<typeof venuePortalQuerySchema>;
 export type AdminDashboardQuery = z.infer<typeof adminDashboardQuerySchema>;
 export type RetentionQuery = z.infer<typeof retentionQuerySchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;

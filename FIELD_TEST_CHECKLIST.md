@@ -43,7 +43,7 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 
 - Log out and open `/admin.html`; admin content should stay hidden and API calls should fail.
 - Log in as a normal user; admin content should still be blocked.
-- Log in as the admin email; pending submissions, KPI, retention, coverage, queues, and field-test summary should load.
+- Log in as the admin email; pending submissions, KPI, retention, coverage, queues, partner leads, venue partner interest, manager assignments, and field-test summary should load.
 
 ## 6. Free User Flow
 
@@ -74,22 +74,36 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 - Open `/admin.html`.
 - Check the field-test summary for users, searches, reveals, blocked reveals, submissions, reports, feedback, top clicked venues, and top searched beers.
 - Check the regular KPI, retention, coverage, and partner-lead sections.
+- Check venue partner interest, outreach status, and manager assignment sections if you are demoing to a venue manager.
 
-## 10. Bug Reporting During The Test
+## 10. Venue Partner Demo
+
+- Open `/for-bars` and submit a register-interest request.
+- Confirm the request appears in `/admin.html` under venue partner interest.
+- Create or pick a venue-manager test user.
+- Assign the test user to one venue from `/admin.html`.
+- Log in as the venue manager and open `/venue-portal`.
+- Confirm only the assigned venue is visible.
+- Confirm aggregate insights, listing quality, wrong-price reports, requests, and update link are visible.
+- Submit a venue manager update and confirm it appears as pending review, not automatically published.
+- Revoke the assignment and confirm the venue manager portal is blocked.
+
+## 11. Bug Reporting During The Test
 
 - Use the floating feedback button when `FIELD_TEST_MODE=true`.
 - Use “Report wrong price” inside venue cards for price issues.
 - Use Account requests for missing venues or beers.
 
-## 11. Known Limitations
+## 12. Known Limitations
 
 - Photo/source uploads are demo storage unless private object storage is configured later.
 - Admin source review is protected, but uploaded files should not contain private personal information.
 - Exact-price access is server-gated, but keep Supabase service-role keys server-only.
 - Demo billing is not a real payment.
-- Partner rewards, free beer redemption, and venue dashboards are intentionally disabled.
+- Venue manager analytics are directional aggregate beta counts only.
+- Paid venue billing, partner rewards, free beer redemption, and brewery dashboards are intentionally disabled.
 
-## 12. Do Not Enable Yet
+## 13. Do Not Enable Yet
 
 - Do not use live payments unless Stripe test checkout and webhooks have passed.
 - Do not enable partner rewards or free beer redemption.

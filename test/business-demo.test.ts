@@ -940,4 +940,79 @@ describe("business demo contribution model", () => {
       dataFreshness: "stale_or_missing",
     }));
   });
+
+  it("supports venue partner interest, manager assignments, and assigned-venue portal access", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "venue-admin", "admin");
+    const manager = createAccount(repository, "venue-manager");
+    const normalUser = createAccount(repository, "venue-normal");
+
+    const interest = service.createVenueInterest(null, {
+      anonymousSessionId: "anon-partner",
+      venueId: "venue-1",
+      venueName: "Rooftop Bar",
+      managerName: "Riley Manager",
+      email: "riley@example.com",
+      phone: null,
+      role: "Venue manager",
+      notes: "Interested in keeping happy hours accurate.",
+      claimListing: true,
+    });
+
+    expect(interest.interest.venueName).toBe("Rooftop Bar");
+    expect(() => service.getVenuePortal(normalUser, { venueId: "venue-1" })).toThrow("Venue manager access required.");
+
+    const assignment = service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "venue-1",
+      venueName: "Rooftop Bar",
+      suburb: "Melbourne",
+    });
+    const managerAccount = repository.getAccountById(manager.id)!;
+
+    expect(assignment.assignment.status).toBe("active");
+    expect(managerAccount.role).toBe("venue_manager");
+
+    const portal = service.getVenuePortal(managerAccount, { venueId: "venue-1" });
+    expect(portal.selectedVenue).toEqual(expect.objectContaining({
+      venueId: "venue-1",
+      venueName: "Rooftop Bar",
+    }));
+    expect(portal.privacyCopy).toContain("privacy-safe");
+    expect(() => service.getVenuePortal(managerAccount, { venueId: "venue-2" })).toThrow("assigned venues");
+
+    const update = service.createVenueManagerSubmission(managerAccount, "venue-1", {
+      venueId: "venue-1",
+      venueName: "Rooftop Bar",
+      suburb: "Melbourne",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: null,
+      sourcePhotoUrl: null,
+      notes: "Venue manager confirmed tap-list board.",
+      items: [
+        {
+          beerName: "Carlton Draught",
+          normalizedBeerId: null,
+          servingSize: "pint",
+          price: 13,
+          isHappyHourPrice: false,
+          happyHourDetails: null,
+          isOnTap: "yes",
+        },
+      ],
+    });
+
+    expect(update.submission.status).toBe("pending");
+    expect(update.message).toContain("submitted for review");
+    expect(repository.listSubmissions({ userId: manager.id, limit: 10 })[0]?.notes).toContain("Venue manager submitted update");
+
+    const partnerAdmin = service.getVenuePartnerAdmin(admin);
+    expect(partnerAdmin.interests[0]).toEqual(expect.objectContaining({ venueName: "Rooftop Bar" }));
+    expect(partnerAdmin.assignments[0]).toEqual(expect.objectContaining({ userId: manager.id, venueId: "venue-1" }));
+
+    const revoked = service.revokeVenueManager(admin, { userId: manager.id, venueId: "venue-1" });
+    expect(revoked.assignment.status).toBe("revoked");
+  });
 });

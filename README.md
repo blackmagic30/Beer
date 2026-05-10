@@ -58,11 +58,19 @@
 - `POST /api/business/feedback`
 - `POST /api/business/wrong-price-reports`
 - `POST /api/business/requests`
+- `POST /api/business/venue-interest`
+- `GET /api/business/venue-portal`
+- `POST /api/business/venue-portal/:venueId/submissions`
 - `GET /api/business/admin/kpis`
 - `GET /api/business/admin/retention`
 - `GET /api/business/admin/coverage`
 - `GET /api/business/admin/partner-leads`
 - `GET /api/business/admin/queues`
+- `GET /api/business/admin/venue-partners`
+- `POST /api/business/admin/venue-managers`
+- `POST /api/business/admin/venue-managers/revoke`
+- `POST /api/business/admin/venue-interest/:id/status`
+- `POST /api/business/admin/venue-outreach`
 - `POST /api/business/billing/checkout`
 - `POST /api/business/billing/webhook`
 - `GET /api/business/analytics/preview`
@@ -95,7 +103,18 @@ Business demo pages:
 - `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, preferences, requests, feedback, and submission status.
 - `/missions.html`: Needs Data mission board with sorting, quick-win guidance, and points.
 - `/submit.html`: venue data submission with manual rows and photo/source queue.
+- `/for-bars`: professional venue-owner page for register-interest and claim-listing requests.
+- `/venue-portal`: admin-assigned venue manager portal with listing quality, update links, pending update submission, and privacy-safe aggregate insights.
 - `/admin.html`: admin-only submission review, KPI dashboard, cohorts, coverage, partner leads, and review queues.
+
+Venue partner demo layer:
+
+- Bars can register interest from `/for-bars`; requests stay in the admin partner queue.
+- Admin can assign or revoke venue managers from `/admin.html`.
+- Venue managers can only access assigned venues on `/venue-portal`.
+- Venue manager updates are submitted for review by default, rather than directly publishing.
+- Venue insights are aggregate-only and do not expose user names, individual clickstream, or exact user location.
+- The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.
 
 Responsible-alcohol guardrails:
 

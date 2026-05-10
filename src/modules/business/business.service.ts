@@ -31,6 +31,12 @@ import type {
   ReviewSubmissionInput,
   RetentionQuery,
   SaveItemInput,
+  VenueInterestInput,
+  VenueInterestStatusInput,
+  VenueManagerAssignmentInput,
+  VenueManagerRevokeInput,
+  VenueOutreachInput,
+  VenuePortalQuery,
   VenueRequestInput,
   WrongPriceReportInput,
 } from "./business.schemas.js";
@@ -345,6 +351,32 @@ export class BusinessService {
     }
 
     return account;
+  }
+
+  private isAdmin(account: BusinessAccount): boolean {
+    return account.role === "admin" || account.subscriptionStatus === "admin";
+  }
+
+  private requireAssignedVenue(account: BusinessAccount, venueId: string) {
+    if (this.isAdmin(account)) {
+      return null;
+    }
+
+    if (account.role !== "venue_manager") {
+      throw new AppError("Venue manager access required.", 403);
+    }
+
+    const assignment = this.repository.getVenueManagerAssignment({
+      userId: account.id,
+      venueId,
+      activeOnly: true,
+    });
+
+    if (!assignment) {
+      throw new AppError("You can only access assigned venues.", 403);
+    }
+
+    return assignment;
   }
 
   signup(input: AuthSignupInput) {
@@ -774,6 +806,41 @@ export class BusinessService {
     };
   }
 
+  createVenueInterest(account: BusinessAccount | null, input: VenueInterestInput) {
+    const now = nowIso();
+    const interest = this.repository.createVenueInterestRequest({
+      id: crypto.randomUUID(),
+      userId: account?.id ?? null,
+      venueId: input.venueId,
+      venueName: input.venueName,
+      managerName: input.managerName,
+      email: normalizeEmail(input.email),
+      phone: input.phone,
+      role: input.role,
+      notes: input.notes,
+      now,
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: input.anonymousSessionId,
+      eventType: input.claimListing ? "venue_claim_requested" : "venue_interest_submitted",
+      venueId: input.venueId,
+      beerId: null,
+      suburb: null,
+      metadata: {
+        interestId: interest.id,
+        venueName: interest.venueName,
+        role: interest.role,
+        claimListing: input.claimListing,
+      },
+    });
+
+    return {
+      interest,
+      message: "Thanks. Your venue interest is saved for admin follow-up.",
+    };
+  }
+
   listSubmissions(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number }) {
     if (!account) {
       throw new AppError("Login required.", 401);
@@ -1140,6 +1207,238 @@ export class BusinessService {
     }
 
     return this.repository.getAnalyticsPreview();
+  }
+
+  getVenuePortal(account: BusinessAccount, query: VenuePortalQuery) {
+    const isAdmin = this.isAdmin(account);
+    const assignments = isAdmin
+      ? this.repository.listVenueManagerAssignments({ activeOnly: true, limit: 100 })
+      : this.repository.listVenueManagerAssignments({ userId: account.id, activeOnly: true, limit: 100 });
+
+    if (!isAdmin && assignments.length === 0) {
+      throw new AppError("Venue manager access required.", 403);
+    }
+
+    const selectedVenueId = query.venueId ?? assignments[0]?.venueId;
+    if (!selectedVenueId) {
+      return {
+        assignments,
+        selectedVenue: null,
+        insights: null,
+        updateLink: null,
+        privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
+      };
+    }
+
+    const assignment = isAdmin
+      ? assignments.find((item) => item.venueId === selectedVenueId) ?? null
+      : this.requireAssignedVenue(account, selectedVenueId);
+    if (!isAdmin && !assignment) {
+      throw new AppError("You can only access assigned venues.", 403);
+    }
+
+    const venueName = assignment?.venueName ?? selectedVenueId;
+    const suburb = assignment?.suburb ?? null;
+    const insights = this.repository.getVenueManagerInsights({
+      venueId: selectedVenueId,
+      suburb,
+      staleBefore: daysAgoIso(30),
+    });
+    const updateLink = `/submit.html?venueId=${encodeURIComponent(selectedVenueId)}&venueName=${encodeURIComponent(venueName)}${suburb ? `&suburb=${encodeURIComponent(suburb)}` : ""}`;
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_portal_viewed",
+      venueId: selectedVenueId,
+      beerId: null,
+      suburb,
+      metadata: { assignmentCount: assignments.length },
+    });
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_insights_viewed",
+      venueId: selectedVenueId,
+      beerId: null,
+      suburb,
+      metadata: { source: "venue_portal" },
+    });
+
+    return {
+      assignments,
+      selectedVenue: {
+        venueId: selectedVenueId,
+        venueName,
+        suburb,
+      },
+      insights,
+      updateLink,
+      qrCopy: "Copy this update link or turn it into a QR code for your bar/tap-list area.",
+      privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
+    };
+  }
+
+  createVenueManagerSubmission(account: BusinessAccount, venueId: string, input: CreateSubmissionInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+
+    if (input.venueId !== venueId) {
+      throw new AppError("Venue update must match the assigned venue.", 403);
+    }
+
+    const result = this.createSubmission(account, {
+      ...input,
+      notes: [
+        input.notes,
+        "Venue manager submitted update. Keep pending for admin/data-quality review unless manually approved.",
+      ].filter(Boolean).join(" "),
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: input.items[0]?.beerName ? normalizeBeerId(input.items[0].beerName) : null,
+      suburb: assignment?.suburb ?? input.suburb,
+      metadata: {
+        submissionId: result.submission.id,
+        submissionType: input.submissionType,
+      },
+    });
+
+    return {
+      ...result,
+      message: "Venue update submitted for review. Approved updates can be shown as venue-confirmed data.",
+    };
+  }
+
+  assignVenueManager(admin: BusinessAccount, input: VenueManagerAssignmentInput) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    const user = this.repository.getAccountById(input.userId);
+    if (!user) {
+      throw new AppError("User account not found.", 404);
+    }
+
+    const assignment = this.repository.assignVenueManager({
+      id: crypto.randomUUID(),
+      userId: user.id,
+      venueId: input.venueId,
+      venueName: input.venueName,
+      suburb: input.suburb,
+      approvedBy: admin.id,
+      now: nowIso(),
+    });
+
+    this.trackEvent(admin, {
+      anonymousSessionId: null,
+      eventType: "venue_manager_assigned",
+      venueId: assignment.venueId,
+      beerId: null,
+      suburb: assignment.suburb,
+      metadata: { managerUserId: assignment.userId, venueName: assignment.venueName },
+    });
+
+    return { assignment };
+  }
+
+  revokeVenueManager(admin: BusinessAccount, input: VenueManagerRevokeInput) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    const assignment = this.repository.revokeVenueManager({
+      userId: input.userId,
+      venueId: input.venueId,
+      now: nowIso(),
+    });
+
+    if (!assignment) {
+      throw new AppError("Venue manager assignment not found.", 404);
+    }
+
+    this.trackEvent(admin, {
+      anonymousSessionId: null,
+      eventType: "venue_manager_revoked",
+      venueId: assignment.venueId,
+      beerId: null,
+      suburb: assignment.suburb,
+      metadata: { managerUserId: assignment.userId, venueName: assignment.venueName },
+    });
+
+    return { assignment };
+  }
+
+  getVenuePartnerAdmin(admin: BusinessAccount) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    return {
+      interests: this.repository.listVenueInterestRequests(100),
+      assignments: this.repository.listVenueManagerAssignments({ limit: 100 }),
+      outreach: this.repository.listVenuePartnerOutreach(100),
+      leads: this.repository.getPotentialPartnerLeads({
+        staleBefore: daysAgoIso(90),
+        limit: 25,
+      }),
+    };
+  }
+
+  updateVenueInterestStatus(admin: BusinessAccount, interestId: string, input: VenueInterestStatusInput) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    const interest = this.repository.updateVenueInterestStatus({
+      id: interestId,
+      status: input.status,
+      now: nowIso(),
+    });
+
+    if (!interest) {
+      throw new AppError("Venue interest request not found.", 404);
+    }
+
+    this.trackEvent(admin, {
+      anonymousSessionId: null,
+      eventType: "outreach_status_updated",
+      venueId: interest.venueId,
+      beerId: null,
+      suburb: null,
+      metadata: { interestId: interest.id, status: interest.status },
+    });
+
+    return { interest };
+  }
+
+  upsertVenueOutreach(admin: BusinessAccount, input: VenueOutreachInput) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    const outreach = this.repository.upsertVenuePartnerOutreach({
+      id: crypto.randomUUID(),
+      venueId: input.venueId,
+      venueName: input.venueName,
+      suburb: input.suburb,
+      status: input.status,
+      contactName: input.contactName,
+      notes: input.notes,
+      updatedBy: admin.id,
+      now: nowIso(),
+    });
+
+    this.trackEvent(admin, {
+      anonymousSessionId: null,
+      eventType: "outreach_status_updated",
+      venueId: outreach.venueId,
+      beerId: null,
+      suburb: outreach.suburb,
+      metadata: { status: outreach.status },
+    });
+
+    return { outreach };
   }
 
   getAdminKpis(admin: BusinessAccount, query: AdminDashboardQuery) {

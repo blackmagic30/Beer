@@ -24,6 +24,12 @@ import {
   saveItemSchema,
   submissionsQuerySchema,
   venueRequestSchema,
+  venueInterestSchema,
+  venueInterestStatusSchema,
+  venueManagerAssignmentSchema,
+  venueManagerRevokeSchema,
+  venueOutreachSchema,
+  venuePortalQuerySchema,
   wrongPriceReportSchema,
 } from "./business.schemas.js";
 import type { BusinessService } from "./business.service.js";
@@ -174,6 +180,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.status(201).json(success(businessService.createVenueRequest(account, body)));
   });
 
+  router.post("/venue-interest", writeLimiter, (req, res) => {
+    const account = getOptionalAccount(req, businessService);
+    const body = parseWithSchema(venueInterestSchema, req.body, "Invalid venue interest payload");
+    res.status(201).json(success(businessService.createVenueInterest(account, body)));
+  });
+
   router.get("/submissions", (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const query = parseWithSchema(submissionsQuerySchema, req.query, "Invalid submissions query");
@@ -222,6 +234,19 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getAnalyticsPreview(admin)));
   });
 
+  router.get("/venue-portal", (req, res) => {
+    const account = businessService.requireAccount(getAuthorization(req));
+    const query = parseWithSchema(venuePortalQuerySchema, req.query, "Invalid venue portal query");
+    res.json(success(businessService.getVenuePortal(account, query)));
+  });
+
+  router.post("/venue-portal/:venueId/submissions", writeLimiter, (req, res) => {
+    const account = businessService.requireAccount(getAuthorization(req));
+    const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid venue update payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.status(201).json(success(businessService.createVenueManagerSubmission(account, venueId, body)));
+  });
+
   router.get("/admin/kpis", (req, res) => {
     const admin = businessService.requireAdmin(getAuthorization(req));
     const query = parseWithSchema(adminDashboardQuerySchema, req.query, "Invalid KPI dashboard query");
@@ -249,9 +274,40 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getAdminQueues(admin)));
   });
 
+  router.get("/admin/venue-partners", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    res.json(success(businessService.getVenuePartnerAdmin(admin)));
+  });
+
+  router.post("/admin/venue-managers", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    const body = parseWithSchema(venueManagerAssignmentSchema, req.body, "Invalid venue manager assignment payload");
+    res.status(201).json(success(businessService.assignVenueManager(admin, body)));
+  });
+
+  router.post("/admin/venue-managers/revoke", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    const body = parseWithSchema(venueManagerRevokeSchema, req.body, "Invalid venue manager revoke payload");
+    res.json(success(businessService.revokeVenueManager(admin, body)));
+  });
+
+  router.post("/admin/venue-interest/:id/status", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    const body = parseWithSchema(venueInterestStatusSchema, req.body, "Invalid venue interest status payload");
+    const interestId = String(req.params.id ?? "");
+    res.json(success(businessService.updateVenueInterestStatus(admin, interestId, body)));
+  });
+
+  router.post("/admin/venue-outreach", (req, res) => {
+    const admin = businessService.requireAdmin(getAuthorization(req));
+    const body = parseWithSchema(venueOutreachSchema, req.body, "Invalid venue outreach payload");
+    res.json(success(businessService.upsertVenueOutreach(admin, body)));
+  });
+
   router.post("/admin/requests/:id/mission", (req, res) => {
     const admin = businessService.requireAdmin(getAuthorization(req));
-    res.status(201).json(success(businessService.createMissionFromRequest(admin, req.params.id)));
+    const requestId = String(req.params.id ?? "");
+    res.status(201).json(success(businessService.createMissionFromRequest(admin, requestId)));
   });
 
   router.post("/billing/checkout", billingLimiter, async (req, res, next) => {

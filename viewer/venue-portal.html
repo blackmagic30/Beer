@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Venue Portal | Melbourne Beer Map</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+
+    <section class="hero">
+      <div class="eyebrow">Venue manager demo</div>
+      <h1>Keep your Melbourne Beer Map listing accurate.</h1>
+      <p class="lead">Assigned venue managers can view listing quality, pending data signals, wrong-price reports and aggregate demand insights. Updates still go through review during the beta.</p>
+    </section>
+
+    <section id="portalAccess" class="notice">Log in with an assigned venue-manager account to view this portal.</section>
+
+    <section id="portalContent" class="is-hidden">
+      <div class="panel form">
+        <label class="field">Assigned venue
+          <select id="venueSelect"></select>
+        </label>
+        <div id="selectedVenueSummary" class="notice"></div>
+      </div>
+
+      <div class="grid grid--two" style="margin-top:16px;">
+        <article class="card">
+          <h2>Listing quality</h2>
+          <div id="qualityScore" class="qualityScore"></div>
+          <ul id="qualityChecklist" class="checkList"></ul>
+        </article>
+        <article class="card">
+          <h2>Privacy-safe insights</h2>
+          <p id="privacyCopy" class="muted"></p>
+          <div id="insightGrid" class="insightGrid"></div>
+        </article>
+      </div>
+
+      <section class="panel" style="margin-top:16px;">
+        <div class="missionCard__top">
+          <div>
+            <h2>Current verified data</h2>
+            <p class="helperCopy">Public prices are still controlled by access rules and verification. Unknown prices are never shown as $0.</p>
+          </div>
+          <div class="actionRow">
+            <button id="copyUpdateLink" class="button" type="button">Copy update link</button>
+            <a id="openSubmitLink" class="button button--primary" href="/submit.html">Open submit flow</a>
+          </div>
+        </div>
+        <div id="priceRecords" class="list"></div>
+      </section>
+
+      <section class="grid grid--two" style="margin-top:16px;">
+        <article class="panel">
+          <h2>Reports and requests</h2>
+          <div id="venueSignals" class="list"></div>
+        </article>
+        <form id="venueUpdateForm" class="panel form">
+          <h2>Submit a venue update</h2>
+          <p class="helperCopy">This creates a pending review item. Admin can publish it as venue-confirmed after checking the source.</p>
+          <label class="field">Beer name
+            <input name="beerName" placeholder="e.g. Carlton Draught" required />
+          </label>
+          <div class="grid grid--two">
+            <label class="field">Serving size
+              <select name="servingSize">
+                <option value="pint">Pint</option>
+                <option value="schooner">Schooner</option>
+                <option value="pot">Pot</option>
+                <option value="jug">Jug</option>
+                <option value="can">Can</option>
+                <option value="bottle">Bottle</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label class="field">Price
+              <input name="price" type="number" min="0" max="250" step="0.01" placeholder="Optional if just updating tap status" />
+            </label>
+          </div>
+          <label class="field">Happy-hour / tap-list notes
+            <textarea name="notes" placeholder="Days, times, specials, tap-list source, or what changed."></textarea>
+          </label>
+          <button class="button button--primary" type="submit">Submit for review</button>
+          <div id="updateStatus" class="notice">Venue updates are reviewed before publishing.</div>
+        </form>
+      </section>
+    </section>
+
+    <p class="footerCopy">Venue insights are aggregate and directional while the beta grows. We do not expose individual user clickstream or exact user location to venues. Drink responsibly.</p>
+  </main>
+
+  <script>
+    let currentPortal = null;
+
+    function money(value) {
+      return value == null ? "No verified price" : new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(value);
+    }
+
+    function renderPortal(data) {
+      currentPortal = data;
+      portalContent.classList.remove("is-hidden");
+      portalAccess.classList.add("is-hidden");
+      venueSelect.innerHTML = data.assignments.length
+        ? data.assignments.map((assignment) => `<option value="${assignment.venueId}" ${data.selectedVenue?.venueId === assignment.venueId ? "selected" : ""}>${assignment.venueName}</option>`).join("")
+        : '<option>No assigned venues yet</option>';
+
+      if (!data.selectedVenue || !data.insights) {
+        selectedVenueSummary.textContent = "No assigned venue selected yet.";
+        return;
+      }
+
+      selectedVenueSummary.textContent = `${data.selectedVenue.venueName}${data.selectedVenue.suburb ? ` · ${data.selectedVenue.suburb}` : ""}`;
+      privacyCopy.textContent = data.privacyCopy;
+      openSubmitLink.href = data.updateLink || "/submit.html";
+
+      const quality = data.insights.listingQuality;
+      qualityScore.innerHTML = `<strong>${quality.score}%</strong><span class="muted">listing quality</span>`;
+      qualityChecklist.innerHTML = quality.checklist
+        .map((item) => `<li>${item.complete ? "Complete" : "Needs work"} · ${item.label}</li>`)
+        .join("");
+
+      const metrics = data.insights.aggregateInsights;
+      insightGrid.innerHTML = [
+        ["Venue views", metrics.venueViews],
+        ["Price reveals", metrics.priceReveals],
+        ["Wrong-price reports", metrics.wrongPriceReports],
+        ["Verify requests", metrics.verifyRequests],
+        ["Updates received", metrics.updatesReceived],
+        ["Marker clicks", metrics.markerClicks],
+      ].map(([label, value]) => `<div class="metricCard"><div class="metricValue">${value}</div><div class="metricLabel">${label}</div></div>`).join("");
+
+      priceRecords.innerHTML = data.insights.priceRecords.length
+        ? data.insights.priceRecords.map((record) => `
+          <div class="listItem">
+            <strong>${record.beerName} · ${record.servingSize}</strong>
+            <div class="muted">${money(record.price)} · ${record.confidence.replaceAll("_", " ")} · Last verified ${MelbBeerBusiness.formatDate(record.lastVerifiedAt)}</div>
+          </div>
+        `).join("")
+        : '<div class="listItem muted">No verified price rows yet. Submit a tap-list photo or add beer rows to improve this listing.</div>';
+
+      const reports = data.insights.wrongPriceReports.map((report) => `Wrong price: ${report.beerName || report.reason}`);
+      const requests = data.insights.requests.map((request) => `Request: ${request.requestType.replaceAll("_", " ")}`);
+      venueSignals.innerHTML = [...reports, ...requests].length
+        ? [...reports, ...requests].slice(0, 8).map((label) => `<div class="listItem">${label}</div>`).join("")
+        : '<div class="listItem muted">No open reports or user requests for this venue yet.</div>';
+    }
+
+    async function loadPortal(venueId = null) {
+      const suffix = venueId ? `?venueId=${encodeURIComponent(venueId)}` : "";
+      const data = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal${suffix}`);
+      renderPortal(data);
+    }
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("venue-portal");
+      MelbBeerBusiness.installFieldTestChrome();
+
+      try {
+        await loadPortal(new URLSearchParams(window.location.search).get("venueId"));
+      } catch (error) {
+        MelbBeerBusiness.setStatus(portalAccess, `${error.message || "Venue portal unavailable."} Ask admin to assign your account to a venue.`, true);
+      }
+
+      venueSelect.addEventListener("change", () => {
+        void loadPortal(venueSelect.value).catch((error) => MelbBeerBusiness.setStatus(portalAccess, error.message, true));
+      });
+
+      copyUpdateLink.addEventListener("click", async () => {
+        const link = currentPortal?.updateLink ? new URL(currentPortal.updateLink, window.location.origin).toString() : window.location.href;
+        await navigator.clipboard.writeText(link).catch(() => {});
+        await MelbBeerBusiness.trackEvent("venue_qr_link_copied", { venueId: currentPortal?.selectedVenue?.venueId || null });
+        copyUpdateLink.textContent = "Copied";
+        window.setTimeout(() => { copyUpdateLink.textContent = "Copy update link"; }, 1600);
+      });
+
+      venueUpdateForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!currentPortal?.selectedVenue) {
+          return;
+        }
+
+        const form = Object.fromEntries(new FormData(venueUpdateForm).entries());
+        const price = form.price === "" ? null : Number(form.price);
+        const body = {
+          venueId: currentPortal.selectedVenue.venueId,
+          venueName: currentPortal.selectedVenue.venueName,
+          suburb: currentPortal.selectedVenue.suburb,
+          submissionType: "single_beer_price",
+          observedAt: new Date().toISOString(),
+          sourcePhotoDataUrl: null,
+          sourcePhotoUrl: null,
+          notes: form.notes || null,
+          items: [{
+            beerName: form.beerName,
+            servingSize: form.servingSize,
+            price,
+            isHappyHourPrice: false,
+            happyHourDetails: form.notes || null,
+            isOnTap: "unknown",
+          }],
+        };
+
+        try {
+          const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(currentPortal.selectedVenue.venueId)}/submissions`, {
+            method: "POST",
+            body: JSON.stringify(body),
+          });
+          venueUpdateForm.reset();
+          MelbBeerBusiness.setStatus(updateStatus, result.message || "Venue update submitted for review.");
+          await loadPortal(currentPortal.selectedVenue.venueId);
+        } catch (error) {
+          MelbBeerBusiness.setStatus(updateStatus, error.message || "Could not submit venue update.", true);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

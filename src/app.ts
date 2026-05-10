@@ -349,6 +349,12 @@ export function createApp() {
   app.get("/", (_req, res) => {
     res.sendFile(path.join(viewerDirectory, "index.html"));
   });
+  app.get("/for-bars", (_req, res) => {
+    res.sendFile(path.join(viewerDirectory, "for-bars.html"));
+  });
+  app.get("/venue-portal", (_req, res) => {
+    res.sendFile(path.join(viewerDirectory, "venue-portal.html"));
+  });
 
   app.use(notFoundHandler);
   app.use(errorHandler);

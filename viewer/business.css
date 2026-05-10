@@ -161,6 +161,12 @@ a {
   color: #ffd8d8;
 }
 
+.button--small {
+  min-height: 34px;
+  padding: 8px 11px;
+  font-size: 0.82rem;
+}
+
 .hero {
   position: relative;
   display: grid;
@@ -236,6 +242,10 @@ h3 {
 
 .grid--two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .panel,
@@ -458,6 +468,61 @@ h3 {
   margin-top: 2px;
 }
 
+.featureList,
+.checkList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.featureList li,
+.checkList li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: #d9dfeb;
+  line-height: 1.55;
+}
+
+.featureList li::before,
+.checkList li::before {
+  content: "";
+  flex: 0 0 9px;
+  width: 9px;
+  height: 9px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--gold), var(--coral));
+  box-shadow: 0 0 18px rgba(245, 199, 107, 0.28);
+}
+
+.insightGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.qualityScore {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.qualityScore strong {
+  font-family: var(--display-font);
+  font-size: 52px;
+  letter-spacing: -0.06em;
+}
+
+.actionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
 .metricGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -585,6 +650,8 @@ h3 {
 
   .grid,
   .grid--two,
+  .grid--four,
+  .insightGrid,
   .metricGrid {
     grid-template-columns: 1fr;
   }

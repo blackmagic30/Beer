@@ -88,6 +88,9 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Confirm `/api/calls` and `/api/results` return `401` logged out and `403` for non-admin users.
 - Submit a wrong-price report and feedback.
 - Confirm KPI/field-test dashboard records activity.
+- Open `/for-bars`, submit a venue interest request, and confirm it appears in admin.
+- Assign a venue manager in admin, log in as that user, and confirm `/venue-portal` only shows the assigned venue.
+- Submit a venue-manager update and confirm it remains pending review.
 - Check the main pages on a phone-width screen.
 
 ## 8. Rollback Plan

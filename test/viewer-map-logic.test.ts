@@ -192,6 +192,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('class="filterGroup__label">Fresh</span>');
     expect(html).toContain('class="filterGroup__label">Price</span>');
     expect(html).toContain('class="filterGroup__label">Tap</span>');
+    expect(html).toContain('data-area-chip="Fitzroy"');
+    expect(html).toContain('data-filter-chip="best_options"');
     expect(html).toContain('id="accessSummary"');
     expect(html).toContain("Drink responsibly");
   });
@@ -199,6 +201,7 @@ describe("viewer map UI wiring", () => {
   it("renders location-aware controls without requesting location on page load", () => {
     expect(html).toContain('id="useLocationButton"');
     expect(html).toContain('data-filter-chip="happy_hour_near_me"');
+    expect(html).toContain('data-filter-chip="recently_verified_near_me"');
     expect(html).toContain('data-filter-chip="nearest"');
     expect(html).toContain('id="nearMeRadiusSelect"');
     expect(html).toContain("navigator.geolocation.getCurrentPosition");
