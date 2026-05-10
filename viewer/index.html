@@ -212,9 +212,13 @@
 
     #toolbar {
       display: grid;
-      grid-template-columns: minmax(200px, 1.1fr) minmax(200px, 1.1fr) auto auto;
+      grid-template-columns: minmax(240px, 1fr) auto auto;
       gap: 12px;
       align-items: end;
+    }
+
+    .hiddenSearchState {
+      display: none !important;
     }
 
     .controlGroup {
@@ -309,6 +313,25 @@
       color: var(--chip-active-text);
     }
 
+    .filterChip.is-locked {
+      border-color: rgba(148, 163, 184, 0.16);
+      background: rgba(15, 23, 42, 0.62);
+      color: #94a3b8;
+    }
+
+    .filterChip.is-locked::after {
+      content: "Locked";
+      margin-left: 8px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: rgba(244, 214, 150, 0.12);
+      color: #f5c76b;
+      font-size: 10px;
+      font-weight: 950;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
     .filterChip:disabled,
     .togglePill:has(input:disabled) {
       opacity: 0.56;
@@ -341,6 +364,120 @@
       justify-content: flex-end;
       align-items: center;
       flex-wrap: wrap;
+    }
+
+    .primaryFilterRow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .popularBeerRow {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .advancedFiltersPanel {
+      display: grid;
+      gap: 14px;
+      padding: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 20px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+        rgba(2, 6, 23, 0.36);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .advancedFiltersPanel[hidden] {
+      display: none;
+    }
+
+    .advancedFiltersPanel__header,
+    .advancedFiltersPanel__footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .advancedFiltersPanel__title {
+      margin: 0;
+      color: #fff7ed;
+      font-size: 15px;
+      font-weight: 950;
+      letter-spacing: -0.01em;
+    }
+
+    .advancedFiltersPanel__copy,
+    .advancedFiltersPanel__notice {
+      margin: 4px 0 0;
+      color: #a8b0bf;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .advancedFiltersPanel__notice {
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid rgba(244, 214, 150, 0.16);
+      border-radius: 15px;
+      background: rgba(245, 199, 107, 0.08);
+      color: #ffe4a8;
+    }
+
+    .advancedFiltersGrid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .advancedFilterSection {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 18px;
+      background: rgba(3, 7, 18, 0.28);
+    }
+
+    .advancedFilterSection--wide {
+      grid-column: 1 / -1;
+    }
+
+    .advancedFilterSection__title {
+      color: #f5c76b;
+      font-size: 11px;
+      font-weight: 950;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .activeFilterSummary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid rgba(56, 189, 248, 0.18);
+      border-radius: 16px;
+      background: rgba(56, 189, 248, 0.08);
+      color: #bfdbfe;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .activeFilterSummary[hidden] {
+      display: none;
+    }
+
+    .activeFilterSummary strong {
+      color: #ffffff;
     }
 
     .locationStrip {
@@ -609,6 +746,12 @@
       position: relative;
       flex: 1 1 auto;
       min-height: 420px;
+    }
+
+    .belowMapInsights {
+      display: grid;
+      gap: 10px;
+      margin: 0 12px 12px;
     }
 
     #mapOverlayTabs {
@@ -2013,7 +2156,7 @@
       }
 
       #toolbar {
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr);
         gap: 8px;
         align-items: stretch;
       }
@@ -2058,6 +2201,42 @@
 
       .utilityButton {
         width: 100%;
+      }
+
+      .primaryFilterRow,
+      .popularBeerRow {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 6px;
+        padding-bottom: 3px;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .primaryFilterRow::-webkit-scrollbar,
+      .popularBeerRow::-webkit-scrollbar {
+        display: none;
+      }
+
+      .advancedFiltersGrid {
+        grid-template-columns: 1fr;
+      }
+
+      .advancedFiltersPanel {
+        gap: 10px;
+        padding: 10px;
+        border-radius: 16px;
+      }
+
+      .advancedFilterSection {
+        padding: 10px;
+        border-radius: 15px;
+      }
+
+      .activeFilterSummary {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 7px;
       }
 
       .locationStrip {
@@ -2116,7 +2295,8 @@
       }
 
       .retentionHighlights {
-        display: none;
+        display: grid;
+        grid-template-columns: 1fr;
       }
 
       #statusBar {
@@ -2318,21 +2498,18 @@
 
     <div class="controlDeck">
       <div class="controlDeck__header">
-        <span class="controlDeck__title">Search Melbourne</span>
-        <span class="controlDeck__copy">Try a beer, pub, suburb, or partial venue name. Unknown prices stay separate from cheap results.</span>
+        <span class="controlDeck__title">Find a venue fast</span>
+        <span class="controlDeck__copy">Search once, then use the map. Unknown prices stay separate from cheap results.</span>
       </div>
 
       <div id="toolbar">
         <label class="controlGroup" for="venueSearch">
-          <span>Venue or suburb</span>
-          <input id="venueSearch" class="controlInput" type="search" placeholder="Try Rooftop, Sandringham, Fitzroy…" />
+          <span>Search beer, venue or suburb</span>
+          <input id="venueSearch" class="controlInput" list="beerSuggestions" type="search" placeholder="Search beer, venue or suburb" />
         </label>
 
-        <label class="controlGroup" for="beerSearch">
-          <span>Beer</span>
-          <input id="beerSearch" class="controlInput" list="beerSuggestions" type="search" placeholder="Try Guinness, Carlton Draught, Stone &amp; Wood…" />
-          <datalist id="beerSuggestions"></datalist>
-        </label>
+        <input id="beerSearch" class="hiddenSearchState" type="search" aria-hidden="true" tabindex="-1" />
+        <datalist id="beerSuggestions"></datalist>
 
         <label class="togglePill" for="onTapOnly">
           <input id="onTapOnly" type="checkbox" />
@@ -2340,78 +2517,111 @@
         </label>
 
         <div class="toolbar__right">
-          <button id="clearFilters" class="utilityButton" type="button" hidden>Clear filters</button>
+          <button id="advancedFiltersToggle" class="utilityButton" type="button" aria-expanded="false" aria-controls="advancedFiltersPanel">Advanced filters</button>
         </div>
       </div>
 
       <div class="locationStrip" aria-live="polite">
         <button id="useLocationButton" class="locationButton" type="button">Use my location</button>
-        <label id="nearMeRadiusControl" class="radiusControl" for="nearMeRadiusSelect" hidden>
-          Within
-          <select id="nearMeRadiusSelect">
-            <option value="0.5">500 m</option>
-            <option value="1">1 km</option>
-            <option value="2" selected>2 km</option>
-            <option value="5">5 km</option>
-            <option value="10">10 km</option>
-          </select>
-        </label>
         <span id="locationStatus" class="locationStatus">Location off. Tap once to show approximate distances and nearby happy hours.</span>
       </div>
 
-      <div class="areaQuickPick" aria-label="Choose a Melbourne area if location is off">
-        <span class="areaQuickPick__label">Choose area</span>
-        <button type="button" data-area-chip="CBD">CBD</button>
-        <button type="button" data-area-chip="Fitzroy">Fitzroy</button>
-        <button type="button" data-area-chip="Collingwood">Collingwood</button>
-        <button type="button" data-area-chip="Richmond">Richmond</button>
-        <button type="button" data-area-chip="Brunswick">Brunswick</button>
-        <button type="button" data-area-chip="Carlton">Carlton</button>
-        <button type="button" data-area-chip="South Yarra">South Yarra</button>
-        <button type="button" data-area-chip="Prahran">Prahran</button>
-        <button type="button" data-area-chip="St Kilda">St Kilda</button>
-        <button type="button" data-area-chip="Footscray">Footscray</button>
+      <div class="primaryFilterRow" aria-label="Primary map filters">
+        <button class="filterChip" type="button" data-filter-chip="happy_hour_near_me">Happy hour near me</button>
+        <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
       </div>
 
-      <div class="chipRow" id="scopeChips">
-        <div class="filterGroup" aria-label="Venue scope">
-          <span class="filterGroup__label">View</span>
-          <button class="filterChip is-active" type="button" data-scope="all">All venues</button>
-          <button class="filterChip" type="button" data-scope="needs_data">Needs data</button>
-        </div>
-        <div class="filterGroup" aria-label="Best options shortcuts">
-          <span class="filterGroup__label">Now</span>
-          <button class="filterChip" type="button" data-filter-chip="best_options">Best options right now</button>
-        </div>
-        <div class="filterGroup" aria-label="Freshness and verification filters">
-          <span class="filterGroup__label">Fresh</span>
-          <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
-          <button class="filterChip" type="button" data-filter-chip="happy_hour_near_me">Happy hour near me</button>
-          <button class="filterChip" type="button" data-filter-chip="recently_verified">Recently verified</button>
-          <button class="filterChip" type="button" data-filter-chip="recently_verified_near_me">Recently verified near me</button>
-          <button class="filterChip" type="button" data-filter-chip="verified_only">Verified only</button>
-        </div>
-        <div class="filterGroup" aria-label="Price filters">
-          <span class="filterGroup__label">Price</span>
-          <button class="filterChip" type="button" data-filter-chip="nearest">Nearest</button>
-          <button class="filterChip" type="button" data-filter-chip="cheapest_near_me">Cheapest near me</button>
-          <button class="filterChip" type="button" data-filter-chip="under_10">Under A$10</button>
-        </div>
-        <div class="filterGroup" aria-label="Availability filters">
-          <span class="filterGroup__label">Tap</span>
-          <button class="filterChip" type="button" data-filter-chip="on_tap">On tap</button>
-          <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs">My saved suburbs</button>
-        </div>
-        <div id="beerChipHost" class="filterGroup chipRow__inline" aria-label="Popular beer filters"></div>
+      <div class="popularBeerRow" aria-label="Popular beer filters">
+        <div id="beerChipHost" class="filterGroup chipRow__inline"></div>
       </div>
-    </div>
 
-    <div id="retentionHighlights" class="retentionHighlights" aria-live="polite"></div>
+      <div id="activeFilterSummary" class="activeFilterSummary" hidden>
+        <span id="activeFilterCopy"><strong>Filters:</strong> All venues</span>
+        <button id="clearFilters" class="utilityButton" type="button" hidden>Clear all</button>
+      </div>
 
-    <div id="statusBar">
-      <div id="resultsSummary" class="statusPill">Loading venues…</div>
-      <div id="viewSummary" class="statusPill">All venues</div>
-      <div id="accessSummary" class="statusPill">Free preview</div>
+      <div id="advancedFiltersPanel" class="advancedFiltersPanel" hidden>
+        <div class="advancedFiltersPanel__header">
+          <div>
+            <h2 class="advancedFiltersPanel__title">Advanced filters</h2>
+            <p class="advancedFiltersPanel__copy">Use deeper filters when you need a narrower answer. Free users can preview locked options.</p>
+          </div>
+          <button id="advancedFiltersApply" class="utilityButton" type="button">Apply filters</button>
+        </div>
+
+        <p id="advancedFiltersNotice" class="advancedFiltersPanel__notice" hidden>
+          Unlock advanced filters with Premium or by submitting verified venue data.
+        </p>
+
+        <div class="advancedFiltersGrid">
+          <section class="advancedFilterSection advancedFilterSection--wide" aria-label="Choose a Melbourne area">
+            <span class="advancedFilterSection__title">Area</span>
+            <div class="areaQuickPick" aria-label="Choose a Melbourne area if location is off">
+              <span class="areaQuickPick__label">Choose area</span>
+              <button type="button" data-area-chip="CBD">CBD</button>
+              <button type="button" data-area-chip="Fitzroy">Fitzroy</button>
+              <button type="button" data-area-chip="Collingwood">Collingwood</button>
+              <button type="button" data-area-chip="Richmond">Richmond</button>
+              <button type="button" data-area-chip="Brunswick">Brunswick</button>
+              <button type="button" data-area-chip="Carlton">Carlton</button>
+              <button type="button" data-area-chip="South Yarra">South Yarra</button>
+              <button type="button" data-area-chip="Prahran">Prahran</button>
+              <button type="button" data-area-chip="St Kilda">St Kilda</button>
+              <button type="button" data-area-chip="Footscray">Footscray</button>
+            </div>
+            <label id="nearMeRadiusControl" class="radiusControl" for="nearMeRadiusSelect" hidden>
+              Within
+              <select id="nearMeRadiusSelect">
+                <option value="0.5">500 m</option>
+                <option value="1">1 km</option>
+                <option value="2" selected>2 km</option>
+                <option value="5">5 km</option>
+                <option value="10">10 km</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="advancedFilterSection" aria-label="Venue scope">
+            <span class="advancedFilterSection__title">View</span>
+            <div class="filterGroup" id="scopeChips">
+              <button class="filterChip is-active" type="button" data-scope="all">All venues</button>
+              <button class="filterChip" type="button" data-scope="needs_data">Needs data</button>
+            </div>
+          </section>
+
+          <section class="advancedFilterSection" aria-label="Best options shortcuts">
+            <span class="advancedFilterSection__title">Now</span>
+            <div class="filterGroup">
+              <button class="filterChip" type="button" data-filter-chip="best_options">Best options right now</button>
+            </div>
+          </section>
+
+          <section class="advancedFilterSection" aria-label="Freshness and verification filters">
+            <span class="advancedFilterSection__title">Freshness and trust</span>
+            <div class="filterGroup">
+              <button class="filterChip" type="button" data-filter-chip="recently_verified">Recently verified</button>
+              <button class="filterChip" type="button" data-filter-chip="recently_verified_near_me" data-premium-filter="true">Recently verified near me</button>
+              <button class="filterChip" type="button" data-filter-chip="verified_only" data-premium-filter="true">Verified only</button>
+            </div>
+          </section>
+
+          <section class="advancedFilterSection" aria-label="Price filters">
+            <span class="advancedFilterSection__title">Price</span>
+            <div class="filterGroup">
+              <button class="filterChip" type="button" data-filter-chip="nearest" data-premium-filter="true">Nearest</button>
+              <button class="filterChip" type="button" data-filter-chip="cheapest_near_me" data-premium-filter="true">Cheapest near me</button>
+              <button class="filterChip" type="button" data-filter-chip="under_10" data-premium-filter="true">Under A$10</button>
+            </div>
+          </section>
+
+          <section class="advancedFilterSection" aria-label="Personal filters">
+            <span class="advancedFilterSection__title">Personal</span>
+            <div class="filterGroup">
+              <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs" data-premium-filter="true">My saved suburbs</button>
+            </div>
+          </section>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -2457,6 +2667,17 @@
         <div id="legendHint" class="legend__hint"></div>
       </aside>
     </div>
+
+    <div class="belowMapInsights">
+      <div id="retentionHighlights" class="retentionHighlights" aria-live="polite"></div>
+
+      <div id="statusBar">
+        <div id="resultsSummary" class="statusPill">Loading venues…</div>
+        <div id="viewSummary" class="statusPill">All venues</div>
+        <div id="accessSummary" class="statusPill">Free preview</div>
+      </div>
+    </div>
+
     <div class="responsibleNote">
       Prices may change. Check with the venue before ordering. Drink responsibly. <a href="/privacy.html">Privacy</a>
     </div>
@@ -2506,6 +2727,12 @@
     const beerChipHostEl = document.getElementById("beerChipHost");
     const onTapOnlyEl = document.getElementById("onTapOnly");
     const clearFiltersEl = document.getElementById("clearFilters");
+    const advancedFiltersToggleEl = document.getElementById("advancedFiltersToggle");
+    const advancedFiltersPanelEl = document.getElementById("advancedFiltersPanel");
+    const advancedFiltersApplyEl = document.getElementById("advancedFiltersApply");
+    const advancedFiltersNoticeEl = document.getElementById("advancedFiltersNotice");
+    const activeFilterSummaryEl = document.getElementById("activeFilterSummary");
+    const activeFilterCopyEl = document.getElementById("activeFilterCopy");
     const useLocationButtonEl = document.getElementById("useLocationButton");
     const nearMeRadiusControlEl = document.getElementById("nearMeRadiusControl");
     const nearMeRadiusSelectEl = document.getElementById("nearMeRadiusSelect");
@@ -2538,6 +2765,14 @@
     let googleMapsAuthFailed = false;
     let activeScope = "all";
     const activeFilterChips = new Set();
+    const premiumAdvancedFilters = new Set([
+      "cheapest_near_me",
+      "under_10",
+      "verified_only",
+      "recently_verified_near_me",
+      "nearest",
+      "my_saved_suburbs",
+    ]);
     let savedSuburbFilters = [];
     let venueRailSortMode = "smart";
     const userLocationState = {
@@ -2617,16 +2852,18 @@
       accessPillEl.classList.toggle("accessPill--full", fullAccess);
       accessPillEl.classList.toggle("accessPill--admin", Boolean(businessAccess.isAdmin));
       businessBannerCopyEl.innerHTML = `<strong>Free preview:</strong> venue pins stay visible. ${businessAccess.freePriceRevealsRemainingToday} exact price ${businessAccess.freePriceRevealsRemainingToday === 1 ? "reveal" : "reveals"} left today. Unlock full access or submit verified venue data. Prices may change.`;
+      if (fullAccess && advancedFiltersNoticeEl) {
+        advancedFiltersNoticeEl.hidden = true;
+      }
       syncAdminNavLink();
-      beerSearchEl.disabled = !businessAccess.canUseBeerSearch;
-      beerSearchEl.placeholder = fullAccess
-        ? DEFAULT_BEER_SEARCH_PLACEHOLDER
-        : "Beer search unlocks with premium or contributor access";
-      onTapOnlyEl.disabled = !fullAccess;
+      beerSearchEl.disabled = false;
+      beerSearchEl.placeholder = DEFAULT_BEER_SEARCH_PLACEHOLDER;
+      onTapOnlyEl.disabled = false;
       beerChipEls.forEach((chipEl) => {
-        chipEl.disabled = !fullAccess;
-        chipEl.title = fullAccess ? "" : "Beer shortcuts unlock with premium or contributor access";
+        chipEl.disabled = false;
+        chipEl.title = "Popular beer shortcut";
       });
+      syncAdvancedFilterLocks();
     }
 
     function getAccessLabel() {
@@ -3040,12 +3277,76 @@
       return getTrackedBeerMeta(name)?.name || String(name || "").trim();
     }
 
+    function getInferredBeerQuery(query) {
+      const queryKey = toSearchKey(query);
+
+      if (!queryKey || queryKey.length < 3) {
+        return "";
+      }
+
+      const exactMatch = TRACKED_BEER_BY_KEY.get(queryKey);
+      if (exactMatch) {
+        return exactMatch.name;
+      }
+
+      const partialMatch = TRACKED_BEERS.find((beer) =>
+        [beer.name, ...(beer.aliases || [])].some((value) => {
+          const valueKey = toSearchKey(value);
+          return valueKey && (valueKey.includes(queryKey) || queryKey.includes(valueKey));
+        }),
+      );
+
+      return partialMatch?.name || "";
+    }
+
+    function isAdvancedFilterLocked(filter) {
+      return !businessAccess.hasFullAccess && premiumAdvancedFilters.has(filter);
+    }
+
+    function syncAdvancedFilterLocks() {
+      highValueChipEls.forEach((chipEl) => {
+        const filter = chipEl.dataset.filterChip || "";
+        const isLocked = isAdvancedFilterLocked(filter);
+        chipEl.classList.toggle("is-locked", isLocked);
+        chipEl.setAttribute("aria-disabled", isLocked ? "true" : "false");
+        chipEl.title = isLocked
+          ? "Unlock advanced filters with Premium or by submitting verified venue data."
+          : "";
+      });
+    }
+
+    function showAdvancedFilterUnlockPrompt() {
+      if (advancedFiltersNoticeEl) {
+        advancedFiltersNoticeEl.hidden = false;
+      }
+
+      businessBannerEl.style.display = "flex";
+      businessBannerCopyEl.innerHTML = "<strong>Unlock advanced filters:</strong> Premium or approved contributor access unlocks deeper sorting and trust filters.";
+    }
+
     function renderTrackedBeerChips() {
       if (!beerChipHostEl) {
         return;
       }
 
-      const featuredBeers = TRACKED_BEERS.slice(0, 6);
+      const preferredBeerNames = ["Guinness", "Carlton Draught", "Stone & Wood"];
+      const preferredBeerKeys = preferredBeerNames.map(toSearchKey);
+      const seenBeerKeys = new Set();
+      const featuredBeers = [
+        ...preferredBeerKeys
+          .map((key) => TRACKED_BEER_BY_KEY.get(key))
+          .filter(Boolean),
+        ...TRACKED_BEERS,
+      ]
+        .filter((beer) => {
+          const key = toSearchKey(beer.name);
+          if (!key || seenBeerKeys.has(key)) {
+            return false;
+          }
+          seenBeerKeys.add(key);
+          return true;
+        })
+        .slice(0, 3);
 
       beerChipHostEl.innerHTML = '<span class="filterGroup__label">Popular beers</span>' + featuredBeers
         .map(
@@ -3873,7 +4174,7 @@
     }
 
     function getPriceRelevantBeerItems(row, viewState) {
-      if (viewState?.beerQuery && businessAccess.canUseBeerSearch) {
+      if (viewState?.beerQuery) {
         return getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly);
       }
 
@@ -3889,10 +4190,14 @@
     }
 
     function getViewState() {
+      const searchQuery = venueSearchEl.value.trim();
+      const explicitBeerQuery = beerSearchEl.value.trim();
+      const inferredBeerQuery = explicitBeerQuery || getInferredBeerQuery(searchQuery);
+
       return {
         scope: activeScope,
-        venueQuery: venueSearchEl.value.trim(),
-        beerQuery: beerSearchEl.value.trim(),
+        venueQuery: inferredBeerQuery ? "" : searchQuery,
+        beerQuery: inferredBeerQuery,
         onTapOnly: onTapOnlyEl.checked,
         filters: Array.from(activeFilterChips),
       };
@@ -3926,7 +4231,7 @@
         return false;
       }
 
-      if (viewState.beerQuery && businessAccess.canUseBeerSearch) {
+      if (viewState.beerQuery) {
         if (getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly).length === 0) {
           return false;
         }
@@ -4010,9 +4315,7 @@
     }
 
     function getFeaturedBeer(row, viewState) {
-      const matchedBeerItems = businessAccess.canUseBeerSearch
-        ? getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly)
-        : [];
+      const matchedBeerItems = getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly);
 
       if (matchedBeerItems.length > 0) {
         return matchedBeerItems[0];
@@ -4024,7 +4327,7 @@
     function getDisplayBeerItems(row, viewState) {
       const allBeerItems = getBeerItems(row);
 
-      if (!viewState.beerQuery || !businessAccess.canUseBeerSearch) {
+      if (!viewState.beerQuery) {
         return allBeerItems;
       }
 
@@ -4090,6 +4393,56 @@
       highValueChipEls.forEach((chipEl) => {
         chipEl.classList.toggle("is-active", activeFilterChips.has(chipEl.dataset.filterChip));
       });
+      syncAdvancedFilterLocks();
+    }
+
+    function getFilterLabel(filter) {
+      const chip = highValueChipEls.find((chipEl) => chipEl.dataset.filterChip === filter);
+      return chip?.textContent?.replace(/\s*Locked\s*$/, "").trim() || filter.replaceAll("_", " ");
+    }
+
+    function getActiveFilterLabels(viewState) {
+      const labels = [];
+
+      if (viewState.scope === "needs_data") {
+        labels.push("Needs data");
+      }
+
+      if (viewState.venueQuery) {
+        labels.push(viewState.venueQuery);
+      }
+
+      if (viewState.beerQuery) {
+        labels.push(viewState.beerQuery);
+      }
+
+      if (viewState.onTapOnly) {
+        labels.push("On tap only");
+      }
+
+      viewState.filters.forEach((filter) => {
+        labels.push(getFilterLabel(filter));
+      });
+
+      if (hasUserLocation() && hasNearMeFilter(viewState)) {
+        labels.push(`Within ${userLocationState.radiusKm} km`);
+      }
+
+      return labels;
+    }
+
+    function syncActiveFilterSummary(viewState) {
+      const labels = getActiveFilterLabels(viewState);
+      const count = labels.length;
+      const hasAdvancedOpen = !advancedFiltersPanelEl.hidden;
+
+      activeFilterSummaryEl.hidden = count === 0;
+      clearFiltersEl.hidden = count === 0;
+      activeFilterCopyEl.innerHTML = `<strong>Filters:</strong> ${escapeHtml(count ? labels.join(" · ") : "All venues")}`;
+      advancedFiltersToggleEl.textContent = count
+        ? `Advanced filters · ${count} active`
+        : "Advanced filters";
+      advancedFiltersToggleEl.setAttribute("aria-expanded", hasAdvancedOpen ? "true" : "false");
     }
 
     function syncStatusPills(filteredRows, viewState) {
@@ -4139,6 +4492,7 @@
         <span class="statusPill__copy">${escapeHtml(accessCopy)}</span>
       `;
       clearFiltersEl.hidden = !hasActiveFilters;
+      syncActiveFilterSummary(viewState);
       syncScopeChipState();
       syncBeerChipState();
       syncHighValueChipState();
@@ -5268,12 +5622,35 @@
           renderMarkers();
         });
 
-        venueSearchEl.addEventListener("input", renderMarkers);
+        advancedFiltersToggleEl.addEventListener("click", () => {
+          const isOpening = advancedFiltersPanelEl.hidden;
+          advancedFiltersPanelEl.hidden = !isOpening;
+          advancedFiltersToggleEl.setAttribute("aria-expanded", isOpening ? "true" : "false");
+          if (isOpening) {
+            void trackBusinessEvent("map_filter_used", { filter: "advanced_filters_opened" });
+          }
+        });
+
+        advancedFiltersApplyEl.addEventListener("click", () => {
+          advancedFiltersPanelEl.hidden = true;
+          advancedFiltersToggleEl.setAttribute("aria-expanded", "false");
+          syncActiveFilterSummary(getViewState());
+        });
+
+        venueSearchEl.addEventListener("input", () => {
+          beerSearchEl.value = "";
+          renderMarkers();
+        });
         venueSearchEl.addEventListener("change", () => {
           const query = venueSearchEl.value.trim();
           if (query) {
-            void trackBusinessEvent("search_performed", { query });
-            void trackBusinessEvent("suburb_search_performed", { query, suburb: query });
+            const inferredBeer = getInferredBeerQuery(query);
+            void trackBusinessEvent(inferredBeer ? "beer_search_performed" : "search_performed", {
+              query: inferredBeer || query,
+            });
+            if (!inferredBeer) {
+              void trackBusinessEvent("suburb_search_performed", { query, suburb: query });
+            }
           }
         });
         beerSearchEl.addEventListener("input", renderMarkers);
@@ -5305,6 +5682,7 @@
           chipEl.addEventListener("click", () => {
             const area = chipEl.dataset.areaChip || "";
             venueSearchEl.value = area;
+            beerSearchEl.value = "";
             void trackBusinessEvent("suburb_area_selected", { suburb: area, source: "area_quick_pick" });
             renderMarkers();
           });
@@ -5329,6 +5707,11 @@
           chipEl.addEventListener("click", async () => {
             const filter = chipEl.dataset.filterChip;
             if (!filter) {
+              return;
+            }
+
+            if (isAdvancedFilterLocked(filter)) {
+              showAdvancedFilterUnlockPrompt();
               return;
             }
 
@@ -5407,9 +5790,11 @@
 
             if (chipBeerKey && chipBeerKey === currentBeerKey) {
               beerSearchEl.value = "";
+              venueSearchEl.value = "";
               onTapOnlyEl.checked = false;
             } else {
               beerSearchEl.value = chipBeer;
+              venueSearchEl.value = chipBeer;
               activeScope = "all";
             }
 

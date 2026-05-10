@@ -185,17 +185,19 @@ describe("viewer map UI wiring", () => {
     expect(html).not.toContain(">$0<");
   });
 
-  it("renders the premium public header, search deck, filter groups, and compact status cards", () => {
+  it("renders the simplified public header, primary controls, and collapsed advanced filters", () => {
     expect(html).toContain('id="topbarBusinessLinks"');
     expect(html).toContain('id="accessPill"');
     expect(html).toContain('class="controlDeck"');
-    expect(html).toContain("Search Melbourne");
-    expect(html).toContain('class="filterGroup__label">View</span>');
-    expect(html).toContain('class="filterGroup__label">Fresh</span>');
-    expect(html).toContain('class="filterGroup__label">Price</span>');
-    expect(html).toContain('class="filterGroup__label">Tap</span>');
+    expect(html).toContain("Find a venue fast");
+    expect(html).toContain('placeholder="Search beer, venue or suburb"');
+    expect(html).toContain('id="advancedFiltersToggle"');
+    expect(html).toContain('id="advancedFiltersPanel" class="advancedFiltersPanel" hidden');
+    expect(html).toContain('id="activeFilterSummary"');
     expect(html).toContain('data-area-chip="Fitzroy"');
     expect(html).toContain('data-filter-chip="best_options"');
+    expect(html).toContain('data-premium-filter="true"');
+    expect(html).toContain('class="belowMapInsights"');
     expect(html).toContain('id="accessSummary"');
     expect(html).toContain("Drink responsibly");
   });
@@ -216,7 +218,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("-webkit-overflow-scrolling: touch");
     expect(html).toContain("-webkit-line-clamp: 2");
     expect(html).toContain("font-size: 16px");
-    expect(html).toContain(".retentionHighlights {\n        display: none;");
+    expect(html).toContain(".primaryFilterRow,\n      .popularBeerRow");
+    expect(html).toContain(".advancedFiltersGrid {\n        grid-template-columns: 1fr;");
     expect(html).toContain("min-height: 62dvh");
   });
 
