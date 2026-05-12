@@ -10,6 +10,12 @@ on:
 jobs:
   build-test-scan:
     runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      PUBLIC_BASE_URL: http://localhost:3000
+      DATABASE_PATH: ./data/ci.sqlite
+      OUTBOUND_CALLS_ENABLED: "false"
+      DEMO_BILLING_MODE: "true"
 
     steps:
       - name: Checkout
