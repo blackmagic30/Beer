@@ -1,5 +1,7 @@
 import type BetterSqlite3 from "better-sqlite3";
 
+import { redactSecrets } from "../lib/redact.js";
+
 export type AccountRole = "user" | "admin" | "venue_manager";
 export type AccountStatus = "active" | "warned" | "suspended";
 export type SubscriptionStatus =
@@ -21,6 +23,8 @@ export type TapStatus = "yes" | "no" | "unknown";
 export type SavedItemType = "venue" | "beer" | "suburb";
 export type FeedbackType = "bug" | "wrong_data" | "feature_idea" | "venue_suggestion" | "general_feedback";
 export type RequestType = "missing_venue" | "missing_beer" | "verify_venue" | "verify_beer_at_venue";
+export type BarMembershipTier = "basic" | "plus" | "pro";
+type StoredBarMembershipTier = BarMembershipTier | "free" | "super_premium";
 export type ConfidenceLabel =
   | "venue_confirmed"
   | "photo_verified"
@@ -224,6 +228,116 @@ export interface VenuePartnerOutreach {
   updatedAt: string;
 }
 
+export interface BarClaimRequest {
+  id: string;
+  userId: string;
+  barId: string | null;
+  barName: string;
+  address: string | null;
+  suburb: string | null;
+  requesterName: string;
+  requesterRole: string;
+  contactEmail: string;
+  contactPhone: string | null;
+  message: string | null;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BarProfile {
+  barId: string;
+  name: string;
+  address: string | null;
+  suburb: string | null;
+  area: string | null;
+  phone: string | null;
+  website: string | null;
+  instagram: string | null;
+  description: string | null;
+  openingHours: Record<string, unknown>;
+  venueTags: string[];
+  membershipTier: BarMembershipTier;
+  highlightedName: boolean;
+  premiumBadge: string | null;
+  promoted: boolean;
+  featuredSpecialEligible: boolean;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  subscriptionStatus: string | null;
+  tierManualOverride: boolean;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BarBeer {
+  id: string;
+  barId: string;
+  beerName: string;
+  brewery: string | null;
+  style: string | null;
+  abv: number | null;
+  serveSize: ServingSize | null;
+  price: number | null;
+  currency: string;
+  onTap: boolean;
+  inStock: boolean;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BarHappyHour {
+  id: string;
+  barId: string;
+  title: string;
+  daysOfWeek: string[];
+  startTime: string;
+  endTime: string;
+  description: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BarSpecial {
+  id: string;
+  barId: string;
+  title: string;
+  description: string;
+  price: number | null;
+  discount: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  scheduleNote: string | null;
+  exclusive: boolean;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MonthlyBarReport {
+  id: string;
+  barId: string;
+  month: string;
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface SecurityAuditLog {
+  id: string;
+  actorUserId: string | null;
+  actorRole: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  metadata: Record<string, unknown>;
+  ipHash: string | null;
+  userAgentHash: string | null;
+  createdAt: string;
+}
+
 interface AccountRow {
   id: string;
   email: string;
@@ -241,6 +355,19 @@ interface AccountRow {
   status: AccountStatus;
   created_at: string;
   updated_at: string;
+}
+
+interface SecurityAuditLogRow {
+  id: string;
+  actor_user_id: string | null;
+  actor_role: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  metadata_json: string;
+  ip_hash: string | null;
+  user_agent_hash: string | null;
+  created_at: string;
 }
 
 interface SubmissionRow {
@@ -419,6 +546,103 @@ interface VenuePartnerOutreachRow {
   updated_at: string;
 }
 
+interface BarProfileRow {
+  bar_id: string;
+  name: string;
+  address: string | null;
+  suburb: string | null;
+  area: string | null;
+  phone: string | null;
+  website: string | null;
+  instagram: string | null;
+  description: string | null;
+  opening_hours_json: string;
+  venue_tags_json: string;
+  membership_tier: StoredBarMembershipTier;
+  highlighted_name: number;
+  premium_badge: string | null;
+  promoted: number;
+  featured_special_eligible: number;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  subscription_status: string | null;
+  tier_manual_override: number;
+  active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BarClaimRequestRow {
+  id: string;
+  user_id: string;
+  bar_id: string | null;
+  bar_name: string;
+  address: string | null;
+  suburb: string | null;
+  requester_name: string;
+  requester_role: string;
+  contact_email: string;
+  contact_phone: string | null;
+  message: string | null;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
+}
+
+interface BarBeerRow {
+  id: string;
+  bar_id: string;
+  beer_name: string;
+  brewery: string | null;
+  style: string | null;
+  abv: number | null;
+  serve_size: ServingSize | null;
+  price: number | null;
+  currency: string;
+  on_tap: number;
+  in_stock: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BarHappyHourRow {
+  id: string;
+  bar_id: string;
+  title: string;
+  days_of_week_json: string;
+  start_time: string;
+  end_time: string;
+  description: string;
+  active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BarSpecialRow {
+  id: string;
+  bar_id: string;
+  title: string;
+  description: string;
+  price: number | null;
+  discount: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  schedule_note: string | null;
+  exclusive: number;
+  active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface MonthlyBarReportRow {
+  id: string;
+  bar_id: string;
+  month: string;
+  data_json: string;
+  created_at: string;
+}
+
 function toAccount(row: AccountRow): BusinessAccount {
   return {
     id: row.id,
@@ -534,6 +758,18 @@ function parseJsonObject(value: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function normalizeBarMembershipTier(value: StoredBarMembershipTier | string | null | undefined): BarMembershipTier {
+  if (value === "plus") {
+    return "plus";
+  }
+
+  if (value === "pro" || value === "super_premium") {
+    return "pro";
+  }
+
+  return "basic";
 }
 
 function toAccountPreferences(row: AccountPreferencesRow): AccountPreferences {
@@ -658,6 +894,130 @@ function toVenuePartnerOutreach(row: VenuePartnerOutreachRow): VenuePartnerOutre
   };
 }
 
+function toBarClaimRequest(row: BarClaimRequestRow): BarClaimRequest {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    barId: row.bar_id,
+    barName: row.bar_name,
+    address: row.address,
+    suburb: row.suburb,
+    requesterName: row.requester_name,
+    requesterRole: row.requester_role,
+    contactEmail: row.contact_email,
+    contactPhone: row.contact_phone,
+    message: row.message,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBarProfile(row: BarProfileRow): BarProfile {
+  return {
+    barId: row.bar_id,
+    name: row.name,
+    address: row.address,
+    suburb: row.suburb,
+    area: row.area,
+    phone: row.phone,
+    website: row.website,
+    instagram: row.instagram,
+    description: row.description,
+    openingHours: parseJsonObject(row.opening_hours_json),
+    venueTags: parseJsonArray(row.venue_tags_json),
+    membershipTier: normalizeBarMembershipTier(row.membership_tier),
+    highlightedName: Boolean(row.highlighted_name),
+    premiumBadge: row.premium_badge,
+    promoted: Boolean(row.promoted),
+    featuredSpecialEligible: Boolean(row.featured_special_eligible),
+    stripeCustomerId: row.stripe_customer_id,
+    stripeSubscriptionId: row.stripe_subscription_id,
+    subscriptionStatus: row.subscription_status,
+    tierManualOverride: Boolean(row.tier_manual_override),
+    active: Boolean(row.active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBarBeer(row: BarBeerRow): BarBeer {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    beerName: row.beer_name,
+    brewery: row.brewery,
+    style: row.style,
+    abv: row.abv,
+    serveSize: row.serve_size,
+    price: row.price,
+    currency: row.currency,
+    onTap: Boolean(row.on_tap),
+    inStock: Boolean(row.in_stock),
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBarHappyHour(row: BarHappyHourRow): BarHappyHour {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    title: row.title,
+    daysOfWeek: parseJsonArray(row.days_of_week_json),
+    startTime: row.start_time,
+    endTime: row.end_time,
+    description: row.description,
+    active: Boolean(row.active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBarSpecial(row: BarSpecialRow): BarSpecial {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    title: row.title,
+    description: row.description,
+    price: row.price,
+    discount: row.discount,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    scheduleNote: row.schedule_note,
+    exclusive: Boolean(row.exclusive),
+    active: Boolean(row.active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toMonthlyBarReport(row: MonthlyBarReportRow): MonthlyBarReport {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    month: row.month,
+    data: parseJsonObject(row.data_json),
+    createdAt: row.created_at,
+  };
+}
+
+function toSecurityAuditLog(row: SecurityAuditLogRow): SecurityAuditLog {
+  return {
+    id: row.id,
+    actorUserId: row.actor_user_id,
+    actorRole: row.actor_role,
+    action: row.action,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    metadata: parseJsonObject(row.metadata_json),
+    ipHash: row.ip_hash,
+    userAgentHash: row.user_agent_hash,
+    createdAt: row.created_at,
+  };
+}
+
 export class BusinessRepository {
   constructor(private readonly database: BetterSqlite3.Database) {}
 
@@ -698,13 +1058,30 @@ export class BusinessRepository {
     return row ? toAccount(row) : null;
   }
 
-  createSession(input: { tokenHash: string; userId: string; createdAt: string; expiresAt: string }): void {
+  createSession(input: {
+    tokenHash: string;
+    userId: string;
+    createdAt: string;
+    expiresAt: string;
+    lastUsedAt?: string | null | undefined;
+    lastIpHash?: string | null | undefined;
+    userAgentHash?: string | null | undefined;
+  }): void {
     this.database
       .prepare(
-        `INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at)
-         VALUES (?, ?, ?, ?)`,
+        `INSERT INTO auth_sessions (
+          token_hash, user_id, created_at, expires_at, last_used_at, last_ip_hash, user_agent_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(input.tokenHash, input.userId, input.createdAt, input.expiresAt);
+      .run(
+        input.tokenHash,
+        input.userId,
+        input.createdAt,
+        input.expiresAt,
+        input.lastUsedAt ?? input.createdAt,
+        input.lastIpHash ?? null,
+        input.userAgentHash ?? null,
+      );
   }
 
   getAccountBySessionTokenHash(tokenHash: string, now: string): BusinessAccount | null {
@@ -713,10 +1090,50 @@ export class BusinessRepository {
         `SELECT accounts.*
          FROM auth_sessions
          JOIN accounts ON accounts.id = auth_sessions.user_id
-         WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > ?`,
+         WHERE auth_sessions.token_hash = ?
+           AND auth_sessions.expires_at > ?
+           AND auth_sessions.revoked_at IS NULL
+           AND accounts.status != 'suspended'`,
       )
       .get(tokenHash, now) as AccountRow | undefined;
     return row ? toAccount(row) : null;
+  }
+
+  touchSession(input: {
+    tokenHash: string;
+    lastUsedAt: string;
+    lastIpHash: string | null;
+    userAgentHash: string | null;
+  }): void {
+    this.database
+      .prepare(
+        `UPDATE auth_sessions
+         SET last_used_at = ?, last_ip_hash = ?, user_agent_hash = ?
+         WHERE token_hash = ? AND revoked_at IS NULL`,
+      )
+      .run(input.lastUsedAt, input.lastIpHash, input.userAgentHash, input.tokenHash);
+  }
+
+  revokeSession(input: { tokenHash: string; revokedAt: string }): boolean {
+    const result = this.database
+      .prepare(
+        `UPDATE auth_sessions
+         SET revoked_at = ?
+         WHERE token_hash = ? AND revoked_at IS NULL`,
+      )
+      .run(input.revokedAt, input.tokenHash);
+    return result.changes > 0;
+  }
+
+  revokeUserSessions(input: { userId: string; revokedAt: string }): number {
+    const result = this.database
+      .prepare(
+        `UPDATE auth_sessions
+         SET revoked_at = ?
+         WHERE user_id = ? AND revoked_at IS NULL`,
+      )
+      .run(input.revokedAt, input.userId);
+    return result.changes;
   }
 
   updateAgeConfirmed(userId: string, confirmedAt: string): BusinessAccount {
@@ -1240,7 +1657,7 @@ export class BusinessRepository {
         input.itemId,
         input.label,
         input.suburb,
-        JSON.stringify(input.metadata),
+        JSON.stringify(redactSecrets(input.metadata)),
         input.now,
       );
 
@@ -1495,6 +1912,67 @@ export class BusinessRepository {
     return row ? toVenueInterestRequest(row) : null;
   }
 
+  createBarClaimRequest(input: {
+    id: string;
+    userId: string;
+    barId: string | null;
+    barName: string;
+    address: string | null;
+    suburb: string | null;
+    requesterName: string;
+    requesterRole: string;
+    contactEmail: string;
+    contactPhone: string | null;
+    message: string | null;
+    now: string;
+  }): BarClaimRequest {
+    this.database
+      .prepare(
+        `INSERT INTO bar_claim_requests (
+          id, user_id, bar_id, bar_name, address, suburb, requester_name, requester_role,
+          contact_email, contact_phone, message, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.barId,
+        input.barName,
+        input.address,
+        input.suburb,
+        input.requesterName,
+        input.requesterRole,
+        input.contactEmail,
+        input.contactPhone,
+        input.message,
+        input.now,
+        input.now,
+      );
+    const row = this.database.prepare("SELECT * FROM bar_claim_requests WHERE id = ?").get(input.id) as BarClaimRequestRow;
+    return toBarClaimRequest(row);
+  }
+
+  listBarClaimRequests(input: { userId?: string | undefined; status?: string | undefined; limit: number }): BarClaimRequest[] {
+    const where: string[] = [];
+    const values: unknown[] = [];
+
+    if (input.userId) {
+      where.push("user_id = ?");
+      values.push(input.userId);
+    }
+
+    if (input.status) {
+      where.push("status = ?");
+      values.push(input.status);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const rows = this.database
+      .prepare(`SELECT * FROM bar_claim_requests ${whereSql} ORDER BY created_at DESC LIMIT ?`)
+      .all(...values, input.limit) as BarClaimRequestRow[];
+    return rows.map(toBarClaimRequest);
+  }
+
   assignVenueManager(input: {
     id: string;
     userId: string;
@@ -1574,6 +2052,479 @@ export class BusinessRepository {
     return row ? toVenueManagerAssignment(row) : null;
   }
 
+  getBarProfile(barId: string): BarProfile | null {
+    const row = this.database.prepare("SELECT * FROM bar_profiles WHERE bar_id = ?").get(barId) as
+      | BarProfileRow
+      | undefined;
+    return row ? toBarProfile(row) : null;
+  }
+
+  upsertBarProfile(input: {
+    barId: string;
+    name: string;
+    address: string | null;
+    suburb: string | null;
+    area: string | null;
+    phone: string | null;
+    website: string | null;
+    instagram: string | null;
+    description: string | null;
+    openingHours: Record<string, unknown>;
+    venueTags: string[];
+    membershipTier: BarMembershipTier;
+    highlightedName: boolean;
+    premiumBadge: string | null;
+    promoted: boolean;
+    featuredSpecialEligible: boolean;
+    stripeCustomerId?: string | null | undefined;
+    stripeSubscriptionId?: string | null | undefined;
+    subscriptionStatus?: string | null | undefined;
+    tierManualOverride?: boolean | undefined;
+    active: boolean;
+    now: string;
+  }): BarProfile {
+    this.database
+      .prepare(
+        `INSERT INTO bar_profiles (
+          bar_id, name, address, suburb, area, phone, website, instagram, description,
+          opening_hours_json, venue_tags_json, membership_tier, highlighted_name, premium_badge,
+          promoted, featured_special_eligible, stripe_customer_id, stripe_subscription_id,
+          subscription_status, tier_manual_override, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(bar_id) DO UPDATE SET
+          name = excluded.name,
+          address = excluded.address,
+          suburb = excluded.suburb,
+          area = excluded.area,
+          phone = excluded.phone,
+          website = excluded.website,
+          instagram = excluded.instagram,
+          description = excluded.description,
+          opening_hours_json = excluded.opening_hours_json,
+          venue_tags_json = excluded.venue_tags_json,
+          membership_tier = excluded.membership_tier,
+          highlighted_name = excluded.highlighted_name,
+          premium_badge = excluded.premium_badge,
+          promoted = excluded.promoted,
+          featured_special_eligible = excluded.featured_special_eligible,
+          stripe_customer_id = COALESCE(excluded.stripe_customer_id, stripe_customer_id),
+          stripe_subscription_id = COALESCE(excluded.stripe_subscription_id, stripe_subscription_id),
+          subscription_status = COALESCE(excluded.subscription_status, subscription_status),
+          tier_manual_override = excluded.tier_manual_override,
+          active = excluded.active,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.barId,
+        input.name,
+        input.address,
+        input.suburb,
+        input.area,
+        input.phone,
+        input.website,
+        input.instagram,
+        input.description,
+        JSON.stringify(input.openingHours),
+        JSON.stringify(input.venueTags),
+        input.membershipTier,
+        input.highlightedName ? 1 : 0,
+        input.premiumBadge,
+        input.promoted ? 1 : 0,
+        input.featuredSpecialEligible ? 1 : 0,
+        input.stripeCustomerId ?? null,
+        input.stripeSubscriptionId ?? null,
+        input.subscriptionStatus ?? null,
+        input.tierManualOverride ? 1 : 0,
+        input.active ? 1 : 0,
+        input.now,
+        input.now,
+      );
+    return this.getBarProfile(input.barId)!;
+  }
+
+  getBarProfileByStripeSubscriptionId(stripeSubscriptionId: string): BarProfile | null {
+    const row = this.database
+      .prepare("SELECT * FROM bar_profiles WHERE stripe_subscription_id = ? LIMIT 1")
+      .get(stripeSubscriptionId) as BarProfileRow | undefined;
+    return row ? toBarProfile(row) : null;
+  }
+
+  updateBarSubscription(input: {
+    barId: string;
+    membershipTier: BarMembershipTier;
+    stripeCustomerId?: string | null | undefined;
+    stripeSubscriptionId?: string | null | undefined;
+    subscriptionStatus?: string | null | undefined;
+    highlightedName: boolean;
+    premiumBadge: string | null;
+    promoted: boolean;
+    featuredSpecialEligible: boolean;
+    now: string;
+  }): BarProfile {
+    this.database
+      .prepare(
+        `UPDATE bar_profiles
+         SET membership_tier = ?,
+             stripe_customer_id = COALESCE(?, stripe_customer_id),
+             stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+             subscription_status = ?,
+             highlighted_name = ?,
+             premium_badge = ?,
+             promoted = ?,
+             featured_special_eligible = ?,
+             updated_at = ?
+         WHERE bar_id = ? AND tier_manual_override = 0`,
+      )
+      .run(
+        input.membershipTier,
+        input.stripeCustomerId ?? null,
+        input.stripeSubscriptionId ?? null,
+        input.subscriptionStatus ?? null,
+        input.highlightedName ? 1 : 0,
+        input.premiumBadge,
+        input.promoted ? 1 : 0,
+        input.featuredSpecialEligible ? 1 : 0,
+        input.now,
+        input.barId,
+      );
+    return this.getBarProfile(input.barId)!;
+  }
+
+  listBarBeers(barId: string): BarBeer[] {
+    const rows = this.database
+      .prepare("SELECT * FROM bar_beers WHERE bar_id = ? ORDER BY on_tap DESC, in_stock DESC, beer_name COLLATE NOCASE ASC")
+      .all(barId) as BarBeerRow[];
+    return rows.map(toBarBeer);
+  }
+
+  getBarBeerById(id: string): BarBeer | null {
+    const row = this.database.prepare("SELECT * FROM bar_beers WHERE id = ?").get(id) as BarBeerRow | undefined;
+    return row ? toBarBeer(row) : null;
+  }
+
+  upsertBarBeer(input: {
+    id: string;
+    barId: string;
+    beerName: string;
+    brewery: string | null;
+    style: string | null;
+    abv: number | null;
+    serveSize: ServingSize | null;
+    price: number | null;
+    currency: string;
+    onTap: boolean;
+    inStock: boolean;
+    notes: string | null;
+    now: string;
+  }): BarBeer {
+    this.database
+      .prepare(
+        `INSERT INTO bar_beers (
+          id, bar_id, beer_name, brewery, style, abv, serve_size, price, currency, on_tap, in_stock, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          beer_name = excluded.beer_name,
+          brewery = excluded.brewery,
+          style = excluded.style,
+          abv = excluded.abv,
+          serve_size = excluded.serve_size,
+          price = excluded.price,
+          currency = excluded.currency,
+          on_tap = excluded.on_tap,
+          in_stock = excluded.in_stock,
+          notes = excluded.notes,
+          updated_at = excluded.updated_at
+        WHERE bar_beers.bar_id = excluded.bar_id`,
+      )
+      .run(
+        input.id,
+        input.barId,
+        input.beerName,
+        input.brewery,
+        input.style,
+        input.abv,
+        input.serveSize,
+        input.price,
+        input.currency,
+        input.onTap ? 1 : 0,
+        input.inStock ? 1 : 0,
+        input.notes,
+        input.now,
+        input.now,
+      );
+    const row = this.database
+      .prepare("SELECT * FROM bar_beers WHERE id = ? AND bar_id = ?")
+      .get(input.id, input.barId) as BarBeerRow | undefined;
+    if (!row) {
+      throw new Error("Beer row belongs to another bar");
+    }
+    return toBarBeer(row);
+  }
+
+  deleteBarBeer(input: { id: string; barId: string }): boolean {
+    const result = this.database.prepare("DELETE FROM bar_beers WHERE id = ? AND bar_id = ?").run(input.id, input.barId);
+    return result.changes > 0;
+  }
+
+  listBarHappyHours(barId: string): BarHappyHour[] {
+    const rows = this.database
+      .prepare("SELECT * FROM bar_happy_hours WHERE bar_id = ? ORDER BY active DESC, start_time ASC, title COLLATE NOCASE ASC")
+      .all(barId) as BarHappyHourRow[];
+    return rows.map(toBarHappyHour);
+  }
+
+  getBarHappyHourById(id: string): BarHappyHour | null {
+    const row = this.database.prepare("SELECT * FROM bar_happy_hours WHERE id = ?").get(id) as
+      | BarHappyHourRow
+      | undefined;
+    return row ? toBarHappyHour(row) : null;
+  }
+
+  upsertBarHappyHour(input: {
+    id: string;
+    barId: string;
+    title: string;
+    daysOfWeek: string[];
+    startTime: string;
+    endTime: string;
+    description: string;
+    active: boolean;
+    now: string;
+  }): BarHappyHour {
+    this.database
+      .prepare(
+        `INSERT INTO bar_happy_hours (
+          id, bar_id, title, days_of_week_json, start_time, end_time, description, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          days_of_week_json = excluded.days_of_week_json,
+          start_time = excluded.start_time,
+          end_time = excluded.end_time,
+          description = excluded.description,
+          active = excluded.active,
+          updated_at = excluded.updated_at
+        WHERE bar_happy_hours.bar_id = excluded.bar_id`,
+      )
+      .run(
+        input.id,
+        input.barId,
+        input.title,
+        JSON.stringify(input.daysOfWeek),
+        input.startTime,
+        input.endTime,
+        input.description,
+        input.active ? 1 : 0,
+        input.now,
+        input.now,
+      );
+    const row = this.database
+      .prepare("SELECT * FROM bar_happy_hours WHERE id = ? AND bar_id = ?")
+      .get(input.id, input.barId) as BarHappyHourRow | undefined;
+    if (!row) {
+      throw new Error("Happy-hour row belongs to another bar");
+    }
+    return toBarHappyHour(row);
+  }
+
+  deleteBarHappyHour(input: { id: string; barId: string }): boolean {
+    const result = this.database.prepare("DELETE FROM bar_happy_hours WHERE id = ? AND bar_id = ?").run(input.id, input.barId);
+    return result.changes > 0;
+  }
+
+  listBarSpecials(barId: string): BarSpecial[] {
+    const rows = this.database
+      .prepare("SELECT * FROM bar_specials WHERE bar_id = ? ORDER BY active DESC, exclusive DESC, starts_at DESC, title COLLATE NOCASE ASC")
+      .all(barId) as BarSpecialRow[];
+    return rows.map(toBarSpecial);
+  }
+
+  getBarSpecialById(id: string): BarSpecial | null {
+    const row = this.database.prepare("SELECT * FROM bar_specials WHERE id = ?").get(id) as BarSpecialRow | undefined;
+    return row ? toBarSpecial(row) : null;
+  }
+
+  upsertBarSpecial(input: {
+    id: string;
+    barId: string;
+    title: string;
+    description: string;
+    price: number | null;
+    discount: string | null;
+    startsAt: string | null;
+    endsAt: string | null;
+    scheduleNote: string | null;
+    exclusive: boolean;
+    active: boolean;
+    now: string;
+  }): BarSpecial {
+    this.database
+      .prepare(
+        `INSERT INTO bar_specials (
+          id, bar_id, title, description, price, discount, starts_at, ends_at, schedule_note, exclusive, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          description = excluded.description,
+          price = excluded.price,
+          discount = excluded.discount,
+          starts_at = excluded.starts_at,
+          ends_at = excluded.ends_at,
+          schedule_note = excluded.schedule_note,
+          exclusive = excluded.exclusive,
+          active = excluded.active,
+          updated_at = excluded.updated_at
+        WHERE bar_specials.bar_id = excluded.bar_id`,
+      )
+      .run(
+        input.id,
+        input.barId,
+        input.title,
+        input.description,
+        input.price,
+        input.discount,
+        input.startsAt,
+        input.endsAt,
+        input.scheduleNote,
+        input.exclusive ? 1 : 0,
+        input.active ? 1 : 0,
+        input.now,
+        input.now,
+      );
+    const row = this.database
+      .prepare("SELECT * FROM bar_specials WHERE id = ? AND bar_id = ?")
+      .get(input.id, input.barId) as BarSpecialRow | undefined;
+    if (!row) {
+      throw new Error("Special row belongs to another bar");
+    }
+    return toBarSpecial(row);
+  }
+
+  deleteBarSpecial(input: { id: string; barId: string }): boolean {
+    const result = this.database.prepare("DELETE FROM bar_specials WHERE id = ? AND bar_id = ?").run(input.id, input.barId);
+    return result.changes > 0;
+  }
+
+  getMonthlyBarReport(input: { barId: string; month: string }): MonthlyBarReport | null {
+    const row = this.database
+      .prepare("SELECT * FROM monthly_bar_reports WHERE bar_id = ? AND month = ?")
+      .get(input.barId, input.month) as MonthlyBarReportRow | undefined;
+    return row ? toMonthlyBarReport(row) : null;
+  }
+
+  upsertMonthlyBarReport(input: { id: string; barId: string; month: string; data: Record<string, unknown>; createdAt: string }): MonthlyBarReport {
+    this.database
+      .prepare(
+        `INSERT INTO monthly_bar_reports (id, bar_id, month, data_json, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(bar_id, month) DO UPDATE SET data_json = excluded.data_json`,
+      )
+      .run(input.id, input.barId, input.month, JSON.stringify(input.data), input.createdAt);
+    return this.getMonthlyBarReport({ barId: input.barId, month: input.month })!;
+  }
+
+  recordBarAnalyticsEvent(input: {
+    id: string;
+    barId: string | null;
+    area: string | null;
+    suburb?: string | null | undefined;
+    eventType: string;
+    queryText: string | null;
+    beerName: string | null;
+    beerStyle: string | null;
+    createdAt: string;
+  }): void {
+    this.database
+      .prepare(
+        `INSERT INTO bar_analytics_events (
+          id, bar_id, area, suburb, event_type, query_text, beer_name, beer_style, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(input.id, input.barId, input.area, input.suburb ?? input.area, input.eventType, input.queryText, input.beerName, input.beerStyle, input.createdAt);
+  }
+
+  getBarAreaAnalytics(input: {
+    barId: string;
+    area: string | null;
+    month?: string | undefined;
+    privacyThreshold?: number | undefined;
+  }) {
+    const privacyThreshold = Math.max(1, input.privacyThreshold ?? 10);
+    const since = input.month ? `${input.month}-01T00:00:00.000Z` : null;
+    const count = (sql: string, values: unknown[] = []) => {
+      const row = this.database.prepare(sql).get(...values) as { count: number } | undefined;
+      return Number(row?.count ?? 0);
+    };
+    const grouped = (sql: string, values: unknown[] = []) =>
+      this.database.prepare(sql).all(...values) as Array<{ key: string; count: number }>;
+    const rangeClause = since ? "AND created_at >= ?" : "";
+    const rangeValues = since ? [since] : [];
+    const eventAreaClause = input.area ? "AND lower(COALESCE(suburb, '')) = lower(?)" : "";
+    const barAreaClause = input.area ? "AND lower(COALESCE(suburb, area, '')) = lower(?)" : "";
+    const areaValues = input.area ? [input.area] : [];
+
+    const barEventCount = (eventTypes: string[]) => {
+      const placeholders = eventTypes.map(() => "?").join(", ");
+      return count(
+        `SELECT count(*) AS count
+         FROM events
+         WHERE venue_id = ?
+           AND event_type IN (${placeholders})
+           ${rangeClause}`,
+        [input.barId, ...eventTypes, ...rangeValues],
+      );
+    };
+
+    const areaBeerSearches = grouped(
+      `SELECT COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer') AS key, count(*) AS count
+       FROM events
+       WHERE event_type = 'beer_search_performed'
+         ${eventAreaClause}
+         ${rangeClause}
+       GROUP BY COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer')
+       HAVING count(*) >= ?
+       ORDER BY count DESC
+       LIMIT 8`,
+      [...areaValues, ...rangeValues, privacyThreshold],
+    );
+    const areaStyleSearches = grouped(
+      `SELECT COALESCE(beer_style, query_text, 'style') AS key, count(*) AS count
+       FROM bar_analytics_events
+       WHERE event_type IN ('beer_style_search', 'beer_search')
+         ${barAreaClause}
+         ${rangeClause}
+       GROUP BY COALESCE(beer_style, query_text, 'style')
+       HAVING count(*) >= ?
+       ORDER BY count DESC
+       LIMIT 8`,
+      [...areaValues, ...rangeValues, privacyThreshold],
+    );
+
+    const areaSearches = count(
+      `SELECT count(*) AS count
+       FROM events
+       WHERE event_type IN ('search_performed', 'beer_search_performed', 'suburb_search_performed')
+           ${eventAreaClause}
+           ${rangeClause}`,
+      [...areaValues, ...rangeValues],
+    );
+    const privacyFloorMet = areaSearches >= privacyThreshold;
+
+    return {
+      barLookups: barEventCount(["venue_card_viewed", "venue_detail_opened"]),
+      profileViews: barEventCount(["venue_detail_opened", "venue_portal_viewed"]),
+      beerListViews: barEventCount(["price_view_revealed", "venue_detail_opened"]),
+      specialsViews: barEventCount(["happy_hour_active_now_used", "happy_hour_near_me_used"]),
+      markerClicks: barEventCount(["venue_card_viewed"]),
+      priceReveals: barEventCount(["price_view_revealed"]),
+      areaSearches,
+      areaBeerSearches: privacyFloorMet ? areaBeerSearches : [],
+      areaStyleSearches: privacyFloorMet ? areaStyleSearches : [],
+      privacyFloorMet,
+      privacyThreshold,
+    };
+  }
+
   upsertVenuePartnerOutreach(input: {
     id: string;
     venueId: string;
@@ -1634,6 +2585,8 @@ export class BusinessRepository {
            SELECT venue_id FROM events WHERE venue_id IS NOT NULL AND venue_id != ''
            UNION ALL
            SELECT venue_id FROM venue_requests WHERE venue_id IS NOT NULL AND venue_id != ''
+           UNION ALL
+           SELECT bar_id AS venue_id FROM bar_profiles WHERE bar_id IS NOT NULL AND bar_id != ''
          )`,
       )
       .get() as { count: number } | undefined;
@@ -1668,6 +2621,46 @@ export class BusinessRepository {
         JSON.stringify(input.metadata),
         input.createdAt,
       );
+  }
+
+  insertSecurityAuditLog(input: {
+    id: string;
+    actorUserId: string | null;
+    actorRole: string | null;
+    action: string;
+    targetType: string | null;
+    targetId: string | null;
+    metadata: Record<string, unknown>;
+    ipHash: string | null;
+    userAgentHash: string | null;
+    createdAt: string;
+  }): void {
+    this.database
+      .prepare(
+        `INSERT INTO security_audit_log (
+          id, actor_user_id, actor_role, action, target_type, target_id,
+          metadata_json, ip_hash, user_agent_hash, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.actorUserId,
+        input.actorRole,
+        input.action,
+        input.targetType,
+        input.targetId,
+        JSON.stringify(redactSecrets(input.metadata)),
+        input.ipHash,
+        input.userAgentHash,
+        input.createdAt,
+      );
+  }
+
+  listSecurityAuditLogs(limit = 100): SecurityAuditLog[] {
+    const rows = this.database
+      .prepare("SELECT * FROM security_audit_log ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as SecurityAuditLogRow[];
+    return rows.map(toSecurityAuditLog);
   }
 
   countEvents(input: {

@@ -43,9 +43,9 @@ export function createWebhooksRouter(options: {
     logger.info("Twilio voice webhook hit", {
       path: req.originalUrl,
       runId: req.query.runId,
-      callSid: typeof req.body?.CallSid === "string" ? req.body.CallSid : null,
-      from: typeof req.body?.From === "string" ? req.body.From : null,
-      to: typeof req.body?.To === "string" ? req.body.To : null,
+      callSidPresent: typeof req.body?.CallSid === "string",
+      fromPresent: typeof req.body?.From === "string",
+      toPresent: typeof req.body?.To === "string",
     });
 
     const validation = options.twilioService.isValidRequest(req, options.validateTwilioSignatures);
@@ -97,7 +97,7 @@ export function createWebhooksRouter(options: {
     logger.info("Twilio status webhook hit", {
       path: req.originalUrl,
       runId: req.query.runId,
-      callSid: typeof req.body?.CallSid === "string" ? req.body.CallSid : null,
+      callSidPresent: typeof req.body?.CallSid === "string",
       status: typeof req.body?.CallStatus === "string" ? req.body.CallStatus : null,
     });
 

@@ -9,6 +9,7 @@ Use this before showing the app to real Melbourne users.
 - Set `PUBLIC_BASE_URL` to the preview URL users will open, for example `https://beer.splitseconds.app`.
 - Set `DATABASE_PATH` to the field-test SQLite database path.
 - Run `npm run check` before deploying.
+- Run `npm run security:scan` before deploying.
 
 ## 2. Recommended Field-Test Env
 
@@ -20,6 +21,14 @@ FREE_PRICE_REVEALS_PER_DAY=3
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
 ADMIN_EMAILS=your-admin-email@example.com
+SESSION_TTL_DAYS=60
+ADMIN_SESSION_TTL_DAYS=7
+ANALYTICS_MIN_BUCKET_SIZE=5
+ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
+TWILIO_VALIDATE_SIGNATURES=true
+ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=false
+ELEVENLABS_WEBHOOK_SECRET=replace_with_elevenlabs_shared_secret
+ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false
 ```
 
 For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you intentionally set `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` and clearly tell testers checkout is simulated. If Stripe test-mode checkout and webhooks have not passed end to end, use free limits, contributor unlocks, or explicit admin overrides instead of live payment claims.
@@ -68,6 +77,7 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 - Confirm points are awarded only after approval.
 - Confirm approved prices publish to the map with confidence and last verified date.
 - Confirm repeated same-user/same-venue submissions in the month do not stack points.
+- Confirm the approval creates a redacted `security_audit_log` entry.
 
 ## 9. KPI Dashboard
 
@@ -84,7 +94,13 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 - Assign the test user to one venue from `/admin.html`.
 - Log in as the venue manager and open `/venue-portal`.
 - Confirm only the assigned venue is visible.
-- Confirm aggregate insights, listing quality, wrong-price reports, requests, and update link are visible.
+- Confirm the Overview, Profile, Beers / stock, Happy hours, Deals & specials, Analytics, and Monthly report tabs load.
+- As a Basic bar account, confirm profile, beers, happy hours, and specials can be edited, while analytics/monthly reports show a Plus upgrade prompt.
+- Ask admin to set the bar tier to Plus or Pro for a demo, then confirm aggregate suburb-level analytics and monthly report preview appear once the privacy threshold is met.
+- Confirm Pro shows premium display metadata in the returned profile, without changing public ranking behaviour.
+- If using authenticated bar claiming, submit a claim from `/venue-portal` as a verified user with no assigned venue and confirm the request stays pending for manual admin review.
+- Confirm listing quality, wrong-price reports, requests, and update link are visible.
+- Add a beer row, mark it on tap/in stock, add a happy hour, and add a deal/special.
 - Submit a venue manager update and confirm it appears as pending review, not automatically published.
 - Revoke the assignment and confirm the venue manager portal is blocked.
 
@@ -97,6 +113,7 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 ## 12. Known Limitations
 
 - Photo/source uploads are demo storage unless private object storage is configured later.
+- Production rejects inline demo image uploads unless `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=true` is intentionally enabled.
 - Admin source review is protected, but uploaded files should not contain private personal information.
 - Exact-price access is server-gated, but keep Supabase service-role keys server-only.
 - Demo billing is not a real payment.

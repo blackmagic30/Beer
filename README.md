@@ -47,6 +47,8 @@
 - `GET /api/business/config`
 - `POST /api/business/auth/signup`
 - `POST /api/business/auth/login`
+- `POST /api/business/auth/logout`
+- `POST /api/business/auth/logout-all`
 - `GET /api/business/account`
 - `GET /api/business/access`
 - `GET /api/business/missions`
@@ -103,8 +105,8 @@ Business demo pages:
 - `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, preferences, requests, feedback, and submission status.
 - `/missions.html`: Needs Data mission board with sorting, quick-win guidance, and points.
 - `/submit.html`: venue data submission with manual rows and photo/source queue.
-- `/for-bars`: professional venue-owner page for register-interest and claim-listing requests.
-- `/venue-portal`: admin-assigned venue manager portal with listing quality, update links, pending update submission, and privacy-safe aggregate insights.
+- `/for-bars`: professional bar-owner landing page with Basic, Plus, and Pro tier explanations, register-interest, and claim-listing requests.
+- `/venue-portal`: admin-assigned bar dashboard for profile details, beer stock/on-tap rows, prices, happy hours, deals/specials, listing quality, tier-gated analytics, monthly report previews, and pending review updates.
 - `/admin.html`: admin-only submission review, KPI dashboard, cohorts, coverage, partner leads, and review queues.
 
 Venue partner demo layer:
@@ -112,9 +114,22 @@ Venue partner demo layer:
 - Bars can register interest from `/for-bars`; requests stay in the admin partner queue.
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
-- Venue manager updates are submitted for review by default, rather than directly publishing.
-- Venue insights are aggregate-only and do not expose user names, individual clickstream, or exact user location.
+- Basic bar accounts can manage profile details, beers/stock/on-tap status, prices, happy hours, and deals/specials.
+- Plus and Pro bar tiers unlock privacy-safe suburb-level analytics and monthly report previews. Bar-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` and `STRIPE_PRO_PRICE_ID` are configured.
+- Pro stores public display metadata only: highlighted name, `Pro` badge, promoted flag, and featured-special eligibility. It does not implement spammy ranking behaviour.
+- Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
+- Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, or another bar’s private data.
 - The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.
+
+Venue owner TODOs before paid partner rollout:
+
+- Add a full Stripe Customer Portal/manage-billing flow for bar tiers if paid venue subscriptions move beyond Checkout.
+- Add an admin approval interface for authenticated `bar_claim_requests`; claims are stored for manual review today.
+- Add stronger claim verification such as business email, phone, or document checks.
+- Replace monthly report previews with scheduled generated reports.
+- Feed `bar_analytics_events` from production map/search usage where useful; current portal also uses existing aggregate `events`.
+- Decide whether trusted venue-manager updates can publish as `venue_confirmed` automatically, or should remain admin-reviewed.
+- Replace suburb-based analytics with custom BeerMap areas such as Melbourne CBD, Fitzroy, Richmond, or Chapel Street once those boundaries are defined.
 
 Responsible-alcohol guardrails:
 
@@ -142,9 +157,21 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - `DEMO_BILLING_MODE=true` is for local/demo only. Production blocks demo billing unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` is explicitly set.
 - State-changing business APIs check trusted origins and use lightweight in-memory rate limits for auth, submissions, feedback, requests, price reveals, and billing routes.
 - Security headers are enabled with a Google Maps-compatible CSP, `nosniff`, same-origin frame protection, strict referrer policy, and limited browser permissions.
+- Account sessions are hashed at rest, expire by role, can be revoked with logout/logout-all, and store only short SHA-256 request fingerprints rather than raw IP addresses or user agents.
+- Sensitive admin, payment, session, and venue-manager actions are written to `security_audit_log` with redacted metadata.
+- Aggregate analytics use `ANALYTICS_MIN_BUCKET_SIZE` to suppress low-count buckets before they are returned to dashboards or venue-owner views.
+- Production requires signed Twilio webhooks unless `ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=true` is explicitly set, and requires an ElevenLabs webhook secret unless `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=true` is explicitly set.
+- Inline demo image evidence is rejected in production unless `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=true`; use private object storage with signed review links before accepting sensitive source photos at scale.
 - `FIELD_TEST_MODE=true` adds an unobtrusive beta label, feedback entry point, and admin field-test summary without exposing debug details to public users.
+- Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
 - See `FIELD_TEST_CHECKLIST.md` before showing the app to real users.
-- See `DEPLOYMENT_CHECKLIST.md` before merging to `main` or deploying the Railway beta; it includes backup, migration, smoke-test, and rollback steps.
+- See `DEPLOYMENT_CHECKLIST.md` before merging to `main` or deploying the Railway beta; it includes backup, migration, security scan, smoke-test, and rollback steps.
+
+Security and rotation notes:
+
+- Browser Google Maps keys are public by design, but should still be restricted to `https://beer.splitseconds.app/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`. If a browser key was ever committed or shared too broadly, rotate it in Google Cloud and update Railway/local env.
+- Supabase service-role keys, Stripe secret keys, Stripe webhook secrets, Twilio auth tokens, OpenAI keys, and ElevenLabs keys must stay server-side only. If any were exposed, rotate them with the provider, update Railway env, restart the service, and run `npm run security:scan`.
+- Do not use standalone static viewer mode for public beta price data, because it cannot enforce server-side price gating.
 
 Suggested production beta values:
 
@@ -156,10 +183,16 @@ ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 FREE_PRICE_REVEALS_PER_DAY=5
 FIELD_TEST_MODE=true
 ADMIN_EMAILS=you@example.com
+SESSION_TTL_DAYS=60
+ADMIN_SESSION_TTL_DAYS=7
+ANALYTICS_MIN_BUCKET_SIZE=5
+ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 STRIPE_SECRET_KEY=sk_test_or_live_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_199_aud
 STRIPE_PRICE_YEARLY=price_yearly_19_aud
+STRIPE_PLUS_PRICE_ID=price_bar_plus_aud
+STRIPE_PRO_PRICE_ID=price_bar_pro_aud
 ```
 
 Stripe test-mode webhook check:
@@ -222,20 +255,28 @@ TWILIO_AUTH_TOKEN=your_twilio_auth_token
 TWILIO_PHONE_NUMBER=+61300000000
 TWILIO_CALL_TIME_LIMIT_SECONDS=30
 TWILIO_VALIDATE_SIGNATURES=false
+ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=false
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ELEVENLABS_AGENT_ID=agent_XXXXXXXXXXXXXXXX
 ELEVENLABS_WEBHOOK_SECRET=optional_shared_secret_from_elevenlabs
+ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false
 ADMIN_EMAILS=you@example.com
+SESSION_TTL_DAYS=60
+ADMIN_SESSION_TTL_DAYS=7
 FREE_PRICE_REVEALS_PER_DAY=5
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
+ANALYTICS_MIN_BUCKET_SIZE=5
 DEMO_BILLING_MODE=true
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
+ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 FIELD_TEST_MODE=true
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_199_aud
 STRIPE_PRICE_YEARLY=price_yearly_19_aud
+STRIPE_PLUS_PRICE_ID=price_bar_plus_aud
+STRIPE_PRO_PRICE_ID=price_bar_pro_aud
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_xxx
 ```
 
@@ -262,20 +303,28 @@ What each one does:
 - `TWILIO_*`: credentials and caller number used for real outbound calls.
 - `TWILIO_CALL_TIME_LIMIT_SECONDS`: hard answered-call cap enforced by Twilio. Default `30` seconds so real staff can answer while still limiting credit bleed.
 - `TWILIO_VALIDATE_SIGNATURES`: set to `true` once your ngrok/public URL is stable.
+- `ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION`: explicit production override if Twilio signatures cannot be validated. Keep `false`.
 - `ELEVENLABS_API_KEY`: required for live ElevenLabs call connection.
 - `ELEVENLABS_AGENT_ID`: required for live ElevenLabs agent routing.
 - `ELEVENLABS_WEBHOOK_SECRET`: optional but recommended for verifying ElevenLabs post-call webhooks.
+- `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION`: explicit production override if an ElevenLabs webhook secret is not configured. Keep `false`.
 - `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup.
+- `SESSION_TTL_DAYS`: normal account bearer-session lifetime. Defaults to `60`.
+- `ADMIN_SESSION_TTL_DAYS`: shorter admin bearer-session lifetime. Defaults to `7`.
 - `FREE_PRICE_REVEALS_PER_DAY`: configurable daily exact-price previews for free users.
 - `CONTRIBUTOR_UNLOCK_POINTS`: approved monthly contribution points required for contributor access.
 - `CONTRIBUTOR_UNLOCK_DAYS`: number of premium days granted for contributor unlocks.
+- `ANALYTICS_MIN_BUCKET_SIZE`: minimum aggregate bucket count before dashboard analytics reveal a beer, suburb, or venue identity.
 - `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe. Keep this `false` for production beta.
 - `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.
+- `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: emergency override for inline demo image evidence in production. Leave `false`; use private storage for real beta evidence.
 - `FIELD_TEST_MODE`: shows beta feedback affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
 - `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.
 - `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.
 - `STRIPE_PRICE_MONTHLY`: Stripe price ID for the A$1.99/month plan.
 - `STRIPE_PRICE_YEARLY`: Stripe price ID for the A$19/year plan.
+- `STRIPE_PLUS_PRICE_ID`: Stripe price ID for the paid Plus bar-owner analytics tier.
+- `STRIPE_PRO_PRICE_ID`: Stripe price ID for the premium Pro bar-owner tier.
 - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`: browser publishable key placeholder for future embedded Stripe UI.
 
 ## Exact ngrok Workflow

@@ -1,3 +1,5 @@
+import { redactSecrets } from "./redact.js";
+
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 function write(level: LogLevel, message: string, meta?: Record<string, unknown>): void {
@@ -5,7 +7,7 @@ function write(level: LogLevel, message: string, meta?: Record<string, unknown>)
     timestamp: new Date().toISOString(),
     level,
     message,
-    ...(meta === undefined ? {} : { meta }),
+    ...(meta === undefined ? {} : { meta: redactSecrets(meta) }),
   };
 
   const line = JSON.stringify(payload);

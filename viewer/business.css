@@ -183,6 +183,37 @@ a {
   overflow: hidden;
 }
 
+.hero--split {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  align-items: center;
+}
+
+.hero--compact {
+  margin-bottom: 18px;
+  padding-block: clamp(22px, 4vw, 40px);
+}
+
+.heroCard {
+  position: relative;
+  z-index: 1;
+  border: 1px solid rgba(244, 214, 150, 0.18);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 20px;
+  box-shadow: var(--soft-shadow);
+}
+
+.heroCard strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 18px;
+}
+
+.heroCard p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .hero::after {
   content: "";
   position: absolute;
@@ -248,6 +279,22 @@ h3 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.sectionHeader {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.sectionHeader > p {
+  max-width: 520px;
+  margin: 0;
+  line-height: 1.6;
+}
+
 .panel,
 .card {
   position: relative;
@@ -285,6 +332,34 @@ h3 {
   font-weight: 900;
   letter-spacing: -0.055em;
   color: var(--gold);
+}
+
+.tierGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.tierCard {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.045);
+  padding: 20px;
+  overflow: hidden;
+}
+
+.tierCard--accent {
+  border-color: rgba(245, 199, 107, 0.38);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(245, 199, 107, 0.16), transparent 42%),
+    rgba(255, 255, 255, 0.055);
+}
+
+.featureGrid .listItem {
+  min-height: 118px;
 }
 
 .form {
@@ -523,6 +598,142 @@ h3 {
   align-items: center;
 }
 
+.dashboardShell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.dashboardSidebar {
+  position: sticky;
+  top: 104px;
+  display: grid;
+  gap: 14px;
+}
+
+.dashboardMain {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.venueSummaryCard {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(119, 217, 255, 0.16);
+  border-radius: 20px;
+  background: rgba(119, 217, 255, 0.08);
+  padding: 13px;
+}
+
+.venueSummaryCard span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tabNav {
+  display: grid;
+  gap: 8px;
+}
+
+.tabButton {
+  appearance: none;
+  border: 1px solid rgba(244, 214, 150, 0.14);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #d9dfeb;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  padding: 11px 12px;
+  text-align: left;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.tabButton:hover,
+.tabButton.is-active {
+  border-color: rgba(245, 199, 107, 0.4);
+  background: rgba(245, 199, 107, 0.12);
+  color: #ffe4a8;
+}
+
+.completionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.completionItem {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.35);
+  padding: 12px;
+}
+
+.completionItem strong {
+  display: block;
+  color: var(--gold);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.completionItem.is-complete strong {
+  color: var(--green);
+}
+
+.dataRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.rowPrice {
+  color: var(--gold);
+  font-size: 18px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.miniStatRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.miniStatRow span {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #d9dfeb;
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.pill--premium {
+  border-color: rgba(119, 217, 255, 0.34);
+  background: rgba(119, 217, 255, 0.12);
+  color: #caefff;
+}
+
+.compactField {
+  min-width: 160px;
+}
+
 .metricGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -640,6 +851,40 @@ h3 {
     border-radius: 26px;
   }
 
+  .hero--split,
+  .dashboardShell,
+  .tierGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboardSidebar {
+    position: static;
+  }
+
+  .tabNav {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .tabButton {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .sectionHeader,
+  .dataRow {
+    flex-direction: column;
+  }
+
+  .rowActions {
+    justify-content: flex-start;
+  }
+
+  .completionGrid {
+    grid-template-columns: 1fr;
+  }
+
   h1 {
     font-size: clamp(38px, 14vw, 56px);
   }
@@ -651,6 +896,7 @@ h3 {
   .grid,
   .grid--two,
   .grid--four,
+  .tierGrid,
   .insightGrid,
   .metricGrid {
     grid-template-columns: 1fr;

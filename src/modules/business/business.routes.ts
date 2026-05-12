@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { Router, type Request } from "express";
 
 import { success } from "../../lib/http.js";
@@ -9,6 +11,12 @@ import {
   adminDashboardQuerySchema,
   adminUserStatusSchema,
   ageConfirmSchema,
+  barBeerSchema,
+  barClaimRequestSchema,
+  barHappyHourSchema,
+  barProfileSchema,
+  barSpecialSchema,
+  barTierCheckoutSchema,
   authLoginSchema,
   authSignupSchema,
   checkoutSchema,
@@ -39,7 +47,26 @@ function getAuthorization(req: Request): string | undefined {
 }
 
 function getOptionalAccount(req: Request, businessService: BusinessService) {
-  return businessService.getAccountFromAuthorization(getAuthorization(req));
+  return businessService.getAccountFromAuthorization(getAuthorization(req), getRequestContext(req));
+}
+
+function getRequestContext(req: Request) {
+  return {
+    ip: req.ip ?? req.socket.remoteAddress ?? null,
+    userAgent: req.get("user-agent") ?? null,
+  };
+}
+
+function requireAccount(req: Request, businessService: BusinessService) {
+  return businessService.requireAccount(getAuthorization(req), getRequestContext(req));
+}
+
+function requireAdmin(req: Request, businessService: BusinessService) {
+  return businessService.requireAdmin(getAuthorization(req), getRequestContext(req));
+}
+
+function stableIdentityPart(value: string): string {
+  return value ? crypto.createHash("sha256").update(value).digest("hex").slice(0, 24) : "";
 }
 
 function rateLimitIdentity(req: Request): string {
@@ -50,34 +77,38 @@ function rateLimitIdentity(req: Request): string {
       : typeof req.body?.anonymousSessionId === "string"
         ? req.body.anonymousSessionId
         : "";
-  return [req.ip ?? req.socket.remoteAddress ?? "unknown-ip", authorization, anonymousSessionId].join(":");
+  return [
+    req.ip ?? req.socket.remoteAddress ?? "unknown-ip",
+    stableIdentityPart(authorization),
+    stableIdentityPart(anonymousSessionId),
+  ].join(":");
 }
 
 const priceReadLimiter = createRateLimiter({
   keyPrefix: "business:price-records",
   windowMs: 60_000,
-  max: 180,
+  max: 120,
   keyGenerator: rateLimitIdentity,
 });
 
 const writeLimiter = createRateLimiter({
   keyPrefix: "business:writes",
   windowMs: 10 * 60_000,
-  max: 45,
+  max: 30,
   keyGenerator: rateLimitIdentity,
 });
 
 const authLimiter = createRateLimiter({
   keyPrefix: "business:auth",
   windowMs: 10 * 60_000,
-  max: 25,
+  max: 12,
   keyGenerator: rateLimitIdentity,
 });
 
 const billingLimiter = createRateLimiter({
   keyPrefix: "business:billing",
   windowMs: 10 * 60_000,
-  max: 20,
+  max: 8,
   keyGenerator: rateLimitIdentity,
 });
 
@@ -97,39 +128,48 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.post("/auth/signup", authLimiter, (req, res) => {
     const body = parseWithSchema(authSignupSchema, req.body, "Invalid signup payload");
-    res.status(201).json(success(businessService.signup(body)));
+    res.status(201).json(success(businessService.signup(body, getRequestContext(req))));
   });
 
   router.post("/auth/login", authLimiter, (req, res) => {
     const body = parseWithSchema(authLoginSchema, req.body, "Invalid login payload");
-    res.json(success(businessService.login(body)));
+    res.json(success(businessService.login(body, getRequestContext(req))));
+  });
+
+  router.post("/auth/logout", authLimiter, (req, res) => {
+    res.json(success(businessService.logout(getAuthorization(req), getRequestContext(req))));
+  });
+
+  router.post("/auth/logout-all", authLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    res.json(success(businessService.logoutAll(account, getRequestContext(req))));
   });
 
   router.get("/account", (req, res) => {
-    const account = businessService.requireAccount(getAuthorization(req));
+    const account = requireAccount(req, businessService);
     res.json(success(businessService.getAccountDashboard(account)));
   });
 
   router.post("/account/age-confirm", (req, res) => {
     parseWithSchema(ageConfirmSchema, req.body, "Invalid age confirmation payload");
-    const account = businessService.requireAccount(getAuthorization(req));
+    const account = requireAccount(req, businessService);
     res.json(success(businessService.confirmAge(account)));
   });
 
   router.post("/account/preferences", (req, res) => {
-    const account = businessService.requireAccount(getAuthorization(req));
+    const account = requireAccount(req, businessService);
     const body = parseWithSchema(accountPreferencesSchema, req.body, "Invalid preferences payload");
     res.json(success(businessService.savePreferences(account, body)));
   });
 
   router.post("/account/saved-items", (req, res) => {
-    const account = businessService.requireAccount(getAuthorization(req));
+    const account = requireAccount(req, businessService);
     const body = parseWithSchema(saveItemSchema, req.body, "Invalid saved item payload");
     res.status(201).json(success(businessService.saveItem(account, body)));
   });
 
   router.delete("/account/saved-items", (req, res) => {
-    const account = businessService.requireAccount(getAuthorization(req));
+    const account = requireAccount(req, businessService);
     const body = parseWithSchema(removeSavedItemSchema, req.body, "Invalid saved item removal payload");
     res.json(success(businessService.removeSavedItem(account, body)));
   });
@@ -156,7 +196,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.post("/submissions", writeLimiter, (req, res) => {
-    const account = businessService.requireAccount(getAuthorization(req));
+    const account = requireAccount(req, businessService);
     const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid submission payload");
     const result = businessService.createSubmission(account, body);
     res.status(201).json(success(result));
@@ -194,7 +234,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.post("/submissions/:id/review", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(reviewSubmissionSchema, req.body, "Invalid review payload");
     const result = businessService.reviewSubmission(admin, req.params.id, body);
     res.json(success(result));
@@ -207,7 +247,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.post("/missions", (req, res) => {
-    businessService.requireAdmin(getAuthorization(req));
+    requireAdmin(req, businessService);
     const body = parseWithSchema(createMissionSchema, req.body, "Invalid mission payload");
     const mission = businessService.createMission(body);
     res.status(201).json(success({ mission }));
@@ -230,89 +270,156 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.get("/analytics/preview", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getAnalyticsPreview(admin)));
   });
 
   router.get("/venue-portal", (req, res) => {
-    const account = businessService.requireAccount(getAuthorization(req));
+    const account = requireAccount(req, businessService);
     const query = parseWithSchema(venuePortalQuerySchema, req.query, "Invalid venue portal query");
     res.json(success(businessService.getVenuePortal(account, query)));
   });
 
+  router.post("/bar-claim-requests", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(barClaimRequestSchema, req.body, "Invalid bar claim request payload");
+    res.status(201).json(success(businessService.createBarClaimRequest(account, body)));
+  });
+
   router.post("/venue-portal/:venueId/submissions", writeLimiter, (req, res) => {
-    const account = businessService.requireAccount(getAuthorization(req));
+    const account = requireAccount(req, businessService);
     const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid venue update payload");
     const venueId = String(req.params.venueId ?? "");
     res.status(201).json(success(businessService.createVenueManagerSubmission(account, venueId, body)));
   });
 
+  router.post("/venue-portal/:venueId/profile", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(barProfileSchema, req.body, "Invalid bar profile payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.json(success(businessService.upsertBarProfile(account, venueId, body)));
+  });
+
+  router.post("/venue-portal/:venueId/beers", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(barBeerSchema, req.body, "Invalid beer inventory payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.status(201).json(success(businessService.upsertBarBeer(account, venueId, body)));
+  });
+
+  router.delete("/venue-portal/:venueId/beers/:beerId", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const venueId = String(req.params.venueId ?? "");
+    const beerId = String(req.params.beerId ?? "");
+    res.json(success(businessService.deleteBarBeer(account, venueId, beerId)));
+  });
+
+  router.post("/venue-portal/:venueId/happy-hours", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(barHappyHourSchema, req.body, "Invalid happy-hour payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.status(201).json(success(businessService.upsertBarHappyHour(account, venueId, body)));
+  });
+
+  router.delete("/venue-portal/:venueId/happy-hours/:happyHourId", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const venueId = String(req.params.venueId ?? "");
+    const happyHourId = String(req.params.happyHourId ?? "");
+    res.json(success(businessService.deleteBarHappyHour(account, venueId, happyHourId)));
+  });
+
+  router.post("/venue-portal/:venueId/specials", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(barSpecialSchema, req.body, "Invalid deal or special payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.status(201).json(success(businessService.upsertBarSpecial(account, venueId, body)));
+  });
+
+  router.delete("/venue-portal/:venueId/specials/:specialId", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const venueId = String(req.params.venueId ?? "");
+    const specialId = String(req.params.specialId ?? "");
+    res.json(success(businessService.deleteBarSpecial(account, venueId, specialId)));
+  });
+
+  router.post("/venue-portal/:venueId/billing/checkout", billingLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      const body = parseWithSchema(barTierCheckoutSchema, req.body, "Invalid bar tier checkout payload");
+      const venueId = String(req.params.venueId ?? "");
+      const result = await businessService.createBarTierCheckout(account, venueId, body);
+      res.status(201).json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/admin/kpis", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     const query = parseWithSchema(adminDashboardQuerySchema, req.query, "Invalid KPI dashboard query");
     res.json(success(businessService.getAdminKpis(admin, query)));
   });
 
   router.get("/admin/retention", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     const query = parseWithSchema(retentionQuerySchema, req.query, "Invalid retention query");
     res.json(success(businessService.getRetentionCohorts(admin, query)));
   });
 
   router.get("/admin/coverage", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getCoverageDashboard(admin)));
   });
 
   router.get("/admin/partner-leads", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getPotentialPartnerLeads(admin)));
   });
 
   router.get("/admin/queues", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getAdminQueues(admin)));
   });
 
   router.get("/admin/venue-partners", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getVenuePartnerAdmin(admin)));
   });
 
   router.post("/admin/venue-managers", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(venueManagerAssignmentSchema, req.body, "Invalid venue manager assignment payload");
     res.status(201).json(success(businessService.assignVenueManager(admin, body)));
   });
 
   router.post("/admin/venue-managers/revoke", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(venueManagerRevokeSchema, req.body, "Invalid venue manager revoke payload");
     res.json(success(businessService.revokeVenueManager(admin, body)));
   });
 
   router.post("/admin/venue-interest/:id/status", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(venueInterestStatusSchema, req.body, "Invalid venue interest status payload");
     const interestId = String(req.params.id ?? "");
     res.json(success(businessService.updateVenueInterestStatus(admin, interestId, body)));
   });
 
   router.post("/admin/venue-outreach", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(venueOutreachSchema, req.body, "Invalid venue outreach payload");
     res.json(success(businessService.upsertVenueOutreach(admin, body)));
   });
 
   router.post("/admin/requests/:id/mission", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     const requestId = String(req.params.id ?? "");
     res.status(201).json(success(businessService.createMissionFromRequest(admin, requestId)));
   });
 
   router.post("/billing/checkout", billingLimiter, async (req, res, next) => {
     try {
-      const account = businessService.requireAccount(getAuthorization(req));
+      const account = requireAccount(req, businessService);
       const body = parseWithSchema(checkoutSchema, req.body, "Invalid checkout payload");
       const result = await businessService.createCheckout(account, body);
       res.status(201).json(success(result));
@@ -322,7 +429,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.post("/billing/demo-subscribe", billingLimiter, (req, res) => {
-    const account = businessService.requireAccount(getAuthorization(req));
+    const account = requireAccount(req, businessService);
     const body = parseWithSchema(checkoutSchema, req.body, "Invalid demo subscription payload");
     res.json(success(businessService.handleDemoSubscription(account, body.plan)));
   });
@@ -334,13 +441,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.post("/admin/users/:id/status", (req, res) => {
-    const admin = businessService.requireAdmin(getAuthorization(req));
+    const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(adminUserStatusSchema, req.body, "Invalid user status payload");
     res.json(success(businessService.adminOverrideUser(admin, req.params.id, body)));
   });
 
   router.post("/demo/seed", (req, res) => {
-    businessService.requireAdmin(getAuthorization(req));
+    requireAdmin(req, businessService);
     res.json(success(businessService.seedDemoMissions()));
   });
 

@@ -38,6 +38,24 @@ const callRunsColumns = [
   { name: "is_test", definition: "INTEGER NOT NULL DEFAULT 0" },
 ] as const;
 
+const barProfilesColumns = [
+  { name: "stripe_customer_id", definition: "TEXT" },
+  { name: "stripe_subscription_id", definition: "TEXT" },
+  { name: "subscription_status", definition: "TEXT" },
+  { name: "tier_manual_override", definition: "INTEGER NOT NULL DEFAULT 0" },
+] as const;
+
+const barAnalyticsEventsColumns = [
+  { name: "suburb", definition: "TEXT" },
+] as const;
+
+const authSessionsColumns = [
+  { name: "revoked_at", definition: "TEXT" },
+  { name: "last_used_at", definition: "TEXT" },
+  { name: "last_ip_hash", definition: "TEXT" },
+  { name: "user_agent_hash", definition: "TEXT" },
+] as const;
+
 function ensureColumns(
   database: BetterSqlite3.Database,
   tableName: string,
@@ -67,6 +85,33 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_beer_price_results_venue_id
       ON beer_price_results (venue_id, timestamp DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_bar_profiles_stripe_subscription
+      ON bar_profiles (stripe_subscription_id);
+
+    CREATE INDEX IF NOT EXISTS idx_bar_analytics_events_suburb
+      ON bar_analytics_events (suburb, event_type, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_active
+      ON auth_sessions (user_id, revoked_at, expires_at DESC);
+  `);
+}
+
+function normalizeLegacyBarTiers(database: BetterSqlite3.Database): void {
+  database.exec(`
+    UPDATE bar_profiles
+       SET membership_tier = 'basic'
+     WHERE membership_tier = 'free';
+
+    UPDATE bar_profiles
+       SET membership_tier = 'plus'
+     WHERE membership_tier = 'pro'
+       AND highlighted_name = 0
+       AND promoted = 0;
+
+    UPDATE bar_profiles
+       SET membership_tier = 'pro'
+     WHERE membership_tier = 'super_premium';
   `);
 }
 
@@ -81,6 +126,10 @@ export function createDatabase(): BetterSqlite3.Database {
   database.exec(schema);
   ensureColumns(database, "call_runs", callRunsColumns);
   ensureColumns(database, "beer_price_results", beerPriceResultsColumns);
+  ensureColumns(database, "bar_profiles", barProfilesColumns);
+  ensureColumns(database, "bar_analytics_events", barAnalyticsEventsColumns);
+  ensureColumns(database, "auth_sessions", authSessionsColumns);
+  normalizeLegacyBarTiers(database);
   ensureIndexes(database);
 
   return database;

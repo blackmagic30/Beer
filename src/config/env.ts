@@ -128,13 +128,21 @@ const envSchema = z.object({
   FREE_PRICE_REVEALS_PER_DAY: z.coerce.number().int().min(0).default(5),
   CONTRIBUTOR_UNLOCK_POINTS: z.coerce.number().int().min(1).default(15),
   CONTRIBUTOR_UNLOCK_DAYS: z.coerce.number().int().min(1).default(30),
+  SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(60),
+  ADMIN_SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(60).default(7),
+  ANALYTICS_MIN_BUCKET_SIZE: z.coerce.number().int().min(1).max(100).default(5),
   DEMO_BILLING_MODE: booleanFromEnv.default(true),
   ALLOW_DEMO_BILLING_IN_PRODUCTION: booleanFromEnv.default(false),
+  ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: booleanFromEnv.default(false),
+  ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION: booleanFromEnv.default(false),
+  ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION: booleanFromEnv.default(false),
   FIELD_TEST_MODE: booleanFromEnv.default(false),
   STRIPE_SECRET_KEY: optionalStringFromEnv,
   STRIPE_WEBHOOK_SECRET: optionalStringFromEnv,
   STRIPE_PRICE_MONTHLY: optionalStringFromEnv,
   STRIPE_PRICE_YEARLY: optionalStringFromEnv,
+  STRIPE_PLUS_PRICE_ID: optionalStringFromEnv,
+  STRIPE_PRO_PRICE_ID: optionalStringFromEnv,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalStringFromEnv,
   TWILIO_ACCOUNT_SID: optionalStringFromEnv,
   TWILIO_AUTH_TOKEN: optionalStringFromEnv,
@@ -158,6 +166,22 @@ if (
   !parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION
 ) {
   throw new Error("DEMO_BILLING_MODE cannot be true in production unless ALLOW_DEMO_BILLING_IN_PRODUCTION=true.");
+}
+
+if (
+  parsedEnv.data.NODE_ENV === "production" &&
+  !parsedEnv.data.TWILIO_VALIDATE_SIGNATURES &&
+  !parsedEnv.data.ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION
+) {
+  throw new Error("TWILIO_VALIDATE_SIGNATURES must be true in production unless ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=true.");
+}
+
+if (
+  parsedEnv.data.NODE_ENV === "production" &&
+  !parsedEnv.data.ELEVENLABS_WEBHOOK_SECRET &&
+  !parsedEnv.data.ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION
+) {
+  throw new Error("ELEVENLABS_WEBHOOK_SECRET is required in production unless ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=true.");
 }
 
 export const env = {

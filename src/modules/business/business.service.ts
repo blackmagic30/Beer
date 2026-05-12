@@ -7,6 +7,8 @@ import type { Env } from "../../config/env.js";
 import {
   BusinessRepository,
   type BusinessAccount,
+  type BarMembershipTier,
+  type BarProfile,
   type BusinessSubmission,
   type BusinessSubmissionItem,
   type ConfidenceLabel,
@@ -16,12 +18,19 @@ import {
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import { redactSecrets } from "../../lib/redact.js";
 
 import type {
   AccountPreferencesInput,
   AdminDashboardQuery,
   AuthLoginInput,
   AuthSignupInput,
+  BarBeerInput,
+  BarClaimRequestInput,
+  BarHappyHourInput,
+  BarProfileInput,
+  BarSpecialInput,
+  BarTierCheckoutInput,
   CheckoutInput,
   CreateSubmissionInput,
   EventTrackInput,
@@ -58,6 +67,11 @@ interface StripeEvent {
   data?: {
     object?: Record<string, unknown>;
   };
+}
+
+export interface SessionRequestContext {
+  ip?: string | null | undefined;
+  userAgent?: string | null | undefined;
 }
 
 function nowIso(): string {
@@ -125,6 +139,15 @@ function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+function hashRequestFingerprint(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 32);
+}
+
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -171,12 +194,60 @@ function getSourcePhotoBytes(dataUrl: string): number {
   return Buffer.byteLength(dataUrl.slice(commaIndex + 1), "base64");
 }
 
+function getSourcePhotoBuffer(dataUrl: string): Buffer {
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex === -1) {
+    return Buffer.alloc(0);
+  }
+
+  return Buffer.from(dataUrl.slice(commaIndex + 1), "base64");
+}
+
 function getSourcePhotoMimeType(dataUrl: string): string | null {
   const match = dataUrl.match(/^data:([^;]+);base64,/i);
   return match?.[1]?.toLowerCase() ?? null;
 }
 
 const BLOCKED_SOURCE_URL_EXTENSIONS = /\.(?:svg|html?|xhtml|xml|js|mjs|css)(?:[?#].*)?$/i;
+
+function detectImageMimeType(bytes: Buffer): string | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+
+  if (
+    bytes.length >= 12 &&
+    bytes.toString("ascii", 0, 4) === "RIFF" &&
+    bytes.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+
+  if (bytes.length >= 12 && bytes.toString("ascii", 4, 12).includes("ftyphei")) {
+    return "image/heic";
+  }
+
+  return null;
+}
+
+function looksLikeActiveTextPayload(bytes: Buffer): boolean {
+  const head = bytes.toString("utf8", 0, Math.min(bytes.length, 512)).trimStart().toLowerCase();
+  return /^(?:<!doctype\s+html|<html|<script|<svg|<\?xml|@import|body\s*\{|\/\*)/.test(head);
+}
 
 function getBearerToken(header: string | undefined): string | null {
   if (!header) {
@@ -241,6 +312,32 @@ function cleanStringList(values: string[]): string[] {
   ).slice(0, 20);
 }
 
+function tierFlags(tier: BarMembershipTier) {
+  return {
+    highlightedName: tier === "pro",
+    premiumBadge: tier === "pro" ? "Pro" : tier === "plus" ? "Plus" : null,
+    promoted: tier === "pro",
+    featuredSpecialEligible: tier === "pro",
+  };
+}
+
+function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
+  const analytics = admin || tier === "plus" || tier === "pro";
+  return {
+    tier,
+    canManageProfile: true,
+    canManageInventory: true,
+    canManageHappyHours: true,
+    canManageSpecials: true,
+    analytics,
+    monthlyReports: analytics,
+    premiumDisplay: tier === "pro",
+    upgradeCopy: analytics
+      ? null
+      : "Upgrade to Plus to see privacy-safe suburb analytics, search trends, and monthly report previews.",
+  };
+}
+
 function sanitizeEventMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
   const blockedKeyPattern = /(email|phone|token|secret|password|authorization|auth|api.?key|photo|image|dataurl|latitude|longitude|\blat\b|\blng\b|coordinates?|gps|precise.?location)/i;
   const sanitized: Record<string, unknown> = {};
@@ -287,10 +384,17 @@ export class BusinessService {
       | "CONTRIBUTOR_UNLOCK_DAYS"
       | "DEMO_BILLING_MODE"
       | "FIELD_TEST_MODE"
+      | "SESSION_TTL_DAYS"
+      | "ADMIN_SESSION_TTL_DAYS"
+      | "ANALYTICS_MIN_BUCKET_SIZE"
+      | "ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION"
+      | "NODE_ENV"
       | "STRIPE_SECRET_KEY"
       | "STRIPE_WEBHOOK_SECRET"
       | "STRIPE_PRICE_MONTHLY"
       | "STRIPE_PRICE_YEARLY"
+      | "STRIPE_PLUS_PRICE_ID"
+      | "STRIPE_PRO_PRICE_ID"
       | "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
       | "SUPABASE_URL"
       | "SUPABASE_SERVICE_ROLE_KEY"
@@ -305,6 +409,48 @@ export class BusinessService {
         },
       });
     }
+  }
+
+  private getRequestHashes(context?: SessionRequestContext | undefined) {
+    return {
+      ipHash: hashRequestFingerprint(context?.ip),
+      userAgentHash: hashRequestFingerprint(context?.userAgent),
+    };
+  }
+
+  private auditSecurity(input: {
+    actor?: BusinessAccount | null | undefined;
+    action: string;
+    targetType?: string | null | undefined;
+    targetId?: string | null | undefined;
+    metadata?: Record<string, unknown> | undefined;
+    context?: SessionRequestContext | undefined;
+  }): void {
+    const requestHashes = this.getRequestHashes(input.context);
+
+    try {
+      this.repository.insertSecurityAuditLog({
+        id: crypto.randomUUID(),
+        actorUserId: input.actor?.id ?? null,
+        actorRole: input.actor?.role ?? null,
+        action: input.action,
+        targetType: input.targetType ?? null,
+        targetId: input.targetId ?? null,
+        metadata: sanitizeEventMetadata(redactSecrets(input.metadata ?? {})),
+        ipHash: requestHashes.ipHash,
+        userAgentHash: requestHashes.userAgentHash,
+        createdAt: nowIso(),
+      });
+    } catch (error) {
+      logger.warn("Security audit log write failed", {
+        action: input.action,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private applyAnalyticsThreshold<T extends { count: number }>(rows: T[]): T[] {
+    return rows.filter((row) => row.count >= this.config.ANALYTICS_MIN_BUCKET_SIZE);
   }
 
   getPublicConfig() {
@@ -324,17 +470,40 @@ export class BusinessService {
     };
   }
 
-  getAccountFromAuthorization(authorizationHeader: string | undefined): BusinessAccount | null {
+  getAccountFromAuthorization(
+    authorizationHeader: string | undefined,
+    context?: SessionRequestContext | undefined,
+  ): BusinessAccount | null {
     const token = getBearerToken(authorizationHeader);
     if (!token) {
       return null;
     }
 
-    return this.repository.getAccountBySessionTokenHash(hashToken(token), nowIso());
+    const tokenHash = hashToken(token);
+    const account = this.repository.getAccountBySessionTokenHash(tokenHash, nowIso());
+    if (!account) {
+      return null;
+    }
+
+    if (account.status === "suspended") {
+      return null;
+    }
+
+    const requestHashes = this.getRequestHashes(context);
+    this.repository.touchSession({
+      tokenHash,
+      lastUsedAt: nowIso(),
+      lastIpHash: requestHashes.ipHash,
+      userAgentHash: requestHashes.userAgentHash,
+    });
+    return account;
   }
 
-  requireAccount(authorizationHeader: string | undefined): BusinessAccount {
-    const account = this.getAccountFromAuthorization(authorizationHeader);
+  requireAccount(
+    authorizationHeader: string | undefined,
+    context?: SessionRequestContext | undefined,
+  ): BusinessAccount {
+    const account = this.getAccountFromAuthorization(authorizationHeader, context);
 
     if (!account) {
       throw new AppError("Login required.", 401);
@@ -343,14 +512,27 @@ export class BusinessService {
     return account;
   }
 
-  requireAdmin(authorizationHeader: string | undefined): BusinessAccount {
-    const account = this.requireAccount(authorizationHeader);
+  requireAdmin(
+    authorizationHeader: string | undefined,
+    context?: SessionRequestContext | undefined,
+  ): BusinessAccount {
+    const account = this.requireAccount(authorizationHeader, context);
 
     if (account.role !== "admin" && account.subscriptionStatus !== "admin") {
       throw new AppError("Admin access required.", 403);
     }
 
     return account;
+  }
+
+  private requireVerifiedBarAccount(account: BusinessAccount): void {
+    if (account.status !== "active") {
+      throw new AppError("Your account must be active to manage a bar.", 403);
+    }
+
+    if (!account.ageConfirmedAt) {
+      throw new AppError("Verify your account before managing a bar. Confirm 18+ from your account page first.", 403);
+    }
   }
 
   private isAdmin(account: BusinessAccount): boolean {
@@ -361,6 +543,8 @@ export class BusinessService {
     if (this.isAdmin(account)) {
       return null;
     }
+
+    this.requireVerifiedBarAccount(account);
 
     if (account.role !== "venue_manager") {
       throw new AppError("Venue manager access required.", 403);
@@ -373,13 +557,79 @@ export class BusinessService {
     });
 
     if (!assignment) {
+      this.auditSecurity({
+        actor: account,
+        action: "venue_manager_cross_venue_blocked",
+        targetType: "venue",
+        targetId: venueId,
+        metadata: { accountRole: account.role },
+      });
       throw new AppError("You can only access assigned venues.", 403);
     }
 
     return assignment;
   }
 
-  signup(input: AuthSignupInput) {
+  private buildDefaultBarProfile(input: { barId: string; name: string; suburb: string | null }): BarProfile {
+    const now = nowIso();
+    return {
+      barId: input.barId,
+      name: input.name,
+      address: null,
+      suburb: input.suburb,
+      area: input.suburb,
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      highlightedName: false,
+      premiumBadge: null,
+      promoted: false,
+      featuredSpecialEligible: false,
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      subscriptionStatus: null,
+      tierManualOverride: false,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  private getOrBuildBarProfile(input: { barId: string; name: string; suburb: string | null }): BarProfile {
+    return this.repository.getBarProfile(input.barId) ?? this.buildDefaultBarProfile(input);
+  }
+
+  private ensureBarProfile(input: { barId: string; name: string; suburb: string | null }): BarProfile {
+    const existing = this.repository.getBarProfile(input.barId);
+    if (existing) {
+      return existing;
+    }
+
+    const flags = tierFlags("basic");
+    return this.repository.upsertBarProfile({
+      barId: input.barId,
+      name: input.name,
+      address: null,
+      suburb: input.suburb,
+      area: input.suburb,
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      active: true,
+      now: nowIso(),
+      ...flags,
+    });
+  }
+
+  signup(input: AuthSignupInput, context?: SessionRequestContext | undefined) {
     const email = normalizeEmail(input.email);
 
     if (this.repository.getAccountByEmail(email)) {
@@ -423,17 +673,30 @@ export class BusinessService {
       });
     }
 
-    return this.createSessionResponse(confirmed);
+    return this.createSessionResponse(confirmed, context);
   }
 
-  login(input: AuthLoginInput) {
+  login(input: AuthLoginInput, context?: SessionRequestContext | undefined) {
     const account = this.repository.getAccountByEmail(normalizeEmail(input.email));
 
     if (!account || !verifyPassword(input.password, account.passwordHash)) {
       throw new AppError("Invalid email or password.", 401);
     }
 
-    return this.createSessionResponse(account);
+    if (account.status === "suspended") {
+      throw new AppError("Account access is suspended.", 403);
+    }
+
+    const session = this.createSessionResponse(account, context);
+    this.auditSecurity({
+      actor: account,
+      action: "login_success",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { role: account.role },
+      context,
+    });
+    return session;
   }
 
   confirmAge(account: BusinessAccount) {
@@ -452,15 +715,22 @@ export class BusinessService {
     };
   }
 
-  private createSessionResponse(account: BusinessAccount) {
+  private createSessionResponse(account: BusinessAccount, context?: SessionRequestContext | undefined) {
     const now = nowIso();
     const token = crypto.randomBytes(32).toString("base64url");
+    const ttlDays = account.role === "admin" || account.subscriptionStatus === "admin"
+      ? this.config.ADMIN_SESSION_TTL_DAYS
+      : this.config.SESSION_TTL_DAYS;
+    const requestHashes = this.getRequestHashes(context);
 
     this.repository.createSession({
       tokenHash: hashToken(token),
       userId: account.id,
       createdAt: now,
-      expiresAt: addDays(now, 60),
+      expiresAt: addDays(now, ttlDays),
+      lastUsedAt: now,
+      lastIpHash: requestHashes.ipHash,
+      userAgentHash: requestHashes.userAgentHash,
     });
 
     return {
@@ -468,6 +738,44 @@ export class BusinessService {
       account: sanitizeAccount(account),
       access: this.getAccessState(account, null),
     };
+  }
+
+  logout(authorizationHeader: string | undefined, context?: SessionRequestContext | undefined) {
+    const token = getBearerToken(authorizationHeader);
+    if (!token) {
+      throw new AppError("Login required.", 401);
+    }
+
+    const account = this.requireAccount(authorizationHeader, context);
+    const revoked = this.repository.revokeSession({
+      tokenHash: hashToken(token),
+      revokedAt: nowIso(),
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "logout",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { revoked },
+      context,
+    });
+    return { revoked };
+  }
+
+  logoutAll(account: BusinessAccount, context?: SessionRequestContext | undefined) {
+    const revokedCount = this.repository.revokeUserSessions({
+      userId: account.id,
+      revokedAt: nowIso(),
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "logout_all",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { revokedCount },
+      context,
+    });
+    return { revokedCount };
   }
 
   getAccessState(account: BusinessAccount | null, anonymousSessionId: string | null) {
@@ -598,6 +906,10 @@ export class BusinessService {
 
   private resolveSourcePhoto(input: Pick<CreateSubmissionInput, "sourcePhotoDataUrl" | "sourcePhotoUrl">): string | null {
     if (input.sourcePhotoDataUrl) {
+      if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
+        throw new AppError("Inline demo image storage is disabled in production. Use private object storage for evidence uploads.", 503);
+      }
+
       const mimeType = getSourcePhotoMimeType(input.sourcePhotoDataUrl);
       if (!mimeType || !SUBMISSION_LIMITS.allowedImageMimeTypes.includes(mimeType as never)) {
         throw new AppError("Upload must be a JPEG, PNG, WebP, HEIC, or HEIF image.", 400);
@@ -605,6 +917,16 @@ export class BusinessService {
 
       if (getSourcePhotoBytes(input.sourcePhotoDataUrl) > SUBMISSION_LIMITS.maxPhotoBytes) {
         throw new AppError("Upload image must be 6MB or smaller.", 400);
+      }
+
+      const bytes = getSourcePhotoBuffer(input.sourcePhotoDataUrl);
+      if (looksLikeActiveTextPayload(bytes)) {
+        throw new AppError("Upload must be a safe image file, not SVG, HTML, XML, script, or style content.", 400);
+      }
+
+      const detectedMimeType = detectImageMimeType(bytes);
+      if (!detectedMimeType || detectedMimeType !== mimeType) {
+        throw new AppError("Upload image content does not match the declared file type.", 400);
       }
 
       // Demo storage: keep the data URL with the pending submission. Production should move this
@@ -889,6 +1211,18 @@ export class BusinessService {
       monthKey: monthKeyFromIso(submission.submission.observedAt),
       premiumUntil: addDays(nowIso(), this.config.CONTRIBUTOR_UNLOCK_DAYS),
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
+    });
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_submission_review",
+      targetType: "submission",
+      targetId: submissionId,
+      metadata: {
+        status: input.status,
+        fraudFlagged: input.fraudFlagged,
+        pointsAwarded: input.status === "approved" ? result.pointsAwarded : 0,
+        venueId: result.submission.venueId,
+      },
     });
     const eventType: EventTrackInput["eventType"] =
       input.status === "approved" ? "submission_approved" : "submission_rejected";
@@ -1206,17 +1540,39 @@ export class BusinessService {
       throw new AppError("Admin access required.", 403);
     }
 
-    return this.repository.getAnalyticsPreview();
+    const preview = this.repository.getAnalyticsPreview();
+    return {
+      ...preview,
+      topSearchedBeers: this.applyAnalyticsThreshold(preview.topSearchedBeers),
+      topClickedVenues: this.applyAnalyticsThreshold(preview.topClickedVenues),
+      topSuburbs: this.applyAnalyticsThreshold(preview.topSuburbs),
+      suppressedBelowCount: this.config.ANALYTICS_MIN_BUCKET_SIZE,
+    };
   }
 
   getVenuePortal(account: BusinessAccount, query: VenuePortalQuery) {
+    this.requireVerifiedBarAccount(account);
     const isAdmin = this.isAdmin(account);
     const assignments = isAdmin
       ? this.repository.listVenueManagerAssignments({ activeOnly: true, limit: 100 })
       : this.repository.listVenueManagerAssignments({ userId: account.id, activeOnly: true, limit: 100 });
 
     if (!isAdmin && assignments.length === 0) {
-      throw new AppError("Venue manager access required.", 403);
+      return {
+        accessState: "claim_required",
+        assignments: [],
+        selectedVenue: null,
+        profile: null,
+        tier: null,
+        inventory: { beers: [], happyHours: [], specials: [] },
+        insights: null,
+        analytics: null,
+        monthlyReport: null,
+        updateLink: null,
+        claimRequests: this.repository.listBarClaimRequests({ userId: account.id, limit: 10 }),
+        message: "Request access to a bar and admin will manually review the claim.",
+        privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
+      };
     }
 
     const selectedVenueId = query.venueId ?? assignments[0]?.venueId;
@@ -1239,11 +1595,57 @@ export class BusinessService {
 
     const venueName = assignment?.venueName ?? selectedVenueId;
     const suburb = assignment?.suburb ?? null;
-    const insights = this.repository.getVenueManagerInsights({
+    const rawInsights = this.repository.getVenueManagerInsights({
       venueId: selectedVenueId,
       suburb,
       staleBefore: daysAgoIso(30),
     });
+    const profile = this.getOrBuildBarProfile({ barId: selectedVenueId, name: venueName, suburb });
+    const capabilities = getBarTierCapabilities(profile.membershipTier, isAdmin);
+    const analytics = capabilities.analytics
+      ? this.repository.getBarAreaAnalytics({
+          barId: selectedVenueId,
+          area: profile.area ?? profile.suburb ?? suburb,
+          month: monthKeyFromIso(nowIso()),
+          privacyThreshold: Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE),
+        })
+      : null;
+    const savedMonthlyReport = capabilities.monthlyReports
+      ? this.repository.getMonthlyBarReport({ barId: selectedVenueId, month: monthKeyFromIso(nowIso()) })
+      : null;
+    const monthlyReport = capabilities.monthlyReports
+      ? savedMonthlyReport ?? {
+          id: null,
+          barId: selectedVenueId,
+          month: monthKeyFromIso(nowIso()),
+          data: {
+            generated: false,
+            summary: analytics
+              ? {
+                  totalBarLookups: analytics.barLookups,
+                  totalProfileViews: analytics.profileViews,
+                  totalBeerListViews: analytics.beerListViews,
+                  totalSpecialsDealsViews: analytics.specialsViews,
+                  mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
+                  mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
+                  suggestedActions: analytics.privacyFloorMet
+                    ? [
+                        "Keep your tap list current so nearby search demand has an accurate listing to land on.",
+                        "Add happy-hour details if they are missing; users often filter by active specials.",
+                      ]
+                    : ["Not enough suburb data yet. Your report will become more useful as more users search nearby."],
+                }
+              : null,
+          },
+          createdAt: null,
+        }
+      : null;
+    const insights = capabilities.analytics
+      ? rawInsights
+      : {
+          ...rawInsights,
+          aggregateInsights: null,
+        };
     const updateLink = `/submit.html?venueId=${encodeURIComponent(selectedVenueId)}&venueName=${encodeURIComponent(venueName)}${suburb ? `&suburb=${encodeURIComponent(suburb)}` : ""}`;
 
     this.trackEvent(account, {
@@ -1270,10 +1672,59 @@ export class BusinessService {
         venueName,
         suburb,
       },
+      profile,
+      tier: {
+        ...capabilities,
+        analyticsLocked: !capabilities.analytics,
+      },
+      inventory: {
+        beers: this.repository.listBarBeers(selectedVenueId),
+        happyHours: this.repository.listBarHappyHours(selectedVenueId),
+        specials: this.repository.listBarSpecials(selectedVenueId),
+      },
       insights,
+      analytics,
+      monthlyReport,
       updateLink,
       qrCopy: "Copy this update link or turn it into a QR code for your bar/tap-list area.",
       privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
+    };
+  }
+
+  createBarClaimRequest(account: BusinessAccount, input: BarClaimRequestInput) {
+    this.requireVerifiedBarAccount(account);
+    const now = nowIso();
+    const claim = this.repository.createBarClaimRequest({
+      id: crypto.randomUUID(),
+      userId: account.id,
+      barId: input.barId,
+      barName: input.barName,
+      address: input.address,
+      suburb: input.suburb,
+      requesterName: input.requesterName,
+      requesterRole: input.requesterRole,
+      contactEmail: normalizeEmail(input.contactEmail),
+      contactPhone: input.contactPhone,
+      message: input.message,
+      now,
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_claim_requested",
+      venueId: claim.barId,
+      beerId: null,
+      suburb: claim.suburb,
+      metadata: {
+        claimId: claim.id,
+        barName: claim.barName,
+        requesterRole: claim.requesterRole,
+      },
+    });
+
+    return {
+      claim,
+      message: "Claim request submitted. Admin will manually verify and assign access if approved.",
     };
   }
 
@@ -1310,6 +1761,220 @@ export class BusinessService {
     };
   }
 
+  upsertBarProfile(account: BusinessAccount, venueId: string, input: BarProfileInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = this.repository.getBarProfile(venueId);
+    const existingTier = existing?.membershipTier ?? "basic";
+    const membershipTier = this.isAdmin(account) ? input.membershipTier ?? existingTier : existingTier;
+    const flags = tierFlags(membershipTier);
+    const now = nowIso();
+    const profile = this.repository.upsertBarProfile({
+      barId: venueId,
+      name: input.name,
+      address: input.address,
+      suburb: input.suburb ?? assignment?.suburb ?? existing?.suburb ?? null,
+      area: input.area ?? input.suburb ?? assignment?.suburb ?? existing?.area ?? existing?.suburb ?? null,
+      phone: input.phone,
+      website: input.website,
+      instagram: input.instagram,
+      description: input.description,
+      openingHours: input.openingHours,
+      venueTags: cleanStringList(input.venueTags),
+      membershipTier,
+      active: input.active,
+      tierManualOverride: this.isAdmin(account) && input.membershipTier !== undefined ? true : existing?.tierManualOverride ?? false,
+      now,
+      ...flags,
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: profile.suburb,
+      metadata: { section: "profile", membershipTier: profile.membershipTier },
+    });
+
+    return {
+      profile,
+      tier: getBarTierCapabilities(profile.membershipTier, this.isAdmin(account)),
+      message: "Bar profile saved.",
+    };
+  }
+
+  upsertBarBeer(account: BusinessAccount, venueId: string, input: BarBeerInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = input.id ? this.repository.getBarBeerById(input.id) : null;
+    if (existing && existing.barId !== venueId) {
+      throw new AppError("Beer row belongs to another venue.", 403);
+    }
+
+    const profile = this.ensureBarProfile({
+      barId: venueId,
+      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
+      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+    });
+    const beer = this.repository.upsertBarBeer({
+      id: input.id ?? crypto.randomUUID(),
+      barId: venueId,
+      beerName: input.beerName,
+      brewery: input.brewery,
+      style: input.style,
+      abv: input.abv,
+      serveSize: input.serveSize,
+      price: input.price,
+      currency: "AUD",
+      onTap: input.onTap,
+      inStock: input.inStock,
+      notes: input.notes,
+      now: nowIso(),
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: normalizeBeerId(beer.beerName),
+      suburb: profile.suburb,
+      metadata: { section: "beer_inventory", onTap: beer.onTap, inStock: beer.inStock, hasPrice: beer.price != null },
+    });
+
+    return { beer, message: "Beer row saved." };
+  }
+
+  deleteBarBeer(account: BusinessAccount, venueId: string, beerId: string) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const deleted = this.repository.deleteBarBeer({ id: beerId, barId: venueId });
+    if (!deleted) {
+      throw new AppError("Beer row not found for this venue.", 404);
+    }
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId,
+      suburb: assignment?.suburb ?? null,
+      metadata: { section: "beer_inventory", action: "delete" },
+    });
+
+    return { deleted: true, message: "Beer row removed." };
+  }
+
+  upsertBarHappyHour(account: BusinessAccount, venueId: string, input: BarHappyHourInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = input.id ? this.repository.getBarHappyHourById(input.id) : null;
+    if (existing && existing.barId !== venueId) {
+      throw new AppError("Happy-hour row belongs to another venue.", 403);
+    }
+
+    const profile = this.ensureBarProfile({
+      barId: venueId,
+      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
+      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+    });
+    const happyHour = this.repository.upsertBarHappyHour({
+      id: input.id ?? crypto.randomUUID(),
+      barId: venueId,
+      title: input.title,
+      daysOfWeek: input.daysOfWeek,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      description: input.description,
+      active: input.active,
+      now: nowIso(),
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: profile.suburb,
+      metadata: { section: "happy_hours", active: happyHour.active, days: happyHour.daysOfWeek },
+    });
+
+    return { happyHour, message: "Happy hour saved." };
+  }
+
+  deleteBarHappyHour(account: BusinessAccount, venueId: string, happyHourId: string) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const deleted = this.repository.deleteBarHappyHour({ id: happyHourId, barId: venueId });
+    if (!deleted) {
+      throw new AppError("Happy hour not found for this venue.", 404);
+    }
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: assignment?.suburb ?? null,
+      metadata: { section: "happy_hours", action: "delete" },
+    });
+
+    return { deleted: true, message: "Happy hour removed." };
+  }
+
+  upsertBarSpecial(account: BusinessAccount, venueId: string, input: BarSpecialInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = input.id ? this.repository.getBarSpecialById(input.id) : null;
+    if (existing && existing.barId !== venueId) {
+      throw new AppError("Special belongs to another venue.", 403);
+    }
+
+    const profile = this.ensureBarProfile({
+      barId: venueId,
+      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
+      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+    });
+    const special = this.repository.upsertBarSpecial({
+      id: input.id ?? crypto.randomUUID(),
+      barId: venueId,
+      title: input.title,
+      description: input.description,
+      price: input.price,
+      discount: input.discount,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+      scheduleNote: input.scheduleNote,
+      exclusive: input.exclusive,
+      active: input.active,
+      now: nowIso(),
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: profile.suburb,
+      metadata: { section: "specials", active: special.active, exclusive: special.exclusive, hasPrice: special.price != null },
+    });
+
+    return { special, message: "Deal or special saved." };
+  }
+
+  deleteBarSpecial(account: BusinessAccount, venueId: string, specialId: string) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const deleted = this.repository.deleteBarSpecial({ id: specialId, barId: venueId });
+    if (!deleted) {
+      throw new AppError("Special not found for this venue.", 404);
+    }
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: assignment?.suburb ?? null,
+      metadata: { section: "specials", action: "delete" },
+    });
+
+    return { deleted: true, message: "Deal or special removed." };
+  }
+
   assignVenueManager(admin: BusinessAccount, input: VenueManagerAssignmentInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
@@ -1328,6 +1993,17 @@ export class BusinessService {
       suburb: input.suburb,
       approvedBy: admin.id,
       now: nowIso(),
+    });
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_venue_manager_assignment",
+      targetType: "venue_manager_assignment",
+      targetId: assignment.id,
+      metadata: {
+        managerUserId: assignment.userId,
+        venueId: assignment.venueId,
+        venueName: assignment.venueName,
+      },
     });
 
     this.trackEvent(admin, {
@@ -1356,6 +2032,17 @@ export class BusinessService {
     if (!assignment) {
       throw new AppError("Venue manager assignment not found.", 404);
     }
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_venue_manager_revoke",
+      targetType: "venue_manager_assignment",
+      targetId: assignment.id,
+      metadata: {
+        managerUserId: assignment.userId,
+        venueId: assignment.venueId,
+        venueName: assignment.venueName,
+      },
+    });
 
     this.trackEvent(admin, {
       anonymousSessionId: null,
@@ -1376,6 +2063,7 @@ export class BusinessService {
 
     return {
       interests: this.repository.listVenueInterestRequests(100),
+      claimRequests: this.repository.listBarClaimRequests({ limit: 100 }),
       assignments: this.repository.listVenueManagerAssignments({ limit: 100 }),
       outreach: this.repository.listVenuePartnerOutreach(100),
       leads: this.repository.getPotentialPartnerLeads({
@@ -1399,6 +2087,13 @@ export class BusinessService {
     if (!interest) {
       throw new AppError("Venue interest request not found.", 404);
     }
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_venue_interest_status_update",
+      targetType: "venue_interest",
+      targetId: interest.id,
+      metadata: { status: interest.status, venueId: interest.venueId, venueName: interest.venueName },
+    });
 
     this.trackEvent(admin, {
       anonymousSessionId: null,
@@ -1428,6 +2123,13 @@ export class BusinessService {
       updatedBy: admin.id,
       now: nowIso(),
     });
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_venue_outreach_update",
+      targetType: "venue",
+      targetId: outreach.venueId,
+      metadata: { status: outreach.status, venueName: outreach.venueName },
+    });
 
     this.trackEvent(admin, {
       anonymousSessionId: null,
@@ -1447,13 +2149,23 @@ export class BusinessService {
     }
 
     const totalVenues = Math.max(this.repository.countKnownVenues(), this.repository.countMissions());
-    return this.repository.getAdminKpiDashboard({
+    const dashboard = this.repository.getAdminKpiDashboard({
       since: startOfAdminRange(query.range),
       sevenDaysAgo: daysAgoIso(7),
       thirtyDaysAgo: daysAgoIso(30),
       staleBefore: daysAgoIso(90),
       totalVenues,
     });
+    return {
+      ...dashboard,
+      topSearchedBeers: this.applyAnalyticsThreshold(dashboard.topSearchedBeers),
+      topSearchedSuburbs: this.applyAnalyticsThreshold(dashboard.topSearchedSuburbs),
+      topClickedVenues: this.applyAnalyticsThreshold(dashboard.topClickedVenues),
+      highDemandVenuesWithStaleOrMissingData: this.applyAnalyticsThreshold(
+        dashboard.highDemandVenuesWithStaleOrMissingData,
+      ),
+      suppressedBelowCount: this.config.ANALYTICS_MIN_BUCKET_SIZE,
+    };
   }
 
   getRetentionCohorts(admin: BusinessAccount, query: RetentionQuery) {
@@ -1606,6 +2318,96 @@ export class BusinessService {
     };
   }
 
+  async createBarTierCheckout(account: BusinessAccount, venueId: string, input: BarTierCheckoutInput) {
+    this.requireVerifiedBarAccount(account);
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const profile = this.ensureBarProfile({
+      barId: venueId,
+      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
+      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+    });
+    const priceId = input.tier === "plus" ? this.config.STRIPE_PLUS_PRICE_ID : this.config.STRIPE_PRO_PRICE_ID;
+    const flags = tierFlags(input.tier);
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "checkout_started",
+      venueId,
+      beerId: null,
+      suburb: profile.suburb,
+      metadata: { billingContext: "bar", tier: input.tier },
+    });
+
+    if (this.config.DEMO_BILLING_MODE) {
+      const updatedProfile = this.repository.updateBarSubscription({
+        barId: venueId,
+        membershipTier: input.tier,
+        subscriptionStatus: "active_demo",
+        now: nowIso(),
+        ...flags,
+      });
+      this.auditSecurity({
+        actor: account,
+        action: "demo_subscription_grant",
+        targetType: "bar",
+        targetId: venueId,
+        metadata: { tier: input.tier, mode: "demo" },
+      });
+      const tierCapabilities = getBarTierCapabilities(updatedProfile.membershipTier, this.isAdmin(account));
+      return {
+        mode: "demo",
+        checkoutUrl: `/venue-portal?checkout=demo&tier=${input.tier}&venueId=${encodeURIComponent(venueId)}`,
+        profile: updatedProfile,
+        tier: {
+          ...tierCapabilities,
+          analyticsLocked: !tierCapabilities.analytics,
+        },
+        message: `${input.tier === "plus" ? "Plus" : "Pro"} demo tier activated for this bar.`,
+      };
+    }
+
+    if (!this.config.STRIPE_SECRET_KEY || !priceId) {
+      throw new AppError("Stripe checkout is not configured for this bar tier.", 503);
+    }
+
+    const successUrl = new URL(`/venue-portal?checkout=success&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
+    const cancelUrl = new URL(`/venue-portal?checkout=cancelled&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
+    const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: formEncode({
+        mode: "subscription",
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        "line_items[0][price]": priceId,
+        "line_items[0][quantity]": "1",
+        "metadata[billing_context]": "bar",
+        "metadata[user_id]": account.id,
+        "metadata[bar_id]": venueId,
+        "metadata[bar_membership_tier]": input.tier,
+        customer_email: account.email,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as { url?: string; error?: { message?: string } } | null;
+
+    if (!response.ok || !payload?.url) {
+      throw new ExternalServiceError("Stripe bar tier checkout session failed", {
+        status: response.status,
+        message: payload?.error?.message,
+      });
+    }
+
+    return {
+      mode: "stripe",
+      checkoutUrl: payload.url,
+      message: "Stripe checkout created for this bar tier.",
+    };
+  }
+
   handleDemoSubscription(account: BusinessAccount, plan: "monthly" | "yearly") {
     if (!this.config.DEMO_BILLING_MODE) {
       throw new AppError("Demo billing is not enabled.", 503);
@@ -1618,6 +2420,13 @@ export class BusinessService {
       subscriptionStatus: status,
       premiumUntil: null,
       now,
+    });
+    this.auditSecurity({
+      actor: updated,
+      action: "demo_subscription_grant",
+      targetType: "account",
+      targetId: updated.id,
+      metadata: { plan, mode: "demo", subscriptionStatus: status },
     });
     this.trackEvent(updated, {
       anonymousSessionId: null,
@@ -1636,10 +2445,25 @@ export class BusinessService {
     }
 
     if (!rawBody || !signature) {
+      this.auditSecurity({
+        action: "stripe_webhook_signature_failed",
+        targetType: "stripe_webhook",
+        metadata: { reason: !rawBody ? "missing_raw_body" : "missing_signature" },
+      });
       throw new AppError("Missing Stripe webhook signature.", 400);
     }
 
-    const event = this.verifyStripeWebhook(rawBody, signature);
+    let event: StripeEvent;
+    try {
+      event = this.verifyStripeWebhook(rawBody, signature);
+    } catch (error) {
+      this.auditSecurity({
+        action: "stripe_webhook_signature_failed",
+        targetType: "stripe_webhook",
+        metadata: { reason: error instanceof Error ? error.message : "invalid_signature" },
+      });
+      throw error;
+    }
     const inserted = this.repository.rememberStripeEvent({
       id: event.id,
       eventType: event.type,
@@ -1695,9 +2519,41 @@ export class BusinessService {
 
     if (event.type === "checkout.session.completed") {
       const metadata = object.metadata as Record<string, string> | undefined;
+      const billingContext = metadata?.billing_context;
+      const barId = metadata?.bar_id;
+      const barMembershipTier = metadata?.bar_membership_tier as BarMembershipTier | undefined;
+      const subscriptionId = typeof object.subscription === "string" ? object.subscription : null;
       const userId = metadata?.user_id;
       const subscriptionStatus = metadata?.subscription_status as SubscriptionStatus | undefined;
       const customer = typeof object.customer === "string" ? object.customer : null;
+
+      if (billingContext === "bar" && barId && (barMembershipTier === "plus" || barMembershipTier === "pro")) {
+        const flags = tierFlags(barMembershipTier);
+        this.repository.updateBarSubscription({
+          barId,
+          membershipTier: barMembershipTier,
+          stripeCustomerId: customer,
+          stripeSubscriptionId: subscriptionId,
+          subscriptionStatus: "active",
+          now: nowIso(),
+          ...flags,
+        });
+        this.trackEvent(null, {
+          anonymousSessionId: null,
+          eventType: "subscription_created",
+          venueId: barId,
+          beerId: null,
+          suburb: null,
+          metadata: { mode: "stripe", billingContext: "bar", tier: barMembershipTier },
+        });
+        this.auditSecurity({
+          action: "stripe_subscription_update",
+          targetType: "bar",
+          targetId: barId,
+          metadata: { eventType: event.type, tier: barMembershipTier, status: "active" },
+        });
+        return;
+      }
 
       if (userId && subscriptionStatus) {
         const updated = this.repository.updateSubscription({
@@ -1715,17 +2571,68 @@ export class BusinessService {
           suburb: null,
           metadata: { mode: "stripe", subscriptionStatus },
         });
+        this.auditSecurity({
+          actor: updated,
+          action: "stripe_subscription_update",
+          targetType: "account",
+          targetId: updated.id,
+          metadata: { eventType: event.type, subscriptionStatus },
+        });
       }
     }
 
-    if (event.type === "customer.subscription.deleted") {
+    if (
+      event.type === "customer.subscription.deleted" ||
+      event.type === "customer.subscription.updated" ||
+      event.type === "invoice.payment_failed"
+    ) {
       const customer = typeof object.customer === "string" ? object.customer : null;
+      const subscriptionId = typeof object.subscription === "string"
+        ? object.subscription
+        : typeof object.id === "string"
+          ? object.id
+          : null;
+      const stripeStatus = typeof object.status === "string" ? object.status : null;
+      const shouldDowngrade =
+        event.type === "customer.subscription.deleted" ||
+        event.type === "invoice.payment_failed" ||
+        ["canceled", "cancelled", "past_due", "unpaid", "incomplete_expired"].includes(stripeStatus ?? "");
+      const barProfile = subscriptionId ? this.repository.getBarProfileByStripeSubscriptionId(subscriptionId) : null;
+      if (barProfile) {
+        const nextTier = shouldDowngrade ? "basic" : barProfile.membershipTier;
+        const flags = tierFlags(nextTier);
+        this.repository.updateBarSubscription({
+          barId: barProfile.barId,
+          membershipTier: nextTier,
+          stripeCustomerId: customer,
+          stripeSubscriptionId: subscriptionId,
+          subscriptionStatus: shouldDowngrade ? "cancelled_or_past_due" : stripeStatus ?? "active",
+          now: nowIso(),
+          ...flags,
+        });
+        this.trackEvent(null, {
+          anonymousSessionId: null,
+          eventType: "subscription_cancelled",
+          venueId: barProfile.barId,
+          beerId: null,
+          suburb: barProfile.suburb,
+          metadata: { mode: "stripe", billingContext: "bar" },
+        });
+        this.auditSecurity({
+          action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
+          targetType: "bar",
+          targetId: barProfile.barId,
+          metadata: { eventType: event.type, stripeStatus, shouldDowngrade },
+        });
+        return;
+      }
+
       const account = customer ? this.repository.getAccountByStripeCustomerId(customer) : null;
 
       if (account) {
         const updated = this.repository.updateSubscription({
           userId: account.id,
-          subscriptionStatus: "free",
+          subscriptionStatus: shouldDowngrade ? "free" : account.subscriptionStatus,
           premiumUntil: null,
           now: nowIso(),
         });
@@ -1737,6 +2644,13 @@ export class BusinessService {
           suburb: null,
           metadata: { mode: "stripe" },
         });
+        this.auditSecurity({
+          actor: updated,
+          action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
+          targetType: "account",
+          targetId: updated.id,
+          metadata: { eventType: event.type, stripeStatus, shouldDowngrade },
+        });
       }
     }
   }
@@ -1746,14 +2660,22 @@ export class BusinessService {
       throw new AppError("Admin access required.", 403);
     }
 
+    const account = this.repository.overrideUserStatus({
+      userId,
+      status: input.status,
+      trustScore: input.trustScore,
+      fraudStrikeCount: input.fraudStrikeCount,
+      now: nowIso(),
+    });
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_user_status_override",
+      targetType: "account",
+      targetId: userId,
+      metadata: { status: input.status, fraudStrikeCount: input.fraudStrikeCount },
+    });
     return {
-      account: sanitizeAccount(this.repository.overrideUserStatus({
-        userId,
-        status: input.status,
-        trustScore: input.trustScore,
-        fraudStrikeCount: input.fraudStrikeCount,
-        now: nowIso(),
-      })),
+      account: sanitizeAccount(account),
     };
   }
 

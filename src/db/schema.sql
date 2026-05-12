@@ -145,11 +145,37 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   user_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  last_used_at TEXT,
+  last_ip_hash TEXT,
+  user_agent_hash TEXT,
   FOREIGN KEY (user_id) REFERENCES accounts(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
   ON auth_sessions (user_id, expires_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_active
+  ON auth_sessions (user_id, revoked_at, expires_at DESC);
+
+CREATE TABLE IF NOT EXISTS security_audit_log (
+  id TEXT PRIMARY KEY,
+  actor_user_id TEXT,
+  actor_role TEXT,
+  action TEXT NOT NULL,
+  target_type TEXT,
+  target_id TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  ip_hash TEXT,
+  user_agent_hash TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_audit_log_created
+  ON security_audit_log (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_security_audit_log_action
+  ON security_audit_log (action, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS submissions (
   id TEXT PRIMARY KEY,
@@ -402,6 +428,152 @@ CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_user
 
 CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_venue
   ON venue_manager_assignments (venue_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS bar_profiles (
+  bar_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  address TEXT,
+  suburb TEXT,
+  area TEXT,
+  phone TEXT,
+  website TEXT,
+  instagram TEXT,
+  description TEXT,
+  opening_hours_json TEXT NOT NULL DEFAULT '{}',
+  venue_tags_json TEXT NOT NULL DEFAULT '[]',
+  membership_tier TEXT NOT NULL DEFAULT 'basic',
+  highlighted_name INTEGER NOT NULL DEFAULT 0,
+  premium_badge TEXT,
+  promoted INTEGER NOT NULL DEFAULT 0,
+  featured_special_eligible INTEGER NOT NULL DEFAULT 0,
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  subscription_status TEXT,
+  tier_manual_override INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bar_profiles_membership
+  ON bar_profiles (membership_tier, active, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bar_profiles_area
+  ON bar_profiles (area, suburb, active);
+
+CREATE TABLE IF NOT EXISTS bar_beers (
+  id TEXT PRIMARY KEY,
+  bar_id TEXT NOT NULL REFERENCES bar_profiles(bar_id) ON DELETE CASCADE,
+  beer_name TEXT NOT NULL,
+  brewery TEXT,
+  style TEXT,
+  abv REAL,
+  serve_size TEXT,
+  price REAL,
+  currency TEXT NOT NULL DEFAULT 'AUD',
+  on_tap INTEGER NOT NULL DEFAULT 0,
+  in_stock INTEGER NOT NULL DEFAULT 1,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bar_beers_bar
+  ON bar_beers (bar_id, on_tap, in_stock, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bar_beers_name
+  ON bar_beers (beer_name, style);
+
+CREATE TABLE IF NOT EXISTS bar_happy_hours (
+  id TEXT PRIMARY KEY,
+  bar_id TEXT NOT NULL REFERENCES bar_profiles(bar_id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  days_of_week_json TEXT NOT NULL DEFAULT '[]',
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  description TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bar_happy_hours_bar
+  ON bar_happy_hours (bar_id, active, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS bar_specials (
+  id TEXT PRIMARY KEY,
+  bar_id TEXT NOT NULL REFERENCES bar_profiles(bar_id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  price REAL,
+  discount TEXT,
+  starts_at TEXT,
+  ends_at TEXT,
+  schedule_note TEXT,
+  exclusive INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bar_specials_bar
+  ON bar_specials (bar_id, active, starts_at, ends_at);
+
+CREATE TABLE IF NOT EXISTS bar_analytics_events (
+  id TEXT PRIMARY KEY,
+  bar_id TEXT,
+  area TEXT,
+  suburb TEXT,
+  event_type TEXT NOT NULL,
+  query_text TEXT,
+  beer_name TEXT,
+  beer_style TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bar_analytics_events_bar
+  ON bar_analytics_events (bar_id, event_type, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bar_analytics_events_area
+  ON bar_analytics_events (area, event_type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS bar_claim_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  bar_id TEXT,
+  bar_name TEXT NOT NULL,
+  address TEXT,
+  suburb TEXT,
+  requester_name TEXT NOT NULL,
+  requester_role TEXT NOT NULL,
+  contact_email TEXT NOT NULL,
+  contact_phone TEXT,
+  message TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bar_claim_requests_user
+  ON bar_claim_requests (user_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bar_claim_requests_status
+  ON bar_claim_requests (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bar_claim_requests_bar
+  ON bar_claim_requests (bar_id, bar_name, suburb);
+
+CREATE TABLE IF NOT EXISTS monthly_bar_reports (
+  id TEXT PRIMARY KEY,
+  bar_id TEXT NOT NULL REFERENCES bar_profiles(bar_id) ON DELETE CASCADE,
+  month TEXT NOT NULL,
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE (bar_id, month)
+);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_bar_reports_bar
+  ON monthly_bar_reports (bar_id, month DESC);
 
 CREATE TABLE IF NOT EXISTS venue_partner_outreach (
   id TEXT PRIMARY KEY,

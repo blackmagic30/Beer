@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Venue Portal | Melbourne Beer Map</title>
+  <title>Bar Dashboard | Melbourne Beer Map</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
@@ -12,142 +12,657 @@
   <main class="pageShell">
     <div id="nav"></div>
 
-    <section class="hero">
-      <div class="eyebrow">Venue manager demo</div>
-      <h1>Keep your Melbourne Beer Map listing accurate.</h1>
-      <p class="lead">Assigned venue managers can view listing quality, pending data signals, wrong-price reports and aggregate demand insights. Updates still go through review during the beta.</p>
+    <section class="hero hero--compact">
+      <div class="eyebrow">Bar owner portal</div>
+      <h1>Manage your bar’s profile, taps, prices and specials.</h1>
+      <p class="lead">Assigned and verified bar accounts can keep venue details, beer stock, happy hours and deals up to date. Analytics stay privacy-safe and are only available on Plus and Pro tiers.</p>
     </section>
 
-    <section id="portalAccess" class="notice">Log in with an assigned venue-manager account to view this portal.</section>
+    <section id="portalAccess" class="notice">Log in with an assigned bar-owner or venue-manager account to view this dashboard.</section>
+
+    <section id="claimPanel" class="panel is-hidden">
+      <div class="sectionHeader">
+        <div>
+          <div class="eyebrow">Manual claiming</div>
+          <h2>Request access to manage a bar</h2>
+        </div>
+        <p class="muted">For this beta, claims are reviewed manually by admin. Later we can add business email, phone or document verification.</p>
+      </div>
+      <form id="claimForm" class="form">
+        <div class="grid grid--two">
+          <label class="field">Bar name
+            <input name="barName" placeholder="Venue name" required />
+          </label>
+          <label class="field">Suburb
+            <input name="suburb" placeholder="e.g. Fitzroy" />
+          </label>
+        </div>
+        <label class="field">Address
+          <input name="address" placeholder="Street address if known" />
+        </label>
+        <div class="grid grid--two">
+          <label class="field">Your name
+            <input name="requesterName" required />
+          </label>
+          <label class="field">Role at the bar
+            <input name="requesterRole" placeholder="Owner, manager, venue team..." required />
+          </label>
+        </div>
+        <div class="grid grid--two">
+          <label class="field">Contact email
+            <input name="contactEmail" type="email" required />
+          </label>
+          <label class="field">Contact phone optional
+            <input name="contactPhone" />
+          </label>
+        </div>
+        <label class="field">Message optional
+          <textarea name="message" placeholder="Anything that helps admin verify the claim."></textarea>
+        </label>
+        <button class="button button--primary" type="submit">Request bar access</button>
+        <div id="claimStatus" class="notice">Submit a request and admin will review it manually.</div>
+      </form>
+      <div id="claimRequests" class="list" style="margin-top:16px;"></div>
+    </section>
 
     <section id="portalContent" class="is-hidden">
-      <div class="panel form">
-        <label class="field">Assigned venue
-          <select id="venueSelect"></select>
-        </label>
-        <div id="selectedVenueSummary" class="notice"></div>
-      </div>
+      <div class="dashboardShell">
+        <aside class="dashboardSidebar panel">
+          <label class="field">Managed bar
+            <select id="venueSelect"></select>
+          </label>
+          <div id="selectedVenueSummary" class="venueSummaryCard"></div>
+          <nav class="tabNav" aria-label="Bar dashboard sections">
+            <button class="tabButton is-active" type="button" data-tab="overview">Overview</button>
+            <button class="tabButton" type="button" data-tab="profile">Profile</button>
+            <button class="tabButton" type="button" data-tab="beers">Beers / stock</button>
+            <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
+            <button class="tabButton" type="button" data-tab="specials">Deals & specials</button>
+            <button class="tabButton" type="button" data-tab="analytics">Analytics</button>
+            <button class="tabButton" type="button" data-tab="report">Monthly report</button>
+          </nav>
+        </aside>
 
-      <div class="grid grid--two" style="margin-top:16px;">
-        <article class="card">
-          <h2>Listing quality</h2>
-          <div id="qualityScore" class="qualityScore"></div>
-          <ul id="qualityChecklist" class="checkList"></ul>
-        </article>
-        <article class="card">
-          <h2>Privacy-safe insights</h2>
-          <p id="privacyCopy" class="muted"></p>
-          <div id="insightGrid" class="insightGrid"></div>
-        </article>
-      </div>
+        <div class="dashboardMain">
+          <section class="tabPanel" data-panel="overview">
+            <div class="grid grid--two">
+              <article class="card">
+                <h2 id="overviewName">Your bar</h2>
+                <p id="overviewMeta" class="muted"></p>
+                <div id="tierBadge" class="pill">Basic</div>
+                <div id="completionGrid" class="completionGrid"></div>
+              </article>
+              <article class="card">
+                <h2>Quick actions</h2>
+                <p class="muted">Fast edits for the things users care about most.</p>
+                <div class="actionRow">
+                  <button class="button button--primary" type="button" data-jump-tab="beers">Add beer on tap</button>
+                  <button class="button" type="button" data-jump-tab="happy-hours">Add happy hour</button>
+                  <button class="button" type="button" data-jump-tab="specials">Add special</button>
+                  <button class="button" type="button" data-jump-tab="profile">Edit profile</button>
+                </div>
+              </article>
+            </div>
 
-      <section class="panel" style="margin-top:16px;">
-        <div class="missionCard__top">
-          <div>
-            <h2>Current verified data</h2>
-            <p class="helperCopy">Public prices are still controlled by access rules and verification. Unknown prices are never shown as $0.</p>
-          </div>
-          <div class="actionRow">
-            <button id="copyUpdateLink" class="button" type="button">Copy update link</button>
-            <a id="openSubmitLink" class="button button--primary" href="/submit.html">Open submit flow</a>
-          </div>
+            <div class="grid grid--two" style="margin-top:16px;">
+              <article class="panel">
+                <h2>Listing quality</h2>
+                <div id="qualityScore" class="qualityScore"></div>
+                <ul id="qualityChecklist" class="checkList"></ul>
+              </article>
+              <article class="panel">
+                <h2>Current public data</h2>
+                <p class="helperCopy">Verified public prices remain controlled by BeerMap access rules. Unknown prices are never shown as $0.</p>
+                <div id="priceRecords" class="list"></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="tabPanel is-hidden" data-panel="profile">
+            <form id="profileForm" class="panel form">
+              <div class="sectionHeader">
+                <div>
+                  <h2>Bar profile details</h2>
+                  <p class="muted">Keep contact details, opening notes and venue tags current.</p>
+                </div>
+                <button class="button button--primary" type="submit">Save profile</button>
+              </div>
+              <div class="grid grid--two">
+                <label class="field">Bar name
+                  <input name="name" required />
+                </label>
+                <label class="field">Suburb
+                  <input name="suburb" placeholder="e.g. Fitzroy" />
+                </label>
+              </div>
+              <label class="field">Address
+                <input name="address" placeholder="Street address" />
+              </label>
+              <div class="grid grid--two">
+                <label class="field">Phone
+                  <input name="phone" placeholder="Optional" />
+                </label>
+                <label class="field">Website
+                  <input name="website" placeholder="https://..." />
+                </label>
+              </div>
+              <div class="grid grid--two">
+                <label class="field">Instagram / social link
+                  <input name="instagram" placeholder="https://instagram.com/..." />
+                </label>
+                <label class="field">Membership tier
+                  <select name="membershipTier">
+                    <option value="basic">Basic</option>
+                    <option value="plus">Plus</option>
+                    <option value="pro">Pro</option>
+                  </select>
+                  <span class="fieldHint">Only admin can change tier. Non-admin saves keep the existing tier.</span>
+                </label>
+              </div>
+              <label class="field">Short description
+                <textarea name="description" placeholder="A short venue description for future listing pages."></textarea>
+              </label>
+              <label class="field">Opening hours note
+                <textarea name="openingHoursNote" placeholder="e.g. Mon-Thu 12pm-late, Fri-Sun 11am-late."></textarea>
+              </label>
+              <div>
+                <div class="field" style="margin-bottom:8px;">Venue tags</div>
+                <div id="venueTags" class="dayChecklist"></div>
+              </div>
+              <label class="dayChip">
+                <input name="active" type="checkbox" checked />
+                Active / listed
+              </label>
+              <div id="profileStatus" class="notice">Profile edits save to this managed bar only.</div>
+            </form>
+          </section>
+
+          <section class="tabPanel is-hidden" data-panel="beers">
+            <div class="grid grid--two">
+              <form id="beerForm" class="panel form">
+                <div class="sectionHeader">
+                  <div>
+                    <h2>Beers, stock and on tap</h2>
+                    <p class="muted">Required: beer name only. Prices and stock status are optional but useful.</p>
+                  </div>
+                </div>
+                <input name="id" type="hidden" />
+                <label class="field">Beer name
+                  <input name="beerName" placeholder="e.g. Carlton Draught" required />
+                </label>
+                <div class="grid grid--two">
+                  <label class="field">Brewery
+                    <input name="brewery" placeholder="Optional" />
+                  </label>
+                  <label class="field">Style
+                    <input name="style" placeholder="Lager, pale ale..." />
+                  </label>
+                </div>
+                <div class="grid grid--three">
+                  <label class="field">ABV
+                    <input name="abv" type="number" min="0" max="25" step="0.1" placeholder="Optional" />
+                  </label>
+                  <label class="field">Serve size
+                    <select name="serveSize">
+                      <option value="">Not set</option>
+                      <option value="pint">Pint</option>
+                      <option value="schooner">Schooner</option>
+                      <option value="pot">Pot</option>
+                      <option value="jug">Jug</option>
+                      <option value="can">Can</option>
+                      <option value="bottle">Bottle</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </label>
+                  <label class="field">Price
+                    <input name="price" type="number" min="0" max="250" step="0.01" placeholder="Optional" />
+                  </label>
+                </div>
+                <div class="dayChecklist">
+                  <label class="dayChip"><input name="onTap" type="checkbox" /> On tap</label>
+                  <label class="dayChip"><input name="inStock" type="checkbox" checked /> In stock</label>
+                </div>
+                <label class="field">Notes
+                  <textarea name="notes" placeholder="Optional tap-list, keg or service notes."></textarea>
+                </label>
+                <div class="actionRow">
+                  <button class="button button--primary" type="submit">Save beer</button>
+                  <button id="resetBeerForm" class="button" type="button">Clear form</button>
+                </div>
+                <div id="beerStatus" class="notice">Add the beers you want users to see as available now.</div>
+              </form>
+              <article class="panel">
+                <h2>Current beer list</h2>
+                <div id="beerList" class="list"></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="tabPanel is-hidden" data-panel="happy-hours">
+            <div class="grid grid--two">
+              <form id="happyHourForm" class="panel form">
+                <h2>Happy hours</h2>
+                <input name="id" type="hidden" />
+                <label class="field">Title
+                  <input name="title" placeholder="e.g. Weekday happy hour" required />
+                </label>
+                <div>
+                  <div class="field" style="margin-bottom:8px;">Days</div>
+                  <div id="happyHourDays" class="dayChecklist"></div>
+                </div>
+                <div class="grid grid--two">
+                  <label class="field">Start time
+                    <input name="startTime" type="time" required />
+                  </label>
+                  <label class="field">End time
+                    <input name="endTime" type="time" required />
+                  </label>
+                </div>
+                <label class="field">Description / deal details
+                  <textarea name="description" placeholder="e.g. $9 house pints, selected taps only." required></textarea>
+                </label>
+                <label class="dayChip"><input name="active" type="checkbox" checked /> Active</label>
+                <div class="actionRow">
+                  <button class="button button--primary" type="submit">Save happy hour</button>
+                  <button id="resetHappyHourForm" class="button" type="button">Clear form</button>
+                </div>
+                <div id="happyHourStatus" class="notice">Add days, times and clear conditions.</div>
+              </form>
+              <article class="panel">
+                <h2>Current happy hours</h2>
+                <div id="happyHourList" class="list"></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="tabPanel is-hidden" data-panel="specials">
+            <div class="grid grid--two">
+              <form id="specialForm" class="panel form">
+                <h2>Deals and specials</h2>
+                <input name="id" type="hidden" />
+                <label class="field">Deal title
+                  <input name="title" placeholder="e.g. Thursday burger and pint" required />
+                </label>
+                <label class="field">Description
+                  <textarea name="description" placeholder="Describe the special and any conditions." required></textarea>
+                </label>
+                <div class="grid grid--two">
+                  <label class="field">Price optional
+                    <input name="price" type="number" min="0" max="250" step="0.01" />
+                  </label>
+                  <label class="field">Discount optional
+                    <input name="discount" placeholder="e.g. 20% off selected pints" />
+                  </label>
+                </div>
+                <div class="grid grid--two">
+                  <label class="field">Start date optional
+                    <input name="startsAt" type="date" />
+                  </label>
+                  <label class="field">End date optional
+                    <input name="endsAt" type="date" />
+                  </label>
+                </div>
+                <label class="field">Day/time restrictions optional
+                  <input name="scheduleNote" placeholder="e.g. Fridays 4pm-7pm only" />
+                </label>
+                <div class="dayChecklist">
+                  <label class="dayChip"><input name="exclusive" type="checkbox" /> Exclusive special</label>
+                  <label class="dayChip"><input name="active" type="checkbox" checked /> Active</label>
+                </div>
+                <div class="actionRow">
+                  <button class="button button--primary" type="submit">Save special</button>
+                  <button id="resetSpecialForm" class="button" type="button">Clear form</button>
+                </div>
+                <div id="specialStatus" class="notice">Use this for current deals, weekly specials or future featured-special ideas.</div>
+              </form>
+              <article class="panel">
+                <h2>Current deals and specials</h2>
+                <div id="specialList" class="list"></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="tabPanel is-hidden" data-panel="analytics">
+            <article id="analyticsGate" class="panel"></article>
+            <article id="analyticsContent" class="panel is-hidden">
+              <div class="sectionHeader">
+                <div>
+                  <h2>Area analytics</h2>
+                  <p class="muted">Aggregated trends only. Individual user clickstream, precise location and competitor-level private data are not shown.</p>
+                </div>
+              </div>
+              <div id="analyticsGrid" class="metricGrid"></div>
+              <div class="grid grid--two" style="margin-top:16px;">
+                <div>
+                  <h3>Most searched beers in suburb</h3>
+                  <div id="areaBeerSearches" class="list"></div>
+                </div>
+                <div>
+                  <h3>Most searched styles in suburb</h3>
+                  <div id="areaStyleSearches" class="list"></div>
+                </div>
+              </div>
+            </article>
+          </section>
+
+          <section class="tabPanel is-hidden" data-panel="report">
+            <article id="reportGate" class="panel"></article>
+            <article id="reportContent" class="panel is-hidden">
+              <div class="sectionHeader">
+                <div>
+                  <h2>Monthly report preview</h2>
+                  <p class="muted">This preview uses current beta analytics where available. Real automated reports can be generated later.</p>
+                </div>
+                <label class="field compactField">Month
+                  <input id="reportMonth" type="month" />
+                </label>
+              </div>
+              <div id="monthlyReport" class="list"></div>
+            </article>
+          </section>
         </div>
-        <div id="priceRecords" class="list"></div>
-      </section>
-
-      <section class="grid grid--two" style="margin-top:16px;">
-        <article class="panel">
-          <h2>Reports and requests</h2>
-          <div id="venueSignals" class="list"></div>
-        </article>
-        <form id="venueUpdateForm" class="panel form">
-          <h2>Submit a venue update</h2>
-          <p class="helperCopy">This creates a pending review item. Admin can publish it as venue-confirmed after checking the source.</p>
-          <label class="field">Beer name
-            <input name="beerName" placeholder="e.g. Carlton Draught" required />
-          </label>
-          <div class="grid grid--two">
-            <label class="field">Serving size
-              <select name="servingSize">
-                <option value="pint">Pint</option>
-                <option value="schooner">Schooner</option>
-                <option value="pot">Pot</option>
-                <option value="jug">Jug</option>
-                <option value="can">Can</option>
-                <option value="bottle">Bottle</option>
-                <option value="other">Other</option>
-              </select>
-            </label>
-            <label class="field">Price
-              <input name="price" type="number" min="0" max="250" step="0.01" placeholder="Optional if just updating tap status" />
-            </label>
-          </div>
-          <label class="field">Happy-hour / tap-list notes
-            <textarea name="notes" placeholder="Days, times, specials, tap-list source, or what changed."></textarea>
-          </label>
-          <button class="button button--primary" type="submit">Submit for review</button>
-          <div id="updateStatus" class="notice">Venue updates are reviewed before publishing.</div>
-        </form>
-      </section>
+      </div>
     </section>
 
-    <p class="footerCopy">Venue insights are aggregate and directional while the beta grows. We do not expose individual user clickstream or exact user location to venues. Drink responsibly.</p>
+    <p class="footerCopy">Venue insights are aggregate and directional while the beta grows. We do not expose individual user clickstream or exact user location to venues. Prices may change. Drink responsibly.</p>
   </main>
 
   <script>
     let currentPortal = null;
+    const tagOptions = ["has food", "outdoor seating", "good for groups", "sports on TV", "dog friendly", "live music", "near public transport"];
+    const dayOptions = [
+      ["mon", "Mon"],
+      ["tue", "Tue"],
+      ["wed", "Wed"],
+      ["thu", "Thu"],
+      ["fri", "Fri"],
+      ["sat", "Sat"],
+      ["sun", "Sun"],
+    ];
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;",
+      }[char]));
+    }
 
     function money(value) {
       return value == null ? "No verified price" : new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(value);
     }
 
+    function prettyTier(value) {
+      return value === "pro" ? "Pro" : value === "plus" ? "Plus" : "Basic";
+    }
+
+    function nullableNumber(value) {
+      return value === "" || value == null ? null : Number(value);
+    }
+
+    function field(form, name) {
+      return form.elements.namedItem(name);
+    }
+
+    function showTab(name) {
+      document.querySelectorAll(".tabButton").forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.tab === name);
+      });
+      document.querySelectorAll(".tabPanel").forEach((panel) => {
+        panel.classList.toggle("is-hidden", panel.dataset.panel !== name);
+      });
+    }
+
+    function renderChecklist(container, options, selected = []) {
+      const selectedSet = new Set(selected);
+      container.innerHTML = options.map((option) => {
+        const value = Array.isArray(option) ? option[0] : option;
+        const label = Array.isArray(option) ? option[1] : option;
+        return `<label class="dayChip"><input type="checkbox" value="${escapeHtml(value)}" ${selectedSet.has(value) ? "checked" : ""} /> ${escapeHtml(label)}</label>`;
+      }).join("");
+    }
+
+    function checkedValues(container) {
+      return Array.from(container.querySelectorAll("input:checked")).map((input) => input.value);
+    }
+
     function renderPortal(data) {
       currentPortal = data;
-      portalContent.classList.remove("is-hidden");
-      portalAccess.classList.add("is-hidden");
-      venueSelect.innerHTML = data.assignments.length
-        ? data.assignments.map((assignment) => `<option value="${assignment.venueId}" ${data.selectedVenue?.venueId === assignment.venueId ? "selected" : ""}>${assignment.venueName}</option>`).join("")
-        : '<option>No assigned venues yet</option>';
-
-      if (!data.selectedVenue || !data.insights) {
-        selectedVenueSummary.textContent = "No assigned venue selected yet.";
+      if (data.accessState === "claim_required") {
+        portalContent.classList.add("is-hidden");
+        portalAccess.classList.add("is-hidden");
+        claimPanel.classList.remove("is-hidden");
+        const requests = data.claimRequests || [];
+        claimRequests.innerHTML = requests.length
+          ? requests.map((request) => `
+            <div class="listItem dataRow">
+              <div>
+                <strong>${escapeHtml(request.barName)}</strong>
+                <div class="muted">${escapeHtml(request.suburb || "Melbourne")} · ${escapeHtml(request.status)} · submitted ${MelbBeerBusiness.formatDate(request.createdAt)}</div>
+              </div>
+            </div>
+          `).join("")
+          : '<div class="listItem muted">No claim requests yet.</div>';
         return;
       }
 
-      selectedVenueSummary.textContent = `${data.selectedVenue.venueName}${data.selectedVenue.suburb ? ` · ${data.selectedVenue.suburb}` : ""}`;
-      privacyCopy.textContent = data.privacyCopy;
-      openSubmitLink.href = data.updateLink || "/submit.html";
+      portalContent.classList.remove("is-hidden");
+      portalAccess.classList.add("is-hidden");
+      claimPanel.classList.add("is-hidden");
 
-      const quality = data.insights.listingQuality;
-      qualityScore.innerHTML = `<strong>${quality.score}%</strong><span class="muted">listing quality</span>`;
-      qualityChecklist.innerHTML = quality.checklist
-        .map((item) => `<li>${item.complete ? "Complete" : "Needs work"} · ${item.label}</li>`)
-        .join("");
+      venueSelect.innerHTML = data.assignments.length
+        ? data.assignments.map((assignment) => `<option value="${escapeHtml(assignment.venueId)}" ${data.selectedVenue?.venueId === assignment.venueId ? "selected" : ""}>${escapeHtml(assignment.venueName)}</option>`).join("")
+        : '<option>No assigned bars yet</option>';
 
-      const metrics = data.insights.aggregateInsights;
-      insightGrid.innerHTML = [
-        ["Venue views", metrics.venueViews],
-        ["Price reveals", metrics.priceReveals],
-        ["Wrong-price reports", metrics.wrongPriceReports],
-        ["Verify requests", metrics.verifyRequests],
-        ["Updates received", metrics.updatesReceived],
-        ["Marker clicks", metrics.markerClicks],
-      ].map(([label, value]) => `<div class="metricCard"><div class="metricValue">${value}</div><div class="metricLabel">${label}</div></div>`).join("");
+      if (!data.selectedVenue || !data.profile) {
+        selectedVenueSummary.innerHTML = "<strong>No assigned bar selected yet.</strong><p class='muted'>Ask admin to assign your account to a venue.</p>";
+        return;
+      }
 
-      priceRecords.innerHTML = data.insights.priceRecords.length
-        ? data.insights.priceRecords.map((record) => `
-          <div class="listItem">
-            <strong>${record.beerName} · ${record.servingSize}</strong>
-            <div class="muted">${money(record.price)} · ${record.confidence.replaceAll("_", " ")} · Last verified ${MelbBeerBusiness.formatDate(record.lastVerifiedAt)}</div>
+      const profile = data.profile;
+      const tier = data.tier || { tier: profile.membershipTier, analyticsLocked: true };
+      selectedVenueSummary.innerHTML = `
+        <strong>${escapeHtml(profile.name)}</strong>
+        <span>${escapeHtml(profile.suburb || "Melbourne")}</span>
+        <span class="pill">${escapeHtml(prettyTier(profile.membershipTier))}</span>
+      `;
+
+      overviewName.textContent = profile.name;
+      overviewMeta.textContent = [profile.suburb, profile.address].filter(Boolean).join(" · ") || "Add suburb and address in Profile.";
+      tierBadge.textContent = prettyTier(profile.membershipTier);
+      tierBadge.className = `pill ${profile.membershipTier === "pro" ? "pill--premium" : ""}`;
+
+      const beers = data.inventory?.beers || [];
+      const happyHours = data.inventory?.happyHours || [];
+      const specials = data.inventory?.specials || [];
+      const completion = [
+        ["Profile", Boolean(profile.name && profile.suburb && profile.description)],
+        ["Beers added", beers.length > 0],
+        ["Deals added", specials.length > 0],
+        ["Happy hours", happyHours.length > 0],
+      ];
+      completionGrid.innerHTML = completion.map(([label, done]) => `
+        <div class="completionItem ${done ? "is-complete" : ""}">
+          <strong>${done ? "Done" : "Next"}</strong>
+          <span>${label}</span>
+        </div>
+      `).join("");
+
+      renderProfileForm(profile);
+      renderBeerList(beers);
+      renderHappyHours(happyHours);
+      renderSpecials(specials);
+      renderOverviewData(data);
+      renderAnalytics(data);
+      renderMonthlyReport(data);
+    }
+
+    function renderProfileForm(profile) {
+      field(profileForm, "name").value = profile.name || "";
+      field(profileForm, "address").value = profile.address || "";
+      field(profileForm, "suburb").value = profile.suburb || "";
+      field(profileForm, "phone").value = profile.phone || "";
+      field(profileForm, "website").value = profile.website || "";
+      field(profileForm, "instagram").value = profile.instagram || "";
+      field(profileForm, "description").value = profile.description || "";
+      field(profileForm, "openingHoursNote").value = profile.openingHours?.note || "";
+      field(profileForm, "membershipTier").value = profile.membershipTier || "basic";
+      field(profileForm, "active").checked = Boolean(profile.active);
+      renderChecklist(venueTags, tagOptions, profile.venueTags || []);
+    }
+
+    function renderOverviewData(data) {
+      const quality = data.insights?.listingQuality;
+      if (quality) {
+        qualityScore.innerHTML = `<strong>${quality.score}%</strong><span class="muted">listing quality</span>`;
+        qualityChecklist.innerHTML = quality.checklist
+          .map((item) => `<li>${item.complete ? "Complete" : "Needs work"} · ${escapeHtml(item.label)}</li>`)
+          .join("");
+      }
+
+      const records = data.insights?.priceRecords || [];
+      priceRecords.innerHTML = records.length
+        ? records.map((record) => `
+          <div class="listItem dataRow">
+            <div>
+              <strong>${escapeHtml(record.beerName)} · ${escapeHtml(record.servingSize)}</strong>
+              <div class="muted">${escapeHtml(record.confidence.replaceAll("_", " "))} · Last verified ${MelbBeerBusiness.formatDate(record.lastVerifiedAt)}</div>
+            </div>
+            <span class="rowPrice">${money(record.price)}</span>
           </div>
         `).join("")
-        : '<div class="listItem muted">No verified price rows yet. Submit a tap-list photo or add beer rows to improve this listing.</div>';
+        : '<div class="listItem muted">No verified price rows yet. Add beers, upload a tap-list source, or submit verified data for review.</div>';
+    }
 
-      const reports = data.insights.wrongPriceReports.map((report) => `Wrong price: ${report.beerName || report.reason}`);
-      const requests = data.insights.requests.map((request) => `Request: ${request.requestType.replaceAll("_", " ")}`);
-      venueSignals.innerHTML = [...reports, ...requests].length
-        ? [...reports, ...requests].slice(0, 8).map((label) => `<div class="listItem">${label}</div>`).join("")
-        : '<div class="listItem muted">No open reports or user requests for this venue yet.</div>';
+    function renderBeerList(beers) {
+      beerList.innerHTML = beers.length
+        ? beers.map((beer) => `
+          <div class="listItem dataRow">
+            <div>
+              <strong>${escapeHtml(beer.beerName)}</strong>
+              <div class="muted">${escapeHtml([beer.brewery, beer.style, beer.serveSize].filter(Boolean).join(" · ") || "No brewery/style set")}</div>
+              <div class="miniStatRow">
+                <span>${beer.onTap ? "On tap" : "Off tap"}</span>
+                <span>${beer.inStock ? "In stock" : "Out of stock"}</span>
+                <span>${money(beer.price)}</span>
+              </div>
+            </div>
+            <div class="rowActions">
+              <button class="button button--small" type="button" data-edit-beer="${escapeHtml(beer.id)}">Edit</button>
+              <button class="button button--small button--danger" type="button" data-delete-beer="${escapeHtml(beer.id)}">Remove</button>
+            </div>
+          </div>
+        `).join("")
+        : '<div class="emptyState"><strong>No beers yet.</strong><br />Add your first beer so BeerMap users can see what is available now.</div>';
+    }
+
+    function renderHappyHours(happyHours) {
+      happyHourList.innerHTML = happyHours.length
+        ? happyHours.map((item) => `
+          <div class="listItem dataRow">
+            <div>
+              <strong>${escapeHtml(item.title)}</strong>
+              <div class="muted">${escapeHtml(item.daysOfWeek.join(", ").toUpperCase())} · ${escapeHtml(item.startTime)}-${escapeHtml(item.endTime)} · ${item.active ? "Active" : "Inactive"}</div>
+              <p class="helperCopy">${escapeHtml(item.description)}</p>
+            </div>
+            <div class="rowActions">
+              <button class="button button--small" type="button" data-edit-happy-hour="${escapeHtml(item.id)}">Edit</button>
+              <button class="button button--small button--danger" type="button" data-delete-happy-hour="${escapeHtml(item.id)}">Remove</button>
+            </div>
+          </div>
+        `).join("")
+        : '<div class="emptyState"><strong>No happy hours yet.</strong><br />Add a happy hour to help nearby users find your best times to visit.</div>';
+    }
+
+    function renderSpecials(specials) {
+      specialList.innerHTML = specials.length
+        ? specials.map((item) => `
+          <div class="listItem dataRow">
+            <div>
+              <strong>${escapeHtml(item.title)}</strong>
+              <div class="muted">${item.active ? "Active" : "Inactive"}${item.exclusive ? " · Exclusive special" : ""}${item.price != null ? ` · ${money(item.price)}` : ""}</div>
+              <p class="helperCopy">${escapeHtml(item.description)}</p>
+            </div>
+            <div class="rowActions">
+              <button class="button button--small" type="button" data-edit-special="${escapeHtml(item.id)}">Edit</button>
+              <button class="button button--small button--danger" type="button" data-delete-special="${escapeHtml(item.id)}">Remove</button>
+            </div>
+          </div>
+        `).join("")
+        : '<div class="emptyState"><strong>No deals or specials yet.</strong><br />Add weekly deals or active specials so users know what is current.</div>';
+    }
+
+    function renderAnalytics(data) {
+      const locked = data.tier?.analyticsLocked;
+      analyticsGate.classList.toggle("is-hidden", !locked);
+      analyticsContent.classList.toggle("is-hidden", locked);
+      if (locked) {
+        analyticsGate.innerHTML = `
+          <h2>Analytics are available on Plus</h2>
+          <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Plus to view privacy-safe suburb analytics and monthly reports.")}</p>
+          <div class="notice">Basic bar accounts can still manage profile details, beers, prices, happy hours, deals and specials.</div>
+          <div class="actionRow">
+            <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
+            <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+          </div>
+        `;
+        return;
+      }
+
+      const analytics = data.analytics || {};
+      analyticsGrid.innerHTML = [
+        ["Bar lookups", analytics.barLookups],
+        ["Profile views", analytics.profileViews],
+        ["Beer list views", analytics.beerListViews],
+        ["Specials views", analytics.specialsViews],
+        ["Marker clicks", analytics.markerClicks],
+        ["Suburb searches", analytics.areaSearches],
+      ].map(([label, value]) => `<div class="metricCard"><div class="metricValue">${Number(value || 0)}</div><div class="metricLabel">${escapeHtml(label)}</div></div>`).join("");
+
+      const renderTrendRows = (rows) => rows?.length
+        ? rows.map((row) => `<div class="listItem dataRow"><strong>${escapeHtml(row.key)}</strong><span class="pill">${Number(row.count)} searches</span></div>`).join("")
+        : `<div class="listItem muted">Not enough suburb data yet. Your report will become more useful as more users search nearby.${analytics.privacyThreshold ? ` Minimum threshold: ${Number(analytics.privacyThreshold)} relevant events.` : ""}</div>`;
+
+      areaBeerSearches.innerHTML = renderTrendRows(analytics.areaBeerSearches);
+      areaStyleSearches.innerHTML = renderTrendRows(analytics.areaStyleSearches);
+    }
+
+    function renderMonthlyReport(data) {
+      const locked = data.tier?.analyticsLocked;
+      reportGate.classList.toggle("is-hidden", !locked);
+      reportContent.classList.toggle("is-hidden", locked);
+      if (locked) {
+        reportGate.innerHTML = `
+          <h2>Monthly reports are a Plus feature</h2>
+          <p class="muted">Reports summarise your venue lookups, beer-list interest, special views and privacy-safe suburb trends.</p>
+          <div class="notice">Upgrade to Plus or Pro to preview monthly reports once there is enough suburb data.</div>
+          <div class="actionRow">
+            <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
+            <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+          </div>
+        `;
+        return;
+      }
+
+      const report = data.monthlyReport?.data?.summary || {};
+      reportMonth.value = data.monthlyReport?.month || new Date().toISOString().slice(0, 7);
+      const suggestedActions = report.suggestedActions || ["Keep your tap list current and add happy-hour conditions clearly."];
+      monthlyReport.innerHTML = `
+        <div class="grid grid--four">
+          ${[
+            ["Bar lookups", report.totalBarLookups],
+            ["Profile views", report.totalProfileViews],
+            ["Beer list views", report.totalBeerListViews],
+            ["Special/deal views", report.totalSpecialsDealsViews],
+          ].map(([label, value]) => `<div class="metricCard"><div class="metricValue">${Number(value || 0)}</div><div class="metricLabel">${escapeHtml(label)}</div></div>`).join("")}
+        </div>
+        <div class="listItem" style="margin-top:12px;">
+          <strong>Suggested actions</strong>
+          <ul class="featureList">${suggestedActions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+        </div>
+      `;
     }
 
     async function loadPortal(venueId = null) {
@@ -156,65 +671,258 @@
       renderPortal(data);
     }
 
+    function selectedVenueId() {
+      return currentPortal?.selectedVenue?.venueId;
+    }
+
+    function resetForm(form) {
+      form.reset();
+      field(form, "id").value = "";
+    }
+
+    async function saveAndReload(path, body, statusElement, successMessage) {
+      const result = await MelbBeerBusiness.apiFetch(path, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      MelbBeerBusiness.setStatus(statusElement, result.message || successMessage);
+      await loadPortal(selectedVenueId());
+      return result;
+    }
+
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("venue-portal");
       MelbBeerBusiness.installFieldTestChrome();
+      renderChecklist(venueTags, tagOptions);
+      renderChecklist(happyHourDays, dayOptions);
 
       try {
         await loadPortal(new URLSearchParams(window.location.search).get("venueId"));
       } catch (error) {
-        MelbBeerBusiness.setStatus(portalAccess, `${error.message || "Venue portal unavailable."} Ask admin to assign your account to a venue.`, true);
+        claimPanel.classList.add("is-hidden");
+        MelbBeerBusiness.setStatus(portalAccess, error.message || "Bar dashboard unavailable. Log in, confirm 18+, or ask admin to assign your account to a venue.", true);
       }
+
+      document.querySelectorAll(".tabButton").forEach((button) => {
+        button.addEventListener("click", () => showTab(button.dataset.tab));
+      });
+      document.querySelectorAll("[data-jump-tab]").forEach((button) => {
+        button.addEventListener("click", () => showTab(button.dataset.jumpTab));
+      });
 
       venueSelect.addEventListener("change", () => {
         void loadPortal(venueSelect.value).catch((error) => MelbBeerBusiness.setStatus(portalAccess, error.message, true));
       });
 
-      copyUpdateLink.addEventListener("click", async () => {
-        const link = currentPortal?.updateLink ? new URL(currentPortal.updateLink, window.location.origin).toString() : window.location.href;
-        await navigator.clipboard.writeText(link).catch(() => {});
-        await MelbBeerBusiness.trackEvent("venue_qr_link_copied", { venueId: currentPortal?.selectedVenue?.venueId || null });
-        copyUpdateLink.textContent = "Copied";
-        window.setTimeout(() => { copyUpdateLink.textContent = "Copy update link"; }, 1600);
-      });
-
-      venueUpdateForm.addEventListener("submit", async (event) => {
+      claimForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        if (!currentPortal?.selectedVenue) {
-          return;
-        }
-
-        const form = Object.fromEntries(new FormData(venueUpdateForm).entries());
-        const price = form.price === "" ? null : Number(form.price);
-        const body = {
-          venueId: currentPortal.selectedVenue.venueId,
-          venueName: currentPortal.selectedVenue.venueName,
-          suburb: currentPortal.selectedVenue.suburb,
-          submissionType: "single_beer_price",
-          observedAt: new Date().toISOString(),
-          sourcePhotoDataUrl: null,
-          sourcePhotoUrl: null,
-          notes: form.notes || null,
-          items: [{
-            beerName: form.beerName,
-            servingSize: form.servingSize,
-            price,
-            isHappyHourPrice: false,
-            happyHourDetails: form.notes || null,
-            isOnTap: "unknown",
-          }],
-        };
+        const body = Object.fromEntries(new FormData(claimForm).entries());
+        body.barId = null;
+        body.address = body.address || null;
+        body.suburb = body.suburb || null;
+        body.contactPhone = body.contactPhone || null;
+        body.message = body.message || null;
 
         try {
-          const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(currentPortal.selectedVenue.venueId)}/submissions`, {
+          const result = await MelbBeerBusiness.apiFetch("/api/business/bar-claim-requests", {
             method: "POST",
             body: JSON.stringify(body),
           });
-          venueUpdateForm.reset();
-          MelbBeerBusiness.setStatus(updateStatus, result.message || "Venue update submitted for review.");
-          await loadPortal(currentPortal.selectedVenue.venueId);
+          claimForm.reset();
+          MelbBeerBusiness.setStatus(claimStatus, result.message || "Claim request submitted.");
+          await loadPortal();
         } catch (error) {
-          MelbBeerBusiness.setStatus(updateStatus, error.message || "Could not submit venue update.", true);
+          MelbBeerBusiness.setStatus(claimStatus, error.message || "Could not submit claim request.", true);
+        }
+      });
+
+      profileForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!selectedVenueId()) return;
+        const body = {
+          name: field(profileForm, "name").value,
+          address: field(profileForm, "address").value || null,
+          suburb: field(profileForm, "suburb").value || null,
+          area: field(profileForm, "suburb").value || null,
+          phone: field(profileForm, "phone").value || null,
+          website: field(profileForm, "website").value || null,
+          instagram: field(profileForm, "instagram").value || null,
+          description: field(profileForm, "description").value || null,
+          openingHours: field(profileForm, "openingHoursNote").value ? { note: field(profileForm, "openingHoursNote").value } : {},
+          venueTags: checkedValues(venueTags),
+          membershipTier: field(profileForm, "membershipTier").value,
+          active: field(profileForm, "active").checked,
+        };
+        try {
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/profile`, body, profileStatus, "Profile saved.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus(profileStatus, error.message || "Could not save profile.", true);
+        }
+      });
+
+      beerForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!selectedVenueId()) return;
+        const body = {
+          id: field(beerForm, "id").value || null,
+          beerName: field(beerForm, "beerName").value,
+          brewery: field(beerForm, "brewery").value || null,
+          style: field(beerForm, "style").value || null,
+          abv: nullableNumber(field(beerForm, "abv").value),
+          serveSize: field(beerForm, "serveSize").value || null,
+          price: nullableNumber(field(beerForm, "price").value),
+          onTap: field(beerForm, "onTap").checked,
+          inStock: field(beerForm, "inStock").checked,
+          notes: field(beerForm, "notes").value || null,
+        };
+        try {
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/beers`, body, beerStatus, "Beer row saved.");
+          resetForm(beerForm);
+          field(beerForm, "inStock").checked = true;
+        } catch (error) {
+          MelbBeerBusiness.setStatus(beerStatus, error.message || "Could not save beer.", true);
+        }
+      });
+
+      happyHourForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!selectedVenueId()) return;
+        const body = {
+          id: field(happyHourForm, "id").value || null,
+          title: field(happyHourForm, "title").value,
+          daysOfWeek: checkedValues(happyHourDays),
+          startTime: field(happyHourForm, "startTime").value,
+          endTime: field(happyHourForm, "endTime").value,
+          description: field(happyHourForm, "description").value,
+          active: field(happyHourForm, "active").checked,
+        };
+        try {
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/happy-hours`, body, happyHourStatus, "Happy hour saved.");
+          resetForm(happyHourForm);
+          field(happyHourForm, "active").checked = true;
+          renderChecklist(happyHourDays, dayOptions);
+        } catch (error) {
+          MelbBeerBusiness.setStatus(happyHourStatus, error.message || "Could not save happy hour.", true);
+        }
+      });
+
+      specialForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!selectedVenueId()) return;
+        const body = {
+          id: field(specialForm, "id").value || null,
+          title: field(specialForm, "title").value,
+          description: field(specialForm, "description").value,
+          price: nullableNumber(field(specialForm, "price").value),
+          discount: field(specialForm, "discount").value || null,
+          startsAt: field(specialForm, "startsAt").value || null,
+          endsAt: field(specialForm, "endsAt").value || null,
+          scheduleNote: field(specialForm, "scheduleNote").value || null,
+          exclusive: field(specialForm, "exclusive").checked,
+          active: field(specialForm, "active").checked,
+        };
+        try {
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/specials`, body, specialStatus, "Special saved.");
+          resetForm(specialForm);
+          field(specialForm, "active").checked = true;
+        } catch (error) {
+          MelbBeerBusiness.setStatus(specialStatus, error.message || "Could not save special.", true);
+        }
+      });
+
+      resetBeerForm.addEventListener("click", () => { resetForm(beerForm); field(beerForm, "inStock").checked = true; });
+      resetHappyHourForm.addEventListener("click", () => { resetForm(happyHourForm); field(happyHourForm, "active").checked = true; renderChecklist(happyHourDays, dayOptions); });
+      resetSpecialForm.addEventListener("click", () => { resetForm(specialForm); field(specialForm, "active").checked = true; });
+
+      document.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !selectedVenueId()) return;
+
+        const beerId = target.dataset.editBeer;
+        if (beerId) {
+          const beer = currentPortal.inventory.beers.find((item) => item.id === beerId);
+          if (!beer) return;
+          field(beerForm, "id").value = beer.id;
+          field(beerForm, "beerName").value = beer.beerName || "";
+          field(beerForm, "brewery").value = beer.brewery || "";
+          field(beerForm, "style").value = beer.style || "";
+          field(beerForm, "abv").value = beer.abv ?? "";
+          field(beerForm, "serveSize").value = beer.serveSize || "";
+          field(beerForm, "price").value = beer.price ?? "";
+          field(beerForm, "onTap").checked = Boolean(beer.onTap);
+          field(beerForm, "inStock").checked = Boolean(beer.inStock);
+          field(beerForm, "notes").value = beer.notes || "";
+          showTab("beers");
+          return;
+        }
+
+        const upgradeTier = target.dataset.upgradeTier;
+        if (upgradeTier) {
+          try {
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/checkout`, {
+              method: "POST",
+              body: JSON.stringify({ tier: upgradeTier }),
+            });
+            if (result.mode === "demo") {
+              MelbBeerBusiness.setStatus(portalAccess, result.message || "Demo bar tier activated.");
+              await loadPortal(selectedVenueId());
+              return;
+            }
+            window.location.href = result.checkoutUrl;
+          } catch (error) {
+            MelbBeerBusiness.setStatus(portalAccess, error.message || "Could not start bar tier checkout.", true);
+          }
+          return;
+        }
+
+        const happyHourId = target.dataset.editHappyHour;
+        if (happyHourId) {
+          const item = currentPortal.inventory.happyHours.find((entry) => entry.id === happyHourId);
+          if (!item) return;
+          field(happyHourForm, "id").value = item.id;
+          field(happyHourForm, "title").value = item.title || "";
+          renderChecklist(happyHourDays, dayOptions, item.daysOfWeek || []);
+          field(happyHourForm, "startTime").value = item.startTime || "";
+          field(happyHourForm, "endTime").value = item.endTime || "";
+          field(happyHourForm, "description").value = item.description || "";
+          field(happyHourForm, "active").checked = Boolean(item.active);
+          showTab("happy-hours");
+          return;
+        }
+
+        const specialId = target.dataset.editSpecial;
+        if (specialId) {
+          const item = currentPortal.inventory.specials.find((entry) => entry.id === specialId);
+          if (!item) return;
+          field(specialForm, "id").value = item.id;
+          field(specialForm, "title").value = item.title || "";
+          field(specialForm, "description").value = item.description || "";
+          field(specialForm, "price").value = item.price ?? "";
+          field(specialForm, "discount").value = item.discount || "";
+          field(specialForm, "startsAt").value = item.startsAt || "";
+          field(specialForm, "endsAt").value = item.endsAt || "";
+          field(specialForm, "scheduleNote").value = item.scheduleNote || "";
+          field(specialForm, "exclusive").checked = Boolean(item.exclusive);
+          field(specialForm, "active").checked = Boolean(item.active);
+          showTab("specials");
+          return;
+        }
+
+        const deleteTargets = [
+          ["deleteBeer", "beers"],
+          ["deleteHappyHour", "happy-hours"],
+          ["deleteSpecial", "specials"],
+        ];
+        for (const [key, route] of deleteTargets) {
+          const id = target.dataset[key];
+          if (!id) continue;
+          try {
+            await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/${route}/${encodeURIComponent(id)}`, { method: "DELETE" });
+            await loadPortal(selectedVenueId());
+          } catch (error) {
+            MelbBeerBusiness.setStatus(portalAccess, error.message || "Could not remove item.", true);
+          }
+          return;
         }
       });
     });

@@ -71,8 +71,10 @@
     <section class="grid grid--two" style="margin-bottom:16px;">
       <div class="panel">
         <h2>Venue partner interest</h2>
-        <p class="muted">Claim requests and venue-manager interest from the For Bars page.</p>
+        <p class="muted">Venue-manager interest from the For Bars page and authenticated claim requests from the portal.</p>
         <div id="venueInterestRequests" class="list"></div>
+        <h3>Authenticated bar claims</h3>
+        <div id="barClaimRequests" class="list"></div>
       </div>
       <div class="panel">
         <h2>Venue manager assignments</h2>
@@ -285,6 +287,18 @@
       venueInterestRequests.querySelectorAll("[data-interest-id]").forEach((button) => {
         button.addEventListener("click", () => updateVenueInterestStatus(button.dataset.interestId, button.dataset.interestStatus));
       });
+
+      const claimRequests = data.claimRequests || [];
+      barClaimRequests.innerHTML = claimRequests.length
+        ? claimRequests.map((claim) => `
+          <article class="listItem">
+            <strong>${escapeHtml(claim.barName)}</strong>
+            <span class="pill">${escapeHtml(claim.status)}</span>
+            <div class="muted">${escapeHtml(claim.suburb || "Suburb not supplied")} · ${escapeHtml(claim.requesterName)} · ${escapeHtml(claim.requesterRole)} · ${escapeHtml(claim.contactEmail)}${claim.contactPhone ? ` · ${escapeHtml(claim.contactPhone)}` : ""}</div>
+            <div class="muted">${escapeHtml(claim.message || claim.address || "No message supplied")}</div>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No authenticated bar claims yet.</div>';
 
       venueManagerAssignments.innerHTML = data.assignments.length
         ? data.assignments.map((assignment) => `

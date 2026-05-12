@@ -19,6 +19,13 @@ import { createResultsRouter } from "../src/modules/results/results.routes.js";
 const NOW = "2026-05-04T08:00:00.000Z";
 const MONTH_KEY = "2026-05";
 const PREMIUM_UNTIL = "2026-06-03T08:00:00.000Z";
+const PNG_DATA_URL = `data:image/png;base64,${Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+]).toString("base64")}`;
+const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46,
+]).toString("base64")}`;
+const WEBP_DATA_URL = `data:image/webp;base64,${Buffer.from("RIFF0000WEBPVP8 ", "ascii").toString("base64")}`;
 
 let openDatabases: BetterSqlite3.Database[] = [];
 
@@ -45,10 +52,17 @@ function createBusinessService(
     CONTRIBUTOR_UNLOCK_DAYS: 30,
     DEMO_BILLING_MODE: true,
     FIELD_TEST_MODE: false,
+    SESSION_TTL_DAYS: 60,
+    ADMIN_SESSION_TTL_DAYS: 7,
+    ANALYTICS_MIN_BUCKET_SIZE: 5,
+    ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
+    NODE_ENV: "test",
     STRIPE_SECRET_KEY: undefined,
     STRIPE_WEBHOOK_SECRET: undefined,
     STRIPE_PRICE_MONTHLY: undefined,
     STRIPE_PRICE_YEARLY: undefined,
+    STRIPE_PLUS_PRICE_ID: undefined,
+    STRIPE_PRO_PRICE_ID: undefined,
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: undefined,
     SUPABASE_URL: undefined,
     SUPABASE_SERVICE_ROLE_KEY: undefined,
@@ -91,7 +105,7 @@ function createSubmission(
     suburb: "Melbourne",
     submissionType: input.submissionType ?? "full_venue_update",
     observedAt: NOW,
-    sourcePhotoUrl: input.sourcePhotoUrl ?? "data:image/jpeg;base64,abc",
+    sourcePhotoUrl: input.sourcePhotoUrl ?? JPEG_DATA_URL,
     notes: "Menu board photo supplied.",
     now: NOW,
     items: [
@@ -204,7 +218,7 @@ describe("submission payload validation", () => {
     venueName: "Test Bar",
     suburb: "Melbourne",
     observedAt: NOW,
-    sourcePhotoDataUrl: "data:image/jpeg;base64,abc",
+    sourcePhotoDataUrl: JPEG_DATA_URL,
     sourcePhotoUrl: null,
     notes: null,
   };
@@ -466,11 +480,53 @@ describe("production hardening", () => {
       sourcePhotoDataUrl: "data:image/gif;base64,abc",
     }))).toThrow("Upload must be a JPEG");
 
+    expect(() => service.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      sourcePhotoDataUrl: `data:image/png;base64,${Buffer.from("<svg><script>alert(1)</script></svg>").toString("base64")}`,
+    }))).toThrow("safe image file");
+
+    expect(() => service.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      sourcePhotoDataUrl: `data:image/png;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString("base64")}`,
+    }))).toThrow("does not match");
+
     const oversizedImage = `data:image/png;base64,${Buffer.alloc((6 * 1024 * 1024) + 64).toString("base64")}`;
     expect(() => service.createSubmission(user, createSubmissionSchema.parse({
       ...baseSubmission,
       sourcePhotoDataUrl: oversizedImage,
     }))).toThrow("6MB or smaller");
+
+    expect(service.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      venueId: "venue-photo-valid",
+      sourcePhotoDataUrl: PNG_DATA_URL,
+    })).submission.sourcePhotoUrl).toBe(PNG_DATA_URL);
+
+    expect(service.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      venueId: "venue-photo-webp",
+      sourcePhotoDataUrl: WEBP_DATA_URL,
+    })).submission.sourcePhotoUrl).toBe(WEBP_DATA_URL);
+
+    const productionService = createBusinessService(repository, {
+      NODE_ENV: "production",
+      ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
+    });
+    expect(() => productionService.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      venueId: "venue-photo-prod",
+      sourcePhotoDataUrl: PNG_DATA_URL,
+    }))).toThrow("disabled in production");
+
+    const productionOverrideService = createBusinessService(repository, {
+      NODE_ENV: "production",
+      ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: true,
+    });
+    expect(productionOverrideService.createSubmission(user, createSubmissionSchema.parse({
+      ...baseSubmission,
+      venueId: "venue-photo-prod-override",
+      sourcePhotoDataUrl: PNG_DATA_URL,
+    })).submission.sourcePhotoUrl).toBe(PNG_DATA_URL);
   });
 
   it("rejects unsafe external source URLs before review storage", () => {
@@ -528,6 +584,39 @@ describe("production hardening", () => {
     expect(() => service.reviewSubmission(admin, ownSubmission.id, approvePayload)).toThrow("Admins cannot review their own submissions");
     service.reviewSubmission(admin, submission.id, approvePayload);
     expect(() => service.reviewSubmission(otherAdmin, submission.id, approvePayload)).toThrow("Submission has already been reviewed");
+    expect(repository.listSecurityAuditLogs(10)[0]).toEqual(expect.objectContaining({
+      action: "admin_submission_review",
+      actorUserId: admin.id,
+      targetId: submission.id,
+    }));
+  });
+
+  it("redacts sensitive metadata before writing security audit rows", () => {
+    const { repository } = createRepository();
+
+    repository.insertSecurityAuditLog({
+      id: "audit-sensitive",
+      actorUserId: "admin",
+      actorRole: "admin",
+      action: "test_sensitive_metadata",
+      targetType: "submission",
+      targetId: "submission-1",
+      metadata: {
+        token: "super-secret-token",
+        email: "person@example.com",
+        phone: "+61400000000",
+        safe: "kept",
+      },
+      ipHash: null,
+      userAgentHash: null,
+      createdAt: NOW,
+    });
+
+    const metadata = repository.listSecurityAuditLogs(1)[0]?.metadata ?? {};
+    expect(metadata.safe).toBe("kept");
+    expect(metadata.token).toBe("[REDACTED]");
+    expect(metadata.email).toBe("[REDACTED]");
+    expect(metadata.phone).toBe("[REDACTED]");
   });
 
   it("does not expose another user's source upload through the non-admin submission queue", () => {
@@ -539,7 +628,7 @@ describe("production hardening", () => {
       id: "source-submission",
       userId: user.id,
       venueId: "venue-source",
-      sourcePhotoUrl: "data:image/png;base64,private-source",
+      sourcePhotoUrl: PNG_DATA_URL,
     });
 
     expect(service.listSubmissions(otherUser, { mine: false, limit: 10 })).toEqual([]);
@@ -559,6 +648,52 @@ describe("production hardening", () => {
     expect(demoService.handleDemoSubscription(user, "monthly").account.subscriptionStatus).toBe("premium_monthly");
     await expect(stripeService.createCheckout(user, { plan: "monthly" })).rejects.toThrow("Stripe checkout is not configured");
     expect(() => stripeService.handleDemoSubscription(user, "monthly")).toThrow("Demo billing is not enabled");
+  });
+
+  it("rejects expired, revoked, and suspended sessions and supports logout flows", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const signup = service.signup({
+      email: "session-user@example.com",
+      password: "password123",
+      ageConfirmed: true,
+    }, {
+      ip: "203.0.113.10",
+      userAgent: "Vitest Browser",
+    });
+    const authHeader = `Bearer ${signup.token}`;
+
+    expect(service.getAccountFromAuthorization(authHeader, {
+      ip: "203.0.113.10",
+      userAgent: "Vitest Browser",
+    })?.email).toBe("session-user@example.com");
+    const touched = database
+      .prepare("SELECT last_used_at, last_ip_hash, user_agent_hash FROM auth_sessions LIMIT 1")
+      .get() as { last_used_at: string | null; last_ip_hash: string | null; user_agent_hash: string | null } | undefined;
+    expect(touched?.last_used_at).toBeTruthy();
+    expect(touched?.last_ip_hash).toHaveLength(32);
+    expect(touched?.user_agent_hash).toHaveLength(32);
+
+    expect(service.logout(authHeader).revoked).toBe(true);
+    expect(service.getAccountFromAuthorization(authHeader)).toBeNull();
+
+    const second = service.login({ email: "session-user@example.com", password: "password123" });
+    expect(service.logoutAll(service.requireAccount(`Bearer ${second.token}`)).revokedCount).toBeGreaterThanOrEqual(1);
+    expect(service.getAccountFromAuthorization(`Bearer ${second.token}`)).toBeNull();
+
+    const expired = service.login({ email: "session-user@example.com", password: "password123" });
+    database
+      .prepare("UPDATE auth_sessions SET expires_at = ? WHERE token_hash = ?")
+      .run("2020-01-01T00:00:00.000Z", crypto.createHash("sha256").update(expired.token).digest("hex"));
+    expect(service.getAccountFromAuthorization(`Bearer ${expired.token}`)).toBeNull();
+
+    const suspended = service.login({ email: "session-user@example.com", password: "password123" });
+    repository.overrideUserStatus({
+      userId: signup.account.id,
+      status: "suspended",
+      now: NOW,
+    });
+    expect(service.getAccountFromAuthorization(`Bearer ${suspended.token}`)).toBeNull();
   });
 
   it("verifies Stripe webhook signatures before updating subscriptions", () => {
@@ -586,8 +721,41 @@ describe("production hardening", () => {
     expect(service.handleStripeWebhook(signed.body, signed.header)).toEqual({ received: true });
     expect(repository.getAccountById(user.id)?.subscriptionStatus).toBe("premium_yearly");
     expect(repository.getAccountById(user.id)?.stripeCustomerId).toBe("cus_test");
+    expect(service.handleStripeWebhook(signed.body, signed.header)).toEqual({ received: true });
+    expect(repository.listSecurityAuditLogs(10).filter((row) => row.action === "stripe_subscription_update")).toHaveLength(1);
+    expect(() => service.handleStripeWebhook(signed.body, undefined)).toThrow("Missing Stripe webhook signature");
     expect(() => service.handleStripeWebhook(signed.body, "t=1777881600,v1=bad")).toThrow("Invalid Stripe webhook signature");
     expect(() => service.handleStripeWebhook(signed.body, `t=1777881600,v1=${"z".repeat(64)}`)).toThrow("Invalid Stripe webhook signature");
+    expect(repository.listSecurityAuditLogs(10).some((row) => row.action === "stripe_webhook_signature_failed")).toBe(true);
+
+    const deletedPayload = {
+      id: "evt_subscription_deleted",
+      type: "customer.subscription.deleted",
+      data: {
+        object: {
+          id: "sub_user",
+          customer: "cus_test",
+        },
+      },
+    };
+    const deletedSigned = createStripeSignature(deletedPayload, "whsec_test");
+    expect(service.handleStripeWebhook(deletedSigned.body, deletedSigned.header)).toEqual({ received: true });
+    expect(repository.getAccountById(user.id)?.subscriptionStatus).toBe("free");
+
+    updateSubscription(repository, user.id, "premium_monthly");
+    const failedPayload = {
+      id: "evt_invoice_failed",
+      type: "invoice.payment_failed",
+      data: {
+        object: {
+          subscription: "sub_user",
+          customer: "cus_test",
+        },
+      },
+    };
+    const failedSigned = createStripeSignature(failedPayload, "whsec_test");
+    expect(service.handleStripeWebhook(failedSigned.body, failedSigned.header)).toEqual({ received: true });
+    expect(repository.getAccountById(user.id)?.subscriptionStatus).toBe("free");
     expect(() => createBusinessService(repository, {
       DEMO_BILLING_MODE: false,
       STRIPE_WEBHOOK_SECRET: undefined,
@@ -741,6 +909,50 @@ describe("business demo contribution model", () => {
     expect(preview.topSearchedBeers).toEqual([{ key: "carlton_draft", count: 1 }]);
     expect(preview.topClickedVenues).toEqual([{ key: "venue-1", count: 1 }]);
     expect(preview.topSuburbs).toEqual([{ key: "Richmond", count: 2 }]);
+  });
+
+  it("suppresses low-count analytics buckets through admin service views", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, { ANALYTICS_MIN_BUCKET_SIZE: 2 });
+    const admin = createAccount(repository, "analytics-admin", "admin");
+
+    repository.recordEvent({
+      id: "event-low",
+      userId: null,
+      anonymousSessionId: "anon-1",
+      eventType: "beer_search_performed",
+      venueId: null,
+      beerId: "guinness",
+      suburb: "Richmond",
+      metadata: {},
+      createdAt: NOW,
+    });
+    repository.recordEvent({
+      id: "event-high-1",
+      userId: null,
+      anonymousSessionId: "anon-2",
+      eventType: "beer_search_performed",
+      venueId: null,
+      beerId: "carlton_draught",
+      suburb: "Richmond",
+      metadata: {},
+      createdAt: NOW,
+    });
+    repository.recordEvent({
+      id: "event-high-2",
+      userId: null,
+      anonymousSessionId: "anon-3",
+      eventType: "beer_search_performed",
+      venueId: null,
+      beerId: "carlton_draught",
+      suburb: "Richmond",
+      metadata: {},
+      createdAt: NOW,
+    });
+
+    const preview = service.getAnalyticsPreview(admin);
+    expect(preview.topSearchedBeers).toEqual([{ key: "carlton_draught", count: 2 }]);
+    expect(preview.suppressedBelowCount).toBe(2);
   });
 
   it("records near-me events without storing precise coordinates", () => {
@@ -961,7 +1173,23 @@ describe("business demo contribution model", () => {
     });
 
     expect(interest.interest.venueName).toBe("Rooftop Bar");
-    expect(() => service.getVenuePortal(normalUser, { venueId: "venue-1" })).toThrow("Venue manager access required.");
+    expect(service.getVenuePortal(normalUser, { venueId: "venue-1" })).toEqual(expect.objectContaining({
+      accessState: "claim_required",
+      selectedVenue: null,
+    }));
+    const claim = service.createBarClaimRequest(normalUser, {
+      barId: "venue-1",
+      barName: "Rooftop Bar",
+      address: "Level 7, Melbourne",
+      suburb: "Melbourne",
+      requesterName: "Normal User",
+      requesterRole: "Venue manager",
+      contactEmail: "normal@example.com",
+      contactPhone: null,
+      message: "I manage this venue.",
+    });
+    expect(claim.claim.status).toBe("pending");
+    expect(service.getVenuePortal(normalUser, { venueId: "venue-1" }).claimRequests).toHaveLength(1);
 
     const assignment = service.assignVenueManager(admin, {
       userId: manager.id,
@@ -1010,9 +1238,246 @@ describe("business demo contribution model", () => {
 
     const partnerAdmin = service.getVenuePartnerAdmin(admin);
     expect(partnerAdmin.interests[0]).toEqual(expect.objectContaining({ venueName: "Rooftop Bar" }));
+    expect(partnerAdmin.claimRequests[0]).toEqual(expect.objectContaining({ barName: "Rooftop Bar", status: "pending" }));
     expect(partnerAdmin.assignments[0]).toEqual(expect.objectContaining({ userId: manager.id, venueId: "venue-1" }));
 
     const revoked = service.revokeVenueManager(admin, { userId: manager.id, venueId: "venue-1" });
     expect(revoked.assignment.status).toBe("revoked");
+  });
+
+  it("requires a verified account before bar portal or claim access", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const unverified = repository.createAccount({
+      id: "unverified-manager",
+      email: "unverified-manager@example.com",
+      passwordHash: "hash",
+      role: "user",
+      subscriptionStatus: "free",
+      now: NOW,
+    });
+
+    expect(() => service.getVenuePortal(unverified, {})).toThrow("Verify your account");
+    expect(() => service.createBarClaimRequest(unverified, {
+      barId: null,
+      barName: "Example Bar",
+      address: "1 Test St",
+      suburb: "Fitzroy",
+      requesterName: "Taylor",
+      requesterRole: "Owner",
+      contactEmail: "taylor@example.com",
+      contactPhone: null,
+      message: null,
+    })).toThrow("Verify your account");
+  });
+
+  it("lets assigned bar managers maintain profile, inventory, happy hours, and specials", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "bar-admin", "admin");
+    const manager = createAccount(repository, "bar-manager");
+    const normalUser = createAccount(repository, "bar-normal");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "bar-1",
+      venueName: "Corner Hotel",
+      suburb: "Richmond",
+    });
+    const managerAccount = repository.getAccountById(manager.id)!;
+
+    expect(() => service.upsertBarBeer(normalUser, "bar-1", {
+      id: null,
+      beerName: "Carlton Draught",
+      brewery: null,
+      style: null,
+      abv: null,
+      serveSize: "pint",
+      price: 13,
+      onTap: true,
+      inStock: true,
+      notes: null,
+    })).toThrow("Venue manager access required.");
+    expect(() => service.upsertBarBeer(managerAccount, "bar-2", {
+      id: null,
+      beerName: "Carlton Draught",
+      brewery: null,
+      style: null,
+      abv: null,
+      serveSize: "pint",
+      price: 13,
+      onTap: true,
+      inStock: true,
+      notes: null,
+    })).toThrow("assigned venues");
+
+    const profile = service.upsertBarProfile(managerAccount, "bar-1", {
+      name: "Corner Hotel",
+      address: "57 Swan St, Richmond",
+      suburb: "Richmond",
+      area: "Richmond",
+      phone: "0399999999",
+      website: "https://corner.example",
+      instagram: "https://instagram.com/corner",
+      description: "Live music venue with a rotating tap list.",
+      openingHours: { note: "Mon-Sun midday-late" },
+      venueTags: ["has food", "live music", "near public transport"],
+      membershipTier: "pro",
+      active: true,
+    });
+    expect(profile.profile.membershipTier).toBe("basic");
+    expect(profile.profile.highlightedName).toBe(false);
+
+    const beer = service.upsertBarBeer(managerAccount, "bar-1", {
+      id: null,
+      beerName: "Carlton Draught",
+      brewery: "Carlton & United Breweries",
+      style: "Lager",
+      abv: 4.6,
+      serveSize: "pint",
+      price: 13,
+      onTap: true,
+      inStock: true,
+      notes: "Main tap",
+    });
+    const happyHour = service.upsertBarHappyHour(managerAccount, "bar-1", {
+      id: null,
+      title: "Weekday happy hour",
+      daysOfWeek: ["mon", "tue", "wed", "thu", "fri"],
+      startTime: "16:00",
+      endTime: "18:00",
+      description: "$9 house pints, selected taps only.",
+      active: true,
+    });
+    const special = service.upsertBarSpecial(managerAccount, "bar-1", {
+      id: null,
+      title: "Thursday burger and pint",
+      description: "Burger and selected pint special.",
+      price: 25,
+      discount: null,
+      startsAt: null,
+      endsAt: null,
+      scheduleNote: "Thursdays from 5pm",
+      exclusive: false,
+      active: true,
+    });
+
+    expect(beer.beer.onTap).toBe(true);
+    expect(happyHour.happyHour.daysOfWeek).toContain("fri");
+    expect(special.special.price).toBe(25);
+
+    const portal = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
+    expect(portal.inventory.beers).toHaveLength(1);
+    expect(portal.inventory.happyHours).toHaveLength(1);
+    expect(portal.inventory.specials).toHaveLength(1);
+    expect(portal.tier.analyticsLocked).toBe(true);
+    expect(portal.insights.aggregateInsights).toBeNull();
+  });
+
+  it("gates bar analytics by tier and enables Pro display metadata", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "bar-tier-admin", "admin");
+    const manager = createAccount(repository, "bar-tier-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "bar-tier-1",
+      venueName: "Railway Hotel",
+      suburb: "South Melbourne",
+    });
+    const managerAccount = repository.getAccountById(manager.id)!;
+
+    for (let index = 0; index < 10; index += 1) {
+      repository.recordEvent({
+        id: `bar-tier-event-${index}`,
+        userId: null,
+        anonymousSessionId: `anon-area-${index}`,
+        eventType: "beer_search_performed",
+        venueId: "bar-tier-1",
+        beerId: "lager",
+        suburb: "South Melbourne",
+        metadata: { query: "lager" },
+        createdAt: NOW,
+      });
+    }
+    repository.recordEvent({
+      id: "bar-tier-detail-event",
+      userId: null,
+      anonymousSessionId: "anon-area-2",
+      eventType: "venue_detail_opened",
+      venueId: "bar-tier-1",
+      beerId: null,
+      suburb: "South Melbourne",
+      metadata: {},
+      createdAt: NOW,
+    });
+
+    const plusProfile = service.upsertBarProfile(admin, "bar-tier-1", {
+      name: "Railway Hotel",
+      address: null,
+      suburb: "South Melbourne",
+      area: "South Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "Neighbourhood pub.",
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "plus",
+      active: true,
+    });
+    expect(plusProfile.profile.membershipTier).toBe("plus");
+
+    const plusPortal = service.getVenuePortal(managerAccount, { venueId: "bar-tier-1" });
+    expect(plusPortal.tier.analyticsLocked).toBe(false);
+    expect(plusPortal.analytics?.barLookups).toBe(1);
+    expect(plusPortal.analytics?.privacyFloorMet).toBe(true);
+    expect(plusPortal.analytics?.areaBeerSearches.length).toBeGreaterThan(0);
+    expect(plusPortal.monthlyReport?.data).toBeTruthy();
+
+    const proProfile = service.upsertBarProfile(admin, "bar-tier-1", {
+      name: "Railway Hotel",
+      address: null,
+      suburb: "South Melbourne",
+      area: "South Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "Neighbourhood pub.",
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "pro",
+      active: true,
+    });
+    expect(proProfile.profile.highlightedName).toBe(true);
+    expect(proProfile.profile.premiumBadge).toBe("Pro");
+    expect(proProfile.profile.promoted).toBe(true);
+    expect(proProfile.profile.featuredSpecialEligible).toBe(true);
+  });
+
+  it("activates Plus and Pro bar tiers through demo checkout without Stripe keys", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "bar-checkout-admin", "admin");
+    const manager = createAccount(repository, "bar-checkout-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "bar-checkout-1",
+      venueName: "Checkout Hotel",
+      suburb: "Collingwood",
+    });
+    const managerAccount = repository.getAccountById(manager.id)!;
+
+    const plusCheckout = await service.createBarTierCheckout(managerAccount, "bar-checkout-1", { tier: "plus" });
+    expect(plusCheckout.mode).toBe("demo");
+    expect(plusCheckout.profile.membershipTier).toBe("plus");
+    expect(plusCheckout.tier.analyticsLocked).toBe(false);
+
+    const proCheckout = await service.createBarTierCheckout(managerAccount, "bar-checkout-1", { tier: "pro" });
+    expect(proCheckout.profile.membershipTier).toBe("pro");
+    expect(proCheckout.profile.highlightedName).toBe(true);
+    expect(proCheckout.profile.premiumBadge).toBe("Pro");
   });
 });
