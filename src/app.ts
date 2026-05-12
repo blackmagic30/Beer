@@ -249,8 +249,12 @@ export function createApp() {
             "https://*.gstatic.com",
           ],
           "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
+          // Safari upgrades localhost subresources when this directive is present,
+          // which leaves external CSS/JS pages looking like raw HTML in local dev.
+          "upgrade-insecure-requests": env.NODE_ENV === "production" ? [] : null,
         },
       },
+      ...(env.NODE_ENV === "production" ? {} : { strictTransportSecurity: false }),
       referrerPolicy: { policy: "strict-origin-when-cross-origin" },
     }),
   );
