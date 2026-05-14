@@ -8,5 +8,10 @@ window.MELB_BEER_BOT_VIEWER_CONFIG = {
   business: {
     fieldTestMode: true,
     freePriceRevealsPerDay: 3,
+    // Supabase Auth uses the server-provided /api/business/config values on the hosted app.
+    // Only fill these for standalone/static local experiments. Never put a service-role key here.
+    supabaseUrl: "https://your-project.supabase.co",
+    supabaseAnonKey: "your_supabase_anon_browser_key",
+    supabaseOauthProviders: ["google", "apple", "facebook"],
   },
 };

@@ -167,6 +167,21 @@ a {
   font-size: 0.82rem;
 }
 
+.oauthStack {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.oauthButton {
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04)),
+    rgba(255, 255, 255, 0.055);
+}
+
 .hero {
   position: relative;
   display: grid;
@@ -362,6 +377,100 @@ h3 {
   min-height: 118px;
 }
 
+.venueHero {
+  isolation: isolate;
+}
+
+.venueHero__kicker {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.venueHero__panel {
+  display: grid;
+  gap: 14px;
+}
+
+.miniStatRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.miniStatRow span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(119, 217, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(119, 217, 255, 0.08);
+  color: #d6f3ff;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.venueFeatureIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(245, 199, 107, 0.24);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(245, 199, 107, 0.26), transparent 52%),
+    rgba(255, 255, 255, 0.06);
+  color: #ffe4a8;
+  font-weight: 950;
+}
+
+.tierCard__price {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--gold);
+  font-family: var(--display-font);
+  font-size: 34px;
+  font-weight: 950;
+  letter-spacing: -0.05em;
+}
+
+.tierCard__price span {
+  color: var(--muted);
+  font-family: var(--body-font);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.venueTrustStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.venueTrustStrip .notice {
+  min-height: 100%;
+}
+
+.partnerFormCard {
+  background:
+    radial-gradient(circle at 10% 0%, rgba(245, 199, 107, 0.14), transparent 34%),
+    radial-gradient(circle at 90% 20%, rgba(119, 217, 255, 0.12), transparent 28%),
+    var(--panel-strong);
+}
+
+.footerCopy {
+  max-width: 860px;
+  margin: 24px auto 0;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.65;
+  font-size: 13px;
+}
+
 .form {
   display: grid;
   gap: 14px;
@@ -389,6 +498,15 @@ h3 {
 
 .helperCopy {
   margin: -2px 0 16px;
+}
+
+.beerCatalogueField {
+  display: grid;
+  gap: 10px;
+}
+
+.beerCatalogueField__newBeer {
+  width: fit-content;
 }
 
 .submitModeBlock {
@@ -897,6 +1015,7 @@ h3 {
   .grid--two,
   .grid--four,
   .tierGrid,
+  .venueTrustStrip,
   .insightGrid,
   .metricGrid {
     grid-template-columns: 1fr;

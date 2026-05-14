@@ -32,6 +32,41 @@ function getBusinessConfig() {
   return getViewerConfig().business || {};
 }
 
+function getSupabaseConfig() {
+  const config = getViewerConfig();
+  const business = getBusinessConfig();
+  return {
+    url: business.supabaseUrl || config.supabaseUrl || null,
+    anonKey: business.supabaseAnonKey || config.supabaseAnonKey || null,
+  };
+}
+
+function getSupabaseOauthProviders() {
+  const config = getViewerConfig();
+  const business = getBusinessConfig();
+  const providers = business.supabaseOauthProviders || config.supabaseOauthProviders || ["google", "apple", "facebook"];
+  return Array.isArray(providers) ? providers : String(providers).split(",").map((provider) => provider.trim()).filter(Boolean);
+}
+
+function getSupabaseClient() {
+  const config = getSupabaseConfig();
+  if (!window.supabase || !config.url || !config.anonKey) {
+    return null;
+  }
+
+  if (!window.__melbBeerSupabaseClient) {
+    window.__melbBeerSupabaseClient = window.supabase.createClient(config.url, config.anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    });
+  }
+
+  return window.__melbBeerSupabaseClient;
+}
+
 function isFieldTestMode() {
   return Boolean(getBusinessConfig().fieldTestMode);
 }
@@ -58,6 +93,65 @@ async function apiFetch(path, options = {}) {
   }
 
   return payload.data;
+}
+
+async function syncSupabaseSession() {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { configured: false, synced: false };
+  }
+
+  const { data, error } = await client.auth.getSession();
+  if (error || !data.session?.access_token) {
+    return { configured: true, synced: false, error: error?.message || null };
+  }
+
+  const result = await apiFetch("/api/business/auth/supabase-session", {
+    method: "POST",
+    body: JSON.stringify({ accessToken: data.session.access_token }),
+  });
+  setAuthToken(result.token);
+  return { configured: true, synced: true, account: result.account };
+}
+
+async function signInWithOAuth(provider) {
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error("Supabase login is not configured for this environment.");
+  }
+
+  const scopesByProvider = {
+    google: "email profile",
+    apple: "name email",
+    facebook: "email public_profile",
+  };
+
+  const { error } = await client.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo: `${window.location.origin}/account.html`,
+      scopes: scopesByProvider[provider] || "email",
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+async function requestPasswordReset(email) {
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error("Password reset is available when Supabase Auth is configured.");
+  }
+
+  const { error } = await client.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/account.html`,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
 }
 
 function renderNav(active = "") {
@@ -141,8 +235,14 @@ window.MelbBeerBusiness = {
   getAnonymousSessionId,
   getViewerConfig,
   getBusinessConfig,
+  getSupabaseConfig,
+  getSupabaseOauthProviders,
+  getSupabaseClient,
   isFieldTestMode,
   apiFetch,
+  syncSupabaseSession,
+  signInWithOAuth,
+  requestPasswordReset,
   renderNav,
   installFieldTestChrome,
   formatDate,

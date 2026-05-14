@@ -6,6 +6,7 @@
   <title>Account | Melbourne Beer Map</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -20,6 +21,12 @@
     <section class="grid grid--two">
       <form id="signupForm" class="panel form">
         <h2>Create account</h2>
+        <div id="oauthStack" class="oauthStack" aria-label="Quick login options">
+          <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
+          <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
+          <button class="button oauthButton" data-provider="facebook" type="button">Continue with Facebook</button>
+        </div>
+        <p id="oauthHelper" class="helperCopy">Social login uses Supabase Auth with minimal profile/email scopes. Provider setup happens in the Supabase dashboard.</p>
         <label class="field">Email <input name="email" type="email" required /></label>
         <label class="field">Password <input name="password" type="password" minlength="8" required /></label>
         <label class="field"><span><input name="ageConfirmed" type="checkbox" required /> I confirm I am 18 years or older.</span></label>
@@ -31,6 +38,7 @@
         <label class="field">Email <input name="email" type="email" required /></label>
         <label class="field">Password <input name="password" type="password" required /></label>
         <button class="button button--primary" type="submit">Log in</button>
+        <button id="passwordResetButton" class="button" type="button">Forgot password</button>
         <button id="logoutButton" class="button button--danger" type="button">Log out</button>
       </form>
     </section>
@@ -193,9 +201,12 @@
           <strong>${account.email}</strong><br>
           Access: ${account.subscriptionStatus}<br>
           Premium until: ${MelbBeerBusiness.formatDate(account.premiumUntil)}<br>
+          Age verification: ${account.ageVerificationStatus} · 18+ rewards eligible: ${result.rewards.ageGatedEligible ? "Yes" : "Not yet"}<br>
+          ${result.ageVerification.copy}<br>
           Points this month: ${account.contributionPointsCurrentMonth} · ${result.contributorProgress.pointsNeeded} points until next contributor unlock<br>
           Trust score: ${account.trustScore} · Status: ${account.status}<br>
-          Approved submissions: ${account.approvedSubmissionCount} · Rejected: ${account.rejectedSubmissionCount} · Fraud strikes: ${account.fraudStrikeCount}
+          Approved submissions: ${account.approvedSubmissionCount} · Rejected: ${account.rejectedSubmissionCount} · Fraud strikes: ${account.fraudStrikeCount}<br>
+          Community verifications: ${(result.verifications || []).length}
         `;
         preferencesForm.preferredSuburbs.value = (result.preferences.preferredSuburbs || []).join(", ");
         preferencesForm.preferredBeers.value = (result.preferences.preferredBeers || []).join(", ");
@@ -242,8 +253,49 @@
 
     window.addEventListener("DOMContentLoaded", () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("account");
+      MelbBeerBusiness.syncSupabaseSession()
+        .catch((error) => MelbBeerBusiness.setStatus(accountSummary, error.message, true))
+        .finally(loadAccount);
+      const enabledOAuthProviders = new Set(MelbBeerBusiness.getSupabaseOauthProviders());
+      const supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient());
+      const oauthButtons = Array.from(document.querySelectorAll(".oauthButton"));
+      oauthButtons.forEach((button) => {
+        const enabled = supabaseConfigured && enabledOAuthProviders.has(button.dataset.provider);
+        button.hidden = !enabled;
+      });
+      if (!supabaseConfigured || oauthButtons.every((button) => button.hidden)) {
+        oauthStack.hidden = true;
+        oauthHelper.textContent = supabaseConfigured
+          ? "No Supabase OAuth providers are enabled in this environment."
+          : "Social login appears after Supabase Auth is configured.";
+      }
+      document.querySelectorAll(".oauthButton").forEach((button) => {
+        button.addEventListener("click", async () => {
+          try {
+            button.disabled = true;
+            button.textContent = "Opening secure login...";
+            await MelbBeerBusiness.signInWithOAuth(button.dataset.provider);
+          } catch (error) {
+            button.disabled = false;
+            button.textContent = `Continue with ${button.dataset.provider[0].toUpperCase()}${button.dataset.provider.slice(1)}`;
+            MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+          }
+        });
+      });
       signupForm.addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
       loginForm.addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
+      passwordResetButton.addEventListener("click", async () => {
+        try {
+          const email = loginForm.email.value || signupForm.email.value;
+          if (!email) {
+            throw new Error("Enter your email first, then tap forgot password.");
+          }
+          await MelbBeerBusiness.requestPasswordReset(email);
+          MelbBeerBusiness.setStatus(accountSummary, "Password reset email requested. Check Supabase Auth email settings if it does not arrive.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+        }
+      });
       confirmAgeButton.addEventListener("click", async () => {
         try {
           await MelbBeerBusiness.apiFetch("/api/business/account/age-confirm", {
@@ -335,7 +387,6 @@
           MelbBeerBusiness.setStatus(accountSummary, error.message, true);
         }
       });
-      loadAccount();
     });
   </script>
 </body>

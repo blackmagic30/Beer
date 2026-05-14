@@ -3,10 +3,15 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 
-const trackedFiles = execFileSync("git", ["ls-files"], { encoding: "utf8" })
+const gitFilesOutput = [
+  execFileSync("git", ["ls-files"], { encoding: "utf8" }),
+  execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { encoding: "utf8" }),
+].join("\n");
+
+const files = Array.from(new Set(gitFilesOutput
   .split("\n")
   .map((file) => file.trim())
-  .filter(Boolean);
+  .filter(Boolean)));
 
 const SKIP_FILE = /(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|dist|coverage|node_modules)\b/;
 const BINARY_FILE = /\.(?:png|jpe?g|gif|webp|heic|heif|ico|pdf|woff2?|ttf|eot|zip|gz|sqlite3?|db)$/i;
@@ -46,7 +51,7 @@ const patterns = [
 
 const findings = [];
 
-for (const file of trackedFiles) {
+for (const file of files) {
   if (SKIP_FILE.test(file) || BINARY_FILE.test(file) || !fs.existsSync(file)) {
     continue;
   }
@@ -82,4 +87,4 @@ if (findings.length > 0) {
   process.exit(1);
 }
 
-console.log(`Security scan passed (${trackedFiles.length} tracked files checked).`);
+console.log(`Security scan passed (${files.length} tracked/untracked files checked).`);

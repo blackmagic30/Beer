@@ -107,8 +107,12 @@ describe("viewer map price logic", () => {
     expect(logic.getMarkerVisual(expensive).fillColor).toBe("#b91c1c");
     expect(logic.getMarkerState(unknown)).toBe("unknown");
     expect(logic.getMarkerVisual(unknown).fillColor).toBe("#475569");
+    expect(logic.getMarkerVisual(null, { mappedOnly: true }).state).toBe("mapped");
+    expect(logic.getMarkerVisual(null, { mappedOnly: true }).fillColor).toBe("#0f766e");
+    expect(logic.getMarkerVisual(null, { mappedOnly: true }).labelText).toBe("✓");
     expect(logic.getMarkerVisual(null, { needsData: true }).state).toBe("needs_data");
-    expect(logic.getMarkerVisual(null, { needsData: true }).fillColor).toBe("#2563eb");
+    expect(logic.getMarkerVisual(null, { needsData: true }).fillColor).toBe("#64748b");
+    expect(logic.getMarkerVisual(null, { needsData: true }).labelText).toBe("?");
   });
 
   it("gives selected markers a stronger gold ring without changing unknown into cheap", () => {
@@ -173,6 +177,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("renderer: clusterRenderer");
     expect(html).toContain("getClusterVisual(count)");
     expect(html).toContain("const currentViewState = getViewState();");
+    expect(html).toContain("Teal markers have data");
+    expect(html).toContain("Muted grey markers are mapped venues");
+    expect(html).not.toContain("Blue markers have no captured beer prices yet.");
     expect(html).not.toContain("buildCurrentViewState");
   });
 
@@ -182,6 +189,14 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("beerPopup__beerRow--unavailable");
     expect(html).toContain("beerPopup__beerRow--package");
     expect(html).toContain("beerPopup__beerRow--locked");
+    expect(html).toContain("beerPopup__summaryGrid");
+    expect(html).toContain("Venue-supplied listing");
+    expect(html).toContain("Update this venue");
+    expect(html).toContain('id="venueDetailOverlay"');
+    expect(html).toContain("openVenueDetailOverlay");
+    expect(html).toContain("Close this panel to return to the map.");
+    expect(html).toContain('liveHappyHourDetails?.sourceType === "venue_manager_portal"');
+    expect(html).toContain("const canShowHappyHourDetails");
     expect(html).not.toContain(">$0<");
   });
 

@@ -14,9 +14,9 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     method: req.method,
     path: req.originalUrl,
     statusCode: appError.statusCode,
-    error: error instanceof Error ? error.message : "Unknown error",
+    error: error instanceof Error ? redactSecrets(error.message) : "Unknown error",
     details: redactSecrets(appError.details),
-    ...(isProduction ? {} : { stack: error instanceof Error ? error.stack : undefined }),
+    ...(isProduction ? {} : { stack: error instanceof Error ? redactSecrets(error.stack) : undefined }),
   });
 
   res.status(appError.statusCode).json(

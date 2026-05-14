@@ -833,10 +833,15 @@
       transition: opacity 140ms ease, transform 140ms ease;
     }
 
-    .overlayPanel.is-hidden-panel {
+    .overlayPanel.is-hidden-panel,
+    #venueDetailOverlay.is-hidden-panel {
       opacity: 0;
       pointer-events: none;
       transform: translateY(8px);
+    }
+
+    #venueDetailOverlay {
+      transition: opacity 160ms ease, transform 160ms ease;
     }
 
     .overlayPanel__close {
@@ -935,7 +940,9 @@
     }
 
     .legend__swatch--neutral {
-      background: #334155;
+      background: #0f766e;
+      border-color: rgba(204, 251, 241, 0.92);
+      box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.28), 0 0 14px rgba(20, 184, 166, 0.26);
     }
 
     .legend__swatch--unknown {
@@ -945,8 +952,10 @@
     }
 
     .legend__swatch--needs {
-      background: #1d4ed8;
-      opacity: 0.74;
+      background: #64748b;
+      border-color: rgba(248, 250, 252, 0.92);
+      opacity: 0.58;
+      box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.26), inset 0 0 0 3px rgba(15, 23, 42, 0.32);
     }
 
     .legend__swatch--green {
@@ -1013,6 +1022,108 @@
       backdrop-filter: blur(18px);
       box-shadow: var(--shadow-lg);
       overflow: hidden;
+    }
+
+    #venueDetailOverlay {
+      position: absolute;
+      inset: 14px;
+      z-index: 8;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(244, 214, 150, 0.2);
+      border-radius: 28px;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(245, 199, 107, 0.16), transparent 36%),
+        radial-gradient(circle at 92% 12%, rgba(56, 189, 248, 0.13), transparent 30%),
+        linear-gradient(150deg, rgba(13, 21, 36, 0.96), rgba(4, 8, 18, 0.97));
+      color: #e2e8f0;
+      backdrop-filter: blur(26px);
+      box-shadow: 0 30px 90px rgba(0, 0, 0, 0.48);
+      overflow: hidden;
+    }
+
+    .venueDetailOverlay__chrome {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(244, 214, 150, 0.12);
+      background: rgba(2, 6, 23, 0.3);
+    }
+
+    .venueDetailOverlay__eyebrow {
+      color: #f5c76b;
+      font-size: 11px;
+      font-weight: 950;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .venueDetailOverlay__hint {
+      margin-top: 3px;
+      color: #a8b0bf;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .venueDetailOverlay__close {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: 46px;
+      height: 46px;
+      border: 1px solid rgba(245, 199, 107, 0.36);
+      border-radius: 999px;
+      background:
+        radial-gradient(circle at 30% 15%, rgba(245, 199, 107, 0.22), transparent 44%),
+        rgba(5, 9, 20, 0.92);
+      color: #fff7ed;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
+      cursor: pointer;
+      font-size: 28px;
+      font-weight: 400;
+      line-height: 1;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    .venueDetailOverlay__close:hover {
+      transform: translateY(-1px);
+      border-color: rgba(245, 199, 107, 0.68);
+      background: rgba(245, 199, 107, 0.14);
+    }
+
+    .venueDetailOverlay__body {
+      flex: 1 1 auto;
+      overflow: auto;
+      padding: clamp(14px, 2.2vw, 26px);
+    }
+
+    .venueDetailOverlay__body .beerPopup {
+      width: 100%;
+      max-width: 1120px;
+      min-height: 100%;
+      margin: 0 auto;
+      border-radius: 30px;
+    }
+
+    .venueDetailOverlay__body .beerPopup__summaryGrid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .venueDetailOverlay__body .beerPopup__section {
+      margin-top: 14px;
+    }
+
+    .venueDetailOverlay__body .beerPopup__beerRow {
+      grid-template-columns: minmax(0, 1fr) minmax(148px, auto);
+      padding: 16px;
+    }
+
+    .venueDetailOverlay__body .beerPopup__actions {
+      margin-top: 18px;
     }
 
     .venueRail__header {
@@ -1756,6 +1867,7 @@
     }
 
     .gm-style .gm-style-iw-c {
+      max-width: min(680px, calc(100vw - 28px)) !important;
       border-radius: 26px !important;
       background: transparent !important;
       box-shadow: 0 30px 90px rgba(0, 0, 0, 0.42) !important;
@@ -1763,6 +1875,7 @@
     }
 
     .gm-style .gm-style-iw-d {
+      max-height: min(74vh, 690px) !important;
       overflow: auto !important;
     }
 
@@ -1771,16 +1884,32 @@
     }
 
     .gm-ui-hover-effect {
-      filter: invert(1) grayscale(1);
-      opacity: 0.8;
-      top: 7px !important;
-      right: 7px !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      width: 40px !important;
+      height: 40px !important;
+      border: 1px solid rgba(245, 199, 107, 0.42) !important;
+      border-radius: 999px !important;
+      background:
+        radial-gradient(circle at 30% 15%, rgba(245, 199, 107, 0.22), transparent 44%),
+        rgba(5, 9, 20, 0.94) !important;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34) !important;
+      opacity: 1;
+      top: 8px !important;
+      right: 8px !important;
+      z-index: 20 !important;
+    }
+
+    .gm-ui-hover-effect span {
+      filter: invert(1) grayscale(1) brightness(1.7) !important;
+      margin: 0 !important;
     }
 
     .beerPopup {
-      width: min(390px, 82vw);
-      max-width: 390px;
-      padding: 16px;
+      width: min(620px, calc(100vw - 40px));
+      max-width: 620px;
+      padding: 20px;
       color: #f8fafc;
       background:
         radial-gradient(circle at 15% 0%, rgba(245, 199, 107, 0.18), transparent 36%),
@@ -1790,12 +1919,100 @@
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
     }
 
+    .beerPopup__head {
+      position: relative;
+      padding-right: 42px;
+      margin-bottom: 14px;
+    }
+
+    .beerPopup__eyebrow {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      margin-bottom: 8px;
+      padding: 5px 9px;
+      border: 1px solid rgba(245, 199, 107, 0.22);
+      border-radius: 999px;
+      background: rgba(245, 199, 107, 0.1);
+      color: #f5c76b;
+      font-size: 10px;
+      font-weight: 950;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
     .beerPopup__title {
       color: #fff7ed;
+      font-size: clamp(28px, 4vw, 36px);
+      line-height: 0.98;
     }
 
     .beerPopup__address {
       color: #a8b0bf;
+      max-width: 470px;
+      margin-bottom: 0;
+      font-size: 14px;
+    }
+
+    .beerPopup__metaStrip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .beerPopup__metaBadge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 999px;
+      background: rgba(2, 6, 23, 0.34);
+      color: #dbeafe;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .beerPopup__summaryGrid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .beerPopup__summaryCard {
+      min-height: 86px;
+      padding: 12px;
+      border: 1px solid rgba(244, 214, 150, 0.14);
+      border-radius: 18px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025)),
+        rgba(8, 13, 26, 0.72);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .beerPopup__summaryLabel {
+      margin-bottom: 7px;
+      color: #f5c76b;
+      font-size: 10px;
+      font-weight: 950;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .beerPopup__summaryValue {
+      color: #fff7ed;
+      font-size: 16px;
+      font-weight: 900;
+      line-height: 1.15;
+    }
+
+    .beerPopup__summarySub {
+      margin-top: 6px;
+      color: #a8b0bf;
+      font-size: 11px;
+      line-height: 1.35;
     }
 
     .beerPopup__featured,
@@ -1818,8 +2035,24 @@
 
     .beerPopup__featuredPrice {
       color: #ffffff;
-      font-size: 24px;
+      font-size: 34px;
       letter-spacing: -0.035em;
+    }
+
+    .beerPopup__featured {
+      margin-bottom: 14px;
+      padding: 16px;
+    }
+
+    .beerPopup__featuredMeta {
+      max-width: 320px;
+      line-height: 1.45;
+    }
+
+    .beerPopup__featured .beerPopup__pill {
+      font-size: 12px;
+      padding: 8px 11px;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
     }
 
     .beerPopup__featured--unknown,
@@ -1842,13 +2075,29 @@
     }
 
     .beerPopup__sectionHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
       background: rgba(2, 6, 23, 0.38);
       border-color: rgba(244, 214, 150, 0.12);
     }
 
+    .beerPopup__sectionCount {
+      color: #a8b0bf;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: none;
+      white-space: nowrap;
+    }
+
     .beerPopup__beerRow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
       border-color: rgba(244, 214, 150, 0.1);
+      padding: 13px 14px;
       transition: background 140ms ease, border-color 140ms ease;
     }
 
@@ -1871,11 +2120,21 @@
 
     .beerPopup__beerName {
       color: #fff7ed;
+      font-size: 14px;
     }
 
     .beerPopup__beerMeta,
+    .beerPopup__beerServing,
     .beerPopup__beerQuality {
       width: fit-content;
+    }
+
+    .beerPopup__beerServing {
+      display: inline-flex;
+      color: #e5edf8;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.35;
     }
 
     .beerPopup__beerQuality {
@@ -1887,9 +2146,13 @@
 
     .beerPopup__beerPrice {
       color: #ffffff;
-      font-size: 15px;
+      font-size: 20px;
       font-weight: 900;
       letter-spacing: -0.015em;
+    }
+
+    .beerPopup__beerActions {
+      min-width: 138px;
     }
 
     .beerPopup__beerPrice--unknown {
@@ -1945,6 +2208,42 @@
 
     .beerPopup__footer {
       border-color: rgba(244, 214, 150, 0.12);
+    }
+
+    .beerPopup__actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .beerPopup__button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 9px 13px;
+      border: 1px solid rgba(245, 199, 107, 0.24);
+      border-radius: 999px;
+      color: #fff7ed;
+      background: rgba(255, 255, 255, 0.06);
+      font-size: 12px;
+      font-weight: 900;
+      text-decoration: none;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    .beerPopup__button:hover {
+      transform: translateY(-1px);
+      border-color: rgba(245, 199, 107, 0.5);
+      background: rgba(245, 199, 107, 0.12);
+    }
+
+    .beerPopup__button--primary {
+      color: #111827;
+      border-color: transparent;
+      background: linear-gradient(135deg, #f5c76b, #ff906f);
+      box-shadow: 0 16px 28px rgba(245, 199, 107, 0.12);
     }
 
     @media (min-width: 901px) {
@@ -2392,19 +2691,85 @@
         overflow-x: auto;
       }
 
+      #venueDetailOverlay {
+        inset: 6px;
+        border-radius: 18px;
+      }
+
+      .venueDetailOverlay__chrome {
+        padding: 10px 11px;
+      }
+
+      .venueDetailOverlay__hint {
+        display: none;
+      }
+
+      .venueDetailOverlay__close {
+        width: 42px;
+        height: 42px;
+        font-size: 26px;
+      }
+
+      .venueDetailOverlay__body {
+        padding: 8px;
+      }
+
+      .venueDetailOverlay__body .beerPopup {
+        border-radius: 20px;
+      }
+
+      .venueDetailOverlay__body .beerPopup__summaryGrid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
       .overlayTab {
         padding: 7px 9px;
         font-size: 11px;
       }
 
       .beerPopup {
-        width: min(338px, calc(100vw - 30px));
-        padding: 13px;
+        width: min(620px, calc(100vw - 28px));
+        padding: 14px;
         border-radius: 22px;
       }
 
       .beerPopup__title {
-        font-size: 20px;
+        font-size: 26px;
+      }
+
+      .beerPopup__head {
+        padding-right: 38px;
+      }
+
+      .beerPopup__summaryGrid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .beerPopup__summaryCard {
+        min-height: 78px;
+        padding: 10px;
+      }
+
+      .beerPopup__featuredRow,
+      .beerPopup__beerRow {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .beerPopup__featuredRow {
+        display: grid;
+      }
+
+      .beerPopup__beerActions {
+        min-width: 0;
+        align-items: flex-start;
+        flex-direction: row;
+        justify-content: space-between;
+      }
+
+      .beerPopup__actions {
+        display: grid;
+        grid-template-columns: 1fr;
       }
 
       .responsibleNote {
@@ -2666,6 +3031,16 @@
         <div id="legendItems" class="legend__list"></div>
         <div id="legendHint" class="legend__hint"></div>
       </aside>
+      <aside id="venueDetailOverlay" class="is-hidden-panel" aria-live="polite" aria-label="Selected venue details" aria-hidden="true">
+        <div class="venueDetailOverlay__chrome">
+          <div>
+            <div class="venueDetailOverlay__eyebrow">Venue details</div>
+            <div class="venueDetailOverlay__hint">Close this panel to return to the map.</div>
+          </div>
+          <button id="closeVenueDetail" class="venueDetailOverlay__close" type="button" aria-label="Close venue details">×</button>
+        </div>
+        <div id="venueDetailBody" class="venueDetailOverlay__body"></div>
+      </aside>
     </div>
 
     <div class="belowMapInsights">
@@ -2758,6 +3133,9 @@
     const overlayTabEls = Array.from(document.querySelectorAll("[data-overlay-panel]"));
     const closeVenueRailEl = document.getElementById("closeVenueRail");
     const closeMapLegendEl = document.getElementById("closeMapLegend");
+    const venueDetailOverlayEl = document.getElementById("venueDetailOverlay");
+    const venueDetailBodyEl = document.getElementById("venueDetailBody");
+    const closeVenueDetailEl = document.getElementById("closeVenueDetail");
     const scopeChipEls = Array.from(document.querySelectorAll("[data-scope]"));
     const highValueChipEls = Array.from(document.querySelectorAll("[data-filter-chip]"));
     const retentionHighlightsEl = document.getElementById("retentionHighlights");
@@ -3105,7 +3483,8 @@
       }
 
       const venue = getVenueRecord(row.venues) || {};
-      const venueId = row.venue_id || venue.id || null;
+      const cleaned = getCleanedRecord(row);
+      const venueId = cleaned.business_record_venue_id || row.venue_id || venue.id || null;
 
       if (!venueId) {
         return;
@@ -3132,6 +3511,59 @@
 
       syncBusinessAccessUi();
     }
+
+    function hideVenueDetailOverlay() {
+      venueDetailOverlayEl.classList.add("is-hidden-panel");
+      venueDetailOverlayEl.setAttribute("aria-hidden", "true");
+      venueDetailBodyEl.removeAttribute("aria-busy");
+    }
+
+    function showVenueDetailLoading() {
+      venueDetailOverlayEl.classList.remove("is-hidden-panel");
+      venueDetailOverlayEl.setAttribute("aria-hidden", "false");
+      venueDetailBodyEl.setAttribute("aria-busy", "true");
+      venueDetailBodyEl.innerHTML = `
+        <div class="beerPopup">
+          <div class="beerPopup__head">
+            <div class="beerPopup__eyebrow">Loading venue</div>
+            <div class="beerPopup__title">Opening details…</div>
+            <div class="beerPopup__address">Fetching the latest venue-supplied prices and happy-hour data.</div>
+          </div>
+        </div>
+      `;
+    }
+
+    async function openVenueDetailOverlay(record, source = "marker") {
+      if (!record) {
+        return;
+      }
+
+      showVenueDetailLoading();
+      try {
+        await maybeRevealVenuePrices(record.row, record.id);
+      } catch (error) {
+        console.warn("Could not reveal latest venue prices", error);
+      }
+      venueDetailBodyEl.removeAttribute("aria-busy");
+      venueDetailBodyEl.innerHTML = getVenueDetailContent(record);
+      venueDetailOverlayEl.classList.remove("is-hidden-panel");
+      venueDetailOverlayEl.setAttribute("aria-hidden", "false");
+      closeVenueDetailEl.focus({ preventScroll: true });
+      void trackBusinessEvent("venue_detail_opened", {
+        venueId: record.row.venue_id || record.venue.id || null,
+        venueName: record.venue.name || record.row.venue_name || null,
+        suburb: record.venue.suburb || record.row.suburb || null,
+        source,
+      });
+    }
+
+    closeVenueDetailEl.addEventListener("click", hideVenueDetailOverlay);
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !venueDetailOverlayEl.classList.contains("is-hidden-panel")) {
+        hideVenueDetailOverlay();
+      }
+    });
 
     if (params.get("googleMapsKey")) {
       window.localStorage.setItem("googleMapsKey", params.get("googleMapsKey"));
@@ -3589,6 +4021,7 @@
         confidenceText,
         needsReview,
         capturedDate,
+        sourceType: typeof happyHour.source_type === "string" ? happyHour.source_type : null,
         summary: [
           summary,
           needsReview ? "Needs review" : null,
@@ -3698,6 +4131,7 @@
             priceNumeric,
             priceRedacted: Boolean(source.price_redacted),
             priceRecordId: source.price_record_id || null,
+            servingSize: source.serving_size || source.serve_size || null,
             confidenceLabel: source.confidence_label || null,
             sourceType: source.source_type || null,
             lastVerifiedAt: source.last_verified_at || null,
@@ -3934,6 +4368,35 @@
       return [confidence, verified, source].filter(Boolean).join(" · ");
     }
 
+    function getBeerServingCopy(beer) {
+      const servingSize = typeof beer?.servingSize === "string" && beer.servingSize.trim()
+        ? beer.servingSize.trim()
+        : null;
+
+      return servingSize ? `${titleizeKey(servingSize)} serve` : "Serving size not listed";
+    }
+
+    function getNewestVerifiedDateLabel(beerItems, fallbackValue = null) {
+      const timestamps = beerItems
+        .map((beer) => beer.lastVerifiedAt)
+        .filter(Boolean)
+        .map((value) => new Date(value).getTime())
+        .filter(Number.isFinite);
+
+      if (fallbackValue) {
+        const fallbackTime = new Date(fallbackValue).getTime();
+        if (Number.isFinite(fallbackTime)) {
+          timestamps.push(fallbackTime);
+        }
+      }
+
+      if (!timestamps.length) {
+        return null;
+      }
+
+      return formatDateLabel(new Date(Math.max(...timestamps)).toISOString());
+    }
+
     function getPriceStateBadgeStyle(beer, markerId) {
       const visual = window.MelbBeerMapLogic.getMarkerVisual(beer, {
         locked: hasRedactedPrice(beer) || (hasNumericPrice(beer) && !canShowExactPrices(markerId)),
@@ -3966,6 +4429,25 @@
         venue.state,
         venue.postcode,
       ].filter(Boolean).join(" ");
+    }
+
+    function getVenueIdentityKey(name, suburb) {
+      const nameKey = toSearchKey(name);
+      const suburbKey = toSearchKey(suburb);
+      return nameKey ? `${nameKey}::${suburbKey}` : "";
+    }
+
+    function getVenueRowIdentityKey(row) {
+      const venue = getVenueRecord(row.venues) || {};
+      return getVenueIdentityKey(venue.name || row.venue_name, venue.suburb || row.suburb);
+    }
+
+    function mergeUniquePriceRecords(...recordSets) {
+      const merged = new Map();
+      recordSets.flat().filter(Boolean).forEach((record) => {
+        merged.set(record.id, record);
+      });
+      return Array.from(merged.values());
     }
 
     function hasCapturedBeerData(row) {
@@ -4073,6 +4555,7 @@
         source_type: record.sourceType,
         source_submission_id: record.sourceSubmissionId,
         price_record_id: record.id,
+        source_venue_id: record.venueId,
         last_verified_at: record.lastVerifiedAt,
         needs_review: false,
       };
@@ -4088,8 +4571,14 @@
         ...(isObjectRecord(cleaned.beers) ? cleaned.beers : {}),
       };
       const verifiedDates = [];
+      const happyHourRecords = records
+        .filter((record) => record.isHappyHourPrice || record.displayKind === "happy_hour" || record.happyHourDetails)
+        .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime());
 
       records.forEach((record) => {
+        if (record.displayKind === "happy_hour") {
+          return;
+        }
         mergedBeers[getBusinessBeerKey(record)] = {
           ...(mergedBeers[getBusinessBeerKey(record)] || {}),
           ...businessPriceRecordToBeerSource(record),
@@ -4108,9 +4597,29 @@
         cleaned: {
           ...cleaned,
           beers: mergedBeers,
+          business_record_venue_id: records[0]?.venueId || cleaned.business_record_venue_id || null,
+          ...(happyHourRecords.length
+            ? {
+              happy_hour: {
+                ...(isObjectRecord(cleaned.happy_hour) ? cleaned.happy_hour : {}),
+                exists: true,
+                days: Array.isArray(happyHourRecords[0].happyHourDays)
+                  ? happyHourRecords[0].happyHourDays.map((day) => day.toUpperCase()).join(", ")
+                  : null,
+                start: happyHourRecords[0].happyHourStartTime || null,
+                end: happyHourRecords[0].happyHourEndTime || null,
+                specials: happyHourRecords[0].happyHourDetails || null,
+                confidence: happyHourRecords[0].confidence === "venue_confirmed" ? 0.9 : 0.6,
+                needs_review: happyHourRecords[0].confidence !== "venue_confirmed",
+                captured_at: happyHourRecords[0].lastVerifiedAt,
+                source_type: happyHourRecords[0].sourceType,
+              },
+            }
+            : {}),
         },
         saved_at: latestVerified || row.saved_at,
         beer_synced_at: latestVerified || row.beer_synced_at,
+        happy_hour_synced_at: happyHourRecords[0]?.lastVerifiedAt || row.happy_hour_synced_at,
       };
     }
 
@@ -4554,7 +5063,7 @@
             hasUserLocation() ? `Within ${userLocationState.radiusKm} km` : "Location off",
           ],
           items: [
-            ["needs", "Happy-hour venue", "Venue has active happy-hour data right now."],
+            ["neutral", "Happy-hour data", "Venue has active happy-hour details right now."],
             ["unknown", "Price unknown", "Happy-hour details exist, but exact price still needs verification."],
             ["selected", "Selected venue", "Gold ring shows the active venue."],
           ],
@@ -4613,27 +5122,27 @@
             `${filteredRows.length} venues still to fill`,
             `${capturedCount} already captured are hidden`,
           ],
-          items: [
-            ["needs", "Needs data", "The pub or bar exists in our venue list and is ready for beer data capture."],
-            ["selected", "Selected venue", "Gold ring shows the active venue."],
-          ],
+        items: [
+          ["needs", "Needs data", "Muted grey markers still need beer prices, happy-hour details, or source evidence."],
+          ["selected", "Selected venue", "Gold ring shows the active venue."],
+        ],
           hint: "Use Submit data to send a venue update, or let the call and OCR workflows fill these in over time."
         };
       }
 
       return {
         title: "All venues",
-        subtitle: "This is the full venue footprint. Neutral markers keep the map calm, and the details live inside each venue card.",
+        subtitle: "This is the full venue footprint. Teal markers have data; muted grey markers still need venue details.",
         stats: [
           `${filteredRows.length} mapped venues`,
           `${missingCount} still need data`,
         ],
         items: [
-          ["neutral", "Mapped venue", "A pub or bar already in the directory. Click through to see captured beers and prices."],
-          ["needs", "Needs data", "Blue markers have no captured beer prices yet."],
+          ["neutral", "Has venue data", "Teal markers have captured beer prices, happy-hour info, or venue-supplied details."],
+          ["needs", "Needs data", "Muted grey markers are mapped venues that still need beer prices or happy-hour details."],
           ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
         ],
-        hint: "Switch to a beer search when you want colour, price-led markers, and faster comparison."
+        hint: "Switch to a beer search when you want price-led green, amber, and red markers."
       };
     }
 
@@ -4996,18 +5505,16 @@
             map.setZoom(15);
           }
 
-          const openInfoWindow = async () => {
-            await maybeRevealVenuePrices(record.row, record.id);
-            record.infoWindow.setContent(getVenueDetailContent(record));
-            record.infoWindow.open(map, record.marker);
+          const openVenueDetail = async () => {
+            await openVenueDetailOverlay(record, "visible_venues");
           };
 
           if (shouldZoomIn && google.maps && google.maps.event && typeof google.maps.event.addListenerOnce === "function") {
             google.maps.event.addListenerOnce(map, "idle", () => {
-              void openInfoWindow();
+              void openVenueDetail();
             });
           } else {
-            void openInfoWindow();
+            void openVenueDetail();
           }
         });
       });
@@ -5145,20 +5652,25 @@
           console.warn("Approved submission price records unavailable", error);
         }
 
-        const infoWindow = new google.maps.InfoWindow();
         const latestRowsByVenue = new Map();
         const latestBeerRowsByVenue = new Map();
         const latestHappyHourRowsByVenue = new Map();
         const businessPriceRecordsByVenue = new Map();
+        const businessPriceRecordsByIdentity = new Map();
 
         businessPriceRecords.forEach((record) => {
-          if (!record.venueId) {
-            return;
+          if (record.venueId) {
+            const venueRecords = businessPriceRecordsByVenue.get(record.venueId) || [];
+            venueRecords.push(record);
+            businessPriceRecordsByVenue.set(record.venueId, venueRecords);
           }
 
-          const venueRecords = businessPriceRecordsByVenue.get(record.venueId) || [];
-          venueRecords.push(record);
-          businessPriceRecordsByVenue.set(record.venueId, venueRecords);
+          const identityKey = getVenueIdentityKey(record.venueName, record.suburb);
+          if (identityKey) {
+            const identityRecords = businessPriceRecordsByIdentity.get(identityKey) || [];
+            identityRecords.push(record);
+            businessPriceRecordsByIdentity.set(identityKey, identityRecords);
+          }
         });
 
         rows.forEach((item) => {
@@ -5193,7 +5705,12 @@
               latestBeerRowsByVenue.get(venue.id),
               latestHappyHourRowsByVenue.get(venue.id),
             );
-            return mergeBusinessPriceRecords(mergedRow, businessPriceRecordsByVenue.get(venue.id) || []);
+            const identityKey = getVenueIdentityKey(venue.name, venue.suburb);
+            const venueRecords = mergeUniquePriceRecords(
+              businessPriceRecordsByVenue.get(venue.id) || [],
+              identityKey ? businessPriceRecordsByIdentity.get(identityKey) || [] : [],
+            );
+            return mergeBusinessPriceRecords(mergedRow, venueRecords);
           });
         const venueRows = allVenueRows.filter((item) => hasCapturedBeerData(item) || hasHappyHourData(item));
 
@@ -5277,6 +5794,7 @@
         }
 
         function clearMarkers() {
+          hideVenueDetailOverlay();
           if (markerCluster && typeof markerCluster.clearMarkers === "function") {
             markerCluster.clearMarkers();
           }
@@ -5393,26 +5911,91 @@
             const createdAt = item.saved_at || item.created_at
               ? new Date(item.saved_at || item.created_at).toLocaleString()
               : "Not captured yet";
-            const venueName = escapeHtml(venue.name || item.venue_name || "Unknown venue");
+            const rawVenueName = venue.name || item.venue_name || "Unknown venue";
+            const venueName = escapeHtml(rawVenueName);
             const safeAddress = escapeHtml(address || "Address unavailable");
             const safeCreatedAt = escapeHtml(createdAt);
             const getContent = () => {
+              const cleaned = getCleanedRecord(item);
               const liveBeerItems = getDisplayBeerItems(item, viewState);
               const liveHappyHourDetails = getHappyHourDetails(item);
               const liveFeaturedBeer = getFeaturedBeer(item, viewState);
               const liveHasCapturedData = hasCapturedBeerData(item);
               const featuredBeerState = liveFeaturedBeer ? getBeerDisplayState(liveFeaturedBeer, markerId) : null;
               const distanceCopy = hasUserLocation() ? formatVenueDistance(item) : null;
+              const hasVenueManagedData = liveBeerItems.some((beer) => beer.sourceType === "venue_manager_portal");
+              const hasVenueManagedHappyHour = liveHappyHourDetails?.sourceType === "venue_manager_portal";
+              const canShowHappyHourDetails = Boolean(businessAccess.hasFullAccess || hasVenueManagedData || hasVenueManagedHappyHour);
+              const venueSuburb = venue.suburb || item.suburb || "Melbourne";
+              const submitVenueId = cleaned.business_record_venue_id || item.venue_id || venue.id || "";
+              const submitUrl = `/submit.html?venueId=${encodeURIComponent(submitVenueId)}&venueName=${encodeURIComponent(rawVenueName)}${venueSuburb ? `&suburb=${encodeURIComponent(venueSuburb)}` : ""}`;
+              const knownPriceCount = liveBeerItems.filter(hasNumericPrice).length;
+              const onTapCount = liveBeerItems.filter((beer) => beer.availabilityLabel === "On tap").length;
+              const newestVerifiedLabel = getNewestVerifiedDateLabel(liveBeerItems, item.saved_at || item.created_at);
+              const happyHourBrief = getHappyHourBrief(liveHappyHourDetails);
+              const happyHourValue = liveHappyHourDetails
+                ? liveHappyHourDetails.exists
+                  ? "Happy hour listed"
+                  : "No happy hour listed"
+                : "No happy hour listed";
+              const happyHourSub = liveHappyHourDetails
+                ? canShowHappyHourDetails
+                  ? happyHourBrief || "Details are listed for this venue."
+                  : liveHappyHourDetails.exists
+                    ? "Unlock full access to view times and specials."
+                    : "Checked where possible."
+                : "Add details if you spot one.";
+              const accessValue = businessAccess.hasFullAccess
+                ? "Full details"
+                : `${businessAccess.freePriceRevealsRemainingToday}/${businessAccess.freePriceRevealsPerDay} reveals left`;
+              const trustValue = hasVenueManagedData
+                ? "Venue supplied"
+                : knownPriceCount > 0
+                  ? "Community verified"
+                  : "Needs data";
+              const beerSectionTitle = hasVenueManagedData ? "Venue-supplied beer list" : "Captured beers";
+              const footerCopy = hasVenueManagedData
+                ? "Venue supplied · Prices may change. Check with the venue before ordering."
+                : `Last verified ${safeCreatedAt} · Confidence: community captured`;
+              const metaBadges = [
+                venueSuburb,
+                distanceCopy,
+                trustValue,
+              ].filter(Boolean).map((value) => `<span class="beerPopup__metaBadge">${escapeHtml(value)}</span>`).join("");
+              const summaryMarkup = `
+                <div class="beerPopup__summaryGrid">
+                  <div class="beerPopup__summaryCard">
+                    <div class="beerPopup__summaryLabel">Distance</div>
+                    <div class="beerPopup__summaryValue">${escapeHtml(distanceCopy || "Location off")}</div>
+                    <div class="beerPopup__summarySub">${escapeHtml(distanceCopy ? "Straight-line distance from you." : "Use location to show nearby venues.")}</div>
+                  </div>
+                  <div class="beerPopup__summaryCard">
+                    <div class="beerPopup__summaryLabel">Beer list</div>
+                    <div class="beerPopup__summaryValue">${escapeHtml(`${liveBeerItems.length} listed`)}</div>
+                    <div class="beerPopup__summarySub">${escapeHtml(`${onTapCount} on tap · ${knownPriceCount} priced`)}</div>
+                  </div>
+                  <div class="beerPopup__summaryCard">
+                    <div class="beerPopup__summaryLabel">Happy hour</div>
+                    <div class="beerPopup__summaryValue">${escapeHtml(happyHourValue)}</div>
+                    <div class="beerPopup__summarySub">${escapeHtml(happyHourSub)}</div>
+                  </div>
+                  <div class="beerPopup__summaryCard">
+                    <div class="beerPopup__summaryLabel">Trust</div>
+                    <div class="beerPopup__summaryValue">${escapeHtml(newestVerifiedLabel ? `Verified ${newestVerifiedLabel}` : trustValue)}</div>
+                    <div class="beerPopup__summarySub">${escapeHtml(hasVenueManagedData ? "Maintained by venue portal." : "Community-submitted and checked where possible.")}</div>
+                  </div>
+                </div>
+              `;
               const featuredBeerMarkup = liveFeaturedBeer ? `
                 <div class="beerPopup__featured beerPopup__featured--${escapeHtml(featuredBeerState)}">
-                  <div class="beerPopup__featuredLabel">${escapeHtml(viewState.beerQuery ? "Best match" : "Best captured beer")}</div>
+                  <div class="beerPopup__featuredLabel">${escapeHtml(viewState.beerQuery ? "Best match" : hasVenueManagedData ? "Venue supplied" : "Best captured beer")}</div>
                   <div class="beerPopup__featuredRow">
                     <div>
                       <div class="beerPopup__featuredPrice">${escapeHtml(getDisplayBeerPriceText(liveFeaturedBeer, markerId))}</div>
-                      <div class="beerPopup__featuredMeta">${escapeHtml(liveFeaturedBeer.availabilityLabel)} · ${escapeHtml(featuredBeerState === "known" ? "Verified price" : featuredBeerState === "locked" ? "Exact price locked" : featuredBeerState === "unavailable" ? "Not currently available" : "No verified price yet")}</div>
+                      <div class="beerPopup__featuredMeta">${escapeHtml(liveFeaturedBeer.label)} · ${escapeHtml(getBeerServingCopy(liveFeaturedBeer))} · ${escapeHtml(liveFeaturedBeer.availabilityLabel)} · ${escapeHtml(featuredBeerState === "known" ? "Verified price" : featuredBeerState === "locked" ? "Exact price locked" : featuredBeerState === "unavailable" ? "Not currently available" : "No verified price yet")}</div>
                     </div>
                     <div class="beerPopup__pill" style="background:${liveFeaturedBeer.availabilityTone.background}; color:${liveFeaturedBeer.availabilityTone.color};">
-                      ${escapeHtml(liveFeaturedBeer.label)}
+                      ${escapeHtml(liveFeaturedBeer.availabilityLabel)}
                     </div>
                   </div>
                 </div>
@@ -5422,6 +6005,7 @@
                 <div class="beerPopup__beerRow ${escapeHtml(getBeerRowClass(beer, markerId))}">
                   <div style="display:flex; flex-direction:column; gap:4px;">
                     <span class="beerPopup__beerName">${escapeHtml(beer.label)}</span>
+                    <span class="beerPopup__beerServing">${escapeHtml(getBeerServingCopy(beer))}</span>
                     <span class="beerPopup__beerMeta" style="background:${beer.availabilityTone.background}; color:${beer.availabilityTone.color};">
                       ${escapeHtml(beer.availabilityLabel)}
                     </span>
@@ -5455,7 +6039,7 @@
               `;
               const happyHourMarkup = !liveHappyHourDetails
                 ? ""
-                : businessAccess.hasFullAccess
+                : canShowHappyHourDetails
                   ? renderHappyHourPopupMarkup(liveHappyHourDetails)
                   : `
                 <div class="beerPopup__notice">
@@ -5465,44 +6049,37 @@
 
               return `
                 <div class="beerPopup">
-                  <div class="beerPopup__title">
-                    ${venueName}
+                  <div class="beerPopup__head">
+                    <div class="beerPopup__eyebrow">${escapeHtml(hasVenueManagedData ? "Venue-supplied listing" : "Melbourne venue")}</div>
+                    <div class="beerPopup__title">
+                      ${venueName}
+                    </div>
+                    <div class="beerPopup__address">${safeAddress}</div>
+                    ${metaBadges ? `<div class="beerPopup__metaStrip">${metaBadges}</div>` : ""}
                   </div>
-                  <div class="beerPopup__address">${safeAddress}</div>
-                  ${distanceCopy ? `<div class="beerPopup__notice beerPopup__notice--blue">${escapeHtml(distanceCopy)} · straight-line distance from your location.</div>` : ""}
+                  ${summaryMarkup}
                   ${featuredBeerMarkup}
                   <div class="beerPopup__section">
-                    <div class="beerPopup__sectionHeader">Captured beers</div>
+                    <div class="beerPopup__sectionHeader">
+                      <span>${escapeHtml(beerSectionTitle)}</span>
+                      <span class="beerPopup__sectionCount">${escapeHtml(liveBeerItems.length ? `${liveBeerItems.length} item${liveBeerItems.length === 1 ? "" : "s"}` : "Needs data")}</span>
+                    </div>
                     ${beerMarkup}
                   </div>
                   ${captureStatusMarkup}
                   ${happyHourMarkup}
+                  <div class="beerPopup__actions">
+                    <a class="beerPopup__button beerPopup__button--primary" href="${escapeHtml(submitUrl)}">Update this venue</a>
+                    <a class="beerPopup__button" href="/pricing.html">Unlock full map</a>
+                  </div>
                   <div class="beerPopup__footer">
-                    Last verified ${safeCreatedAt} · Confidence: community captured
+                    ${escapeHtml(footerCopy)}
                   </div>
                 </div>
               `;
             };
             const content = getContent();
-
-            marker.addListener("click", async () => {
-              setActiveMarker(marker);
-              await maybeRevealVenuePrices(item, markerId);
-              void trackBusinessEvent("venue_detail_opened", {
-                venueId: item.venue_id || venue.id || null,
-                venueName: venue.name || item.venue_name || null,
-                suburb: venue.suburb || item.suburb || null,
-              });
-              infoWindow.setContent(getContent());
-              infoWindow.open(map, marker);
-              venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
-                cardEl.classList.toggle("is-active", cardEl.dataset.markerId === markerId);
-              });
-            });
-
-            bounds.extend({ lat, lng });
-            liveMarkers.push(marker);
-            markerRecords.push({
+            const markerRecord = {
               id: markerId,
               row: item,
               venue,
@@ -5510,8 +6087,19 @@
               content,
               getContent,
               featuredBeer,
-              infoWindow,
+            };
+
+            marker.addListener("click", async () => {
+              setActiveMarker(marker);
+              await openVenueDetailOverlay(markerRecord, "marker");
+              venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
+                cardEl.classList.toggle("is-active", cardEl.dataset.markerId === markerId);
+              });
             });
+
+            bounds.extend({ lat, lng });
+            liveMarkers.push(marker);
+            markerRecords.push(markerRecord);
             markerCount += 1;
           });
 
@@ -5572,9 +6160,7 @@
           renderRetentionHighlights(filteredRows, markerRecords, async (record, source) => {
             setActiveMarker(record.marker);
             map.panTo(record.marker.getPosition());
-            await maybeRevealVenuePrices(record.row, record.id);
-            record.infoWindow.setContent(getVenueDetailContent(record));
-            record.infoWindow.open(map, record.marker);
+            await openVenueDetailOverlay(record, source || "highlight");
             venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
               cardEl.classList.toggle("is-active", cardEl.dataset.markerId === record.id);
             });

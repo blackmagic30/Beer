@@ -25,6 +25,7 @@ export type FeedbackType = "bug" | "wrong_data" | "feature_idea" | "venue_sugges
 export type RequestType = "missing_venue" | "missing_beer" | "verify_venue" | "verify_beer_at_venue";
 export type BarMembershipTier = "basic" | "plus" | "pro";
 type StoredBarMembershipTier = BarMembershipTier | "free" | "super_premium";
+export type AgeVerificationStatus = "not_started" | "pending" | "verified" | "rejected" | "expired";
 export type ConfidenceLabel =
   | "venue_confirmed"
   | "photo_verified"
@@ -37,8 +38,17 @@ export interface BusinessAccount {
   id: string;
   email: string;
   passwordHash: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  authProvider: string;
+  supabaseUserId: string | null;
+  emailVerifiedAt: string | null;
+  mfaLevel: string;
+  mfaVerifiedAt: string | null;
   role: AccountRole;
   ageConfirmedAt: string | null;
+  ageVerificationStatus: AgeVerificationStatus;
+  isOver18Verified: boolean;
   subscriptionStatus: SubscriptionStatus;
   stripeCustomerId: string | null;
   premiumUntil: string | null;
@@ -50,6 +60,32 @@ export interface BusinessAccount {
   status: AccountStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PublicProfile {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  username: string | null;
+  avatarUrl: string | null;
+  role: AccountRole;
+  accountStatus: AccountStatus;
+  ageVerificationStatus: AgeVerificationStatus;
+  isOver18Verified: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SourceEvidenceObject {
+  id: string;
+  ownerUserId: string | null;
+  storageProvider: string;
+  objectPath: string;
+  mimeType: string | null;
+  byteSize: number | null;
+  dataBase64: string | null;
+  externalUrl: string | null;
+  createdAt: string;
 }
 
 export interface BusinessSubmission {
@@ -107,12 +143,18 @@ export interface PublicVenuePriceRecord {
   venueId: string;
   venueName: string;
   suburb: string | null;
+  venueAddress?: string | null;
   beerName: string;
   normalizedBeerId: string | null;
   servingSize: ServingSize;
   price: number | null;
   isHappyHourPrice: boolean;
   happyHourDetails: string | null;
+  happyHourTitle?: string | null;
+  happyHourDays?: string[];
+  happyHourStartTime?: string | null;
+  happyHourEndTime?: string | null;
+  displayKind?: "beer" | "happy_hour";
   isOnTap: TapStatus;
   confidence: ConfidenceLabel;
   sourceType: string;
@@ -317,6 +359,27 @@ export interface BarSpecial {
   updatedAt: string;
 }
 
+export type BarPendingChangeType = "profile" | "beer" | "happy_hour" | "special";
+export type BarPendingChangeAction = "upsert" | "delete";
+export type BarPendingChangeStatus = "pending" | "approved" | "rejected";
+
+export interface BarPendingChange {
+  id: string;
+  barId: string;
+  changeType: BarPendingChangeType;
+  action: BarPendingChangeAction;
+  targetId: string | null;
+  payload: Record<string, unknown>;
+  status: BarPendingChangeStatus;
+  submittedBy: string;
+  submittedAt: string;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface MonthlyBarReport {
   id: string;
   barId: string;
@@ -338,12 +401,56 @@ export interface SecurityAuditLog {
   createdAt: string;
 }
 
+export interface UserActivityEvent {
+  id: string;
+  userId: string;
+  eventType: string;
+  relatedEntityType: string | null;
+  relatedEntityId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface UserVerification {
+  id: string;
+  verifierUserId: string;
+  uploadId: string;
+  targetEntityType: string;
+  targetEntityId: string;
+  result: string;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface AgeVerification {
+  id: string;
+  userId: string;
+  status: AgeVerificationStatus;
+  ageThreshold: number;
+  isOver18: boolean;
+  providerName: string | null;
+  providerReferenceId: string | null;
+  checkedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface AccountRow {
   id: string;
   email: string;
   password_hash: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  auth_provider: string;
+  supabase_user_id: string | null;
+  email_verified_at: string | null;
+  mfa_level: string;
+  mfa_verified_at: string | null;
   role: AccountRole;
   age_confirmed_at: string | null;
+  age_verification_status: AgeVerificationStatus;
+  is_over_18_verified: number;
   subscription_status: SubscriptionStatus;
   stripe_customer_id: string | null;
   premium_until: string | null;
@@ -353,6 +460,20 @@ interface AccountRow {
   rejected_submission_count: number;
   fraud_strike_count: number;
   status: AccountStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ProfileRow {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  username: string | null;
+  avatar_url: string | null;
+  role: AccountRole;
+  account_status: AccountStatus;
+  age_verification_status: AgeVerificationStatus;
+  is_over_18_verified: number;
   created_at: string;
   updated_at: string;
 }
@@ -368,6 +489,53 @@ interface SecurityAuditLogRow {
   ip_hash: string | null;
   user_agent_hash: string | null;
   created_at: string;
+}
+
+interface SourceEvidenceObjectRow {
+  id: string;
+  owner_user_id: string | null;
+  storage_provider: string;
+  object_path: string;
+  mime_type: string | null;
+  byte_size: number | null;
+  data_base64: string | null;
+  external_url: string | null;
+  created_at: string;
+}
+
+interface VerificationRow {
+  id: string;
+  verifier_user_id: string;
+  upload_id: string;
+  target_entity_type: string;
+  target_entity_id: string;
+  result: string;
+  notes: string | null;
+  created_at: string;
+}
+
+interface UserActivityEventRow {
+  id: string;
+  user_id: string;
+  event_type: string;
+  related_entity_type: string | null;
+  related_entity_id: string | null;
+  metadata_json: string;
+  created_at: string;
+}
+
+interface AgeVerificationRow {
+  id: string;
+  user_id: string;
+  status: AgeVerificationStatus;
+  age_threshold: number;
+  is_over_18: number;
+  provider_name: string | null;
+  provider_reference_id: string | null;
+  checked_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface SubmissionRow {
@@ -635,6 +803,23 @@ interface BarSpecialRow {
   updated_at: string;
 }
 
+interface BarPendingChangeRow {
+  id: string;
+  bar_id: string;
+  change_type: BarPendingChangeType;
+  action: BarPendingChangeAction;
+  target_id: string | null;
+  payload_json: string;
+  status: BarPendingChangeStatus;
+  submitted_by: string;
+  submitted_at: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface MonthlyBarReportRow {
   id: string;
   bar_id: string;
@@ -648,8 +833,17 @@ function toAccount(row: AccountRow): BusinessAccount {
     id: row.id,
     email: row.email,
     passwordHash: row.password_hash,
+    displayName: row.display_name,
+    avatarUrl: row.avatar_url,
+    authProvider: row.auth_provider,
+    supabaseUserId: row.supabase_user_id,
+    emailVerifiedAt: row.email_verified_at,
+    mfaLevel: row.mfa_level,
+    mfaVerifiedAt: row.mfa_verified_at,
     role: row.role,
     ageConfirmedAt: row.age_confirmed_at,
+    ageVerificationStatus: row.age_verification_status,
+    isOver18Verified: Boolean(row.is_over_18_verified),
     subscriptionStatus: row.subscription_status,
     stripeCustomerId: row.stripe_customer_id,
     premiumUntil: row.premium_until,
@@ -659,6 +853,36 @@ function toAccount(row: AccountRow): BusinessAccount {
     rejectedSubmissionCount: row.rejected_submission_count,
     fraudStrikeCount: row.fraud_strike_count,
     status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toSourceEvidenceObject(row: SourceEvidenceObjectRow): SourceEvidenceObject {
+  return {
+    id: row.id,
+    ownerUserId: row.owner_user_id,
+    storageProvider: row.storage_provider,
+    objectPath: row.object_path,
+    mimeType: row.mime_type,
+    byteSize: row.byte_size,
+    dataBase64: row.data_base64,
+    externalUrl: row.external_url,
+    createdAt: row.created_at,
+  };
+}
+
+function toProfile(row: ProfileRow): PublicProfile {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    username: row.username,
+    avatarUrl: row.avatar_url,
+    role: row.role,
+    accountStatus: row.account_status,
+    ageVerificationStatus: row.age_verification_status,
+    isOver18Verified: Boolean(row.is_over_18_verified),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -993,6 +1217,25 @@ function toBarSpecial(row: BarSpecialRow): BarSpecial {
   };
 }
 
+function toBarPendingChange(row: BarPendingChangeRow): BarPendingChange {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    changeType: row.change_type,
+    action: row.action,
+    targetId: row.target_id,
+    payload: parseJsonObject(row.payload_json),
+    status: row.status,
+    submittedBy: row.submitted_by,
+    submittedAt: row.submitted_at,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: row.reviewed_at,
+    rejectionReason: row.rejection_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function toMonthlyBarReport(row: MonthlyBarReportRow): MonthlyBarReport {
   return {
     id: row.id,
@@ -1018,6 +1261,47 @@ function toSecurityAuditLog(row: SecurityAuditLogRow): SecurityAuditLog {
   };
 }
 
+function toVerification(row: VerificationRow): UserVerification {
+  return {
+    id: row.id,
+    verifierUserId: row.verifier_user_id,
+    uploadId: row.upload_id,
+    targetEntityType: row.target_entity_type,
+    targetEntityId: row.target_entity_id,
+    result: row.result,
+    notes: row.notes,
+    createdAt: row.created_at,
+  };
+}
+
+function toUserActivityEvent(row: UserActivityEventRow): UserActivityEvent {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    eventType: row.event_type,
+    relatedEntityType: row.related_entity_type,
+    relatedEntityId: row.related_entity_id,
+    metadata: parseJsonObject(row.metadata_json),
+    createdAt: row.created_at,
+  };
+}
+
+function toAgeVerification(row: AgeVerificationRow): AgeVerification {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    status: row.status,
+    ageThreshold: row.age_threshold,
+    isOver18: Boolean(row.is_over_18),
+    providerName: row.provider_name,
+    providerReferenceId: row.provider_reference_id,
+    checkedAt: row.checked_at,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export class BusinessRepository {
   constructor(private readonly database: BetterSqlite3.Database) {}
 
@@ -1028,15 +1312,104 @@ export class BusinessRepository {
     role: AccountRole;
     subscriptionStatus: SubscriptionStatus;
     now: string;
+    displayName?: string | null | undefined;
+    avatarUrl?: string | null | undefined;
+    authProvider?: string | undefined;
+    supabaseUserId?: string | null | undefined;
+    emailVerifiedAt?: string | null | undefined;
+    mfaLevel?: string | undefined;
+    mfaVerifiedAt?: string | null | undefined;
   }): BusinessAccount {
+    const create = this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO accounts (
+            id, email, password_hash, display_name, avatar_url, auth_provider, supabase_user_id,
+            email_verified_at, mfa_level, mfa_verified_at, role, subscription_status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          input.email,
+          input.passwordHash,
+          input.displayName ?? null,
+          input.avatarUrl ?? null,
+          input.authProvider ?? "local",
+          input.supabaseUserId ?? null,
+          input.emailVerifiedAt ?? null,
+          input.mfaLevel ?? "aal1",
+          input.mfaVerifiedAt ?? null,
+          input.role,
+          input.subscriptionStatus,
+          input.now,
+          input.now,
+        );
+
+      this.upsertProfile({
+        id: input.id,
+        email: input.email,
+        displayName: input.displayName ?? null,
+        username: null,
+        avatarUrl: input.avatarUrl ?? null,
+        role: input.role,
+        accountStatus: "active",
+        ageVerificationStatus: "not_started",
+        isOver18Verified: false,
+        now: input.now,
+      });
+    });
+
+    create();
+    return this.getAccountById(input.id)!;
+  }
+
+  upsertProfile(input: {
+    id: string;
+    email: string | null;
+    displayName: string | null;
+    username: string | null;
+    avatarUrl: string | null;
+    role: AccountRole;
+    accountStatus: AccountStatus;
+    ageVerificationStatus: AgeVerificationStatus;
+    isOver18Verified: boolean;
+    now: string;
+  }): PublicProfile {
     this.database
       .prepare(
-        `INSERT INTO accounts (
-          id, email, password_hash, role, subscription_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO profiles (
+          id, email, display_name, username, avatar_url, role, account_status,
+          age_verification_status, is_over_18_verified, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          email = excluded.email,
+          display_name = excluded.display_name,
+          avatar_url = excluded.avatar_url,
+          role = excluded.role,
+          account_status = excluded.account_status,
+          age_verification_status = excluded.age_verification_status,
+          is_over_18_verified = excluded.is_over_18_verified,
+          updated_at = excluded.updated_at`,
       )
-      .run(input.id, input.email, input.passwordHash, input.role, input.subscriptionStatus, input.now, input.now);
-    return this.getAccountById(input.id)!;
+      .run(
+        input.id,
+        input.email,
+        input.displayName,
+        input.username,
+        input.avatarUrl,
+        input.role,
+        input.accountStatus,
+        input.ageVerificationStatus,
+        input.isOver18Verified ? 1 : 0,
+        input.now,
+        input.now,
+      );
+    return this.getProfileById(input.id)!;
+  }
+
+  getProfileById(id: string): PublicProfile | null {
+    const row = this.database.prepare("SELECT * FROM profiles WHERE id = ?").get(id) as ProfileRow | undefined;
+    return row ? toProfile(row) : null;
   }
 
   getAccountByEmail(email: string): BusinessAccount | null {
@@ -1049,6 +1422,94 @@ export class BusinessRepository {
   getAccountById(id: string): BusinessAccount | null {
     const row = this.database.prepare("SELECT * FROM accounts WHERE id = ?").get(id) as AccountRow | undefined;
     return row ? toAccount(row) : null;
+  }
+
+  getAccountBySupabaseUserId(supabaseUserId: string): BusinessAccount | null {
+    const row = this.database
+      .prepare("SELECT * FROM accounts WHERE supabase_user_id = ? OR id = ? LIMIT 1")
+      .get(supabaseUserId, supabaseUserId) as AccountRow | undefined;
+    return row ? toAccount(row) : null;
+  }
+
+  linkSupabaseAccount(input: {
+    userId: string;
+    supabaseUserId: string;
+    authProvider: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+    emailVerifiedAt: string | null;
+    mfaLevel: string;
+    mfaVerifiedAt: string | null;
+    now: string;
+  }): BusinessAccount {
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE accounts
+           SET supabase_user_id = ?,
+               auth_provider = ?,
+               display_name = ?,
+               avatar_url = ?,
+               email_verified_at = COALESCE(?, email_verified_at),
+               mfa_level = ?,
+               mfa_verified_at = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          input.supabaseUserId,
+          input.authProvider,
+          input.displayName,
+          input.avatarUrl,
+          input.emailVerifiedAt,
+          input.mfaLevel,
+          input.mfaVerifiedAt,
+          input.now,
+          input.userId,
+        );
+      const account = this.getAccountById(input.userId);
+      if (account) {
+        this.upsertProfile({
+          id: account.id,
+          email: account.email,
+          displayName: input.displayName,
+          username: null,
+          avatarUrl: input.avatarUrl,
+          role: account.role,
+          accountStatus: account.status,
+          ageVerificationStatus: account.ageVerificationStatus,
+          isOver18Verified: account.isOver18Verified,
+          now: input.now,
+        });
+      }
+    })();
+    return this.getAccountById(input.userId)!;
+  }
+
+  updateAccountSecurityClaims(input: {
+    userId: string;
+    emailVerifiedAt?: string | null | undefined;
+    mfaLevel?: string | undefined;
+    mfaVerifiedAt?: string | null | undefined;
+    now: string;
+  }): BusinessAccount {
+    this.database
+      .prepare(
+        `UPDATE accounts
+         SET email_verified_at = COALESCE(?, email_verified_at),
+             mfa_level = COALESCE(?, mfa_level),
+             mfa_verified_at = COALESCE(?, mfa_verified_at),
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        input.emailVerifiedAt ?? null,
+        input.mfaLevel ?? null,
+        input.mfaVerifiedAt ?? null,
+        input.now,
+        input.userId,
+      );
+    return this.getAccountById(input.userId)!;
   }
 
   getAccountByStripeCustomerId(stripeCustomerId: string): BusinessAccount | null {
@@ -1137,10 +1598,92 @@ export class BusinessRepository {
   }
 
   updateAgeConfirmed(userId: string, confirmedAt: string): BusinessAccount {
-    this.database
-      .prepare("UPDATE accounts SET age_confirmed_at = ?, updated_at = ? WHERE id = ?")
-      .run(confirmedAt, confirmedAt, userId);
+    this.database.transaction(() => {
+      this.database
+        .prepare("UPDATE accounts SET age_confirmed_at = ?, updated_at = ? WHERE id = ?")
+        .run(confirmedAt, confirmedAt, userId);
+      this.database
+        .prepare("UPDATE profiles SET updated_at = ? WHERE id = ?")
+        .run(confirmedAt, userId);
+    })();
     return this.getAccountById(userId)!;
+  }
+
+  upsertAgeVerification(input: {
+    id: string;
+    userId: string;
+    status: AgeVerificationStatus;
+    ageThreshold: number;
+    isOver18: boolean;
+    providerName: string | null;
+    providerReferenceId: string | null;
+    checkedAt: string | null;
+    expiresAt: string | null;
+    now: string;
+  }): AgeVerification {
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO age_verifications (
+            id, user_id, status, age_threshold, is_over_18, provider_name,
+            provider_reference_id, checked_at, expires_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            status = excluded.status,
+            age_threshold = excluded.age_threshold,
+            is_over_18 = excluded.is_over_18,
+            provider_name = excluded.provider_name,
+            provider_reference_id = excluded.provider_reference_id,
+            checked_at = excluded.checked_at,
+            expires_at = excluded.expires_at,
+            updated_at = excluded.updated_at`,
+        )
+        .run(
+          input.id,
+          input.userId,
+          input.status,
+          input.ageThreshold,
+          input.isOver18 ? 1 : 0,
+          input.providerName,
+          input.providerReferenceId,
+          input.checkedAt,
+          input.expiresAt,
+          input.now,
+          input.now,
+        );
+
+      this.database
+        .prepare(
+          `UPDATE accounts
+           SET age_verification_status = ?, is_over_18_verified = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(input.status, input.status === "verified" && input.isOver18 ? 1 : 0, input.now, input.userId);
+
+      this.database
+        .prepare(
+          `UPDATE profiles
+           SET age_verification_status = ?, is_over_18_verified = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(input.status, input.status === "verified" && input.isOver18 ? 1 : 0, input.now, input.userId);
+    })();
+
+    return this.getAgeVerificationById(input.id)!;
+  }
+
+  getAgeVerificationById(id: string): AgeVerification | null {
+    const row = this.database.prepare("SELECT * FROM age_verifications WHERE id = ?").get(id) as
+      | AgeVerificationRow
+      | undefined;
+    return row ? toAgeVerification(row) : null;
+  }
+
+  getLatestAgeVerification(userId: string): AgeVerification | null {
+    const row = this.database
+      .prepare("SELECT * FROM age_verifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(userId) as AgeVerificationRow | undefined;
+    return row ? toAgeVerification(row) : null;
   }
 
   updateSubscription(input: {
@@ -1191,6 +1734,9 @@ export class BusinessRepository {
         input.now,
         input.userId,
       );
+    this.database
+      .prepare("UPDATE profiles SET account_status = ?, updated_at = ? WHERE id = ?")
+      .run(input.status, input.now, input.userId);
     return this.getAccountById(input.userId)!;
   }
 
@@ -1265,6 +1811,107 @@ export class BusinessRepository {
 
     create();
     return this.getSubmissionById(input.id)!.submission;
+  }
+
+  createVerification(input: {
+    id: string;
+    verifierUserId: string;
+    uploadId: string;
+    targetEntityType: string;
+    targetEntityId: string;
+    result: string;
+    notes: string | null;
+    now: string;
+  }): UserVerification {
+    const submission = this.getSubmissionById(input.uploadId);
+    if (!submission) {
+      throw new Error("Submission not found");
+    }
+
+    if (submission.submission.userId === input.verifierUserId) {
+      throw new Error("Users cannot verify their own uploads");
+    }
+
+    this.database
+      .prepare(
+        `INSERT INTO verifications (
+          id, verifier_user_id, upload_id, target_entity_type, target_entity_id, result, notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.verifierUserId,
+        input.uploadId,
+        input.targetEntityType,
+        input.targetEntityId,
+        input.result,
+        input.notes,
+        input.now,
+      );
+
+    return this.getVerificationById(input.id)!;
+  }
+
+  getVerificationById(id: string): UserVerification | null {
+    const row = this.database.prepare("SELECT * FROM verifications WHERE id = ?").get(id) as
+      | VerificationRow
+      | undefined;
+    return row ? toVerification(row) : null;
+  }
+
+  getVerificationByUserAndUpload(input: { verifierUserId: string; uploadId: string }): UserVerification | null {
+    const row = this.database
+      .prepare("SELECT * FROM verifications WHERE verifier_user_id = ? AND upload_id = ? LIMIT 1")
+      .get(input.verifierUserId, input.uploadId) as VerificationRow | undefined;
+    return row ? toVerification(row) : null;
+  }
+
+  listVerificationsForUser(userId: string, limit: number): UserVerification[] {
+    const rows = this.database
+      .prepare("SELECT * FROM verifications WHERE verifier_user_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(userId, limit) as VerificationRow[];
+    return rows.map(toVerification);
+  }
+
+  createUserActivityEvent(input: {
+    id: string;
+    userId: string;
+    eventType: string;
+    relatedEntityType: string | null;
+    relatedEntityId: string | null;
+    metadata: Record<string, unknown>;
+    now: string;
+  }): UserActivityEvent {
+    this.database
+      .prepare(
+        `INSERT INTO user_activity_events (
+          id, user_id, event_type, related_entity_type, related_entity_id, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.eventType,
+        input.relatedEntityType,
+        input.relatedEntityId,
+        JSON.stringify(redactSecrets(input.metadata)),
+        input.now,
+      );
+    return this.getUserActivityEventById(input.id)!;
+  }
+
+  getUserActivityEventById(id: string): UserActivityEvent | null {
+    const row = this.database.prepare("SELECT * FROM user_activity_events WHERE id = ?").get(id) as
+      | UserActivityEventRow
+      | undefined;
+    return row ? toUserActivityEvent(row) : null;
+  }
+
+  listUserActivityEvents(userId: string, limit: number): UserActivityEvent[] {
+    const rows = this.database
+      .prepare("SELECT * FROM user_activity_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(userId, limit) as UserActivityEventRow[];
+    return rows.map(toUserActivityEvent);
   }
 
   getSubmissionById(id: string): { submission: BusinessSubmission; items: BusinessSubmissionItem[] } | null {
@@ -1587,6 +2234,93 @@ export class BusinessRepository {
       .prepare(`SELECT * FROM venue_price_records ${where} ORDER BY last_verified_at DESC LIMIT ?`)
       .all(...values) as PriceRecordRow[];
     return rows.map(toPriceRecord);
+  }
+
+  listVenueManagerPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {
+    const values = venueId ? [venueId, limit] : [limit];
+    const beerWhere = venueId ? "WHERE beer.bar_id = ? AND profile.active = 1" : "WHERE profile.active = 1";
+    const happyWhere = venueId
+      ? "WHERE happy.bar_id = ? AND happy.active = 1 AND profile.active = 1"
+      : "WHERE happy.active = 1 AND profile.active = 1";
+    const beerRows = this.database
+      .prepare(
+        `SELECT
+           beer.*,
+           profile.name AS profile_name,
+           profile.suburb AS profile_suburb,
+           profile.address AS profile_address
+         FROM bar_beers beer
+         INNER JOIN bar_profiles profile ON profile.bar_id = beer.bar_id
+         ${beerWhere}
+         ORDER BY beer.updated_at DESC
+         LIMIT ?`,
+      )
+      .all(...values) as Array<BarBeerRow & { profile_name: string | null; profile_suburb: string | null; profile_address: string | null }>;
+    const happyRows = this.database
+      .prepare(
+        `SELECT
+           happy.*,
+           profile.name AS profile_name,
+           profile.suburb AS profile_suburb,
+           profile.address AS profile_address
+         FROM bar_happy_hours happy
+         INNER JOIN bar_profiles profile ON profile.bar_id = happy.bar_id
+         ${happyWhere}
+         ORDER BY happy.updated_at DESC
+         LIMIT ?`,
+      )
+      .all(...values) as Array<BarHappyHourRow & { profile_name: string | null; profile_suburb: string | null; profile_address: string | null }>;
+
+    return [
+      ...beerRows.map((row) => ({
+        id: `bar_beer:${row.id}`,
+        venueId: row.bar_id,
+        venueName: row.profile_name || row.bar_id,
+        venueAddress: row.profile_address,
+        suburb: row.profile_suburb,
+        beerName: row.beer_name,
+        normalizedBeerId: null,
+        servingSize: row.serve_size || "other",
+        price: row.price,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        displayKind: "beer" as const,
+        isOnTap: row.on_tap ? "yes" as const : row.in_stock ? "unknown" as const : "no" as const,
+        confidence: "venue_confirmed" as const,
+        sourceType: "venue_manager_portal",
+        sourceSubmissionId: null,
+        lastVerifiedAt: row.updated_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+      ...happyRows.map((row) => ({
+        id: `bar_happy_hour:${row.id}`,
+        venueId: row.bar_id,
+        venueName: row.profile_name || row.bar_id,
+        venueAddress: row.profile_address,
+        suburb: row.profile_suburb,
+        beerName: row.title || "Happy hour",
+        normalizedBeerId: null,
+        servingSize: "other" as const,
+        price: null,
+        isHappyHourPrice: true,
+        happyHourDetails: row.description,
+        happyHourTitle: row.title,
+        happyHourDays: parseJsonArray(row.days_of_week_json),
+        happyHourStartTime: row.start_time,
+        happyHourEndTime: row.end_time,
+        displayKind: "happy_hour" as const,
+        isOnTap: "unknown" as const,
+        confidence: "venue_confirmed" as const,
+        sourceType: "venue_manager_portal",
+        sourceSubmissionId: null,
+        lastVerifiedAt: row.updated_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    ]
+      .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime())
+      .slice(0, limit);
   }
 
   getAccountPreferences(userId: string): AccountPreferences | null {
@@ -2405,6 +3139,98 @@ export class BusinessRepository {
     return result.changes > 0;
   }
 
+  createBarPendingChange(input: {
+    id: string;
+    barId: string;
+    changeType: BarPendingChangeType;
+    action: BarPendingChangeAction;
+    targetId: string | null;
+    payload: Record<string, unknown>;
+    submittedBy: string;
+    now: string;
+  }): BarPendingChange {
+    this.database
+      .prepare(
+        `INSERT INTO bar_pending_changes (
+          id, bar_id, change_type, action, target_id, payload_json, status,
+          submitted_by, submitted_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.barId,
+        input.changeType,
+        input.action,
+        input.targetId,
+        JSON.stringify(input.payload),
+        input.submittedBy,
+        input.now,
+        input.now,
+        input.now,
+      );
+    const row = this.database.prepare("SELECT * FROM bar_pending_changes WHERE id = ?").get(input.id) as BarPendingChangeRow;
+    return toBarPendingChange(row);
+  }
+
+  getBarPendingChangeById(id: string): BarPendingChange | null {
+    const row = this.database.prepare("SELECT * FROM bar_pending_changes WHERE id = ?").get(id) as
+      | BarPendingChangeRow
+      | undefined;
+    return row ? toBarPendingChange(row) : null;
+  }
+
+  listBarPendingChanges(input: {
+    barId?: string | undefined;
+    submittedBy?: string | undefined;
+    status?: BarPendingChangeStatus | undefined;
+    limit: number;
+  }): BarPendingChange[] {
+    const clauses: string[] = [];
+    const values: unknown[] = [];
+
+    if (input.barId) {
+      clauses.push("bar_id = ?");
+      values.push(input.barId);
+    }
+
+    if (input.submittedBy) {
+      clauses.push("submitted_by = ?");
+      values.push(input.submittedBy);
+    }
+
+    if (input.status) {
+      clauses.push("status = ?");
+      values.push(input.status);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.database
+      .prepare(`SELECT * FROM bar_pending_changes ${where} ORDER BY submitted_at DESC LIMIT ?`)
+      .all(...values, input.limit) as BarPendingChangeRow[];
+    return rows.map(toBarPendingChange);
+  }
+
+  reviewBarPendingChange(input: {
+    id: string;
+    status: Exclude<BarPendingChangeStatus, "pending">;
+    reviewedBy: string;
+    reviewedAt: string;
+    rejectionReason: string | null;
+  }): BarPendingChange | null {
+    this.database
+      .prepare(
+        `UPDATE bar_pending_changes
+         SET status = ?,
+             reviewed_by = ?,
+             reviewed_at = ?,
+             rejection_reason = ?,
+             updated_at = ?
+         WHERE id = ? AND status = 'pending'`,
+      )
+      .run(input.status, input.reviewedBy, input.reviewedAt, input.rejectionReason, input.reviewedAt, input.id);
+    return this.getBarPendingChangeById(input.id);
+  }
+
   getMonthlyBarReport(input: { barId: string; month: string }): MonthlyBarReport | null {
     const row = this.database
       .prepare("SELECT * FROM monthly_bar_reports WHERE bar_id = ? AND month = ?")
@@ -2661,6 +3487,45 @@ export class BusinessRepository {
       .prepare("SELECT * FROM security_audit_log ORDER BY created_at DESC LIMIT ?")
       .all(limit) as SecurityAuditLogRow[];
     return rows.map(toSecurityAuditLog);
+  }
+
+  createSourceEvidenceObject(input: {
+    id: string;
+    ownerUserId: string | null;
+    storageProvider: string;
+    objectPath: string;
+    mimeType: string | null;
+    byteSize: number | null;
+    dataBase64: string | null;
+    externalUrl: string | null;
+    createdAt: string;
+  }): SourceEvidenceObject {
+    this.database
+      .prepare(
+        `INSERT INTO source_evidence_objects (
+          id, owner_user_id, storage_provider, object_path, mime_type, byte_size,
+          data_base64, external_url, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.ownerUserId,
+        input.storageProvider,
+        input.objectPath,
+        input.mimeType,
+        input.byteSize,
+        input.dataBase64,
+        input.externalUrl,
+        input.createdAt,
+      );
+    return this.getSourceEvidenceObject(input.id)!;
+  }
+
+  getSourceEvidenceObject(id: string): SourceEvidenceObject | null {
+    const row = this.database
+      .prepare("SELECT * FROM source_evidence_objects WHERE id = ?")
+      .get(id) as SourceEvidenceObjectRow | undefined;
+    return row ? toSourceEvidenceObject(row) : null;
   }
 
   countEvents(input: {

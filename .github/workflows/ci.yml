@@ -35,3 +35,6 @@ jobs:
 
       - name: Secret scan
         run: npm run security:scan
+
+      - name: Dependency audit
+        run: npm run security:audit

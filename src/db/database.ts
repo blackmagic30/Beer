@@ -56,6 +56,18 @@ const authSessionsColumns = [
   { name: "user_agent_hash", definition: "TEXT" },
 ] as const;
 
+const accountsColumns = [
+  { name: "display_name", definition: "TEXT" },
+  { name: "avatar_url", definition: "TEXT" },
+  { name: "auth_provider", definition: "TEXT NOT NULL DEFAULT 'local'" },
+  { name: "supabase_user_id", definition: "TEXT" },
+  { name: "email_verified_at", definition: "TEXT" },
+  { name: "mfa_level", definition: "TEXT NOT NULL DEFAULT 'aal1'" },
+  { name: "mfa_verified_at", definition: "TEXT" },
+  { name: "age_verification_status", definition: "TEXT NOT NULL DEFAULT 'not_started'" },
+  { name: "is_over_18_verified", definition: "INTEGER NOT NULL DEFAULT 0" },
+] as const;
+
 function ensureColumns(
   database: BetterSqlite3.Database,
   tableName: string,
@@ -94,6 +106,18 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_active
       ON auth_sessions (user_id, revoked_at, expires_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_accounts_supabase_user
+      ON accounts (supabase_user_id);
+
+    CREATE INDEX IF NOT EXISTS idx_accounts_email_verified
+      ON accounts (email_verified_at, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_bar_pending_changes_review
+      ON bar_pending_changes (status, reviewed_at DESC, submitted_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_source_evidence_owner
+      ON source_evidence_objects (owner_user_id, created_at DESC);
   `);
 }
 
@@ -115,22 +139,28 @@ function normalizeLegacyBarTiers(database: BetterSqlite3.Database): void {
   `);
 }
 
-export function createDatabase(): BetterSqlite3.Database {
-  fs.mkdirSync(path.dirname(env.DATABASE_PATH), { recursive: true });
-
-  const database = new BetterSqlite3(env.DATABASE_PATH);
+export function initializeDatabaseSchema(database: BetterSqlite3.Database): void {
   const schema = fs.readFileSync(resolveSchemaPath(), "utf8");
 
-  database.pragma("journal_mode = WAL");
-  database.pragma("foreign_keys = ON");
   database.exec(schema);
   ensureColumns(database, "call_runs", callRunsColumns);
   ensureColumns(database, "beer_price_results", beerPriceResultsColumns);
   ensureColumns(database, "bar_profiles", barProfilesColumns);
   ensureColumns(database, "bar_analytics_events", barAnalyticsEventsColumns);
+  ensureColumns(database, "accounts", accountsColumns);
   ensureColumns(database, "auth_sessions", authSessionsColumns);
   normalizeLegacyBarTiers(database);
   ensureIndexes(database);
+}
+
+export function createDatabase(): BetterSqlite3.Database {
+  fs.mkdirSync(path.dirname(env.DATABASE_PATH), { recursive: true });
+
+  const database = new BetterSqlite3(env.DATABASE_PATH);
+
+  database.pragma("journal_mode = WAL");
+  database.pragma("foreign_keys = ON");
+  initializeDatabaseSchema(database);
 
   return database;
 }

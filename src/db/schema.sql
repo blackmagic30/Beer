@@ -119,8 +119,17 @@ CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  display_name TEXT,
+  avatar_url TEXT,
+  auth_provider TEXT NOT NULL DEFAULT 'local',
+  supabase_user_id TEXT UNIQUE,
+  email_verified_at TEXT,
+  mfa_level TEXT NOT NULL DEFAULT 'aal1',
+  mfa_verified_at TEXT,
   role TEXT NOT NULL DEFAULT 'user',
   age_confirmed_at TEXT,
+  age_verification_status TEXT NOT NULL DEFAULT 'not_started',
+  is_over_18_verified INTEGER NOT NULL DEFAULT 0,
   subscription_status TEXT NOT NULL DEFAULT 'free',
   stripe_customer_id TEXT,
   premium_until TEXT,
@@ -140,6 +149,24 @@ CREATE INDEX IF NOT EXISTS idx_accounts_email
 CREATE INDEX IF NOT EXISTS idx_accounts_stripe_customer
   ON accounts (stripe_customer_id);
 
+CREATE TABLE IF NOT EXISTS profiles (
+  id TEXT PRIMARY KEY,
+  email TEXT,
+  display_name TEXT,
+  username TEXT,
+  avatar_url TEXT,
+  role TEXT NOT NULL DEFAULT 'user',
+  account_status TEXT NOT NULL DEFAULT 'active',
+  age_verification_status TEXT NOT NULL DEFAULT 'not_started',
+  is_over_18_verified INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_profiles_status
+  ON profiles (account_status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -154,9 +181,6 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
   ON auth_sessions (user_id, expires_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_auth_sessions_active
-  ON auth_sessions (user_id, revoked_at, expires_at DESC);
 
 CREATE TABLE IF NOT EXISTS security_audit_log (
   id TEXT PRIMARY KEY,
@@ -176,6 +200,22 @@ CREATE INDEX IF NOT EXISTS idx_security_audit_log_created
 
 CREATE INDEX IF NOT EXISTS idx_security_audit_log_action
   ON security_audit_log (action, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS source_evidence_objects (
+  id TEXT PRIMARY KEY,
+  owner_user_id TEXT,
+  storage_provider TEXT NOT NULL DEFAULT 'sqlite_private',
+  object_path TEXT NOT NULL UNIQUE,
+  mime_type TEXT,
+  byte_size INTEGER,
+  data_base64 TEXT,
+  external_url TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (owner_user_id) REFERENCES accounts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_evidence_owner
+  ON source_evidence_objects (owner_user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS submissions (
   id TEXT PRIMARY KEY,
@@ -225,6 +265,64 @@ CREATE TABLE IF NOT EXISTS submission_items (
 
 CREATE INDEX IF NOT EXISTS idx_submission_items_submission
   ON submission_items (submission_id);
+
+CREATE TABLE IF NOT EXISTS verifications (
+  id TEXT PRIMARY KEY,
+  verifier_user_id TEXT NOT NULL,
+  upload_id TEXT NOT NULL,
+  target_entity_type TEXT NOT NULL DEFAULT 'submission',
+  target_entity_id TEXT NOT NULL,
+  result TEXT NOT NULL,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (verifier_user_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (upload_id) REFERENCES submissions(id) ON DELETE CASCADE,
+  UNIQUE (verifier_user_id, upload_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_verifications_user
+  ON verifications (verifier_user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_verifications_target
+  ON verifications (target_entity_type, target_entity_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_activity_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  related_entity_type TEXT,
+  related_entity_id TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_activity_user_created
+  ON user_activity_events (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_user_activity_type
+  ON user_activity_events (event_type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS age_verifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'not_started',
+  age_threshold INTEGER NOT NULL DEFAULT 18,
+  is_over_18 INTEGER NOT NULL DEFAULT 0,
+  provider_name TEXT,
+  provider_reference_id TEXT,
+  checked_at TEXT,
+  expires_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_age_verifications_user
+  ON age_verifications (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_age_verifications_status
+  ON age_verifications (status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS venue_price_records (
   id TEXT PRIMARY KEY,
@@ -518,6 +616,32 @@ CREATE TABLE IF NOT EXISTS bar_specials (
 
 CREATE INDEX IF NOT EXISTS idx_bar_specials_bar
   ON bar_specials (bar_id, active, starts_at, ends_at);
+
+CREATE TABLE IF NOT EXISTS bar_pending_changes (
+  id TEXT PRIMARY KEY,
+  bar_id TEXT NOT NULL,
+  change_type TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_id TEXT,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending',
+  submitted_by TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  submitted_at TEXT NOT NULL,
+  reviewed_by TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  reviewed_at TEXT,
+  rejection_reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bar_pending_changes_bar_status
+  ON bar_pending_changes (bar_id, status, submitted_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bar_pending_changes_submitter_status
+  ON bar_pending_changes (submitted_by, status, submitted_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bar_pending_changes_status
+  ON bar_pending_changes (status, submitted_at DESC);
 
 CREATE TABLE IF NOT EXISTS bar_analytics_events (
   id TEXT PRIMARY KEY,

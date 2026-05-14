@@ -10,6 +10,7 @@ Use this before merging a beta/hardening branch into `main` or deploying a Railw
 - Build command: `npm run build`.
 - Start command: `node dist/src/server.js`.
 - Health check: `/health`.
+- Readiness check: `/ready` initializes the lazy backend routers/database and should return `status: "ready"` before routing production traffic.
 - Database: SQLite at `DATABASE_PATH`, with additive schema creation from `src/db/schema.sql`.
 
 ## 2. Pre-Deploy Checks
@@ -20,10 +21,12 @@ Use this before merging a beta/hardening branch into `main` or deploying a Railw
 - Run `npm test`.
 - Run `npm run check`.
 - Run `npm run security:scan`.
+- Run `npm run security:audit`.
 - Confirm no `.env` file, API keys, Stripe secrets, Supabase service-role keys, Twilio auth tokens, OpenAI keys, or ElevenLabs keys are committed.
 - Confirm public map source does not contain legacy admin/debug UI strings.
 - Confirm Google Maps browser keys are HTTP-referrer restricted to localhost and the live beta domain.
-- Confirm Supabase Row Level Security policies are reviewed if any direct browser Supabase access is enabled for future work.
+- Confirm Supabase OAuth providers and redirect URLs are configured if quick login is enabled.
+- Confirm Supabase Row Level Security policies from `supabase/migrations/20260512000000_auth_profiles_activity.sql` are reviewed before any direct browser writes are enabled.
 
 ## 3. Required Production Beta Env
 
@@ -39,17 +42,28 @@ FREE_PRICE_REVEALS_PER_DAY=3
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
 ADMIN_EMAILS=your-admin-email@example.com
+GOOGLE_MAPS_API_KEY=browser_key_restricted_to_live_domain
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
+REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
+ADMIN_MFA_MAX_AGE_MINUTES=720
+REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true
 ANALYTICS_MIN_BUCKET_SIZE=5
+REDIS_URL=redis://default:replace_me@host:6379
+ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
+SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
+SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 TWILIO_VALIDATE_SIGNATURES=true
 ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=false
 ELEVENLABS_WEBHOOK_SECRET=replace_with_elevenlabs_shared_secret
 ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false
 OUTBOUND_CALLS_ENABLED=false
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-browser-safe-anon-key
+SUPABASE_OAUTH_PROVIDERS=google,apple,facebook
 ```
 
 If you intentionally use simulated checkout for the private field test, set both:
@@ -74,8 +88,11 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Before deploy, back up the production SQLite file or Railway volume.
 - The schema is additive with `CREATE TABLE IF NOT EXISTS` and indexes; do not run destructive `DROP` or `DELETE` commands for this beta.
 - Deploy will initialize missing tables from `src/db/schema.sql` through the app database setup.
-- New hardening tables/columns are additive: `security_audit_log`, session revocation/last-used fields, and supporting indexes.
+- New hardening/auth tables/columns are additive: `profiles`, `verifications`, `user_activity_events`, `age_verifications`, `security_audit_log`, session revocation/last-used fields, and supporting indexes.
+- If using Supabase Auth/OAuth writes directly, apply and review `supabase/migrations/20260512000000_auth_profiles_activity.sql` in Supabase before field testing uploads/verifications through Supabase-backed clients.
+- Verify the Supabase private Storage bucket `beermap-source-evidence` exists, is not public, and has owner-only object policies before accepting source evidence at scale.
 - Verify `/health` after deploy, then confirm account signup and map load.
+- Verify `/ready` after deploy; if it fails, inspect app logs before allowing user traffic.
 - If migration fails, stop the deployment, restore the DB backup, and redeploy the previous production commit.
 
 ## 6. Admin Account
@@ -88,12 +105,14 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 ## 7. Live Smoke Test
 
 - Open the live site logged out and confirm the map loads.
+- Confirm `/health` and `/ready` both return success.
 - Confirm no admin/debug UI is visible.
 - Open a venue and confirm exact prices are limited/redacted for anonymous users.
 - Directly request `/api/business/price-records` logged out and confirm prices are redacted unless a server-counted reveal is used.
 - Run `POST /api/business/auth/logout` and confirm the same bearer token can no longer access `/api/business/account`.
 - Run a sensitive admin action and confirm a row appears in `security_audit_log`.
 - Confirm production inline `sourcePhotoDataUrl` submissions are rejected unless `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=true` is intentionally set.
+- Confirm source evidence signed URLs are available only to the uploader/admin and expire after `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`.
 - Create or log in as a test user and confirm 18+.
 - Hit the free reveal limit.
 - Submit venue data and confirm it appears as pending in account.
@@ -115,6 +134,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 ## 8. Security Preflight
 
 - Run `npm run security:scan` after final env/docs edits.
+- Run `npm run security:audit` and confirm there are no high-severity advisories before release.
 - Rotate any provider key that was ever committed, shared in chat/screenshots, or exposed through public config.
 - Confirm `/config.js` only exposes browser-safe fields such as Google Maps browser key, map ID, field-test flag, and non-secret public settings.
 - Confirm `viewer/config.js` is ignored and not committed.
@@ -123,7 +143,9 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Confirm Stripe CLI delivered a signed test webhook to `/api/business/billing/webhook`.
 - Confirm audit logs redact email, phone, token, secret, raw payload, source image data, and precise coordinates.
 - Confirm analytics buckets below `ANALYTICS_MIN_BUCKET_SIZE` are suppressed in admin and venue-owner outputs.
-- Confirm in-memory rate limiting is acceptable for the current single Railway instance. For multiple instances, add Redis or edge/WAF limiting before wider release.
+- Confirm Redis-backed rate limiting is active through `REDIS_URL`. Do not set `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` for full-scale launch.
+- Confirm Supabase MFA is enabled and admin routes require an AAL2 session in production.
+- Confirm Supabase Confirm Email/custom SMTP is configured before allowing self-serve venue-manager onboarding.
 
 ## 9. Rollback Plan
 

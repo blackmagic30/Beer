@@ -14,10 +14,12 @@ import {
   barBeerSchema,
   barClaimRequestSchema,
   barHappyHourSchema,
+  barPendingChangeReviewSchema,
   barProfileSchema,
   barSpecialSchema,
   barTierCheckoutSchema,
   authLoginSchema,
+  authSupabaseSessionSchema,
   authSignupSchema,
   checkoutSchema,
   createMissionSchema,
@@ -32,6 +34,7 @@ import {
   saveItemSchema,
   submissionsQuerySchema,
   venueRequestSchema,
+  verificationSchema,
   venueInterestSchema,
   venueInterestStatusSchema,
   venueManagerAssignmentSchema,
@@ -136,6 +139,16 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.login(body, getRequestContext(req))));
   });
 
+  router.post("/auth/supabase-session", authLimiter, async (req, res, next) => {
+    try {
+      const body = parseWithSchema(authSupabaseSessionSchema, req.body, "Invalid Supabase auth payload");
+      const result = await businessService.loginWithSupabaseAccessToken(body, getRequestContext(req));
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post("/auth/logout", authLimiter, (req, res) => {
     res.json(success(businessService.logout(getAuthorization(req), getRequestContext(req))));
   });
@@ -233,11 +246,45 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success({ submissions }));
   });
 
+  router.get("/submissions/:id/source-evidence-url", (req, res) => {
+    const account = requireAccount(req, businessService);
+    res.json(success(businessService.getSubmissionSourceEvidenceUrl(account, String(req.params.id ?? ""))));
+  });
+
+  router.get("/source-evidence/:id", (req, res) => {
+    const evidence = businessService.getSourceEvidenceForSignedRequest({
+      evidenceId: String(req.params.id ?? ""),
+      expires: typeof req.query.expires === "string" ? req.query.expires : undefined,
+      signature: typeof req.query.signature === "string" ? req.query.signature : undefined,
+    });
+
+    res.setHeader("Cache-Control", "private, no-store");
+    if (evidence.externalUrl) {
+      res.redirect(evidence.externalUrl);
+      return;
+    }
+
+    if (!evidence.dataBase64 || !evidence.mimeType) {
+      res.sendStatus(404);
+      return;
+    }
+
+    res.type(evidence.mimeType).send(Buffer.from(evidence.dataBase64, "base64"));
+  });
+
   router.post("/submissions/:id/review", (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(reviewSubmissionSchema, req.body, "Invalid review payload");
     const result = businessService.reviewSubmission(admin, req.params.id, body);
     res.json(success(result));
+  });
+
+  router.post("/submissions/:id/verifications", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(verificationSchema, req.body, "Invalid verification payload");
+    const submissionId = String(req.params.id ?? "");
+    const result = businessService.verifySubmission(account, submissionId, body);
+    res.status(201).json(success(result));
   });
 
   router.get("/missions", (req, res) => {
@@ -384,6 +431,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/admin/venue-partners", (req, res) => {
     const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getVenuePartnerAdmin(admin)));
+  });
+
+  router.post("/admin/bar-pending-changes/:id/review", (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(barPendingChangeReviewSchema, req.body, "Invalid pending bar change review payload");
+    const changeId = String(req.params.id ?? "");
+    res.json(success(businessService.reviewBarPendingChange(admin, changeId, body)));
   });
 
   router.post("/admin/venue-managers", (req, res) => {

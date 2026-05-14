@@ -10,10 +10,10 @@ The beta security posture is designed to protect:
 - admin review and call/transcript routes
 - venue-manager access to assigned venues only
 - payment webhooks through Stripe signature verification
-- source/photo evidence through upload validation and production storage controls
+- source/photo evidence through upload validation, private evidence references, and short-lived signed URLs
 - aggregate analytics privacy through bucket-size suppression
 
-This is not yet a mature enterprise security program. Wider launch should add MFA, private object storage, distributed rate limiting, and a formal RLS/pentest review.
+This is not yet a mature enterprise security program. Wider launch still needs provider-verified Supabase MFA/AAL2 setup, private Storage verification, Redis provisioning, restore drills, and a formal RLS/pentest review.
 
 ## Reporting Vulnerabilities
 
@@ -65,7 +65,10 @@ Run `npm run security:scan` before every deploy.
 - Do not expose individual clickstream, exact user location, call transcripts, phone numbers, source photos, or account emails to venue managers.
 - Venue analytics are aggregated and low-count buckets are suppressed by `ANALYTICS_MIN_BUCKET_SIZE`.
 - Location is opt-in and one-time; the app must not store continuous movement trails.
-- Upload/source evidence should move to private object storage with signed review URLs before broader public beta.
+- Upload/source evidence should use private object storage or the server-side private evidence fallback with signed review URLs. Do not expose raw source URLs or data URLs publicly.
+- Production admin actions require verified email and Supabase AAL2/MFA claims when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
+- Production uploads/verifications require verified account status when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
+- Production rate limiting should use Redis via `REDIS_URL`; the in-memory override is only for a time-boxed single-instance emergency.
 - Keep database and export backups encrypted or access-controlled.
 
 ## Backup And Restore
@@ -74,6 +77,6 @@ Run `npm run security:scan` before every deploy.
 - Schema changes should be additive. Avoid destructive migrations for the beta.
 - Roll back by redeploying the previous commit and restoring the pre-deploy SQLite backup if a migration corrupts state.
 
-## Admin MFA Backlog
+## Admin MFA / Step-Up
 
-Admin MFA/TOTP and recovery codes are not implemented in this beta. Until implemented, protect admin accounts with strong unique passwords, limited `ADMIN_EMAILS`, short admin session TTLs, and external account/provider protection where available.
+Repo-side admin step-up checks are implemented and fail closed in production. Supabase/provider configuration is still required: enable MFA factors, require confirmed email, verify admin sessions reach Auth Assurance Level 2 (`aal2`), and keep `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.

@@ -88,8 +88,17 @@ export const authLoginSchema = z.object({
   password: z.string().min(1),
 });
 
+export const authSupabaseSessionSchema = z.object({
+  accessToken: z.string().trim().min(20),
+});
+
 export const ageConfirmSchema = z.object({
   ageConfirmed: z.boolean().refine((value) => value === true, "You must confirm you are 18+."),
+});
+
+export const verificationSchema = z.object({
+  result: z.enum(["confirmed", "disputed", "needs_more_evidence"]).default("confirmed"),
+  notes: nullableTrimmedStringSchema.default(null),
 });
 
 const stringListSchema = z.array(z.string().trim().min(1).max(80)).max(20).default([]);
@@ -222,6 +231,8 @@ export const eventTrackSchema = z.object({
     "signup_started",
     "signup_completed",
     "age_confirmed",
+    "age_verification_started",
+    "age_verification_status_updated",
     "pricing_page_viewed",
     "checkout_started",
     "subscription_created",
@@ -249,6 +260,11 @@ export const eventTrackSchema = z.object({
     "mission_opened",
     "submission_started",
     "submission_completed",
+    "data_upload_created",
+    "data_verified",
+    "data_edit_submitted",
+    "venue_visit_logged",
+    "reward_eligibility_checked",
     "submission_approved",
     "submission_rejected",
     "contributor_access_unlocked",
@@ -400,7 +416,52 @@ export const venuePortalQuerySchema = z.object({
 });
 
 const dayOfWeekSchema = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
-const timeSchema = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use 24-hour time, e.g. 17:00.");
+
+export function normalizeHappyHourTime(value: unknown): string {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) {
+    return raw;
+  }
+
+  const compact = raw
+    .replace(/\s+/g, "")
+    .replace(/[.]/g, ":");
+  const meridiemMatch = compact.match(/^(\d{1,2})(?::?(\d{2}))?(am|pm)$/);
+  if (meridiemMatch) {
+    let hour = Number(meridiemMatch[1]);
+    const minute = Number(meridiemMatch[2] ?? "0");
+    const meridiem = meridiemMatch[3];
+    if (hour >= 1 && hour <= 12 && minute >= 0 && minute <= 59) {
+      if (meridiem === "pm" && hour !== 12) hour += 12;
+      if (meridiem === "am" && hour === 12) hour = 0;
+      return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    }
+  }
+
+  const numericMatch = compact.match(/^(\d{1,2})(?::?(\d{2}))$/);
+  if (numericMatch) {
+    const hour = Number(numericMatch[1]);
+    const minute = Number(numericMatch[2]);
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+      return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    }
+  }
+
+  const hourOnlyMatch = compact.match(/^(\d{1,2})$/);
+  if (hourOnlyMatch) {
+    const hour = Number(hourOnlyMatch[1]);
+    if (hour >= 0 && hour <= 23) {
+      return `${String(hour).padStart(2, "0")}:00`;
+    }
+  }
+
+  return compact;
+}
+
+const timeSchema = z.preprocess(
+  normalizeHappyHourTime,
+  z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a valid time, e.g. 7:30 pm or 19:30."),
+);
 
 export const barProfileSchema = z.object({
   name: z.string().trim().min(1).max(180),
@@ -488,6 +549,11 @@ export const barTierCheckoutSchema = z.object({
   tier: z.enum(["plus", "pro"]),
 });
 
+export const barPendingChangeReviewSchema = z.object({
+  status: z.enum(["approved", "rejected"]),
+  rejectionReason: nullableTrimmedStringSchema.default(null),
+});
+
 export const adminUserStatusSchema = z.object({
   status: z.enum(["active", "warned", "suspended"]),
   trustScore: z.coerce.number().int().min(0).max(100).optional(),
@@ -496,6 +562,8 @@ export const adminUserStatusSchema = z.object({
 
 export type AuthSignupInput = z.infer<typeof authSignupSchema>;
 export type AuthLoginInput = z.infer<typeof authLoginSchema>;
+export type AuthSupabaseSessionInput = z.infer<typeof authSupabaseSessionSchema>;
+export type VerificationInput = z.infer<typeof verificationSchema>;
 export type CreateSubmissionInput = z.infer<typeof createSubmissionSchema>;
 export type ReviewSubmissionInput = z.infer<typeof reviewSubmissionSchema>;
 export type EventTrackInput = z.infer<typeof eventTrackSchema>;
@@ -516,6 +584,7 @@ export type BarBeerInput = z.infer<typeof barBeerSchema>;
 export type BarHappyHourInput = z.infer<typeof barHappyHourSchema>;
 export type BarSpecialInput = z.infer<typeof barSpecialSchema>;
 export type BarClaimRequestInput = z.infer<typeof barClaimRequestSchema>;
+export type BarPendingChangeReviewInput = z.infer<typeof barPendingChangeReviewSchema>;
 export type AdminDashboardQuery = z.infer<typeof adminDashboardQuerySchema>;
 export type RetentionQuery = z.infer<typeof retentionQuerySchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;

@@ -116,6 +116,12 @@
                 <div id="priceRecords" class="list"></div>
               </article>
             </div>
+
+            <article class="panel" style="margin-top:16px;">
+              <h2>Pending review</h2>
+              <p class="helperCopy">Manager edits are saved privately until BeerMap admin approval. Public map/listing views keep showing the last approved data.</p>
+              <div id="pendingChanges" class="list"></div>
+            </article>
           </section>
 
           <section class="tabPanel is-hidden" data-panel="profile">
@@ -187,9 +193,17 @@
                   </div>
                 </div>
                 <input name="id" type="hidden" />
-                <label class="field">Beer name
-                  <input name="beerName" placeholder="e.g. Carlton Draught" required />
-                </label>
+                <div class="beerCatalogueField">
+                  <label class="field">Beer name
+                    <input name="beerName" list="portalBeerSuggestions" placeholder="Start typing Carlton Draft, Balter XPA, Guinness..." autocomplete="off" required />
+                    <datalist id="portalBeerSuggestions"></datalist>
+                    <span id="beerCatalogueHint" class="fieldHint">Choose from the BeerMap catalogue to keep spelling consistent across venues.</span>
+                  </label>
+                  <label class="dayChip beerCatalogueField__newBeer">
+                    <input name="isNewBeer" type="checkbox" />
+                    Add new beer not in catalogue
+                  </label>
+                </div>
                 <div class="grid grid--two">
                   <label class="field">Brewery
                     <input name="brewery" placeholder="Optional" />
@@ -252,12 +266,15 @@
                 </div>
                 <div class="grid grid--two">
                   <label class="field">Start time
-                    <input name="startTime" type="time" required />
+                    <input name="startTime" type="text" list="happyHourTimeSuggestions" inputmode="numeric" placeholder="e.g. 4pm or 16:00" required />
+                    <span class="fieldHint">Choose a suggestion or type 7:30pm, 19:30, 730pm.</span>
                   </label>
                   <label class="field">End time
-                    <input name="endTime" type="time" required />
+                    <input name="endTime" type="text" list="happyHourTimeSuggestions" inputmode="numeric" placeholder="e.g. 6pm or 18:00" required />
+                    <span class="fieldHint">We save times in Melbourne 24-hour format.</span>
                   </label>
                 </div>
+                <datalist id="happyHourTimeSuggestions"></datalist>
                 <label class="field">Description / deal details
                   <textarea name="description" placeholder="e.g. $9 house pints, selected taps only." required></textarea>
                 </label>
@@ -369,6 +386,26 @@
 
   <script>
     let currentPortal = null;
+    const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
+    const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
+      ? viewerConfig.trackedBeers
+          .filter((beer) => beer && typeof beer === "object")
+          .map((beer) => ({
+            key: String(beer.key || "").trim(),
+            name: String(beer.name || "").trim(),
+            aliases: Array.isArray(beer.aliases) ? beer.aliases.map((alias) => String(alias || "").trim()).filter(Boolean) : [],
+            brewery: beer.brewery ? String(beer.brewery).trim() : "",
+            style: beer.style ? String(beer.style).trim() : "",
+            abv: beer.abv == null || Number.isNaN(Number(beer.abv)) ? null : Number(beer.abv),
+          }))
+          .filter((beer) => beer.name)
+      : [
+        { key: "guinness", name: "Guinness", aliases: ["guinness"], brewery: "Guinness", style: "Stout", abv: 4.2 },
+        { key: "carlton_draft", name: "Carlton Draft", aliases: ["carlton draft", "carlton draught"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.6 },
+        { key: "stone_and_wood_pacific_ale", name: "Stone & Wood Pacific Ale", aliases: ["stone and wood", "stone & wood"], brewery: "Stone & Wood", style: "Pacific ale", abv: 4.4 },
+      ];
+    const trackedBeerLookup = new Map();
+    let lastBeerAutofill = { brewery: "", style: "", abv: "" };
     const tagOptions = ["has food", "outdoor seating", "good for groups", "sports on TV", "dog friendly", "live music", "near public transport"];
     const dayOptions = [
       ["mon", "Mon"],
@@ -400,6 +437,145 @@
 
     function nullableNumber(value) {
       return value === "" || value == null ? null : Number(value);
+    }
+
+    function normalizeHappyHourTime(value) {
+      const raw = String(value || "").trim().toLowerCase();
+      if (!raw) return "";
+      const compact = raw.replace(/\s+/g, "").replace(/[.]/g, ":");
+      const meridiemMatch = compact.match(/^(\d{1,2})(?::?(\d{2}))?(am|pm)$/);
+      if (meridiemMatch) {
+        let hour = Number(meridiemMatch[1]);
+        const minute = Number(meridiemMatch[2] || "0");
+        const meridiem = meridiemMatch[3];
+        if (hour >= 1 && hour <= 12 && minute >= 0 && minute <= 59) {
+          if (meridiem === "pm" && hour !== 12) hour += 12;
+          if (meridiem === "am" && hour === 12) hour = 0;
+          return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+        }
+      }
+
+      const numericMatch = compact.match(/^(\d{1,2})(?::?(\d{2}))$/);
+      if (numericMatch) {
+        const hour = Number(numericMatch[1]);
+        const minute = Number(numericMatch[2]);
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+          return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+        }
+      }
+
+      const hourOnlyMatch = compact.match(/^(\d{1,2})$/);
+      if (hourOnlyMatch) {
+        const hour = Number(hourOnlyMatch[1]);
+        if (hour >= 0 && hour <= 23) {
+          return `${String(hour).padStart(2, "0")}:00`;
+        }
+      }
+
+      return "";
+    }
+
+    function formatFriendlyTime(value) {
+      const normalized = normalizeHappyHourTime(value);
+      if (!normalized) return String(value || "");
+      const [hourText, minuteText] = normalized.split(":");
+      const hour = Number(hourText);
+      const suffix = hour >= 12 ? "pm" : "am";
+      const displayHour = hour % 12 || 12;
+      return `${displayHour}:${minuteText} ${suffix}`;
+    }
+
+    function renderTimeSuggestions() {
+      if (!window.happyHourTimeSuggestions) return;
+      const options = [];
+      for (let hour = 10; hour <= 23; hour += 1) {
+        for (const minute of [0, 30]) {
+          const normalized = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+          options.push(`<option value="${formatFriendlyTime(normalized)}">${normalized}</option>`);
+        }
+      }
+      window.happyHourTimeSuggestions.innerHTML = options.join("");
+    }
+
+    function normalizeTimeField(input) {
+      const normalized = normalizeHappyHourTime(input.value);
+      if (normalized) {
+        input.value = formatFriendlyTime(normalized);
+      }
+      return normalized;
+    }
+
+    function normalizeBeerSearchKey(value) {
+      return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    }
+
+    function seedTrackedBeerLookup() {
+      trackedBeerLookup.clear();
+      TRACKED_BEERS.forEach((beer) => {
+        [beer.key, beer.name, ...(beer.aliases || [])].forEach((candidate) => {
+          const key = normalizeBeerSearchKey(candidate);
+          if (key) {
+            trackedBeerLookup.set(key, beer);
+          }
+        });
+      });
+    }
+
+    function findTrackedBeer(value) {
+      const key = normalizeBeerSearchKey(value);
+      return key ? trackedBeerLookup.get(key) || null : null;
+    }
+
+    function populateBeerSuggestions() {
+      if (!window.portalBeerSuggestions) return;
+      window.portalBeerSuggestions.innerHTML = TRACKED_BEERS
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((beer) => `<option value="${escapeHtml(beer.name)}">${escapeHtml([beer.brewery, beer.style].filter(Boolean).join(" · "))}</option>`)
+        .join("");
+    }
+
+    function resetBeerAutofillMemory() {
+      lastBeerAutofill = { brewery: "", style: "", abv: "" };
+    }
+
+    function updateAutofilledField(name, nextValue) {
+      const input = field(beerForm, name);
+      const previousAutoValue = lastBeerAutofill[name] == null ? "" : String(lastBeerAutofill[name]);
+      const nextAutoValue = nextValue == null ? "" : String(nextValue);
+      const currentValue = String(input.value || "");
+
+      // Keep deliberate venue-specific edits, but replace stale values that came from the last catalogue pick.
+      if (!currentValue || currentValue === previousAutoValue) {
+        input.value = nextAutoValue;
+      }
+    }
+
+    function updateBeerCatalogueState() {
+      const beerNameInput = field(beerForm, "beerName");
+      const addNewInput = field(beerForm, "isNewBeer");
+      const trackedBeer = findTrackedBeer(beerNameInput.value);
+      if (trackedBeer && !addNewInput.checked) {
+        beerNameInput.value = trackedBeer.name;
+        updateAutofilledField("brewery", trackedBeer.brewery || "");
+        updateAutofilledField("style", trackedBeer.style || "");
+        updateAutofilledField("abv", trackedBeer.abv ?? "");
+        lastBeerAutofill = {
+          brewery: trackedBeer.brewery || "",
+          style: trackedBeer.style || "",
+          abv: trackedBeer.abv == null ? "" : String(trackedBeer.abv),
+        };
+        beerCatalogueHint.textContent = `Matched ${trackedBeer.name}. Brewery/style details can still be edited if this venue lists it differently.`;
+        return;
+      }
+      resetBeerAutofillMemory();
+      beerCatalogueHint.textContent = addNewInput.checked
+        ? "New beer mode: enter the name exactly as it appears on the menu or tap list."
+        : "Choose from the BeerMap catalogue to keep spelling consistent across venues.";
     }
 
     function field(form, name) {
@@ -495,6 +671,7 @@
       renderHappyHours(happyHours);
       renderSpecials(specials);
       renderOverviewData(data);
+      renderPendingChanges(data.pendingChanges || []);
       renderAnalytics(data);
       renderMonthlyReport(data);
     }
@@ -534,6 +711,33 @@
           </div>
         `).join("")
         : '<div class="listItem muted">No verified price rows yet. Add beers, upload a tap-list source, or submit verified data for review.</div>';
+    }
+
+    function renderPendingChanges(changes) {
+      pendingChanges.innerHTML = changes?.length
+        ? changes.map((change) => `
+          <div class="listItem dataRow">
+            <div>
+              <strong>${escapeHtml(change.changeType.replace("_", " "))} · ${escapeHtml(change.action)}</strong>
+              <div class="muted">Submitted ${MelbBeerBusiness.formatDate(change.submittedAt)} · status ${escapeHtml(change.status)}</div>
+              <p class="helperCopy">${escapeHtml(change.action === "delete"
+                ? `Remove ${change.targetId || "item"}`
+                : summarizePendingPayload(change.payload))}</p>
+            </div>
+            <span class="pill">Admin review</span>
+          </div>
+        `).join("")
+        : '<div class="emptyState"><strong>No pending edits.</strong><br />New profile, beer, happy-hour and special changes will appear here until approved.</div>';
+    }
+
+    function summarizePendingPayload(payload = {}) {
+      return [
+        payload.name,
+        payload.beerName,
+        payload.title,
+        payload.price != null ? money(payload.price) : null,
+        payload.description,
+      ].filter(Boolean).slice(0, 3).join(" · ") || "Pending venue update";
     }
 
     function renderBeerList(beers) {
@@ -695,6 +899,19 @@
       MelbBeerBusiness.installFieldTestChrome();
       renderChecklist(venueTags, tagOptions);
       renderChecklist(happyHourDays, dayOptions);
+      seedTrackedBeerLookup();
+      populateBeerSuggestions();
+      renderTimeSuggestions();
+      field(beerForm, "beerName").addEventListener("change", updateBeerCatalogueState);
+      field(beerForm, "beerName").addEventListener("input", () => {
+        if (!field(beerForm, "isNewBeer").checked) {
+          beerCatalogueHint.textContent = "Pick the matching beer from the dropdown, or tick Add new beer if it is not listed.";
+        }
+      });
+      field(beerForm, "isNewBeer").addEventListener("change", updateBeerCatalogueState);
+      [field(happyHourForm, "startTime"), field(happyHourForm, "endTime")].forEach((input) => {
+        input.addEventListener("blur", () => normalizeTimeField(input));
+      });
 
       try {
         await loadPortal(new URLSearchParams(window.location.search).get("venueId"));
@@ -763,12 +980,24 @@
       beerForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (!selectedVenueId()) return;
+        const rawBeerName = field(beerForm, "beerName").value.trim();
+        const trackedBeer = findTrackedBeer(rawBeerName);
+        const isNewBeer = field(beerForm, "isNewBeer").checked;
+        if (!rawBeerName) {
+          MelbBeerBusiness.setStatus(beerStatus, "Add a beer name before saving.", true);
+          return;
+        }
+        if (!isNewBeer && !trackedBeer) {
+          MelbBeerBusiness.setStatus(beerStatus, `"${rawBeerName}" is not in the BeerMap catalogue yet. Choose a dropdown match or tick Add new beer.`, true);
+          return;
+        }
+        const abvValue = nullableNumber(field(beerForm, "abv").value);
         const body = {
           id: field(beerForm, "id").value || null,
-          beerName: field(beerForm, "beerName").value,
-          brewery: field(beerForm, "brewery").value || null,
-          style: field(beerForm, "style").value || null,
-          abv: nullableNumber(field(beerForm, "abv").value),
+          beerName: !isNewBeer && trackedBeer ? trackedBeer.name : rawBeerName,
+          brewery: field(beerForm, "brewery").value || trackedBeer?.brewery || null,
+          style: field(beerForm, "style").value || trackedBeer?.style || null,
+          abv: abvValue ?? trackedBeer?.abv ?? null,
           serveSize: field(beerForm, "serveSize").value || null,
           price: nullableNumber(field(beerForm, "price").value),
           onTap: field(beerForm, "onTap").checked,
@@ -779,6 +1008,8 @@
           await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/beers`, body, beerStatus, "Beer row saved.");
           resetForm(beerForm);
           field(beerForm, "inStock").checked = true;
+          field(beerForm, "isNewBeer").checked = false;
+          updateBeerCatalogueState();
         } catch (error) {
           MelbBeerBusiness.setStatus(beerStatus, error.message || "Could not save beer.", true);
         }
@@ -787,12 +1018,18 @@
       happyHourForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (!selectedVenueId()) return;
+        const startTime = normalizeTimeField(field(happyHourForm, "startTime"));
+        const endTime = normalizeTimeField(field(happyHourForm, "endTime"));
+        if (!startTime || !endTime) {
+          MelbBeerBusiness.setStatus(happyHourStatus, "Use a valid time like 4pm, 7:30 pm, or 19:30.", true);
+          return;
+        }
         const body = {
           id: field(happyHourForm, "id").value || null,
           title: field(happyHourForm, "title").value,
           daysOfWeek: checkedValues(happyHourDays),
-          startTime: field(happyHourForm, "startTime").value,
-          endTime: field(happyHourForm, "endTime").value,
+          startTime,
+          endTime,
           description: field(happyHourForm, "description").value,
           active: field(happyHourForm, "active").checked,
         };
@@ -830,7 +1067,12 @@
         }
       });
 
-      resetBeerForm.addEventListener("click", () => { resetForm(beerForm); field(beerForm, "inStock").checked = true; });
+      resetBeerForm.addEventListener("click", () => {
+        resetForm(beerForm);
+        field(beerForm, "inStock").checked = true;
+        field(beerForm, "isNewBeer").checked = false;
+        updateBeerCatalogueState();
+      });
       resetHappyHourForm.addEventListener("click", () => { resetForm(happyHourForm); field(happyHourForm, "active").checked = true; renderChecklist(happyHourDays, dayOptions); });
       resetSpecialForm.addEventListener("click", () => { resetForm(specialForm); field(specialForm, "active").checked = true; });
 
@@ -844,6 +1086,7 @@
           if (!beer) return;
           field(beerForm, "id").value = beer.id;
           field(beerForm, "beerName").value = beer.beerName || "";
+          field(beerForm, "isNewBeer").checked = !findTrackedBeer(beer.beerName || "");
           field(beerForm, "brewery").value = beer.brewery || "";
           field(beerForm, "style").value = beer.style || "";
           field(beerForm, "abv").value = beer.abv ?? "";
@@ -852,6 +1095,7 @@
           field(beerForm, "onTap").checked = Boolean(beer.onTap);
           field(beerForm, "inStock").checked = Boolean(beer.inStock);
           field(beerForm, "notes").value = beer.notes || "";
+          updateBeerCatalogueState();
           showTab("beers");
           return;
         }
@@ -882,8 +1126,8 @@
           field(happyHourForm, "id").value = item.id;
           field(happyHourForm, "title").value = item.title || "";
           renderChecklist(happyHourDays, dayOptions, item.daysOfWeek || []);
-          field(happyHourForm, "startTime").value = item.startTime || "";
-          field(happyHourForm, "endTime").value = item.endTime || "";
+          field(happyHourForm, "startTime").value = item.startTime ? formatFriendlyTime(item.startTime) : "";
+          field(happyHourForm, "endTime").value = item.endTime ? formatFriendlyTime(item.endTime) : "";
           field(happyHourForm, "description").value = item.description || "";
           field(happyHourForm, "active").checked = Boolean(item.active);
           showTab("happy-hours");

@@ -44,15 +44,18 @@
 - `POST /webhooks/twilio/status`
 - `POST /webhooks/elevenlabs/post-call`
 - `GET /health`
+- `GET /ready`
 - `GET /api/business/config`
 - `POST /api/business/auth/signup`
 - `POST /api/business/auth/login`
+- `POST /api/business/auth/supabase-session`
 - `POST /api/business/auth/logout`
 - `POST /api/business/auth/logout-all`
 - `GET /api/business/account`
 - `GET /api/business/access`
 - `GET /api/business/missions`
 - `POST /api/business/submissions`
+- `POST /api/business/submissions/:id/verifications`
 - `POST /api/business/submissions/:id/review`
 - `POST /api/business/account/preferences`
 - `POST /api/business/account/saved-items`
@@ -78,6 +81,8 @@
 - `GET /api/business/analytics/preview`
 
 Field-test note: legacy call-control and call-result routes are admin-only. Use a bearer token from an account listed in `ADMIN_EMAILS` for `/api/calls/*`, `/api/results`, `/api/admin/*`, and `/api/business/admin/*`.
+
+For the intended beta role boundaries, private-data rules, and approval gates, see [`ROLE_PERMISSION_MATRIX.md`](./ROLE_PERMISSION_MATRIX.md).
 
 ## Business Model Demo
 
@@ -108,6 +113,20 @@ Business demo pages:
 - `/for-bars`: professional bar-owner landing page with Basic, Plus, and Pro tier explanations, register-interest, and claim-listing requests.
 - `/venue-portal`: admin-assigned bar dashboard for profile details, beer stock/on-tap rows, prices, happy hours, deals/specials, listing quality, tier-gated analytics, monthly report previews, and pending review updates.
 - `/admin.html`: admin-only submission review, KPI dashboard, cohorts, coverage, partner leads, and review queues.
+
+Supabase auth/account foundation:
+
+- The beta keeps the existing BeerMap bearer-session system for app API access, but can exchange a Supabase Auth OAuth session for a local BeerMap session through `POST /api/business/auth/supabase-session`.
+- `/account.html` shows Google, Apple, and Facebook quick-login buttons when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured. Email/password signup/login still works through the existing BeerMap account flow.
+- Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google, name/email for Apple, and email/public_profile for Facebook.
+- Add OAuth redirect URLs for local and hosted account pages, for example `http://localhost:3000/account.html` and `https://beer.splitseconds.app/account.html`.
+- New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
+- Production admin access expects Supabase Auth MFA/Auth Assurance Level 2 (`aal2`). Enable MFA factors in Supabase, require confirmed email, and verify the OAuth/session JWT contains `aal2` before relying on admin routes.
+- Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
+- Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
+- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket.
+- Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. BeerMap must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
+- Future rewards should use `canAccessAgeGatedRewards(...)`, which requires verified 18+ status, a latest verified age-check record, and a non-expired verification.
 
 Venue partner demo layer:
 
@@ -153,17 +172,22 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Free exact-price reveal limits are counted server-side using the logged-in user where possible, or the anonymous session/IP fallback for anonymous users.
 - The map gets venue pins and preview metadata by default, then requests an exact venue reveal only when a user opens a venue detail.
 - Admin tools live on `/admin.html` and `/api/business/admin/*`; public map HTML should not include admin unlock forms or secret-entry UI.
-- Demo photo/source uploads are validated for image MIME type and 6MB max size, then stored with pending submissions for review. For production, move these to private object storage and render review links through signed URLs.
+- Photo/source uploads are validated for image MIME type and 6MB max size, then stored behind private source-evidence references. Review/download access is issued through short-lived signed server URLs after an uploader/admin authorization check.
 - `DEMO_BILLING_MODE=true` is for local/demo only. Production blocks demo billing unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` is explicitly set.
-- State-changing business APIs check trusted origins and use lightweight in-memory rate limits for auth, submissions, feedback, requests, price reveals, and billing routes.
+- State-changing business APIs check trusted origins and use hashed-key rate limits for auth, submissions, feedback, requests, price reveals, and billing routes. Production uses Redis when `REDIS_URL` is set and otherwise fails closed unless `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` is explicitly set.
 - Security headers are enabled with a Google Maps-compatible CSP, `nosniff`, same-origin frame protection, strict referrer policy, and limited browser permissions.
 - Account sessions are hashed at rest, expire by role, can be revoked with logout/logout-all, and store only short SHA-256 request fingerprints rather than raw IP addresses or user agents.
 - Sensitive admin, payment, session, and venue-manager actions are written to `security_audit_log` with redacted metadata.
 - Aggregate analytics use `ANALYTICS_MIN_BUCKET_SIZE` to suppress low-count buckets before they are returned to dashboards or venue-owner views.
 - Production requires signed Twilio webhooks unless `ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=true` is explicitly set, and requires an ElevenLabs webhook secret unless `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=true` is explicitly set.
-- Inline demo image evidence is rejected in production unless `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=true`; use private object storage with signed review links before accepting sensitive source photos at scale.
+- Production admin routes require verified email and a fresh MFA/AAL2 claim when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
+- Upload and verification actions require a verified account in production when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
+- Inline demo image evidence is never exposed publicly; use the private `beermap-source-evidence` Supabase Storage bucket and signed review links before accepting sensitive source photos at scale.
 - `FIELD_TEST_MODE=true` adds an unobtrusive beta label, feedback entry point, and admin field-test summary without exposing debug details to public users.
 - Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
+- Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
+- Production startup now requires an HTTPS `PUBLIC_BASE_URL`, `ADMIN_EMAILS`, and a `GOOGLE_MAPS_API_KEY`; this prevents silent admin/map misconfiguration.
+- `/ready` initializes the database-backed routers and should be used as the deeper readiness check after `/health`.
 - See `FIELD_TEST_CHECKLIST.md` before showing the app to real users.
 - See `DEPLOYMENT_CHECKLIST.md` before merging to `main` or deploying the Railway beta; it includes backup, migration, security scan, smoke-test, and rollback steps.
 
@@ -186,7 +210,14 @@ ADMIN_EMAILS=you@example.com
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
 ANALYTICS_MIN_BUCKET_SIZE=5
+REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
+ADMIN_MFA_MAX_AGE_MINUTES=720
+REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true
+REDIS_URL=redis://default:replace_me@host:6379
+ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
+SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
+SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 STRIPE_SECRET_KEY=sk_test_or_live_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_199_aud
@@ -246,6 +277,9 @@ BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD=5
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_browser_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+# Configure Google/Apple/Facebook OAuth providers in Supabase dashboard.
+# Redirect URLs: http://localhost:3000/account.html and your hosted /account.html URL.
+SUPABASE_OAUTH_PROVIDERS=google,apple,facebook
 SUPABASE_RESULTS_TABLE=call_results
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 GOOGLE_MAPS_MAP_ID=optional_google_maps_map_id
@@ -263,13 +297,20 @@ ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false
 ADMIN_EMAILS=you@example.com
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
+REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
+ADMIN_MFA_MAX_AGE_MINUTES=720
+REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true
 FREE_PRICE_REVEALS_PER_DAY=5
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
 ANALYTICS_MIN_BUCKET_SIZE=5
+REDIS_URL=
+ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 DEMO_BILLING_MODE=true
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
+SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
+SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 FIELD_TEST_MODE=true
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
@@ -293,9 +334,10 @@ What each one does:
 - `OUTBOUND_REPEAT_GUARD_SECONDS`: blocks accidentally dialing the same number again within this window.
 - `PARSE_CONFIDENCE_THRESHOLD`: threshold used for review decisions.
 - `BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD`: pauses the batch after this many consecutive bad outcomes.
-- `SUPABASE_URL`: Supabase project URL used for venue imports and map-sync result writes.
-- `SUPABASE_ANON_KEY`: optional for legacy standalone/static viewer experiments. The hosted beta viewer does not expose this key.
+- `SUPABASE_URL`: Supabase project URL used for venue imports, map-sync result writes, and optional Supabase Auth OAuth login.
+- `SUPABASE_ANON_KEY`: browser-safe anon key used by `/account.html` for Supabase Auth OAuth. Never use the service-role key in browser config.
 - `SUPABASE_SERVICE_ROLE_KEY`: required for inserting venues and syncing call results.
+- `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`; set this to providers configured in the Supabase dashboard, for example `google,apple,facebook`.
 - `SUPABASE_RESULTS_TABLE`: Supabase table used for synced call results. Defaults to `call_results`.
 - `GOOGLE_MAPS_API_KEY`: browser-safe Google Maps key used by the hosted viewer.
 - `GOOGLE_MAPS_MAP_ID`: optional Google Maps map ID for branded vector map styling.
@@ -311,13 +353,20 @@ What each one does:
 - `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup.
 - `SESSION_TTL_DAYS`: normal account bearer-session lifetime. Defaults to `60`.
 - `ADMIN_SESSION_TTL_DAYS`: shorter admin bearer-session lifetime. Defaults to `7`.
+- `REQUIRE_ADMIN_MFA_IN_PRODUCTION`: production guard for admin routes. Keep `true`; admins must have a fresh Supabase AAL2/MFA claim.
+- `ADMIN_MFA_MAX_AGE_MINUTES`: maximum age for admin AAL2/step-up claims. Defaults to `720`.
+- `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION`: production guard for uploads, verifications, and bar dashboard access. Keep `true`.
 - `FREE_PRICE_REVEALS_PER_DAY`: configurable daily exact-price previews for free users.
 - `CONTRIBUTOR_UNLOCK_POINTS`: approved monthly contribution points required for contributor access.
 - `CONTRIBUTOR_UNLOCK_DAYS`: number of premium days granted for contributor unlocks.
 - `ANALYTICS_MIN_BUCKET_SIZE`: minimum aggregate bucket count before dashboard analytics reveal a beer, suburb, or venue identity.
+- `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Required in production unless the explicit in-memory override is enabled.
+- `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: temporary emergency override for single-instance beta only. Keep `false` for full-scale production.
 - `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe. Keep this `false` for production beta.
 - `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.
-- `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: emergency override for inline demo image evidence in production. Leave `false`; use private storage for real beta evidence.
+- `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: legacy emergency override for demo image evidence. Leave `false`; evidence should use private references and signed URLs.
+- `SOURCE_EVIDENCE_SIGNING_SECRET`: 32+ character random secret used to sign short-lived source evidence URLs.
+- `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`: signed evidence URL lifetime. Defaults to `300`.
 - `FIELD_TEST_MODE`: shows beta feedback affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
 - `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.
 - `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.
@@ -450,8 +499,11 @@ and uses these safe env vars:
 
 - `GOOGLE_MAPS_API_KEY`
 - `GOOGLE_MAPS_MAP_ID`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_OAUTH_PROVIDERS`
 
-The hosted public viewer intentionally does not receive Supabase browser credentials. Venue and price data comes through `/api/business/venues` and `/api/business/price-records` so exact-price access can be enforced server-side.
+The hosted public viewer may receive the Supabase anon key for OAuth login only. It must never receive the Supabase service-role key, and venue/price data still comes through `/api/business/venues` and `/api/business/price-records` so exact-price access can be enforced server-side.
 
 For legacy standalone local use, the viewer can still use:
 
@@ -473,6 +525,9 @@ window.MELB_BEER_BOT_VIEWER_CONFIG = {
   business: {
     fieldTestMode: true,
     freePriceRevealsPerDay: 3,
+    supabaseUrl: "https://your-project.supabase.co",
+    supabaseAnonKey: "your_supabase_anon_browser_key",
+    supabaseOauthProviders: ["google", "apple", "facebook"],
   },
 };
 ```
@@ -482,6 +537,7 @@ Notes:
 - Do not use standalone static mode for public beta price data, because it cannot enforce server-side price gating.
 - `googleMapsApiKey` should be a browser key restricted by HTTP referrers
 - `googleMapsMapId` is optional for now, but it gives you a clean path to branded vector map styling later
+- `supabaseAnonKey` is public and only for Supabase Auth OAuth. Never put a service-role key in `viewer/config.js`.
 
 For local browser testing, allow these referrers on the Google Maps browser key:
 

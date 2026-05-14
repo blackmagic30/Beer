@@ -137,6 +137,14 @@
         <div id="pendingSubmissions" class="list"></div>
       </div>
       <div class="panel">
+        <h2>Pending bar changes</h2>
+        <p class="muted">Manager edits stay private until approved here.</p>
+        <div id="pendingBarChanges" class="list"></div>
+      </div>
+    </section>
+
+    <section class="grid grid--two" style="margin-top:16px;">
+      <div class="panel">
         <h2>Review queues</h2>
         <div id="reviewQueues" class="list"></div>
       </div>
@@ -313,6 +321,32 @@
       venueManagerAssignments.querySelectorAll("[data-revoke-user]").forEach((button) => {
         button.addEventListener("click", () => revokeVenueManager(button.dataset.revokeUser, button.dataset.revokeVenue));
       });
+
+      const pendingChanges = data.pendingChanges || [];
+      pendingBarChanges.innerHTML = pendingChanges.length
+        ? pendingChanges.map((change) => `
+          <article class="listItem">
+            <strong>${escapeHtml(change.changeType.replace("_", " "))} · ${escapeHtml(change.action)}</strong>
+            <span class="pill">${escapeHtml(change.status)}</span>
+            <div class="muted">${escapeHtml(change.barId)} · submitted by ${escapeHtml(change.submittedBy)} · ${escapeHtml(change.submittedAt)}</div>
+            <div class="muted">${escapeHtml(summarizePendingPayload(change.payload))}</div>
+            <div class="actionRow">
+              <button class="button button--small button--primary" type="button" data-review-change="${escapeHtml(change.id)}" data-review-status="approved">Approve</button>
+              <button class="button button--small button--danger" type="button" data-review-change="${escapeHtml(change.id)}" data-review-status="rejected">Reject</button>
+            </div>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No pending bar changes.</div>';
+      pendingBarChanges.querySelectorAll("[data-review-change]").forEach((button) => {
+        button.addEventListener("click", () => reviewBarChange(button.dataset.reviewChange, button.dataset.reviewStatus));
+      });
+    }
+
+    function summarizePendingPayload(payload = {}) {
+      return [payload.name, payload.beerName, payload.title, payload.price != null ? `$${Number(payload.price).toFixed(2)}` : null, payload.description]
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(" · ") || "Pending venue update";
     }
 
     async function reviewSubmission(id, status) {
@@ -325,6 +359,23 @@
           body: JSON.stringify(body),
         });
         MelbBeerBusiness.setStatus(statusEl, `Reviewed ${result.submission.venueName}. Awarded ${result.pointsAwarded} points.`);
+        await loadAdmin();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message, true);
+      }
+    }
+
+    async function reviewBarChange(id, status) {
+      if (!id || !status) return;
+      try {
+        await MelbBeerBusiness.apiFetch(`/api/business/admin/bar-pending-changes/${encodeURIComponent(id)}/review`, {
+          method: "POST",
+          body: JSON.stringify({
+            status,
+            rejectionReason: status === "rejected" ? "Rejected during admin review." : null,
+          }),
+        });
+        MelbBeerBusiness.setStatus(statusEl, status === "approved" ? "Bar change approved and published." : "Bar change rejected.");
         await loadAdmin();
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message, true);

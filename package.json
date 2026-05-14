@@ -5,6 +5,9 @@
   "description": "MVP Twilio + ElevenLabs beer price calling bot for Melbourne venues.",
   "type": "module",
   "main": "dist/src/server.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "rm -rf dist && tsc --project tsconfig.json && mkdir -p dist/src/db && cp src/db/schema.sql dist/src/db/schema.sql",
@@ -22,6 +25,7 @@
     "results:reparse:hosted": "tsx scripts/reparse-hosted-call-results.ts",
     "test": "vitest run",
     "security:scan": "node scripts/security-scan.mjs",
+    "security:audit": "npm audit --audit-level=high",
     "check": "npm run build && npm run test && npm run security:scan"
   },
   "dependencies": {
@@ -32,6 +36,7 @@
     "dotenv": "^17.4.0",
     "express": "^5.2.1",
     "helmet": "^8.1.0",
+    "ioredis": "^5.10.1",
     "node-fetch": "^2.7.0",
     "openai": "^6.33.0",
     "twilio": "^5.13.1",
