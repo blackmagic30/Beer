@@ -46,6 +46,25 @@ describe("environment safety defaults", () => {
     expect(env.ADMIN_EMAILS).toBeUndefined();
   });
 
+  it("lets public production boot while provider-only secrets are pending and fails closed in feature code", async () => {
+    stubProductionEnv({
+      ADMIN_EMAILS: "",
+      DEMO_BILLING_MODE: "",
+      SOURCE_EVIDENCE_SIGNING_SECRET: "",
+      REDIS_URL: "",
+      TWILIO_VALIDATE_SIGNATURES: "",
+      ELEVENLABS_WEBHOOK_SECRET: "",
+    });
+
+    const { env } = await loadEnv();
+
+    expect(env.NODE_ENV).toBe("production");
+    expect(env.SOURCE_EVIDENCE_SIGNING_SECRET).toBeUndefined();
+    expect(env.REDIS_URL).toBeUndefined();
+    expect(env.TWILIO_VALIDATE_SIGNATURES).toBe(true);
+    expect(env.ELEVENLABS_WEBHOOK_SECRET).toBeUndefined();
+  });
+
   it("still blocks explicit production demo billing without the override", async () => {
     stubProductionEnv({ DEMO_BILLING_MODE: "true" });
 

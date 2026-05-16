@@ -180,7 +180,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Account sessions are hashed at rest, expire by role, can be revoked with logout/logout-all, and store only short SHA-256 request fingerprints rather than raw IP addresses or user agents.
 - Sensitive admin, payment, session, and venue-manager actions are written to `security_audit_log` with redacted metadata.
 - Aggregate analytics use `ANALYTICS_MIN_BUCKET_SIZE` to suppress low-count buckets before they are returned to dashboards or venue-owner views.
-- Production requires signed Twilio webhooks unless `ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=true` is explicitly set, and requires an ElevenLabs webhook secret unless `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=true` is explicitly set.
+- Production defaults Twilio signature validation on and ElevenLabs webhooks fail closed unless `ELEVENLABS_WEBHOOK_SECRET` is set or `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=true` is explicitly set.
 - Production admin routes require verified email and a fresh MFA/AAL2 claim when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
 - Upload and verification actions require a verified account in production when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
 - Inline demo image evidence is never exposed publicly; use the private `beermap-source-evidence` Supabase Storage bucket and signed review links before accepting sensitive source photos at scale.
@@ -363,12 +363,12 @@ What each one does:
 - `CONTRIBUTOR_UNLOCK_POINTS`: approved monthly contribution points required for contributor access.
 - `CONTRIBUTOR_UNLOCK_DAYS`: number of premium days granted for contributor unlocks.
 - `ANALYTICS_MIN_BUCKET_SIZE`: minimum aggregate bucket count before dashboard analytics reveal a beer, suburb, or venue identity.
-- `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Required in production unless the explicit in-memory override is enabled.
+- `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Public pages can boot without it, but rate-limited write/auth/payment routes fail closed in production unless the explicit in-memory override is enabled.
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: temporary emergency override for single-instance beta only. Keep `false` for full-scale production.
 - `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe. Keep this `false` for production beta.
 - `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.
 - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: legacy emergency override for demo image evidence. Leave `false`; evidence should use private references and signed URLs.
-- `SOURCE_EVIDENCE_SIGNING_SECRET`: 32+ character random secret used to sign short-lived source evidence URLs.
+- `SOURCE_EVIDENCE_SIGNING_SECRET`: 32+ character random secret used to sign short-lived source evidence URLs. Public pages can boot without it, but source-evidence review/download links fail closed in production until configured.
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`: signed evidence URL lifetime. Defaults to `300`.
 - `FIELD_TEST_MODE`: shows beta feedback affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
 - `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.

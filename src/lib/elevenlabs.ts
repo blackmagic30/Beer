@@ -10,6 +10,7 @@ export class ElevenLabsService {
   constructor(
     private readonly apiKey?: string,
     private readonly webhookSecret?: string,
+    private readonly requireWebhookSecret = false,
   ) {
     if (apiKey) {
       this.client = new ElevenLabsClient({
@@ -64,6 +65,10 @@ export class ElevenLabsService {
 
   async verifyAndParseWebhook(rawBody: string, signatureHeader?: string): Promise<any> {
     if (!this.webhookSecret) {
+      if (this.requireWebhookSecret) {
+        throw new AppError("ElevenLabs webhook verification is not configured", 503);
+      }
+
       return JSON.parse(rawBody);
     }
 

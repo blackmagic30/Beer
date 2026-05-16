@@ -74,6 +74,14 @@ const demoBillingModeFromEnv = z.preprocess((value) => {
   return value;
 }, booleanFromEnv);
 
+const twilioValidateSignaturesFromEnv = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") {
+    return process.env.NODE_ENV === "production" ? true : false;
+  }
+
+  return value;
+}, booleanFromEnv);
+
 const optionalStringFromEnv = z.preprocess((value) => {
   const trimmed = sanitizeEnvString(value);
   if (typeof trimmed !== "string") {
@@ -164,7 +172,7 @@ const envSchema = z.object({
   TWILIO_AUTH_TOKEN: optionalStringFromEnv,
   TWILIO_PHONE_NUMBER: optionalE164PhoneFromEnv,
   TWILIO_CALL_TIME_LIMIT_SECONDS: z.coerce.number().int().min(5).max(600).default(30),
-  TWILIO_VALIDATE_SIGNATURES: booleanFromEnv.default(false),
+  TWILIO_VALIDATE_SIGNATURES: twilioValidateSignaturesFromEnv,
   ELEVENLABS_API_KEY: optionalStringFromEnv,
   ELEVENLABS_AGENT_ID: optionalStringFromEnv,
   ELEVENLABS_WEBHOOK_SECRET: optionalStringFromEnv,
@@ -198,29 +206,6 @@ if (parsedEnv.data.NODE_ENV === "production") {
     throw new Error("REQUIRE_ADMIN_MFA_IN_PRODUCTION must remain true in production.");
   }
 
-  if (!parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET || parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET.length < 32) {
-    throw new Error("SOURCE_EVIDENCE_SIGNING_SECRET with at least 32 characters is required in production.");
-  }
-
-  if (!parsedEnv.data.REDIS_URL && !parsedEnv.data.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
-    throw new Error("REDIS_URL is required in production unless ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true is explicitly set.");
-  }
-}
-
-if (
-  parsedEnv.data.NODE_ENV === "production" &&
-  !parsedEnv.data.TWILIO_VALIDATE_SIGNATURES &&
-  !parsedEnv.data.ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION
-) {
-  throw new Error("TWILIO_VALIDATE_SIGNATURES must be true in production unless ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=true.");
-}
-
-if (
-  parsedEnv.data.NODE_ENV === "production" &&
-  !parsedEnv.data.ELEVENLABS_WEBHOOK_SECRET &&
-  !parsedEnv.data.ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION
-) {
-  throw new Error("ELEVENLABS_WEBHOOK_SECRET is required in production unless ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=true.");
 }
 
 export const env = {

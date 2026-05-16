@@ -101,6 +101,11 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
     let bucket: Bucket;
 
     try {
+      if (env.NODE_ENV === "production" && !env.REDIS_URL && !env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
+        next(new AppError("Rate limiter unavailable. Please try again shortly.", 503));
+        return;
+      }
+
       bucket = await incrementRedisBucket(key, options.windowMs, now)
         ?? incrementMemoryBucket(key, options.windowMs, now);
     } catch {

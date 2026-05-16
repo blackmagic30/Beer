@@ -53,8 +53,8 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
   - `ADMIN_EMAILS` can be blank while the official owner/admin email is pending; admin routes fail closed until it is configured.
   - `GOOGLE_MAPS_API_KEY` is required in production.
   - `REQUIRE_ADMIN_MFA_IN_PRODUCTION` must remain enabled in production.
-  - `SOURCE_EVIDENCE_SIGNING_SECRET` is required in production.
-  - `REDIS_URL` is required in production unless the explicit in-memory override is set.
+  - `SOURCE_EVIDENCE_SIGNING_SECRET` can be pending at boot; source-evidence links fail closed until configured.
+  - `REDIS_URL` can be pending at boot; rate-limited write/auth/payment routes fail closed in production unless the explicit in-memory override is set.
 - Added `/ready` readiness route that initializes lazy routers/database-backed services.
 - Added `Cache-Control: no-store` to `/config.js`.
 - Redacted top-level production error messages and development stack logs.

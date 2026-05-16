@@ -81,6 +81,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   const elevenLabsService = new ElevenLabsService(
     env.ELEVENLABS_API_KEY,
     env.ELEVENLABS_WEBHOOK_SECRET,
+    env.NODE_ENV === "production" && !env.ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION,
   );
   const callsService = new CallsService(
     callRunsRepository,
