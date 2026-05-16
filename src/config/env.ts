@@ -66,6 +66,14 @@ const booleanFromEnv = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+const demoBillingModeFromEnv = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") {
+    return process.env.NODE_ENV === "production" ? false : true;
+  }
+
+  return value;
+}, booleanFromEnv);
+
 const optionalStringFromEnv = z.preprocess((value) => {
   const trimmed = sanitizeEnvString(value);
   if (typeof trimmed !== "string") {
@@ -137,7 +145,7 @@ const envSchema = z.object({
   ANALYTICS_MIN_BUCKET_SIZE: z.coerce.number().int().min(1).max(100).default(5),
   REDIS_URL: optionalStringFromEnv,
   ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(false),
-  DEMO_BILLING_MODE: booleanFromEnv.default(true),
+  DEMO_BILLING_MODE: demoBillingModeFromEnv,
   ALLOW_DEMO_BILLING_IN_PRODUCTION: booleanFromEnv.default(false),
   ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: booleanFromEnv.default(false),
   SOURCE_EVIDENCE_SIGNING_SECRET: optionalStringFromEnv,
