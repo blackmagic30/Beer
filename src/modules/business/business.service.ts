@@ -2368,7 +2368,7 @@ export class BusinessService {
 
     if (!isAdmin && assignments.length === 0) {
       return {
-        accessState: "claim_required",
+        accessState: "invite_required",
         assignments: [],
         selectedVenue: null,
         profile: null,
@@ -2379,8 +2379,8 @@ export class BusinessService {
         analytics: null,
         monthlyReport: null,
         updateLink: null,
-        claimRequests: this.repository.listBarClaimRequests({ userId: account.id, limit: 10 }),
-        message: "Request access to a bar and admin will manually review the claim.",
+        claimRequests: [],
+        message: "Venue management is invite-only during beta. Ask the Pint Path admin to assign your account to a venue.",
         privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
       };
     }
@@ -2504,6 +2504,10 @@ export class BusinessService {
 
   createBarClaimRequest(account: BusinessAccount, input: BarClaimRequestInput) {
     this.requireVerifiedBarAccount(account);
+    if (!this.isAdmin(account)) {
+      throw new AppError("Venue manager access is invite-only during beta.", 403);
+    }
+
     const now = nowIso();
     const claim = this.repository.createBarClaimRequest({
       id: crypto.randomUUID(),

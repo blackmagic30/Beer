@@ -170,6 +170,7 @@ describe("viewer map price logic", () => {
 
 describe("viewer map UI wiring", () => {
   const html = fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
+  const venuePortalHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/venue-portal.html"), "utf8");
 
   it("renders the polished marker legend and cluster renderer", () => {
     expect(html).toContain("legend__swatch--selected");
@@ -240,7 +241,15 @@ describe("viewer map UI wiring", () => {
 
   it("keeps admin navigation out of the static public header", () => {
     expect(html).not.toMatch(/<a[^>]*href="\/admin\.html"[^>]*>Admin<\/a>/);
+    expect(html).not.toMatch(/<a[^>]*href="\/for-bars"[^>]*>/);
     expect(html).not.toContain("Admin secret");
     expect(html).not.toContain("debugToggle");
+  });
+
+  it("keeps venue manager self-claiming hidden behind invite-only copy", () => {
+    expect(venuePortalHtml).toContain("Venue portal access is assigned by Pint Path admin");
+    expect(venuePortalHtml).not.toContain('id="claimForm"');
+    expect(venuePortalHtml).not.toContain("Create your Basic bar account");
+    expect(venuePortalHtml).not.toContain("Claim your bar");
   });
 });

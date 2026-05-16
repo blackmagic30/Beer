@@ -121,11 +121,11 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Confirm `/api/calls`, `/api/results`, and `/webhooks/*` return disabled/not-found responses because legacy call automation is off.
 - Submit a wrong-price report and feedback.
 - Confirm KPI/field-test dashboard records activity.
-- Open `/for-bars`, submit a venue interest request, and confirm it appears in admin.
+- Open `/for-bars` and confirm it redirects to `/venue-portal` without exposing a public claim form.
 - Assign a venue manager in admin, log in as that user, and confirm `/venue-portal` only shows the assigned venue.
 - Confirm the venue portal can save profile details, beer/on-tap rows, happy hours, and deals/specials for the assigned venue only.
 - Confirm a Basic bar tier sees analytics/monthly report upgrade prompts, and Plus/Pro tiers can see aggregate-only suburb analytics once the privacy threshold is met.
-- Confirm authenticated bar-claim requests are stored as pending manual reviews before any manager assignment is granted.
+- Confirm authenticated non-admin users cannot submit bar-claim requests and only see the invite-only venue portal message.
 - Submit a venue-manager update and confirm it remains pending review.
 - Check the main pages on a phone-width screen.
 

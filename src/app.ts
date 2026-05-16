@@ -400,12 +400,15 @@ export function createApp() {
   app.use("/api/results", createLazyMount((routers) => routers.resultsRouter));
   app.use("/webhooks", createLazyMount((routers) => routers.webhooksRouter));
   app.use("/api", createLazyMount((routers) => routers.webhooksRouter));
+  app.get("/for-bars", (_req, res) => {
+    res.redirect(302, "/venue-portal");
+  });
+  app.get("/for-bars.html", (_req, res) => {
+    res.redirect(302, "/venue-portal");
+  });
   app.use(express.static(viewerDirectory));
   app.get("/", (_req, res) => {
     res.sendFile(path.join(viewerDirectory, "index.html"));
-  });
-  app.get("/for-bars", (_req, res) => {
-    res.sendFile(path.join(viewerDirectory, "for-bars.html"));
   });
   app.get("/venue-portal", (_req, res) => {
     res.sendFile(path.join(viewerDirectory, "venue-portal.html"));

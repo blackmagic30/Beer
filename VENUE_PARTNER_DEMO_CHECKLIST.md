@@ -18,15 +18,15 @@ Use this when showing Pint Path to a bar owner, venue manager, or potential affi
 - Explain that community data stays pending until verified or approved.
 - Explain that contributors can earn full map access by submitting useful verified data.
 
-## 3. For Bars Page
+## 3. Invite-Only Venue Portal
 
-- Open `/for-bars`.
-- Show the venue-manager value proposition:
+- Open `/for-bars` and confirm it redirects to `/venue-portal`.
+- Explain that venue-manager access is invite-only during beta:
   - keep prices and happy hours accurate
   - help nearby locals find the venue
   - reduce stale or wrong listings
   - access privacy-safe aggregate demand signals
-- Submit a register-interest or claim-listing request.
+- Explain that public self-claiming is disabled so random users cannot request access to venue tools.
 - Explain that this does not start paid venue billing.
 
 ## 4. Admin Follow-Up

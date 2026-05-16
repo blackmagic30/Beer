@@ -102,8 +102,7 @@ Business demo pages:
 - `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, preferences, requests, feedback, and submission status.
 - `/missions.html`: Needs Data mission board with sorting, quick-win guidance, and points.
 - `/submit.html`: venue data submission with manual rows and photo/source queue.
-- `/for-bars`: professional bar-owner landing page with Basic, Plus, and Pro tier explanations, register-interest, and claim-listing requests.
-- `/venue-portal`: admin-assigned bar dashboard for profile details, beer stock/on-tap rows, prices, happy hours, deals/specials, listing quality, tier-gated analytics, monthly report previews, and pending review updates.
+- `/venue-portal`: invite-only, admin-assigned venue dashboard for profile details, beer stock/on-tap rows, prices, happy hours, deals/specials, listing quality, tier-gated analytics, monthly report previews, and pending review updates. `/for-bars` redirects here so public users do not see venue-owner operating details.
 - `/admin.html`: admin-only submission review, KPI dashboard, cohorts, coverage, partner leads, and review queues.
 
 Supabase auth/account foundation:
@@ -123,7 +122,7 @@ Supabase auth/account foundation:
 
 Venue partner demo layer:
 
-- Bars can register interest from `/for-bars`; requests stay in the admin partner queue.
+- Public self-claiming is disabled during beta. Admin assigns verified venue managers from `/admin.html`; `/for-bars` redirects to the invite-only `/venue-portal` access screen.
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
 - Basic bar accounts can manage profile details, beers/stock/on-tap status, prices, happy hours, and deals/specials.

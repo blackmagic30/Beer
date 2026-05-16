@@ -88,8 +88,8 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 
 ## 10. Venue Partner Demo
 
-- Open `/for-bars` and submit a register-interest request.
-- Confirm the request appears in `/admin.html` under venue partner interest.
+- Open `/for-bars` and confirm it redirects to `/venue-portal` without exposing a public claim form.
+- Confirm `/admin.html` is the only place to assign venue-manager access during beta.
 - Create or pick a venue-manager test user.
 - Assign the test user to one venue from `/admin.html`.
 - Log in as the venue manager and open `/venue-portal`.
@@ -98,7 +98,7 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 - As a Basic bar account, confirm profile, beers, happy hours, and specials can be edited, while analytics/monthly reports show a Plus upgrade prompt.
 - Ask admin to set the bar tier to Plus or Pro for a demo, then confirm aggregate suburb-level analytics and monthly report preview appear once the privacy threshold is met.
 - Confirm Pro shows premium display metadata in the returned profile, without changing public ranking behaviour.
-- If using authenticated bar claiming, submit a claim from `/venue-portal` as a verified user with no assigned venue and confirm the request stays pending for manual admin review.
+- As a verified user with no assigned venue, open `/venue-portal` and confirm it shows invite-only access rather than a claim form.
 - Confirm listing quality, wrong-price reports, requests, and update link are visible.
 - Add a beer row, mark it on tap/in stock, add a happy hour, and add a deal/special.
 - Submit a venue manager update and confirm it appears as pending review, not automatically published.

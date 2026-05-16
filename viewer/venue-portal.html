@@ -23,46 +23,17 @@
     <section id="claimPanel" class="panel is-hidden">
       <div class="sectionHeader">
         <div>
-          <div class="eyebrow">Manual claiming</div>
-          <h2>Request access to manage a bar</h2>
+          <div class="eyebrow">Invite-only access</div>
+          <h2>Venue portal access is assigned by Pint Path admin</h2>
         </div>
-        <p class="muted">For this beta, claims are reviewed manually by admin. Later we can add business email, phone or document verification.</p>
+        <p class="muted">For this beta, venue-manager accounts are created manually after we verify the venue contact. This keeps venue information and management tools private.</p>
       </div>
-      <form id="claimForm" class="form">
-        <div class="grid grid--two">
-          <label class="field">Bar name
-            <input name="barName" placeholder="Venue name" required />
-          </label>
-          <label class="field">Suburb
-            <input name="suburb" placeholder="e.g. Fitzroy" />
-          </label>
-        </div>
-        <label class="field">Address
-          <input name="address" placeholder="Street address if known" />
-        </label>
-        <div class="grid grid--two">
-          <label class="field">Your name
-            <input name="requesterName" required />
-          </label>
-          <label class="field">Role at the bar
-            <input name="requesterRole" placeholder="Owner, manager, venue team..." required />
-          </label>
-        </div>
-        <div class="grid grid--two">
-          <label class="field">Contact email
-            <input name="contactEmail" type="email" required />
-          </label>
-          <label class="field">Contact phone optional
-            <input name="contactPhone" />
-          </label>
-        </div>
-        <label class="field">Message optional
-          <textarea name="message" placeholder="Anything that helps admin verify the claim."></textarea>
-        </label>
-        <button class="button button--primary" type="submit">Request bar access</button>
-        <div id="claimStatus" class="notice">Submit a request and admin will review it manually.</div>
-      </form>
-      <div id="claimRequests" class="list" style="margin-top:16px;"></div>
+      <div id="claimStatus" class="notice">If you should manage a venue, ask the Pint Path admin to assign your login to that venue. No public claim form is available.</div>
+      <div class="actionRow" style="margin-top:16px;">
+        <a class="button button--primary" href="/account.html">Go to account</a>
+        <a class="button" href="/">Back to map</a>
+      </div>
+      <div id="claimRequests" class="list is-hidden" style="margin-top:16px;"></div>
     </section>
 
     <section id="portalContent" class="is-hidden">
@@ -606,21 +577,15 @@
 
     function renderPortal(data) {
       currentPortal = data;
-      if (data.accessState === "claim_required") {
+      if (data.accessState === "invite_required" || data.accessState === "claim_required") {
         portalContent.classList.add("is-hidden");
         portalAccess.classList.add("is-hidden");
         claimPanel.classList.remove("is-hidden");
-        const requests = data.claimRequests || [];
-        claimRequests.innerHTML = requests.length
-          ? requests.map((request) => `
-            <div class="listItem dataRow">
-              <div>
-                <strong>${escapeHtml(request.barName)}</strong>
-                <div class="muted">${escapeHtml(request.suburb || "Melbourne")} · ${escapeHtml(request.status)} · submitted ${MelbBeerBusiness.formatDate(request.createdAt)}</div>
-              </div>
-            </div>
-          `).join("")
-          : '<div class="listItem muted">No claim requests yet.</div>';
+        MelbBeerBusiness.setStatus(
+          claimStatus,
+          data.message || "Venue portal access is invite-only during beta.",
+        );
+        claimRequests.innerHTML = "";
         return;
       }
 
@@ -929,28 +894,6 @@
 
       venueSelect.addEventListener("change", () => {
         void loadPortal(venueSelect.value).catch((error) => MelbBeerBusiness.setStatus(portalAccess, error.message, true));
-      });
-
-      claimForm.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const body = Object.fromEntries(new FormData(claimForm).entries());
-        body.barId = null;
-        body.address = body.address || null;
-        body.suburb = body.suburb || null;
-        body.contactPhone = body.contactPhone || null;
-        body.message = body.message || null;
-
-        try {
-          const result = await MelbBeerBusiness.apiFetch("/api/business/bar-claim-requests", {
-            method: "POST",
-            body: JSON.stringify(body),
-          });
-          claimForm.reset();
-          MelbBeerBusiness.setStatus(claimStatus, result.message || "Claim request submitted.");
-          await loadPortal();
-        } catch (error) {
-          MelbBeerBusiness.setStatus(claimStatus, error.message || "Could not submit claim request.", true);
-        }
       });
 
       profileForm.addEventListener("submit", async (event) => {

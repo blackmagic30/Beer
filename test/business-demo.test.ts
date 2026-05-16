@@ -1722,10 +1722,10 @@ describe("business demo contribution model", () => {
 
     expect(interest.interest.venueName).toBe("Rooftop Bar");
     expect(service.getVenuePortal(normalUser, { venueId: "venue-1" })).toEqual(expect.objectContaining({
-      accessState: "claim_required",
+      accessState: "invite_required",
       selectedVenue: null,
     }));
-    const claim = service.createBarClaimRequest(normalUser, {
+    expect(() => service.createBarClaimRequest(normalUser, {
       barId: "venue-1",
       barName: "Rooftop Bar",
       address: "Level 7, Melbourne",
@@ -1735,9 +1735,8 @@ describe("business demo contribution model", () => {
       contactEmail: "normal@example.com",
       contactPhone: null,
       message: "I manage this venue.",
-    });
-    expect(claim.claim.status).toBe("pending");
-    expect(service.getVenuePortal(normalUser, { venueId: "venue-1" }).claimRequests).toHaveLength(1);
+    })).toThrow("Venue manager access is invite-only");
+    expect(service.getVenuePortal(normalUser, { venueId: "venue-1" }).claimRequests).toHaveLength(0);
 
     const assignment = service.assignVenueManager(admin, {
       userId: manager.id,
@@ -1786,7 +1785,7 @@ describe("business demo contribution model", () => {
 
     const partnerAdmin = service.getVenuePartnerAdmin(admin);
     expect(partnerAdmin.interests[0]).toEqual(expect.objectContaining({ venueName: "Rooftop Bar" }));
-    expect(partnerAdmin.claimRequests[0]).toEqual(expect.objectContaining({ barName: "Rooftop Bar", status: "pending" }));
+    expect(partnerAdmin.claimRequests).toEqual([]);
     expect(partnerAdmin.assignments[0]).toEqual(expect.objectContaining({ userId: manager.id, venueId: "venue-1" }));
 
     const revoked = service.revokeVenueManager(admin, { userId: manager.id, venueId: "venue-1" });
