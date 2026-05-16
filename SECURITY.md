@@ -2,7 +2,7 @@
 
 ## Supported Beta Posture
 
-Pint Path is a Melbourne beta running on a Node.js, TypeScript, Express, SQLite, Supabase, Google Maps, Twilio, ElevenLabs, OpenAI, Stripe, and Railway stack.
+Pint Path is a Melbourne beta running on a Node.js, TypeScript, Express, SQLite, Supabase, Google Maps, OpenAI, Stripe, and Railway stack. Legacy Twilio/ElevenLabs call automation code is retained but disabled by default behind `ENABLE_LEGACY_CALL_AUTOMATION=false`.
 
 The beta security posture is designed to protect:
 
@@ -37,14 +37,14 @@ Rotation checklist:
 - Google Maps browser key: rotate in Google Cloud, restrict HTTP referrers to `https://pintpath.beer/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`.
 - Google Places server key: rotate and restrict by API/IP where possible.
 - Stripe secret/webhook keys: rotate in Stripe, update Railway env, replay a signed test webhook.
-- Twilio auth token: rotate in Twilio, update Railway env, confirm signed webhooks still pass.
-- OpenAI and ElevenLabs keys: rotate with each provider, update Railway env, verify no raw payloads are logged.
+- OpenAI keys: rotate with OpenAI, update Railway env, verify no raw payloads are logged.
+- Legacy Twilio/ElevenLabs keys: only relevant if `ENABLE_LEGACY_CALL_AUTOMATION=true`; rotate with each provider before re-enabling the archived calling bot.
 
 Run `npm run security:scan` before every deploy.
 
 ## Incident Response Checklist
 
-1. Disable risky env switches first: `OUTBOUND_CALLS_ENABLED=false`, `DEMO_BILLING_MODE=false`, and `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`.
+1. Disable risky env switches first: `ENABLE_LEGACY_CALL_AUTOMATION=false`, `DEMO_BILLING_MODE=false`, and `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`.
 2. If payments are involved, disable checkout price IDs and verify Stripe webhook signatures.
 3. Rotate any potentially exposed keys.
 4. Revoke impacted sessions with logout-all/admin database action.

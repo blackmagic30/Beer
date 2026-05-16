@@ -1,18 +1,19 @@
 # pint-path
 
-`pint-path` is a production-minded local Node.js + TypeScript service that places Twilio outbound calls, connects them to an ElevenLabs voice agent, stores one `call_run` per call, persists the full transcript when the call is finished, parses beer pricing outcomes, and exposes review APIs so you can inspect exactly what happened afterward.
+`pint-path` is a production-minded Node.js + TypeScript app for Melbourne beer-price and happy-hour discovery. The active product is the public map, contributor account flow, venue portal, admin review workflow, and server-gated price/submission APIs.
+
+The old Twilio + ElevenLabs outbound calling bot is intentionally disabled by default. Its code is kept behind `ENABLE_LEGACY_CALL_AUTOMATION=true` in case we want to revive it later, but it is not part of the active Pint Path beta.
 
 ## Current Capabilities
 
-- Creates a `call_runs` row before every outbound dial attempt.
-- Places a live Twilio outbound call from `POST /api/calls/outbound`.
-- Handles Twilio voice webhooks and always returns valid TwiML.
-- Falls back to a safe spoken TwiML response if ElevenLabs is missing or fails.
-- Tracks Twilio status updates like `ringing`, `in-progress`, `completed`, `busy`, `no-answer`, `failed`, and `canceled`.
-- Accepts ElevenLabs post-call transcript webhooks.
-- Persists raw transcripts to `call_runs`.
-- Parses the current target beer flow, configurable as Guinness, Carlton Draft, or Stone & Wood.
-- Syncs completed venue-linked call results into Supabase `call_results`; the public viewer reads approved venue/price data through server-gated business APIs.
+- Public Melbourne beer-price and happy-hour map.
+- Server-side price gating, free daily reveals, premium access, and contributor unlocks.
+- Contributor account dashboard with private evidence handling and submission history.
+- Venue portal for venue-managed beers, prices, happy hours, deals, and pending approval flows.
+- Admin review, KPI, coverage, retention, partner-lead, and venue-manager workflows.
+- Privacy-safe aggregate analytics and source-evidence protections.
+- Legacy Twilio/ElevenLabs call automation can be re-enabled only with `ENABLE_LEGACY_CALL_AUTOMATION=true`.
+- The public viewer reads approved venue/price data through server-gated business APIs.
 - Stores structured per-beer availability fields for map use:
   - `availability_status`
   - `available_on_tap`
@@ -30,19 +31,10 @@
   - `partial`
   - `needs_review`
   - `failed`
-- Supports `testMode: true` so you can safely place a test call to your own number and clearly distinguish it from real venue calls.
-- Provides review endpoints for recent calls and per-call inspection.
 - Adds a Melbourne-only business-model demo with free preview access, paid premium access, contributor unlocks, public submissions, missions, admin review, and aggregate analytics.
 
 ## Main Routes
 
-- `POST /api/calls/outbound`
-- `GET /api/calls`
-- `GET /api/calls/:callSid`
-- `GET /api/results`
-- `POST /webhooks/twilio/voice`
-- `POST /webhooks/twilio/status`
-- `POST /webhooks/elevenlabs/post-call`
 - `GET /health`
 - `GET /ready`
 - `GET /api/business/config`
@@ -80,7 +72,7 @@
 - `POST /api/business/billing/webhook`
 - `GET /api/business/analytics/preview`
 
-Field-test note: legacy call-control and call-result routes are admin-only. Use a bearer token from an account listed in `ADMIN_EMAILS` for `/api/calls/*`, `/api/results`, `/api/admin/*`, and `/api/business/admin/*`.
+Field-test note: `/api/admin/*` and `/api/business/admin/*` are admin-only. Legacy call-control, call-result, and webhook routes (`/api/calls/*`, `/api/results`, `/webhooks/*`) are disabled/not-found unless `ENABLE_LEGACY_CALL_AUTOMATION=true`; if re-enabled later, they remain admin/protected where applicable.
 
 For the intended beta role boundaries, private-data rules, and approval gates, see [`ROLE_PERMISSION_MATRIX.md`](./ROLE_PERMISSION_MATRIX.md).
 
@@ -180,7 +172,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Account sessions are hashed at rest, expire by role, can be revoked with logout/logout-all, and store only short SHA-256 request fingerprints rather than raw IP addresses or user agents.
 - Sensitive admin, payment, session, and venue-manager actions are written to `security_audit_log` with redacted metadata.
 - Aggregate analytics use `ANALYTICS_MIN_BUCKET_SIZE` to suppress low-count buckets before they are returned to dashboards or venue-owner views.
-- Production defaults Twilio signature validation on and ElevenLabs webhooks fail closed unless `ELEVENLABS_WEBHOOK_SECRET` is set or `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=true` is explicitly set.
+- Legacy Twilio/ElevenLabs routes are disabled by default. If `ENABLE_LEGACY_CALL_AUTOMATION=true` is ever restored, Twilio signature validation defaults on in production and ElevenLabs webhooks fail closed unless a webhook secret or explicit unsigned override is configured.
 - Production admin routes require verified email and a fresh MFA/AAL2 claim when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
 - Upload and verification actions require a verified account in production when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
 - Inline demo image evidence is never exposed publicly; use the private `beermap-source-evidence` Supabase Storage bucket and signed review links before accepting sensitive source photos at scale.
@@ -265,16 +257,10 @@ Set these values:
 NODE_ENV=development
 HOST=0.0.0.0
 PORT=3000
-TARGET_BEER=guinness
 PUBLIC_BASE_URL=https://your-ngrok-subdomain.ngrok-free.app
 DATABASE_PATH=./data/pint-path.sqlite
 TRUST_PROXY=true
-OUTBOUND_CALLS_ENABLED=true
-OUTBOUND_CALL_TIMEZONE=Australia/Melbourne
-OUTBOUND_CALL_WINDOW_START=11:00
-OUTBOUND_CALL_WINDOW_END=20:30
-OUTBOUND_CALL_ALLOWED_DAYS=mon,tue,wed,thu,fri,sat,sun
-OUTBOUND_REPEAT_GUARD_SECONDS=300
+ENABLE_LEGACY_CALL_AUTOMATION=false
 PARSE_CONFIDENCE_THRESHOLD=0.72
 BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD=5
 SUPABASE_URL=https://your-project.supabase.co
@@ -287,16 +273,6 @@ SUPABASE_RESULTS_TABLE=call_results
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 GOOGLE_MAPS_MAP_ID=optional_google_maps_map_id
 GOOGLE_PLACES_API_KEY=your_server_side_google_places_api_key
-TWILIO_ACCOUNT_SID=ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-TWILIO_AUTH_TOKEN=your_twilio_auth_token
-TWILIO_PHONE_NUMBER=+61300000000
-TWILIO_CALL_TIME_LIMIT_SECONDS=30
-TWILIO_VALIDATE_SIGNATURES=false
-ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=false
-ELEVENLABS_API_KEY=your_elevenlabs_api_key
-ELEVENLABS_AGENT_ID=agent_XXXXXXXXXXXXXXXX
-ELEVENLABS_WEBHOOK_SECRET=optional_shared_secret_from_elevenlabs
-ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false
 ADMIN_EMAILS=you@example.com
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
@@ -327,32 +303,20 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_xxx
 What each one does:
 
 - `PUBLIC_BASE_URL`: your public HTTPS base URL. Use your ngrok URL here.
-- `TARGET_BEER`: active beer campaign for outbound calls and reparsing. Supported values: `guinness`, `carlton_draft`, `stone_and_wood`.
 - `HOST`: interface the Node server should bind to. Use `0.0.0.0` for Railway and other hosted deployments.
 - `DATABASE_PATH`: SQLite file path.
-- `OUTBOUND_CALLS_ENABLED`: master pause switch for real venue dialing. Test-mode calls still work.
-- `OUTBOUND_CALL_TIMEZONE`: timezone used for the venue call window.
-- `OUTBOUND_CALL_WINDOW_START` / `OUTBOUND_CALL_WINDOW_END`: local start and stop time for venue calls.
-- `OUTBOUND_CALL_ALLOWED_DAYS`: allowed local weekdays for venue calls.
-- `OUTBOUND_REPEAT_GUARD_SECONDS`: blocks accidentally dialing the same number again within this window.
+- `ENABLE_LEGACY_CALL_AUTOMATION`: defaults to `false`. Leave off for Pint Path. Setting it to `true` re-enables the archived Twilio/ElevenLabs call routers and requires the legacy call env vars below.
 - `PARSE_CONFIDENCE_THRESHOLD`: threshold used for review decisions.
 - `BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD`: pauses the batch after this many consecutive bad outcomes.
 - `SUPABASE_URL`: Supabase project URL used for venue imports, map-sync result writes, and optional Supabase Auth OAuth login.
 - `SUPABASE_ANON_KEY`: browser-safe anon key used by `/account.html` for Supabase Auth OAuth. Never use the service-role key in browser config.
 - `SUPABASE_SERVICE_ROLE_KEY`: required for inserting venues and syncing call results.
 - `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`; set this to providers configured in the Supabase dashboard, for example `google,apple,facebook`.
-- `SUPABASE_RESULTS_TABLE`: Supabase table used for synced call results. Defaults to `call_results`.
+- `SUPABASE_RESULTS_TABLE`: legacy call-result sync table. Defaults to `call_results`; not used unless legacy call automation is re-enabled.
 - `GOOGLE_MAPS_API_KEY`: browser-safe Google Maps key used by the hosted viewer.
 - `GOOGLE_MAPS_MAP_ID`: optional Google Maps map ID for branded vector map styling.
 - `GOOGLE_PLACES_API_KEY`: server-side key used by the venue import scripts. If absent, the importer falls back to `GOOGLE_MAPS_API_KEY`.
-- `TWILIO_*`: credentials and caller number used for real outbound calls.
-- `TWILIO_CALL_TIME_LIMIT_SECONDS`: hard answered-call cap enforced by Twilio. Default `30` seconds so real staff can answer while still limiting credit bleed.
-- `TWILIO_VALIDATE_SIGNATURES`: set to `true` once your ngrok/public URL is stable.
-- `ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION`: explicit production override if Twilio signatures cannot be validated. Keep `false`.
-- `ELEVENLABS_API_KEY`: required for live ElevenLabs call connection.
-- `ELEVENLABS_AGENT_ID`: required for live ElevenLabs agent routing.
-- `ELEVENLABS_WEBHOOK_SECRET`: optional but recommended for verifying ElevenLabs post-call webhooks.
-- `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION`: explicit production override if an ElevenLabs webhook secret is not configured. Keep `false`.
+- Legacy call automation envs are intentionally omitted from the active setup. If we revive the calling bot later, copy the commented placeholders from `.env.example`, set `ENABLE_LEGACY_CALL_AUTOMATION=true`, and configure Twilio/ElevenLabs credentials in Railway.
 - `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup. In production this can be left blank while the official ABN/admin email is pending; the public site will still boot, but admin routes will return `403` until the allowlist is configured.
 - `SESSION_TTL_DAYS`: normal account bearer-session lifetime. Defaults to `60`.
 - `ADMIN_SESSION_TTL_DAYS`: shorter admin bearer-session lifetime. Defaults to `7`.
@@ -439,7 +403,7 @@ Recommended rollout:
 2. Deploy the app to Railway.
 3. Point `pintpath.beer` at that host with DNS.
 4. Switch `PUBLIC_BASE_URL` to `https://pintpath.beer`.
-5. Update Twilio and ElevenLabs webhook URLs to the same domain.
+5. Keep `ENABLE_LEGACY_CALL_AUTOMATION=false`.
 6. Add the domain to your Google Maps browser key referrer rules.
 
 Recommended Google Maps browser key referrers once hosted:
@@ -662,7 +626,11 @@ npm run venues:review -- --suburb=fitzroy
 npm run venues:review -- --include-called --include-not-ready
 ```
 
-## Batch Call Imported Venues
+## Archived Legacy Calling Bot
+
+The sections below document the old Twilio/ElevenLabs calling bot. They are intentionally retained for reference only. The active Pint Path app does not initialize these routes unless `ENABLE_LEGACY_CALL_AUTOMATION=true`.
+
+## Archived: Batch Call Imported Venues
 
 Once the app is running locally and ngrok is live, queue calls for imported venues:
 

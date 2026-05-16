@@ -63,7 +63,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - Confirm startup logs do not print secrets.
 - Confirm `/health` returns success.
 - Confirm `/ready` returns success.
-- Confirm outbound calls are disabled unless intentionally operating the calling bot: `OUTBOUND_CALLS_ENABLED=false`.
+- Confirm archived Twilio/ElevenLabs call automation is disabled: `ENABLE_LEGACY_CALL_AUTOMATION=false`.
 - Confirm demo billing and demo image storage production overrides are false unless intentionally time-boxed.
 
 ## Post-Deploy Verification Checklist
@@ -88,7 +88,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - Confirm Plus/Pro venue tier sees only privacy-safe aggregate analytics above bucket threshold.
 - Confirm Stripe signed test webhook updates a subscription and replayed event does not double-process.
 - Confirm invalid/missing Stripe webhook signatures are rejected.
-- Confirm Twilio and ElevenLabs webhook signature/secret checks are enabled in production.
+- Confirm `/api/calls`, `/api/results`, and `/webhooks/*` are disabled/not found while `ENABLE_LEGACY_CALL_AUTOMATION=false`.
 - Confirm source photo inline storage is rejected in production.
 - Confirm security audit rows are created for admin review, venue-manager assignment, billing grants, and webhook failures.
 - Confirm mobile Safari/Chrome smoke test: map, venue details, submit data, account, venue portal.
@@ -106,7 +106,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - Alert on admin review, venue-manager assignment/revoke, and user status override events if possible.
 - Alert on Redis/rate-limiter connection failures; production should fail closed rather than silently bypassing limits.
 - Monitor database file/volume size and backup age.
-- Monitor Twilio/ElevenLabs webhook failures if calling flows are enabled.
+- No Twilio/ElevenLabs monitoring is required while archived call automation is disabled. Add provider monitoring before re-enabling it.
 - Preserve enough logs for incident response without logging secrets, raw transcripts, raw source photos, or exact user locations.
 
 ## Rollback Checklist
@@ -115,7 +115,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - If the release was a merge commit, use `git revert -m 1 <merge_sha>`.
 - If the release was fast-forwarded, revert the problematic commit range or redeploy the previous Railway SHA.
 - Disable risky features quickly with env:
-  - `OUTBOUND_CALLS_ENABLED=false`
+  - `ENABLE_LEGACY_CALL_AUTOMATION=false`
   - `DEMO_BILLING_MODE=false`
   - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`
   - `FIELD_TEST_MODE=false`
@@ -130,7 +130,7 @@ Go only if:
 - No P0 blocker in `PROD_FOLLOWUPS.md` remains unresolved or unaccepted.
 - Production secrets are configured provider-side and not committed.
 - Backups and rollback path are verified.
-- Stripe/Twilio/ElevenLabs/Supabase provider-level tests pass in staging or production preview.
+- Stripe/Supabase provider-level tests pass in staging or production preview. Twilio/ElevenLabs tests are only required if archived call automation is deliberately re-enabled.
 
 No-go if:
 - Any exact-price API leaks unrestricted prices.

@@ -7,8 +7,6 @@ const productionRequiredEnv = {
   GOOGLE_MAPS_API_KEY: "test-browser-maps-key",
   SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
   REDIS_URL: "redis://localhost:6379",
-  TWILIO_VALIDATE_SIGNATURES: "true",
-  ELEVENLABS_WEBHOOK_SECRET: "test-elevenlabs-webhook-secret",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
 };
 
@@ -35,6 +33,7 @@ describe("environment safety defaults", () => {
 
     expect(env.NODE_ENV).toBe("production");
     expect(env.DEMO_BILLING_MODE).toBe(false);
+    expect(env.ENABLE_LEGACY_CALL_AUTOMATION).toBe(false);
   });
 
   it("does not block public production boot while the official admin email is pending", async () => {
@@ -54,6 +53,7 @@ describe("environment safety defaults", () => {
       REDIS_URL: "",
       TWILIO_VALIDATE_SIGNATURES: "",
       ELEVENLABS_WEBHOOK_SECRET: "",
+      ENABLE_LEGACY_CALL_AUTOMATION: "",
     });
 
     const { env } = await loadEnv();
@@ -61,8 +61,17 @@ describe("environment safety defaults", () => {
     expect(env.NODE_ENV).toBe("production");
     expect(env.SOURCE_EVIDENCE_SIGNING_SECRET).toBeUndefined();
     expect(env.REDIS_URL).toBeUndefined();
+    expect(env.ENABLE_LEGACY_CALL_AUTOMATION).toBe(false);
     expect(env.TWILIO_VALIDATE_SIGNATURES).toBe(true);
     expect(env.ELEVENLABS_WEBHOOK_SECRET).toBeUndefined();
+  });
+
+  it("keeps archived call automation available only behind an explicit flag", async () => {
+    stubProductionEnv({ ENABLE_LEGACY_CALL_AUTOMATION: "true" });
+
+    const { env } = await loadEnv();
+
+    expect(env.ENABLE_LEGACY_CALL_AUTOMATION).toBe(true);
   });
 
   it("still blocks explicit production demo billing without the override", async () => {

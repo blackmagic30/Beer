@@ -6,7 +6,7 @@ Date: 2026-05-14
 
 Pint Path is substantially hardened for a controlled Melbourne beta, but it is not yet ready for full-scale production deployment without provider/dashboard verification. The application now has strong server-side price gating, admin/venue-manager authorization tests, pending-review workflows for venue-manager changes, production admin MFA step-up guards, private source-evidence references with signed server URLs, Redis-capable rate limiting, Stripe webhook signature handling, upload validation, security audit logging, production config guards, and a CI path that runs build/test/secret scan/dependency audit.
 
-The remaining blockers are now mostly provider and operations verification: Supabase MFA/AAL2 must be configured and tested, private Supabase Storage should be verified before broad source-evidence uploads, Redis must be provisioned for production rate limiting, backup/restore and monitoring must be tested, and live Stripe/Supabase/Twilio/ElevenLabs/Google configuration must be verified in staging.
+The remaining blockers are now mostly provider and operations verification: Supabase MFA/AAL2 must be configured and tested, private Supabase Storage should be verified before broad source-evidence uploads, Redis must be provisioned for production rate limiting, backup/restore and monitoring must be tested, and live Stripe/Supabase/Google configuration must be verified in staging. Twilio/ElevenLabs call automation is archived and disabled by default.
 
 ## Production Readiness Verdict
 
@@ -21,7 +21,7 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 - Database: SQLite via `better-sqlite3`, initialized additively from `src/db/schema.sql`.
 - Auth: local Pint Path bearer sessions plus optional Supabase OAuth session exchange; production admin actions require verified email and AAL2 step-up claims.
 - Payments: Stripe Checkout/webhooks plus demo billing mode guarded by env.
-- External services: Supabase, Google Maps, Twilio, ElevenLabs, OpenAI, Stripe.
+- External services: Supabase, Google Maps, OpenAI, Stripe. Legacy Twilio/ElevenLabs modules remain in the repo but are disabled unless `ENABLE_LEGACY_CALL_AUTOMATION=true`.
 - Hosting assumptions: Railway, with build `npm run build`, start `node dist/src/server.js`.
 - CI: GitHub Actions in `.github/workflows/ci.yml`.
 
@@ -139,7 +139,7 @@ P1 blockers before broad paid/public rollout:
 
 - No production deployment or production data was touched.
 - Local/test SQLite data only was used.
-- Live Stripe, Twilio, Supabase, ElevenLabs, OpenAI, and Google provider credentials were not available locally, so provider-level verification remains a production/staging action.
+- Live Stripe, Supabase, OpenAI, and Google provider credentials were not available locally, so provider-level verification remains a production/staging action. Twilio/ElevenLabs provider checks are deferred unless legacy call automation is re-enabled.
 - The current target is full-scale production readiness, not merely a small private beta.
 
 ## Recommended Next Steps Before Launch

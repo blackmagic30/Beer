@@ -2,7 +2,7 @@
   "name": "pint-path",
   "version": "0.1.0",
   "private": true,
-  "description": "MVP Twilio + ElevenLabs beer price calling bot for Melbourne venues.",
+  "description": "Pint Path Melbourne beer price and happy-hour map.",
   "type": "module",
   "main": "dist/src/server.js",
   "engines": {

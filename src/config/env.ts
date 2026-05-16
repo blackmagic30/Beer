@@ -74,6 +74,14 @@ const demoBillingModeFromEnv = z.preprocess((value) => {
   return value;
 }, booleanFromEnv);
 
+const legacyCallAutomationFromEnv = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") {
+    return false;
+  }
+
+  return value;
+}, booleanFromEnv);
+
 const twilioValidateSignaturesFromEnv = z.preprocess((value) => {
   if (value === undefined || value === null || value === "") {
     return process.env.NODE_ENV === "production" ? true : false;
@@ -124,7 +132,8 @@ const envSchema = z.object({
   PUBLIC_BASE_URL: z.preprocess(sanitizeEnvString, z.string().url()),
   DATABASE_PATH: z.preprocess(sanitizeEnvString, z.string()).default("./data/pint-path.sqlite"),
   TRUST_PROXY: booleanFromEnv.default(true),
-  OUTBOUND_CALLS_ENABLED: booleanFromEnv.default(true),
+  ENABLE_LEGACY_CALL_AUTOMATION: legacyCallAutomationFromEnv,
+  OUTBOUND_CALLS_ENABLED: booleanFromEnv.default(false),
   OUTBOUND_CALL_TIMEZONE: z.preprocess(sanitizeEnvString, z.string().min(1)).default("Australia/Melbourne"),
   OUTBOUND_CALL_WINDOW_START: z.preprocess(sanitizeEnvString, z.string().regex(clockTimeRegex)).default("11:00"),
   OUTBOUND_CALL_WINDOW_END: z.preprocess(sanitizeEnvString, z.string().regex(clockTimeRegex)).default("20:30"),

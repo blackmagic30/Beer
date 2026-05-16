@@ -57,8 +57,8 @@ These are the remaining actions after the production-readiness pass. Priorities 
 
 ## P1: Provider Configuration Verification
 
-- Why it matters: Google Maps, Twilio, ElevenLabs, OpenAI, Supabase, and Stripe all depend on provider-side restrictions/secrets that cannot be verified from local code alone.
-- Suggested fix: Verify Google Maps referrer restrictions, Twilio signatures, ElevenLabs webhook secret, Supabase OAuth redirect URLs/RLS, Stripe webhook secret, and OpenAI key scope in staging.
+- Why it matters: Google Maps, OpenAI, Supabase, and Stripe all depend on provider-side restrictions/secrets that cannot be verified from local code alone. Twilio/ElevenLabs are archived and only matter if legacy call automation is re-enabled.
+- Suggested fix: Verify Google Maps referrer restrictions, Supabase OAuth redirect URLs/RLS, Stripe webhook secret, and OpenAI key scope in staging. If `ENABLE_LEGACY_CALL_AUTOMATION=true` is ever restored, add Twilio signature and ElevenLabs webhook-secret verification before deploy.
 - Blocks production: Yes until completed.
 
 ## P2: Admin Audit Log UI And Export Controls

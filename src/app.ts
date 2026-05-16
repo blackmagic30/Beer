@@ -31,71 +31,23 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     { createDatabase },
     { AdminIngestionQueueRepository },
     { BusinessRepository },
-    { BeerPriceResultsRepository },
-    { CallRunsRepository },
-    { ElevenLabsService },
-    { SupabaseResultsSyncService },
-    { TwilioService },
-    { createCallsRouter },
-    { CallsService },
     { createAdminRouter },
     { AdminService },
     { createBusinessRouter },
     { BusinessService },
-    { createResultsRouter },
-    { ResultsService },
-    { createWebhooksRouter },
-    { WebhooksService },
   ] = await Promise.all([
     import("./db/database.js"),
     import("./db/admin-ingestion-queue.repository.js"),
     import("./db/business.repository.js"),
-    import("./db/beer-price-results.repository.js"),
-    import("./db/call-runs.repository.js"),
-    import("./lib/elevenlabs.js"),
-    import("./lib/supabase-results-sync.js"),
-    import("./lib/twilio.js"),
-    import("./modules/calls/calls.routes.js"),
-    import("./modules/calls/calls.service.js"),
     import("./modules/admin/admin.routes.js"),
     import("./modules/admin/admin.service.js"),
     import("./modules/business/business.routes.js"),
     import("./modules/business/business.service.js"),
-    import("./modules/results/results.routes.js"),
-    import("./modules/results/results.service.js"),
-    import("./modules/webhooks/webhooks.routes.js"),
-    import("./modules/webhooks/webhooks.service.js"),
   ]);
 
   const database = createDatabase();
   const adminIngestionQueueRepository = new AdminIngestionQueueRepository(database);
   const businessRepository = new BusinessRepository(database);
-  const callRunsRepository = new CallRunsRepository(database);
-  const beerPriceResultsRepository = new BeerPriceResultsRepository(database);
-  const twilioService = new TwilioService(
-    env.TWILIO_ACCOUNT_SID,
-    env.TWILIO_AUTH_TOKEN,
-    env.TWILIO_PHONE_NUMBER,
-    env.TWILIO_CALL_TIME_LIMIT_SECONDS,
-  );
-  const elevenLabsService = new ElevenLabsService(
-    env.ELEVENLABS_API_KEY,
-    env.ELEVENLABS_WEBHOOK_SECRET,
-    env.NODE_ENV === "production" && !env.ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION,
-  );
-  const callsService = new CallsService(
-    callRunsRepository,
-    beerPriceResultsRepository,
-    twilioService,
-    env.PUBLIC_BASE_URL,
-    env.OUTBOUND_REPEAT_GUARD_SECONDS,
-    env.PARSE_CONFIDENCE_THRESHOLD,
-  );
-  const resultsService = new ResultsService(
-    callRunsRepository,
-    beerPriceResultsRepository,
-    env.PARSE_CONFIDENCE_THRESHOLD,
-  );
   const adminService = new AdminService(
     adminIngestionQueueRepository,
     env.SUPABASE_URL,
@@ -103,34 +55,107 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.SUPABASE_RESULTS_TABLE,
     env.OPENAI_API_KEY,
   );
-  const supabaseResultsSyncService = new SupabaseResultsSyncService(
-    env.SUPABASE_URL,
-    env.SUPABASE_SERVICE_ROLE_KEY,
-    env.SUPABASE_RESULTS_TABLE,
-  );
-  const webhooksService = new WebhooksService(
-    callRunsRepository,
-    beerPriceResultsRepository,
-    elevenLabsService,
-    supabaseResultsSyncService,
-    env.ELEVENLABS_AGENT_ID,
-    env.PARSE_CONFIDENCE_THRESHOLD,
-  );
   const businessService = new BusinessService(businessRepository, env);
   businessService.logStartupSummary();
+
+  let callsRouter = createDisabledLegacyCallAutomationRouter();
+  let resultsRouter = createDisabledLegacyCallAutomationRouter();
+  let webhooksRouter = createDisabledLegacyCallAutomationRouter();
+
+  if (env.ENABLE_LEGACY_CALL_AUTOMATION) {
+    const [
+      { BeerPriceResultsRepository },
+      { CallRunsRepository },
+      { ElevenLabsService },
+      { SupabaseResultsSyncService },
+      { TwilioService },
+      { createCallsRouter },
+      { CallsService },
+      { createResultsRouter },
+      { ResultsService },
+      { createWebhooksRouter },
+      { WebhooksService },
+    ] = await Promise.all([
+      import("./db/beer-price-results.repository.js"),
+      import("./db/call-runs.repository.js"),
+      import("./lib/elevenlabs.js"),
+      import("./lib/supabase-results-sync.js"),
+      import("./lib/twilio.js"),
+      import("./modules/calls/calls.routes.js"),
+      import("./modules/calls/calls.service.js"),
+      import("./modules/results/results.routes.js"),
+      import("./modules/results/results.service.js"),
+      import("./modules/webhooks/webhooks.routes.js"),
+      import("./modules/webhooks/webhooks.service.js"),
+    ]);
+
+    const callRunsRepository = new CallRunsRepository(database);
+    const beerPriceResultsRepository = new BeerPriceResultsRepository(database);
+    const twilioService = new TwilioService(
+      env.TWILIO_ACCOUNT_SID,
+      env.TWILIO_AUTH_TOKEN,
+      env.TWILIO_PHONE_NUMBER,
+      env.TWILIO_CALL_TIME_LIMIT_SECONDS,
+    );
+    const elevenLabsService = new ElevenLabsService(
+      env.ELEVENLABS_API_KEY,
+      env.ELEVENLABS_WEBHOOK_SECRET,
+      env.NODE_ENV === "production" && !env.ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION,
+    );
+    const callsService = new CallsService(
+      callRunsRepository,
+      beerPriceResultsRepository,
+      twilioService,
+      env.PUBLIC_BASE_URL,
+      env.OUTBOUND_REPEAT_GUARD_SECONDS,
+      env.PARSE_CONFIDENCE_THRESHOLD,
+    );
+    const resultsService = new ResultsService(
+      callRunsRepository,
+      beerPriceResultsRepository,
+      env.PARSE_CONFIDENCE_THRESHOLD,
+    );
+    const supabaseResultsSyncService = new SupabaseResultsSyncService(
+      env.SUPABASE_URL,
+      env.SUPABASE_SERVICE_ROLE_KEY,
+      env.SUPABASE_RESULTS_TABLE,
+    );
+    const webhooksService = new WebhooksService(
+      callRunsRepository,
+      beerPriceResultsRepository,
+      elevenLabsService,
+      supabaseResultsSyncService,
+      env.ELEVENLABS_AGENT_ID,
+      env.PARSE_CONFIDENCE_THRESHOLD,
+    );
+
+    callsRouter = createCallsRouter(callsService, businessService);
+    resultsRouter = createResultsRouter(resultsService, businessService);
+    webhooksRouter = createWebhooksRouter({
+      webhooksService,
+      twilioService,
+      validateTwilioSignatures: env.TWILIO_VALIDATE_SIGNATURES,
+    });
+  } else {
+    logger.info("Legacy Twilio/ElevenLabs call automation disabled", {
+      featureFlag: "ENABLE_LEGACY_CALL_AUTOMATION",
+    });
+  }
 
   console.info("Backend services initialized.");
 
   return {
-    callsRouter: createCallsRouter(callsService, businessService),
-    resultsRouter: createResultsRouter(resultsService, businessService),
-    webhooksRouter: createWebhooksRouter({
-      webhooksService,
-      twilioService,
-      validateTwilioSignatures: env.TWILIO_VALIDATE_SIGNATURES,
-    }),
+    callsRouter,
+    resultsRouter,
+    webhooksRouter,
     adminRouter: createAdminRouter(adminService, businessService),
     businessRouter: createBusinessRouter(businessService),
+  };
+}
+
+function createDisabledLegacyCallAutomationRouter(): RequestHandler {
+  return (_req, _res, next) => {
+    next(new AppError("Legacy call automation is disabled.", 404));
   };
 }
 

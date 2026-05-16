@@ -58,11 +58,7 @@ ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
-TWILIO_VALIDATE_SIGNATURES=true
-ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=false
-ELEVENLABS_WEBHOOK_SECRET=replace_with_elevenlabs_shared_secret
-ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false
-OUTBOUND_CALLS_ENABLED=false
+ENABLE_LEGACY_CALL_AUTOMATION=false
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-browser-safe-anon-key
 SUPABASE_OAUTH_PROVIDERS=google,apple,facebook
@@ -122,7 +118,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Confirm points are awarded only after approval.
 - Confirm contributor unlock works after the configured threshold.
 - Confirm approved price records appear on the map with confidence and last verified date.
-- Confirm `/api/calls` and `/api/results` return `401` logged out and `403` for non-admin users.
+- Confirm `/api/calls`, `/api/results`, and `/webhooks/*` return disabled/not-found responses because legacy call automation is off.
 - Submit a wrong-price report and feedback.
 - Confirm KPI/field-test dashboard records activity.
 - Open `/for-bars`, submit a venue interest request, and confirm it appears in admin.
@@ -140,8 +136,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Rotate any provider key that was ever committed, shared in chat/screenshots, or exposed through public config.
 - Confirm `/config.js` only exposes browser-safe fields such as Google Maps browser key, map ID, field-test flag, and non-secret public settings.
 - Confirm `viewer/config.js` is ignored and not committed.
-- Confirm Twilio signature validation is enabled in production, or document the explicit temporary override and expiry date.
-- Confirm ElevenLabs webhook secret is set in production, or document the explicit temporary override and expiry date.
+- Confirm `ENABLE_LEGACY_CALL_AUTOMATION=false`. If the archived calling bot is ever re-enabled, add a separate Twilio/ElevenLabs security checklist before deploy.
 - Confirm Stripe CLI delivered a signed test webhook to `/api/business/billing/webhook`.
 - Confirm audit logs redact email, phone, token, secret, raw payload, source image data, and precise coordinates.
 - Confirm analytics buckets below `ANALYTICS_MIN_BUCKET_SIZE` are suppressed in admin and venue-owner outputs.
@@ -160,7 +155,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
   - `FIELD_TEST_MODE=false`
   - `DEMO_BILLING_MODE=false`
   - `FREE_PRICE_REVEALS_PER_DAY=0`
-  - `OUTBOUND_CALLS_ENABLED=false`
+  - `ENABLE_LEGACY_CALL_AUTOMATION=false`
   - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`
   - `ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=false`
   - `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false`
