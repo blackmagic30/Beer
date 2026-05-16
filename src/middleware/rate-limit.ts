@@ -5,6 +5,7 @@ import { Redis } from "ioredis";
 
 import { env } from "../config/env.js";
 import { AppError } from "../lib/errors.js";
+import { logger } from "../lib/logger.js";
 
 type RateLimiterOptions = {
   windowMs: number;
@@ -20,6 +21,19 @@ type Bucket = {
 
 const buckets = new Map<string, Bucket>();
 let redisClient: Redis | null | undefined;
+let warnedMemoryFallback = false;
+
+function warnMemoryFallback(reason: string): void {
+  if (warnedMemoryFallback || env.NODE_ENV !== "production") {
+    return;
+  }
+
+  warnedMemoryFallback = true;
+  logger.warn("Using in-memory rate limiting fallback in production", {
+    reason,
+    distributedRateLimitingConfigured: Boolean(env.REDIS_URL),
+  });
+}
 
 function hashKey(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex").slice(0, 24);
@@ -106,6 +120,10 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
         return;
       }
 
+      if (env.NODE_ENV === "production" && !env.REDIS_URL) {
+        warnMemoryFallback("missing_redis_url");
+      }
+
       bucket = await incrementRedisBucket(key, options.windowMs, now)
         ?? incrementMemoryBucket(key, options.windowMs, now);
     } catch {
@@ -114,12 +132,16 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
         return;
       }
 
+      warnMemoryFallback("redis_unavailable");
       bucket = incrementMemoryBucket(key, options.windowMs, now);
     }
 
     res.setHeader("RateLimit-Limit", String(options.max));
     res.setHeader("RateLimit-Remaining", String(Math.max(0, options.max - bucket.count)));
     res.setHeader("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
+    if (env.NODE_ENV === "production" && (!env.REDIS_URL || env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION)) {
+      res.setHeader("RateLimit-Policy", env.REDIS_URL ? "redis-with-memory-fallback" : "memory-fallback");
+    }
 
     if (bucket.count > options.max) {
       next(new AppError("Too many requests. Please wait a moment and try again.", 429));

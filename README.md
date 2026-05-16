@@ -166,7 +166,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Admin tools live on `/admin.html` and `/api/business/admin/*`; public map HTML should not include admin unlock forms or secret-entry UI.
 - Photo/source uploads are validated for image MIME type and 6MB max size, then stored behind private source-evidence references. Review/download access is issued through short-lived signed server URLs after an uploader/admin authorization check.
 - `DEMO_BILLING_MODE=true` is for local/demo only. Production blocks demo billing unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` is explicitly set.
-- State-changing business APIs check trusted origins and use hashed-key rate limits for auth, submissions, feedback, requests, price reveals, and billing routes. Production uses Redis when `REDIS_URL` is set and otherwise fails closed unless `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` is explicitly set.
+- State-changing business APIs check trusted origins and use hashed-key rate limits for auth, submissions, feedback, requests, price reveals, and billing routes. Controlled beta deployments fall back to in-memory rate limiting if Redis is not configured, so login does not fail closed during field tests. Full-scale production should set `REDIS_URL` and set `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false`.
 - Security headers are enabled with a Google Maps-compatible CSP, `nosniff`, same-origin frame protection, strict referrer policy, and limited browser permissions.
 - Account sessions are hashed at rest, expire by role, can be revoked with logout/logout-all, and store only short SHA-256 request fingerprints rather than raw IP addresses or user agents.
 - Sensitive admin, payment, session, and venue-manager actions are written to `security_audit_log` with redacted metadata.
@@ -326,8 +326,8 @@ What each one does:
 - `CONTRIBUTOR_UNLOCK_POINTS`: approved monthly contribution points required for contributor access.
 - `CONTRIBUTOR_UNLOCK_DAYS`: number of premium days granted for contributor unlocks.
 - `ANALYTICS_MIN_BUCKET_SIZE`: minimum aggregate bucket count before dashboard analytics reveal a beer, suburb, or venue identity.
-- `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Public pages can boot without it, but rate-limited write/auth/payment routes fail closed in production unless the explicit in-memory override is enabled.
-- `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: temporary emergency override for single-instance beta only. Keep `false` for full-scale production.
+- `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Public pages and controlled beta auth/write flows can boot without it using hashed in-memory buckets, but multi-instance production should configure Redis.
+- `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: controlled-beta fallback for single-instance Railway deploys. Defaults to `true` so login stays available without Redis. Set `false` for full-scale production after `REDIS_URL` is configured and tested.
 - `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe. Keep this `false` for production beta.
 - `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.
 - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: legacy emergency override for demo image evidence. Leave `false`; evidence should use private references and signed URLs.

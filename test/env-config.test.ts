@@ -61,6 +61,7 @@ describe("environment safety defaults", () => {
     expect(env.NODE_ENV).toBe("production");
     expect(env.SOURCE_EVIDENCE_SIGNING_SECRET).toBeUndefined();
     expect(env.REDIS_URL).toBeUndefined();
+    expect(env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION).toBe(true);
     expect(env.ENABLE_LEGACY_CALL_AUTOMATION).toBe(false);
     expect(env.TWILIO_VALIDATE_SIGNATURES).toBe(true);
     expect(env.ELEVENLABS_WEBHOOK_SECRET).toBeUndefined();

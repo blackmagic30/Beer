@@ -140,7 +140,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Confirm Stripe CLI delivered a signed test webhook to `/api/business/billing/webhook`.
 - Confirm audit logs redact email, phone, token, secret, raw payload, source image data, and precise coordinates.
 - Confirm analytics buckets below `ANALYTICS_MIN_BUCKET_SIZE` are suppressed in admin and venue-owner outputs.
-- Confirm Redis-backed rate limiting is active through `REDIS_URL`. Do not set `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` for full-scale launch.
+- Confirm Redis-backed rate limiting is active through `REDIS_URL` before full-scale launch. Controlled beta may use `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true`, but set it to `false` once Redis is configured and tested.
 - Confirm Supabase MFA is enabled and admin routes require an AAL2 session in production.
 - Confirm Supabase Confirm Email/custom SMTP is configured before allowing self-serve venue-manager onboarding.
 

@@ -161,7 +161,7 @@ const envSchema = z.object({
   REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: booleanFromEnv.default(true),
   ANALYTICS_MIN_BUCKET_SIZE: z.coerce.number().int().min(1).max(100).default(5),
   REDIS_URL: optionalStringFromEnv,
-  ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(false),
+  ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(true),
   DEMO_BILLING_MODE: demoBillingModeFromEnv,
   ALLOW_DEMO_BILLING_IN_PRODUCTION: booleanFromEnv.default(false),
   ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: booleanFromEnv.default(false),
