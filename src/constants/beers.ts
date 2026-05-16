@@ -1,4 +1,5 @@
 import { env } from "../config/env.js";
+import { BEER_CATALOG, type BeerCatalogItem } from "./beer-catalog.js";
 
 export const SUPPORTED_TARGET_KEYS = ["guinness", "carlton_draft", "stone_and_wood", "happy_hour"] as const;
 export const SUPPORTED_BEER_KEYS = SUPPORTED_TARGET_KEYS;
@@ -34,24 +35,14 @@ export type TargetBeerKey = keyof typeof SUPPORTED_BEERS;
 export type BeerDefinition = (typeof SUPPORTED_BEERS)[TargetBeerKey];
 export type TrackedBeerDefinition = Extract<BeerDefinition, { kind: "beer" }>;
 export type BeerName = TrackedBeerDefinition["name"];
-export interface ViewerTrackedBeerDefinition {
-  key: string;
-  name: string;
-  aliases: string[];
-}
+export interface ViewerTrackedBeerDefinition extends BeerCatalogItem {}
 
 export const DEFAULT_TARGET_BEER_KEY: TargetBeerKey = "guinness";
 export const ACTIVE_TARGET_BEER_KEY: TargetBeerKey = env.TARGET_BEER;
 export const ACTIVE_TARGET_BEER: BeerDefinition = SUPPORTED_BEERS[ACTIVE_TARGET_BEER_KEY];
 export const TARGET_BEERS: readonly TrackedBeerDefinition[] =
   ACTIVE_TARGET_BEER.kind === "beer" ? [ACTIVE_TARGET_BEER] : [SUPPORTED_BEERS[DEFAULT_TARGET_BEER_KEY]];
-export const VIEWER_TRACKED_BEERS: readonly ViewerTrackedBeerDefinition[] = Object.values(SUPPORTED_BEERS)
-  .filter((beer) => beer.kind === "beer")
-  .map((beer) => ({
-    key: beer.key,
-    name: beer.name,
-    aliases: [...beer.aliases],
-  }));
+export const VIEWER_TRACKED_BEERS: readonly ViewerTrackedBeerDefinition[] = BEER_CATALOG;
 const TRACKED_BEER_LOOKUP = new Map<string, ViewerTrackedBeerDefinition>();
 
 for (const beer of VIEWER_TRACKED_BEERS) {

@@ -9,6 +9,7 @@ import { VIEWER_TRACKED_BEERS } from "./constants/beers.js";
 import { AppError } from "./lib/errors.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
+import { redactSecrets } from "./lib/redact.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFoundHandler } from "./middleware/not-found.js";
 import { captureRawBody } from "./middleware/raw-body.js";
@@ -136,7 +137,9 @@ async function getLazyRouters(): Promise<LazyRouters> {
   if (!lazyRoutersPromise) {
     lazyRoutersPromise = buildLazyRouters().catch((error) => {
       lazyRoutersPromise = undefined;
-      console.error("Backend initialization failed", error);
+      logger.error("Backend initialization failed", {
+        error: error instanceof Error ? redactSecrets(error.message) : redactSecrets(String(error)),
+      });
       throw error;
     });
   }
@@ -247,10 +250,16 @@ export function createApp() {
             "https://*.googleapis.com",
             "https://*.google.com",
             "https://*.gstatic.com",
+            "https://*.supabase.co",
+            "https://*.supabase.com",
           ],
           "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
+          // Safari upgrades localhost subresources when this directive is present,
+          // which leaves external CSS/JS pages looking like raw HTML in local dev.
+          "upgrade-insecure-requests": env.NODE_ENV === "production" ? [] : null,
         },
       },
+      ...(env.NODE_ENV === "production" ? {} : { strictTransportSecurity: false }),
       referrerPolicy: { policy: "strict-origin-when-cross-origin" },
     }),
   );
@@ -308,18 +317,35 @@ export function createApp() {
   app.get("/health", (_req, res) => {
     res.json(
       success({
-        service: "melb-beer-bot",
+        service: "pint-path",
         status: "ok",
       }),
     );
   });
 
+  app.get("/ready", async (_req, res, next) => {
+    try {
+      await getLazyRouters();
+      res.json(
+        success({
+          service: "pint-path",
+          status: "ready",
+        }),
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/config.js", (_req, res) => {
     const viewerConfig = {
       // The public viewer uses server-gated API routes for venue and price data.
-      // Do not expose Supabase browser reads here; exact price access is enforced server-side.
+      // Supabase anon config is exposed only for OAuth login; exact price access stays server-gated.
       googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
       googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
+      supabaseUrl: env.SUPABASE_URL ?? "",
+      supabaseAnonKey: env.SUPABASE_ANON_KEY ?? "",
+      supabaseOauthProviders: env.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
       trackedBeers: VIEWER_TRACKED_BEERS,
       business: {
         freePriceRevealsPerDay: env.FREE_PRICE_REVEALS_PER_DAY,
@@ -334,7 +360,10 @@ export function createApp() {
       },
     };
 
-    res.type("application/javascript").send(
+    res
+      .type("application/javascript")
+      .setHeader("Cache-Control", "no-store")
+      .send(
       `window.MELB_BEER_BOT_VIEWER_CONFIG = ${JSON.stringify(viewerConfig, null, 2)};\n`,
     );
   });

@@ -167,6 +167,21 @@ a {
   font-size: 0.82rem;
 }
 
+.oauthStack {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.oauthButton {
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04)),
+    rgba(255, 255, 255, 0.055);
+}
+
 .hero {
   position: relative;
   display: grid;
@@ -181,6 +196,37 @@ a {
     linear-gradient(135deg, rgba(14, 22, 38, 0.92), rgba(5, 9, 20, 0.78));
   box-shadow: var(--shadow);
   overflow: hidden;
+}
+
+.hero--split {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  align-items: center;
+}
+
+.hero--compact {
+  margin-bottom: 18px;
+  padding-block: clamp(22px, 4vw, 40px);
+}
+
+.heroCard {
+  position: relative;
+  z-index: 1;
+  border: 1px solid rgba(244, 214, 150, 0.18);
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 20px;
+  box-shadow: var(--soft-shadow);
+}
+
+.heroCard strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 18px;
+}
+
+.heroCard p {
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .hero::after {
@@ -248,6 +294,22 @@ h3 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.sectionHeader {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.sectionHeader > p {
+  max-width: 520px;
+  margin: 0;
+  line-height: 1.6;
+}
+
 .panel,
 .card {
   position: relative;
@@ -287,6 +349,128 @@ h3 {
   color: var(--gold);
 }
 
+.tierGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.tierCard {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.045);
+  padding: 20px;
+  overflow: hidden;
+}
+
+.tierCard--accent {
+  border-color: rgba(245, 199, 107, 0.38);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(245, 199, 107, 0.16), transparent 42%),
+    rgba(255, 255, 255, 0.055);
+}
+
+.featureGrid .listItem {
+  min-height: 118px;
+}
+
+.venueHero {
+  isolation: isolate;
+}
+
+.venueHero__kicker {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.venueHero__panel {
+  display: grid;
+  gap: 14px;
+}
+
+.miniStatRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.miniStatRow span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(119, 217, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(119, 217, 255, 0.08);
+  color: #d6f3ff;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.venueFeatureIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(245, 199, 107, 0.24);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(245, 199, 107, 0.26), transparent 52%),
+    rgba(255, 255, 255, 0.06);
+  color: #ffe4a8;
+  font-weight: 950;
+}
+
+.tierCard__price {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--gold);
+  font-family: var(--display-font);
+  font-size: 34px;
+  font-weight: 950;
+  letter-spacing: -0.05em;
+}
+
+.tierCard__price span {
+  color: var(--muted);
+  font-family: var(--body-font);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.venueTrustStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.venueTrustStrip .notice {
+  min-height: 100%;
+}
+
+.partnerFormCard {
+  background:
+    radial-gradient(circle at 10% 0%, rgba(245, 199, 107, 0.14), transparent 34%),
+    radial-gradient(circle at 90% 20%, rgba(119, 217, 255, 0.12), transparent 28%),
+    var(--panel-strong);
+}
+
+.footerCopy {
+  max-width: 860px;
+  margin: 24px auto 0;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.65;
+  font-size: 13px;
+}
+
 .form {
   display: grid;
   gap: 14px;
@@ -314,6 +498,15 @@ h3 {
 
 .helperCopy {
   margin: -2px 0 16px;
+}
+
+.beerCatalogueField {
+  display: grid;
+  gap: 10px;
+}
+
+.beerCatalogueField__newBeer {
+  width: fit-content;
 }
 
 .submitModeBlock {
@@ -523,6 +716,142 @@ h3 {
   align-items: center;
 }
 
+.dashboardShell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.dashboardSidebar {
+  position: sticky;
+  top: 104px;
+  display: grid;
+  gap: 14px;
+}
+
+.dashboardMain {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.venueSummaryCard {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(119, 217, 255, 0.16);
+  border-radius: 20px;
+  background: rgba(119, 217, 255, 0.08);
+  padding: 13px;
+}
+
+.venueSummaryCard span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tabNav {
+  display: grid;
+  gap: 8px;
+}
+
+.tabButton {
+  appearance: none;
+  border: 1px solid rgba(244, 214, 150, 0.14);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #d9dfeb;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  padding: 11px 12px;
+  text-align: left;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.tabButton:hover,
+.tabButton.is-active {
+  border-color: rgba(245, 199, 107, 0.4);
+  background: rgba(245, 199, 107, 0.12);
+  color: #ffe4a8;
+}
+
+.completionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.completionItem {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.35);
+  padding: 12px;
+}
+
+.completionItem strong {
+  display: block;
+  color: var(--gold);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.completionItem.is-complete strong {
+  color: var(--green);
+}
+
+.dataRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.rowPrice {
+  color: var(--gold);
+  font-size: 18px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.miniStatRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.miniStatRow span {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #d9dfeb;
+  padding: 6px 9px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.pill--premium {
+  border-color: rgba(119, 217, 255, 0.34);
+  background: rgba(119, 217, 255, 0.12);
+  color: #caefff;
+}
+
+.compactField {
+  min-width: 160px;
+}
+
 .metricGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -564,6 +893,343 @@ h3 {
   height: 100%;
   border-radius: inherit;
   background: linear-gradient(135deg, var(--gold) 0%, var(--coral) 100%);
+}
+
+.accountPage {
+  max-width: 1220px;
+}
+
+.authShell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.72fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.authIntro,
+.authCard,
+.accountHero,
+.accountUploadPanel {
+  overflow: hidden;
+}
+
+.authIntro {
+  display: grid;
+  align-content: center;
+  min-height: 520px;
+  padding: clamp(28px, 5vw, 58px);
+  background:
+    radial-gradient(circle at 12% 12%, rgba(245, 199, 107, 0.2), transparent 34%),
+    radial-gradient(circle at 88% 10%, rgba(119, 217, 255, 0.14), transparent 28%),
+    linear-gradient(135deg, rgba(14, 22, 38, 0.94), rgba(5, 9, 20, 0.78));
+}
+
+.authIntro h1 {
+  font-size: clamp(44px, 6vw, 76px);
+}
+
+.authTrustGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.authTrustGrid div {
+  border: 1px solid rgba(244, 214, 150, 0.14);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 14px;
+}
+
+.authTrustGrid strong,
+.authTrustGrid span {
+  display: block;
+}
+
+.authTrustGrid strong {
+  margin-bottom: 5px;
+  color: #ffe4a8;
+}
+
+.authTrustGrid span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.authCard {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.authTabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid rgba(244, 214, 150, 0.12);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.4);
+  padding: 5px;
+}
+
+.authTab {
+  appearance: none;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 950;
+  padding: 11px 12px;
+}
+
+.authTab.is-active {
+  background: linear-gradient(135deg, rgba(245, 199, 107, 0.94), rgba(255, 123, 104, 0.94));
+  color: #17120a;
+}
+
+.authForm h2 {
+  margin-top: 4px;
+}
+
+.passwordInputWrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.passwordInputWrap input {
+  min-width: 0;
+}
+
+.passwordToggle {
+  appearance: none;
+  border: 1px solid rgba(244, 214, 150, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffe4a8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 950;
+  padding: 12px 13px;
+}
+
+.consentField span:first-child {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  line-height: 1.45;
+}
+
+.accountDashboard {
+  gap: 18px;
+}
+
+.accountHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  align-items: center;
+}
+
+.accountIdentityCard {
+  display: grid;
+  gap: 12px;
+}
+
+.accountIdentityCard strong {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.accountMetricGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.accountPrimaryGrid {
+  align-items: stretch;
+}
+
+.accountProgressPanel,
+.verificationPanel {
+  display: grid;
+  align-content: start;
+}
+
+.timelineList {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timelineList li {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.32);
+  padding: 13px;
+}
+
+.timelineList strong {
+  color: var(--gold);
+}
+
+.timelineList span {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.accountActionsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.actionCard {
+  appearance: none;
+  display: grid;
+  gap: 7px;
+  min-height: 120px;
+  border: 1px solid rgba(244, 214, 150, 0.16);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(245, 199, 107, 0.14), transparent 44%),
+    rgba(255, 255, 255, 0.055);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 17px;
+  text-align: left;
+  text-decoration: none;
+  transition: transform 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.actionCard:hover {
+  transform: translateY(-2px);
+  border-color: rgba(245, 199, 107, 0.42);
+  background: rgba(255, 255, 255, 0.085);
+}
+
+.actionCard strong {
+  font-size: 17px;
+  letter-spacing: -0.02em;
+}
+
+.actionCard span {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.submissionList {
+  display: grid;
+  gap: 12px;
+}
+
+.submissionCard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025)),
+    rgba(3, 7, 18, 0.36);
+  padding: 16px;
+}
+
+.submissionCard__top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.submissionCard p {
+  margin: 0 0 7px;
+  color: #dbe3ef;
+  line-height: 1.5;
+}
+
+.submissionCard__price {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  min-width: 120px;
+}
+
+.submissionCard__price strong {
+  color: var(--gold);
+  font-family: var(--display-font);
+  font-size: 28px;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
+}
+
+.submissionCard__price span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.1);
+  color: #dbe3ef;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.statusBadge--pending,
+.statusBadge--needs_more_evidence {
+  border-color: rgba(245, 199, 107, 0.28);
+  background: rgba(245, 199, 107, 0.13);
+  color: #ffe4a8;
+}
+
+.statusBadge--approved {
+  border-color: rgba(117, 224, 167, 0.28);
+  background: rgba(117, 224, 167, 0.13);
+  color: #d9ffe9;
+}
+
+.statusBadge--rejected,
+.statusBadge--disputed,
+.statusBadge--fraud_flagged {
+  border-color: rgba(255, 154, 154, 0.34);
+  background: rgba(255, 154, 154, 0.12);
+  color: #ffd8d8;
+}
+
+.accountEmptyState {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  border: 1px dashed rgba(244, 214, 150, 0.22);
+  border-radius: 22px;
+  padding: 18px;
+}
+
+.accountEmptyState span {
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .pill {
@@ -640,6 +1306,61 @@ h3 {
     border-radius: 26px;
   }
 
+  .hero--split,
+  .dashboardShell,
+  .authShell,
+  .accountHero,
+  .tierGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .authIntro {
+    min-height: auto;
+  }
+
+  .authTrustGrid,
+  .accountMetricGrid,
+  .accountActionsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .timelineList li,
+  .submissionCard {
+    grid-template-columns: 1fr;
+  }
+
+  .submissionCard__price {
+    justify-items: start;
+  }
+
+  .dashboardSidebar {
+    position: static;
+  }
+
+  .tabNav {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .tabButton {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .sectionHeader,
+  .dataRow {
+    flex-direction: column;
+  }
+
+  .rowActions {
+    justify-content: flex-start;
+  }
+
+  .completionGrid {
+    grid-template-columns: 1fr;
+  }
+
   h1 {
     font-size: clamp(38px, 14vw, 56px);
   }
@@ -651,6 +1372,8 @@ h3 {
   .grid,
   .grid--two,
   .grid--four,
+  .tierGrid,
+  .venueTrustStrip,
   .insightGrid,
   .metricGrid {
     grid-template-columns: 1fr;

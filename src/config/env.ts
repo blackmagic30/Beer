@@ -106,7 +106,7 @@ const envSchema = z.object({
   }, z.string().min(1).optional()),
   PORT: z.coerce.number().int().positive().default(3000),
   PUBLIC_BASE_URL: z.preprocess(sanitizeEnvString, z.string().url()),
-  DATABASE_PATH: z.preprocess(sanitizeEnvString, z.string()).default("./data/melb-beer-bot.sqlite"),
+  DATABASE_PATH: z.preprocess(sanitizeEnvString, z.string()).default("./data/pint-path.sqlite"),
   TRUST_PROXY: booleanFromEnv.default(true),
   OUTBOUND_CALLS_ENABLED: booleanFromEnv.default(true),
   OUTBOUND_CALL_TIMEZONE: z.preprocess(sanitizeEnvString, z.string().min(1)).default("Australia/Melbourne"),
@@ -120,6 +120,7 @@ const envSchema = z.object({
   SUPABASE_URL: optionalHttpUrlFromEnv,
   SUPABASE_ANON_KEY: optionalStringFromEnv,
   SUPABASE_SERVICE_ROLE_KEY: optionalStringFromEnv,
+  SUPABASE_OAUTH_PROVIDERS: z.preprocess(sanitizeEnvString, z.string()).default("google,apple,facebook"),
   SUPABASE_RESULTS_TABLE: optionalStringFromEnv.default("call_results"),
   ADMIN_EMAILS: optionalStringFromEnv,
   GOOGLE_MAPS_API_KEY: optionalStringFromEnv,
@@ -128,13 +129,28 @@ const envSchema = z.object({
   FREE_PRICE_REVEALS_PER_DAY: z.coerce.number().int().min(0).default(5),
   CONTRIBUTOR_UNLOCK_POINTS: z.coerce.number().int().min(1).default(15),
   CONTRIBUTOR_UNLOCK_DAYS: z.coerce.number().int().min(1).default(30),
+  SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(60),
+  ADMIN_SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(60).default(7),
+  REQUIRE_ADMIN_MFA_IN_PRODUCTION: booleanFromEnv.default(true),
+  ADMIN_MFA_MAX_AGE_MINUTES: z.coerce.number().int().min(5).max(1440).default(720),
+  REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: booleanFromEnv.default(true),
+  ANALYTICS_MIN_BUCKET_SIZE: z.coerce.number().int().min(1).max(100).default(5),
+  REDIS_URL: optionalStringFromEnv,
+  ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(false),
   DEMO_BILLING_MODE: booleanFromEnv.default(true),
   ALLOW_DEMO_BILLING_IN_PRODUCTION: booleanFromEnv.default(false),
+  ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: booleanFromEnv.default(false),
+  SOURCE_EVIDENCE_SIGNING_SECRET: optionalStringFromEnv,
+  SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(300),
+  ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION: booleanFromEnv.default(false),
+  ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION: booleanFromEnv.default(false),
   FIELD_TEST_MODE: booleanFromEnv.default(false),
   STRIPE_SECRET_KEY: optionalStringFromEnv,
   STRIPE_WEBHOOK_SECRET: optionalStringFromEnv,
   STRIPE_PRICE_MONTHLY: optionalStringFromEnv,
   STRIPE_PRICE_YEARLY: optionalStringFromEnv,
+  STRIPE_PLUS_PRICE_ID: optionalStringFromEnv,
+  STRIPE_PRO_PRICE_ID: optionalStringFromEnv,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalStringFromEnv,
   TWILIO_ACCOUNT_SID: optionalStringFromEnv,
   TWILIO_AUTH_TOKEN: optionalStringFromEnv,
@@ -158,6 +174,49 @@ if (
   !parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION
 ) {
   throw new Error("DEMO_BILLING_MODE cannot be true in production unless ALLOW_DEMO_BILLING_IN_PRODUCTION=true.");
+}
+
+if (parsedEnv.data.NODE_ENV === "production") {
+  const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
+  if (publicBaseUrl.protocol !== "https:") {
+    throw new Error("PUBLIC_BASE_URL must use https:// in production.");
+  }
+
+  if (!parsedEnv.data.ADMIN_EMAILS) {
+    throw new Error("ADMIN_EMAILS is required in production so admin access is explicit and auditable.");
+  }
+
+  if (!parsedEnv.data.GOOGLE_MAPS_API_KEY) {
+    throw new Error("GOOGLE_MAPS_API_KEY is required in production so the public map does not silently fail.");
+  }
+
+  if (!parsedEnv.data.REQUIRE_ADMIN_MFA_IN_PRODUCTION) {
+    throw new Error("REQUIRE_ADMIN_MFA_IN_PRODUCTION must remain true in production.");
+  }
+
+  if (!parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET || parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET.length < 32) {
+    throw new Error("SOURCE_EVIDENCE_SIGNING_SECRET with at least 32 characters is required in production.");
+  }
+
+  if (!parsedEnv.data.REDIS_URL && !parsedEnv.data.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
+    throw new Error("REDIS_URL is required in production unless ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true is explicitly set.");
+  }
+}
+
+if (
+  parsedEnv.data.NODE_ENV === "production" &&
+  !parsedEnv.data.TWILIO_VALIDATE_SIGNATURES &&
+  !parsedEnv.data.ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION
+) {
+  throw new Error("TWILIO_VALIDATE_SIGNATURES must be true in production unless ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=true.");
+}
+
+if (
+  parsedEnv.data.NODE_ENV === "production" &&
+  !parsedEnv.data.ELEVENLABS_WEBHOOK_SECRET &&
+  !parsedEnv.data.ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION
+) {
+  throw new Error("ELEVENLABS_WEBHOOK_SECRET is required in production unless ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=true.");
 }
 
 export const env = {

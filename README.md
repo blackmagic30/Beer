@@ -1,6 +1,6 @@
-# melb-beer-bot
+# pint-path
 
-`melb-beer-bot` is a production-minded local Node.js + TypeScript service that places Twilio outbound calls, connects them to an ElevenLabs voice agent, stores one `call_run` per call, persists the full transcript when the call is finished, parses beer pricing outcomes, and exposes review APIs so you can inspect exactly what happened afterward.
+`pint-path` is a production-minded local Node.js + TypeScript service that places Twilio outbound calls, connects them to an ElevenLabs voice agent, stores one `call_run` per call, persists the full transcript when the call is finished, parses beer pricing outcomes, and exposes review APIs so you can inspect exactly what happened afterward.
 
 ## Current Capabilities
 
@@ -44,13 +44,18 @@
 - `POST /webhooks/twilio/status`
 - `POST /webhooks/elevenlabs/post-call`
 - `GET /health`
+- `GET /ready`
 - `GET /api/business/config`
 - `POST /api/business/auth/signup`
 - `POST /api/business/auth/login`
+- `POST /api/business/auth/supabase-session`
+- `POST /api/business/auth/logout`
+- `POST /api/business/auth/logout-all`
 - `GET /api/business/account`
 - `GET /api/business/access`
 - `GET /api/business/missions`
 - `POST /api/business/submissions`
+- `POST /api/business/submissions/:id/verifications`
 - `POST /api/business/submissions/:id/review`
 - `POST /api/business/account/preferences`
 - `POST /api/business/account/saved-items`
@@ -76,6 +81,8 @@
 - `GET /api/business/analytics/preview`
 
 Field-test note: legacy call-control and call-result routes are admin-only. Use a bearer token from an account listed in `ADMIN_EMAILS` for `/api/calls/*`, `/api/results`, `/api/admin/*`, and `/api/business/admin/*`.
+
+For the intended beta role boundaries, private-data rules, and approval gates, see [`ROLE_PERMISSION_MATRIX.md`](./ROLE_PERMISSION_MATRIX.md).
 
 ## Business Model Demo
 
@@ -103,18 +110,46 @@ Business demo pages:
 - `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, preferences, requests, feedback, and submission status.
 - `/missions.html`: Needs Data mission board with sorting, quick-win guidance, and points.
 - `/submit.html`: venue data submission with manual rows and photo/source queue.
-- `/for-bars`: professional venue-owner page for register-interest and claim-listing requests.
-- `/venue-portal`: admin-assigned venue manager portal with listing quality, update links, pending update submission, and privacy-safe aggregate insights.
+- `/for-bars`: professional bar-owner landing page with Basic, Plus, and Pro tier explanations, register-interest, and claim-listing requests.
+- `/venue-portal`: admin-assigned bar dashboard for profile details, beer stock/on-tap rows, prices, happy hours, deals/specials, listing quality, tier-gated analytics, monthly report previews, and pending review updates.
 - `/admin.html`: admin-only submission review, KPI dashboard, cohorts, coverage, partner leads, and review queues.
+
+Supabase auth/account foundation:
+
+- The beta keeps the existing Pint Path bearer-session system for app API access, but can exchange a Supabase Auth OAuth session for a local Pint Path session through `POST /api/business/auth/supabase-session`.
+- `/account.html` shows Google, Apple, and Facebook quick-login buttons when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured. Email/password signup/login still works through the existing Pint Path account flow.
+- Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google, name/email for Apple, and email/public_profile for Facebook.
+- Add OAuth redirect URLs for local and hosted account pages, for example `http://localhost:3000/account.html` and `https://pintpath.beer/account.html`.
+- New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
+- Production admin access expects Supabase Auth MFA/Auth Assurance Level 2 (`aal2`). Enable MFA factors in Supabase, require confirmed email, and verify the OAuth/session JWT contains `aal2` before relying on admin routes.
+- Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
+- Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
+- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` adds a detailed `public.user_price_submissions` table for future direct Supabase contributor uploads, protected so users can insert/select only their own pending rows while admins review status fields.
+- `/account.html` now has two states: logged-out users see polished sign-in/create-account forms, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points.
+- Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. Pint Path must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
+- Future rewards should use `canAccessAgeGatedRewards(...)`, which requires verified 18+ status, a latest verified age-check record, and a non-expired verification.
 
 Venue partner demo layer:
 
 - Bars can register interest from `/for-bars`; requests stay in the admin partner queue.
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
-- Venue manager updates are submitted for review by default, rather than directly publishing.
-- Venue insights are aggregate-only and do not expose user names, individual clickstream, or exact user location.
+- Basic bar accounts can manage profile details, beers/stock/on-tap status, prices, happy hours, and deals/specials.
+- Plus and Pro bar tiers unlock privacy-safe suburb-level analytics and monthly report previews. Bar-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` and `STRIPE_PRO_PRICE_ID` are configured.
+- Pro stores public display metadata only: highlighted name, `Pro` badge, promoted flag, and featured-special eligibility. It does not implement spammy ranking behaviour.
+- Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
+- Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, or another bar’s private data.
 - The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.
+
+Venue owner TODOs before paid partner rollout:
+
+- Add a full Stripe Customer Portal/manage-billing flow for bar tiers if paid venue subscriptions move beyond Checkout.
+- Add an admin approval interface for authenticated `bar_claim_requests`; claims are stored for manual review today.
+- Add stronger claim verification such as business email, phone, or document checks.
+- Replace monthly report previews with scheduled generated reports.
+- Feed `bar_analytics_events` from production map/search usage where useful; current portal also uses existing aggregate `events`.
+- Decide whether trusted venue-manager updates can publish as `venue_confirmed` automatically, or should remain admin-reviewed.
+- Replace suburb-based analytics with custom Pint Path areas such as Melbourne CBD, Fitzroy, Richmond, or Chapel Street once those boundaries are defined.
 
 Responsible-alcohol guardrails:
 
@@ -138,28 +173,58 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Free exact-price reveal limits are counted server-side using the logged-in user where possible, or the anonymous session/IP fallback for anonymous users.
 - The map gets venue pins and preview metadata by default, then requests an exact venue reveal only when a user opens a venue detail.
 - Admin tools live on `/admin.html` and `/api/business/admin/*`; public map HTML should not include admin unlock forms or secret-entry UI.
-- Demo photo/source uploads are validated for image MIME type and 6MB max size, then stored with pending submissions for review. For production, move these to private object storage and render review links through signed URLs.
+- Photo/source uploads are validated for image MIME type and 6MB max size, then stored behind private source-evidence references. Review/download access is issued through short-lived signed server URLs after an uploader/admin authorization check.
 - `DEMO_BILLING_MODE=true` is for local/demo only. Production blocks demo billing unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` is explicitly set.
-- State-changing business APIs check trusted origins and use lightweight in-memory rate limits for auth, submissions, feedback, requests, price reveals, and billing routes.
+- State-changing business APIs check trusted origins and use hashed-key rate limits for auth, submissions, feedback, requests, price reveals, and billing routes. Production uses Redis when `REDIS_URL` is set and otherwise fails closed unless `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` is explicitly set.
 - Security headers are enabled with a Google Maps-compatible CSP, `nosniff`, same-origin frame protection, strict referrer policy, and limited browser permissions.
+- Account sessions are hashed at rest, expire by role, can be revoked with logout/logout-all, and store only short SHA-256 request fingerprints rather than raw IP addresses or user agents.
+- Sensitive admin, payment, session, and venue-manager actions are written to `security_audit_log` with redacted metadata.
+- Aggregate analytics use `ANALYTICS_MIN_BUCKET_SIZE` to suppress low-count buckets before they are returned to dashboards or venue-owner views.
+- Production requires signed Twilio webhooks unless `ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=true` is explicitly set, and requires an ElevenLabs webhook secret unless `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=true` is explicitly set.
+- Production admin routes require verified email and a fresh MFA/AAL2 claim when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
+- Upload and verification actions require a verified account in production when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
+- Inline demo image evidence is never exposed publicly; use the private `beermap-source-evidence` Supabase Storage bucket and signed review links before accepting sensitive source photos at scale.
 - `FIELD_TEST_MODE=true` adds an unobtrusive beta label, feedback entry point, and admin field-test summary without exposing debug details to public users.
+- Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
+- Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
+- Production startup now requires an HTTPS `PUBLIC_BASE_URL`, `ADMIN_EMAILS`, and a `GOOGLE_MAPS_API_KEY`; this prevents silent admin/map misconfiguration.
+- `/ready` initializes the database-backed routers and should be used as the deeper readiness check after `/health`.
 - See `FIELD_TEST_CHECKLIST.md` before showing the app to real users.
-- See `DEPLOYMENT_CHECKLIST.md` before merging to `main` or deploying the Railway beta; it includes backup, migration, smoke-test, and rollback steps.
+- See `DEPLOYMENT_CHECKLIST.md` before merging to `main` or deploying the Railway beta; it includes backup, migration, security scan, smoke-test, and rollback steps.
+
+Security and rotation notes:
+
+- Browser Google Maps keys are public by design, but should still be restricted to `https://pintpath.beer/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`. If a browser key was ever committed or shared too broadly, rotate it in Google Cloud and update Railway/local env.
+- Supabase service-role keys, Stripe secret keys, Stripe webhook secrets, Twilio auth tokens, OpenAI keys, and ElevenLabs keys must stay server-side only. If any were exposed, rotate them with the provider, update Railway env, restart the service, and run `npm run security:scan`.
+- Do not use standalone static viewer mode for public beta price data, because it cannot enforce server-side price gating.
 
 Suggested production beta values:
 
 ```dotenv
 NODE_ENV=production
-PUBLIC_BASE_URL=https://beer.splitseconds.app
+PUBLIC_BASE_URL=https://pintpath.beer
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 FREE_PRICE_REVEALS_PER_DAY=5
 FIELD_TEST_MODE=true
 ADMIN_EMAILS=you@example.com
+SESSION_TTL_DAYS=60
+ADMIN_SESSION_TTL_DAYS=7
+ANALYTICS_MIN_BUCKET_SIZE=5
+REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
+ADMIN_MFA_MAX_AGE_MINUTES=720
+REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true
+REDIS_URL=redis://default:replace_me@host:6379
+ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
+ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
+SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
+SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 STRIPE_SECRET_KEY=sk_test_or_live_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_199_aud
 STRIPE_PRICE_YEARLY=price_yearly_19_aud
+STRIPE_PLUS_PRICE_ID=price_bar_plus_aud
+STRIPE_PRO_PRICE_ID=price_bar_pro_aud
 ```
 
 Stripe test-mode webhook check:
@@ -200,7 +265,7 @@ HOST=0.0.0.0
 PORT=3000
 TARGET_BEER=guinness
 PUBLIC_BASE_URL=https://your-ngrok-subdomain.ngrok-free.app
-DATABASE_PATH=./data/melb-beer-bot.sqlite
+DATABASE_PATH=./data/pint-path.sqlite
 TRUST_PROXY=true
 OUTBOUND_CALLS_ENABLED=true
 OUTBOUND_CALL_TIMEZONE=Australia/Melbourne
@@ -213,6 +278,9 @@ BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD=5
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_browser_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+# Configure Google/Apple/Facebook OAuth providers in Supabase dashboard.
+# Redirect URLs: http://localhost:3000/account.html and your hosted /account.html URL.
+SUPABASE_OAUTH_PROVIDERS=google,apple,facebook
 SUPABASE_RESULTS_TABLE=call_results
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 GOOGLE_MAPS_MAP_ID=optional_google_maps_map_id
@@ -222,20 +290,35 @@ TWILIO_AUTH_TOKEN=your_twilio_auth_token
 TWILIO_PHONE_NUMBER=+61300000000
 TWILIO_CALL_TIME_LIMIT_SECONDS=30
 TWILIO_VALIDATE_SIGNATURES=false
+ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=false
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ELEVENLABS_AGENT_ID=agent_XXXXXXXXXXXXXXXX
 ELEVENLABS_WEBHOOK_SECRET=optional_shared_secret_from_elevenlabs
+ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false
 ADMIN_EMAILS=you@example.com
+SESSION_TTL_DAYS=60
+ADMIN_SESSION_TTL_DAYS=7
+REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
+ADMIN_MFA_MAX_AGE_MINUTES=720
+REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true
 FREE_PRICE_REVEALS_PER_DAY=5
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
+ANALYTICS_MIN_BUCKET_SIZE=5
+REDIS_URL=
+ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 DEMO_BILLING_MODE=true
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
+ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
+SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
+SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 FIELD_TEST_MODE=true
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_199_aud
 STRIPE_PRICE_YEARLY=price_yearly_19_aud
+STRIPE_PLUS_PRICE_ID=price_bar_plus_aud
+STRIPE_PRO_PRICE_ID=price_bar_pro_aud
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_xxx
 ```
 
@@ -252,9 +335,10 @@ What each one does:
 - `OUTBOUND_REPEAT_GUARD_SECONDS`: blocks accidentally dialing the same number again within this window.
 - `PARSE_CONFIDENCE_THRESHOLD`: threshold used for review decisions.
 - `BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD`: pauses the batch after this many consecutive bad outcomes.
-- `SUPABASE_URL`: Supabase project URL used for venue imports and map-sync result writes.
-- `SUPABASE_ANON_KEY`: optional for legacy standalone/static viewer experiments. The hosted beta viewer does not expose this key.
+- `SUPABASE_URL`: Supabase project URL used for venue imports, map-sync result writes, and optional Supabase Auth OAuth login.
+- `SUPABASE_ANON_KEY`: browser-safe anon key used by `/account.html` for Supabase Auth OAuth. Never use the service-role key in browser config.
 - `SUPABASE_SERVICE_ROLE_KEY`: required for inserting venues and syncing call results.
+- `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`; set this to providers configured in the Supabase dashboard, for example `google,apple,facebook`.
 - `SUPABASE_RESULTS_TABLE`: Supabase table used for synced call results. Defaults to `call_results`.
 - `GOOGLE_MAPS_API_KEY`: browser-safe Google Maps key used by the hosted viewer.
 - `GOOGLE_MAPS_MAP_ID`: optional Google Maps map ID for branded vector map styling.
@@ -262,20 +346,35 @@ What each one does:
 - `TWILIO_*`: credentials and caller number used for real outbound calls.
 - `TWILIO_CALL_TIME_LIMIT_SECONDS`: hard answered-call cap enforced by Twilio. Default `30` seconds so real staff can answer while still limiting credit bleed.
 - `TWILIO_VALIDATE_SIGNATURES`: set to `true` once your ngrok/public URL is stable.
+- `ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION`: explicit production override if Twilio signatures cannot be validated. Keep `false`.
 - `ELEVENLABS_API_KEY`: required for live ElevenLabs call connection.
 - `ELEVENLABS_AGENT_ID`: required for live ElevenLabs agent routing.
 - `ELEVENLABS_WEBHOOK_SECRET`: optional but recommended for verifying ElevenLabs post-call webhooks.
+- `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION`: explicit production override if an ElevenLabs webhook secret is not configured. Keep `false`.
 - `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup.
+- `SESSION_TTL_DAYS`: normal account bearer-session lifetime. Defaults to `60`.
+- `ADMIN_SESSION_TTL_DAYS`: shorter admin bearer-session lifetime. Defaults to `7`.
+- `REQUIRE_ADMIN_MFA_IN_PRODUCTION`: production guard for admin routes. Keep `true`; admins must have a fresh Supabase AAL2/MFA claim.
+- `ADMIN_MFA_MAX_AGE_MINUTES`: maximum age for admin AAL2/step-up claims. Defaults to `720`.
+- `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION`: production guard for uploads, verifications, and bar dashboard access. Keep `true`.
 - `FREE_PRICE_REVEALS_PER_DAY`: configurable daily exact-price previews for free users.
 - `CONTRIBUTOR_UNLOCK_POINTS`: approved monthly contribution points required for contributor access.
 - `CONTRIBUTOR_UNLOCK_DAYS`: number of premium days granted for contributor unlocks.
+- `ANALYTICS_MIN_BUCKET_SIZE`: minimum aggregate bucket count before dashboard analytics reveal a beer, suburb, or venue identity.
+- `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Required in production unless the explicit in-memory override is enabled.
+- `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: temporary emergency override for single-instance beta only. Keep `false` for full-scale production.
 - `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe. Keep this `false` for production beta.
 - `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.
+- `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: legacy emergency override for demo image evidence. Leave `false`; evidence should use private references and signed URLs.
+- `SOURCE_EVIDENCE_SIGNING_SECRET`: 32+ character random secret used to sign short-lived source evidence URLs.
+- `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`: signed evidence URL lifetime. Defaults to `300`.
 - `FIELD_TEST_MODE`: shows beta feedback affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
 - `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.
 - `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.
 - `STRIPE_PRICE_MONTHLY`: Stripe price ID for the A$1.99/month plan.
 - `STRIPE_PRICE_YEARLY`: Stripe price ID for the A$19/year plan.
+- `STRIPE_PLUS_PRICE_ID`: Stripe price ID for the paid Plus bar-owner analytics tier.
+- `STRIPE_PRO_PRICE_ID`: Stripe price ID for the premium Pro bar-owner tier.
 - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`: browser publishable key placeholder for future embedded Stripe UI.
 
 ## Exact ngrok Workflow
@@ -321,7 +420,7 @@ You do not need to buy a separate subdomain if you already own `splitseconds.app
 Use:
 
 ```text
-beer.splitseconds.app
+pintpath.beer
 ```
 
 That is the recommended staging/live-testing host for this project because it keeps the beer map separate from the main Split Seconds app while still living under your existing domain.
@@ -329,21 +428,21 @@ That is the recommended staging/live-testing host for this project because it ke
 When you deploy it, switch:
 
 ```dotenv
-PUBLIC_BASE_URL=https://beer.splitseconds.app
+PUBLIC_BASE_URL=https://pintpath.beer
 ```
 
 Recommended rollout:
 
 1. Keep local development on `localhost` and ngrok.
 2. Deploy the app to Railway.
-3. Point `beer.splitseconds.app` at that host with DNS.
-4. Switch `PUBLIC_BASE_URL` to `https://beer.splitseconds.app`.
+3. Point `pintpath.beer` at that host with DNS.
+4. Switch `PUBLIC_BASE_URL` to `https://pintpath.beer`.
 5. Update Twilio and ElevenLabs webhook URLs to the same domain.
 6. Add the domain to your Google Maps browser key referrer rules.
 
 Recommended Google Maps browser key referrers once hosted:
 
-- `https://beer.splitseconds.app/*`
+- `https://pintpath.beer/*`
 - `http://localhost:3000/*`
 - `http://127.0.0.1:3000/*`
 
@@ -357,7 +456,7 @@ Recommended Google key split long-term:
 Recommended hosted environment values:
 
 ```dotenv
-PUBLIC_BASE_URL=https://beer.splitseconds.app
+PUBLIC_BASE_URL=https://pintpath.beer
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 GOOGLE_MAPS_API_KEY=your_google_maps_browser_key
@@ -378,9 +477,9 @@ Recommended Railway service setup:
 
 1. Deploy one web service from this repo.
 2. Attach a persistent volume mounted at `/app/data`.
-3. Set `DATABASE_PATH=./data/melb-beer-bot.sqlite`.
-4. Set `PUBLIC_BASE_URL=https://beer.splitseconds.app`.
-5. Add the custom domain `beer.splitseconds.app`.
+3. Set `DATABASE_PATH=./data/pint-path.sqlite`.
+4. Set `PUBLIC_BASE_URL=https://pintpath.beer`.
+5. Add the custom domain `pintpath.beer`.
 
 Because the app uses SQLite for local `call_runs` state, the persistent volume matters.
 
@@ -401,8 +500,11 @@ and uses these safe env vars:
 
 - `GOOGLE_MAPS_API_KEY`
 - `GOOGLE_MAPS_MAP_ID`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_OAUTH_PROVIDERS`
 
-The hosted public viewer intentionally does not receive Supabase browser credentials. Venue and price data comes through `/api/business/venues` and `/api/business/price-records` so exact-price access can be enforced server-side.
+The hosted public viewer may receive the Supabase anon key for OAuth login only. It must never receive the Supabase service-role key, and venue/price data still comes through `/api/business/venues` and `/api/business/price-records` so exact-price access can be enforced server-side.
 
 For legacy standalone local use, the viewer can still use:
 
@@ -424,6 +526,9 @@ window.MELB_BEER_BOT_VIEWER_CONFIG = {
   business: {
     fieldTestMode: true,
     freePriceRevealsPerDay: 3,
+    supabaseUrl: "https://your-project.supabase.co",
+    supabaseAnonKey: "your_supabase_anon_browser_key",
+    supabaseOauthProviders: ["google", "apple", "facebook"],
   },
 };
 ```
@@ -433,6 +538,7 @@ Notes:
 - Do not use standalone static mode for public beta price data, because it cannot enforce server-side price gating.
 - `googleMapsApiKey` should be a browser key restricted by HTTP referrers
 - `googleMapsMapId` is optional for now, but it gives you a clean path to branded vector map styling later
+- `supabaseAnonKey` is public and only for Supabase Auth OAuth. Never put a service-role key in `viewer/config.js`.
 
 For local browser testing, allow these referrers on the Google Maps browser key:
 
@@ -443,7 +549,7 @@ For local browser testing, allow these referrers on the Google Maps browser key:
 
 For hosted staging, also allow:
 
-- `https://beer.splitseconds.app/*`
+- `https://pintpath.beer/*`
 
 Make sure the same Google Cloud project has:
 

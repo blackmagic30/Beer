@@ -1,5 +1,7 @@
 import type BetterSqlite3 from "better-sqlite3";
 
+import { redactSecrets } from "../lib/redact.js";
+
 export type AccountRole = "user" | "admin" | "venue_manager";
 export type AccountStatus = "active" | "warned" | "suspended";
 export type SubscriptionStatus =
@@ -21,6 +23,9 @@ export type TapStatus = "yes" | "no" | "unknown";
 export type SavedItemType = "venue" | "beer" | "suburb";
 export type FeedbackType = "bug" | "wrong_data" | "feature_idea" | "venue_suggestion" | "general_feedback";
 export type RequestType = "missing_venue" | "missing_beer" | "verify_venue" | "verify_beer_at_venue";
+export type BarMembershipTier = "basic" | "plus" | "pro";
+type StoredBarMembershipTier = BarMembershipTier | "free" | "super_premium";
+export type AgeVerificationStatus = "not_started" | "pending" | "verified" | "rejected" | "expired";
 export type ConfidenceLabel =
   | "venue_confirmed"
   | "photo_verified"
@@ -33,8 +38,17 @@ export interface BusinessAccount {
   id: string;
   email: string;
   passwordHash: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  authProvider: string;
+  supabaseUserId: string | null;
+  emailVerifiedAt: string | null;
+  mfaLevel: string;
+  mfaVerifiedAt: string | null;
   role: AccountRole;
   ageConfirmedAt: string | null;
+  ageVerificationStatus: AgeVerificationStatus;
+  isOver18Verified: boolean;
   subscriptionStatus: SubscriptionStatus;
   stripeCustomerId: string | null;
   premiumUntil: string | null;
@@ -46,6 +60,32 @@ export interface BusinessAccount {
   status: AccountStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PublicProfile {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  username: string | null;
+  avatarUrl: string | null;
+  role: AccountRole;
+  accountStatus: AccountStatus;
+  ageVerificationStatus: AgeVerificationStatus;
+  isOver18Verified: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SourceEvidenceObject {
+  id: string;
+  ownerUserId: string | null;
+  storageProvider: string;
+  objectPath: string;
+  mimeType: string | null;
+  byteSize: number | null;
+  dataBase64: string | null;
+  externalUrl: string | null;
+  createdAt: string;
 }
 
 export interface BusinessSubmission {
@@ -103,12 +143,18 @@ export interface PublicVenuePriceRecord {
   venueId: string;
   venueName: string;
   suburb: string | null;
+  venueAddress?: string | null;
   beerName: string;
   normalizedBeerId: string | null;
   servingSize: ServingSize;
   price: number | null;
   isHappyHourPrice: boolean;
   happyHourDetails: string | null;
+  happyHourTitle?: string | null;
+  happyHourDays?: string[];
+  happyHourStartTime?: string | null;
+  happyHourEndTime?: string | null;
+  displayKind?: "beer" | "happy_hour";
   isOnTap: TapStatus;
   confidence: ConfidenceLabel;
   sourceType: string;
@@ -224,12 +270,187 @@ export interface VenuePartnerOutreach {
   updatedAt: string;
 }
 
+export interface BarClaimRequest {
+  id: string;
+  userId: string;
+  barId: string | null;
+  barName: string;
+  address: string | null;
+  suburb: string | null;
+  requesterName: string;
+  requesterRole: string;
+  contactEmail: string;
+  contactPhone: string | null;
+  message: string | null;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BarProfile {
+  barId: string;
+  name: string;
+  address: string | null;
+  suburb: string | null;
+  area: string | null;
+  phone: string | null;
+  website: string | null;
+  instagram: string | null;
+  description: string | null;
+  openingHours: Record<string, unknown>;
+  venueTags: string[];
+  membershipTier: BarMembershipTier;
+  highlightedName: boolean;
+  premiumBadge: string | null;
+  promoted: boolean;
+  featuredSpecialEligible: boolean;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  subscriptionStatus: string | null;
+  tierManualOverride: boolean;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BarBeer {
+  id: string;
+  barId: string;
+  beerName: string;
+  brewery: string | null;
+  style: string | null;
+  abv: number | null;
+  serveSize: ServingSize | null;
+  price: number | null;
+  currency: string;
+  onTap: boolean;
+  inStock: boolean;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BarHappyHour {
+  id: string;
+  barId: string;
+  title: string;
+  daysOfWeek: string[];
+  startTime: string;
+  endTime: string;
+  description: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BarSpecial {
+  id: string;
+  barId: string;
+  title: string;
+  description: string;
+  price: number | null;
+  discount: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  scheduleNote: string | null;
+  exclusive: boolean;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BarPendingChangeType = "profile" | "beer" | "happy_hour" | "special";
+export type BarPendingChangeAction = "upsert" | "delete";
+export type BarPendingChangeStatus = "pending" | "approved" | "rejected";
+
+export interface BarPendingChange {
+  id: string;
+  barId: string;
+  changeType: BarPendingChangeType;
+  action: BarPendingChangeAction;
+  targetId: string | null;
+  payload: Record<string, unknown>;
+  status: BarPendingChangeStatus;
+  submittedBy: string;
+  submittedAt: string;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MonthlyBarReport {
+  id: string;
+  barId: string;
+  month: string;
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface SecurityAuditLog {
+  id: string;
+  actorUserId: string | null;
+  actorRole: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  metadata: Record<string, unknown>;
+  ipHash: string | null;
+  userAgentHash: string | null;
+  createdAt: string;
+}
+
+export interface UserActivityEvent {
+  id: string;
+  userId: string;
+  eventType: string;
+  relatedEntityType: string | null;
+  relatedEntityId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface UserVerification {
+  id: string;
+  verifierUserId: string;
+  uploadId: string;
+  targetEntityType: string;
+  targetEntityId: string;
+  result: string;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface AgeVerification {
+  id: string;
+  userId: string;
+  status: AgeVerificationStatus;
+  ageThreshold: number;
+  isOver18: boolean;
+  providerName: string | null;
+  providerReferenceId: string | null;
+  checkedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface AccountRow {
   id: string;
   email: string;
   password_hash: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  auth_provider: string;
+  supabase_user_id: string | null;
+  email_verified_at: string | null;
+  mfa_level: string;
+  mfa_verified_at: string | null;
   role: AccountRole;
   age_confirmed_at: string | null;
+  age_verification_status: AgeVerificationStatus;
+  is_over_18_verified: number;
   subscription_status: SubscriptionStatus;
   stripe_customer_id: string | null;
   premium_until: string | null;
@@ -239,6 +460,80 @@ interface AccountRow {
   rejected_submission_count: number;
   fraud_strike_count: number;
   status: AccountStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ProfileRow {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  username: string | null;
+  avatar_url: string | null;
+  role: AccountRole;
+  account_status: AccountStatus;
+  age_verification_status: AgeVerificationStatus;
+  is_over_18_verified: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SecurityAuditLogRow {
+  id: string;
+  actor_user_id: string | null;
+  actor_role: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  metadata_json: string;
+  ip_hash: string | null;
+  user_agent_hash: string | null;
+  created_at: string;
+}
+
+interface SourceEvidenceObjectRow {
+  id: string;
+  owner_user_id: string | null;
+  storage_provider: string;
+  object_path: string;
+  mime_type: string | null;
+  byte_size: number | null;
+  data_base64: string | null;
+  external_url: string | null;
+  created_at: string;
+}
+
+interface VerificationRow {
+  id: string;
+  verifier_user_id: string;
+  upload_id: string;
+  target_entity_type: string;
+  target_entity_id: string;
+  result: string;
+  notes: string | null;
+  created_at: string;
+}
+
+interface UserActivityEventRow {
+  id: string;
+  user_id: string;
+  event_type: string;
+  related_entity_type: string | null;
+  related_entity_id: string | null;
+  metadata_json: string;
+  created_at: string;
+}
+
+interface AgeVerificationRow {
+  id: string;
+  user_id: string;
+  status: AgeVerificationStatus;
+  age_threshold: number;
+  is_over_18: number;
+  provider_name: string | null;
+  provider_reference_id: string | null;
+  checked_at: string | null;
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -419,13 +714,136 @@ interface VenuePartnerOutreachRow {
   updated_at: string;
 }
 
+interface BarProfileRow {
+  bar_id: string;
+  name: string;
+  address: string | null;
+  suburb: string | null;
+  area: string | null;
+  phone: string | null;
+  website: string | null;
+  instagram: string | null;
+  description: string | null;
+  opening_hours_json: string;
+  venue_tags_json: string;
+  membership_tier: StoredBarMembershipTier;
+  highlighted_name: number;
+  premium_badge: string | null;
+  promoted: number;
+  featured_special_eligible: number;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  subscription_status: string | null;
+  tier_manual_override: number;
+  active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BarClaimRequestRow {
+  id: string;
+  user_id: string;
+  bar_id: string | null;
+  bar_name: string;
+  address: string | null;
+  suburb: string | null;
+  requester_name: string;
+  requester_role: string;
+  contact_email: string;
+  contact_phone: string | null;
+  message: string | null;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
+}
+
+interface BarBeerRow {
+  id: string;
+  bar_id: string;
+  beer_name: string;
+  brewery: string | null;
+  style: string | null;
+  abv: number | null;
+  serve_size: ServingSize | null;
+  price: number | null;
+  currency: string;
+  on_tap: number;
+  in_stock: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BarHappyHourRow {
+  id: string;
+  bar_id: string;
+  title: string;
+  days_of_week_json: string;
+  start_time: string;
+  end_time: string;
+  description: string;
+  active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BarSpecialRow {
+  id: string;
+  bar_id: string;
+  title: string;
+  description: string;
+  price: number | null;
+  discount: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  schedule_note: string | null;
+  exclusive: number;
+  active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BarPendingChangeRow {
+  id: string;
+  bar_id: string;
+  change_type: BarPendingChangeType;
+  action: BarPendingChangeAction;
+  target_id: string | null;
+  payload_json: string;
+  status: BarPendingChangeStatus;
+  submitted_by: string;
+  submitted_at: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface MonthlyBarReportRow {
+  id: string;
+  bar_id: string;
+  month: string;
+  data_json: string;
+  created_at: string;
+}
+
 function toAccount(row: AccountRow): BusinessAccount {
   return {
     id: row.id,
     email: row.email,
     passwordHash: row.password_hash,
+    displayName: row.display_name,
+    avatarUrl: row.avatar_url,
+    authProvider: row.auth_provider,
+    supabaseUserId: row.supabase_user_id,
+    emailVerifiedAt: row.email_verified_at,
+    mfaLevel: row.mfa_level,
+    mfaVerifiedAt: row.mfa_verified_at,
     role: row.role,
     ageConfirmedAt: row.age_confirmed_at,
+    ageVerificationStatus: row.age_verification_status,
+    isOver18Verified: Boolean(row.is_over_18_verified),
     subscriptionStatus: row.subscription_status,
     stripeCustomerId: row.stripe_customer_id,
     premiumUntil: row.premium_until,
@@ -435,6 +853,36 @@ function toAccount(row: AccountRow): BusinessAccount {
     rejectedSubmissionCount: row.rejected_submission_count,
     fraudStrikeCount: row.fraud_strike_count,
     status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toSourceEvidenceObject(row: SourceEvidenceObjectRow): SourceEvidenceObject {
+  return {
+    id: row.id,
+    ownerUserId: row.owner_user_id,
+    storageProvider: row.storage_provider,
+    objectPath: row.object_path,
+    mimeType: row.mime_type,
+    byteSize: row.byte_size,
+    dataBase64: row.data_base64,
+    externalUrl: row.external_url,
+    createdAt: row.created_at,
+  };
+}
+
+function toProfile(row: ProfileRow): PublicProfile {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    username: row.username,
+    avatarUrl: row.avatar_url,
+    role: row.role,
+    accountStatus: row.account_status,
+    ageVerificationStatus: row.age_verification_status,
+    isOver18Verified: Boolean(row.is_over_18_verified),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -534,6 +982,18 @@ function parseJsonObject(value: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function normalizeBarMembershipTier(value: StoredBarMembershipTier | string | null | undefined): BarMembershipTier {
+  if (value === "plus") {
+    return "plus";
+  }
+
+  if (value === "pro" || value === "super_premium") {
+    return "pro";
+  }
+
+  return "basic";
 }
 
 function toAccountPreferences(row: AccountPreferencesRow): AccountPreferences {
@@ -658,6 +1118,190 @@ function toVenuePartnerOutreach(row: VenuePartnerOutreachRow): VenuePartnerOutre
   };
 }
 
+function toBarClaimRequest(row: BarClaimRequestRow): BarClaimRequest {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    barId: row.bar_id,
+    barName: row.bar_name,
+    address: row.address,
+    suburb: row.suburb,
+    requesterName: row.requester_name,
+    requesterRole: row.requester_role,
+    contactEmail: row.contact_email,
+    contactPhone: row.contact_phone,
+    message: row.message,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBarProfile(row: BarProfileRow): BarProfile {
+  return {
+    barId: row.bar_id,
+    name: row.name,
+    address: row.address,
+    suburb: row.suburb,
+    area: row.area,
+    phone: row.phone,
+    website: row.website,
+    instagram: row.instagram,
+    description: row.description,
+    openingHours: parseJsonObject(row.opening_hours_json),
+    venueTags: parseJsonArray(row.venue_tags_json),
+    membershipTier: normalizeBarMembershipTier(row.membership_tier),
+    highlightedName: Boolean(row.highlighted_name),
+    premiumBadge: row.premium_badge,
+    promoted: Boolean(row.promoted),
+    featuredSpecialEligible: Boolean(row.featured_special_eligible),
+    stripeCustomerId: row.stripe_customer_id,
+    stripeSubscriptionId: row.stripe_subscription_id,
+    subscriptionStatus: row.subscription_status,
+    tierManualOverride: Boolean(row.tier_manual_override),
+    active: Boolean(row.active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBarBeer(row: BarBeerRow): BarBeer {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    beerName: row.beer_name,
+    brewery: row.brewery,
+    style: row.style,
+    abv: row.abv,
+    serveSize: row.serve_size,
+    price: row.price,
+    currency: row.currency,
+    onTap: Boolean(row.on_tap),
+    inStock: Boolean(row.in_stock),
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBarHappyHour(row: BarHappyHourRow): BarHappyHour {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    title: row.title,
+    daysOfWeek: parseJsonArray(row.days_of_week_json),
+    startTime: row.start_time,
+    endTime: row.end_time,
+    description: row.description,
+    active: Boolean(row.active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBarSpecial(row: BarSpecialRow): BarSpecial {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    title: row.title,
+    description: row.description,
+    price: row.price,
+    discount: row.discount,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    scheduleNote: row.schedule_note,
+    exclusive: Boolean(row.exclusive),
+    active: Boolean(row.active),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBarPendingChange(row: BarPendingChangeRow): BarPendingChange {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    changeType: row.change_type,
+    action: row.action,
+    targetId: row.target_id,
+    payload: parseJsonObject(row.payload_json),
+    status: row.status,
+    submittedBy: row.submitted_by,
+    submittedAt: row.submitted_at,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: row.reviewed_at,
+    rejectionReason: row.rejection_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toMonthlyBarReport(row: MonthlyBarReportRow): MonthlyBarReport {
+  return {
+    id: row.id,
+    barId: row.bar_id,
+    month: row.month,
+    data: parseJsonObject(row.data_json),
+    createdAt: row.created_at,
+  };
+}
+
+function toSecurityAuditLog(row: SecurityAuditLogRow): SecurityAuditLog {
+  return {
+    id: row.id,
+    actorUserId: row.actor_user_id,
+    actorRole: row.actor_role,
+    action: row.action,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    metadata: parseJsonObject(row.metadata_json),
+    ipHash: row.ip_hash,
+    userAgentHash: row.user_agent_hash,
+    createdAt: row.created_at,
+  };
+}
+
+function toVerification(row: VerificationRow): UserVerification {
+  return {
+    id: row.id,
+    verifierUserId: row.verifier_user_id,
+    uploadId: row.upload_id,
+    targetEntityType: row.target_entity_type,
+    targetEntityId: row.target_entity_id,
+    result: row.result,
+    notes: row.notes,
+    createdAt: row.created_at,
+  };
+}
+
+function toUserActivityEvent(row: UserActivityEventRow): UserActivityEvent {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    eventType: row.event_type,
+    relatedEntityType: row.related_entity_type,
+    relatedEntityId: row.related_entity_id,
+    metadata: parseJsonObject(row.metadata_json),
+    createdAt: row.created_at,
+  };
+}
+
+function toAgeVerification(row: AgeVerificationRow): AgeVerification {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    status: row.status,
+    ageThreshold: row.age_threshold,
+    isOver18: Boolean(row.is_over_18),
+    providerName: row.provider_name,
+    providerReferenceId: row.provider_reference_id,
+    checkedAt: row.checked_at,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export class BusinessRepository {
   constructor(private readonly database: BetterSqlite3.Database) {}
 
@@ -668,15 +1312,104 @@ export class BusinessRepository {
     role: AccountRole;
     subscriptionStatus: SubscriptionStatus;
     now: string;
+    displayName?: string | null | undefined;
+    avatarUrl?: string | null | undefined;
+    authProvider?: string | undefined;
+    supabaseUserId?: string | null | undefined;
+    emailVerifiedAt?: string | null | undefined;
+    mfaLevel?: string | undefined;
+    mfaVerifiedAt?: string | null | undefined;
   }): BusinessAccount {
+    const create = this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO accounts (
+            id, email, password_hash, display_name, avatar_url, auth_provider, supabase_user_id,
+            email_verified_at, mfa_level, mfa_verified_at, role, subscription_status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          input.email,
+          input.passwordHash,
+          input.displayName ?? null,
+          input.avatarUrl ?? null,
+          input.authProvider ?? "local",
+          input.supabaseUserId ?? null,
+          input.emailVerifiedAt ?? null,
+          input.mfaLevel ?? "aal1",
+          input.mfaVerifiedAt ?? null,
+          input.role,
+          input.subscriptionStatus,
+          input.now,
+          input.now,
+        );
+
+      this.upsertProfile({
+        id: input.id,
+        email: input.email,
+        displayName: input.displayName ?? null,
+        username: null,
+        avatarUrl: input.avatarUrl ?? null,
+        role: input.role,
+        accountStatus: "active",
+        ageVerificationStatus: "not_started",
+        isOver18Verified: false,
+        now: input.now,
+      });
+    });
+
+    create();
+    return this.getAccountById(input.id)!;
+  }
+
+  upsertProfile(input: {
+    id: string;
+    email: string | null;
+    displayName: string | null;
+    username: string | null;
+    avatarUrl: string | null;
+    role: AccountRole;
+    accountStatus: AccountStatus;
+    ageVerificationStatus: AgeVerificationStatus;
+    isOver18Verified: boolean;
+    now: string;
+  }): PublicProfile {
     this.database
       .prepare(
-        `INSERT INTO accounts (
-          id, email, password_hash, role, subscription_status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO profiles (
+          id, email, display_name, username, avatar_url, role, account_status,
+          age_verification_status, is_over_18_verified, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          email = excluded.email,
+          display_name = excluded.display_name,
+          avatar_url = excluded.avatar_url,
+          role = excluded.role,
+          account_status = excluded.account_status,
+          age_verification_status = excluded.age_verification_status,
+          is_over_18_verified = excluded.is_over_18_verified,
+          updated_at = excluded.updated_at`,
       )
-      .run(input.id, input.email, input.passwordHash, input.role, input.subscriptionStatus, input.now, input.now);
-    return this.getAccountById(input.id)!;
+      .run(
+        input.id,
+        input.email,
+        input.displayName,
+        input.username,
+        input.avatarUrl,
+        input.role,
+        input.accountStatus,
+        input.ageVerificationStatus,
+        input.isOver18Verified ? 1 : 0,
+        input.now,
+        input.now,
+      );
+    return this.getProfileById(input.id)!;
+  }
+
+  getProfileById(id: string): PublicProfile | null {
+    const row = this.database.prepare("SELECT * FROM profiles WHERE id = ?").get(id) as ProfileRow | undefined;
+    return row ? toProfile(row) : null;
   }
 
   getAccountByEmail(email: string): BusinessAccount | null {
@@ -691,6 +1424,94 @@ export class BusinessRepository {
     return row ? toAccount(row) : null;
   }
 
+  getAccountBySupabaseUserId(supabaseUserId: string): BusinessAccount | null {
+    const row = this.database
+      .prepare("SELECT * FROM accounts WHERE supabase_user_id = ? OR id = ? LIMIT 1")
+      .get(supabaseUserId, supabaseUserId) as AccountRow | undefined;
+    return row ? toAccount(row) : null;
+  }
+
+  linkSupabaseAccount(input: {
+    userId: string;
+    supabaseUserId: string;
+    authProvider: string;
+    displayName: string | null;
+    avatarUrl: string | null;
+    emailVerifiedAt: string | null;
+    mfaLevel: string;
+    mfaVerifiedAt: string | null;
+    now: string;
+  }): BusinessAccount {
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE accounts
+           SET supabase_user_id = ?,
+               auth_provider = ?,
+               display_name = ?,
+               avatar_url = ?,
+               email_verified_at = COALESCE(?, email_verified_at),
+               mfa_level = ?,
+               mfa_verified_at = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          input.supabaseUserId,
+          input.authProvider,
+          input.displayName,
+          input.avatarUrl,
+          input.emailVerifiedAt,
+          input.mfaLevel,
+          input.mfaVerifiedAt,
+          input.now,
+          input.userId,
+        );
+      const account = this.getAccountById(input.userId);
+      if (account) {
+        this.upsertProfile({
+          id: account.id,
+          email: account.email,
+          displayName: input.displayName,
+          username: null,
+          avatarUrl: input.avatarUrl,
+          role: account.role,
+          accountStatus: account.status,
+          ageVerificationStatus: account.ageVerificationStatus,
+          isOver18Verified: account.isOver18Verified,
+          now: input.now,
+        });
+      }
+    })();
+    return this.getAccountById(input.userId)!;
+  }
+
+  updateAccountSecurityClaims(input: {
+    userId: string;
+    emailVerifiedAt?: string | null | undefined;
+    mfaLevel?: string | undefined;
+    mfaVerifiedAt?: string | null | undefined;
+    now: string;
+  }): BusinessAccount {
+    this.database
+      .prepare(
+        `UPDATE accounts
+         SET email_verified_at = COALESCE(?, email_verified_at),
+             mfa_level = COALESCE(?, mfa_level),
+             mfa_verified_at = COALESCE(?, mfa_verified_at),
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        input.emailVerifiedAt ?? null,
+        input.mfaLevel ?? null,
+        input.mfaVerifiedAt ?? null,
+        input.now,
+        input.userId,
+      );
+    return this.getAccountById(input.userId)!;
+  }
+
   getAccountByStripeCustomerId(stripeCustomerId: string): BusinessAccount | null {
     const row = this.database
       .prepare("SELECT * FROM accounts WHERE stripe_customer_id = ?")
@@ -698,13 +1519,30 @@ export class BusinessRepository {
     return row ? toAccount(row) : null;
   }
 
-  createSession(input: { tokenHash: string; userId: string; createdAt: string; expiresAt: string }): void {
+  createSession(input: {
+    tokenHash: string;
+    userId: string;
+    createdAt: string;
+    expiresAt: string;
+    lastUsedAt?: string | null | undefined;
+    lastIpHash?: string | null | undefined;
+    userAgentHash?: string | null | undefined;
+  }): void {
     this.database
       .prepare(
-        `INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at)
-         VALUES (?, ?, ?, ?)`,
+        `INSERT INTO auth_sessions (
+          token_hash, user_id, created_at, expires_at, last_used_at, last_ip_hash, user_agent_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(input.tokenHash, input.userId, input.createdAt, input.expiresAt);
+      .run(
+        input.tokenHash,
+        input.userId,
+        input.createdAt,
+        input.expiresAt,
+        input.lastUsedAt ?? input.createdAt,
+        input.lastIpHash ?? null,
+        input.userAgentHash ?? null,
+      );
   }
 
   getAccountBySessionTokenHash(tokenHash: string, now: string): BusinessAccount | null {
@@ -713,17 +1551,139 @@ export class BusinessRepository {
         `SELECT accounts.*
          FROM auth_sessions
          JOIN accounts ON accounts.id = auth_sessions.user_id
-         WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > ?`,
+         WHERE auth_sessions.token_hash = ?
+           AND auth_sessions.expires_at > ?
+           AND auth_sessions.revoked_at IS NULL
+           AND accounts.status != 'suspended'`,
       )
       .get(tokenHash, now) as AccountRow | undefined;
     return row ? toAccount(row) : null;
   }
 
-  updateAgeConfirmed(userId: string, confirmedAt: string): BusinessAccount {
+  touchSession(input: {
+    tokenHash: string;
+    lastUsedAt: string;
+    lastIpHash: string | null;
+    userAgentHash: string | null;
+  }): void {
     this.database
-      .prepare("UPDATE accounts SET age_confirmed_at = ?, updated_at = ? WHERE id = ?")
-      .run(confirmedAt, confirmedAt, userId);
+      .prepare(
+        `UPDATE auth_sessions
+         SET last_used_at = ?, last_ip_hash = ?, user_agent_hash = ?
+         WHERE token_hash = ? AND revoked_at IS NULL`,
+      )
+      .run(input.lastUsedAt, input.lastIpHash, input.userAgentHash, input.tokenHash);
+  }
+
+  revokeSession(input: { tokenHash: string; revokedAt: string }): boolean {
+    const result = this.database
+      .prepare(
+        `UPDATE auth_sessions
+         SET revoked_at = ?
+         WHERE token_hash = ? AND revoked_at IS NULL`,
+      )
+      .run(input.revokedAt, input.tokenHash);
+    return result.changes > 0;
+  }
+
+  revokeUserSessions(input: { userId: string; revokedAt: string }): number {
+    const result = this.database
+      .prepare(
+        `UPDATE auth_sessions
+         SET revoked_at = ?
+         WHERE user_id = ? AND revoked_at IS NULL`,
+      )
+      .run(input.revokedAt, input.userId);
+    return result.changes;
+  }
+
+  updateAgeConfirmed(userId: string, confirmedAt: string): BusinessAccount {
+    this.database.transaction(() => {
+      this.database
+        .prepare("UPDATE accounts SET age_confirmed_at = ?, updated_at = ? WHERE id = ?")
+        .run(confirmedAt, confirmedAt, userId);
+      this.database
+        .prepare("UPDATE profiles SET updated_at = ? WHERE id = ?")
+        .run(confirmedAt, userId);
+    })();
     return this.getAccountById(userId)!;
+  }
+
+  upsertAgeVerification(input: {
+    id: string;
+    userId: string;
+    status: AgeVerificationStatus;
+    ageThreshold: number;
+    isOver18: boolean;
+    providerName: string | null;
+    providerReferenceId: string | null;
+    checkedAt: string | null;
+    expiresAt: string | null;
+    now: string;
+  }): AgeVerification {
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO age_verifications (
+            id, user_id, status, age_threshold, is_over_18, provider_name,
+            provider_reference_id, checked_at, expires_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            status = excluded.status,
+            age_threshold = excluded.age_threshold,
+            is_over_18 = excluded.is_over_18,
+            provider_name = excluded.provider_name,
+            provider_reference_id = excluded.provider_reference_id,
+            checked_at = excluded.checked_at,
+            expires_at = excluded.expires_at,
+            updated_at = excluded.updated_at`,
+        )
+        .run(
+          input.id,
+          input.userId,
+          input.status,
+          input.ageThreshold,
+          input.isOver18 ? 1 : 0,
+          input.providerName,
+          input.providerReferenceId,
+          input.checkedAt,
+          input.expiresAt,
+          input.now,
+          input.now,
+        );
+
+      this.database
+        .prepare(
+          `UPDATE accounts
+           SET age_verification_status = ?, is_over_18_verified = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(input.status, input.status === "verified" && input.isOver18 ? 1 : 0, input.now, input.userId);
+
+      this.database
+        .prepare(
+          `UPDATE profiles
+           SET age_verification_status = ?, is_over_18_verified = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(input.status, input.status === "verified" && input.isOver18 ? 1 : 0, input.now, input.userId);
+    })();
+
+    return this.getAgeVerificationById(input.id)!;
+  }
+
+  getAgeVerificationById(id: string): AgeVerification | null {
+    const row = this.database.prepare("SELECT * FROM age_verifications WHERE id = ?").get(id) as
+      | AgeVerificationRow
+      | undefined;
+    return row ? toAgeVerification(row) : null;
+  }
+
+  getLatestAgeVerification(userId: string): AgeVerification | null {
+    const row = this.database
+      .prepare("SELECT * FROM age_verifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 1")
+      .get(userId) as AgeVerificationRow | undefined;
+    return row ? toAgeVerification(row) : null;
   }
 
   updateSubscription(input: {
@@ -774,6 +1734,9 @@ export class BusinessRepository {
         input.now,
         input.userId,
       );
+    this.database
+      .prepare("UPDATE profiles SET account_status = ?, updated_at = ? WHERE id = ?")
+      .run(input.status, input.now, input.userId);
     return this.getAccountById(input.userId)!;
   }
 
@@ -848,6 +1811,107 @@ export class BusinessRepository {
 
     create();
     return this.getSubmissionById(input.id)!.submission;
+  }
+
+  createVerification(input: {
+    id: string;
+    verifierUserId: string;
+    uploadId: string;
+    targetEntityType: string;
+    targetEntityId: string;
+    result: string;
+    notes: string | null;
+    now: string;
+  }): UserVerification {
+    const submission = this.getSubmissionById(input.uploadId);
+    if (!submission) {
+      throw new Error("Submission not found");
+    }
+
+    if (submission.submission.userId === input.verifierUserId) {
+      throw new Error("Users cannot verify their own uploads");
+    }
+
+    this.database
+      .prepare(
+        `INSERT INTO verifications (
+          id, verifier_user_id, upload_id, target_entity_type, target_entity_id, result, notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.verifierUserId,
+        input.uploadId,
+        input.targetEntityType,
+        input.targetEntityId,
+        input.result,
+        input.notes,
+        input.now,
+      );
+
+    return this.getVerificationById(input.id)!;
+  }
+
+  getVerificationById(id: string): UserVerification | null {
+    const row = this.database.prepare("SELECT * FROM verifications WHERE id = ?").get(id) as
+      | VerificationRow
+      | undefined;
+    return row ? toVerification(row) : null;
+  }
+
+  getVerificationByUserAndUpload(input: { verifierUserId: string; uploadId: string }): UserVerification | null {
+    const row = this.database
+      .prepare("SELECT * FROM verifications WHERE verifier_user_id = ? AND upload_id = ? LIMIT 1")
+      .get(input.verifierUserId, input.uploadId) as VerificationRow | undefined;
+    return row ? toVerification(row) : null;
+  }
+
+  listVerificationsForUser(userId: string, limit: number): UserVerification[] {
+    const rows = this.database
+      .prepare("SELECT * FROM verifications WHERE verifier_user_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(userId, limit) as VerificationRow[];
+    return rows.map(toVerification);
+  }
+
+  createUserActivityEvent(input: {
+    id: string;
+    userId: string;
+    eventType: string;
+    relatedEntityType: string | null;
+    relatedEntityId: string | null;
+    metadata: Record<string, unknown>;
+    now: string;
+  }): UserActivityEvent {
+    this.database
+      .prepare(
+        `INSERT INTO user_activity_events (
+          id, user_id, event_type, related_entity_type, related_entity_id, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.eventType,
+        input.relatedEntityType,
+        input.relatedEntityId,
+        JSON.stringify(redactSecrets(input.metadata)),
+        input.now,
+      );
+    return this.getUserActivityEventById(input.id)!;
+  }
+
+  getUserActivityEventById(id: string): UserActivityEvent | null {
+    const row = this.database.prepare("SELECT * FROM user_activity_events WHERE id = ?").get(id) as
+      | UserActivityEventRow
+      | undefined;
+    return row ? toUserActivityEvent(row) : null;
+  }
+
+  listUserActivityEvents(userId: string, limit: number): UserActivityEvent[] {
+    const rows = this.database
+      .prepare("SELECT * FROM user_activity_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(userId, limit) as UserActivityEventRow[];
+    return rows.map(toUserActivityEvent);
   }
 
   getSubmissionById(id: string): { submission: BusinessSubmission; items: BusinessSubmissionItem[] } | null {
@@ -1172,6 +2236,93 @@ export class BusinessRepository {
     return rows.map(toPriceRecord);
   }
 
+  listVenueManagerPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {
+    const values = venueId ? [venueId, limit] : [limit];
+    const beerWhere = venueId ? "WHERE beer.bar_id = ? AND profile.active = 1" : "WHERE profile.active = 1";
+    const happyWhere = venueId
+      ? "WHERE happy.bar_id = ? AND happy.active = 1 AND profile.active = 1"
+      : "WHERE happy.active = 1 AND profile.active = 1";
+    const beerRows = this.database
+      .prepare(
+        `SELECT
+           beer.*,
+           profile.name AS profile_name,
+           profile.suburb AS profile_suburb,
+           profile.address AS profile_address
+         FROM bar_beers beer
+         INNER JOIN bar_profiles profile ON profile.bar_id = beer.bar_id
+         ${beerWhere}
+         ORDER BY beer.updated_at DESC
+         LIMIT ?`,
+      )
+      .all(...values) as Array<BarBeerRow & { profile_name: string | null; profile_suburb: string | null; profile_address: string | null }>;
+    const happyRows = this.database
+      .prepare(
+        `SELECT
+           happy.*,
+           profile.name AS profile_name,
+           profile.suburb AS profile_suburb,
+           profile.address AS profile_address
+         FROM bar_happy_hours happy
+         INNER JOIN bar_profiles profile ON profile.bar_id = happy.bar_id
+         ${happyWhere}
+         ORDER BY happy.updated_at DESC
+         LIMIT ?`,
+      )
+      .all(...values) as Array<BarHappyHourRow & { profile_name: string | null; profile_suburb: string | null; profile_address: string | null }>;
+
+    return [
+      ...beerRows.map((row) => ({
+        id: `bar_beer:${row.id}`,
+        venueId: row.bar_id,
+        venueName: row.profile_name || row.bar_id,
+        venueAddress: row.profile_address,
+        suburb: row.profile_suburb,
+        beerName: row.beer_name,
+        normalizedBeerId: null,
+        servingSize: row.serve_size || "other",
+        price: row.price,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        displayKind: "beer" as const,
+        isOnTap: row.on_tap ? "yes" as const : row.in_stock ? "unknown" as const : "no" as const,
+        confidence: "venue_confirmed" as const,
+        sourceType: "venue_manager_portal",
+        sourceSubmissionId: null,
+        lastVerifiedAt: row.updated_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+      ...happyRows.map((row) => ({
+        id: `bar_happy_hour:${row.id}`,
+        venueId: row.bar_id,
+        venueName: row.profile_name || row.bar_id,
+        venueAddress: row.profile_address,
+        suburb: row.profile_suburb,
+        beerName: row.title || "Happy hour",
+        normalizedBeerId: null,
+        servingSize: "other" as const,
+        price: null,
+        isHappyHourPrice: true,
+        happyHourDetails: row.description,
+        happyHourTitle: row.title,
+        happyHourDays: parseJsonArray(row.days_of_week_json),
+        happyHourStartTime: row.start_time,
+        happyHourEndTime: row.end_time,
+        displayKind: "happy_hour" as const,
+        isOnTap: "unknown" as const,
+        confidence: "venue_confirmed" as const,
+        sourceType: "venue_manager_portal",
+        sourceSubmissionId: null,
+        lastVerifiedAt: row.updated_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+    ]
+      .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime())
+      .slice(0, limit);
+  }
+
   getAccountPreferences(userId: string): AccountPreferences | null {
     const row = this.database
       .prepare("SELECT * FROM account_preferences WHERE user_id = ?")
@@ -1240,7 +2391,7 @@ export class BusinessRepository {
         input.itemId,
         input.label,
         input.suburb,
-        JSON.stringify(input.metadata),
+        JSON.stringify(redactSecrets(input.metadata)),
         input.now,
       );
 
@@ -1495,6 +2646,67 @@ export class BusinessRepository {
     return row ? toVenueInterestRequest(row) : null;
   }
 
+  createBarClaimRequest(input: {
+    id: string;
+    userId: string;
+    barId: string | null;
+    barName: string;
+    address: string | null;
+    suburb: string | null;
+    requesterName: string;
+    requesterRole: string;
+    contactEmail: string;
+    contactPhone: string | null;
+    message: string | null;
+    now: string;
+  }): BarClaimRequest {
+    this.database
+      .prepare(
+        `INSERT INTO bar_claim_requests (
+          id, user_id, bar_id, bar_name, address, suburb, requester_name, requester_role,
+          contact_email, contact_phone, message, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.barId,
+        input.barName,
+        input.address,
+        input.suburb,
+        input.requesterName,
+        input.requesterRole,
+        input.contactEmail,
+        input.contactPhone,
+        input.message,
+        input.now,
+        input.now,
+      );
+    const row = this.database.prepare("SELECT * FROM bar_claim_requests WHERE id = ?").get(input.id) as BarClaimRequestRow;
+    return toBarClaimRequest(row);
+  }
+
+  listBarClaimRequests(input: { userId?: string | undefined; status?: string | undefined; limit: number }): BarClaimRequest[] {
+    const where: string[] = [];
+    const values: unknown[] = [];
+
+    if (input.userId) {
+      where.push("user_id = ?");
+      values.push(input.userId);
+    }
+
+    if (input.status) {
+      where.push("status = ?");
+      values.push(input.status);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const rows = this.database
+      .prepare(`SELECT * FROM bar_claim_requests ${whereSql} ORDER BY created_at DESC LIMIT ?`)
+      .all(...values, input.limit) as BarClaimRequestRow[];
+    return rows.map(toBarClaimRequest);
+  }
+
   assignVenueManager(input: {
     id: string;
     userId: string;
@@ -1574,6 +2786,571 @@ export class BusinessRepository {
     return row ? toVenueManagerAssignment(row) : null;
   }
 
+  getBarProfile(barId: string): BarProfile | null {
+    const row = this.database.prepare("SELECT * FROM bar_profiles WHERE bar_id = ?").get(barId) as
+      | BarProfileRow
+      | undefined;
+    return row ? toBarProfile(row) : null;
+  }
+
+  upsertBarProfile(input: {
+    barId: string;
+    name: string;
+    address: string | null;
+    suburb: string | null;
+    area: string | null;
+    phone: string | null;
+    website: string | null;
+    instagram: string | null;
+    description: string | null;
+    openingHours: Record<string, unknown>;
+    venueTags: string[];
+    membershipTier: BarMembershipTier;
+    highlightedName: boolean;
+    premiumBadge: string | null;
+    promoted: boolean;
+    featuredSpecialEligible: boolean;
+    stripeCustomerId?: string | null | undefined;
+    stripeSubscriptionId?: string | null | undefined;
+    subscriptionStatus?: string | null | undefined;
+    tierManualOverride?: boolean | undefined;
+    active: boolean;
+    now: string;
+  }): BarProfile {
+    this.database
+      .prepare(
+        `INSERT INTO bar_profiles (
+          bar_id, name, address, suburb, area, phone, website, instagram, description,
+          opening_hours_json, venue_tags_json, membership_tier, highlighted_name, premium_badge,
+          promoted, featured_special_eligible, stripe_customer_id, stripe_subscription_id,
+          subscription_status, tier_manual_override, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(bar_id) DO UPDATE SET
+          name = excluded.name,
+          address = excluded.address,
+          suburb = excluded.suburb,
+          area = excluded.area,
+          phone = excluded.phone,
+          website = excluded.website,
+          instagram = excluded.instagram,
+          description = excluded.description,
+          opening_hours_json = excluded.opening_hours_json,
+          venue_tags_json = excluded.venue_tags_json,
+          membership_tier = excluded.membership_tier,
+          highlighted_name = excluded.highlighted_name,
+          premium_badge = excluded.premium_badge,
+          promoted = excluded.promoted,
+          featured_special_eligible = excluded.featured_special_eligible,
+          stripe_customer_id = COALESCE(excluded.stripe_customer_id, stripe_customer_id),
+          stripe_subscription_id = COALESCE(excluded.stripe_subscription_id, stripe_subscription_id),
+          subscription_status = COALESCE(excluded.subscription_status, subscription_status),
+          tier_manual_override = excluded.tier_manual_override,
+          active = excluded.active,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.barId,
+        input.name,
+        input.address,
+        input.suburb,
+        input.area,
+        input.phone,
+        input.website,
+        input.instagram,
+        input.description,
+        JSON.stringify(input.openingHours),
+        JSON.stringify(input.venueTags),
+        input.membershipTier,
+        input.highlightedName ? 1 : 0,
+        input.premiumBadge,
+        input.promoted ? 1 : 0,
+        input.featuredSpecialEligible ? 1 : 0,
+        input.stripeCustomerId ?? null,
+        input.stripeSubscriptionId ?? null,
+        input.subscriptionStatus ?? null,
+        input.tierManualOverride ? 1 : 0,
+        input.active ? 1 : 0,
+        input.now,
+        input.now,
+      );
+    return this.getBarProfile(input.barId)!;
+  }
+
+  getBarProfileByStripeSubscriptionId(stripeSubscriptionId: string): BarProfile | null {
+    const row = this.database
+      .prepare("SELECT * FROM bar_profiles WHERE stripe_subscription_id = ? LIMIT 1")
+      .get(stripeSubscriptionId) as BarProfileRow | undefined;
+    return row ? toBarProfile(row) : null;
+  }
+
+  updateBarSubscription(input: {
+    barId: string;
+    membershipTier: BarMembershipTier;
+    stripeCustomerId?: string | null | undefined;
+    stripeSubscriptionId?: string | null | undefined;
+    subscriptionStatus?: string | null | undefined;
+    highlightedName: boolean;
+    premiumBadge: string | null;
+    promoted: boolean;
+    featuredSpecialEligible: boolean;
+    now: string;
+  }): BarProfile {
+    this.database
+      .prepare(
+        `UPDATE bar_profiles
+         SET membership_tier = ?,
+             stripe_customer_id = COALESCE(?, stripe_customer_id),
+             stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+             subscription_status = ?,
+             highlighted_name = ?,
+             premium_badge = ?,
+             promoted = ?,
+             featured_special_eligible = ?,
+             updated_at = ?
+         WHERE bar_id = ? AND tier_manual_override = 0`,
+      )
+      .run(
+        input.membershipTier,
+        input.stripeCustomerId ?? null,
+        input.stripeSubscriptionId ?? null,
+        input.subscriptionStatus ?? null,
+        input.highlightedName ? 1 : 0,
+        input.premiumBadge,
+        input.promoted ? 1 : 0,
+        input.featuredSpecialEligible ? 1 : 0,
+        input.now,
+        input.barId,
+      );
+    return this.getBarProfile(input.barId)!;
+  }
+
+  listBarBeers(barId: string): BarBeer[] {
+    const rows = this.database
+      .prepare("SELECT * FROM bar_beers WHERE bar_id = ? ORDER BY on_tap DESC, in_stock DESC, beer_name COLLATE NOCASE ASC")
+      .all(barId) as BarBeerRow[];
+    return rows.map(toBarBeer);
+  }
+
+  getBarBeerById(id: string): BarBeer | null {
+    const row = this.database.prepare("SELECT * FROM bar_beers WHERE id = ?").get(id) as BarBeerRow | undefined;
+    return row ? toBarBeer(row) : null;
+  }
+
+  upsertBarBeer(input: {
+    id: string;
+    barId: string;
+    beerName: string;
+    brewery: string | null;
+    style: string | null;
+    abv: number | null;
+    serveSize: ServingSize | null;
+    price: number | null;
+    currency: string;
+    onTap: boolean;
+    inStock: boolean;
+    notes: string | null;
+    now: string;
+  }): BarBeer {
+    this.database
+      .prepare(
+        `INSERT INTO bar_beers (
+          id, bar_id, beer_name, brewery, style, abv, serve_size, price, currency, on_tap, in_stock, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          beer_name = excluded.beer_name,
+          brewery = excluded.brewery,
+          style = excluded.style,
+          abv = excluded.abv,
+          serve_size = excluded.serve_size,
+          price = excluded.price,
+          currency = excluded.currency,
+          on_tap = excluded.on_tap,
+          in_stock = excluded.in_stock,
+          notes = excluded.notes,
+          updated_at = excluded.updated_at
+        WHERE bar_beers.bar_id = excluded.bar_id`,
+      )
+      .run(
+        input.id,
+        input.barId,
+        input.beerName,
+        input.brewery,
+        input.style,
+        input.abv,
+        input.serveSize,
+        input.price,
+        input.currency,
+        input.onTap ? 1 : 0,
+        input.inStock ? 1 : 0,
+        input.notes,
+        input.now,
+        input.now,
+      );
+    const row = this.database
+      .prepare("SELECT * FROM bar_beers WHERE id = ? AND bar_id = ?")
+      .get(input.id, input.barId) as BarBeerRow | undefined;
+    if (!row) {
+      throw new Error("Beer row belongs to another bar");
+    }
+    return toBarBeer(row);
+  }
+
+  deleteBarBeer(input: { id: string; barId: string }): boolean {
+    const result = this.database.prepare("DELETE FROM bar_beers WHERE id = ? AND bar_id = ?").run(input.id, input.barId);
+    return result.changes > 0;
+  }
+
+  listBarHappyHours(barId: string): BarHappyHour[] {
+    const rows = this.database
+      .prepare("SELECT * FROM bar_happy_hours WHERE bar_id = ? ORDER BY active DESC, start_time ASC, title COLLATE NOCASE ASC")
+      .all(barId) as BarHappyHourRow[];
+    return rows.map(toBarHappyHour);
+  }
+
+  getBarHappyHourById(id: string): BarHappyHour | null {
+    const row = this.database.prepare("SELECT * FROM bar_happy_hours WHERE id = ?").get(id) as
+      | BarHappyHourRow
+      | undefined;
+    return row ? toBarHappyHour(row) : null;
+  }
+
+  upsertBarHappyHour(input: {
+    id: string;
+    barId: string;
+    title: string;
+    daysOfWeek: string[];
+    startTime: string;
+    endTime: string;
+    description: string;
+    active: boolean;
+    now: string;
+  }): BarHappyHour {
+    this.database
+      .prepare(
+        `INSERT INTO bar_happy_hours (
+          id, bar_id, title, days_of_week_json, start_time, end_time, description, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          days_of_week_json = excluded.days_of_week_json,
+          start_time = excluded.start_time,
+          end_time = excluded.end_time,
+          description = excluded.description,
+          active = excluded.active,
+          updated_at = excluded.updated_at
+        WHERE bar_happy_hours.bar_id = excluded.bar_id`,
+      )
+      .run(
+        input.id,
+        input.barId,
+        input.title,
+        JSON.stringify(input.daysOfWeek),
+        input.startTime,
+        input.endTime,
+        input.description,
+        input.active ? 1 : 0,
+        input.now,
+        input.now,
+      );
+    const row = this.database
+      .prepare("SELECT * FROM bar_happy_hours WHERE id = ? AND bar_id = ?")
+      .get(input.id, input.barId) as BarHappyHourRow | undefined;
+    if (!row) {
+      throw new Error("Happy-hour row belongs to another bar");
+    }
+    return toBarHappyHour(row);
+  }
+
+  deleteBarHappyHour(input: { id: string; barId: string }): boolean {
+    const result = this.database.prepare("DELETE FROM bar_happy_hours WHERE id = ? AND bar_id = ?").run(input.id, input.barId);
+    return result.changes > 0;
+  }
+
+  listBarSpecials(barId: string): BarSpecial[] {
+    const rows = this.database
+      .prepare("SELECT * FROM bar_specials WHERE bar_id = ? ORDER BY active DESC, exclusive DESC, starts_at DESC, title COLLATE NOCASE ASC")
+      .all(barId) as BarSpecialRow[];
+    return rows.map(toBarSpecial);
+  }
+
+  getBarSpecialById(id: string): BarSpecial | null {
+    const row = this.database.prepare("SELECT * FROM bar_specials WHERE id = ?").get(id) as BarSpecialRow | undefined;
+    return row ? toBarSpecial(row) : null;
+  }
+
+  upsertBarSpecial(input: {
+    id: string;
+    barId: string;
+    title: string;
+    description: string;
+    price: number | null;
+    discount: string | null;
+    startsAt: string | null;
+    endsAt: string | null;
+    scheduleNote: string | null;
+    exclusive: boolean;
+    active: boolean;
+    now: string;
+  }): BarSpecial {
+    this.database
+      .prepare(
+        `INSERT INTO bar_specials (
+          id, bar_id, title, description, price, discount, starts_at, ends_at, schedule_note, exclusive, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          description = excluded.description,
+          price = excluded.price,
+          discount = excluded.discount,
+          starts_at = excluded.starts_at,
+          ends_at = excluded.ends_at,
+          schedule_note = excluded.schedule_note,
+          exclusive = excluded.exclusive,
+          active = excluded.active,
+          updated_at = excluded.updated_at
+        WHERE bar_specials.bar_id = excluded.bar_id`,
+      )
+      .run(
+        input.id,
+        input.barId,
+        input.title,
+        input.description,
+        input.price,
+        input.discount,
+        input.startsAt,
+        input.endsAt,
+        input.scheduleNote,
+        input.exclusive ? 1 : 0,
+        input.active ? 1 : 0,
+        input.now,
+        input.now,
+      );
+    const row = this.database
+      .prepare("SELECT * FROM bar_specials WHERE id = ? AND bar_id = ?")
+      .get(input.id, input.barId) as BarSpecialRow | undefined;
+    if (!row) {
+      throw new Error("Special row belongs to another bar");
+    }
+    return toBarSpecial(row);
+  }
+
+  deleteBarSpecial(input: { id: string; barId: string }): boolean {
+    const result = this.database.prepare("DELETE FROM bar_specials WHERE id = ? AND bar_id = ?").run(input.id, input.barId);
+    return result.changes > 0;
+  }
+
+  createBarPendingChange(input: {
+    id: string;
+    barId: string;
+    changeType: BarPendingChangeType;
+    action: BarPendingChangeAction;
+    targetId: string | null;
+    payload: Record<string, unknown>;
+    submittedBy: string;
+    now: string;
+  }): BarPendingChange {
+    this.database
+      .prepare(
+        `INSERT INTO bar_pending_changes (
+          id, bar_id, change_type, action, target_id, payload_json, status,
+          submitted_by, submitted_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.barId,
+        input.changeType,
+        input.action,
+        input.targetId,
+        JSON.stringify(input.payload),
+        input.submittedBy,
+        input.now,
+        input.now,
+        input.now,
+      );
+    const row = this.database.prepare("SELECT * FROM bar_pending_changes WHERE id = ?").get(input.id) as BarPendingChangeRow;
+    return toBarPendingChange(row);
+  }
+
+  getBarPendingChangeById(id: string): BarPendingChange | null {
+    const row = this.database.prepare("SELECT * FROM bar_pending_changes WHERE id = ?").get(id) as
+      | BarPendingChangeRow
+      | undefined;
+    return row ? toBarPendingChange(row) : null;
+  }
+
+  listBarPendingChanges(input: {
+    barId?: string | undefined;
+    submittedBy?: string | undefined;
+    status?: BarPendingChangeStatus | undefined;
+    limit: number;
+  }): BarPendingChange[] {
+    const clauses: string[] = [];
+    const values: unknown[] = [];
+
+    if (input.barId) {
+      clauses.push("bar_id = ?");
+      values.push(input.barId);
+    }
+
+    if (input.submittedBy) {
+      clauses.push("submitted_by = ?");
+      values.push(input.submittedBy);
+    }
+
+    if (input.status) {
+      clauses.push("status = ?");
+      values.push(input.status);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = this.database
+      .prepare(`SELECT * FROM bar_pending_changes ${where} ORDER BY submitted_at DESC LIMIT ?`)
+      .all(...values, input.limit) as BarPendingChangeRow[];
+    return rows.map(toBarPendingChange);
+  }
+
+  reviewBarPendingChange(input: {
+    id: string;
+    status: Exclude<BarPendingChangeStatus, "pending">;
+    reviewedBy: string;
+    reviewedAt: string;
+    rejectionReason: string | null;
+  }): BarPendingChange | null {
+    this.database
+      .prepare(
+        `UPDATE bar_pending_changes
+         SET status = ?,
+             reviewed_by = ?,
+             reviewed_at = ?,
+             rejection_reason = ?,
+             updated_at = ?
+         WHERE id = ? AND status = 'pending'`,
+      )
+      .run(input.status, input.reviewedBy, input.reviewedAt, input.rejectionReason, input.reviewedAt, input.id);
+    return this.getBarPendingChangeById(input.id);
+  }
+
+  getMonthlyBarReport(input: { barId: string; month: string }): MonthlyBarReport | null {
+    const row = this.database
+      .prepare("SELECT * FROM monthly_bar_reports WHERE bar_id = ? AND month = ?")
+      .get(input.barId, input.month) as MonthlyBarReportRow | undefined;
+    return row ? toMonthlyBarReport(row) : null;
+  }
+
+  upsertMonthlyBarReport(input: { id: string; barId: string; month: string; data: Record<string, unknown>; createdAt: string }): MonthlyBarReport {
+    this.database
+      .prepare(
+        `INSERT INTO monthly_bar_reports (id, bar_id, month, data_json, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(bar_id, month) DO UPDATE SET data_json = excluded.data_json`,
+      )
+      .run(input.id, input.barId, input.month, JSON.stringify(input.data), input.createdAt);
+    return this.getMonthlyBarReport({ barId: input.barId, month: input.month })!;
+  }
+
+  recordBarAnalyticsEvent(input: {
+    id: string;
+    barId: string | null;
+    area: string | null;
+    suburb?: string | null | undefined;
+    eventType: string;
+    queryText: string | null;
+    beerName: string | null;
+    beerStyle: string | null;
+    createdAt: string;
+  }): void {
+    this.database
+      .prepare(
+        `INSERT INTO bar_analytics_events (
+          id, bar_id, area, suburb, event_type, query_text, beer_name, beer_style, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(input.id, input.barId, input.area, input.suburb ?? input.area, input.eventType, input.queryText, input.beerName, input.beerStyle, input.createdAt);
+  }
+
+  getBarAreaAnalytics(input: {
+    barId: string;
+    area: string | null;
+    month?: string | undefined;
+    privacyThreshold?: number | undefined;
+  }) {
+    const privacyThreshold = Math.max(1, input.privacyThreshold ?? 10);
+    const since = input.month ? `${input.month}-01T00:00:00.000Z` : null;
+    const count = (sql: string, values: unknown[] = []) => {
+      const row = this.database.prepare(sql).get(...values) as { count: number } | undefined;
+      return Number(row?.count ?? 0);
+    };
+    const grouped = (sql: string, values: unknown[] = []) =>
+      this.database.prepare(sql).all(...values) as Array<{ key: string; count: number }>;
+    const rangeClause = since ? "AND created_at >= ?" : "";
+    const rangeValues = since ? [since] : [];
+    const eventAreaClause = input.area ? "AND lower(COALESCE(suburb, '')) = lower(?)" : "";
+    const barAreaClause = input.area ? "AND lower(COALESCE(suburb, area, '')) = lower(?)" : "";
+    const areaValues = input.area ? [input.area] : [];
+
+    const barEventCount = (eventTypes: string[]) => {
+      const placeholders = eventTypes.map(() => "?").join(", ");
+      return count(
+        `SELECT count(*) AS count
+         FROM events
+         WHERE venue_id = ?
+           AND event_type IN (${placeholders})
+           ${rangeClause}`,
+        [input.barId, ...eventTypes, ...rangeValues],
+      );
+    };
+
+    const areaBeerSearches = grouped(
+      `SELECT COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer') AS key, count(*) AS count
+       FROM events
+       WHERE event_type = 'beer_search_performed'
+         ${eventAreaClause}
+         ${rangeClause}
+       GROUP BY COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer')
+       HAVING count(*) >= ?
+       ORDER BY count DESC
+       LIMIT 8`,
+      [...areaValues, ...rangeValues, privacyThreshold],
+    );
+    const areaStyleSearches = grouped(
+      `SELECT COALESCE(beer_style, query_text, 'style') AS key, count(*) AS count
+       FROM bar_analytics_events
+       WHERE event_type IN ('beer_style_search', 'beer_search')
+         ${barAreaClause}
+         ${rangeClause}
+       GROUP BY COALESCE(beer_style, query_text, 'style')
+       HAVING count(*) >= ?
+       ORDER BY count DESC
+       LIMIT 8`,
+      [...areaValues, ...rangeValues, privacyThreshold],
+    );
+
+    const areaSearches = count(
+      `SELECT count(*) AS count
+       FROM events
+       WHERE event_type IN ('search_performed', 'beer_search_performed', 'suburb_search_performed')
+           ${eventAreaClause}
+           ${rangeClause}`,
+      [...areaValues, ...rangeValues],
+    );
+    const privacyFloorMet = areaSearches >= privacyThreshold;
+
+    return {
+      barLookups: barEventCount(["venue_card_viewed", "venue_detail_opened"]),
+      profileViews: barEventCount(["venue_detail_opened", "venue_portal_viewed"]),
+      beerListViews: barEventCount(["price_view_revealed", "venue_detail_opened"]),
+      specialsViews: barEventCount(["happy_hour_active_now_used", "happy_hour_near_me_used"]),
+      markerClicks: barEventCount(["venue_card_viewed"]),
+      priceReveals: barEventCount(["price_view_revealed"]),
+      areaSearches,
+      areaBeerSearches: privacyFloorMet ? areaBeerSearches : [],
+      areaStyleSearches: privacyFloorMet ? areaStyleSearches : [],
+      privacyFloorMet,
+      privacyThreshold,
+    };
+  }
+
   upsertVenuePartnerOutreach(input: {
     id: string;
     venueId: string;
@@ -1634,6 +3411,8 @@ export class BusinessRepository {
            SELECT venue_id FROM events WHERE venue_id IS NOT NULL AND venue_id != ''
            UNION ALL
            SELECT venue_id FROM venue_requests WHERE venue_id IS NOT NULL AND venue_id != ''
+           UNION ALL
+           SELECT bar_id AS venue_id FROM bar_profiles WHERE bar_id IS NOT NULL AND bar_id != ''
          )`,
       )
       .get() as { count: number } | undefined;
@@ -1668,6 +3447,85 @@ export class BusinessRepository {
         JSON.stringify(input.metadata),
         input.createdAt,
       );
+  }
+
+  insertSecurityAuditLog(input: {
+    id: string;
+    actorUserId: string | null;
+    actorRole: string | null;
+    action: string;
+    targetType: string | null;
+    targetId: string | null;
+    metadata: Record<string, unknown>;
+    ipHash: string | null;
+    userAgentHash: string | null;
+    createdAt: string;
+  }): void {
+    this.database
+      .prepare(
+        `INSERT INTO security_audit_log (
+          id, actor_user_id, actor_role, action, target_type, target_id,
+          metadata_json, ip_hash, user_agent_hash, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.actorUserId,
+        input.actorRole,
+        input.action,
+        input.targetType,
+        input.targetId,
+        JSON.stringify(redactSecrets(input.metadata)),
+        input.ipHash,
+        input.userAgentHash,
+        input.createdAt,
+      );
+  }
+
+  listSecurityAuditLogs(limit = 100): SecurityAuditLog[] {
+    const rows = this.database
+      .prepare("SELECT * FROM security_audit_log ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as SecurityAuditLogRow[];
+    return rows.map(toSecurityAuditLog);
+  }
+
+  createSourceEvidenceObject(input: {
+    id: string;
+    ownerUserId: string | null;
+    storageProvider: string;
+    objectPath: string;
+    mimeType: string | null;
+    byteSize: number | null;
+    dataBase64: string | null;
+    externalUrl: string | null;
+    createdAt: string;
+  }): SourceEvidenceObject {
+    this.database
+      .prepare(
+        `INSERT INTO source_evidence_objects (
+          id, owner_user_id, storage_provider, object_path, mime_type, byte_size,
+          data_base64, external_url, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.ownerUserId,
+        input.storageProvider,
+        input.objectPath,
+        input.mimeType,
+        input.byteSize,
+        input.dataBase64,
+        input.externalUrl,
+        input.createdAt,
+      );
+    return this.getSourceEvidenceObject(input.id)!;
+  }
+
+  getSourceEvidenceObject(id: string): SourceEvidenceObject | null {
+    const row = this.database
+      .prepare("SELECT * FROM source_evidence_objects WHERE id = ?")
+      .get(id) as SourceEvidenceObjectRow | undefined;
+    return row ? toSourceEvidenceObject(row) : null;
   }
 
   countEvents(input: {

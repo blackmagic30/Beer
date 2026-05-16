@@ -20,7 +20,7 @@ export const SUBMISSION_LIMITS = {
 
 export const RESPONSIBLE_ALCOHOL_COPY = {
   footer:
-    "Melbourne Beer Map is for adults 18+ in Victoria. Prices can change, availability is not guaranteed, and venues may refuse service under RSA obligations. Drink responsibly.",
+    "Pint Path is for adults 18+ in Victoria. Prices can change, availability is not guaranteed, and venues may refuse service under RSA obligations. Drink responsibly.",
   rewardsDisabled:
     "Partner venue credit is planned for a future release and is not live in this demo.",
 } as const;

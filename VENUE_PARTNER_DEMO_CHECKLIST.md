@@ -1,6 +1,6 @@
 # Venue Partner Demo Checklist
 
-Use this when showing Melbourne Beer Map to a bar owner, venue manager, or potential affiliate partner.
+Use this when showing Pint Path to a bar owner, venue manager, or potential affiliate partner.
 
 ## 1. Public Product Story
 

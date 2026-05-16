@@ -1,6 +1,8 @@
 import type { Server } from "node:http";
 import { networkInterfaces } from "node:os";
 
+import { redactSecrets } from "./lib/redact.js";
+
 let server: Server | undefined;
 let heartbeatInterval: NodeJS.Timeout | undefined;
 let selfCheckInterval: NodeJS.Timeout | undefined;
@@ -65,7 +67,7 @@ async function boot(): Promise<void> {
       JSON.stringify({
         timestamp: new Date().toISOString(),
         level: "info",
-        message: "melb-beer-bot booting",
+        message: "pint-path booting",
         meta: getDeployMeta(),
       }),
     );
@@ -80,7 +82,7 @@ async function boot(): Promise<void> {
 
     const onListening = () => {
       logger.info(
-        `melb-beer-bot listening host=${env.HOST ?? "default"} effectiveHost=${listenHost ?? "default"} railwayBinding=${useRailwayBinding} port=${env.PORT} bound=${getBoundAddress()} outboundCallsEnabled=${env.OUTBOUND_CALLS_ENABLED} targetBeer=${env.TARGET_BEER} publicBaseUrl=${env.PUBLIC_BASE_URL}`,
+        `pint-path listening host=${env.HOST ?? "default"} effectiveHost=${listenHost ?? "default"} railwayBinding=${useRailwayBinding} port=${env.PORT} bound=${getBoundAddress()} outboundCallsEnabled=${env.OUTBOUND_CALLS_ENABLED} targetBeer=${env.TARGET_BEER} publicBaseUrl=${env.PUBLIC_BASE_URL}`,
         getDeployMeta(),
       );
     };
@@ -100,7 +102,7 @@ async function boot(): Promise<void> {
 
     heartbeatInterval = setInterval(() => {
       logger.info(
-        `melb-beer-bot heartbeat listening=${server?.listening ?? false} bound=${getBoundAddress()}`,
+        `pint-path heartbeat listening=${server?.listening ?? false} bound=${getBoundAddress()}`,
         getDeployMeta(),
       );
     }, 30_000);
@@ -110,12 +112,12 @@ async function boot(): Promise<void> {
         try {
           const response = await fetch(target.url);
           logger.info(
-            `melb-beer-bot self-check target=${target.name} status=${response.status} ok=${response.ok}`,
+            `pint-path self-check target=${target.name} status=${response.status} ok=${response.ok}`,
             getDeployMeta(),
           );
         } catch (error) {
           logger.error(
-            `melb-beer-bot self-check target=${target.name} failed=${error instanceof Error ? error.message : String(error)}`,
+            `pint-path self-check target=${target.name} failed=${error instanceof Error ? error.message : String(error)}`,
             getDeployMeta(),
           );
         }
@@ -123,6 +125,19 @@ async function boot(): Promise<void> {
     }, 30_000);
 
     server.on("error", (error) => {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "EADDRINUSE"
+      ) {
+        logger.error(
+          `Port ${env.PORT} is already in use. Another Pint Path dev server is probably still running. Stop it with Ctrl+C in the old terminal, or run lsof -nP -iTCP:${env.PORT} -sTCP:LISTEN to find the process.`,
+          getDeployMeta(),
+        );
+        process.exit(1);
+      }
+
       logger.error("Server failed to start", {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -133,8 +148,8 @@ async function boot(): Promise<void> {
     });
   } catch (error) {
     console.error("Application boot failed", {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      error: error instanceof Error ? redactSecrets(error.message) : redactSecrets(String(error)),
+      stack: error instanceof Error ? redactSecrets(error.stack) : undefined,
     });
     process.exit(1);
   }
@@ -171,11 +186,18 @@ function shutdown(signal: string): void {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("uncaughtException", (error) => {
-  console.error("Uncaught exception", error);
+  console.error("Uncaught exception", redactSecrets({
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  }));
   process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled rejection", reason);
+  console.error("Unhandled rejection", redactSecrets({
+    reason: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  }));
+  process.exit(1);
 });
 process.on("exit", (code) => {
   console.info("Process exiting", { code, ...getDeployMeta() });

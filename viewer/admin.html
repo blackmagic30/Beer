@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Admin | Melbourne Beer Map</title>
+  <title>Admin | Pint Path</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
@@ -71,8 +71,10 @@
     <section class="grid grid--two" style="margin-bottom:16px;">
       <div class="panel">
         <h2>Venue partner interest</h2>
-        <p class="muted">Claim requests and venue-manager interest from the For Bars page.</p>
+        <p class="muted">Venue-manager interest from the For Bars page and authenticated claim requests from the portal.</p>
         <div id="venueInterestRequests" class="list"></div>
+        <h3>Authenticated bar claims</h3>
+        <div id="barClaimRequests" class="list"></div>
       </div>
       <div class="panel">
         <h2>Venue manager assignments</h2>
@@ -134,6 +136,14 @@
         <h2>Pending submissions</h2>
         <div id="pendingSubmissions" class="list"></div>
       </div>
+      <div class="panel">
+        <h2>Pending bar changes</h2>
+        <p class="muted">Manager edits stay private until approved here.</p>
+        <div id="pendingBarChanges" class="list"></div>
+      </div>
+    </section>
+
+    <section class="grid grid--two" style="margin-top:16px;">
       <div class="panel">
         <h2>Review queues</h2>
         <div id="reviewQueues" class="list"></div>
@@ -286,6 +296,18 @@
         button.addEventListener("click", () => updateVenueInterestStatus(button.dataset.interestId, button.dataset.interestStatus));
       });
 
+      const claimRequests = data.claimRequests || [];
+      barClaimRequests.innerHTML = claimRequests.length
+        ? claimRequests.map((claim) => `
+          <article class="listItem">
+            <strong>${escapeHtml(claim.barName)}</strong>
+            <span class="pill">${escapeHtml(claim.status)}</span>
+            <div class="muted">${escapeHtml(claim.suburb || "Suburb not supplied")} · ${escapeHtml(claim.requesterName)} · ${escapeHtml(claim.requesterRole)} · ${escapeHtml(claim.contactEmail)}${claim.contactPhone ? ` · ${escapeHtml(claim.contactPhone)}` : ""}</div>
+            <div class="muted">${escapeHtml(claim.message || claim.address || "No message supplied")}</div>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No authenticated bar claims yet.</div>';
+
       venueManagerAssignments.innerHTML = data.assignments.length
         ? data.assignments.map((assignment) => `
           <article class="listItem">
@@ -299,6 +321,32 @@
       venueManagerAssignments.querySelectorAll("[data-revoke-user]").forEach((button) => {
         button.addEventListener("click", () => revokeVenueManager(button.dataset.revokeUser, button.dataset.revokeVenue));
       });
+
+      const pendingChanges = data.pendingChanges || [];
+      pendingBarChanges.innerHTML = pendingChanges.length
+        ? pendingChanges.map((change) => `
+          <article class="listItem">
+            <strong>${escapeHtml(change.changeType.replace("_", " "))} · ${escapeHtml(change.action)}</strong>
+            <span class="pill">${escapeHtml(change.status)}</span>
+            <div class="muted">${escapeHtml(change.barId)} · submitted by ${escapeHtml(change.submittedBy)} · ${escapeHtml(change.submittedAt)}</div>
+            <div class="muted">${escapeHtml(summarizePendingPayload(change.payload))}</div>
+            <div class="actionRow">
+              <button class="button button--small button--primary" type="button" data-review-change="${escapeHtml(change.id)}" data-review-status="approved">Approve</button>
+              <button class="button button--small button--danger" type="button" data-review-change="${escapeHtml(change.id)}" data-review-status="rejected">Reject</button>
+            </div>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No pending bar changes.</div>';
+      pendingBarChanges.querySelectorAll("[data-review-change]").forEach((button) => {
+        button.addEventListener("click", () => reviewBarChange(button.dataset.reviewChange, button.dataset.reviewStatus));
+      });
+    }
+
+    function summarizePendingPayload(payload = {}) {
+      return [payload.name, payload.beerName, payload.title, payload.price != null ? `$${Number(payload.price).toFixed(2)}` : null, payload.description]
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(" · ") || "Pending venue update";
     }
 
     async function reviewSubmission(id, status) {
@@ -311,6 +359,23 @@
           body: JSON.stringify(body),
         });
         MelbBeerBusiness.setStatus(statusEl, `Reviewed ${result.submission.venueName}. Awarded ${result.pointsAwarded} points.`);
+        await loadAdmin();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message, true);
+      }
+    }
+
+    async function reviewBarChange(id, status) {
+      if (!id || !status) return;
+      try {
+        await MelbBeerBusiness.apiFetch(`/api/business/admin/bar-pending-changes/${encodeURIComponent(id)}/review`, {
+          method: "POST",
+          body: JSON.stringify({
+            status,
+            rejectionReason: status === "rejected" ? "Rejected during admin review." : null,
+          }),
+        });
+        MelbBeerBusiness.setStatus(statusEl, status === "approved" ? "Bar change approved and published." : "Bar change rejected.");
         await loadAdmin();
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message, true);

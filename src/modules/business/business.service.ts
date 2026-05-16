@@ -6,22 +6,39 @@ import { CONTRIBUTION_POINTS, PREMIUM_PRICING, SUBMISSION_LIMITS } from "../../c
 import type { Env } from "../../config/env.js";
 import {
   BusinessRepository,
+  type AgeVerification,
+  type BarPendingChange,
+  type BarPendingChangeAction,
+  type BarPendingChangeType,
   type BusinessAccount,
+  type BarMembershipTier,
+  type BarProfile,
   type BusinessSubmission,
   type BusinessSubmissionItem,
   type ConfidenceLabel,
   type PublicVenuePriceRecord,
+  type ServingSize,
+  type SourceEvidenceObject,
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import { redactSecrets } from "../../lib/redact.js";
 
 import type {
   AccountPreferencesInput,
   AdminDashboardQuery,
   AuthLoginInput,
   AuthSignupInput,
+  AuthSupabaseSessionInput,
+  BarBeerInput,
+  BarClaimRequestInput,
+  BarHappyHourInput,
+  BarPendingChangeReviewInput,
+  BarProfileInput,
+  BarSpecialInput,
+  BarTierCheckoutInput,
   CheckoutInput,
   CreateSubmissionInput,
   EventTrackInput,
@@ -38,6 +55,7 @@ import type {
   VenueOutreachInput,
   VenuePortalQuery,
   VenueRequestInput,
+  VerificationInput,
   WrongPriceReportInput,
 } from "./business.schemas.js";
 
@@ -58,6 +76,11 @@ interface StripeEvent {
   data?: {
     object?: Record<string, unknown>;
   };
+}
+
+export interface SessionRequestContext {
+  ip?: string | null | undefined;
+  userAgent?: string | null | undefined;
 }
 
 function nowIso(): string {
@@ -125,6 +148,15 @@ function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+function hashRequestFingerprint(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 32);
+}
+
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -157,9 +189,38 @@ function sanitizeAccount(account: BusinessAccount) {
     rejectedSubmissionCount: account.rejectedSubmissionCount,
     fraudStrikeCount: account.fraudStrikeCount,
     status: account.status,
+    displayName: account.displayName,
+    avatarUrl: account.avatarUrl,
+    authProvider: account.authProvider,
+    ageVerificationStatus: account.ageVerificationStatus,
+    isOver18Verified: account.isOver18Verified,
+    emailVerifiedAt: account.emailVerifiedAt,
+    mfaLevel: account.mfaLevel,
+    mfaVerifiedAt: account.mfaVerifiedAt,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
+}
+
+export function canAccessAgeGatedRewards(input: {
+  account: Pick<BusinessAccount, "isOver18Verified" | "ageVerificationStatus"> | null;
+  latestAgeVerification: Pick<AgeVerification, "status" | "isOver18" | "ageThreshold" | "expiresAt"> | null;
+  now?: string | undefined;
+}): boolean {
+  if (!input.account || !input.account.isOver18Verified || input.account.ageVerificationStatus !== "verified") {
+    return false;
+  }
+
+  const latest = input.latestAgeVerification;
+  if (!latest || latest.status !== "verified" || !latest.isOver18 || latest.ageThreshold !== 18) {
+    return false;
+  }
+
+  if (latest.expiresAt && new Date(latest.expiresAt).getTime() <= new Date(input.now ?? nowIso()).getTime()) {
+    return false;
+  }
+
+  return true;
 }
 
 function getSourcePhotoBytes(dataUrl: string): number {
@@ -171,12 +232,61 @@ function getSourcePhotoBytes(dataUrl: string): number {
   return Buffer.byteLength(dataUrl.slice(commaIndex + 1), "base64");
 }
 
+function getSourcePhotoBuffer(dataUrl: string): Buffer {
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex === -1) {
+    return Buffer.alloc(0);
+  }
+
+  return Buffer.from(dataUrl.slice(commaIndex + 1), "base64");
+}
+
 function getSourcePhotoMimeType(dataUrl: string): string | null {
   const match = dataUrl.match(/^data:([^;]+);base64,/i);
   return match?.[1]?.toLowerCase() ?? null;
 }
 
 const BLOCKED_SOURCE_URL_EXTENSIONS = /\.(?:svg|html?|xhtml|xml|js|mjs|css)(?:[?#].*)?$/i;
+const PRIVATE_EVIDENCE_PREFIX = "private:evidence:";
+
+function detectImageMimeType(bytes: Buffer): string | null {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+
+  if (
+    bytes.length >= 12 &&
+    bytes.toString("ascii", 0, 4) === "RIFF" &&
+    bytes.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+
+  if (bytes.length >= 12 && bytes.toString("ascii", 4, 12).includes("ftyphei")) {
+    return "image/heic";
+  }
+
+  return null;
+}
+
+function looksLikeActiveTextPayload(bytes: Buffer): boolean {
+  const head = bytes.toString("utf8", 0, Math.min(bytes.length, 512)).trimStart().toLowerCase();
+  return /^(?:<!doctype\s+html|<html|<script|<svg|<\?xml|@import|body\s*\{|\/\*)/.test(head);
+}
 
 function getBearerToken(header: string | undefined): string | null {
   if (!header) {
@@ -185,6 +295,42 @@ function getBearerToken(header: string | undefined): string | null {
 
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim() ?? null;
+}
+
+function privateEvidenceRef(id: string): string {
+  return `${PRIVATE_EVIDENCE_PREFIX}${id}`;
+}
+
+function getPrivateEvidenceId(value: string | null): string | null {
+  return value?.startsWith(PRIVATE_EVIDENCE_PREFIX) ? value.slice(PRIVATE_EVIDENCE_PREFIX.length) : null;
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const [, payload] = token.split(".");
+  if (!payload) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function getSupabaseEmailVerifiedAt(user: unknown): string | null {
+  const record = user as Record<string, unknown>;
+  const value = record.email_confirmed_at ?? record.confirmed_at;
+  return typeof value === "string" && value ? value : null;
+}
+
+function getSupabaseMfaClaims(accessToken: string, now: string): { mfaLevel: string; mfaVerifiedAt: string | null } {
+  const payload = decodeJwtPayload(accessToken);
+  const aal = typeof payload?.aal === "string" ? payload.aal : "aal1";
+  return {
+    mfaLevel: aal,
+    mfaVerifiedAt: aal === "aal2" ? now : null,
+  };
 }
 
 function isFullAccess(account: BusinessAccount | null): boolean {
@@ -216,9 +362,26 @@ function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceReco
     ...record,
     price: null,
     happyHourDetails: null,
+    happyHourTitle: null,
+    happyHourDays: [],
+    happyHourStartTime: null,
+    happyHourEndTime: null,
     sourceSubmissionId: null,
     priceRedacted: true,
   };
+}
+
+function redactUserVisibleFreeText(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const redacted = redactSecrets(value)
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted email]")
+    .replace(/(?:\+?61|0)[\s.-]?(?:\d[\s.-]?){8,10}\d/g, "[redacted phone]")
+    .trim();
+
+  return redacted.length > 0 ? redacted.slice(0, 500) : null;
 }
 
 function hashAnonymousFallback(value: string): string {
@@ -239,6 +402,54 @@ function cleanStringList(values: string[]): string[] {
   return Array.from(
     new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)),
   ).slice(0, 20);
+}
+
+function stringArrayFromUnknown(value: unknown): string[] {
+  return Array.isArray(value)
+    ? cleanStringList(value.filter((item): item is string => typeof item === "string"))
+    : [];
+}
+
+function objectFromUnknown(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function booleanFromUnknown(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function tierFlags(tier: BarMembershipTier) {
+  return {
+    highlightedName: tier === "pro",
+    premiumBadge: tier === "pro" ? "Pro" : tier === "plus" ? "Plus" : null,
+    promoted: tier === "pro",
+    featuredSpecialEligible: tier === "pro",
+  };
+}
+
+function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
+  const analytics = admin || tier === "plus" || tier === "pro";
+  return {
+    tier,
+    canManageProfile: true,
+    canManageInventory: true,
+    canManageHappyHours: true,
+    canManageSpecials: true,
+    analytics,
+    monthlyReports: analytics,
+    premiumDisplay: tier === "pro",
+    upgradeCopy: analytics
+      ? null
+      : "Upgrade to Plus to see privacy-safe suburb analytics, search trends, and monthly report previews.",
+  };
 }
 
 function sanitizeEventMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
@@ -287,24 +498,106 @@ export class BusinessService {
       | "CONTRIBUTOR_UNLOCK_DAYS"
       | "DEMO_BILLING_MODE"
       | "FIELD_TEST_MODE"
+      | "SESSION_TTL_DAYS"
+      | "ADMIN_SESSION_TTL_DAYS"
+      | "REQUIRE_ADMIN_MFA_IN_PRODUCTION"
+      | "ADMIN_MFA_MAX_AGE_MINUTES"
+      | "REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION"
+      | "ANALYTICS_MIN_BUCKET_SIZE"
+      | "ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION"
+      | "SOURCE_EVIDENCE_SIGNING_SECRET"
+      | "SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS"
+      | "NODE_ENV"
       | "STRIPE_SECRET_KEY"
       | "STRIPE_WEBHOOK_SECRET"
       | "STRIPE_PRICE_MONTHLY"
       | "STRIPE_PRICE_YEARLY"
+      | "STRIPE_PLUS_PRICE_ID"
+      | "STRIPE_PRO_PRICE_ID"
       | "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
       | "SUPABASE_URL"
+      | "SUPABASE_ANON_KEY"
       | "SUPABASE_SERVICE_ROLE_KEY"
+      | "SUPABASE_OAUTH_PROVIDERS"
       | "ADMIN_EMAILS"
     >,
   ) {
-    if (config.SUPABASE_URL && config.SUPABASE_SERVICE_ROLE_KEY) {
-      this.supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, {
+    const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
+    if (config.SUPABASE_URL && supabaseServerKey) {
+      this.supabase = createClient(config.SUPABASE_URL, supabaseServerKey, {
         auth: {
           persistSession: false,
           autoRefreshToken: false,
         },
       });
     }
+  }
+
+  private getRequestHashes(context?: SessionRequestContext | undefined) {
+    return {
+      ipHash: hashRequestFingerprint(context?.ip),
+      userAgentHash: hashRequestFingerprint(context?.userAgent),
+    };
+  }
+
+  private auditSecurity(input: {
+    actor?: BusinessAccount | null | undefined;
+    action: string;
+    targetType?: string | null | undefined;
+    targetId?: string | null | undefined;
+    metadata?: Record<string, unknown> | undefined;
+    context?: SessionRequestContext | undefined;
+  }): void {
+    const requestHashes = this.getRequestHashes(input.context);
+
+    try {
+      this.repository.insertSecurityAuditLog({
+        id: crypto.randomUUID(),
+        actorUserId: input.actor?.id ?? null,
+        actorRole: input.actor?.role ?? null,
+        action: input.action,
+        targetType: input.targetType ?? null,
+        targetId: input.targetId ?? null,
+        metadata: sanitizeEventMetadata(redactSecrets(input.metadata ?? {})),
+        ipHash: requestHashes.ipHash,
+        userAgentHash: requestHashes.userAgentHash,
+        createdAt: nowIso(),
+      });
+    } catch (error) {
+      logger.warn("Security audit log write failed", {
+        action: input.action,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private recordUserActivity(input: {
+    account: BusinessAccount;
+    eventType: string;
+    relatedEntityType?: string | null | undefined;
+    relatedEntityId?: string | null | undefined;
+    metadata?: Record<string, unknown> | undefined;
+  }): void {
+    try {
+      this.repository.createUserActivityEvent({
+        id: crypto.randomUUID(),
+        userId: input.account.id,
+        eventType: input.eventType,
+        relatedEntityType: input.relatedEntityType ?? null,
+        relatedEntityId: input.relatedEntityId ?? null,
+        metadata: sanitizeEventMetadata(redactSecrets(input.metadata ?? {})),
+        now: nowIso(),
+      });
+    } catch (error) {
+      logger.warn("User activity write failed", {
+        eventType: input.eventType,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private applyAnalyticsThreshold<T extends { count: number }>(rows: T[]): T[] {
+    return rows.filter((row) => row.count >= this.config.ANALYTICS_MIN_BUCKET_SIZE);
   }
 
   getPublicConfig() {
@@ -314,6 +607,9 @@ export class BusinessService {
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
       contributorUnlockDays: this.config.CONTRIBUTOR_UNLOCK_DAYS,
       stripePublishableKey: this.config.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? null,
+      supabaseUrl: this.config.SUPABASE_URL ?? null,
+      supabaseAnonKey: this.config.SUPABASE_ANON_KEY ?? null,
+      supabaseOauthProviders: this.config.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
       demoBillingMode: this.config.DEMO_BILLING_MODE,
       fieldTestMode: this.config.FIELD_TEST_MODE,
       rewards: {
@@ -324,17 +620,40 @@ export class BusinessService {
     };
   }
 
-  getAccountFromAuthorization(authorizationHeader: string | undefined): BusinessAccount | null {
+  getAccountFromAuthorization(
+    authorizationHeader: string | undefined,
+    context?: SessionRequestContext | undefined,
+  ): BusinessAccount | null {
     const token = getBearerToken(authorizationHeader);
     if (!token) {
       return null;
     }
 
-    return this.repository.getAccountBySessionTokenHash(hashToken(token), nowIso());
+    const tokenHash = hashToken(token);
+    const account = this.repository.getAccountBySessionTokenHash(tokenHash, nowIso());
+    if (!account) {
+      return null;
+    }
+
+    if (account.status === "suspended") {
+      return null;
+    }
+
+    const requestHashes = this.getRequestHashes(context);
+    this.repository.touchSession({
+      tokenHash,
+      lastUsedAt: nowIso(),
+      lastIpHash: requestHashes.ipHash,
+      userAgentHash: requestHashes.userAgentHash,
+    });
+    return account;
   }
 
-  requireAccount(authorizationHeader: string | undefined): BusinessAccount {
-    const account = this.getAccountFromAuthorization(authorizationHeader);
+  requireAccount(
+    authorizationHeader: string | undefined,
+    context?: SessionRequestContext | undefined,
+  ): BusinessAccount {
+    const account = this.getAccountFromAuthorization(authorizationHeader, context);
 
     if (!account) {
       throw new AppError("Login required.", 401);
@@ -343,14 +662,64 @@ export class BusinessService {
     return account;
   }
 
-  requireAdmin(authorizationHeader: string | undefined): BusinessAccount {
-    const account = this.requireAccount(authorizationHeader);
+  requireAdmin(
+    authorizationHeader: string | undefined,
+    context?: SessionRequestContext | undefined,
+  ): BusinessAccount {
+    const account = this.requireAccount(authorizationHeader, context);
 
     if (account.role !== "admin" && account.subscriptionStatus !== "admin") {
       throw new AppError("Admin access required.", 403);
     }
 
+    if (this.config.NODE_ENV === "production") {
+      this.requireVerifiedEmail(account, "Admin email verification is required in production.");
+
+      if (this.config.REQUIRE_ADMIN_MFA_IN_PRODUCTION && !this.hasFreshAdminMfa(account)) {
+        this.auditSecurity({
+          actor: account,
+          action: "admin_mfa_step_up_required",
+          targetType: "account",
+          targetId: account.id,
+          metadata: { mfaLevel: account.mfaLevel },
+          context,
+        });
+        throw new AppError("Admin MFA step-up required.", 403);
+      }
+    }
+
     return account;
+  }
+
+  private requireVerifiedEmail(account: BusinessAccount, message = "Verify your email before continuing."): void {
+    if (
+      this.config.NODE_ENV === "production" &&
+      this.config.REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION &&
+      !account.emailVerifiedAt
+    ) {
+      throw new AppError(message, 403);
+    }
+  }
+
+  private hasFreshAdminMfa(account: BusinessAccount): boolean {
+    if (account.mfaLevel !== "aal2" || !account.mfaVerifiedAt) {
+      return false;
+    }
+
+    const ageMs = Date.now() - new Date(account.mfaVerifiedAt).getTime();
+    return ageMs >= 0 && ageMs <= this.config.ADMIN_MFA_MAX_AGE_MINUTES * 60_000;
+  }
+
+  private requireVerifiedBarAccount(account: BusinessAccount): void {
+    if (account.status !== "active") {
+      throw new AppError("Your account must be active to manage a bar.", 403);
+    }
+
+    this.requireVerifiedEmail(account, "Verify your email before managing a bar.");
+
+    if (!account.ageConfirmedAt) {
+      throw new AppError("Verify your account before managing a bar. Confirm 18+ from your account page first.", 403);
+    }
   }
 
   private isAdmin(account: BusinessAccount): boolean {
@@ -361,6 +730,8 @@ export class BusinessService {
     if (this.isAdmin(account)) {
       return null;
     }
+
+    this.requireVerifiedBarAccount(account);
 
     if (account.role !== "venue_manager") {
       throw new AppError("Venue manager access required.", 403);
@@ -373,13 +744,312 @@ export class BusinessService {
     });
 
     if (!assignment) {
+      this.auditSecurity({
+        actor: account,
+        action: "venue_manager_cross_venue_blocked",
+        targetType: "venue",
+        targetId: venueId,
+        metadata: { accountRole: account.role },
+      });
       throw new AppError("You can only access assigned venues.", 403);
     }
 
     return assignment;
   }
 
-  signup(input: AuthSignupInput) {
+  private buildDefaultBarProfile(input: { barId: string; name: string; suburb: string | null }): BarProfile {
+    const now = nowIso();
+    return {
+      barId: input.barId,
+      name: input.name,
+      address: null,
+      suburb: input.suburb,
+      area: input.suburb,
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      highlightedName: false,
+      premiumBadge: null,
+      promoted: false,
+      featuredSpecialEligible: false,
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      subscriptionStatus: null,
+      tierManualOverride: false,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  private getOrBuildBarProfile(input: { barId: string; name: string; suburb: string | null }): BarProfile {
+    return this.repository.getBarProfile(input.barId) ?? this.buildDefaultBarProfile(input);
+  }
+
+  private sanitizeVenueManagerInsights(
+    rawInsights: ReturnType<BusinessRepository["getVenueManagerInsights"]>,
+    input: { includeAggregate: boolean; privacyThreshold: number },
+  ) {
+    const aggregateInsights = input.includeAggregate && rawInsights.aggregateInsights
+      ? {
+          ...rawInsights.aggregateInsights,
+          topSearchedBeersNearby: rawInsights.aggregateInsights.topSearchedBeersNearby
+            .filter((row) => row.count >= input.privacyThreshold),
+          missingBeerSearches: rawInsights.aggregateInsights.missingBeerSearches
+            .filter((row) => row.count >= input.privacyThreshold),
+          suppressedBelowCount: input.privacyThreshold,
+        }
+      : null;
+
+    return {
+      ...rawInsights,
+      wrongPriceReports: rawInsights.wrongPriceReports.map((report) => ({
+        id: report.id,
+        venueId: report.venueId,
+        venueName: report.venueName,
+        priceRecordId: report.priceRecordId,
+        beerName: report.beerName,
+        reason: report.reason,
+        notes: redactUserVisibleFreeText(report.notes),
+        hasSourcePhoto: Boolean(report.sourcePhotoUrl),
+        status: report.status,
+        createdAt: report.createdAt,
+        updatedAt: report.updatedAt,
+      })),
+      requests: rawInsights.requests.map((request) => ({
+        id: request.id,
+        requestType: request.requestType,
+        venueId: request.venueId,
+        venueName: request.venueName,
+        beerName: request.beerName,
+        suburb: request.suburb,
+        notes: redactUserVisibleFreeText(request.notes),
+        status: request.status,
+        missionId: request.missionId,
+        createdAt: request.createdAt,
+        updatedAt: request.updatedAt,
+      })),
+      submissions: rawInsights.submissions.map((submission) => ({
+        id: submission.id,
+        venueId: submission.venueId,
+        venueName: submission.venueName,
+        suburb: submission.suburb,
+        status: submission.status,
+        submissionType: submission.submissionType,
+        observedAt: submission.observedAt,
+        hasSourcePhoto: Boolean(submission.sourcePhotoUrl),
+        reviewedAt: submission.reviewedAt,
+        createdAt: submission.createdAt,
+        updatedAt: submission.updatedAt,
+      })),
+      aggregateInsights,
+    };
+  }
+
+  private ensureBarProfile(input: { barId: string; name: string; suburb: string | null }): BarProfile {
+    const existing = this.repository.getBarProfile(input.barId);
+    if (existing) {
+      return existing;
+    }
+
+    const flags = tierFlags("basic");
+    return this.repository.upsertBarProfile({
+      barId: input.barId,
+      name: input.name,
+      address: null,
+      suburb: input.suburb,
+      area: input.suburb,
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      active: true,
+      now: nowIso(),
+      ...flags,
+    });
+  }
+
+  private createPendingBarChange(input: {
+    account: BusinessAccount;
+    venueId: string;
+    changeType: BarPendingChangeType;
+    action: BarPendingChangeAction;
+    targetId: string | null;
+    payload: Record<string, unknown>;
+    suburb?: string | null | undefined;
+  }) {
+    const now = nowIso();
+    const pendingChange = this.repository.createBarPendingChange({
+      id: crypto.randomUUID(),
+      barId: input.venueId,
+      changeType: input.changeType,
+      action: input.action,
+      targetId: input.targetId,
+      payload: input.payload,
+      submittedBy: input.account.id,
+      now,
+    });
+
+    this.trackEvent(input.account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId: input.venueId,
+      beerId: input.changeType === "beer" ? normalizeBeerId(String(input.payload.beerName ?? input.targetId ?? "")) : null,
+      suburb: input.suburb ?? null,
+      metadata: {
+        section: input.changeType,
+        action: input.action,
+        pendingChangeId: pendingChange.id,
+      },
+    });
+
+    return {
+      pendingChange,
+      message: "Saved for admin review. It will not appear publicly until approved.",
+    };
+  }
+
+  private applyApprovedBarChange(change: BarPendingChange, admin: BusinessAccount, now: string): void {
+    if (change.action === "delete") {
+      if (!change.targetId) {
+        throw new AppError("Pending delete change is missing a target.", 409);
+      }
+
+      if (change.changeType === "beer") {
+        this.repository.deleteBarBeer({ id: change.targetId, barId: change.barId });
+        return;
+      }
+
+      if (change.changeType === "happy_hour") {
+        this.repository.deleteBarHappyHour({ id: change.targetId, barId: change.barId });
+        return;
+      }
+
+      if (change.changeType === "special") {
+        this.repository.deleteBarSpecial({ id: change.targetId, barId: change.barId });
+        return;
+      }
+
+      throw new AppError("Profile changes cannot be deleted through pending review.", 400);
+    }
+
+    if (change.changeType === "profile") {
+      const existing = this.repository.getBarProfile(change.barId);
+      const payload = change.payload;
+      const membershipTier = existing?.membershipTier ?? "basic";
+      const flags = tierFlags(membershipTier);
+      this.repository.upsertBarProfile({
+        barId: change.barId,
+        name: stringOrNull(payload.name) ?? existing?.name ?? change.barId,
+        address: stringOrNull(payload.address),
+        suburb: stringOrNull(payload.suburb) ?? existing?.suburb ?? null,
+        area: stringOrNull(payload.area) ?? stringOrNull(payload.suburb) ?? existing?.area ?? existing?.suburb ?? null,
+        phone: stringOrNull(payload.phone),
+        website: stringOrNull(payload.website),
+        instagram: stringOrNull(payload.instagram),
+        description: stringOrNull(payload.description),
+        openingHours: objectFromUnknown(payload.openingHours),
+        venueTags: stringArrayFromUnknown(payload.venueTags),
+        membershipTier,
+        tierManualOverride: existing?.tierManualOverride ?? false,
+        active: booleanFromUnknown(payload.active, existing?.active ?? true),
+        now,
+        ...flags,
+      });
+      return;
+    }
+
+    if (change.changeType === "beer") {
+      const payload = change.payload;
+      const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
+      this.ensureBarProfile({
+        barId: change.barId,
+        name: this.repository.getBarProfile(change.barId)?.name ?? change.barId,
+        suburb: this.repository.getBarProfile(change.barId)?.suburb ?? null,
+      });
+      this.repository.upsertBarBeer({
+        id: targetId,
+        barId: change.barId,
+        beerName: stringOrNull(payload.beerName) ?? "Unnamed beer",
+        brewery: stringOrNull(payload.brewery),
+        style: stringOrNull(payload.style),
+        abv: numberOrNull(payload.abv),
+        serveSize: stringOrNull(payload.serveSize) as ServingSize | null,
+        price: numberOrNull(payload.price),
+        currency: "AUD",
+        onTap: booleanFromUnknown(payload.onTap, false),
+        inStock: booleanFromUnknown(payload.inStock, true),
+        notes: stringOrNull(payload.notes),
+        now,
+      });
+      return;
+    }
+
+    if (change.changeType === "happy_hour") {
+      const payload = change.payload;
+      const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
+      this.ensureBarProfile({
+        barId: change.barId,
+        name: this.repository.getBarProfile(change.barId)?.name ?? change.barId,
+        suburb: this.repository.getBarProfile(change.barId)?.suburb ?? null,
+      });
+      this.repository.upsertBarHappyHour({
+        id: targetId,
+        barId: change.barId,
+        title: stringOrNull(payload.title) ?? "Happy hour",
+        daysOfWeek: stringArrayFromUnknown(payload.daysOfWeek),
+        startTime: stringOrNull(payload.startTime) ?? "00:00",
+        endTime: stringOrNull(payload.endTime) ?? "00:00",
+        description: stringOrNull(payload.description) ?? "Details pending.",
+        active: booleanFromUnknown(payload.active, true),
+        now,
+      });
+      return;
+    }
+
+    if (change.changeType === "special") {
+      const payload = change.payload;
+      const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
+      this.ensureBarProfile({
+        barId: change.barId,
+        name: this.repository.getBarProfile(change.barId)?.name ?? change.barId,
+        suburb: this.repository.getBarProfile(change.barId)?.suburb ?? null,
+      });
+      this.repository.upsertBarSpecial({
+        id: targetId,
+        barId: change.barId,
+        title: stringOrNull(payload.title) ?? "Venue special",
+        description: stringOrNull(payload.description) ?? "Details pending.",
+        price: numberOrNull(payload.price),
+        discount: stringOrNull(payload.discount),
+        startsAt: stringOrNull(payload.startsAt),
+        endsAt: stringOrNull(payload.endsAt),
+        scheduleNote: stringOrNull(payload.scheduleNote),
+        exclusive: booleanFromUnknown(payload.exclusive, false),
+        active: booleanFromUnknown(payload.active, true),
+        now,
+      });
+      return;
+    }
+
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_bar_pending_change_unknown_type",
+      targetType: "bar_pending_change",
+      targetId: change.id,
+      metadata: { changeType: change.changeType },
+    });
+    throw new AppError("Unsupported pending bar change type.", 400);
+  }
+
+  signup(input: AuthSignupInput, context?: SessionRequestContext | undefined) {
     const email = normalizeEmail(input.email);
 
     if (this.repository.getAccountByEmail(email)) {
@@ -411,6 +1081,13 @@ export class BusinessService {
       suburb: null,
       metadata: { role: confirmed.role },
     });
+    this.recordUserActivity({
+      account: confirmed,
+      eventType: "user_signup",
+      relatedEntityType: "account",
+      relatedEntityId: confirmed.id,
+      metadata: { authProvider: confirmed.authProvider },
+    });
 
     if (input.ageConfirmed) {
       this.trackEvent(confirmed, {
@@ -423,17 +1100,142 @@ export class BusinessService {
       });
     }
 
-    return this.createSessionResponse(confirmed);
+    return this.createSessionResponse(confirmed, context);
   }
 
-  login(input: AuthLoginInput) {
+  login(input: AuthLoginInput, context?: SessionRequestContext | undefined) {
     const account = this.repository.getAccountByEmail(normalizeEmail(input.email));
 
     if (!account || !verifyPassword(input.password, account.passwordHash)) {
       throw new AppError("Invalid email or password.", 401);
     }
 
-    return this.createSessionResponse(account);
+    if (account.status === "suspended") {
+      throw new AppError("Account access is suspended.", 403);
+    }
+
+    const session = this.createSessionResponse(account, context);
+    this.recordUserActivity({
+      account,
+      eventType: "user_login",
+      relatedEntityType: "account",
+      relatedEntityId: account.id,
+      metadata: { authProvider: account.authProvider },
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "login_success",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { role: account.role },
+      context,
+    });
+    return session;
+  }
+
+  async loginWithSupabaseAccessToken(input: AuthSupabaseSessionInput, context?: SessionRequestContext | undefined) {
+    if (!this.supabase) {
+      throw new AppError("Supabase authentication is not configured.", 503);
+    }
+
+    const { data, error } = await this.supabase.auth.getUser(input.accessToken);
+    if (error || !data.user?.id || !data.user.email) {
+      throw new AppError("Invalid Supabase session.", 401);
+    }
+
+    const supabaseUser = data.user;
+    const supabaseEmail = supabaseUser.email;
+    if (!supabaseEmail) {
+      throw new AppError("Invalid Supabase session.", 401);
+    }
+
+    const email = normalizeEmail(supabaseEmail);
+    const metadata = (supabaseUser.user_metadata ?? {}) as Record<string, unknown>;
+    const displayName =
+      typeof metadata.full_name === "string"
+        ? metadata.full_name
+        : typeof metadata.name === "string"
+          ? metadata.name
+          : null;
+    const avatarUrl = typeof metadata.avatar_url === "string" ? metadata.avatar_url : null;
+
+    let account = this.repository.getAccountBySupabaseUserId(supabaseUser.id) ?? this.repository.getAccountByEmail(email);
+    const now = nowIso();
+    const emailVerifiedAt = getSupabaseEmailVerifiedAt(supabaseUser);
+    const mfaClaims = getSupabaseMfaClaims(input.accessToken, now);
+
+    if (!account) {
+      const adminEmails = new Set(
+        (this.config.ADMIN_EMAILS ?? "")
+          .split(",")
+          .map((value) => normalizeEmail(value))
+          .filter(Boolean),
+      );
+      account = this.repository.createAccount({
+        id: supabaseUser.id,
+        email,
+        passwordHash: "supabase-auth",
+        displayName,
+        avatarUrl,
+        authProvider: "supabase",
+        supabaseUserId: supabaseUser.id,
+        emailVerifiedAt,
+        mfaLevel: mfaClaims.mfaLevel,
+        mfaVerifiedAt: mfaClaims.mfaVerifiedAt,
+        role: adminEmails.has(email) ? "admin" : "user",
+        subscriptionStatus: adminEmails.has(email) ? "admin" : "free",
+        now,
+      });
+      this.recordUserActivity({
+        account,
+        eventType: "user_signup",
+        relatedEntityType: "account",
+        relatedEntityId: account.id,
+        metadata: { authProvider: "supabase" },
+      });
+    } else if (!account.supabaseUserId || account.authProvider !== "supabase" || account.displayName !== displayName || account.avatarUrl !== avatarUrl) {
+      account = this.repository.linkSupabaseAccount({
+        userId: account.id,
+        supabaseUserId: supabaseUser.id,
+        authProvider: "supabase",
+        displayName,
+        avatarUrl,
+        emailVerifiedAt,
+        mfaLevel: mfaClaims.mfaLevel,
+        mfaVerifiedAt: mfaClaims.mfaVerifiedAt,
+        now,
+      });
+    } else {
+      account = this.repository.updateAccountSecurityClaims({
+        userId: account.id,
+        emailVerifiedAt,
+        mfaLevel: mfaClaims.mfaLevel,
+        mfaVerifiedAt: mfaClaims.mfaVerifiedAt,
+        now,
+      });
+    }
+
+    if (account.status === "suspended") {
+      throw new AppError("Account access is suspended.", 403);
+    }
+
+    this.recordUserActivity({
+      account,
+      eventType: "user_login",
+      relatedEntityType: "account",
+      relatedEntityId: account.id,
+      metadata: { authProvider: "supabase" },
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "login_success",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { authProvider: "supabase", role: account.role },
+      context,
+    });
+
+    return this.createSessionResponse(account, context);
   }
 
   confirmAge(account: BusinessAccount) {
@@ -447,20 +1249,34 @@ export class BusinessService {
       suburb: null,
       metadata: { source: "account" },
     });
+    this.recordUserActivity({
+      account: updated,
+      eventType: "age_verification_started",
+      relatedEntityType: "account",
+      relatedEntityId: updated.id,
+      metadata: { method: "self_attestation", ageThreshold: 18 },
+    });
     return {
       account: sanitizeAccount(updated),
     };
   }
 
-  private createSessionResponse(account: BusinessAccount) {
+  private createSessionResponse(account: BusinessAccount, context?: SessionRequestContext | undefined) {
     const now = nowIso();
     const token = crypto.randomBytes(32).toString("base64url");
+    const ttlDays = account.role === "admin" || account.subscriptionStatus === "admin"
+      ? this.config.ADMIN_SESSION_TTL_DAYS
+      : this.config.SESSION_TTL_DAYS;
+    const requestHashes = this.getRequestHashes(context);
 
     this.repository.createSession({
       tokenHash: hashToken(token),
       userId: account.id,
       createdAt: now,
-      expiresAt: addDays(now, 60),
+      expiresAt: addDays(now, ttlDays),
+      lastUsedAt: now,
+      lastIpHash: requestHashes.ipHash,
+      userAgentHash: requestHashes.userAgentHash,
     });
 
     return {
@@ -468,6 +1284,44 @@ export class BusinessService {
       account: sanitizeAccount(account),
       access: this.getAccessState(account, null),
     };
+  }
+
+  logout(authorizationHeader: string | undefined, context?: SessionRequestContext | undefined) {
+    const token = getBearerToken(authorizationHeader);
+    if (!token) {
+      throw new AppError("Login required.", 401);
+    }
+
+    const account = this.requireAccount(authorizationHeader, context);
+    const revoked = this.repository.revokeSession({
+      tokenHash: hashToken(token),
+      revokedAt: nowIso(),
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "logout",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { revoked },
+      context,
+    });
+    return { revoked };
+  }
+
+  logoutAll(account: BusinessAccount, context?: SessionRequestContext | undefined) {
+    const revokedCount = this.repository.revokeUserSessions({
+      userId: account.id,
+      revokedAt: nowIso(),
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "logout_all",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { revokedCount },
+      context,
+    });
+    return { revokedCount };
   }
 
   getAccessState(account: BusinessAccount | null, anonymousSessionId: string | null) {
@@ -507,11 +1361,66 @@ export class BusinessService {
       .map((item) => item.label);
     const suggestedSuburb = savedSuburbs[0] ?? preferences?.preferredSuburbs[0];
     const suggestedMissions = this.listMissions({ suburb: suggestedSuburb, sort: "saved", limit: 6 });
+    const latestAgeVerification = this.repository.getLatestAgeVerification(account.id);
+    const submissions = this.repository.listSubmissions({ userId: account.id, limit: 100 });
+    const recentSubmissions = submissions.slice(0, 12).map((submission) => {
+      const detail = this.repository.getSubmissionById(submission.id);
+      return {
+        id: submission.id,
+        venueId: submission.venueId,
+        venueName: submission.venueName,
+        suburb: submission.suburb,
+        status: submission.status,
+        submissionType: submission.submissionType,
+        observedAt: submission.observedAt,
+        createdAt: submission.createdAt,
+        reviewedAt: submission.reviewedAt,
+        rejectionReason: submission.rejectionReason,
+        pointsAwarded: submission.pointsAwarded,
+        fraudFlagged: submission.fraudFlagged,
+        hasEvidence: Boolean(submission.sourcePhotoUrl),
+        verificationResult: submission.status === "approved"
+          ? "verified"
+          : submission.status === "needs_more_evidence"
+            ? "needs more info"
+            : submission.status,
+        items: (detail?.items ?? []).map((item) => ({
+          id: item.id,
+          beerName: item.beerName,
+          servingSize: item.servingSize,
+          price: item.price,
+          isHappyHourPrice: item.isHappyHourPrice,
+          happyHourDetails: item.happyHourDetails,
+          isOnTap: item.isOnTap,
+        })),
+      };
+    });
+    const pendingCount = submissions.filter((submission) => submission.status === "pending").length;
+    const needsMoreInfoCount = submissions.filter((submission) => submission.status === "needs_more_evidence").length;
+    const verifiedCount = submissions.filter((submission) => submission.status === "approved").length;
+    const rejectedCount = submissions.filter((submission) =>
+      ["rejected", "disputed", "fraud_flagged"].includes(submission.status),
+    ).length;
 
     return {
       account: sanitizeAccount(account),
+      profile: this.repository.getProfileById(account.id),
       access: this.getAccessState(account, null),
-      submissions: this.repository.listSubmissions({ userId: account.id, limit: 100 }),
+      submissions,
+      recentSubmissions,
+      dashboardStats: {
+        totalUploads: submissions.length,
+        pendingCount,
+        pendingVerificationCount: pendingCount + needsMoreInfoCount,
+        needsMoreInfoCount,
+        verifiedCount,
+        rejectedCount,
+        fraudStrikes: account.fraudStrikeCount,
+        pointsThisMonth: account.contributionPointsCurrentMonth,
+        trustScore: account.trustScore,
+      },
+      verifications: this.repository.listVerificationsForUser(account.id, 100),
+      activity: this.repository.listUserActivityEvents(account.id, 25),
       preferences: preferences ?? {
         userId: account.id,
         preferredSuburbs: [],
@@ -531,7 +1440,15 @@ export class BusinessService {
       },
       rewards: {
         status: "coming_soon",
-        eligiblePlaceholder: account.approvedSubmissionCount > 0,
+        eligiblePlaceholder: canAccessAgeGatedRewards({ account, latestAgeVerification }),
+        ageGatedEligible: canAccessAgeGatedRewards({ account, latestAgeVerification }),
+        ageThreshold: 18,
+      },
+      ageVerification: {
+        latest: latestAgeVerification,
+        status: account.ageVerificationStatus,
+        isOver18Verified: account.isOver18Verified,
+        copy: "18+ verification will be required for some future rewards. Pint Path does not store raw ID documents.",
       },
     };
   }
@@ -541,11 +1458,13 @@ export class BusinessService {
       throw new AppError("Suspended accounts cannot submit reward-eligible data.", 403);
     }
 
+    this.requireVerifiedEmail(account, "Verify your email before uploading venue data.");
+
     if (!account.ageConfirmedAt) {
       throw new AppError("Please confirm you are 18+ before submitting venue data.", 403);
     }
 
-    const sourcePhotoUrl = this.resolveSourcePhoto(input);
+    const sourcePhotoUrl = this.resolveSourcePhoto(account, input);
     const now = nowIso();
     const submission = this.repository.createSubmission({
       id: crypto.randomUUID(),
@@ -588,6 +1507,17 @@ export class BusinessService {
         hasSourcePhoto: Boolean(sourcePhotoUrl),
       },
     });
+    this.recordUserActivity({
+      account,
+      eventType: "data_upload_created",
+      relatedEntityType: "submission",
+      relatedEntityId: submission.id,
+      metadata: {
+        submissionType: submission.submissionType,
+        venueId: submission.venueId,
+        itemCount: input.items.length,
+      },
+    });
 
     return {
       submission,
@@ -596,7 +1526,10 @@ export class BusinessService {
     };
   }
 
-  private resolveSourcePhoto(input: Pick<CreateSubmissionInput, "sourcePhotoDataUrl" | "sourcePhotoUrl">): string | null {
+  private resolveSourcePhoto(
+    account: Pick<BusinessAccount, "id"> | null,
+    input: Pick<CreateSubmissionInput, "sourcePhotoDataUrl" | "sourcePhotoUrl">,
+  ): string | null {
     if (input.sourcePhotoDataUrl) {
       const mimeType = getSourcePhotoMimeType(input.sourcePhotoDataUrl);
       if (!mimeType || !SUBMISSION_LIMITS.allowedImageMimeTypes.includes(mimeType as never)) {
@@ -607,9 +1540,28 @@ export class BusinessService {
         throw new AppError("Upload image must be 6MB or smaller.", 400);
       }
 
-      // Demo storage: keep the data URL with the pending submission. Production should move this
-      // to object storage and keep only a private object key.
-      return input.sourcePhotoDataUrl;
+      const bytes = getSourcePhotoBuffer(input.sourcePhotoDataUrl);
+      if (looksLikeActiveTextPayload(bytes)) {
+        throw new AppError("Upload must be a safe image file, not SVG, HTML, XML, script, or style content.", 400);
+      }
+
+      const detectedMimeType = detectImageMimeType(bytes);
+      if (!detectedMimeType || detectedMimeType !== mimeType) {
+        throw new AppError("Upload image content does not match the declared file type.", 400);
+      }
+
+      const evidence = this.repository.createSourceEvidenceObject({
+        id: crypto.randomUUID(),
+        ownerUserId: account?.id ?? null,
+        storageProvider: "sqlite_private",
+        objectPath: `evidence/${crypto.randomUUID()}`,
+        mimeType,
+        byteSize: bytes.length,
+        dataBase64: bytes.toString("base64"),
+        externalUrl: null,
+        createdAt: nowIso(),
+      });
+      return privateEvidenceRef(evidence.id);
     }
 
     if (!input.sourcePhotoUrl) {
@@ -631,7 +1583,104 @@ export class BusinessService {
       throw new AppError("Source photo URL must point to a safe image source, not HTML, SVG, script, or style content.", 400);
     }
 
-    return parsed.toString();
+    const evidence = this.repository.createSourceEvidenceObject({
+      id: crypto.randomUUID(),
+      ownerUserId: account?.id ?? null,
+      storageProvider: "external_private_reference",
+      objectPath: `external/${crypto.randomUUID()}`,
+      mimeType: null,
+      byteSize: null,
+      dataBase64: null,
+      externalUrl: parsed.toString(),
+      createdAt: nowIso(),
+    });
+    return privateEvidenceRef(evidence.id);
+  }
+
+  private getEvidenceSigningSecret(): string {
+    if (this.config.SOURCE_EVIDENCE_SIGNING_SECRET) {
+      return this.config.SOURCE_EVIDENCE_SIGNING_SECRET;
+    }
+
+    if (this.config.NODE_ENV === "production") {
+      throw new AppError("Source evidence signing is not configured.", 503);
+    }
+
+    return "development-source-evidence-signing-secret";
+  }
+
+  private signEvidenceUrl(evidenceId: string, expiresAt: number): string {
+    return crypto
+      .createHmac("sha256", this.getEvidenceSigningSecret())
+      .update(`${evidenceId}.${expiresAt}`)
+      .digest("hex");
+  }
+
+  getSubmissionSourceEvidenceUrl(account: BusinessAccount, submissionId: string) {
+    const submission = this.repository.getSubmissionById(submissionId);
+    if (!submission) {
+      throw new AppError("Submission not found.", 404);
+    }
+
+    if (!this.isAdmin(account) && submission.submission.userId !== account.id) {
+      throw new AppError("You can only access your own source evidence.", 403);
+    }
+
+    const evidenceId = getPrivateEvidenceId(submission.submission.sourcePhotoUrl);
+    if (!evidenceId) {
+      return { signedUrl: null, expiresAt: null };
+    }
+
+    const evidence = this.repository.getSourceEvidenceObject(evidenceId);
+    if (!evidence) {
+      throw new AppError("Source evidence not found.", 404);
+    }
+
+    const expiresAt = Math.floor(Date.now() / 1000) + this.config.SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS;
+    const signature = this.signEvidenceUrl(evidence.id, expiresAt);
+    const signedUrl = new URL(`/api/business/source-evidence/${encodeURIComponent(evidence.id)}`, this.config.PUBLIC_BASE_URL);
+    signedUrl.searchParams.set("expires", String(expiresAt));
+    signedUrl.searchParams.set("signature", signature);
+
+    this.auditSecurity({
+      actor: account,
+      action: "source_evidence_signed_url_created",
+      targetType: "source_evidence",
+      targetId: evidence.id,
+      metadata: { submissionId },
+    });
+
+    return {
+      signedUrl: signedUrl.toString(),
+      expiresAt: new Date(expiresAt * 1000).toISOString(),
+    };
+  }
+
+  getSourceEvidenceForSignedRequest(input: {
+    evidenceId: string;
+    expires: string | undefined;
+    signature: string | undefined;
+  }): SourceEvidenceObject {
+    const expiresAt = Number(input.expires);
+    if (!Number.isInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000)) {
+      throw new AppError("Source evidence link has expired.", 403);
+    }
+
+    if (!input.signature || !/^[a-f0-9]{64}$/i.test(input.signature)) {
+      throw new AppError("Invalid source evidence signature.", 403);
+    }
+
+    const expected = this.signEvidenceUrl(input.evidenceId, expiresAt);
+    if (!crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(input.signature, "hex"))) {
+      throw new AppError("Invalid source evidence signature.", 403);
+    }
+
+    const evidence = this.repository.getSourceEvidenceObject(input.evidenceId);
+    if (!evidence) {
+      throw new AppError("Source evidence not found.", 404);
+    }
+
+    return evidence;
   }
 
   savePreferences(account: BusinessAccount, input: AccountPreferencesInput) {
@@ -734,7 +1783,7 @@ export class BusinessService {
 
   reportWrongPrice(account: BusinessAccount | null, input: WrongPriceReportInput) {
     const now = nowIso();
-    const sourcePhotoUrl = this.resolveSourcePhoto(input);
+    const sourcePhotoUrl = this.resolveSourcePhoto(account, input);
     const result = this.repository.createWrongPriceReport({
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
@@ -861,6 +1910,71 @@ export class BusinessService {
     });
   }
 
+  verifySubmission(account: BusinessAccount, submissionId: string, input: VerificationInput) {
+    if (account.status === "suspended") {
+      throw new AppError("Suspended accounts cannot verify venue data.", 403);
+    }
+
+    this.requireVerifiedEmail(account, "Verify your email before verifying venue data.");
+
+    const submission = this.repository.getSubmissionById(submissionId);
+    if (!submission) {
+      throw new AppError("Submission not found.", 404);
+    }
+
+    if (submission.submission.userId === account.id) {
+      throw new AppError("You cannot verify your own upload.", 403);
+    }
+
+    if (submission.submission.status !== "pending" && submission.submission.status !== "needs_more_evidence") {
+      throw new AppError("Only pending submissions can be community verified.", 409);
+    }
+
+    if (this.repository.getVerificationByUserAndUpload({ verifierUserId: account.id, uploadId: submissionId })) {
+      throw new AppError("You have already verified this upload.", 409);
+    }
+
+    const verification = this.repository.createVerification({
+      id: crypto.randomUUID(),
+      verifierUserId: account.id,
+      uploadId: submissionId,
+      targetEntityType: "submission",
+      targetEntityId: submissionId,
+      result: input.result,
+      notes: input.notes,
+      now: nowIso(),
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "data_verified",
+      venueId: submission.submission.venueId,
+      beerId: submission.items[0]?.normalizedBeerId ?? null,
+      suburb: submission.submission.suburb,
+      metadata: {
+        verificationId: verification.id,
+        submissionId,
+        result: input.result,
+      },
+    });
+    this.recordUserActivity({
+      account,
+      eventType: "data_verified",
+      relatedEntityType: "submission",
+      relatedEntityId: submissionId,
+      metadata: {
+        verificationId: verification.id,
+        result: input.result,
+        venueId: submission.submission.venueId,
+      },
+    });
+
+    return {
+      verification,
+      message: "Verification saved. Community confirmations help improve data confidence.",
+    };
+  }
+
   reviewSubmission(admin: BusinessAccount, submissionId: string, input: ReviewSubmissionInput) {
     const submission = this.repository.getSubmissionById(submissionId);
 
@@ -889,6 +2003,18 @@ export class BusinessService {
       monthKey: monthKeyFromIso(submission.submission.observedAt),
       premiumUntil: addDays(nowIso(), this.config.CONTRIBUTOR_UNLOCK_DAYS),
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
+    });
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_submission_review",
+      targetType: "submission",
+      targetId: submissionId,
+      metadata: {
+        status: input.status,
+        fraudFlagged: input.fraudFlagged,
+        pointsAwarded: input.status === "approved" ? result.pointsAwarded : 0,
+        venueId: result.submission.venueId,
+      },
     });
     const eventType: EventTrackInput["eventType"] =
       input.status === "approved" ? "submission_approved" : "submission_rejected";
@@ -1101,7 +2227,12 @@ export class BusinessService {
   ) {
     const anonymousSessionId = input.anonymousSessionId
       || (account ? null : hashAnonymousFallback(input.clientIp || "unknown-client"));
-    const records = this.repository.listLatestPriceRecords(input.limit, input.venueId);
+    const records = [
+      ...this.repository.listLatestPriceRecords(input.limit, input.venueId),
+      ...this.repository.listVenueManagerPriceRecords(input.limit, input.venueId),
+    ]
+      .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime())
+      .slice(0, input.limit);
     const hasFullAccess = isFullAccess(account);
 
     if (hasFullAccess) {
@@ -1206,17 +2337,40 @@ export class BusinessService {
       throw new AppError("Admin access required.", 403);
     }
 
-    return this.repository.getAnalyticsPreview();
+    const preview = this.repository.getAnalyticsPreview();
+    return {
+      ...preview,
+      topSearchedBeers: this.applyAnalyticsThreshold(preview.topSearchedBeers),
+      topClickedVenues: this.applyAnalyticsThreshold(preview.topClickedVenues),
+      topSuburbs: this.applyAnalyticsThreshold(preview.topSuburbs),
+      suppressedBelowCount: this.config.ANALYTICS_MIN_BUCKET_SIZE,
+    };
   }
 
   getVenuePortal(account: BusinessAccount, query: VenuePortalQuery) {
+    this.requireVerifiedBarAccount(account);
     const isAdmin = this.isAdmin(account);
     const assignments = isAdmin
       ? this.repository.listVenueManagerAssignments({ activeOnly: true, limit: 100 })
       : this.repository.listVenueManagerAssignments({ userId: account.id, activeOnly: true, limit: 100 });
 
     if (!isAdmin && assignments.length === 0) {
-      throw new AppError("Venue manager access required.", 403);
+      return {
+        accessState: "claim_required",
+        assignments: [],
+        selectedVenue: null,
+        profile: null,
+        tier: null,
+        inventory: { beers: [], happyHours: [], specials: [] },
+        pendingChanges: [],
+        insights: null,
+        analytics: null,
+        monthlyReport: null,
+        updateLink: null,
+        claimRequests: this.repository.listBarClaimRequests({ userId: account.id, limit: 10 }),
+        message: "Request access to a bar and admin will manually review the claim.",
+        privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
+      };
     }
 
     const selectedVenueId = query.venueId ?? assignments[0]?.venueId;
@@ -1224,6 +2378,7 @@ export class BusinessService {
       return {
         assignments,
         selectedVenue: null,
+        pendingChanges: [],
         insights: null,
         updateLink: null,
         privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
@@ -1239,10 +2394,55 @@ export class BusinessService {
 
     const venueName = assignment?.venueName ?? selectedVenueId;
     const suburb = assignment?.suburb ?? null;
-    const insights = this.repository.getVenueManagerInsights({
+    const rawInsights = this.repository.getVenueManagerInsights({
       venueId: selectedVenueId,
       suburb,
       staleBefore: daysAgoIso(30),
+    });
+    const profile = this.getOrBuildBarProfile({ barId: selectedVenueId, name: venueName, suburb });
+    const capabilities = getBarTierCapabilities(profile.membershipTier, isAdmin);
+    const venueInsightPrivacyThreshold = Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE);
+    const analytics = capabilities.analytics
+      ? this.repository.getBarAreaAnalytics({
+          barId: selectedVenueId,
+          area: profile.area ?? profile.suburb ?? suburb,
+          month: monthKeyFromIso(nowIso()),
+          privacyThreshold: venueInsightPrivacyThreshold,
+        })
+      : null;
+    const savedMonthlyReport = capabilities.monthlyReports
+      ? this.repository.getMonthlyBarReport({ barId: selectedVenueId, month: monthKeyFromIso(nowIso()) })
+      : null;
+    const monthlyReport = capabilities.monthlyReports
+      ? savedMonthlyReport ?? {
+          id: null,
+          barId: selectedVenueId,
+          month: monthKeyFromIso(nowIso()),
+          data: {
+            generated: false,
+            summary: analytics
+              ? {
+                  totalBarLookups: analytics.barLookups,
+                  totalProfileViews: analytics.profileViews,
+                  totalBeerListViews: analytics.beerListViews,
+                  totalSpecialsDealsViews: analytics.specialsViews,
+                  mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
+                  mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
+                  suggestedActions: analytics.privacyFloorMet
+                    ? [
+                        "Keep your tap list current so nearby search demand has an accurate listing to land on.",
+                        "Add happy-hour details if they are missing; users often filter by active specials.",
+                      ]
+                    : ["Not enough suburb data yet. Your report will become more useful as more users search nearby."],
+                }
+              : null,
+          },
+          createdAt: null,
+        }
+      : null;
+    const insights = this.sanitizeVenueManagerInsights(rawInsights, {
+      includeAggregate: capabilities.analytics,
+      privacyThreshold: venueInsightPrivacyThreshold,
     });
     const updateLink = `/submit.html?venueId=${encodeURIComponent(selectedVenueId)}&venueName=${encodeURIComponent(venueName)}${suburb ? `&suburb=${encodeURIComponent(suburb)}` : ""}`;
 
@@ -1270,10 +2470,60 @@ export class BusinessService {
         venueName,
         suburb,
       },
+      profile,
+      tier: {
+        ...capabilities,
+        analyticsLocked: !capabilities.analytics,
+      },
+      inventory: {
+        beers: this.repository.listBarBeers(selectedVenueId),
+        happyHours: this.repository.listBarHappyHours(selectedVenueId),
+        specials: this.repository.listBarSpecials(selectedVenueId),
+      },
+      pendingChanges: this.repository.listBarPendingChanges({ barId: selectedVenueId, status: "pending", limit: 100 }),
       insights,
+      analytics,
+      monthlyReport,
       updateLink,
       qrCopy: "Copy this update link or turn it into a QR code for your bar/tap-list area.",
       privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
+    };
+  }
+
+  createBarClaimRequest(account: BusinessAccount, input: BarClaimRequestInput) {
+    this.requireVerifiedBarAccount(account);
+    const now = nowIso();
+    const claim = this.repository.createBarClaimRequest({
+      id: crypto.randomUUID(),
+      userId: account.id,
+      barId: input.barId,
+      barName: input.barName,
+      address: input.address,
+      suburb: input.suburb,
+      requesterName: input.requesterName,
+      requesterRole: input.requesterRole,
+      contactEmail: normalizeEmail(input.contactEmail),
+      contactPhone: input.contactPhone,
+      message: input.message,
+      now,
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_claim_requested",
+      venueId: claim.barId,
+      beerId: null,
+      suburb: claim.suburb,
+      metadata: {
+        claimId: claim.id,
+        barName: claim.barName,
+        requesterRole: claim.requesterRole,
+      },
+    });
+
+    return {
+      claim,
+      message: "Claim request submitted. Admin will manually verify and assign access if approved.",
     };
   }
 
@@ -1310,6 +2560,373 @@ export class BusinessService {
     };
   }
 
+  upsertBarProfile(account: BusinessAccount, venueId: string, input: BarProfileInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = this.repository.getBarProfile(venueId);
+    const existingTier = existing?.membershipTier ?? "basic";
+    const membershipTier = this.isAdmin(account) ? input.membershipTier ?? existingTier : existingTier;
+    if (!this.isAdmin(account)) {
+      return this.createPendingBarChange({
+        account,
+        venueId,
+        changeType: "profile",
+        action: "upsert",
+        targetId: venueId,
+        payload: {
+          ...input,
+          membershipTier,
+          venueTags: cleanStringList(input.venueTags),
+          area: input.area ?? input.suburb ?? assignment?.suburb ?? existing?.area ?? existing?.suburb ?? null,
+        },
+        suburb: input.suburb ?? assignment?.suburb ?? existing?.suburb ?? null,
+      });
+    }
+
+    const flags = tierFlags(membershipTier);
+    const now = nowIso();
+    const profile = this.repository.upsertBarProfile({
+      barId: venueId,
+      name: input.name,
+      address: input.address,
+      suburb: input.suburb ?? assignment?.suburb ?? existing?.suburb ?? null,
+      area: input.area ?? input.suburb ?? assignment?.suburb ?? existing?.area ?? existing?.suburb ?? null,
+      phone: input.phone,
+      website: input.website,
+      instagram: input.instagram,
+      description: input.description,
+      openingHours: input.openingHours,
+      venueTags: cleanStringList(input.venueTags),
+      membershipTier,
+      active: input.active,
+      tierManualOverride: this.isAdmin(account) && input.membershipTier !== undefined ? true : existing?.tierManualOverride ?? false,
+      now,
+      ...flags,
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: profile.suburb,
+      metadata: { section: "profile", membershipTier: profile.membershipTier },
+    });
+
+    return {
+      profile,
+      tier: getBarTierCapabilities(profile.membershipTier, this.isAdmin(account)),
+      message: "Bar profile saved.",
+    };
+  }
+
+  upsertBarBeer(account: BusinessAccount, venueId: string, input: BarBeerInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = input.id ? this.repository.getBarBeerById(input.id) : null;
+    if (existing && existing.barId !== venueId) {
+      throw new AppError("Beer row belongs to another venue.", 403);
+    }
+
+    if (!this.isAdmin(account)) {
+      const targetId = input.id ?? crypto.randomUUID();
+      return this.createPendingBarChange({
+        account,
+        venueId,
+        changeType: "beer",
+        action: "upsert",
+        targetId,
+        payload: { ...input, id: targetId },
+        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      });
+    }
+
+    const profile = this.ensureBarProfile({
+      barId: venueId,
+      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
+      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+    });
+    const beer = this.repository.upsertBarBeer({
+      id: input.id ?? crypto.randomUUID(),
+      barId: venueId,
+      beerName: input.beerName,
+      brewery: input.brewery,
+      style: input.style,
+      abv: input.abv,
+      serveSize: input.serveSize,
+      price: input.price,
+      currency: "AUD",
+      onTap: input.onTap,
+      inStock: input.inStock,
+      notes: input.notes,
+      now: nowIso(),
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: normalizeBeerId(beer.beerName),
+      suburb: profile.suburb,
+      metadata: { section: "beer_inventory", onTap: beer.onTap, inStock: beer.inStock, hasPrice: beer.price != null },
+    });
+
+    return { beer, message: "Beer row saved." };
+  }
+
+  deleteBarBeer(account: BusinessAccount, venueId: string, beerId: string) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = this.repository.getBarBeerById(beerId);
+    if (!existing || existing.barId !== venueId) {
+      throw new AppError("Beer row not found for this venue.", 404);
+    }
+
+    if (!this.isAdmin(account)) {
+      return this.createPendingBarChange({
+        account,
+        venueId,
+        changeType: "beer",
+        action: "delete",
+        targetId: beerId,
+        payload: { id: beerId, beerName: existing.beerName },
+        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      });
+    }
+
+    const deleted = this.repository.deleteBarBeer({ id: beerId, barId: venueId });
+    if (!deleted) {
+      throw new AppError("Beer row not found for this venue.", 404);
+    }
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId,
+      suburb: assignment?.suburb ?? null,
+      metadata: { section: "beer_inventory", action: "delete" },
+    });
+
+    return { deleted: true, message: "Beer row removed." };
+  }
+
+  upsertBarHappyHour(account: BusinessAccount, venueId: string, input: BarHappyHourInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = input.id ? this.repository.getBarHappyHourById(input.id) : null;
+    if (existing && existing.barId !== venueId) {
+      throw new AppError("Happy-hour row belongs to another venue.", 403);
+    }
+
+    if (!this.isAdmin(account)) {
+      const targetId = input.id ?? crypto.randomUUID();
+      return this.createPendingBarChange({
+        account,
+        venueId,
+        changeType: "happy_hour",
+        action: "upsert",
+        targetId,
+        payload: { ...input, id: targetId },
+        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      });
+    }
+
+    const profile = this.ensureBarProfile({
+      barId: venueId,
+      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
+      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+    });
+    const happyHour = this.repository.upsertBarHappyHour({
+      id: input.id ?? crypto.randomUUID(),
+      barId: venueId,
+      title: input.title,
+      daysOfWeek: input.daysOfWeek,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      description: input.description,
+      active: input.active,
+      now: nowIso(),
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: profile.suburb,
+      metadata: { section: "happy_hours", active: happyHour.active, days: happyHour.daysOfWeek },
+    });
+
+    return { happyHour, message: "Happy hour saved." };
+  }
+
+  deleteBarHappyHour(account: BusinessAccount, venueId: string, happyHourId: string) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = this.repository.getBarHappyHourById(happyHourId);
+    if (!existing || existing.barId !== venueId) {
+      throw new AppError("Happy hour not found for this venue.", 404);
+    }
+
+    if (!this.isAdmin(account)) {
+      return this.createPendingBarChange({
+        account,
+        venueId,
+        changeType: "happy_hour",
+        action: "delete",
+        targetId: happyHourId,
+        payload: { id: happyHourId, title: existing.title },
+        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      });
+    }
+
+    const deleted = this.repository.deleteBarHappyHour({ id: happyHourId, barId: venueId });
+    if (!deleted) {
+      throw new AppError("Happy hour not found for this venue.", 404);
+    }
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: assignment?.suburb ?? null,
+      metadata: { section: "happy_hours", action: "delete" },
+    });
+
+    return { deleted: true, message: "Happy hour removed." };
+  }
+
+  upsertBarSpecial(account: BusinessAccount, venueId: string, input: BarSpecialInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = input.id ? this.repository.getBarSpecialById(input.id) : null;
+    if (existing && existing.barId !== venueId) {
+      throw new AppError("Special belongs to another venue.", 403);
+    }
+
+    if (!this.isAdmin(account)) {
+      const targetId = input.id ?? crypto.randomUUID();
+      return this.createPendingBarChange({
+        account,
+        venueId,
+        changeType: "special",
+        action: "upsert",
+        targetId,
+        payload: { ...input, id: targetId },
+        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      });
+    }
+
+    const profile = this.ensureBarProfile({
+      barId: venueId,
+      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
+      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+    });
+    const special = this.repository.upsertBarSpecial({
+      id: input.id ?? crypto.randomUUID(),
+      barId: venueId,
+      title: input.title,
+      description: input.description,
+      price: input.price,
+      discount: input.discount,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+      scheduleNote: input.scheduleNote,
+      exclusive: input.exclusive,
+      active: input.active,
+      now: nowIso(),
+    });
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: profile.suburb,
+      metadata: { section: "specials", active: special.active, exclusive: special.exclusive, hasPrice: special.price != null },
+    });
+
+    return { special, message: "Deal or special saved." };
+  }
+
+  deleteBarSpecial(account: BusinessAccount, venueId: string, specialId: string) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const existing = this.repository.getBarSpecialById(specialId);
+    if (!existing || existing.barId !== venueId) {
+      throw new AppError("Special not found for this venue.", 404);
+    }
+
+    if (!this.isAdmin(account)) {
+      return this.createPendingBarChange({
+        account,
+        venueId,
+        changeType: "special",
+        action: "delete",
+        targetId: specialId,
+        payload: { id: specialId, title: existing.title },
+        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      });
+    }
+
+    const deleted = this.repository.deleteBarSpecial({ id: specialId, barId: venueId });
+    if (!deleted) {
+      throw new AppError("Special not found for this venue.", 404);
+    }
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "venue_update_submitted",
+      venueId,
+      beerId: null,
+      suburb: assignment?.suburb ?? null,
+      metadata: { section: "specials", action: "delete" },
+    });
+
+    return { deleted: true, message: "Deal or special removed." };
+  }
+
+  reviewBarPendingChange(admin: BusinessAccount, changeId: string, input: BarPendingChangeReviewInput) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    const change = this.repository.getBarPendingChangeById(changeId);
+    if (!change) {
+      throw new AppError("Pending bar change not found.", 404);
+    }
+
+    if (change.status !== "pending") {
+      throw new AppError("Pending bar change has already been reviewed.", 409);
+    }
+
+    const now = nowIso();
+    if (input.status === "approved") {
+      this.applyApprovedBarChange(change, admin, now);
+    }
+
+    const reviewed = this.repository.reviewBarPendingChange({
+      id: change.id,
+      status: input.status,
+      reviewedBy: admin.id,
+      reviewedAt: now,
+      rejectionReason: input.status === "rejected" ? input.rejectionReason ?? "Rejected by admin review." : null,
+    });
+
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_bar_pending_change_review",
+      targetType: "bar_pending_change",
+      targetId: change.id,
+      metadata: {
+        barId: change.barId,
+        changeType: change.changeType,
+        action: change.action,
+        status: input.status,
+      },
+    });
+
+    return {
+      pendingChange: reviewed,
+      message: input.status === "approved" ? "Bar change approved and published." : "Bar change rejected. Public data was not changed.",
+    };
+  }
+
   assignVenueManager(admin: BusinessAccount, input: VenueManagerAssignmentInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
@@ -1328,6 +2945,17 @@ export class BusinessService {
       suburb: input.suburb,
       approvedBy: admin.id,
       now: nowIso(),
+    });
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_venue_manager_assignment",
+      targetType: "venue_manager_assignment",
+      targetId: assignment.id,
+      metadata: {
+        managerUserId: assignment.userId,
+        venueId: assignment.venueId,
+        venueName: assignment.venueName,
+      },
     });
 
     this.trackEvent(admin, {
@@ -1356,6 +2984,17 @@ export class BusinessService {
     if (!assignment) {
       throw new AppError("Venue manager assignment not found.", 404);
     }
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_venue_manager_revoke",
+      targetType: "venue_manager_assignment",
+      targetId: assignment.id,
+      metadata: {
+        managerUserId: assignment.userId,
+        venueId: assignment.venueId,
+        venueName: assignment.venueName,
+      },
+    });
 
     this.trackEvent(admin, {
       anonymousSessionId: null,
@@ -1376,7 +3015,9 @@ export class BusinessService {
 
     return {
       interests: this.repository.listVenueInterestRequests(100),
+      claimRequests: this.repository.listBarClaimRequests({ limit: 100 }),
       assignments: this.repository.listVenueManagerAssignments({ limit: 100 }),
+      pendingChanges: this.repository.listBarPendingChanges({ status: "pending", limit: 100 }),
       outreach: this.repository.listVenuePartnerOutreach(100),
       leads: this.repository.getPotentialPartnerLeads({
         staleBefore: daysAgoIso(90),
@@ -1399,6 +3040,13 @@ export class BusinessService {
     if (!interest) {
       throw new AppError("Venue interest request not found.", 404);
     }
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_venue_interest_status_update",
+      targetType: "venue_interest",
+      targetId: interest.id,
+      metadata: { status: interest.status, venueId: interest.venueId, venueName: interest.venueName },
+    });
 
     this.trackEvent(admin, {
       anonymousSessionId: null,
@@ -1428,6 +3076,13 @@ export class BusinessService {
       updatedBy: admin.id,
       now: nowIso(),
     });
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_venue_outreach_update",
+      targetType: "venue",
+      targetId: outreach.venueId,
+      metadata: { status: outreach.status, venueName: outreach.venueName },
+    });
 
     this.trackEvent(admin, {
       anonymousSessionId: null,
@@ -1447,13 +3102,23 @@ export class BusinessService {
     }
 
     const totalVenues = Math.max(this.repository.countKnownVenues(), this.repository.countMissions());
-    return this.repository.getAdminKpiDashboard({
+    const dashboard = this.repository.getAdminKpiDashboard({
       since: startOfAdminRange(query.range),
       sevenDaysAgo: daysAgoIso(7),
       thirtyDaysAgo: daysAgoIso(30),
       staleBefore: daysAgoIso(90),
       totalVenues,
     });
+    return {
+      ...dashboard,
+      topSearchedBeers: this.applyAnalyticsThreshold(dashboard.topSearchedBeers),
+      topSearchedSuburbs: this.applyAnalyticsThreshold(dashboard.topSearchedSuburbs),
+      topClickedVenues: this.applyAnalyticsThreshold(dashboard.topClickedVenues),
+      highDemandVenuesWithStaleOrMissingData: this.applyAnalyticsThreshold(
+        dashboard.highDemandVenuesWithStaleOrMissingData,
+      ),
+      suppressedBelowCount: this.config.ANALYTICS_MIN_BUCKET_SIZE,
+    };
   }
 
   getRetentionCohorts(admin: BusinessAccount, query: RetentionQuery) {
@@ -1606,6 +3271,96 @@ export class BusinessService {
     };
   }
 
+  async createBarTierCheckout(account: BusinessAccount, venueId: string, input: BarTierCheckoutInput) {
+    this.requireVerifiedBarAccount(account);
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const profile = this.ensureBarProfile({
+      barId: venueId,
+      name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
+      suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+    });
+    const priceId = input.tier === "plus" ? this.config.STRIPE_PLUS_PRICE_ID : this.config.STRIPE_PRO_PRICE_ID;
+    const flags = tierFlags(input.tier);
+
+    this.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "checkout_started",
+      venueId,
+      beerId: null,
+      suburb: profile.suburb,
+      metadata: { billingContext: "bar", tier: input.tier },
+    });
+
+    if (this.config.DEMO_BILLING_MODE) {
+      const updatedProfile = this.repository.updateBarSubscription({
+        barId: venueId,
+        membershipTier: input.tier,
+        subscriptionStatus: "active_demo",
+        now: nowIso(),
+        ...flags,
+      });
+      this.auditSecurity({
+        actor: account,
+        action: "demo_subscription_grant",
+        targetType: "bar",
+        targetId: venueId,
+        metadata: { tier: input.tier, mode: "demo" },
+      });
+      const tierCapabilities = getBarTierCapabilities(updatedProfile.membershipTier, this.isAdmin(account));
+      return {
+        mode: "demo",
+        checkoutUrl: `/venue-portal?checkout=demo&tier=${input.tier}&venueId=${encodeURIComponent(venueId)}`,
+        profile: updatedProfile,
+        tier: {
+          ...tierCapabilities,
+          analyticsLocked: !tierCapabilities.analytics,
+        },
+        message: `${input.tier === "plus" ? "Plus" : "Pro"} demo tier activated for this bar.`,
+      };
+    }
+
+    if (!this.config.STRIPE_SECRET_KEY || !priceId) {
+      throw new AppError("Stripe checkout is not configured for this bar tier.", 503);
+    }
+
+    const successUrl = new URL(`/venue-portal?checkout=success&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
+    const cancelUrl = new URL(`/venue-portal?checkout=cancelled&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
+    const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: formEncode({
+        mode: "subscription",
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        "line_items[0][price]": priceId,
+        "line_items[0][quantity]": "1",
+        "metadata[billing_context]": "bar",
+        "metadata[user_id]": account.id,
+        "metadata[bar_id]": venueId,
+        "metadata[bar_membership_tier]": input.tier,
+        customer_email: account.email,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as { url?: string; error?: { message?: string } } | null;
+
+    if (!response.ok || !payload?.url) {
+      throw new ExternalServiceError("Stripe bar tier checkout session failed", {
+        status: response.status,
+        message: payload?.error?.message,
+      });
+    }
+
+    return {
+      mode: "stripe",
+      checkoutUrl: payload.url,
+      message: "Stripe checkout created for this bar tier.",
+    };
+  }
+
   handleDemoSubscription(account: BusinessAccount, plan: "monthly" | "yearly") {
     if (!this.config.DEMO_BILLING_MODE) {
       throw new AppError("Demo billing is not enabled.", 503);
@@ -1618,6 +3373,13 @@ export class BusinessService {
       subscriptionStatus: status,
       premiumUntil: null,
       now,
+    });
+    this.auditSecurity({
+      actor: updated,
+      action: "demo_subscription_grant",
+      targetType: "account",
+      targetId: updated.id,
+      metadata: { plan, mode: "demo", subscriptionStatus: status },
     });
     this.trackEvent(updated, {
       anonymousSessionId: null,
@@ -1636,10 +3398,25 @@ export class BusinessService {
     }
 
     if (!rawBody || !signature) {
+      this.auditSecurity({
+        action: "stripe_webhook_signature_failed",
+        targetType: "stripe_webhook",
+        metadata: { reason: !rawBody ? "missing_raw_body" : "missing_signature" },
+      });
       throw new AppError("Missing Stripe webhook signature.", 400);
     }
 
-    const event = this.verifyStripeWebhook(rawBody, signature);
+    let event: StripeEvent;
+    try {
+      event = this.verifyStripeWebhook(rawBody, signature);
+    } catch (error) {
+      this.auditSecurity({
+        action: "stripe_webhook_signature_failed",
+        targetType: "stripe_webhook",
+        metadata: { reason: error instanceof Error ? error.message : "invalid_signature" },
+      });
+      throw error;
+    }
     const inserted = this.repository.rememberStripeEvent({
       id: event.id,
       eventType: event.type,
@@ -1695,9 +3472,41 @@ export class BusinessService {
 
     if (event.type === "checkout.session.completed") {
       const metadata = object.metadata as Record<string, string> | undefined;
+      const billingContext = metadata?.billing_context;
+      const barId = metadata?.bar_id;
+      const barMembershipTier = metadata?.bar_membership_tier as BarMembershipTier | undefined;
+      const subscriptionId = typeof object.subscription === "string" ? object.subscription : null;
       const userId = metadata?.user_id;
       const subscriptionStatus = metadata?.subscription_status as SubscriptionStatus | undefined;
       const customer = typeof object.customer === "string" ? object.customer : null;
+
+      if (billingContext === "bar" && barId && (barMembershipTier === "plus" || barMembershipTier === "pro")) {
+        const flags = tierFlags(barMembershipTier);
+        this.repository.updateBarSubscription({
+          barId,
+          membershipTier: barMembershipTier,
+          stripeCustomerId: customer,
+          stripeSubscriptionId: subscriptionId,
+          subscriptionStatus: "active",
+          now: nowIso(),
+          ...flags,
+        });
+        this.trackEvent(null, {
+          anonymousSessionId: null,
+          eventType: "subscription_created",
+          venueId: barId,
+          beerId: null,
+          suburb: null,
+          metadata: { mode: "stripe", billingContext: "bar", tier: barMembershipTier },
+        });
+        this.auditSecurity({
+          action: "stripe_subscription_update",
+          targetType: "bar",
+          targetId: barId,
+          metadata: { eventType: event.type, tier: barMembershipTier, status: "active" },
+        });
+        return;
+      }
 
       if (userId && subscriptionStatus) {
         const updated = this.repository.updateSubscription({
@@ -1715,17 +3524,68 @@ export class BusinessService {
           suburb: null,
           metadata: { mode: "stripe", subscriptionStatus },
         });
+        this.auditSecurity({
+          actor: updated,
+          action: "stripe_subscription_update",
+          targetType: "account",
+          targetId: updated.id,
+          metadata: { eventType: event.type, subscriptionStatus },
+        });
       }
     }
 
-    if (event.type === "customer.subscription.deleted") {
+    if (
+      event.type === "customer.subscription.deleted" ||
+      event.type === "customer.subscription.updated" ||
+      event.type === "invoice.payment_failed"
+    ) {
       const customer = typeof object.customer === "string" ? object.customer : null;
+      const subscriptionId = typeof object.subscription === "string"
+        ? object.subscription
+        : typeof object.id === "string"
+          ? object.id
+          : null;
+      const stripeStatus = typeof object.status === "string" ? object.status : null;
+      const shouldDowngrade =
+        event.type === "customer.subscription.deleted" ||
+        event.type === "invoice.payment_failed" ||
+        ["canceled", "cancelled", "past_due", "unpaid", "incomplete_expired"].includes(stripeStatus ?? "");
+      const barProfile = subscriptionId ? this.repository.getBarProfileByStripeSubscriptionId(subscriptionId) : null;
+      if (barProfile) {
+        const nextTier = shouldDowngrade ? "basic" : barProfile.membershipTier;
+        const flags = tierFlags(nextTier);
+        this.repository.updateBarSubscription({
+          barId: barProfile.barId,
+          membershipTier: nextTier,
+          stripeCustomerId: customer,
+          stripeSubscriptionId: subscriptionId,
+          subscriptionStatus: shouldDowngrade ? "cancelled_or_past_due" : stripeStatus ?? "active",
+          now: nowIso(),
+          ...flags,
+        });
+        this.trackEvent(null, {
+          anonymousSessionId: null,
+          eventType: "subscription_cancelled",
+          venueId: barProfile.barId,
+          beerId: null,
+          suburb: barProfile.suburb,
+          metadata: { mode: "stripe", billingContext: "bar" },
+        });
+        this.auditSecurity({
+          action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
+          targetType: "bar",
+          targetId: barProfile.barId,
+          metadata: { eventType: event.type, stripeStatus, shouldDowngrade },
+        });
+        return;
+      }
+
       const account = customer ? this.repository.getAccountByStripeCustomerId(customer) : null;
 
       if (account) {
         const updated = this.repository.updateSubscription({
           userId: account.id,
-          subscriptionStatus: "free",
+          subscriptionStatus: shouldDowngrade ? "free" : account.subscriptionStatus,
           premiumUntil: null,
           now: nowIso(),
         });
@@ -1737,6 +3597,13 @@ export class BusinessService {
           suburb: null,
           metadata: { mode: "stripe" },
         });
+        this.auditSecurity({
+          actor: updated,
+          action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
+          targetType: "account",
+          targetId: updated.id,
+          metadata: { eventType: event.type, stripeStatus, shouldDowngrade },
+        });
       }
     }
   }
@@ -1746,14 +3613,22 @@ export class BusinessService {
       throw new AppError("Admin access required.", 403);
     }
 
+    const account = this.repository.overrideUserStatus({
+      userId,
+      status: input.status,
+      trustScore: input.trustScore,
+      fraudStrikeCount: input.fraudStrikeCount,
+      now: nowIso(),
+    });
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_user_status_override",
+      targetType: "account",
+      targetId: userId,
+      metadata: { status: input.status, fraudStrikeCount: input.fraudStrikeCount },
+    });
     return {
-      account: sanitizeAccount(this.repository.overrideUserStatus({
-        userId,
-        status: input.status,
-        trustScore: input.trustScore,
-        fraudStrikeCount: input.fraudStrikeCount,
-        now: nowIso(),
-      })),
+      account: sanitizeAccount(account),
     };
   }
 

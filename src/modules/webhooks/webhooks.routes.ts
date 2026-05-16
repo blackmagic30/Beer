@@ -1,7 +1,9 @@
 import { Router, type Request, type Response } from "express";
 
 import { failure, success } from "../../lib/http.js";
+import { isAppError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import { redactSecrets } from "../../lib/redact.js";
 
 import {
   twilioStatusWebhookEnvelopeSchema,
@@ -30,12 +32,15 @@ export function createWebhooksRouter(options: {
 
       res.json(success(result));
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown post-call webhook error";
+      const statusCode = isAppError(error) ? error.statusCode : 500;
+      const message = error instanceof Error ? redactSecrets(error.message) : "Unknown post-call webhook error";
 
       logger.error("ElevenLabs post-call webhook failed", {
         error: message,
       });
-      res.json(failure("Failed to process ElevenLabs post-call webhook", { message }));
+      res
+        .status(statusCode >= 400 && statusCode < 600 ? statusCode : 500)
+        .json(failure("Failed to process ElevenLabs post-call webhook"));
     }
   };
 
@@ -43,9 +48,9 @@ export function createWebhooksRouter(options: {
     logger.info("Twilio voice webhook hit", {
       path: req.originalUrl,
       runId: req.query.runId,
-      callSid: typeof req.body?.CallSid === "string" ? req.body.CallSid : null,
-      from: typeof req.body?.From === "string" ? req.body.From : null,
-      to: typeof req.body?.To === "string" ? req.body.To : null,
+      callSidPresent: typeof req.body?.CallSid === "string",
+      fromPresent: typeof req.body?.From === "string",
+      toPresent: typeof req.body?.To === "string",
     });
 
     const validation = options.twilioService.isValidRequest(req, options.validateTwilioSignatures);
@@ -97,7 +102,7 @@ export function createWebhooksRouter(options: {
     logger.info("Twilio status webhook hit", {
       path: req.originalUrl,
       runId: req.query.runId,
-      callSid: typeof req.body?.CallSid === "string" ? req.body.CallSid : null,
+      callSidPresent: typeof req.body?.CallSid === "string",
       status: typeof req.body?.CallStatus === "string" ? req.body.CallStatus : null,
     });
 
