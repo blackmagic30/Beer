@@ -2160,6 +2160,47 @@ describe("business demo contribution model", () => {
     });
   });
 
+  it("rejects anonymous direct submission API attempts", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+
+    await withHttpServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/business/submissions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          venueId: "venue-1",
+          venueName: "Anonymous Test Bar",
+          suburb: "Melbourne",
+          submissionType: "single_beer_price",
+          observedAt: NOW,
+          sourcePhotoDataUrl: null,
+          sourcePhotoUrl: null,
+          notes: null,
+          items: [{
+            beerName: "Guinness",
+            servingSize: "pint",
+            price: 12,
+            isHappyHourPrice: false,
+            happyHourDetails: null,
+            isOnTap: "yes",
+          }],
+        }),
+      });
+
+      expect(response.status).toBe(401);
+      const body = await response.json() as { error: { message: string } };
+      expect(body.error.message).toContain("Login required");
+      expect(repository.listSubmissions({ limit: 10 })).toHaveLength(0);
+    });
+  });
+
   it("keeps venue-manager insights privacy-safe and suppresses low-count suburb demand buckets", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, { ANALYTICS_MIN_BUCKET_SIZE: 5 });

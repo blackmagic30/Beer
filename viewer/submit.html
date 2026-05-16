@@ -14,10 +14,35 @@
     <section class="hero">
       <div class="eyebrow">Submit venue data</div>
       <h1>Help keep Melbourne beer prices accurate.</h1>
-      <p class="lead">Submit manual beer-price rows or attach a menu/tap-list/photo source. Public data stays pending until reviewed or sufficiently verified.</p>
+      <p class="lead">Log in to submit manual beer-price rows or attach a menu/tap-list/photo source. Public data stays pending until reviewed or sufficiently verified.</p>
     </section>
 
-    <section class="panel">
+    <section id="loginRequiredPanel" class="panel">
+      <div class="sectionHeader">
+        <div>
+          <div class="eyebrow">Login required</div>
+          <h2>Sign in before submitting data</h2>
+        </div>
+        <p class="muted">This keeps Pint Path useful: every upload is linked to an account so false or abusive submissions can be reviewed, rejected, fraud-struck, or rate-limited.</p>
+      </div>
+      <div class="grid grid--two">
+        <article class="card">
+          <h3>Why we ask for login</h3>
+          <p class="muted">Logged-in submissions help reviewers contact the right contributor, track repeat issues, and protect the map from spam or bot uploads.</p>
+        </article>
+        <article class="card">
+          <h3>What stays private</h3>
+          <p class="muted">Your raw menu photos, receipts, and source evidence stay private for review. Only approved, normalized venue data can appear on the public map.</p>
+        </article>
+      </div>
+      <div class="actionRow" style="margin-top:16px;">
+        <a id="loginToSubmitLink" class="button button--primary" href="/account.html">Log in or create account</a>
+        <a class="button" href="/">Back to map</a>
+      </div>
+      <div id="authGateStatus" class="notice" style="margin-top:16px;">Checking whether you are already signed in...</div>
+    </section>
+
+    <section id="submissionPanel" class="panel is-hidden">
       <form id="submissionForm" class="form">
         <div class="grid grid--two">
           <label class="field">Search venue
@@ -88,7 +113,7 @@
         <label class="field">Notes <textarea name="notes" placeholder="Optional notes, conditions, or source details"></textarea></label>
         <button class="button button--primary" type="submit">Submit for review</button>
       </form>
-      <div id="status" class="notice" style="margin-top:16px;">Submissions are reviewed before trusted publication. Full venue updates can earn up to 5 points.</div>
+      <div id="status" class="notice" style="margin-top:16px;">Submissions are reviewed before trusted publication. False or abusive data can receive fraud strikes.</div>
     </section>
 
     <p class="footerCopy">18+ only. Submit accurate observations, not drinking challenges. Prices may change and venues may refuse service under RSA obligations. <a href="/terms.html">Beta terms</a> · <a href="/privacy.html">Privacy</a></p>
@@ -468,8 +493,41 @@
         : "No match yet. Try a shorter venue name, suburb, or street.";
     }
 
+    async function requireSubmitLogin() {
+      const nextPath = `${window.location.pathname}${window.location.search || ""}`;
+      loginToSubmitLink.href = `/account.html?next=${encodeURIComponent(nextPath)}`;
+
+      try {
+        if (!MelbBeerBusiness.getAuthToken()) {
+          await MelbBeerBusiness.syncSupabaseSession();
+        }
+
+        if (!MelbBeerBusiness.getAuthToken()) {
+          MelbBeerBusiness.setStatus(authGateStatus, "Log in or create an account to submit venue data.");
+          loginRequiredPanel.classList.remove("is-hidden");
+          submissionPanel.classList.add("is-hidden");
+          return false;
+        }
+
+        await MelbBeerBusiness.apiFetch("/api/business/account/dashboard");
+        loginRequiredPanel.classList.add("is-hidden");
+        submissionPanel.classList.remove("is-hidden");
+        return true;
+      } catch {
+        MelbBeerBusiness.setAuthToken(null);
+        MelbBeerBusiness.setStatus(authGateStatus, "Your session could not be verified. Please log in before submitting data.", true);
+        loginRequiredPanel.classList.remove("is-hidden");
+        submissionPanel.classList.add("is-hidden");
+        return false;
+      }
+    }
+
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("submit");
+      const canSubmit = await requireSubmitLogin();
+      if (!canSubmit) {
+        return;
+      }
       const params = new URLSearchParams(window.location.search);
       const initialVenueId = params.get("venueId");
       const initialVenueName = params.get("venueName") || "";
@@ -516,6 +574,12 @@
 
       submissionForm.addEventListener("submit", async (event) => {
         event.preventDefault();
+        if (!MelbBeerBusiness.getAuthToken()) {
+          MelbBeerBusiness.setStatus(status, "Log in before submitting venue data.", true);
+          loginRequiredPanel.classList.remove("is-hidden");
+          submissionPanel.classList.add("is-hidden");
+          return;
+        }
         const selected = venues.find((venue) => venue.id === venueSelect.value);
         if (!selected) {
           MelbBeerBusiness.setStatus(status, "Choose a venue first.", true);
@@ -554,6 +618,12 @@
           appendBeerRow();
           applySubmissionType();
         } catch (error) {
+          if (/login required|verify your email|account/i.test(error.message || "")) {
+            loginRequiredPanel.classList.remove("is-hidden");
+            submissionPanel.classList.add("is-hidden");
+            MelbBeerBusiness.setStatus(authGateStatus, error.message || "Log in before submitting venue data.", true);
+            return;
+          }
           MelbBeerBusiness.setStatus(status, error.message, true);
         }
       });
