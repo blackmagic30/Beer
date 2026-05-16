@@ -187,7 +187,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - `FIELD_TEST_MODE=true` adds an unobtrusive beta label, feedback entry point, and admin field-test summary without exposing debug details to public users.
 - Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
 - Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
-- Production startup now requires an HTTPS `PUBLIC_BASE_URL`, `ADMIN_EMAILS`, and a `GOOGLE_MAPS_API_KEY`; this prevents silent admin/map misconfiguration.
+- Production startup now requires an HTTPS `PUBLIC_BASE_URL` and a `GOOGLE_MAPS_API_KEY`; admin routes stay locked until `ADMIN_EMAILS` is configured with the approved owner/admin email.
 - `/ready` initializes the database-backed routers and should be used as the deeper readiness check after `/health`.
 - See `FIELD_TEST_CHECKLIST.md` before showing the app to real users.
 - See `DEPLOYMENT_CHECKLIST.md` before merging to `main` or deploying the Railway beta; it includes backup, migration, security scan, smoke-test, and rollback steps.
@@ -207,7 +207,9 @@ DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 FREE_PRICE_REVEALS_PER_DAY=5
 FIELD_TEST_MODE=true
-ADMIN_EMAILS=you@example.com
+# Optional until the official owner/admin email is approved.
+# Without this, public traffic can run but admin routes are disabled.
+ADMIN_EMAILS=
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
 ANALYTICS_MIN_BUCKET_SIZE=5
@@ -351,7 +353,7 @@ What each one does:
 - `ELEVENLABS_AGENT_ID`: required for live ElevenLabs agent routing.
 - `ELEVENLABS_WEBHOOK_SECRET`: optional but recommended for verifying ElevenLabs post-call webhooks.
 - `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION`: explicit production override if an ElevenLabs webhook secret is not configured. Keep `false`.
-- `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup.
+- `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup. In production this can be left blank while the official ABN/admin email is pending; the public site will still boot, but admin routes will return `403` until the allowlist is configured.
 - `SESSION_TTL_DAYS`: normal account bearer-session lifetime. Defaults to `60`.
 - `ADMIN_SESSION_TTL_DAYS`: shorter admin bearer-session lifetime. Defaults to `7`.
 - `REQUIRE_ADMIN_MFA_IN_PRODUCTION`: production guard for admin routes. Keep `true`; admins must have a fresh Supabase AAL2/MFA claim.

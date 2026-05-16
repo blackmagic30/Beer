@@ -667,12 +667,25 @@ export class BusinessService {
     context?: SessionRequestContext | undefined,
   ): BusinessAccount {
     const account = this.requireAccount(authorizationHeader, context);
+    const adminEmails = this.getAdminEmailAllowlist();
 
     if (account.role !== "admin" && account.subscriptionStatus !== "admin") {
       throw new AppError("Admin access required.", 403);
     }
 
     if (this.config.NODE_ENV === "production") {
+      if (adminEmails.size === 0 || !adminEmails.has(normalizeEmail(account.email))) {
+        this.auditSecurity({
+          actor: account,
+          action: "admin_allowlist_required",
+          targetType: "account",
+          targetId: account.id,
+          metadata: { configured: adminEmails.size > 0 },
+          context,
+        });
+        throw new AppError("Admin access is not configured.", 403);
+      }
+
       this.requireVerifiedEmail(account, "Admin email verification is required in production.");
 
       if (this.config.REQUIRE_ADMIN_MFA_IN_PRODUCTION && !this.hasFreshAdminMfa(account)) {
@@ -689,6 +702,15 @@ export class BusinessService {
     }
 
     return account;
+  }
+
+  private getAdminEmailAllowlist(): Set<string> {
+    return new Set(
+      (this.config.ADMIN_EMAILS ?? "")
+        .split(",")
+        .map((value) => normalizeEmail(value))
+        .filter(Boolean),
+    );
   }
 
   private requireVerifiedEmail(account: BusinessAccount, message = "Verify your email before continuing."): void {
@@ -1057,12 +1079,7 @@ export class BusinessService {
     }
 
     const now = nowIso();
-    const adminEmails = new Set(
-      (this.config.ADMIN_EMAILS ?? "")
-        .split(",")
-        .map((value) => normalizeEmail(value))
-        .filter(Boolean),
-    );
+    const adminEmails = this.getAdminEmailAllowlist();
     const account = this.repository.createAccount({
       id: crypto.randomUUID(),
       email,
@@ -1165,12 +1182,7 @@ export class BusinessService {
     const mfaClaims = getSupabaseMfaClaims(input.accessToken, now);
 
     if (!account) {
-      const adminEmails = new Set(
-        (this.config.ADMIN_EMAILS ?? "")
-          .split(",")
-          .map((value) => normalizeEmail(value))
-          .filter(Boolean),
-      );
+      const adminEmails = this.getAdminEmailAllowlist();
       account = this.repository.createAccount({
         id: supabaseUser.id,
         email,

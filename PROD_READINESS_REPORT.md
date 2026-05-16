@@ -50,7 +50,7 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 - Added high-severity dependency audit to CI.
 - Added production env fail-fast checks:
   - `PUBLIC_BASE_URL` must be HTTPS in production.
-  - `ADMIN_EMAILS` is required in production.
+  - `ADMIN_EMAILS` can be blank while the official owner/admin email is pending; admin routes fail closed until it is configured.
   - `GOOGLE_MAPS_API_KEY` is required in production.
   - `REQUIRE_ADMIN_MFA_IN_PRODUCTION` must remain enabled in production.
   - `SOURCE_EVIDENCE_SIGNING_SECRET` is required in production.

@@ -27,7 +27,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - `NODE_ENV=production`
 - `PUBLIC_BASE_URL=https://pintpath.beer` or the production HTTPS origin.
 - `DATABASE_PATH` points to a persistent Railway volume path.
-- `ADMIN_EMAILS` is set to the exact admin owner email list.
+- `ADMIN_EMAILS` is set to the exact admin owner email list before enabling admin access. If the official ABN/admin email is pending, leave it blank and confirm admin routes return `403`.
 - `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
 - `ADMIN_MFA_MAX_AGE_MINUTES=720` or a stricter value.
 - `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.

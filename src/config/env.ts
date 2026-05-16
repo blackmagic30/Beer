@@ -190,10 +190,6 @@ if (parsedEnv.data.NODE_ENV === "production") {
     throw new Error("PUBLIC_BASE_URL must use https:// in production.");
   }
 
-  if (!parsedEnv.data.ADMIN_EMAILS) {
-    throw new Error("ADMIN_EMAILS is required in production so admin access is explicit and auditable.");
-  }
-
   if (!parsedEnv.data.GOOGLE_MAPS_API_KEY) {
     throw new Error("GOOGLE_MAPS_API_KEY is required in production so the public map does not silently fail.");
   }

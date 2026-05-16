@@ -856,6 +856,41 @@ describe("production hardening", () => {
     expect(service.requireAdmin(`Bearer ${adminSession.token}`).id).toBe(adminSession.account.id);
   });
 
+  it("keeps production admin routes locked until an admin email allowlist is configured", () => {
+    const { repository } = createRepository();
+    const serviceWithAllowlist = createBusinessService(repository, {
+      NODE_ENV: "production",
+      ADMIN_EMAILS: "pending-admin@example.com",
+      REQUIRE_ADMIN_MFA_IN_PRODUCTION: true,
+      REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
+      SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
+    });
+    const adminSession = serviceWithAllowlist.signup({
+      email: "pending-admin@example.com",
+      password: "password123",
+      ageConfirmed: true,
+    });
+    repository.updateAccountSecurityClaims({
+      userId: adminSession.account.id,
+      emailVerifiedAt: NOW,
+      mfaLevel: "aal2",
+      mfaVerifiedAt: new Date().toISOString(),
+      now: NOW,
+    });
+
+    const serviceWithoutAllowlist = createBusinessService(repository, {
+      NODE_ENV: "production",
+      ADMIN_EMAILS: undefined,
+      REQUIRE_ADMIN_MFA_IN_PRODUCTION: true,
+      REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
+      SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
+    });
+
+    expect(() => serviceWithoutAllowlist.requireAdmin(`Bearer ${adminSession.token}`)).toThrow(
+      "Admin access is not configured",
+    );
+  });
+
   it("blocks production uploads and verifications until email verification is recorded", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, {

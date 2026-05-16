@@ -37,6 +37,15 @@ describe("environment safety defaults", () => {
     expect(env.DEMO_BILLING_MODE).toBe(false);
   });
 
+  it("does not block public production boot while the official admin email is pending", async () => {
+    stubProductionEnv({ ADMIN_EMAILS: "", DEMO_BILLING_MODE: "" });
+
+    const { env } = await loadEnv();
+
+    expect(env.NODE_ENV).toBe("production");
+    expect(env.ADMIN_EMAILS).toBeUndefined();
+  });
+
   it("still blocks explicit production demo billing without the override", async () => {
     stubProductionEnv({ DEMO_BILLING_MODE: "true" });
 

@@ -41,7 +41,9 @@ FIELD_TEST_MODE=true
 FREE_PRICE_REVEALS_PER_DAY=3
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
-ADMIN_EMAILS=your-admin-email@example.com
+# Optional until the official owner/admin email is approved.
+# Leave blank to keep admin routes disabled while public browsing stays online.
+ADMIN_EMAILS=
 GOOGLE_MAPS_API_KEY=browser_key_restricted_to_live_domain
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
@@ -97,7 +99,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 
 ## 6. Admin Account
 
-- Set `ADMIN_EMAILS` to the owner/admin email before first admin signup.
+- Set `ADMIN_EMAILS` to the approved owner/admin email before first admin signup. If the official ABN/admin email is still pending, leave it blank; public routes can run, but admin routes must remain disabled.
 - Sign up with that exact email.
 - Open `/admin.html`.
 - Confirm unauthenticated requests are blocked and the admin dashboard loads only for the admin account.
