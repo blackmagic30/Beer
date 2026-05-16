@@ -1362,12 +1362,63 @@ export class BusinessService {
     const suggestedSuburb = savedSuburbs[0] ?? preferences?.preferredSuburbs[0];
     const suggestedMissions = this.listMissions({ suburb: suggestedSuburb, sort: "saved", limit: 6 });
     const latestAgeVerification = this.repository.getLatestAgeVerification(account.id);
+    const submissions = this.repository.listSubmissions({ userId: account.id, limit: 100 });
+    const recentSubmissions = submissions.slice(0, 12).map((submission) => {
+      const detail = this.repository.getSubmissionById(submission.id);
+      return {
+        id: submission.id,
+        venueId: submission.venueId,
+        venueName: submission.venueName,
+        suburb: submission.suburb,
+        status: submission.status,
+        submissionType: submission.submissionType,
+        observedAt: submission.observedAt,
+        createdAt: submission.createdAt,
+        reviewedAt: submission.reviewedAt,
+        rejectionReason: submission.rejectionReason,
+        pointsAwarded: submission.pointsAwarded,
+        fraudFlagged: submission.fraudFlagged,
+        hasEvidence: Boolean(submission.sourcePhotoUrl),
+        verificationResult: submission.status === "approved"
+          ? "verified"
+          : submission.status === "needs_more_evidence"
+            ? "needs more info"
+            : submission.status,
+        items: (detail?.items ?? []).map((item) => ({
+          id: item.id,
+          beerName: item.beerName,
+          servingSize: item.servingSize,
+          price: item.price,
+          isHappyHourPrice: item.isHappyHourPrice,
+          happyHourDetails: item.happyHourDetails,
+          isOnTap: item.isOnTap,
+        })),
+      };
+    });
+    const pendingCount = submissions.filter((submission) => submission.status === "pending").length;
+    const needsMoreInfoCount = submissions.filter((submission) => submission.status === "needs_more_evidence").length;
+    const verifiedCount = submissions.filter((submission) => submission.status === "approved").length;
+    const rejectedCount = submissions.filter((submission) =>
+      ["rejected", "disputed", "fraud_flagged"].includes(submission.status),
+    ).length;
 
     return {
       account: sanitizeAccount(account),
       profile: this.repository.getProfileById(account.id),
       access: this.getAccessState(account, null),
-      submissions: this.repository.listSubmissions({ userId: account.id, limit: 100 }),
+      submissions,
+      recentSubmissions,
+      dashboardStats: {
+        totalUploads: submissions.length,
+        pendingCount,
+        pendingVerificationCount: pendingCount + needsMoreInfoCount,
+        needsMoreInfoCount,
+        verifiedCount,
+        rejectedCount,
+        fraudStrikes: account.fraudStrikeCount,
+        pointsThisMonth: account.contributionPointsCurrentMonth,
+        trustScore: account.trustScore,
+      },
       verifications: this.repository.listVerificationsForUser(account.id, 100),
       activity: this.repository.listUserActivityEvents(account.id, 25),
       preferences: preferences ?? {
@@ -1397,7 +1448,7 @@ export class BusinessService {
         latest: latestAgeVerification,
         status: account.ageVerificationStatus,
         isOver18Verified: account.isOver18Verified,
-        copy: "18+ verification will be required for some future rewards. BeerMap does not store raw ID documents.",
+        copy: "18+ verification will be required for some future rewards. Pint Path does not store raw ID documents.",
       },
     };
   }

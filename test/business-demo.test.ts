@@ -389,7 +389,7 @@ describe("Supabase account and verification foundation", () => {
     }));
   });
 
-  it("exchanges a Supabase Auth session for the local BeerMap session", async () => {
+  it("exchanges a Supabase Auth session for the local Pint Path session", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, {
       SUPABASE_URL: "https://example.supabase.co",
@@ -489,6 +489,52 @@ describe("Supabase account and verification foundation", () => {
       result: "confirmed",
       notes: null,
     })).toThrow("Only pending submissions");
+  });
+
+  it("returns contributor dashboard stats and redacts raw evidence references", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const submitter = createAccount(repository, "dashboard-contributor");
+    const admin = createAccount(repository, "dashboard-admin", "admin");
+
+    const pending = createSubmission(repository, {
+      id: "dashboard-pending",
+      userId: submitter.id,
+      venueId: "venue-dashboard-1",
+      venueName: "Dashboard Bar",
+      beerName: "Guinness",
+      price: 12,
+      sourcePhotoUrl: "private:evidence:evidence-1",
+    });
+    const approved = createSubmission(repository, {
+      id: "dashboard-approved",
+      userId: submitter.id,
+      venueId: "venue-dashboard-2",
+      venueName: "Approved Bar",
+      beerName: "Carlton Draft",
+      price: 13,
+      sourcePhotoUrl: "private:evidence:evidence-2",
+    });
+    approve(repository, approved.id, admin.id);
+
+    const dashboard = service.getAccountDashboard(repository.getAccountById(submitter.id)!);
+
+    expect(dashboard.dashboardStats).toEqual(expect.objectContaining({
+      totalUploads: 2,
+      pendingVerificationCount: 1,
+      verifiedCount: 1,
+      rejectedCount: 0,
+    }));
+    expect(dashboard.recentSubmissions[0]).toEqual(expect.objectContaining({
+      venueName: pending.venueName,
+      hasEvidence: true,
+      items: [expect.objectContaining({
+        beerName: "Guinness",
+        servingSize: "pint",
+        price: 12,
+      })],
+    }));
+    expect(JSON.stringify(dashboard.recentSubmissions)).not.toContain("private:evidence");
   });
 
   it("only allows age-gated reward eligibility for verified 18+ records that have not expired", () => {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bar Dashboard | Melbourne Beer Map</title>
+  <title>Bar Dashboard | Pint Path</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
@@ -112,14 +112,14 @@
               </article>
               <article class="panel">
                 <h2>Current public data</h2>
-                <p class="helperCopy">Verified public prices remain controlled by BeerMap access rules. Unknown prices are never shown as $0.</p>
+                <p class="helperCopy">Verified public prices remain controlled by Pint Path access rules. Unknown prices are never shown as $0.</p>
                 <div id="priceRecords" class="list"></div>
               </article>
             </div>
 
             <article class="panel" style="margin-top:16px;">
               <h2>Pending review</h2>
-              <p class="helperCopy">Manager edits are saved privately until BeerMap admin approval. Public map/listing views keep showing the last approved data.</p>
+              <p class="helperCopy">Manager edits are saved privately until Pint Path admin approval. Public map/listing views keep showing the last approved data.</p>
               <div id="pendingChanges" class="list"></div>
             </article>
           </section>
@@ -197,7 +197,7 @@
                   <label class="field">Beer name
                     <input name="beerName" list="portalBeerSuggestions" placeholder="Start typing Carlton Draft, Balter XPA, Guinness..." autocomplete="off" required />
                     <datalist id="portalBeerSuggestions"></datalist>
-                    <span id="beerCatalogueHint" class="fieldHint">Choose from the BeerMap catalogue to keep spelling consistent across venues.</span>
+                    <span id="beerCatalogueHint" class="fieldHint">Choose from the Pint Path catalogue to keep spelling consistent across venues.</span>
                   </label>
                   <label class="dayChip beerCatalogueField__newBeer">
                     <input name="isNewBeer" type="checkbox" />
@@ -575,7 +575,7 @@
       resetBeerAutofillMemory();
       beerCatalogueHint.textContent = addNewInput.checked
         ? "New beer mode: enter the name exactly as it appears on the menu or tap list."
-        : "Choose from the BeerMap catalogue to keep spelling consistent across venues.";
+        : "Choose from the Pint Path catalogue to keep spelling consistent across venues.";
     }
 
     function field(form, name) {
@@ -759,7 +759,7 @@
             </div>
           </div>
         `).join("")
-        : '<div class="emptyState"><strong>No beers yet.</strong><br />Add your first beer so BeerMap users can see what is available now.</div>';
+        : '<div class="emptyState"><strong>No beers yet.</strong><br />Add your first beer so Pint Path users can see what is available now.</div>';
     }
 
     function renderHappyHours(happyHours) {
@@ -988,7 +988,7 @@
           return;
         }
         if (!isNewBeer && !trackedBeer) {
-          MelbBeerBusiness.setStatus(beerStatus, `"${rawBeerName}" is not in the BeerMap catalogue yet. Choose a dropdown match or tick Add new beer.`, true);
+          MelbBeerBusiness.setStatus(beerStatus, `"${rawBeerName}" is not in the Pint Path catalogue yet. Choose a dropdown match or tick Add new beer.`, true);
           return;
         }
         const abvValue = nullableNumber(field(beerForm, "abv").value);

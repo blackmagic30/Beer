@@ -1,10 +1,10 @@
-# BeerMap Production Readiness Report
+# Pint Path Production Readiness Report
 
 Date: 2026-05-14
 
 ## Executive Summary
 
-BeerMap is substantially hardened for a controlled Melbourne beta, but it is not yet ready for full-scale production deployment without provider/dashboard verification. The application now has strong server-side price gating, admin/venue-manager authorization tests, pending-review workflows for venue-manager changes, production admin MFA step-up guards, private source-evidence references with signed server URLs, Redis-capable rate limiting, Stripe webhook signature handling, upload validation, security audit logging, production config guards, and a CI path that runs build/test/secret scan/dependency audit.
+Pint Path is substantially hardened for a controlled Melbourne beta, but it is not yet ready for full-scale production deployment without provider/dashboard verification. The application now has strong server-side price gating, admin/venue-manager authorization tests, pending-review workflows for venue-manager changes, production admin MFA step-up guards, private source-evidence references with signed server URLs, Redis-capable rate limiting, Stripe webhook signature handling, upload validation, security audit logging, production config guards, and a CI path that runs build/test/secret scan/dependency audit.
 
 The remaining blockers are now mostly provider and operations verification: Supabase MFA/AAL2 must be configured and tested, private Supabase Storage should be verified before broad source-evidence uploads, Redis must be provisioned for production rate limiting, backup/restore and monitoring must be tested, and live Stripe/Supabase/Twilio/ElevenLabs/Google configuration must be verified in staging.
 
@@ -19,7 +19,7 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 - Runtime: Node.js 22+ with TypeScript and Express.
 - Frontend: static HTML/CSS/JS in `viewer/`.
 - Database: SQLite via `better-sqlite3`, initialized additively from `src/db/schema.sql`.
-- Auth: local BeerMap bearer sessions plus optional Supabase OAuth session exchange; production admin actions require verified email and AAL2 step-up claims.
+- Auth: local Pint Path bearer sessions plus optional Supabase OAuth session exchange; production admin actions require verified email and AAL2 step-up claims.
 - Payments: Stripe Checkout/webhooks plus demo billing mode guarded by env.
 - External services: Supabase, Google Maps, Twilio, ElevenLabs, OpenAI, Stripe.
 - Hosting assumptions: Railway, with build `npm run build`, start `node dist/src/server.js`.

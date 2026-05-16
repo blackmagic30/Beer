@@ -1,5 +1,5 @@
 {
-  "name": "melb-beer-bot",
+  "name": "pint-path",
   "version": "0.1.0",
   "private": true,
   "description": "MVP Twilio + ElevenLabs beer price calling bot for Melbourne venues.",

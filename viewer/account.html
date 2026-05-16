@@ -3,146 +3,425 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Account | Melbourne Beer Map</title>
+  <title>Account | Pint Path</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
-  <main class="pageShell">
+  <main class="pageShell accountPage">
     <div id="nav"></div>
-    <section class="hero">
-      <div class="eyebrow">Account</div>
-      <h1>Your access, points, and submissions.</h1>
-      <p class="lead">Create a demo account, confirm you are 18+, then submit venue data or start premium access.</p>
-    </section>
 
-    <section class="grid grid--two">
-      <form id="signupForm" class="panel form">
-        <h2>Create account</h2>
+    <section id="loggedOutView" class="authShell" hidden>
+      <div class="authIntro panel">
+        <div class="eyebrow">Contributor account</div>
+        <h1>Pint Path Contributor Account</h1>
+        <p class="lead">Upload beer prices, menu photos, and tap-list evidence to help verify Melbourne beer pricing.</p>
+        <div class="authTrustGrid">
+          <div>
+            <strong>Private evidence</strong>
+            <span>Menu photos and proof stay private for reviewers.</span>
+          </div>
+          <div>
+            <strong>Review first</strong>
+            <span>Submitted data stays pending until verified or approved.</span>
+          </div>
+          <div>
+            <strong>Earn access</strong>
+            <span>Approved contributions can unlock fuller map access.</span>
+          </div>
+        </div>
+      </div>
+
+      <section class="authCard panel" aria-label="Account access">
+        <div class="authTabs" role="tablist" aria-label="Choose sign in or create account">
+          <button id="showLoginButton" class="authTab is-active" type="button" role="tab" aria-controls="loginPanel">Sign in</button>
+          <button id="showSignupButton" class="authTab" type="button" role="tab" aria-controls="signupPanel">Create account</button>
+        </div>
+
         <div id="oauthStack" class="oauthStack" aria-label="Quick login options">
           <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
           <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
           <button class="button oauthButton" data-provider="facebook" type="button">Continue with Facebook</button>
         </div>
-        <p id="oauthHelper" class="helperCopy">Social login uses Supabase Auth with minimal profile/email scopes. Provider setup happens in the Supabase dashboard.</p>
-        <label class="field">Email <input name="email" type="email" required /></label>
-        <label class="field">Password <input name="password" type="password" minlength="8" required /></label>
-        <label class="field"><span><input name="ageConfirmed" type="checkbox" required /> I confirm I am 18 years or older.</span></label>
-        <button class="button button--primary" type="submit">Sign up</button>
-      </form>
+        <p id="oauthHelper" class="helperCopy">Social login appears when Supabase OAuth providers are configured.</p>
 
-      <form id="loginForm" class="panel form">
-        <h2>Log in</h2>
-        <label class="field">Email <input name="email" type="email" required /></label>
-        <label class="field">Password <input name="password" type="password" required /></label>
-        <button class="button button--primary" type="submit">Log in</button>
-        <button id="passwordResetButton" class="button" type="button">Forgot password</button>
-        <button id="logoutButton" class="button button--danger" type="button">Log out</button>
-      </form>
+        <form id="loginForm" class="form authForm" aria-labelledby="loginHeading">
+          <div id="loginPanel">
+            <h2 id="loginHeading">Welcome back</h2>
+            <p class="muted">Sign in to upload venue data, view your submissions, and track contribution progress.</p>
+            <label class="field">Email
+              <input name="email" type="email" autocomplete="email" required />
+            </label>
+            <label class="field passwordField">Password
+              <span class="passwordInputWrap">
+                <input name="password" type="password" autocomplete="current-password" required />
+                <button class="passwordToggle" type="button" data-password-toggle>Show</button>
+              </span>
+            </label>
+            <div class="actionRow">
+              <button class="button button--primary" type="submit">Sign in</button>
+              <button id="passwordResetButton" class="button" type="button">Forgot password</button>
+            </div>
+          </div>
+        </form>
+
+        <form id="signupForm" class="form authForm is-hidden" aria-labelledby="signupHeading">
+          <div id="signupPanel">
+            <h2 id="signupHeading">Create your contributor account</h2>
+            <p class="muted">Use a real email so review notes and future contributor access can stay attached to you.</p>
+            <label class="field">Email
+              <input name="email" type="email" autocomplete="email" required />
+            </label>
+            <label class="field passwordField">Password
+              <span class="passwordInputWrap">
+                <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+                <button class="passwordToggle" type="button" data-password-toggle>Show</button>
+              </span>
+              <span class="fieldHint">Use at least 8 characters.</span>
+            </label>
+            <label class="field consentField">
+              <span><input name="ageConfirmed" type="checkbox" required /> I confirm I am 18 years or older.</span>
+              <span class="fieldHint">Pint Path does not store ID documents. Some future rewards may require verified 18+ status.</span>
+            </label>
+            <button class="button button--primary" type="submit">Create account</button>
+          </div>
+        </form>
+
+        <div id="authStatus" class="notice" role="status">Enter your details to continue.</div>
+      </section>
     </section>
 
-    <section class="panel" style="margin-top:16px;">
-      <h2>Current status</h2>
-      <div id="accountSummary" class="notice">Not logged in yet.</div>
-      <button id="confirmAgeButton" class="button" type="button" style="margin-top:12px;">Confirm I am 18+</button>
-    </section>
+    <section id="accountDashboard" class="dashboardMain accountDashboard" hidden>
+      <section class="hero hero--compact accountHero">
+        <div>
+          <div class="eyebrow">My account</div>
+          <h1>Contributor dashboard</h1>
+          <p class="lead">Track your uploads, review status, contribution points, and private evidence in one place.</p>
+        </div>
+        <div class="heroCard accountIdentityCard">
+          <span class="muted">Signed in as</span>
+          <strong id="accountEmail">Loading...</strong>
+          <div id="accessBadgeRow" class="miniStatRow"></div>
+          <button id="logoutButton" class="button button--danger" type="button">Log out</button>
+        </div>
+      </section>
 
-    <section class="grid grid--two" style="margin-top:16px;">
-      <form id="preferencesForm" class="panel form">
-        <h2>Optional onboarding</h2>
-        <p class="muted">Save a few defaults so the map and missions feel more local to you.</p>
-        <label class="field">Favourite suburbs/areas <input name="preferredSuburbs" placeholder="Fitzroy, Richmond, St Kilda" /></label>
-        <label class="field">Favourite beers <input name="preferredBeers" placeholder="Guinness, Carlton Draft, Stone & Wood" /></label>
-        <label class="field">Mostly interested in
-          <select name="preferredUseCases" multiple size="5">
-            <option value="cheapest_beer">Cheapest beer</option>
-            <option value="happy_hours">Happy hours</option>
-            <option value="specific_beers">Specific beers</option>
-            <option value="recently_verified">Recently verified prices</option>
-            <option value="contributing_data">Contributing data to unlock access</option>
-          </select>
-        </label>
-        <button class="button button--primary" type="submit">Save preferences</button>
-      </form>
+      <div id="dashboardStatus" class="notice" role="status">Loading your account...</div>
 
-      <form id="saveItemForm" class="panel form">
-        <h2>Save a shortcut</h2>
-        <p class="muted">Keep venues, beers, and suburbs handy. Alerts can come later; for now this is your in-app watchlist.</p>
-        <label class="field">Type
-          <select name="itemType">
-            <option value="venue">Venue</option>
-            <option value="beer">Beer</option>
-            <option value="suburb">Suburb</option>
-          </select>
-        </label>
-        <label class="field">Name <input name="label" placeholder="Rooftop Bar or Carlton Draft" required /></label>
-        <label class="field">Suburb, if relevant <input name="suburb" placeholder="Melbourne" /></label>
-        <button class="button button--primary" type="submit">Save</button>
-      </form>
-    </section>
+      <section class="metricGrid accountMetricGrid" aria-label="Contributor stats">
+        <div class="metricCard"><div id="totalUploadsMetric" class="metricValue">0</div><div class="metricLabel">Total uploads</div></div>
+        <div class="metricCard"><div id="pendingMetric" class="metricValue">0</div><div class="metricLabel">Pending review</div></div>
+        <div class="metricCard"><div id="verifiedMetric" class="metricValue">0</div><div class="metricLabel">Verified</div></div>
+        <div class="metricCard"><div id="rejectedMetric" class="metricValue">0</div><div class="metricLabel">Rejected</div></div>
+        <div class="metricCard"><div id="pointsMetric" class="metricValue">0</div><div class="metricLabel">Points this month</div></div>
+        <div class="metricCard"><div id="trustMetric" class="metricValue">0</div><div class="metricLabel">Trust score</div></div>
+        <div class="metricCard"><div id="verificationMetric" class="metricValue">0</div><div class="metricLabel">Community verifications</div></div>
+        <div class="metricCard"><div id="fraudMetric" class="metricValue">0</div><div class="metricLabel">Fraud strikes</div></div>
+      </section>
 
-    <section class="grid grid--two" style="margin-top:16px;">
-      <div class="panel">
-        <h2>Saved items and searches</h2>
-        <div id="savedItemsList" class="list"></div>
-      </div>
-      <div class="panel">
-        <h2>Suggested missions</h2>
-        <p class="helperCopy">Quick ways to earn points and help keep Melbourne venue data accurate.</p>
-        <div id="suggestedMissions" class="list"></div>
-      </div>
-    </section>
+      <section class="grid grid--two accountPrimaryGrid">
+        <article class="panel accountProgressPanel">
+          <div class="sectionHeader">
+            <div>
+              <h2>Contributor unlock progress</h2>
+              <p class="muted" id="contributorProgressCopy">Approved data earns points toward contributor access.</p>
+            </div>
+            <span id="accountTierPill" class="pill">Free</span>
+          </div>
+          <div class="progressTrack" aria-hidden="true"><div id="contributorProgressBar" class="progressBar" style="width:0%;"></div></div>
+          <p id="rewardEligibilityCopy" class="helperCopy">18+ verification will be required for some future rewards.</p>
+          <button id="confirmAgeButton" class="button" type="button">Confirm I am 18+</button>
+        </article>
 
-    <section class="grid grid--two" style="margin-top:16px;">
-      <form id="requestForm" class="panel form">
-        <h2>Request a venue or beer</h2>
-        <label class="field">Request type
-          <select name="requestType">
-            <option value="missing_venue">Add a missing venue</option>
-            <option value="missing_beer">Add a missing beer</option>
-            <option value="verify_venue">Verify a venue</option>
-            <option value="verify_beer_at_venue">Verify a beer at a venue</option>
-          </select>
-        </label>
-        <label class="field">Venue <input name="venueName" placeholder="Venue name" /></label>
-        <label class="field">Beer <input name="beerName" placeholder="Beer name, if relevant" /></label>
-        <label class="field">Suburb <input name="suburb" placeholder="Melbourne" /></label>
-        <label class="field">Notes <textarea name="notes" placeholder="What should we check?"></textarea></label>
-        <button class="button button--primary" type="submit">Send request</button>
-      </form>
+        <article class="panel verificationPanel">
+          <h2>How verification works</h2>
+          <ol class="timelineList">
+            <li><strong>Submitted</strong><span>Your beer price or photo is saved privately.</span></li>
+            <li><strong>Pending review</strong><span>Admins or trusted community reviewers check the evidence.</span></li>
+            <li><strong>Verified or rejected</strong><span>Approved prices may be normalized and shown publicly on the map.</span></li>
+          </ol>
+          <p class="helperCopy">Raw photos, receipts, OCR evidence, and reviewer notes are not public map data.</p>
+        </article>
+      </section>
 
-      <form id="feedbackForm" class="panel form">
-        <h2>Send feedback</h2>
-        <label class="field">Type
-          <select name="feedbackType">
-            <option value="general_feedback">General feedback</option>
-            <option value="bug">Bug</option>
-            <option value="wrong_data">Wrong data</option>
-            <option value="feature_idea">Feature idea</option>
-            <option value="venue_suggestion">Venue suggestion</option>
-          </select>
-        </label>
-        <label class="field">Message <textarea name="message" required placeholder="What should we improve?"></textarea></label>
-        <button class="button button--primary" type="submit">Send feedback</button>
-      </form>
-    </section>
+      <section class="accountActionsGrid" aria-label="Quick actions">
+        <a class="actionCard" href="/submit.html">
+          <strong>Upload beer price</strong>
+          <span>Add a current price from a venue visit.</span>
+        </a>
+        <button id="focusUploadFormButton" class="actionCard" type="button">
+          <strong>Upload menu/photo</strong>
+          <span>Attach private evidence for review.</span>
+        </button>
+        <a class="actionCard" href="#recentSubmissionsSection">
+          <strong>View my submissions</strong>
+          <span>See pending, verified, and rejected updates.</span>
+        </a>
+        <a class="actionCard" href="#profileToolsSection">
+          <strong>Edit profile</strong>
+          <span>Save preferences, beers, suburbs, and feedback.</span>
+        </a>
+      </section>
 
-    <section class="panel" style="margin-top:16px;">
-      <h2>Your submissions</h2>
-      <div id="submissionList" class="list"></div>
+      <section id="uploadPanel" class="panel accountUploadPanel">
+        <div class="sectionHeader">
+          <div>
+            <h2>Quick beer price upload</h2>
+            <p class="muted">Pick an existing venue, add the beer details, and optionally attach private menu/photo evidence.</p>
+          </div>
+          <span class="pill">Private until reviewed</span>
+        </div>
+        <form id="quickUploadForm" class="form">
+          <div class="grid grid--two">
+            <label class="field">Search venue
+              <input id="quickVenueSearch" type="search" list="quickVenueSuggestions" placeholder="Try Half Moon, Fitzroy, Richmond..." autocomplete="off" required />
+              <datalist id="quickVenueSuggestions"></datalist>
+              <span id="quickVenueHelp" class="fieldHint">Choose a venue from the Pint Path venue list.</span>
+            </label>
+            <label class="field">Selected venue
+              <select id="quickVenueSelect" required></select>
+              <span class="fieldHint">Submissions must attach to an existing venue_id.</span>
+            </label>
+          </div>
+          <div class="grid grid--two">
+            <label class="field">Beer name
+              <input id="quickBeerName" name="beerName" placeholder="Guinness, Carlton Draft..." required />
+            </label>
+            <label class="field">Serving size
+              <select id="quickServingSize" name="servingSize">
+                <option value="pint">Pint</option>
+                <option value="schooner">Schooner</option>
+                <option value="pot">Pot</option>
+                <option value="jug">Jug</option>
+                <option value="can">Can</option>
+                <option value="bottle">Bottle</option>
+                <option value="other">Custom/other</option>
+              </select>
+            </label>
+          </div>
+          <div class="grid grid--two">
+            <label class="field">Price (AUD)
+              <input id="quickPrice" name="price" type="number" min="0" max="250" step="0.01" placeholder="13.50" required />
+            </label>
+            <label class="field">On tap?
+              <select id="quickOnTap" name="isOnTap">
+                <option value="yes">Yes</option>
+                <option value="unknown">Unknown</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">Private menu/photo evidence
+            <input id="quickSourcePhoto" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/*" />
+            <span class="fieldHint">Optional. Evidence is stored privately and is only available to you and authorized reviewers.</span>
+          </label>
+          <label class="field">Notes
+            <textarea id="quickNotes" name="notes" placeholder="Optional conditions, board text, or source notes"></textarea>
+          </label>
+          <div class="actionRow">
+            <button id="quickUploadSubmitButton" class="button button--primary" type="submit">Submit for review</button>
+            <a class="button" href="/submit.html">Use full submission form</a>
+          </div>
+          <div id="quickUploadStatus" class="notice">Approved data can earn points and may unlock contributor access.</div>
+        </form>
+      </section>
+
+      <section id="recentSubmissionsSection" class="panel">
+        <div class="sectionHeader">
+          <div>
+            <h2>Recent submissions</h2>
+            <p class="muted">Your private submission history. Public map data only updates after verification.</p>
+          </div>
+          <a class="button" href="/submit.html">Submit more data</a>
+        </div>
+        <div id="recentSubmissionsList" class="submissionList"></div>
+      </section>
+
+      <section id="profileToolsSection" class="grid grid--two">
+        <form id="preferencesForm" class="panel form">
+          <h2>Preferences</h2>
+          <p class="muted">Save a few defaults so the map and missions feel more local to you.</p>
+          <label class="field">Favourite suburbs/areas <input name="preferredSuburbs" placeholder="Fitzroy, Richmond, St Kilda" /></label>
+          <label class="field">Favourite beers <input name="preferredBeers" placeholder="Guinness, Carlton Draft, Stone & Wood" /></label>
+          <label class="field">Mostly interested in
+            <select name="preferredUseCases" multiple size="5">
+              <option value="cheapest_beer">Cheapest beer</option>
+              <option value="happy_hours">Happy hours</option>
+              <option value="specific_beers">Specific beers</option>
+              <option value="recently_verified">Recently verified prices</option>
+              <option value="contributing_data">Contributing data to unlock access</option>
+            </select>
+          </label>
+          <button class="button button--primary" type="submit">Save preferences</button>
+        </form>
+
+        <form id="saveItemForm" class="panel form">
+          <h2>Watchlist shortcuts</h2>
+          <p class="muted">Keep venues, beers, and suburbs handy. Alerts can come later.</p>
+          <label class="field">Type
+            <select name="itemType">
+              <option value="venue">Venue</option>
+              <option value="beer">Beer</option>
+              <option value="suburb">Suburb</option>
+            </select>
+          </label>
+          <label class="field">Name <input name="label" placeholder="Rooftop Bar or Carlton Draft" required /></label>
+          <label class="field">Suburb, if relevant <input name="suburb" placeholder="Melbourne" /></label>
+          <button class="button button--primary" type="submit">Save shortcut</button>
+        </form>
+      </section>
+
+      <section class="grid grid--two">
+        <div class="panel">
+          <h2>Saved items and searches</h2>
+          <div id="savedItemsList" class="list"></div>
+        </div>
+        <div class="panel">
+          <h2>Suggested missions</h2>
+          <p class="helperCopy">Quick ways to earn points and help keep Melbourne venue data accurate.</p>
+          <div id="suggestedMissions" class="list"></div>
+        </div>
+      </section>
+
+      <section class="grid grid--two">
+        <form id="requestForm" class="panel form">
+          <h2>Request a venue or beer</h2>
+          <label class="field">Request type
+            <select name="requestType">
+              <option value="missing_venue">Add a missing venue</option>
+              <option value="missing_beer">Add a missing beer</option>
+              <option value="verify_venue">Verify a venue</option>
+              <option value="verify_beer_at_venue">Verify a beer at a venue</option>
+            </select>
+          </label>
+          <label class="field">Venue <input name="venueName" placeholder="Venue name" /></label>
+          <label class="field">Beer <input name="beerName" placeholder="Beer name, if relevant" /></label>
+          <label class="field">Suburb <input name="suburb" placeholder="Melbourne" /></label>
+          <label class="field">Notes <textarea name="notes" placeholder="What should we check?"></textarea></label>
+          <button class="button button--primary" type="submit">Send request</button>
+        </form>
+
+        <form id="feedbackForm" class="panel form">
+          <h2>Send feedback</h2>
+          <label class="field">Type
+            <select name="feedbackType">
+              <option value="general_feedback">General feedback</option>
+              <option value="bug">Bug</option>
+              <option value="wrong_data">Wrong data</option>
+              <option value="feature_idea">Feature idea</option>
+              <option value="venue_suggestion">Venue suggestion</option>
+            </select>
+          </label>
+          <label class="field">Message <textarea name="message" required placeholder="What should we improve?"></textarea></label>
+          <button class="button button--primary" type="submit">Send feedback</button>
+        </form>
+      </section>
     </section>
 
     <p class="footerCopy">18+ only. Community data is verified where possible. Prices may change, venues may refuse service under RSA obligations, and availability is not guaranteed. <a href="/terms.html">Beta terms</a> · <a href="/privacy.html">Privacy</a></p>
   </main>
 
   <script>
+    const state = {
+      accountData: null,
+      quickVenues: [],
+      quickVenueSearchTimer: null,
+    };
+
+    const statusLabels = {
+      pending: "Pending",
+      approved: "Verified",
+      rejected: "Rejected",
+      needs_more_evidence: "Needs more info",
+      disputed: "Disputed",
+      fraud_flagged: "Fraud flagged",
+    };
+
+    function $(id) {
+      return document.getElementById(id);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
     function splitCsv(value) {
       return String(value || "")
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
+    }
+
+    function formatPrice(value) {
+      if (value == null || value === "") {
+        return "No price";
+      }
+      return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(Number(value));
+    }
+
+    function localDatetimeIso(date = new Date()) {
+      return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    }
+
+    function venueLabel(venue) {
+      return `${venue.name}${venue.suburb ? `, ${venue.suburb}` : ""}${venue.address ? ` · ${venue.address}` : ""}`;
+    }
+
+    function normalizeText(value) {
+      return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+    }
+
+    function findQuickVenueFromSearchValue(value) {
+      const normalized = normalizeText(value);
+      if (!normalized) {
+        return null;
+      }
+      return state.quickVenues.find((venue) => normalizeText(venueLabel(venue)) === normalized) || null;
+    }
+
+    function selectedQuickVenue() {
+      return state.quickVenues.find((venue) => venue.id === $("quickVenueSelect").value) || null;
+    }
+
+    function setLoading(button, loading, loadingCopy = "Working...") {
+      if (!button) {
+        return;
+      }
+      if (loading) {
+        button.dataset.originalText = button.textContent;
+        button.textContent = loadingCopy;
+        button.disabled = true;
+      } else {
+        button.textContent = button.dataset.originalText || button.textContent;
+        button.disabled = false;
+      }
+    }
+
+    function showLoggedOut(message = "Enter your details to continue.", isError = false) {
+      $("loggedOutView").hidden = false;
+      $("accountDashboard").hidden = true;
+      MelbBeerBusiness.setStatus($("authStatus"), message, isError);
+    }
+
+    function showDashboard() {
+      $("loggedOutView").hidden = true;
+      $("accountDashboard").hidden = false;
+    }
+
+    function showAuthTab(tab) {
+      const showLogin = tab === "login";
+      $("loginForm").classList.toggle("is-hidden", !showLogin);
+      $("signupForm").classList.toggle("is-hidden", showLogin);
+      $("showLoginButton").classList.toggle("is-active", showLogin);
+      $("showSignupButton").classList.toggle("is-active", !showLogin);
+      MelbBeerBusiness.setStatus($("authStatus"), showLogin ? "Sign in with email and password." : "Create an account to start contributing.");
     }
 
     function renderSavedItems(items, recentSearches) {
@@ -153,89 +432,152 @@
       };
       const section = (title, rows) => `
         <div class="listItem">
-          <strong>${title}</strong>
-          <div class="muted">${rows.length ? rows.map((item) => item.label).join(" · ") : "None saved yet"}</div>
+          <strong>${escapeHtml(title)}</strong>
+          <div class="muted">${rows.length ? rows.map((item) => escapeHtml(item.label)).join(" · ") : "None saved yet"}</div>
         </div>
       `;
-      savedItemsList.innerHTML = [
+      $("savedItemsList").innerHTML = [
         section("Saved venues", groups.venue),
         section("Saved beers", groups.beer),
         section("Saved suburbs", groups.suburb),
-        `<div class="listItem"><strong>Recent searches</strong><div class="muted">${recentSearches.length ? recentSearches.map((item) => item.label).join(" · ") : "No recent searches yet"}</div></div>`,
+        `<div class="listItem"><strong>Recent searches</strong><div class="muted">${recentSearches.length ? recentSearches.map((item) => escapeHtml(item.label)).join(" · ") : "No recent searches yet"}</div></div>`,
       ].join("");
     }
 
     function renderSuggestedMissions(missions) {
-      suggestedMissions.innerHTML = missions.length
+      $("suggestedMissions").innerHTML = missions.length
         ? missions.map((mission) => `
           <div class="listItem missionCard">
-            <div class="missionCard__top">
-              <div class="missionCard__title">
-                <strong>${mission.venueName}</strong>
-                <span class="pill">${Math.round(mission.points * mission.multiplier)} pts</span>
-              </div>
+            <div class="missionCard__title">
+              <strong>${escapeHtml(mission.venueName)}</strong>
+              <span class="pill">${Math.round(mission.points * mission.multiplier)} pts</span>
             </div>
-            <div class="missionCard__meta">${mission.suburb || "Melbourne"} · ${mission.reason}</div>
+            <div class="missionCard__meta">${escapeHtml(mission.suburb || "Melbourne")} · ${escapeHtml(mission.reason)}</div>
             <a class="button missionCard__action" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}">Submit update</a>
           </div>
         `).join("")
         : '<div class="listItem emptyState">Save a suburb or open Missions to get suggested venues. Try areas like <strong>Fitzroy</strong>, <strong>Sandringham</strong>, or <strong>South Melbourne</strong>.</div>';
     }
 
-    async function loadAccount() {
+    function statusBadge(status) {
+      const label = statusLabels[status] || status;
+      return `<span class="statusBadge statusBadge--${escapeHtml(status)}">${escapeHtml(label)}</span>`;
+    }
+
+    function renderRecentSubmissions(submissions) {
+      const list = $("recentSubmissionsList");
+      if (!submissions.length) {
+        list.innerHTML = `
+          <div class="emptyState accountEmptyState">
+            <strong>No uploads yet.</strong>
+            <span>Submit your first beer price and it will appear here while reviewers check it.</span>
+            <a class="button button--primary" href="/submit.html">Submit your first beer price</a>
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = submissions.map((submission) => {
+        const firstItem = submission.items?.[0] || null;
+        const extraCount = Math.max(0, (submission.items?.length || 0) - 1);
+        const priceCopy = firstItem ? formatPrice(firstItem.price) : "Photo/source upload";
+        const itemCopy = firstItem
+          ? `${escapeHtml(firstItem.beerName)} · ${escapeHtml(firstItem.servingSize)}${extraCount ? ` · +${extraCount} more` : ""}`
+          : "Menu/photo evidence for reviewer queue";
+        const evidenceCopy = submission.hasEvidence ? "Private evidence attached" : "No photo evidence";
+        return `
+          <article class="submissionCard">
+            <div>
+              <div class="submissionCard__top">
+                <strong>${escapeHtml(submission.venueName)}</strong>
+                ${statusBadge(submission.status)}
+              </div>
+              <p>${itemCopy}</p>
+              <div class="muted">${escapeHtml(submission.suburb || "Melbourne")} · ${evidenceCopy} · submitted ${MelbBeerBusiness.formatDate(submission.createdAt)}</div>
+              ${submission.rejectionReason ? `<div class="notice notice--warning">${escapeHtml(submission.rejectionReason)}</div>` : ""}
+            </div>
+            <div class="submissionCard__price">
+              <strong>${priceCopy}</strong>
+              <span>${escapeHtml(submission.verificationResult || submission.status)}</span>
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function renderDashboard(result) {
+      state.accountData = result;
+      showDashboard();
+      const account = result.account;
+      const stats = result.dashboardStats || {};
+      $("accountEmail").textContent = account.email;
+      $("accountTierPill").textContent = account.subscriptionStatus.replaceAll("_", " ");
+      $("accessBadgeRow").innerHTML = [
+        `<span>${escapeHtml(account.subscriptionStatus.replaceAll("_", " "))}</span>`,
+        `<span>${result.access.freePriceRevealsRemainingToday}/${result.access.freePriceRevealsPerDay} free reveals today</span>`,
+        account.emailVerifiedAt ? "<span>Email verified</span>" : "<span>Email verification pending</span>",
+      ].join("");
+      $("totalUploadsMetric").textContent = stats.totalUploads ?? 0;
+      $("pendingMetric").textContent = stats.pendingVerificationCount ?? stats.pendingCount ?? 0;
+      $("verifiedMetric").textContent = stats.verifiedCount ?? account.approvedSubmissionCount ?? 0;
+      $("rejectedMetric").textContent = stats.rejectedCount ?? account.rejectedSubmissionCount ?? 0;
+      $("pointsMetric").textContent = stats.pointsThisMonth ?? account.contributionPointsCurrentMonth ?? 0;
+      $("trustMetric").textContent = stats.trustScore ?? account.trustScore ?? 0;
+      $("verificationMetric").textContent = (result.verifications || []).length;
+      $("fraudMetric").textContent = stats.fraudStrikes ?? account.fraudStrikeCount ?? 0;
+
+      const progress = result.contributorProgress || {};
+      const threshold = Math.max(1, progress.unlockThreshold || 15);
+      const points = Math.max(0, progress.pointsThisMonth || 0);
+      const percent = Math.min(100, Math.round((points / threshold) * 100));
+      $("contributorProgressBar").style.width = `${percent}%`;
+      $("contributorProgressCopy").textContent = progress.pointsNeeded > 0
+        ? `${progress.pointsNeeded} points until next contributor unlock.`
+        : "Contributor unlock threshold reached for this month.";
+      $("rewardEligibilityCopy").textContent = result.ageVerification?.copy || "18+ verification will be required for some future rewards.";
+      $("confirmAgeButton").style.display = account.ageConfirmedAt ? "none" : "inline-flex";
+
+      $("dashboardStatus").textContent = account.status === "active"
+        ? "Account active. Uploads and verification actions are tracked against your signed-in user."
+        : `Account status: ${account.status}`;
+      $("dashboardStatus").className = `notice ${account.status === "active" ? "" : "notice--warning"}`;
+
+      const preferences = result.preferences || {};
+      $("preferencesForm").preferredSuburbs.value = (preferences.preferredSuburbs || []).join(", ");
+      $("preferencesForm").preferredBeers.value = (preferences.preferredBeers || []).join(", ");
+      Array.from($("preferencesForm").preferredUseCases.options).forEach((option) => {
+        option.selected = (preferences.preferredUseCases || []).includes(option.value);
+      });
+      renderSavedItems(result.savedItems || [], result.recentSearches || []);
+      renderSuggestedMissions(result.suggestedMissions || []);
+      renderRecentSubmissions(result.recentSubmissions || []);
+    }
+
+    async function refreshAccount() {
       const token = MelbBeerBusiness.getAuthToken();
       if (!token) {
-        accountSummary.textContent = "Not logged in yet.";
-        confirmAgeButton.style.display = "none";
-        submissionList.innerHTML = "";
-        savedItemsList.innerHTML = "";
-        suggestedMissions.innerHTML = "";
+        showLoggedOut();
         return;
       }
 
       try {
         const result = await MelbBeerBusiness.apiFetch("/api/business/account");
-        const account = result.account;
-        confirmAgeButton.style.display = account.ageConfirmedAt ? "none" : "inline-flex";
-        accountSummary.innerHTML = `
-          <strong>${account.email}</strong><br>
-          Access: ${account.subscriptionStatus}<br>
-          Premium until: ${MelbBeerBusiness.formatDate(account.premiumUntil)}<br>
-          Age verification: ${account.ageVerificationStatus} · 18+ rewards eligible: ${result.rewards.ageGatedEligible ? "Yes" : "Not yet"}<br>
-          ${result.ageVerification.copy}<br>
-          Points this month: ${account.contributionPointsCurrentMonth} · ${result.contributorProgress.pointsNeeded} points until next contributor unlock<br>
-          Trust score: ${account.trustScore} · Status: ${account.status}<br>
-          Approved submissions: ${account.approvedSubmissionCount} · Rejected: ${account.rejectedSubmissionCount} · Fraud strikes: ${account.fraudStrikeCount}<br>
-          Community verifications: ${(result.verifications || []).length}
-        `;
-        preferencesForm.preferredSuburbs.value = (result.preferences.preferredSuburbs || []).join(", ");
-        preferencesForm.preferredBeers.value = (result.preferences.preferredBeers || []).join(", ");
-        Array.from(preferencesForm.preferredUseCases.options).forEach((option) => {
-          option.selected = (result.preferences.preferredUseCases || []).includes(option.value);
-        });
-        renderSavedItems(result.savedItems || [], result.recentSearches || []);
-        renderSuggestedMissions(result.suggestedMissions || []);
-        submissionList.innerHTML = result.submissions.length
-          ? result.submissions.map((submission) => `
-            <div class="listItem">
-              <strong>${submission.venueName}</strong>
-              <span class="pill">${submission.status}</span>
-              <div class="muted">${submission.submissionType} · observed ${MelbBeerBusiness.formatDate(submission.observedAt)} · ${submission.pointsAwarded} points</div>
-            </div>
-          `).join("")
-          : '<div class="listItem muted">No submissions yet.</div>';
+        renderDashboard(result);
       } catch (error) {
-        MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+        MelbBeerBusiness.setAuthToken(null);
+        showLoggedOut(error.message || "Please sign in again.", true);
       }
     }
 
     async function handleAuth(event, path) {
       event.preventDefault();
       const form = event.currentTarget;
+      const submitButton = form.querySelector('button[type="submit"]');
       const body = Object.fromEntries(new FormData(form).entries());
       body.ageConfirmed = body.ageConfirmed === "on";
 
       try {
+        setLoading(submitButton, true, path.includes("signup") ? "Creating..." : "Signing in...");
         if (path.includes("signup")) {
           await MelbBeerBusiness.trackEvent("signup_started", { source: "account_page" });
         }
@@ -245,17 +587,108 @@
         });
         MelbBeerBusiness.setAuthToken(result.token);
         form.reset();
-        await loadAccount();
+        await refreshAccount();
       } catch (error) {
-        MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+        MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
+      } finally {
+        setLoading(submitButton, false);
       }
     }
 
-    window.addEventListener("DOMContentLoaded", () => {
-      nav.innerHTML = MelbBeerBusiness.renderNav("account");
-      MelbBeerBusiness.syncSupabaseSession()
-        .catch((error) => MelbBeerBusiness.setStatus(accountSummary, error.message, true))
-        .finally(loadAccount);
+    async function loadQuickVenues(query = "") {
+      const data = await MelbBeerBusiness.apiFetch(`/api/business/venues?q=${encodeURIComponent(query)}&limit=30`);
+      state.quickVenues = data.venues || [];
+      $("quickVenueSuggestions").innerHTML = state.quickVenues
+        .map((venue) => `<option value="${escapeHtml(venueLabel(venue))}"></option>`)
+        .join("");
+      $("quickVenueSelect").innerHTML = state.quickVenues.length
+        ? state.quickVenues.map((venue) => `<option value="${escapeHtml(venue.id)}">${escapeHtml(venueLabel(venue))}</option>`).join("")
+        : '<option value="">No matching venues found</option>';
+      $("quickVenueHelp").textContent = state.quickVenues.length
+        ? `Showing ${state.quickVenues.length} matching venue${state.quickVenues.length === 1 ? "" : "s"}.`
+        : "No matching venues yet. Try a shorter name, suburb, or street.";
+    }
+
+    function selectQuickVenue(venue) {
+      if (!venue) {
+        return;
+      }
+      $("quickVenueSelect").value = venue.id;
+      $("quickVenueSearch").value = venueLabel(venue);
+      $("quickVenueHelp").textContent = `Selected ${venueLabel(venue)}.`;
+    }
+
+    function readPhotoDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        if (!file) {
+          resolve(null);
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Could not read source photo."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function submitQuickUpload(event) {
+      event.preventDefault();
+      const selected = selectedQuickVenue();
+      if (!selected) {
+        MelbBeerBusiness.setStatus($("quickUploadStatus"), "Choose a venue from the venue list first.", true);
+        return;
+      }
+
+      const submitButton = $("quickUploadSubmitButton");
+      try {
+        setLoading(submitButton, true, "Submitting...");
+        const price = $("quickPrice").value.trim();
+        const sourcePhotoDataUrl = await readPhotoDataUrl($("quickSourcePhoto").files[0]);
+        const result = await MelbBeerBusiness.apiFetch("/api/business/submissions", {
+          method: "POST",
+          body: JSON.stringify({
+            venueId: selected.id,
+            venueName: selected.name,
+            suburb: selected.suburb || null,
+            submissionType: "single_beer_price",
+            observedAt: new Date().toISOString(),
+            sourcePhotoDataUrl,
+            sourcePhotoUrl: null,
+            notes: $("quickNotes").value.trim() || null,
+            items: [{
+              beerName: $("quickBeerName").value.trim(),
+              servingSize: $("quickServingSize").value,
+              price: price ? Number(price) : null,
+              isHappyHourPrice: false,
+              happyHourDetails: null,
+              isOnTap: $("quickOnTap").value,
+            }],
+          }),
+        });
+        $("quickUploadForm").reset();
+        $("quickVenueSearch").value = "";
+        await loadQuickVenues("");
+        MelbBeerBusiness.setStatus($("quickUploadStatus"), `${result.submission.venueName} submitted and pending review.`);
+        await refreshAccount();
+      } catch (error) {
+        MelbBeerBusiness.setStatus($("quickUploadStatus"), error.message, true);
+      } finally {
+        setLoading(submitButton, false);
+      }
+    }
+
+    function installPasswordToggles() {
+      document.querySelectorAll("[data-password-toggle]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const input = button.parentElement.querySelector("input");
+          const showing = input.type === "text";
+          input.type = showing ? "password" : "text";
+          button.textContent = showing ? "Show" : "Hide";
+        });
+      });
+    }
+
+    async function setupOauth() {
       const enabledOAuthProviders = new Set(MelbBeerBusiness.getSupabaseOauthProviders());
       const supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient());
       const oauthButtons = Array.from(document.querySelectorAll(".oauthButton"));
@@ -264,74 +697,116 @@
         button.hidden = !enabled;
       });
       if (!supabaseConfigured || oauthButtons.every((button) => button.hidden)) {
-        oauthStack.hidden = true;
-        oauthHelper.textContent = supabaseConfigured
+        $("oauthStack").hidden = true;
+        $("oauthHelper").textContent = supabaseConfigured
           ? "No Supabase OAuth providers are enabled in this environment."
-          : "Social login appears after Supabase Auth is configured.";
+          : "Email login is available. Social login appears after Supabase Auth is configured.";
       }
-      document.querySelectorAll(".oauthButton").forEach((button) => {
+
+      oauthButtons.forEach((button) => {
         button.addEventListener("click", async () => {
+          const provider = button.dataset.provider;
           try {
-            button.disabled = true;
-            button.textContent = "Opening secure login...";
-            await MelbBeerBusiness.signInWithOAuth(button.dataset.provider);
+            setLoading(button, true, "Opening secure login...");
+            await MelbBeerBusiness.signInWithOAuth(provider);
           } catch (error) {
-            button.disabled = false;
-            button.textContent = `Continue with ${button.dataset.provider[0].toUpperCase()}${button.dataset.provider.slice(1)}`;
-            MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+            setLoading(button, false);
+            MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
           }
         });
       });
-      signupForm.addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
-      loginForm.addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
-      passwordResetButton.addEventListener("click", async () => {
+    }
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
+      installPasswordToggles();
+      await setupOauth();
+      $("showLoginButton").addEventListener("click", () => showAuthTab("login"));
+      $("showSignupButton").addEventListener("click", () => showAuthTab("signup"));
+      $("signupForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
+      $("loginForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
+      $("passwordResetButton").addEventListener("click", async () => {
         try {
-          const email = loginForm.email.value || signupForm.email.value;
+          const email = $("loginForm").email.value || $("signupForm").email.value;
           if (!email) {
             throw new Error("Enter your email first, then tap forgot password.");
           }
           await MelbBeerBusiness.requestPasswordReset(email);
-          MelbBeerBusiness.setStatus(accountSummary, "Password reset email requested. Check Supabase Auth email settings if it does not arrive.");
+          MelbBeerBusiness.setStatus($("authStatus"), "Password reset email requested. Check Supabase Auth email settings if it does not arrive.");
         } catch (error) {
-          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+          MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
         }
       });
-      confirmAgeButton.addEventListener("click", async () => {
+      $("logoutButton").addEventListener("click", async () => {
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" });
+        } catch {
+          // Clear local session even if the server session already expired.
+        }
+        try {
+          await MelbBeerBusiness.getSupabaseClient()?.auth.signOut();
+        } catch {
+          // Supabase is optional in local demo mode.
+        }
+        MelbBeerBusiness.setAuthToken(null);
+        showLoggedOut("You have been logged out.");
+      });
+      $("confirmAgeButton").addEventListener("click", async () => {
         try {
           await MelbBeerBusiness.apiFetch("/api/business/account/age-confirm", {
             method: "POST",
             body: JSON.stringify({ ageConfirmed: true }),
           });
-          await loadAccount();
+          await refreshAccount();
         } catch (error) {
-          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
-      logoutButton.addEventListener("click", () => {
-        MelbBeerBusiness.setAuthToken(null);
-        loadAccount();
+      $("focusUploadFormButton").addEventListener("click", () => {
+        $("uploadPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+        $("quickSourcePhoto").focus();
       });
-      preferencesForm.addEventListener("submit", async (event) => {
+      $("quickUploadForm").addEventListener("submit", submitQuickUpload);
+      $("quickVenueSelect").addEventListener("change", () => selectQuickVenue(selectedQuickVenue()));
+      $("quickVenueSearch").addEventListener("input", () => {
+        window.clearTimeout(state.quickVenueSearchTimer);
+        const matched = findQuickVenueFromSearchValue($("quickVenueSearch").value);
+        if (matched) {
+          selectQuickVenue(matched);
+          return;
+        }
+        $("quickVenueHelp").textContent = $("quickVenueSearch").value.trim()
+          ? "Searching venues. Pick a suggestion or choose the best match."
+          : "Choose a venue from the Pint Path venue list.";
+        state.quickVenueSearchTimer = window.setTimeout(async () => {
+          await loadQuickVenues($("quickVenueSearch").value);
+          const postSearchMatch = findQuickVenueFromSearchValue($("quickVenueSearch").value);
+          if (postSearchMatch) {
+            selectQuickVenue(postSearchMatch);
+          }
+        }, 180);
+      });
+      $("preferencesForm").addEventListener("submit", async (event) => {
         event.preventDefault();
         try {
           await MelbBeerBusiness.apiFetch("/api/business/account/preferences", {
             method: "POST",
             body: JSON.stringify({
-              preferredSuburbs: splitCsv(preferencesForm.preferredSuburbs.value),
-              preferredBeers: splitCsv(preferencesForm.preferredBeers.value),
-              preferredUseCases: Array.from(preferencesForm.preferredUseCases.selectedOptions).map((option) => option.value),
+              preferredSuburbs: splitCsv($("preferencesForm").preferredSuburbs.value),
+              preferredBeers: splitCsv($("preferencesForm").preferredBeers.value),
+              preferredUseCases: Array.from($("preferencesForm").preferredUseCases.selectedOptions).map((option) => option.value),
               onboardingCompleted: true,
             }),
           });
-          MelbBeerBusiness.setStatus(accountSummary, "Preferences saved. Your suggested missions will use these areas.");
-          await loadAccount();
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Preferences saved. Your suggested missions will use these areas.");
+          await refreshAccount();
         } catch (error) {
-          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
-      saveItemForm.addEventListener("submit", async (event) => {
+      $("saveItemForm").addEventListener("submit", async (event) => {
         event.preventDefault();
-        const body = Object.fromEntries(new FormData(saveItemForm).entries());
+        const body = Object.fromEntries(new FormData($("saveItemForm")).entries());
         try {
           await MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
             method: "POST",
@@ -343,15 +818,15 @@
               metadata: {},
             }),
           });
-          saveItemForm.reset();
-          await loadAccount();
+          $("saveItemForm").reset();
+          await refreshAccount();
         } catch (error) {
-          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
-      requestForm.addEventListener("submit", async (event) => {
+      $("requestForm").addEventListener("submit", async (event) => {
         event.preventDefault();
-        const body = Object.fromEntries(new FormData(requestForm).entries());
+        const body = Object.fromEntries(new FormData($("requestForm")).entries());
         try {
           await MelbBeerBusiness.apiFetch("/api/business/requests", {
             method: "POST",
@@ -364,15 +839,15 @@
               notes: body.notes || null,
             }),
           });
-          requestForm.reset();
-          MelbBeerBusiness.setStatus(accountSummary, "Request saved. High-demand requests can become missions.");
+          $("requestForm").reset();
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Request saved. High-demand requests can become missions.");
         } catch (error) {
-          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
-      feedbackForm.addEventListener("submit", async (event) => {
+      $("feedbackForm").addEventListener("submit", async (event) => {
         event.preventDefault();
-        const body = Object.fromEntries(new FormData(feedbackForm).entries());
+        const body = Object.fromEntries(new FormData($("feedbackForm")).entries());
         try {
           await MelbBeerBusiness.apiFetch("/api/business/feedback", {
             method: "POST",
@@ -381,12 +856,17 @@
               anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
             }),
           });
-          feedbackForm.reset();
-          MelbBeerBusiness.setStatus(accountSummary, "Feedback saved for review. Thank you.");
+          $("feedbackForm").reset();
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Feedback saved for review. Thank you.");
         } catch (error) {
-          MelbBeerBusiness.setStatus(accountSummary, error.message, true);
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
+
+      await MelbBeerBusiness.syncSupabaseSession()
+        .catch((error) => MelbBeerBusiness.setStatus($("authStatus"), error.message, true));
+      await loadQuickVenues("");
+      await refreshAccount();
     });
   </script>
 </body>

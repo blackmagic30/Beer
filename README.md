@@ -1,6 +1,6 @@
-# melb-beer-bot
+# pint-path
 
-`melb-beer-bot` is a production-minded local Node.js + TypeScript service that places Twilio outbound calls, connects them to an ElevenLabs voice agent, stores one `call_run` per call, persists the full transcript when the call is finished, parses beer pricing outcomes, and exposes review APIs so you can inspect exactly what happened afterward.
+`pint-path` is a production-minded local Node.js + TypeScript service that places Twilio outbound calls, connects them to an ElevenLabs voice agent, stores one `call_run` per call, persists the full transcript when the call is finished, parses beer pricing outcomes, and exposes review APIs so you can inspect exactly what happened afterward.
 
 ## Current Capabilities
 
@@ -116,16 +116,17 @@ Business demo pages:
 
 Supabase auth/account foundation:
 
-- The beta keeps the existing BeerMap bearer-session system for app API access, but can exchange a Supabase Auth OAuth session for a local BeerMap session through `POST /api/business/auth/supabase-session`.
-- `/account.html` shows Google, Apple, and Facebook quick-login buttons when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured. Email/password signup/login still works through the existing BeerMap account flow.
+- The beta keeps the existing Pint Path bearer-session system for app API access, but can exchange a Supabase Auth OAuth session for a local Pint Path session through `POST /api/business/auth/supabase-session`.
+- `/account.html` shows Google, Apple, and Facebook quick-login buttons when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured. Email/password signup/login still works through the existing Pint Path account flow.
 - Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google, name/email for Apple, and email/public_profile for Facebook.
-- Add OAuth redirect URLs for local and hosted account pages, for example `http://localhost:3000/account.html` and `https://beer.splitseconds.app/account.html`.
+- Add OAuth redirect URLs for local and hosted account pages, for example `http://localhost:3000/account.html` and `https://pintpath.beer/account.html`.
 - New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
 - Production admin access expects Supabase Auth MFA/Auth Assurance Level 2 (`aal2`). Enable MFA factors in Supabase, require confirmed email, and verify the OAuth/session JWT contains `aal2` before relying on admin routes.
 - Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
 - Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
-- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket.
-- Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. BeerMap must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
+- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` adds a detailed `public.user_price_submissions` table for future direct Supabase contributor uploads, protected so users can insert/select only their own pending rows while admins review status fields.
+- `/account.html` now has two states: logged-out users see polished sign-in/create-account forms, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points.
+- Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. Pint Path must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
 - Future rewards should use `canAccessAgeGatedRewards(...)`, which requires verified 18+ status, a latest verified age-check record, and a non-expired verification.
 
 Venue partner demo layer:
@@ -148,7 +149,7 @@ Venue owner TODOs before paid partner rollout:
 - Replace monthly report previews with scheduled generated reports.
 - Feed `bar_analytics_events` from production map/search usage where useful; current portal also uses existing aggregate `events`.
 - Decide whether trusted venue-manager updates can publish as `venue_confirmed` automatically, or should remain admin-reviewed.
-- Replace suburb-based analytics with custom BeerMap areas such as Melbourne CBD, Fitzroy, Richmond, or Chapel Street once those boundaries are defined.
+- Replace suburb-based analytics with custom Pint Path areas such as Melbourne CBD, Fitzroy, Richmond, or Chapel Street once those boundaries are defined.
 
 Responsible-alcohol guardrails:
 
@@ -193,7 +194,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 
 Security and rotation notes:
 
-- Browser Google Maps keys are public by design, but should still be restricted to `https://beer.splitseconds.app/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`. If a browser key was ever committed or shared too broadly, rotate it in Google Cloud and update Railway/local env.
+- Browser Google Maps keys are public by design, but should still be restricted to `https://pintpath.beer/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`. If a browser key was ever committed or shared too broadly, rotate it in Google Cloud and update Railway/local env.
 - Supabase service-role keys, Stripe secret keys, Stripe webhook secrets, Twilio auth tokens, OpenAI keys, and ElevenLabs keys must stay server-side only. If any were exposed, rotate them with the provider, update Railway env, restart the service, and run `npm run security:scan`.
 - Do not use standalone static viewer mode for public beta price data, because it cannot enforce server-side price gating.
 
@@ -201,7 +202,7 @@ Suggested production beta values:
 
 ```dotenv
 NODE_ENV=production
-PUBLIC_BASE_URL=https://beer.splitseconds.app
+PUBLIC_BASE_URL=https://pintpath.beer
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 FREE_PRICE_REVEALS_PER_DAY=5
@@ -264,7 +265,7 @@ HOST=0.0.0.0
 PORT=3000
 TARGET_BEER=guinness
 PUBLIC_BASE_URL=https://your-ngrok-subdomain.ngrok-free.app
-DATABASE_PATH=./data/melb-beer-bot.sqlite
+DATABASE_PATH=./data/pint-path.sqlite
 TRUST_PROXY=true
 OUTBOUND_CALLS_ENABLED=true
 OUTBOUND_CALL_TIMEZONE=Australia/Melbourne
@@ -419,7 +420,7 @@ You do not need to buy a separate subdomain if you already own `splitseconds.app
 Use:
 
 ```text
-beer.splitseconds.app
+pintpath.beer
 ```
 
 That is the recommended staging/live-testing host for this project because it keeps the beer map separate from the main Split Seconds app while still living under your existing domain.
@@ -427,21 +428,21 @@ That is the recommended staging/live-testing host for this project because it ke
 When you deploy it, switch:
 
 ```dotenv
-PUBLIC_BASE_URL=https://beer.splitseconds.app
+PUBLIC_BASE_URL=https://pintpath.beer
 ```
 
 Recommended rollout:
 
 1. Keep local development on `localhost` and ngrok.
 2. Deploy the app to Railway.
-3. Point `beer.splitseconds.app` at that host with DNS.
-4. Switch `PUBLIC_BASE_URL` to `https://beer.splitseconds.app`.
+3. Point `pintpath.beer` at that host with DNS.
+4. Switch `PUBLIC_BASE_URL` to `https://pintpath.beer`.
 5. Update Twilio and ElevenLabs webhook URLs to the same domain.
 6. Add the domain to your Google Maps browser key referrer rules.
 
 Recommended Google Maps browser key referrers once hosted:
 
-- `https://beer.splitseconds.app/*`
+- `https://pintpath.beer/*`
 - `http://localhost:3000/*`
 - `http://127.0.0.1:3000/*`
 
@@ -455,7 +456,7 @@ Recommended Google key split long-term:
 Recommended hosted environment values:
 
 ```dotenv
-PUBLIC_BASE_URL=https://beer.splitseconds.app
+PUBLIC_BASE_URL=https://pintpath.beer
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 GOOGLE_MAPS_API_KEY=your_google_maps_browser_key
@@ -476,9 +477,9 @@ Recommended Railway service setup:
 
 1. Deploy one web service from this repo.
 2. Attach a persistent volume mounted at `/app/data`.
-3. Set `DATABASE_PATH=./data/melb-beer-bot.sqlite`.
-4. Set `PUBLIC_BASE_URL=https://beer.splitseconds.app`.
-5. Add the custom domain `beer.splitseconds.app`.
+3. Set `DATABASE_PATH=./data/pint-path.sqlite`.
+4. Set `PUBLIC_BASE_URL=https://pintpath.beer`.
+5. Add the custom domain `pintpath.beer`.
 
 Because the app uses SQLite for local `call_runs` state, the persistent volume matters.
 
@@ -548,7 +549,7 @@ For local browser testing, allow these referrers on the Google Maps browser key:
 
 For hosted staging, also allow:
 
-- `https://beer.splitseconds.app/*`
+- `https://pintpath.beer/*`
 
 Make sure the same Google Cloud project has:
 

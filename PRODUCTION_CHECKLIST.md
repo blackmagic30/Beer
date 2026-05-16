@@ -1,4 +1,4 @@
-# BeerMap Production Checklist
+# Pint Path Production Checklist
 
 Use this for a full production release. For smaller private beta releases, also use `FIELD_TEST_CHECKLIST.md` and `DEPLOYMENT_CHECKLIST.md`.
 
@@ -25,7 +25,7 @@ Use this for a full production release. For smaller private beta releases, also 
 ## Required Production Environment
 
 - `NODE_ENV=production`
-- `PUBLIC_BASE_URL=https://beer.splitseconds.app` or the production HTTPS origin.
+- `PUBLIC_BASE_URL=https://pintpath.beer` or the production HTTPS origin.
 - `DATABASE_PATH` points to a persistent Railway volume path.
 - `ADMIN_EMAILS` is set to the exact admin owner email list.
 - `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.

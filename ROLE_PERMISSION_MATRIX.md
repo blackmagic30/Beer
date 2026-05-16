@@ -1,4 +1,4 @@
-# BeerMap Role and Permission Matrix
+# Pint Path Role and Permission Matrix
 
 This matrix documents the beta access rules enforced by the Express business API, viewer pages, and SQLite schema. Backend checks are the source of truth; frontend hiding is only a usability layer.
 

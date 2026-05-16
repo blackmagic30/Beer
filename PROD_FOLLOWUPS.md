@@ -1,4 +1,4 @@
-# BeerMap Production Follow-Ups
+# Pint Path Production Follow-Ups
 
 These are the remaining actions after the production-readiness pass. Priorities are based on a full-scale public production deployment, not a small controlled field test.
 

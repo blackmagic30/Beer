@@ -332,7 +332,7 @@ export class AdminService {
 
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "melb-beer-bot-source-ingestion/1.0",
+        "User-Agent": "pint-path-source-ingestion/1.0",
       },
     });
 

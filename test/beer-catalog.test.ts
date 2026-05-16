@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, findTrackedBeerByName } from "../src/constants/beers.js";
 
-describe("BeerMap beer catalogue", () => {
+describe("Pint Path beer catalogue", () => {
   it("provides a broad dropdown catalogue for venue-owner beer entry", () => {
     expect(VIEWER_TRACKED_BEERS.length).toBeGreaterThanOrEqual(80);
     expect(VIEWER_TRACKED_BEERS.map((beer) => beer.name)).toContain("Balter XPA");

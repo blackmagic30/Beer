@@ -895,6 +895,343 @@ h3 {
   background: linear-gradient(135deg, var(--gold) 0%, var(--coral) 100%);
 }
 
+.accountPage {
+  max-width: 1220px;
+}
+
+.authShell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.72fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.authIntro,
+.authCard,
+.accountHero,
+.accountUploadPanel {
+  overflow: hidden;
+}
+
+.authIntro {
+  display: grid;
+  align-content: center;
+  min-height: 520px;
+  padding: clamp(28px, 5vw, 58px);
+  background:
+    radial-gradient(circle at 12% 12%, rgba(245, 199, 107, 0.2), transparent 34%),
+    radial-gradient(circle at 88% 10%, rgba(119, 217, 255, 0.14), transparent 28%),
+    linear-gradient(135deg, rgba(14, 22, 38, 0.94), rgba(5, 9, 20, 0.78));
+}
+
+.authIntro h1 {
+  font-size: clamp(44px, 6vw, 76px);
+}
+
+.authTrustGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.authTrustGrid div {
+  border: 1px solid rgba(244, 214, 150, 0.14);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 14px;
+}
+
+.authTrustGrid strong,
+.authTrustGrid span {
+  display: block;
+}
+
+.authTrustGrid strong {
+  margin-bottom: 5px;
+  color: #ffe4a8;
+}
+
+.authTrustGrid span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.authCard {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.authTabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid rgba(244, 214, 150, 0.12);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.4);
+  padding: 5px;
+}
+
+.authTab {
+  appearance: none;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 950;
+  padding: 11px 12px;
+}
+
+.authTab.is-active {
+  background: linear-gradient(135deg, rgba(245, 199, 107, 0.94), rgba(255, 123, 104, 0.94));
+  color: #17120a;
+}
+
+.authForm h2 {
+  margin-top: 4px;
+}
+
+.passwordInputWrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.passwordInputWrap input {
+  min-width: 0;
+}
+
+.passwordToggle {
+  appearance: none;
+  border: 1px solid rgba(244, 214, 150, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffe4a8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 950;
+  padding: 12px 13px;
+}
+
+.consentField span:first-child {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  line-height: 1.45;
+}
+
+.accountDashboard {
+  gap: 18px;
+}
+
+.accountHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  align-items: center;
+}
+
+.accountIdentityCard {
+  display: grid;
+  gap: 12px;
+}
+
+.accountIdentityCard strong {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.accountMetricGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.accountPrimaryGrid {
+  align-items: stretch;
+}
+
+.accountProgressPanel,
+.verificationPanel {
+  display: grid;
+  align-content: start;
+}
+
+.timelineList {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timelineList li {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.32);
+  padding: 13px;
+}
+
+.timelineList strong {
+  color: var(--gold);
+}
+
+.timelineList span {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.accountActionsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.actionCard {
+  appearance: none;
+  display: grid;
+  gap: 7px;
+  min-height: 120px;
+  border: 1px solid rgba(244, 214, 150, 0.16);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(245, 199, 107, 0.14), transparent 44%),
+    rgba(255, 255, 255, 0.055);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 17px;
+  text-align: left;
+  text-decoration: none;
+  transition: transform 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.actionCard:hover {
+  transform: translateY(-2px);
+  border-color: rgba(245, 199, 107, 0.42);
+  background: rgba(255, 255, 255, 0.085);
+}
+
+.actionCard strong {
+  font-size: 17px;
+  letter-spacing: -0.02em;
+}
+
+.actionCard span {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.submissionList {
+  display: grid;
+  gap: 12px;
+}
+
+.submissionCard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025)),
+    rgba(3, 7, 18, 0.36);
+  padding: 16px;
+}
+
+.submissionCard__top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.submissionCard p {
+  margin: 0 0 7px;
+  color: #dbe3ef;
+  line-height: 1.5;
+}
+
+.submissionCard__price {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  min-width: 120px;
+}
+
+.submissionCard__price strong {
+  color: var(--gold);
+  font-family: var(--display-font);
+  font-size: 28px;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
+}
+
+.submissionCard__price span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.1);
+  color: #dbe3ef;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.statusBadge--pending,
+.statusBadge--needs_more_evidence {
+  border-color: rgba(245, 199, 107, 0.28);
+  background: rgba(245, 199, 107, 0.13);
+  color: #ffe4a8;
+}
+
+.statusBadge--approved {
+  border-color: rgba(117, 224, 167, 0.28);
+  background: rgba(117, 224, 167, 0.13);
+  color: #d9ffe9;
+}
+
+.statusBadge--rejected,
+.statusBadge--disputed,
+.statusBadge--fraud_flagged {
+  border-color: rgba(255, 154, 154, 0.34);
+  background: rgba(255, 154, 154, 0.12);
+  color: #ffd8d8;
+}
+
+.accountEmptyState {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  border: 1px dashed rgba(244, 214, 150, 0.22);
+  border-radius: 22px;
+  padding: 18px;
+}
+
+.accountEmptyState span {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
 .pill {
   display: inline-flex;
   padding: 5px 10px;
@@ -971,8 +1308,29 @@ h3 {
 
   .hero--split,
   .dashboardShell,
+  .authShell,
+  .accountHero,
   .tierGrid {
     grid-template-columns: 1fr;
+  }
+
+  .authIntro {
+    min-height: auto;
+  }
+
+  .authTrustGrid,
+  .accountMetricGrid,
+  .accountActionsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .timelineList li,
+  .submissionCard {
+    grid-template-columns: 1fr;
+  }
+
+  .submissionCard__price {
+    justify-items: start;
   }
 
   .dashboardSidebar {

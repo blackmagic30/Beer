@@ -160,7 +160,7 @@ function renderNav(active = "") {
   return `
     <nav class="topNav">
       <a class="brand" href="/">
-        <strong>Melbourne Beer Map</strong>
+        <strong>Pint Path</strong>
         <span>Verified local price index</span>
       </a>
       ${betaPill}

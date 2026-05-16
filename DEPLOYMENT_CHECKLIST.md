@@ -1,4 +1,4 @@
-# Melbourne Beer Map Deployment Checklist
+# Pint Path Deployment Checklist
 
 Use this before merging a beta/hardening branch into `main` or deploying a Railway production beta.
 
@@ -34,8 +34,8 @@ Use this before merging a beta/hardening branch into `main` or deploying a Railw
 NODE_ENV=production
 HOST=0.0.0.0
 PORT=8080
-PUBLIC_BASE_URL=https://beer.splitseconds.app
-DATABASE_PATH=/app/data/melb-beer-bot.sqlite
+PUBLIC_BASE_URL=https://pintpath.beer
+DATABASE_PATH=/app/data/pint-path.sqlite
 TRUST_PROXY=true
 FIELD_TEST_MODE=true
 FREE_PRICE_REVEALS_PER_DAY=3

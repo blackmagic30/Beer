@@ -106,7 +106,7 @@ const envSchema = z.object({
   }, z.string().min(1).optional()),
   PORT: z.coerce.number().int().positive().default(3000),
   PUBLIC_BASE_URL: z.preprocess(sanitizeEnvString, z.string().url()),
-  DATABASE_PATH: z.preprocess(sanitizeEnvString, z.string()).default("./data/melb-beer-bot.sqlite"),
+  DATABASE_PATH: z.preprocess(sanitizeEnvString, z.string()).default("./data/pint-path.sqlite"),
   TRUST_PROXY: booleanFromEnv.default(true),
   OUTBOUND_CALLS_ENABLED: booleanFromEnv.default(true),
   OUTBOUND_CALL_TIMEZONE: z.preprocess(sanitizeEnvString, z.string().min(1)).default("Australia/Melbourne"),

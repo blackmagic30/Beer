@@ -317,7 +317,7 @@ export function createApp() {
   app.get("/health", (_req, res) => {
     res.json(
       success({
-        service: "melb-beer-bot",
+        service: "pint-path",
         status: "ok",
       }),
     );
@@ -328,7 +328,7 @@ export function createApp() {
       await getLazyRouters();
       res.json(
         success({
-          service: "melb-beer-bot",
+          service: "pint-path",
           status: "ready",
         }),
       );
