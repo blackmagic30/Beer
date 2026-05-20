@@ -34,7 +34,7 @@ Rotate a provider key immediately if it was committed, exposed through `/config.
 Rotation checklist:
 
 - Supabase service role: rotate in Supabase, update Railway/local env, restart the service, verify server sync only.
-- Google Maps browser key: rotate in Google Cloud, restrict HTTP referrers to `https://pintpath.beer/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`.
+- Google Maps browser key: rotate in Google Cloud, restrict HTTP referrers to `https://pintpath.au/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`.
 - Google Places server key: rotate and restrict by API/IP where possible.
 - Stripe secret/webhook keys: rotate in Stripe, update Railway env, replay a signed test webhook.
 - OpenAI keys: rotate with OpenAI, update Railway env, verify no raw payloads are logged.

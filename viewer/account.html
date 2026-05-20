@@ -46,6 +46,7 @@
           <button class="button oauthButton" data-provider="facebook" type="button">Continue with Facebook</button>
         </div>
         <p id="oauthHelper" class="helperCopy">Social login appears when Supabase OAuth providers are configured.</p>
+        <div class="authDivider"><span>Continue with Email</span></div>
 
         <form id="loginForm" class="form authForm" aria-labelledby="loginHeading">
           <div id="loginPanel">
@@ -514,7 +515,9 @@
       $("accountTierPill").textContent = account.subscriptionStatus.replaceAll("_", " ");
       $("accessBadgeRow").innerHTML = [
         `<span>${escapeHtml(account.subscriptionStatus.replaceAll("_", " "))}</span>`,
-        `<span>${result.access.freePriceRevealsRemainingToday}/${result.access.freePriceRevealsPerDay} free reveals today</span>`,
+        result.access.hasFullAccess
+          ? "<span>Full map access</span>"
+          : "<span>Free preview: happy hours + core pint prices</span>",
         account.emailVerifiedAt ? "<span>Email verified</span>" : "<span>Email verification pending</span>",
       ].join("");
       $("totalUploadsMetric").textContent = stats.totalUploads ?? 0;
@@ -578,16 +581,37 @@
 
       try {
         setLoading(submitButton, true, path.includes("signup") ? "Creating..." : "Signing in...");
-        if (path.includes("signup")) {
+        const isSignup = path.includes("signup");
+        const supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient());
+        if (isSignup) {
           await MelbBeerBusiness.trackEvent("signup_started", { source: "account_page" });
         }
-        const result = await MelbBeerBusiness.apiFetch(path, {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
-        MelbBeerBusiness.setAuthToken(result.token);
+
+        if (supabaseConfigured) {
+          if (isSignup) {
+            const result = await MelbBeerBusiness.signUpWithEmail(body.email, body.password, body.ageConfirmed);
+            if (result.needsEmailConfirmation) {
+              form.reset();
+              MelbBeerBusiness.setStatus($("authStatus"), "Account created. Check your email to confirm your Pint Path login, then return here to sign in.");
+              return;
+            }
+          } else {
+            await MelbBeerBusiness.signInWithEmail(body.email, body.password);
+          }
+        } else {
+          const result = await MelbBeerBusiness.apiFetch(path, {
+            method: "POST",
+            body: JSON.stringify(body),
+          });
+          MelbBeerBusiness.setAuthToken(result.token);
+        }
+
         form.reset();
         await refreshAccount();
+        const nextPath = MelbBeerBusiness.getAuthReturnPathFromLocation();
+        if (nextPath && nextPath !== "/account.html" && !nextPath.startsWith("/account.html")) {
+          window.location.assign(nextPath);
+        }
       } catch (error) {
         MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
       } finally {
@@ -708,7 +732,9 @@
           const provider = button.dataset.provider;
           try {
             setLoading(button, true, "Opening secure login...");
-            await MelbBeerBusiness.signInWithOAuth(provider);
+            await MelbBeerBusiness.signInWithOAuth(provider, {
+              returnTo: MelbBeerBusiness.getAuthReturnPathFromLocation(),
+            });
           } catch (error) {
             setLoading(button, false);
             MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
@@ -867,6 +893,10 @@
         .catch((error) => MelbBeerBusiness.setStatus($("authStatus"), error.message, true));
       await loadQuickVenues("");
       await refreshAccount();
+      const authError = new URLSearchParams(window.location.search).get("authError");
+      if (authError) {
+        MelbBeerBusiness.setStatus($("authStatus"), authError, true);
+      }
     });
   </script>
 </body>

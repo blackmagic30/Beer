@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Signing in | Pint Path</title>
+  <link rel="stylesheet" href="../business.css" />
+  <script src="/config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell authCallbackPage">
+    <section class="panel authCard">
+      <div class="eyebrow">Secure sign in</div>
+      <h1>Finishing your Pint Path login</h1>
+      <p id="callbackStatus" class="lead">Checking your Supabase session and returning you to Pint Path...</p>
+      <p class="helperCopy">If this takes more than a moment, return to the account page and try signing in again.</p>
+      <a class="button" href="/account.html">Back to account</a>
+    </section>
+  </main>
+
+  <script>
+    function callbackErrorMessage() {
+      const query = new URLSearchParams(window.location.search);
+      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      return query.get("error_description") ||
+        query.get("error") ||
+        hash.get("error_description") ||
+        hash.get("error") ||
+        null;
+    }
+
+    function safeReturnPath() {
+      const params = new URLSearchParams(window.location.search);
+      return MelbBeerBusiness.getSafeReturnPath(
+        params.get("returnTo") || window.localStorage.getItem("pintPathAuthReturnTo") || "/account.html",
+      );
+    }
+
+    function redirectWithError(message) {
+      const accountUrl = new URL("/account.html", window.location.origin);
+      accountUrl.searchParams.set("authError", message || "Login failed. Please try again.");
+      window.location.replace(accountUrl.toString());
+    }
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      const status = document.getElementById("callbackStatus");
+      const errorMessage = callbackErrorMessage();
+      if (errorMessage) {
+        redirectWithError(errorMessage);
+        return;
+      }
+
+      try {
+        const client = MelbBeerBusiness.getSupabaseClient();
+        if (!client) {
+          throw new Error("Supabase login is not configured for this environment.");
+        }
+
+        const code = new URLSearchParams(window.location.search).get("code");
+        if (code && client.auth.exchangeCodeForSession) {
+          const { error } = await client.auth.exchangeCodeForSession(code);
+          if (error && !/already|invalid_grant/i.test(error.message || "")) {
+            throw error;
+          }
+        }
+
+        const result = await MelbBeerBusiness.syncSupabaseSession();
+        if (!result.synced) {
+          throw new Error(result.error || "No Supabase session was returned. Please try signing in again.");
+        }
+
+        status.textContent = "Signed in. Taking you back...";
+        const destination = safeReturnPath();
+        window.localStorage.removeItem("pintPathAuthReturnTo");
+        window.location.replace(destination);
+      } catch (error) {
+        redirectWithError(error.message);
+      }
+    });
+  </script>
+</body>
+</html>

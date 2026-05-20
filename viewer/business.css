@@ -182,6 +182,25 @@ a {
     rgba(255, 255, 255, 0.055);
 }
 
+.authDivider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.authDivider::before,
+.authDivider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(244, 214, 150, 0.16);
+}
+
 .hero {
   position: relative;
   display: grid;

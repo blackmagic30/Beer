@@ -495,7 +495,8 @@
 
     async function requireSubmitLogin() {
       const nextPath = `${window.location.pathname}${window.location.search || ""}`;
-      loginToSubmitLink.href = `/account.html?next=${encodeURIComponent(nextPath)}`;
+      const loginUrl = `/account.html?next=${encodeURIComponent(nextPath)}`;
+      loginToSubmitLink.href = loginUrl;
 
       try {
         if (!MelbBeerBusiness.getAuthToken()) {
@@ -506,10 +507,11 @@
           MelbBeerBusiness.setStatus(authGateStatus, "Log in or create an account to submit venue data.");
           loginRequiredPanel.classList.remove("is-hidden");
           submissionPanel.classList.add("is-hidden");
+          window.location.assign(loginUrl);
           return false;
         }
 
-        await MelbBeerBusiness.apiFetch("/api/business/account/dashboard");
+        await MelbBeerBusiness.apiFetch("/api/business/account");
         loginRequiredPanel.classList.add("is-hidden");
         submissionPanel.classList.remove("is-hidden");
         return true;
@@ -518,6 +520,7 @@
         MelbBeerBusiness.setStatus(authGateStatus, "Your session could not be verified. Please log in before submitting data.", true);
         loginRequiredPanel.classList.remove("is-hidden");
         submissionPanel.classList.add("is-hidden");
+        window.location.assign(loginUrl);
         return false;
       }
     }

@@ -106,6 +106,7 @@ function createSubmission(
     venueName?: string;
     submissionType?: SubmissionType;
     beerName?: string;
+    servingSize?: string;
     price?: number | null;
     sourcePhotoUrl?: string | null;
   },
@@ -126,7 +127,7 @@ function createSubmission(
         id: `${input.id}:item-1`,
         beerName: input.beerName ?? "Carlton Draft",
         normalizedBeerId: null,
-        servingSize: "pint",
+        servingSize: input.servingSize ?? "pint",
         price: input.price ?? 14,
         isHappyHourPrice: false,
         happyHourDetails: null,
@@ -598,16 +599,18 @@ describe("Supabase account and verification foundation", () => {
 });
 
 describe("production hardening", () => {
-  it("redacts price records by default and enforces anonymous daily reveals server-side", () => {
+  it("limits free users to happy hours and core pint price previews server-side", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, { FREE_PRICE_REVEALS_PER_DAY: 1 });
     const submitter = createAccount(repository, "submitter");
     const admin = createAccount(repository, "admin", "admin");
     const first = createSubmission(repository, { id: "submission-1", userId: submitter.id, venueId: "venue-1", price: 14 });
-    const second = createSubmission(repository, { id: "submission-2", userId: submitter.id, venueId: "venue-2", price: 16 });
+    const second = createSubmission(repository, { id: "submission-2", userId: submitter.id, venueId: "venue-2", beerName: "Asahi Super Dry", price: 16 });
+    const third = createSubmission(repository, { id: "submission-3", userId: submitter.id, venueId: "venue-3", beerName: "Guinness", servingSize: "schooner", price: 11 });
 
     approve(repository, first.id, admin.id);
     approve(repository, second.id, admin.id);
+    approve(repository, third.id, admin.id);
 
     const preview = service.listPriceRecords(null, {
       anonymousSessionId: "anon-price-test",
@@ -615,9 +618,12 @@ describe("production hardening", () => {
       limit: 20,
       venueId: null,
     });
-    expect(preview.records).toHaveLength(2);
-    expect(preview.records.every((record) => record.price === null)).toBe(true);
-    expect(preview.records.every((record) => Boolean((record as { priceRedacted?: boolean }).priceRedacted))).toBe(true);
+    expect(preview.records).toHaveLength(3);
+    expect(preview.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ beerName: "Carlton Draft", servingSize: "pint", price: 14, freePreviewIncluded: true }),
+      expect.objectContaining({ beerName: "Asahi Super Dry", price: null, priceRedacted: true }),
+      expect.objectContaining({ beerName: "Guinness", servingSize: "schooner", price: null, priceRedacted: true }),
+    ]));
 
     const revealed = service.listPriceRecords(null, {
       anonymousSessionId: "anon-price-test",
@@ -647,7 +653,7 @@ describe("production hardening", () => {
       userId: null,
       anonymousSessionId: "anon-price-test",
       since: todayStart.toISOString(),
-    })).toBe(1);
+    })).toBe(0);
     expect(repository.countEvents({
       eventType: "price_view_blocked_free_limit",
       userId: null,
@@ -656,7 +662,7 @@ describe("production hardening", () => {
     })).toBe(1);
   });
 
-  it("limits free users while allowing premium, contributor, and admin exact price access", () => {
+  it("keeps non-preview prices locked for free users while allowing premium, contributor, and admin exact price access", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, { FREE_PRICE_REVEALS_PER_DAY: 1 });
     const submitter = createAccount(repository, "submitter");
@@ -665,7 +671,7 @@ describe("production hardening", () => {
     let contributor = createAccount(repository, "contributor-user");
     const admin = createAccount(repository, "admin", "admin");
     const first = createSubmission(repository, { id: "submission-1", userId: submitter.id, venueId: "venue-1", price: 12 });
-    const second = createSubmission(repository, { id: "submission-2", userId: submitter.id, venueId: "venue-2", price: 17 });
+    const second = createSubmission(repository, { id: "submission-2", userId: submitter.id, venueId: "venue-2", beerName: "Asahi Super Dry", price: 17 });
 
     approve(repository, first.id, admin.id);
     approve(repository, second.id, admin.id);
@@ -674,7 +680,7 @@ describe("production hardening", () => {
 
     expect(service.listPriceRecords(freeUser, {
       anonymousSessionId: null,
-      reveal: true,
+      reveal: false,
       limit: 20,
       venueId: "venue-1",
     }).records[0]?.price).toBe(12);
@@ -1972,18 +1978,17 @@ describe("business demo contribution model", () => {
     expect(publicPreview.records).toEqual(expect.arrayContaining([
       expect.objectContaining({
         beerName: "Carlton Draught",
-        price: null,
-        priceRedacted: true,
+        price: 13,
+        freePreviewIncluded: true,
         sourceType: "venue_manager_portal",
       }),
       expect.objectContaining({
         displayKind: "happy_hour",
-        happyHourDetails: null,
-        happyHourTitle: null,
-        happyHourDays: [],
-        happyHourStartTime: null,
-        happyHourEndTime: null,
+        happyHourDetails: "$9 house pints, selected taps only.",
+        happyHourStartTime: "16:00",
+        happyHourEndTime: "18:00",
         sourceType: "venue_manager_portal",
+        freePreviewIncluded: true,
       }),
     ]));
 
@@ -2155,7 +2160,7 @@ describe("business demo contribution model", () => {
 
       const publicAfter = await fetch(`${baseUrl}/api/business/price-records?venueId=api-bar-1&limit=20&reveal=true&anonymousSessionId=api-api-after`);
       expect((await publicAfter.json()).data.records).toEqual(expect.arrayContaining([
-        expect.objectContaining({ beerName: "Asahi Super Dry", price: 12 }),
+        expect.objectContaining({ beerName: "Asahi Super Dry", price: null, priceRedacted: true }),
       ]));
     });
   });

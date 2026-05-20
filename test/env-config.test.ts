@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const productionRequiredEnv = {
   NODE_ENV: "production",
-  PUBLIC_BASE_URL: "https://beer.splitseconds.app",
+  PUBLIC_BASE_URL: "https://pintpath.au",
   ADMIN_EMAILS: "admin@example.com",
   GOOGLE_MAPS_API_KEY: "test-browser-maps-key",
   SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
@@ -80,6 +80,14 @@ describe("environment safety defaults", () => {
 
     await expect(loadEnv()).rejects.toThrow(
       "DEMO_BILLING_MODE cannot be true in production unless ALLOW_DEMO_BILLING_IN_PRODUCTION=true.",
+    );
+  });
+
+  it("rejects Railway preview domains as the canonical production public URL", async () => {
+    stubProductionEnv({ PUBLIC_BASE_URL: "https://beer-production-aad4.up.railway.app" });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "PUBLIC_BASE_URL must be https://pintpath.au in production",
     );
   });
 });

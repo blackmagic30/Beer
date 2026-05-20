@@ -7,7 +7,7 @@ LOG="$ROOT/data/runs/manual-priority-beer-batches-2026-04-23.log"
 NPM_BIN="/Users/zac/.nvm/versions/node/v24.14.1/bin/npm"
 NODE_BIN="/Users/zac/.nvm/versions/node/v24.14.1/bin/node"
 AREAS="CBD,Brighton,Collingwood,Sandringham,Richmond,Fitzroy,Saint Kilda,South Yarra,Windsor,Brunswick,Saint Kilda East,Prahran,Carlton,Beghntligh"
-API_BASE_URL="${BEER_API_BASE_URL:-https://beer-production-aad4.up.railway.app}"
+API_BASE_URL="${BEER_API_BASE_URL:-${PUBLIC_BASE_URL:-https://pintpath.au}}"
 
 mkdir -p "$ROOT/data/runs"
 export PATH="/Users/zac/.nvm/versions/node/v24.14.1/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"

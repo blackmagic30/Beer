@@ -369,12 +369,14 @@ export function createApp() {
       // Supabase anon config is exposed only for OAuth login; exact price access stays server-gated.
       googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
       googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
+      publicBaseUrl: env.PUBLIC_BASE_URL,
       supabaseUrl: env.SUPABASE_URL ?? "",
       supabaseAnonKey: env.SUPABASE_ANON_KEY ?? "",
       supabaseOauthProviders: env.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
       trackedBeers: VIEWER_TRACKED_BEERS,
       business: {
         freePriceRevealsPerDay: env.FREE_PRICE_REVEALS_PER_DAY,
+        publicBaseUrl: env.PUBLIC_BASE_URL,
         contributorUnlockPoints: env.CONTRIBUTOR_UNLOCK_POINTS,
         contributorUnlockDays: env.CONTRIBUTOR_UNLOCK_DAYS,
         demoBillingMode: env.DEMO_BILLING_MODE,
@@ -405,6 +407,9 @@ export function createApp() {
   });
   app.get("/for-bars.html", (_req, res) => {
     res.redirect(302, "/venue-portal");
+  });
+  app.get("/auth/callback", (_req, res) => {
+    res.sendFile(path.join(viewerDirectory, "auth", "callback.html"));
   });
   app.use(express.static(viewerDirectory));
   app.get("/", (_req, res) => {

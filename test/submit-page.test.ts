@@ -16,7 +16,8 @@ describe("submit page auth gate", () => {
     expect(html).toContain("Sign in before submitting data");
     expect(html).toContain("every upload is linked to an account");
     expect(html).toContain("False or abusive data can receive fraud strikes");
-    expect(html).toContain("await MelbBeerBusiness.apiFetch(\"/api/business/account/dashboard\")");
+    expect(html).toContain("await MelbBeerBusiness.apiFetch(\"/api/business/account\")");
+    expect(html).toContain("window.location.assign(loginUrl)");
   });
 
   it("does not expose the submission form to anonymous users by default", () => {

@@ -27,7 +27,7 @@ interface CallsResponse {
 
 function parseArgs(argv: string[]) {
   const options = {
-    baseUrl: process.env.BEER_API_BASE_URL ?? "https://beer-production-aad4.up.railway.app",
+    baseUrl: process.env.BEER_API_BASE_URL ?? process.env.PUBLIC_BASE_URL ?? "https://pintpath.au",
     limit: 200,
   };
 

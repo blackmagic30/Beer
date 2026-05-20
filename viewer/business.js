@@ -1,5 +1,6 @@
 const AUTH_TOKEN_KEY = "melbBeerBusinessAuthToken";
 const ANON_SESSION_KEY = "melbBeerAnonSessionId";
+const AUTH_RETURN_KEY = "pintPathAuthReturnTo";
 
 function getAuthToken() {
   return window.localStorage.getItem(AUTH_TOKEN_KEY);
@@ -32,6 +33,66 @@ function getBusinessConfig() {
   return getViewerConfig().business || {};
 }
 
+function isLocalOrigin(origin = window.location.origin) {
+  try {
+    const hostname = new URL(origin).hostname;
+    return ["localhost", "127.0.0.1", "::1"].includes(hostname);
+  } catch {
+    return false;
+  }
+}
+
+function getConfiguredPublicBaseUrl() {
+  const config = getViewerConfig();
+  const business = getBusinessConfig();
+  return business.publicBaseUrl || config.publicBaseUrl || null;
+}
+
+function getCanonicalBaseUrl() {
+  const configured = getConfiguredPublicBaseUrl();
+
+  if (configured && !isLocalOrigin()) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+      return window.location.origin;
+    }
+  }
+
+  return window.location.origin;
+}
+
+function getSafeReturnPath(value = null) {
+  const fallback = "/account.html";
+  const raw = String(value || "").trim();
+
+  if (!raw) {
+    return fallback;
+  }
+
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    if (parsed.origin !== window.location.origin && parsed.origin !== getCanonicalBaseUrl()) {
+      return fallback;
+    }
+
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return raw.startsWith("/") && !raw.startsWith("//") ? raw : fallback;
+  }
+}
+
+function getAuthReturnPathFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  return getSafeReturnPath(params.get("next") || params.get("returnTo") || window.localStorage.getItem(AUTH_RETURN_KEY));
+}
+
+function getAuthCallbackUrl(returnTo = "/account.html") {
+  const url = new URL("/auth/callback", getCanonicalBaseUrl());
+  url.searchParams.set("returnTo", getSafeReturnPath(returnTo));
+  return url.toString();
+}
+
 function getSupabaseConfig() {
   const config = getViewerConfig();
   const business = getBusinessConfig();
@@ -62,6 +123,17 @@ function getSupabaseClient() {
         detectSessionInUrl: true,
       },
     });
+
+    if (isLocalOrigin() && !window.__melbBeerSupabaseAuthDebugInstalled) {
+      window.__melbBeerSupabaseAuthDebugInstalled = true;
+      window.__melbBeerSupabaseClient.auth.onAuthStateChange((event, session) => {
+        console.debug("[Pint Path auth]", {
+          event,
+          userId: session?.user?.id || null,
+          email: session?.user?.email || null,
+        });
+      });
+    }
   }
 
   return window.__melbBeerSupabaseClient;
@@ -114,7 +186,7 @@ async function syncSupabaseSession() {
   return { configured: true, synced: true, account: result.account };
 }
 
-async function signInWithOAuth(provider) {
+async function signInWithOAuth(provider, options = {}) {
   const client = getSupabaseClient();
   if (!client) {
     throw new Error("Supabase login is not configured for this environment.");
@@ -126,10 +198,13 @@ async function signInWithOAuth(provider) {
     facebook: "email public_profile",
   };
 
+  const returnTo = getSafeReturnPath(options.returnTo || getAuthReturnPathFromLocation());
+  window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
+
   const { error } = await client.auth.signInWithOAuth({
     provider,
     options: {
-      redirectTo: `${window.location.origin}/account.html`,
+      redirectTo: getAuthCallbackUrl(returnTo),
       scopes: scopesByProvider[provider] || "email",
     },
   });
@@ -139,6 +214,62 @@ async function signInWithOAuth(provider) {
   }
 }
 
+async function signInWithEmail(email, password) {
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error("Supabase email login is not configured for this environment.");
+  }
+
+  const { data, error } = await client.auth.signInWithPassword({ email, password });
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data.session?.access_token) {
+    throw new Error("Email login did not return a session. Confirm your email, then try again.");
+  }
+
+  return syncSupabaseSession();
+}
+
+async function signUpWithEmail(email, password, ageConfirmed) {
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error("Supabase email signup is not configured for this environment.");
+  }
+
+  const returnTo = getAuthReturnPathFromLocation();
+  window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
+
+  const { data, error } = await client.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: getAuthCallbackUrl(returnTo),
+      data: {
+        age_confirmed: Boolean(ageConfirmed),
+      },
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (data.session?.access_token) {
+    const synced = await syncSupabaseSession();
+    if (ageConfirmed) {
+      await apiFetch("/api/business/account/age-confirm", {
+        method: "POST",
+        body: JSON.stringify({ ageConfirmed: true }),
+      });
+    }
+    return { ...synced, needsEmailConfirmation: false };
+  }
+
+  return { configured: true, synced: false, needsEmailConfirmation: true };
+}
+
 async function requestPasswordReset(email) {
   const client = getSupabaseClient();
   if (!client) {
@@ -146,7 +277,7 @@ async function requestPasswordReset(email) {
   }
 
   const { error } = await client.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/account.html`,
+    redirectTo: getAuthCallbackUrl("/account.html"),
   });
 
   if (error) {
@@ -236,10 +367,16 @@ window.MelbBeerBusiness = {
   getSupabaseConfig,
   getSupabaseOauthProviders,
   getSupabaseClient,
+  getCanonicalBaseUrl,
+  getSafeReturnPath,
+  getAuthReturnPathFromLocation,
+  getAuthCallbackUrl,
   isFieldTestMode,
   apiFetch,
   syncSupabaseSession,
   signInWithOAuth,
+  signInWithEmail,
+  signUpWithEmail,
   requestPasswordReset,
   renderNav,
   installFieldTestChrome,

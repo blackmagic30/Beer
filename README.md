@@ -7,7 +7,7 @@ The old Twilio + ElevenLabs outbound calling bot is intentionally disabled by de
 ## Current Capabilities
 
 - Public Melbourne beer-price and happy-hour map.
-- Server-side price gating, free daily reveals, premium access, and contributor unlocks.
+- Server-side price gating, free preview access, premium access, and contributor unlocks.
 - Contributor account dashboard with private evidence handling and submission history.
 - Venue portal for venue-managed beers, prices, happy hours, deals, and pending approval flows.
 - Admin review, KPI, coverage, retention, partner-lead, and venue-manager workflows.
@@ -80,7 +80,7 @@ For the intended beta role boundaries, private-data rules, and approval gates, s
 
 The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 
-- Free users can view the map, venue pins, suburbs, data freshness, missions, and a limited number of exact price reveals per day.
+- Free users can view the map, venue pins, suburbs, data freshness, missions, happy hours, and pint prices for Guinness, Carlton Draft, and Stone & Wood.
 - Premium users can unlock full map utility at A$1.99/month or A$19/year.
 - Contributors can earn temporary premium access through approved venue data. Defaults are 5 points for a valid full venue update and 15 approved monthly points for 30 days of access.
 - Public submissions are queued as `pending` and do not become trusted map data until reviewed.
@@ -89,7 +89,7 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 - Admin review lives at `/admin.html` and is protected by account role checks via `ADMIN_EMAILS`.
 - Legacy call/result APIs are admin-only so transcripts and call-derived exact price rows are not exposed to anonymous users.
 - The public map no longer exposes legacy admin controls or direct browser reads of exact price records.
-- Exact price records are redacted by default and only revealed through server-side access checks and daily free reveal limits.
+- Exact price records are redacted by default unless they are part of the free preview: happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.
 - Analytics are captured as aggregate events only. No venue dashboard or individual clickstream export is live yet.
 - The admin KPI dashboard tracks early validation metrics, retention cohorts, data coverage, and potential partner leads from aggregated demand.
 - Users can save venues, beers, and suburbs, submit feedback, report wrong prices, and request missing venues or beers.
@@ -110,13 +110,13 @@ Supabase auth/account foundation:
 - The beta keeps the existing Pint Path bearer-session system for app API access, but can exchange a Supabase Auth OAuth session for a local Pint Path session through `POST /api/business/auth/supabase-session`.
 - `/account.html` shows Google, Apple, and Facebook quick-login buttons when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured. Email/password signup/login still works through the existing Pint Path account flow.
 - Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google, name/email for Apple, and email/public_profile for Facebook.
-- Add OAuth redirect URLs for local and hosted account pages, for example `http://localhost:3000/account.html` and `https://pintpath.beer/account.html`.
+- Add OAuth redirect URLs for local and hosted callback pages, for example `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`.
 - New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
 - Production admin access expects Supabase Auth MFA/Auth Assurance Level 2 (`aal2`). Enable MFA factors in Supabase, require confirmed email, and verify the OAuth/session JWT contains `aal2` before relying on admin routes.
 - Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
 - Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
 - Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` adds a detailed `public.user_price_submissions` table for future direct Supabase contributor uploads, protected so users can insert/select only their own pending rows while admins review status fields.
-- `/account.html` now has two states: logged-out users see polished sign-in/create-account forms, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points.
+- `/account.html` now has two states: logged-out users see polished Supabase Google/Apple/email sign-in/create-account forms, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points. Supabase OAuth and password-reset redirects land on `/auth/callback`, exchange the session, and then return to the account page or requested upload page.
 - Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. Pint Path must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
 - Future rewards should use `canAccessAgeGatedRewards(...)`, which requires verified 18+ status, a latest verified age-check record, and a non-expired verification.
 
@@ -160,9 +160,9 @@ Location/privacy guardrails:
 
 For the Melbourne beta, exact prices must flow through the Express API, not direct browser database reads.
 
-- `/api/business/price-records` returns redacted price records unless the caller has admin, premium, contributor, or remaining free reveal access.
-- Free exact-price reveal limits are counted server-side using the logged-in user where possible, or the anonymous session/IP fallback for anonymous users.
-- The map gets venue pins and preview metadata by default, then requests an exact venue reveal only when a user opens a venue detail.
+- `/api/business/price-records` returns exact records only for admin, premium, contributor access, or the free preview scope: happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.
+- Free users cannot reveal every price by repeatedly opening venues; premium/contributor/admin access is required for the full price catalogue.
+- The map gets venue pins and preview metadata by default, then requests venue detail records when a user opens a venue panel. The server still decides which exact prices are visible.
 - Admin tools live on `/admin.html` and `/api/business/admin/*`; public map HTML should not include admin unlock forms or secret-entry UI.
 - Photo/source uploads are validated for image MIME type and 6MB max size, then stored behind private source-evidence references. Review/download access is issued through short-lived signed server URLs after an uploader/admin authorization check.
 - `DEMO_BILLING_MODE=true` is for local/demo only. Production blocks demo billing unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` is explicitly set.
@@ -185,7 +185,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 
 Security and rotation notes:
 
-- Browser Google Maps keys are public by design, but should still be restricted to `https://pintpath.beer/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`. If a browser key was ever committed or shared too broadly, rotate it in Google Cloud and update Railway/local env.
+- Browser Google Maps keys are public by design, but should still be restricted to `https://pintpath.au/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`. If a browser key was ever committed or shared too broadly, rotate it in Google Cloud and update Railway/local env.
 - Supabase service-role keys, Stripe secret keys, Stripe webhook secrets, Twilio auth tokens, OpenAI keys, and ElevenLabs keys must stay server-side only. If any were exposed, rotate them with the provider, update Railway env, restart the service, and run `npm run security:scan`.
 - Do not use standalone static viewer mode for public beta price data, because it cannot enforce server-side price gating.
 
@@ -193,7 +193,7 @@ Suggested production beta values:
 
 ```dotenv
 NODE_ENV=production
-PUBLIC_BASE_URL=https://pintpath.beer
+PUBLIC_BASE_URL=https://pintpath.au
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 FREE_PRICE_REVEALS_PER_DAY=5
@@ -236,7 +236,7 @@ stripe listen --forward-to localhost:3000/api/business/billing/webhook
 
 Local MVP flow checks:
 
-- Free map: open `http://localhost:3000`, confirm pins appear and exact prices are limited.
+- Free map: open `http://localhost:3000`, confirm pins appear, happy hours are visible, and only Guinness/Carlton Draft/Stone & Wood pint prices are exact.
 - Signup/age gate: create an account, confirm 18+, then submit venue data at `/submit.html`.
 - Admin approval: sign up with an email in `ADMIN_EMAILS`, open `/admin.html`, approve the pending submission, and confirm points are awarded.
 - Contributor unlock: approve enough unique-venue points to reach `CONTRIBUTOR_UNLOCK_POINTS`, then confirm full access and map price visibility.
@@ -266,7 +266,7 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_browser_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 # Configure Google/Apple/Facebook OAuth providers in Supabase dashboard.
-# Redirect URLs: http://localhost:3000/account.html and your hosted /account.html URL.
+# Redirect URLs: http://localhost:3000/auth/callback and https://pintpath.au/auth/callback.
 SUPABASE_OAUTH_PROVIDERS=google,apple,facebook
 SUPABASE_RESULTS_TABLE=call_results
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
@@ -378,36 +378,36 @@ PUBLIC_BASE_URL=https://abc123.ngrok-free.app
 
 6. Restart the app after editing `.env`.
 
-## Split Seconds Staging Domain
+## Pint Path Production Domain
 
-You do not need to buy a separate subdomain if you already own `splitseconds.app`.
+The official production URL is:
 
 Use:
 
 ```text
-pintpath.beer
+pintpath.au
 ```
 
-That is the recommended staging/live-testing host for this project because it keeps the beer map separate from the main Split Seconds app while still living under your existing domain.
+That is the recommended live host for this project. Keep localhost/ngrok for local testing and use `pintpath.au` for production Railway traffic once DNS is fully configured.
 
 When you deploy it, switch:
 
 ```dotenv
-PUBLIC_BASE_URL=https://pintpath.beer
+PUBLIC_BASE_URL=https://pintpath.au
 ```
 
 Recommended rollout:
 
 1. Keep local development on `localhost` and ngrok.
 2. Deploy the app to Railway.
-3. Point `pintpath.beer` at that host with DNS.
-4. Switch `PUBLIC_BASE_URL` to `https://pintpath.beer`.
+3. Point `pintpath.au` at that host with DNS.
+4. Switch `PUBLIC_BASE_URL` to `https://pintpath.au`.
 5. Keep `ENABLE_LEGACY_CALL_AUTOMATION=false`.
 6. Add the domain to your Google Maps browser key referrer rules.
 
 Recommended Google Maps browser key referrers once hosted:
 
-- `https://pintpath.beer/*`
+- `https://pintpath.au/*`
 - `http://localhost:3000/*`
 - `http://127.0.0.1:3000/*`
 
@@ -421,7 +421,7 @@ Recommended Google key split long-term:
 Recommended hosted environment values:
 
 ```dotenv
-PUBLIC_BASE_URL=https://pintpath.beer
+PUBLIC_BASE_URL=https://pintpath.au
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 GOOGLE_MAPS_API_KEY=your_google_maps_browser_key
@@ -443,8 +443,8 @@ Recommended Railway service setup:
 1. Deploy one web service from this repo.
 2. Attach a persistent volume mounted at `/app/data`.
 3. Set `DATABASE_PATH=./data/pint-path.sqlite`.
-4. Set `PUBLIC_BASE_URL=https://pintpath.beer`.
-5. Add the custom domain `pintpath.beer`.
+4. Set `PUBLIC_BASE_URL=https://pintpath.au`.
+5. Add the custom domain `pintpath.au`.
 
 Because the app uses SQLite for local `call_runs` state, the persistent volume matters.
 
@@ -514,7 +514,7 @@ For local browser testing, allow these referrers on the Google Maps browser key:
 
 For hosted staging, also allow:
 
-- `https://pintpath.beer/*`
+- `https://pintpath.au/*`
 
 Make sure the same Google Cloud project has:
 
@@ -682,7 +682,7 @@ The hosted `viewer/index.html` now reads venue pins and approved price previews 
 - `GET /api/business/venues`
 - `GET /api/business/price-records`
 
-`/api/business/price-records` returns redacted records by default. The viewer requests `reveal=true&venueId=...` only when a user opens a venue detail, and the server decides whether exact prices can be returned.
+`/api/business/price-records` returns redacted records by default, except for the free preview scope: happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood. The viewer requests `reveal=true&venueId=...` only when a user opens a venue detail, and the server decides whether any additional exact prices can be returned.
 
 Call-derived data can still sync into Supabase `call_results` for the calling pipeline, but the public browser should not read that table directly for beta use.
 

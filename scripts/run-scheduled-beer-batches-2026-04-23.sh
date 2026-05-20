@@ -16,17 +16,17 @@ export PATH="/Users/zac/.nvm/versions/node/v24.14.1/bin:/opt/homebrew/bin:/usr/l
   cd "$ROOT" || exit 1
 
   echo "--- Starting Carlton Draft batch ---"
-  "$NPM_BIN" run venues:call -- --beer=carlton_draft --suburb="$AREAS" --limit=0 --delay-ms=45000 --state-file=./data/runs/priority-areas-carlton-draft-batch.json --base-url=https://beer.splitseconds.app
+  "$NPM_BIN" run venues:call -- --beer=carlton_draft --suburb="$AREAS" --limit=0 --delay-ms=45000 --state-file=./data/runs/priority-areas-carlton-draft-batch.json --base-url=https://pintpath.au
   carlton_status=$?
   echo "--- Carlton Draft batch exited with status $carlton_status ---"
 
   echo "--- Starting Stone & Wood batch ---"
-  "$NPM_BIN" run venues:call -- --beer=stone_and_wood --suburb="$AREAS" --limit=0 --delay-ms=45000 --state-file=./data/runs/priority-areas-stone-and-wood-batch.json --base-url=https://beer.splitseconds.app
+  "$NPM_BIN" run venues:call -- --beer=stone_and_wood --suburb="$AREAS" --limit=0 --delay-ms=45000 --state-file=./data/runs/priority-areas-stone-and-wood-batch.json --base-url=https://pintpath.au
   stone_status=$?
   echo "--- Stone & Wood batch exited with status $stone_status ---"
 
   echo "--- Starting Guinness batch ---"
-  "$NPM_BIN" run venues:call -- --beer=guinness --suburb="$AREAS" --limit=0 --delay-ms=45000 --state-file=./data/runs/priority-areas-guinness-batch.json --base-url=https://beer.splitseconds.app
+  "$NPM_BIN" run venues:call -- --beer=guinness --suburb="$AREAS" --limit=0 --delay-ms=45000 --state-file=./data/runs/priority-areas-guinness-batch.json --base-url=https://pintpath.au
   guinness_status=$?
   echo "--- Guinness batch exited with status $guinness_status ---"
 

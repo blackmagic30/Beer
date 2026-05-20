@@ -25,7 +25,7 @@ Use this before merging a beta/hardening branch into `main` or deploying a Railw
 - Confirm no `.env` file, API keys, Stripe secrets, Supabase service-role keys, Twilio auth tokens, OpenAI keys, or ElevenLabs keys are committed.
 - Confirm public map source does not contain legacy admin/debug UI strings.
 - Confirm Google Maps browser keys are HTTP-referrer restricted to localhost and the live beta domain.
-- Confirm Supabase OAuth providers and redirect URLs are configured if quick login is enabled.
+- Confirm Supabase OAuth providers and redirect URLs are configured if quick login is enabled: `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`.
 - Confirm Supabase Row Level Security policies from `supabase/migrations/20260512000000_auth_profiles_activity.sql` are reviewed before any direct browser writes are enabled.
 
 ## 3. Required Production Beta Env
@@ -34,7 +34,7 @@ Use this before merging a beta/hardening branch into `main` or deploying a Railw
 NODE_ENV=production
 HOST=0.0.0.0
 PORT=8080
-PUBLIC_BASE_URL=https://pintpath.beer
+PUBLIC_BASE_URL=https://pintpath.au
 DATABASE_PATH=/app/data/pint-path.sqlite
 TRUST_PROXY=true
 FIELD_TEST_MODE=true

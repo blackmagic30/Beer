@@ -114,7 +114,7 @@ async function fetchHostedCalls(baseUrl: string, limit: number): Promise<HostedC
 }
 
 async function main() {
-  const baseUrl = getArg("base-url", "https://beer.splitseconds.app") ?? "https://beer.splitseconds.app";
+  const baseUrl = getArg("base-url", "https://pintpath.au") ?? "https://pintpath.au";
   const limit = Number.parseInt(getArg("limit", "50") ?? "50", 10);
   const callSids = (getArg("call-sids", "") ?? "")
     .split(",")

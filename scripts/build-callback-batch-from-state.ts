@@ -92,7 +92,7 @@ async function main() {
   const sourceStatePath = path.resolve(root, getArg("source-state-file", "./data/runs/priority-areas-carlton-draft-batch.json")!);
   const outputStatePath = path.resolve(root, getArg("output-state-file", "./data/runs/callback-batch.json")!);
   const targetBeer = normalizeTargetBeerKey(getArg("beer", "happy_hour"));
-  const baseUrl = getArg("base-url", "https://beer-production-aad4.up.railway.app")!;
+  const baseUrl = getArg("base-url", process.env.BEER_API_BASE_URL ?? process.env.PUBLIC_BASE_URL ?? "https://pintpath.au")!;
 
   const sourceState = readJsonFile<SourceBatchState>(sourceStatePath);
   const venuesById = new Map(sourceState.venues.map((venue) => [venue.venueId, venue]));

@@ -21,7 +21,7 @@ import {
   type SourceEvidenceObject,
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
-import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../../constants/beers.js";
+import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, normalizeBeerSearchKey } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { redactSecrets } from "../../lib/redact.js";
@@ -368,6 +368,44 @@ function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceReco
     happyHourEndTime: null,
     sourceSubmissionId: null,
     priceRedacted: true,
+  };
+}
+
+const FREE_PREVIEW_BEER_KEYS = new Set([
+  "guinness",
+  "carlton_draft",
+  "stone_and_wood",
+  "stone_and_wood_pacific_ale",
+]);
+
+function isHappyHourRecord(record: PublicVenuePriceRecord): boolean {
+  return record.displayKind === "happy_hour" || record.isHappyHourPrice;
+}
+
+function isPintServing(record: PublicVenuePriceRecord): boolean {
+  return normalizeBeerSearchKey(record.servingSize) === "pint";
+}
+
+function isFreePreviewBeerRecord(record: PublicVenuePriceRecord): boolean {
+  const canonicalBeerKey = normalizeBeerSearchKey(canonicalizeTrackedBeerName(record.beerName));
+  return isPintServing(record) && FREE_PREVIEW_BEER_KEYS.has(canonicalBeerKey);
+}
+
+function canFreeUserSeeRecord(record: PublicVenuePriceRecord): boolean {
+  return isHappyHourRecord(record) || isFreePreviewBeerRecord(record);
+}
+
+function freePreviewPriceRecord(record: PublicVenuePriceRecord):
+  | (PublicVenuePriceRecord & { freePreviewIncluded: true })
+  | (PublicVenuePriceRecord & { priceRedacted: true }) {
+  if (!canFreeUserSeeRecord(record)) {
+    return redactPriceRecord(record);
+  }
+
+  return {
+    ...record,
+    sourceSubmissionId: null,
+    freePreviewIncluded: true,
   };
 }
 
@@ -1231,6 +1269,10 @@ export class BusinessService {
       throw new AppError("Account access is suspended.", 403);
     }
 
+    if (metadata.age_confirmed === true && !account.ageConfirmedAt) {
+      account = this.repository.updateAgeConfirmed(account.id, now);
+    }
+
     this.recordUserActivity({
       account,
       eventType: "user_login",
@@ -1359,8 +1401,9 @@ export class BusinessService {
       canRevealPrice: hasFullAccess || remaining > 0,
       canUseCheapestSort: hasFullAccess,
       canUseBeerSearch: hasFullAccess,
-      canUseHappyHourActiveNow: hasFullAccess,
+      canUseHappyHourActiveNow: true,
       canUseVerifiedOnly: hasFullAccess,
+      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.",
       premiumUntil: account?.premiumUntil ?? null,
     };
   }
@@ -2256,70 +2299,38 @@ export class BusinessService {
       };
     }
 
-    const redactedRecords = records.map(redactPriceRecord);
+    const freePreviewRecords = records.map(freePreviewPriceRecord);
     if (!input.reveal || !input.venueId || records.length === 0) {
       return {
-        records: redactedRecords,
+        records: freePreviewRecords,
         access: this.getAccessState(account, anonymousSessionId),
         revealed: false,
         blocked: false,
       };
     }
 
-    const identity = {
-      userId: account?.id ?? null,
-      anonymousSessionId,
-    };
-    const since = startOfTodayIso();
-    const alreadyRevealed = this.repository.countEvents({
-      eventType: "price_view_revealed",
-      userId: identity.userId,
-      anonymousSessionId: identity.anonymousSessionId,
-      venueId: input.venueId,
-      since,
-    }) > 0;
-    const accessBeforeReveal = this.getAccessState(account, anonymousSessionId);
-
-    if (alreadyRevealed || accessBeforeReveal.freePriceRevealsRemainingToday > 0) {
-      if (!alreadyRevealed) {
-        this.trackEvent(account, {
-          anonymousSessionId,
-          eventType: "price_view_revealed",
-          venueId: input.venueId,
-          beerId: null,
-          suburb: records[0]?.suburb ?? null,
-          metadata: {
-            source: "server_price_records",
-            recordCount: records.length,
-          },
-        });
-      }
-
-      return {
-        records,
-        access: this.getAccessState(account, anonymousSessionId),
-        revealed: true,
-        blocked: false,
-      };
+    const visibleCount = freePreviewRecords.filter((record) => "freePreviewIncluded" in record).length;
+    const lockedCount = freePreviewRecords.filter((record) => "priceRedacted" in record).length;
+    if (lockedCount > 0) {
+      this.trackEvent(account, {
+        anonymousSessionId,
+        eventType: "price_view_blocked_free_limit",
+        venueId: input.venueId,
+        beerId: null,
+        suburb: records[0]?.suburb ?? null,
+        metadata: {
+          source: "server_free_preview_scope",
+          recordCount: records.length,
+          visibleFreePreviewCount: visibleCount,
+          lockedPremiumCount: lockedCount,
+        },
+      });
     }
-
-    this.trackEvent(account, {
-      anonymousSessionId,
-      eventType: "price_view_blocked_free_limit",
-      venueId: input.venueId,
-      beerId: null,
-      suburb: records[0]?.suburb ?? null,
-      metadata: {
-        source: "server_price_records",
-        recordCount: records.length,
-      },
-    });
-
     return {
-      records: redactedRecords,
+      records: freePreviewRecords,
       access: this.getAccessState(account, anonymousSessionId),
-      revealed: false,
-      blocked: true,
+      revealed: visibleCount > 0,
+      blocked: lockedCount > 0,
     };
   }
 

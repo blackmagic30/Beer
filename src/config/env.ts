@@ -207,6 +207,10 @@ if (parsedEnv.data.NODE_ENV === "production") {
     throw new Error("PUBLIC_BASE_URL must use https:// in production.");
   }
 
+  if (publicBaseUrl.hostname !== "pintpath.au") {
+    throw new Error("PUBLIC_BASE_URL must be https://pintpath.au in production. Do not use Railway preview domains as the canonical public app URL.");
+  }
+
   if (!parsedEnv.data.GOOGLE_MAPS_API_KEY) {
     throw new Error("GOOGLE_MAPS_API_KEY is required in production so the public map does not silently fail.");
   }

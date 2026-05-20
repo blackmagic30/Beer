@@ -6,7 +6,7 @@ Use this before showing the app to real Melbourne users.
 
 - Run `npm install` if dependencies are not installed.
 - Copy `.env.example` to `.env`.
-- Set `PUBLIC_BASE_URL` to the preview URL users will open, for example `https://pintpath.beer`.
+- Set `PUBLIC_BASE_URL` to the preview URL users will open, for example `https://pintpath.au`.
 - Set `DATABASE_PATH` to the field-test SQLite database path.
 - Run `npm run check` before deploying.
 - Run `npm run security:scan` before deploying.
