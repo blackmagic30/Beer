@@ -38,14 +38,26 @@ describe("account page shell", () => {
 
     expect(html).toContain('$("loggedOutView").hidden = true');
     expect(html).toContain('$("accountDashboard").hidden = false');
+    expect(html).toContain('$("accountDashboard").classList.remove("is-hidden")');
     expect(html).toContain('$("loggedOutView").hidden = false');
     expect(html).toContain('$("accountDashboard").hidden = true');
+    expect(html).toContain('$("accountDashboard").classList.add("is-hidden")');
   });
 
   it("keeps hidden account states visually hidden even when display utility classes are present", () => {
+    const html = accountHtml();
     const css = businessCss();
 
+    expect(html).toContain('id="accountDashboard" class="dashboardMain accountDashboard is-hidden" hidden');
+    expect(html).toContain('id="accountEmail">Not signed in</strong>');
     expect(css).toMatch(/\[hidden\]\s*\{[^}]*display:\s*none\s*!important;/s);
+  });
+
+  it("does not show logged-out confirmation when no session existed", () => {
+    const html = accountHtml();
+
+    expect(html).toContain("const hadApiToken = Boolean(MelbBeerBusiness.getAuthToken())");
+    expect(html).toContain("hadApiToken || hadSupabaseSession ? \"You have been logged out.\" : \"Enter your details to continue.\"");
   });
 
   it("keeps contributor evidence copy private and reviewer-focused", () => {

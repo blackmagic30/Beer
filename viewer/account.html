@@ -94,7 +94,7 @@
       </section>
     </section>
 
-    <section id="accountDashboard" class="dashboardMain accountDashboard" hidden>
+    <section id="accountDashboard" class="dashboardMain accountDashboard is-hidden" hidden>
       <section class="hero hero--compact accountHero">
         <div>
           <div class="eyebrow">My account</div>
@@ -103,7 +103,7 @@
         </div>
         <div class="heroCard accountIdentityCard">
           <span class="muted">Signed in as</span>
-          <strong id="accountEmail">Loading...</strong>
+          <strong id="accountEmail">Not signed in</strong>
           <div id="accessBadgeRow" class="miniStatRow"></div>
           <button id="logoutButton" class="button button--danger" type="button">Log out</button>
         </div>
@@ -408,12 +408,18 @@
     function showLoggedOut(message = "Enter your details to continue.", isError = false) {
       $("loggedOutView").hidden = false;
       $("accountDashboard").hidden = true;
+      $("accountDashboard").classList.add("is-hidden");
+      $("accountEmail").textContent = "Not signed in";
+      $("dashboardStatus").textContent = "Sign in to load your contributor dashboard.";
+      $("logoutButton").disabled = true;
       MelbBeerBusiness.setStatus($("authStatus"), message, isError);
     }
 
     function showDashboard() {
       $("loggedOutView").hidden = true;
       $("accountDashboard").hidden = false;
+      $("accountDashboard").classList.remove("is-hidden");
+      $("logoutButton").disabled = false;
     }
 
     function showAuthTab(tab) {
@@ -764,18 +770,30 @@
         }
       });
       $("logoutButton").addEventListener("click", async () => {
+        const hadApiToken = Boolean(MelbBeerBusiness.getAuthToken());
+        let hadSupabaseSession = false;
         try {
-          await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" });
+          const session = await MelbBeerBusiness.getSupabaseClient()?.auth.getSession();
+          hadSupabaseSession = Boolean(session?.data?.session?.access_token);
+        } catch {
+          hadSupabaseSession = false;
+        }
+        try {
+          if (hadApiToken) {
+            await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" });
+          }
         } catch {
           // Clear local session even if the server session already expired.
         }
         try {
-          await MelbBeerBusiness.getSupabaseClient()?.auth.signOut();
+          if (hadSupabaseSession) {
+            await MelbBeerBusiness.getSupabaseClient()?.auth.signOut();
+          }
         } catch {
           // Supabase is optional in local demo mode.
         }
         MelbBeerBusiness.setAuthToken(null);
-        showLoggedOut("You have been logged out.");
+        showLoggedOut(hadApiToken || hadSupabaseSession ? "You have been logged out." : "Enter your details to continue.");
       });
       $("confirmAgeButton").addEventListener("click", async () => {
         try {
