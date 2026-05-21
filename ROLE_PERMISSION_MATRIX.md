@@ -5,7 +5,7 @@ This matrix documents the beta access rules enforced by the Express business API
 ## Public / Anonymous
 
 Can:
-- Browse public map, venue markers, missions, pricing, For Bars page, beta terms, and privacy pages.
+- Browse public map, venue markers, missions, pricing, account/auth, beta terms, and privacy pages.
 - Search venues, suburbs, and beers using public preview data.
 - Use map filters that do not require exact-price access.
 - Create feedback, venue/beer requests, venue-interest requests, and wrong-price reports.
@@ -34,7 +34,7 @@ Cannot:
 - Verify their own upload.
 - Approve/reject/fraud-flag submissions.
 - Self-award points or edit contribution totals.
-- Access admin APIs, venue portal data, paid map access beyond reveal limits, bar analytics, or another user's private account/submission data.
+- Access admin APIs, venue portal data, paid map access beyond reveal limits, venue analytics, or another user's private account/submission data.
 
 Approval / validation:
 - Submissions stay `pending` until admin review.
@@ -49,7 +49,7 @@ Can:
 - Use paid map features such as full beer search, cheapest sort, verified-only, and full happy-hour detail according to current product rules.
 
 Cannot:
-- Access admin APIs, venue portal data unless separately assigned, another user's private account/submission data, or bar-private reports.
+- Access admin APIs, venue portal data unless separately assigned, another user's private account/submission data, or venue-private reports.
 - Bypass Stripe/demo billing server-side entitlement checks.
 
 Approval / validation:
@@ -69,7 +69,7 @@ Cannot:
 Approval / validation:
 - Contributor unlock uses the contribution ledger, not mutable frontend totals.
 
-## Bar Tier 1: Basic
+## Venue Tier 1: Basic
 
 Can:
 - Access `/venue-portal` only when logged in, 18+ confirmed, active, role is `venue_manager`, and assigned to that venue by admin.
@@ -80,7 +80,7 @@ Can:
 Cannot:
 - Access unassigned venues by URL/API manipulation.
 - Access admin dashboard or admin APIs.
-- Change their own bar membership tier through profile updates.
+- Change their own venue membership tier through profile updates.
 - View Plus/Pro analytics or monthly report content.
 - See individual user IDs, anonymous session IDs, exact user location, raw user clickstream, account emails, or raw source-photo evidence in portal insight payloads.
 
@@ -89,7 +89,7 @@ Publishing / validation:
 - High-trust public price records from community submissions still use the admin review flow.
 - Admin should only assign verified venue managers during beta.
 
-## Bar Tier 2: Plus
+## Venue Tier 2: Plus
 
 Can:
 - Everything Basic can do.
@@ -103,7 +103,7 @@ Cannot:
 Privacy threshold:
 - Suburb demand buckets are suppressed below the configured threshold, with venue-manager views using at least 10 events for sensitive demand lists.
 
-## Bar Tier 3: Pro
+## Venue Tier 3: Pro
 
 Can:
 - Everything Plus can do.
@@ -116,7 +116,7 @@ Cannot:
 ## Admin / Moderator / Approver
 
 Can:
-- Access protected admin dashboards, KPI/retention/coverage/partner-lead views, queues, venue partner tools, and legacy call/result APIs.
+- Access protected admin dashboards, KPI/retention/coverage/partner-lead views, queues, and venue partner tools.
 - Review submissions and approve/reject/needs-more-evidence/fraud-flag.
 - Assign/revoke venue managers.
 - Update venue-interest/outreach status.
@@ -128,7 +128,7 @@ Cannot:
 - Review their own submission.
 - Use admin APIs without a valid non-expired, non-revoked, active admin session.
 - Bypass audit logging for sensitive admin/payment actions.
-- Expose service-role keys, Stripe secrets, Twilio/OpenAI/ElevenLabs secrets, raw transcripts, raw evidence photos, or private user account data in public UI.
+- Expose service-role keys, Stripe secrets, OpenAI/private Google keys, raw evidence photos, or private user account data in public UI.
 
 Approval / validation:
 - Sensitive admin actions create security audit rows with redacted metadata.
@@ -160,7 +160,7 @@ Can:
 
 Cannot:
 - Normal users or Basic venue managers cannot view paid analytics/monthly report payloads.
-- Venue managers cannot view another bar's private report by changing IDs in URLs/API calls.
+- Venue managers cannot view another venue's private report by changing IDs in URLs/API calls.
 - Reports must not expose competitor-level private rows, raw user clickstream, exact user location, account emails, raw session IDs, or source-photo evidence.
 
 ## Inputs Requiring Validation
@@ -168,7 +168,7 @@ Cannot:
 - Auth: email/password and Supabase session tokens.
 - Submissions: venue, observed date/time, source image/URL, beer rows, prices, tap status, happy-hour details.
 - Verification: target submission and result.
-- Bar portal: profile URLs, phone/socials, venue tags, beer catalog fields, ABV, prices, serving sizes, happy-hour days/times, specials.
+- Venue portal: profile URLs, phone/socials, venue tags, beer catalog fields, ABV, prices, serving sizes, happy-hour days/times, specials.
 - Billing: plan/tier is validated server-side and entitlements come from Stripe webhook/demo/admin code paths only.
 - Uploads: MIME, magic bytes, size, unsafe extensions/content, and production inline storage guard.
 
@@ -176,4 +176,4 @@ Cannot:
 
 - Local email/password accounts do not yet include a full email-verification workflow; Supabase OAuth/email verification should be preferred for public beta onboarding.
 - Portal-managed stock/happy-hour rows can be displayed as venue-supplied data for assigned managers; broader trusted-public publishing and disputes still need operational policy.
-- Admin MFA, private object storage/signed URLs, distributed rate limiting, and a formal Supabase RLS audit remain in `SECURITY_BACKLOG.md`.
+- Provider-side Supabase MFA verification, storage access tests, Redis provisioning, and a formal Supabase RLS audit remain in `PROD_FOLLOWUPS.md`.

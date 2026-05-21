@@ -5,8 +5,6 @@ import { z } from "zod";
 
 dotenv.config();
 
-const e164PhoneRegex = /^\+[1-9]\d{7,14}$/;
-
 function sanitizeEnvString(value: unknown): unknown {
   if (typeof value !== "string") {
     return value;
@@ -74,22 +72,6 @@ const demoBillingModeFromEnv = z.preprocess((value) => {
   return value;
 }, booleanFromEnv);
 
-const legacyCallAutomationFromEnv = z.preprocess((value) => {
-  if (value === undefined || value === null || value === "") {
-    return false;
-  }
-
-  return value;
-}, booleanFromEnv);
-
-const twilioValidateSignaturesFromEnv = z.preprocess((value) => {
-  if (value === undefined || value === null || value === "") {
-    return process.env.NODE_ENV === "production" ? true : false;
-  }
-
-  return value;
-}, booleanFromEnv);
-
 const optionalStringFromEnv = z.preprocess((value) => {
   const trimmed = sanitizeEnvString(value);
   if (typeof trimmed !== "string") {
@@ -107,16 +89,6 @@ const optionalHttpUrlFromEnv = z.preprocess((value) => {
   return normalised.length === 0 ? undefined : normalised;
 }, z.string().url().optional());
 
-const optionalE164PhoneFromEnv = z.preprocess((value) => {
-  const trimmed = sanitizeEnvString(value);
-  if (typeof trimmed !== "string") {
-    return trimmed;
-  }
-  return trimmed.length === 0 ? undefined : trimmed;
-}, z.string().regex(e164PhoneRegex, "TWILIO_PHONE_NUMBER must be in E.164 format").optional());
-
-const clockTimeRegex = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
-
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   TARGET_BEER: z.enum(["guinness", "carlton_draft", "stone_and_wood", "happy_hour"]).default("guinness"),
@@ -132,21 +104,11 @@ const envSchema = z.object({
   PUBLIC_BASE_URL: z.preprocess(sanitizeEnvString, z.string().url()),
   DATABASE_PATH: z.preprocess(sanitizeEnvString, z.string()).default("./data/pint-path.sqlite"),
   TRUST_PROXY: booleanFromEnv.default(true),
-  ENABLE_LEGACY_CALL_AUTOMATION: legacyCallAutomationFromEnv,
-  OUTBOUND_CALLS_ENABLED: booleanFromEnv.default(false),
-  OUTBOUND_CALL_TIMEZONE: z.preprocess(sanitizeEnvString, z.string().min(1)).default("Australia/Melbourne"),
-  OUTBOUND_CALL_WINDOW_START: z.preprocess(sanitizeEnvString, z.string().regex(clockTimeRegex)).default("11:00"),
-  OUTBOUND_CALL_WINDOW_END: z.preprocess(sanitizeEnvString, z.string().regex(clockTimeRegex)).default("20:30"),
-  OUTBOUND_CALL_ALLOWED_DAYS: z.preprocess(sanitizeEnvString, z.string().min(1)).default("mon,tue,wed,thu,fri,sat,sun"),
-  OUTBOUND_REPEAT_GUARD_SECONDS: z.coerce.number().int().min(0).default(300),
-  PARSE_CONFIDENCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.72),
-  BATCH_CALL_CIRCUIT_BREAKER_THRESHOLD: z.coerce.number().int().min(1).max(20).default(5),
-  BATCH_CALL_LOW_SIGNAL_THRESHOLD: z.coerce.number().int().min(1).max(40).default(12),
   SUPABASE_URL: optionalHttpUrlFromEnv,
   SUPABASE_ANON_KEY: optionalStringFromEnv,
   SUPABASE_SERVICE_ROLE_KEY: optionalStringFromEnv,
   SUPABASE_OAUTH_PROVIDERS: z.preprocess(sanitizeEnvString, z.string()).default("google,apple,facebook"),
-  SUPABASE_RESULTS_TABLE: optionalStringFromEnv.default("call_results"),
+  SUPABASE_MENU_CAPTURE_TABLE: optionalStringFromEnv.default("venue_menu_captures"),
   ADMIN_EMAILS: optionalStringFromEnv,
   GOOGLE_MAPS_API_KEY: optionalStringFromEnv,
   GOOGLE_MAPS_MAP_ID: optionalStringFromEnv,
@@ -167,8 +129,6 @@ const envSchema = z.object({
   ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: booleanFromEnv.default(false),
   SOURCE_EVIDENCE_SIGNING_SECRET: optionalStringFromEnv,
   SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(300),
-  ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION: booleanFromEnv.default(false),
-  ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION: booleanFromEnv.default(false),
   FIELD_TEST_MODE: booleanFromEnv.default(false),
   STRIPE_SECRET_KEY: optionalStringFromEnv,
   STRIPE_WEBHOOK_SECRET: optionalStringFromEnv,
@@ -177,14 +137,6 @@ const envSchema = z.object({
   STRIPE_PLUS_PRICE_ID: optionalStringFromEnv,
   STRIPE_PRO_PRICE_ID: optionalStringFromEnv,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalStringFromEnv,
-  TWILIO_ACCOUNT_SID: optionalStringFromEnv,
-  TWILIO_AUTH_TOKEN: optionalStringFromEnv,
-  TWILIO_PHONE_NUMBER: optionalE164PhoneFromEnv,
-  TWILIO_CALL_TIME_LIMIT_SECONDS: z.coerce.number().int().min(5).max(600).default(30),
-  TWILIO_VALIDATE_SIGNATURES: twilioValidateSignaturesFromEnv,
-  ELEVENLABS_API_KEY: optionalStringFromEnv,
-  ELEVENLABS_AGENT_ID: optionalStringFromEnv,
-  ELEVENLABS_WEBHOOK_SECRET: optionalStringFromEnv,
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

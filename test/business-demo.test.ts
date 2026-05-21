@@ -10,13 +10,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { BusinessRepository, type BarPendingChange, type SubmissionType, type SubscriptionStatus } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
-import { AppError } from "../src/lib/errors.js";
 import { errorHandler } from "../src/middleware/error-handler.js";
-import { createCallsRouter } from "../src/modules/calls/calls.routes.js";
 import { barHappyHourSchema, createSubmissionSchema, normalizeHappyHourTime } from "../src/modules/business/business.schemas.js";
 import { createBusinessRouter } from "../src/modules/business/business.routes.js";
 import { BusinessService, canAccessAgeGatedRewards } from "../src/modules/business/business.service.js";
-import { createResultsRouter } from "../src/modules/results/results.routes.js";
 
 const NOW = "2026-05-04T08:00:00.000Z";
 const MONTH_KEY = "2026-05";
@@ -716,7 +713,7 @@ describe("production hardening", () => {
     const adminHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/admin.html"), "utf8");
     const legacyMapHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/google-map.html"), "utf8");
 
-    expect(viewerHtml).not.toContain(".from(\"call_results\")");
+    expect(viewerHtml).not.toContain(".from(\"venue_menu_captures\")");
     expect(viewerHtml).not.toContain("@supabase/supabase-js");
     expect(viewerHtml).not.toContain("supabaseAnonKey");
     expect(viewerHtml).not.toContain("Admin secret");
@@ -737,50 +734,6 @@ describe("production hardening", () => {
     expect(adminHtml).not.toContain("Unlock admin actions");
     expect(legacyMapHtml).not.toContain("Fetching venues from Supabase");
     expect(legacyMapHtml).not.toContain("<div id=\"debug\"");
-  });
-
-  it("protects legacy call and result APIs behind admin auth", async () => {
-    const businessService = {
-      requireAdmin(authorization: string | undefined) {
-        if (!authorization) {
-          throw new AppError("Login required.", 401);
-        }
-
-        if (authorization !== "Bearer admin-token") {
-          throw new AppError("Admin access required.", 403);
-        }
-
-        return { id: "admin", role: "admin", subscriptionStatus: "admin" };
-      },
-    } as unknown as BusinessService;
-    const app = express();
-    app.use(express.json());
-    app.use("/api/calls", createCallsRouter({
-      listCallRuns: () => [],
-      getCallRun: () => null,
-      createOutboundCall: async () => ({ callRun: null }),
-    } as never, businessService));
-    app.use("/api/results", createResultsRouter({
-      list: () => [],
-    } as never, businessService));
-    app.use(errorHandler);
-
-    await withHttpServer(app, async (baseUrl) => {
-      expect((await fetch(`${baseUrl}/api/calls`)).status).toBe(401);
-      expect((await fetch(`${baseUrl}/api/results`)).status).toBe(401);
-      expect((await fetch(`${baseUrl}/api/calls`, {
-        headers: { Authorization: "Bearer user-token" },
-      })).status).toBe(403);
-      expect((await fetch(`${baseUrl}/api/results`, {
-        headers: { Authorization: "Bearer user-token" },
-      })).status).toBe(403);
-      expect((await fetch(`${baseUrl}/api/calls`, {
-        headers: { Authorization: "Bearer admin-token" },
-      })).status).toBe(200);
-      expect((await fetch(`${baseUrl}/api/results`, {
-        headers: { Authorization: "Bearer admin-token" },
-      })).status).toBe(200);
-    });
   });
 
   it("redacts sensitive production error details from responses and logs", async () => {

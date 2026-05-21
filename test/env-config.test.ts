@@ -33,7 +33,6 @@ describe("environment safety defaults", () => {
 
     expect(env.NODE_ENV).toBe("production");
     expect(env.DEMO_BILLING_MODE).toBe(false);
-    expect(env.ENABLE_LEGACY_CALL_AUTOMATION).toBe(false);
   });
 
   it("does not block public production boot while the official admin email is pending", async () => {
@@ -51,9 +50,6 @@ describe("environment safety defaults", () => {
       DEMO_BILLING_MODE: "",
       SOURCE_EVIDENCE_SIGNING_SECRET: "",
       REDIS_URL: "",
-      TWILIO_VALIDATE_SIGNATURES: "",
-      ELEVENLABS_WEBHOOK_SECRET: "",
-      ENABLE_LEGACY_CALL_AUTOMATION: "",
     });
 
     const { env } = await loadEnv();
@@ -62,17 +58,6 @@ describe("environment safety defaults", () => {
     expect(env.SOURCE_EVIDENCE_SIGNING_SECRET).toBeUndefined();
     expect(env.REDIS_URL).toBeUndefined();
     expect(env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION).toBe(true);
-    expect(env.ENABLE_LEGACY_CALL_AUTOMATION).toBe(false);
-    expect(env.TWILIO_VALIDATE_SIGNATURES).toBe(true);
-    expect(env.ELEVENLABS_WEBHOOK_SECRET).toBeUndefined();
-  });
-
-  it("keeps archived call automation available only behind an explicit flag", async () => {
-    stubProductionEnv({ ENABLE_LEGACY_CALL_AUTOMATION: "true" });
-
-    const { env } = await loadEnv();
-
-    expect(env.ENABLE_LEGACY_CALL_AUTOMATION).toBe(true);
   });
 
   it("still blocks explicit production demo billing without the override", async () => {

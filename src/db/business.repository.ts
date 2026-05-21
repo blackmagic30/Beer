@@ -715,7 +715,7 @@ interface VenuePartnerOutreachRow {
 }
 
 interface BarProfileRow {
-  bar_id: string;
+  venue_id: string;
   name: string;
   address: string | null;
   suburb: string | null;
@@ -743,8 +743,8 @@ interface BarProfileRow {
 interface BarClaimRequestRow {
   id: string;
   user_id: string;
-  bar_id: string | null;
-  bar_name: string;
+  venue_id: string | null;
+  venue_name: string;
   address: string | null;
   suburb: string | null;
   requester_name: string;
@@ -759,7 +759,7 @@ interface BarClaimRequestRow {
 
 interface BarBeerRow {
   id: string;
-  bar_id: string;
+  venue_id: string;
   beer_name: string;
   brewery: string | null;
   style: string | null;
@@ -776,7 +776,7 @@ interface BarBeerRow {
 
 interface BarHappyHourRow {
   id: string;
-  bar_id: string;
+  venue_id: string;
   title: string;
   days_of_week_json: string;
   start_time: string;
@@ -789,7 +789,7 @@ interface BarHappyHourRow {
 
 interface BarSpecialRow {
   id: string;
-  bar_id: string;
+  venue_id: string;
   title: string;
   description: string;
   price: number | null;
@@ -805,7 +805,7 @@ interface BarSpecialRow {
 
 interface BarPendingChangeRow {
   id: string;
-  bar_id: string;
+  venue_id: string;
   change_type: BarPendingChangeType;
   action: BarPendingChangeAction;
   target_id: string | null;
@@ -822,7 +822,7 @@ interface BarPendingChangeRow {
 
 interface MonthlyBarReportRow {
   id: string;
-  bar_id: string;
+  venue_id: string;
   month: string;
   data_json: string;
   created_at: string;
@@ -1122,8 +1122,8 @@ function toBarClaimRequest(row: BarClaimRequestRow): BarClaimRequest {
   return {
     id: row.id,
     userId: row.user_id,
-    barId: row.bar_id,
-    barName: row.bar_name,
+    barId: row.venue_id,
+    barName: row.venue_name,
     address: row.address,
     suburb: row.suburb,
     requesterName: row.requester_name,
@@ -1139,7 +1139,7 @@ function toBarClaimRequest(row: BarClaimRequestRow): BarClaimRequest {
 
 function toBarProfile(row: BarProfileRow): BarProfile {
   return {
-    barId: row.bar_id,
+    barId: row.venue_id,
     name: row.name,
     address: row.address,
     suburb: row.suburb,
@@ -1168,7 +1168,7 @@ function toBarProfile(row: BarProfileRow): BarProfile {
 function toBarBeer(row: BarBeerRow): BarBeer {
   return {
     id: row.id,
-    barId: row.bar_id,
+    barId: row.venue_id,
     beerName: row.beer_name,
     brewery: row.brewery,
     style: row.style,
@@ -1187,7 +1187,7 @@ function toBarBeer(row: BarBeerRow): BarBeer {
 function toBarHappyHour(row: BarHappyHourRow): BarHappyHour {
   return {
     id: row.id,
-    barId: row.bar_id,
+    barId: row.venue_id,
     title: row.title,
     daysOfWeek: parseJsonArray(row.days_of_week_json),
     startTime: row.start_time,
@@ -1202,7 +1202,7 @@ function toBarHappyHour(row: BarHappyHourRow): BarHappyHour {
 function toBarSpecial(row: BarSpecialRow): BarSpecial {
   return {
     id: row.id,
-    barId: row.bar_id,
+    barId: row.venue_id,
     title: row.title,
     description: row.description,
     price: row.price,
@@ -1220,7 +1220,7 @@ function toBarSpecial(row: BarSpecialRow): BarSpecial {
 function toBarPendingChange(row: BarPendingChangeRow): BarPendingChange {
   return {
     id: row.id,
-    barId: row.bar_id,
+    barId: row.venue_id,
     changeType: row.change_type,
     action: row.action,
     targetId: row.target_id,
@@ -1239,7 +1239,7 @@ function toBarPendingChange(row: BarPendingChangeRow): BarPendingChange {
 function toMonthlyBarReport(row: MonthlyBarReportRow): MonthlyBarReport {
   return {
     id: row.id,
-    barId: row.bar_id,
+    barId: row.venue_id,
     month: row.month,
     data: parseJsonObject(row.data_json),
     createdAt: row.created_at,
@@ -2238,9 +2238,9 @@ export class BusinessRepository {
 
   listVenueManagerPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {
     const values = venueId ? [venueId, limit] : [limit];
-    const beerWhere = venueId ? "WHERE beer.bar_id = ? AND profile.active = 1" : "WHERE profile.active = 1";
+    const beerWhere = venueId ? "WHERE beer.venue_id = ? AND profile.active = 1" : "WHERE profile.active = 1";
     const happyWhere = venueId
-      ? "WHERE happy.bar_id = ? AND happy.active = 1 AND profile.active = 1"
+      ? "WHERE happy.venue_id = ? AND happy.active = 1 AND profile.active = 1"
       : "WHERE happy.active = 1 AND profile.active = 1";
     const beerRows = this.database
       .prepare(
@@ -2249,8 +2249,8 @@ export class BusinessRepository {
            profile.name AS profile_name,
            profile.suburb AS profile_suburb,
            profile.address AS profile_address
-         FROM bar_beers beer
-         INNER JOIN bar_profiles profile ON profile.bar_id = beer.bar_id
+         FROM venue_beers beer
+         INNER JOIN venue_profiles profile ON profile.venue_id = beer.venue_id
          ${beerWhere}
          ORDER BY beer.updated_at DESC
          LIMIT ?`,
@@ -2263,8 +2263,8 @@ export class BusinessRepository {
            profile.name AS profile_name,
            profile.suburb AS profile_suburb,
            profile.address AS profile_address
-         FROM bar_happy_hours happy
-         INNER JOIN bar_profiles profile ON profile.bar_id = happy.bar_id
+         FROM venue_happy_hours happy
+         INNER JOIN venue_profiles profile ON profile.venue_id = happy.venue_id
          ${happyWhere}
          ORDER BY happy.updated_at DESC
          LIMIT ?`,
@@ -2274,8 +2274,8 @@ export class BusinessRepository {
     return [
       ...beerRows.map((row) => ({
         id: `bar_beer:${row.id}`,
-        venueId: row.bar_id,
-        venueName: row.profile_name || row.bar_id,
+        venueId: row.venue_id,
+        venueName: row.profile_name || row.venue_id,
         venueAddress: row.profile_address,
         suburb: row.profile_suburb,
         beerName: row.beer_name,
@@ -2295,8 +2295,8 @@ export class BusinessRepository {
       })),
       ...happyRows.map((row) => ({
         id: `bar_happy_hour:${row.id}`,
-        venueId: row.bar_id,
-        venueName: row.profile_name || row.bar_id,
+        venueId: row.venue_id,
+        venueName: row.profile_name || row.venue_id,
         venueAddress: row.profile_address,
         suburb: row.profile_suburb,
         beerName: row.title || "Happy hour",
@@ -2662,8 +2662,8 @@ export class BusinessRepository {
   }): BarClaimRequest {
     this.database
       .prepare(
-        `INSERT INTO bar_claim_requests (
-          id, user_id, bar_id, bar_name, address, suburb, requester_name, requester_role,
+        `INSERT INTO venue_claim_requests (
+          id, user_id, venue_id, venue_name, address, suburb, requester_name, requester_role,
           contact_email, contact_phone, message, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
@@ -2682,7 +2682,7 @@ export class BusinessRepository {
         input.now,
         input.now,
       );
-    const row = this.database.prepare("SELECT * FROM bar_claim_requests WHERE id = ?").get(input.id) as BarClaimRequestRow;
+    const row = this.database.prepare("SELECT * FROM venue_claim_requests WHERE id = ?").get(input.id) as BarClaimRequestRow;
     return toBarClaimRequest(row);
   }
 
@@ -2702,7 +2702,7 @@ export class BusinessRepository {
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const rows = this.database
-      .prepare(`SELECT * FROM bar_claim_requests ${whereSql} ORDER BY created_at DESC LIMIT ?`)
+      .prepare(`SELECT * FROM venue_claim_requests ${whereSql} ORDER BY created_at DESC LIMIT ?`)
       .all(...values, input.limit) as BarClaimRequestRow[];
     return rows.map(toBarClaimRequest);
   }
@@ -2787,7 +2787,7 @@ export class BusinessRepository {
   }
 
   getBarProfile(barId: string): BarProfile | null {
-    const row = this.database.prepare("SELECT * FROM bar_profiles WHERE bar_id = ?").get(barId) as
+    const row = this.database.prepare("SELECT * FROM venue_profiles WHERE venue_id = ?").get(barId) as
       | BarProfileRow
       | undefined;
     return row ? toBarProfile(row) : null;
@@ -2819,13 +2819,13 @@ export class BusinessRepository {
   }): BarProfile {
     this.database
       .prepare(
-        `INSERT INTO bar_profiles (
-          bar_id, name, address, suburb, area, phone, website, instagram, description,
+        `INSERT INTO venue_profiles (
+          venue_id, name, address, suburb, area, phone, website, instagram, description,
           opening_hours_json, venue_tags_json, membership_tier, highlighted_name, premium_badge,
           promoted, featured_special_eligible, stripe_customer_id, stripe_subscription_id,
           subscription_status, tier_manual_override, active, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(bar_id) DO UPDATE SET
+        ON CONFLICT(venue_id) DO UPDATE SET
           name = excluded.name,
           address = excluded.address,
           suburb = excluded.suburb,
@@ -2878,7 +2878,7 @@ export class BusinessRepository {
 
   getBarProfileByStripeSubscriptionId(stripeSubscriptionId: string): BarProfile | null {
     const row = this.database
-      .prepare("SELECT * FROM bar_profiles WHERE stripe_subscription_id = ? LIMIT 1")
+      .prepare("SELECT * FROM venue_profiles WHERE stripe_subscription_id = ? LIMIT 1")
       .get(stripeSubscriptionId) as BarProfileRow | undefined;
     return row ? toBarProfile(row) : null;
   }
@@ -2897,7 +2897,7 @@ export class BusinessRepository {
   }): BarProfile {
     this.database
       .prepare(
-        `UPDATE bar_profiles
+        `UPDATE venue_profiles
          SET membership_tier = ?,
              stripe_customer_id = COALESCE(?, stripe_customer_id),
              stripe_subscription_id = COALESCE(?, stripe_subscription_id),
@@ -2907,7 +2907,7 @@ export class BusinessRepository {
              promoted = ?,
              featured_special_eligible = ?,
              updated_at = ?
-         WHERE bar_id = ? AND tier_manual_override = 0`,
+         WHERE venue_id = ? AND tier_manual_override = 0`,
       )
       .run(
         input.membershipTier,
@@ -2926,13 +2926,13 @@ export class BusinessRepository {
 
   listBarBeers(barId: string): BarBeer[] {
     const rows = this.database
-      .prepare("SELECT * FROM bar_beers WHERE bar_id = ? ORDER BY on_tap DESC, in_stock DESC, beer_name COLLATE NOCASE ASC")
+      .prepare("SELECT * FROM venue_beers WHERE venue_id = ? ORDER BY on_tap DESC, in_stock DESC, beer_name COLLATE NOCASE ASC")
       .all(barId) as BarBeerRow[];
     return rows.map(toBarBeer);
   }
 
   getBarBeerById(id: string): BarBeer | null {
-    const row = this.database.prepare("SELECT * FROM bar_beers WHERE id = ?").get(id) as BarBeerRow | undefined;
+    const row = this.database.prepare("SELECT * FROM venue_beers WHERE id = ?").get(id) as BarBeerRow | undefined;
     return row ? toBarBeer(row) : null;
   }
 
@@ -2953,8 +2953,8 @@ export class BusinessRepository {
   }): BarBeer {
     this.database
       .prepare(
-        `INSERT INTO bar_beers (
-          id, bar_id, beer_name, brewery, style, abv, serve_size, price, currency, on_tap, in_stock, notes, created_at, updated_at
+        `INSERT INTO venue_beers (
+          id, venue_id, beer_name, brewery, style, abv, serve_size, price, currency, on_tap, in_stock, notes, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           beer_name = excluded.beer_name,
@@ -2968,7 +2968,7 @@ export class BusinessRepository {
           in_stock = excluded.in_stock,
           notes = excluded.notes,
           updated_at = excluded.updated_at
-        WHERE bar_beers.bar_id = excluded.bar_id`,
+        WHERE venue_beers.venue_id = excluded.venue_id`,
       )
       .run(
         input.id,
@@ -2987,7 +2987,7 @@ export class BusinessRepository {
         input.now,
       );
     const row = this.database
-      .prepare("SELECT * FROM bar_beers WHERE id = ? AND bar_id = ?")
+      .prepare("SELECT * FROM venue_beers WHERE id = ? AND venue_id = ?")
       .get(input.id, input.barId) as BarBeerRow | undefined;
     if (!row) {
       throw new Error("Beer row belongs to another bar");
@@ -2996,19 +2996,19 @@ export class BusinessRepository {
   }
 
   deleteBarBeer(input: { id: string; barId: string }): boolean {
-    const result = this.database.prepare("DELETE FROM bar_beers WHERE id = ? AND bar_id = ?").run(input.id, input.barId);
+    const result = this.database.prepare("DELETE FROM venue_beers WHERE id = ? AND venue_id = ?").run(input.id, input.barId);
     return result.changes > 0;
   }
 
   listBarHappyHours(barId: string): BarHappyHour[] {
     const rows = this.database
-      .prepare("SELECT * FROM bar_happy_hours WHERE bar_id = ? ORDER BY active DESC, start_time ASC, title COLLATE NOCASE ASC")
+      .prepare("SELECT * FROM venue_happy_hours WHERE venue_id = ? ORDER BY active DESC, start_time ASC, title COLLATE NOCASE ASC")
       .all(barId) as BarHappyHourRow[];
     return rows.map(toBarHappyHour);
   }
 
   getBarHappyHourById(id: string): BarHappyHour | null {
-    const row = this.database.prepare("SELECT * FROM bar_happy_hours WHERE id = ?").get(id) as
+    const row = this.database.prepare("SELECT * FROM venue_happy_hours WHERE id = ?").get(id) as
       | BarHappyHourRow
       | undefined;
     return row ? toBarHappyHour(row) : null;
@@ -3027,8 +3027,8 @@ export class BusinessRepository {
   }): BarHappyHour {
     this.database
       .prepare(
-        `INSERT INTO bar_happy_hours (
-          id, bar_id, title, days_of_week_json, start_time, end_time, description, active, created_at, updated_at
+        `INSERT INTO venue_happy_hours (
+          id, venue_id, title, days_of_week_json, start_time, end_time, description, active, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
@@ -3038,7 +3038,7 @@ export class BusinessRepository {
           description = excluded.description,
           active = excluded.active,
           updated_at = excluded.updated_at
-        WHERE bar_happy_hours.bar_id = excluded.bar_id`,
+        WHERE venue_happy_hours.venue_id = excluded.venue_id`,
       )
       .run(
         input.id,
@@ -3053,7 +3053,7 @@ export class BusinessRepository {
         input.now,
       );
     const row = this.database
-      .prepare("SELECT * FROM bar_happy_hours WHERE id = ? AND bar_id = ?")
+      .prepare("SELECT * FROM venue_happy_hours WHERE id = ? AND venue_id = ?")
       .get(input.id, input.barId) as BarHappyHourRow | undefined;
     if (!row) {
       throw new Error("Happy-hour row belongs to another bar");
@@ -3062,19 +3062,19 @@ export class BusinessRepository {
   }
 
   deleteBarHappyHour(input: { id: string; barId: string }): boolean {
-    const result = this.database.prepare("DELETE FROM bar_happy_hours WHERE id = ? AND bar_id = ?").run(input.id, input.barId);
+    const result = this.database.prepare("DELETE FROM venue_happy_hours WHERE id = ? AND venue_id = ?").run(input.id, input.barId);
     return result.changes > 0;
   }
 
   listBarSpecials(barId: string): BarSpecial[] {
     const rows = this.database
-      .prepare("SELECT * FROM bar_specials WHERE bar_id = ? ORDER BY active DESC, exclusive DESC, starts_at DESC, title COLLATE NOCASE ASC")
+      .prepare("SELECT * FROM venue_specials WHERE venue_id = ? ORDER BY active DESC, exclusive DESC, starts_at DESC, title COLLATE NOCASE ASC")
       .all(barId) as BarSpecialRow[];
     return rows.map(toBarSpecial);
   }
 
   getBarSpecialById(id: string): BarSpecial | null {
-    const row = this.database.prepare("SELECT * FROM bar_specials WHERE id = ?").get(id) as BarSpecialRow | undefined;
+    const row = this.database.prepare("SELECT * FROM venue_specials WHERE id = ?").get(id) as BarSpecialRow | undefined;
     return row ? toBarSpecial(row) : null;
   }
 
@@ -3094,8 +3094,8 @@ export class BusinessRepository {
   }): BarSpecial {
     this.database
       .prepare(
-        `INSERT INTO bar_specials (
-          id, bar_id, title, description, price, discount, starts_at, ends_at, schedule_note, exclusive, active, created_at, updated_at
+        `INSERT INTO venue_specials (
+          id, venue_id, title, description, price, discount, starts_at, ends_at, schedule_note, exclusive, active, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
@@ -3108,7 +3108,7 @@ export class BusinessRepository {
           exclusive = excluded.exclusive,
           active = excluded.active,
           updated_at = excluded.updated_at
-        WHERE bar_specials.bar_id = excluded.bar_id`,
+        WHERE venue_specials.venue_id = excluded.venue_id`,
       )
       .run(
         input.id,
@@ -3126,7 +3126,7 @@ export class BusinessRepository {
         input.now,
       );
     const row = this.database
-      .prepare("SELECT * FROM bar_specials WHERE id = ? AND bar_id = ?")
+      .prepare("SELECT * FROM venue_specials WHERE id = ? AND venue_id = ?")
       .get(input.id, input.barId) as BarSpecialRow | undefined;
     if (!row) {
       throw new Error("Special row belongs to another bar");
@@ -3135,7 +3135,7 @@ export class BusinessRepository {
   }
 
   deleteBarSpecial(input: { id: string; barId: string }): boolean {
-    const result = this.database.prepare("DELETE FROM bar_specials WHERE id = ? AND bar_id = ?").run(input.id, input.barId);
+    const result = this.database.prepare("DELETE FROM venue_specials WHERE id = ? AND venue_id = ?").run(input.id, input.barId);
     return result.changes > 0;
   }
 
@@ -3151,8 +3151,8 @@ export class BusinessRepository {
   }): BarPendingChange {
     this.database
       .prepare(
-        `INSERT INTO bar_pending_changes (
-          id, bar_id, change_type, action, target_id, payload_json, status,
+        `INSERT INTO venue_pending_changes (
+          id, venue_id, change_type, action, target_id, payload_json, status,
           submitted_by, submitted_at, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
       )
@@ -3168,12 +3168,12 @@ export class BusinessRepository {
         input.now,
         input.now,
       );
-    const row = this.database.prepare("SELECT * FROM bar_pending_changes WHERE id = ?").get(input.id) as BarPendingChangeRow;
+    const row = this.database.prepare("SELECT * FROM venue_pending_changes WHERE id = ?").get(input.id) as BarPendingChangeRow;
     return toBarPendingChange(row);
   }
 
   getBarPendingChangeById(id: string): BarPendingChange | null {
-    const row = this.database.prepare("SELECT * FROM bar_pending_changes WHERE id = ?").get(id) as
+    const row = this.database.prepare("SELECT * FROM venue_pending_changes WHERE id = ?").get(id) as
       | BarPendingChangeRow
       | undefined;
     return row ? toBarPendingChange(row) : null;
@@ -3189,7 +3189,7 @@ export class BusinessRepository {
     const values: unknown[] = [];
 
     if (input.barId) {
-      clauses.push("bar_id = ?");
+      clauses.push("venue_id = ?");
       values.push(input.barId);
     }
 
@@ -3205,7 +3205,7 @@ export class BusinessRepository {
 
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.database
-      .prepare(`SELECT * FROM bar_pending_changes ${where} ORDER BY submitted_at DESC LIMIT ?`)
+      .prepare(`SELECT * FROM venue_pending_changes ${where} ORDER BY submitted_at DESC LIMIT ?`)
       .all(...values, input.limit) as BarPendingChangeRow[];
     return rows.map(toBarPendingChange);
   }
@@ -3219,7 +3219,7 @@ export class BusinessRepository {
   }): BarPendingChange | null {
     this.database
       .prepare(
-        `UPDATE bar_pending_changes
+        `UPDATE venue_pending_changes
          SET status = ?,
              reviewed_by = ?,
              reviewed_at = ?,
@@ -3233,7 +3233,7 @@ export class BusinessRepository {
 
   getMonthlyBarReport(input: { barId: string; month: string }): MonthlyBarReport | null {
     const row = this.database
-      .prepare("SELECT * FROM monthly_bar_reports WHERE bar_id = ? AND month = ?")
+      .prepare("SELECT * FROM venue_monthly_reports WHERE venue_id = ? AND month = ?")
       .get(input.barId, input.month) as MonthlyBarReportRow | undefined;
     return row ? toMonthlyBarReport(row) : null;
   }
@@ -3241,9 +3241,9 @@ export class BusinessRepository {
   upsertMonthlyBarReport(input: { id: string; barId: string; month: string; data: Record<string, unknown>; createdAt: string }): MonthlyBarReport {
     this.database
       .prepare(
-        `INSERT INTO monthly_bar_reports (id, bar_id, month, data_json, created_at)
+        `INSERT INTO venue_monthly_reports (id, venue_id, month, data_json, created_at)
          VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(bar_id, month) DO UPDATE SET data_json = excluded.data_json`,
+         ON CONFLICT(venue_id, month) DO UPDATE SET data_json = excluded.data_json`,
       )
       .run(input.id, input.barId, input.month, JSON.stringify(input.data), input.createdAt);
     return this.getMonthlyBarReport({ barId: input.barId, month: input.month })!;
@@ -3262,8 +3262,8 @@ export class BusinessRepository {
   }): void {
     this.database
       .prepare(
-        `INSERT INTO bar_analytics_events (
-          id, bar_id, area, suburb, event_type, query_text, beer_name, beer_style, created_at
+        `INSERT INTO venue_analytics_events (
+          id, venue_id, area, suburb, event_type, query_text, beer_name, beer_style, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(input.id, input.barId, input.area, input.suburb ?? input.area, input.eventType, input.queryText, input.beerName, input.beerStyle, input.createdAt);
@@ -3315,7 +3315,7 @@ export class BusinessRepository {
     );
     const areaStyleSearches = grouped(
       `SELECT COALESCE(beer_style, query_text, 'style') AS key, count(*) AS count
-       FROM bar_analytics_events
+       FROM venue_analytics_events
        WHERE event_type IN ('beer_style_search', 'beer_search')
          ${barAreaClause}
          ${rangeClause}
@@ -3412,7 +3412,7 @@ export class BusinessRepository {
            UNION ALL
            SELECT venue_id FROM venue_requests WHERE venue_id IS NOT NULL AND venue_id != ''
            UNION ALL
-           SELECT bar_id AS venue_id FROM bar_profiles WHERE bar_id IS NOT NULL AND bar_id != ''
+           SELECT venue_id AS venue_id FROM venue_profiles WHERE venue_id IS NOT NULL AND venue_id != ''
          )`,
       )
       .get() as { count: number } | undefined;

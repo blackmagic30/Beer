@@ -2,12 +2,12 @@
 
 ## Supported Beta Posture
 
-Pint Path is a Melbourne beta running on a Node.js, TypeScript, Express, SQLite, Supabase, Google Maps, OpenAI, Stripe, and Railway stack. Legacy Twilio/ElevenLabs call automation code is retained but disabled by default behind `ENABLE_LEGACY_CALL_AUTOMATION=false`.
+Pint Path is a Melbourne beta running on a Node.js, TypeScript, Express, SQLite, Supabase, Google Maps, OpenAI, Stripe, and Railway stack. The old phone-call automation surface has been retired from the active app; historical code is parked under `legacy/call-automation/` and is not built or mounted.
 
 The beta security posture is designed to protect:
 
 - exact beer-price access through server-side gating
-- admin review and call/transcript routes
+- admin review, source-evidence, and venue-manager routes
 - venue-manager access to assigned venues only
 - payment webhooks through Stripe signature verification
 - source/photo evidence through upload validation, private evidence references, and short-lived signed URLs
@@ -17,14 +17,14 @@ This is not yet a mature enterprise security program. Wider launch still needs p
 
 ## Reporting Vulnerabilities
 
-Report suspected security issues privately to the project owner/admin. Do not file public issues with secrets, exploitable payloads, phone numbers, transcripts, source photos, or personal data.
+Report suspected security issues privately to the project owner/admin. Do not file public issues with secrets, exploitable payloads, phone numbers, source photos, or personal data.
 
 Include:
 
 - affected route or page
 - steps to reproduce
 - impact
-- whether any account, venue, payment, transcript, or upload data was exposed
+- whether any account, venue, payment, source-evidence, or upload data was exposed
 - screenshots only if they do not include private data
 
 ## Secret And Key Rotation
@@ -38,20 +38,20 @@ Rotation checklist:
 - Google Places server key: rotate and restrict by API/IP where possible.
 - Stripe secret/webhook keys: rotate in Stripe, update Railway env, replay a signed test webhook.
 - OpenAI keys: rotate with OpenAI, update Railway env, verify no raw payloads are logged.
-- Legacy Twilio/ElevenLabs keys: only relevant if `ENABLE_LEGACY_CALL_AUTOMATION=true`; rotate with each provider before re-enabling the archived calling bot.
+- Retired phone-call provider keys: remove them from Railway/local env. If phone automation ever returns, rebuild it behind a fresh security review and rotate any old provider credentials first.
 
 Run `npm run security:scan` before every deploy.
 
 ## Incident Response Checklist
 
-1. Disable risky env switches first: `ENABLE_LEGACY_CALL_AUTOMATION=false`, `DEMO_BILLING_MODE=false`, and `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`.
+1. Disable risky env switches first: `DEMO_BILLING_MODE=false` and `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`.
 2. If payments are involved, disable checkout price IDs and verify Stripe webhook signatures.
 3. Rotate any potentially exposed keys.
 4. Revoke impacted sessions with logout-all/admin database action.
 5. Review `security_audit_log` for admin, payment, session, and venue-manager actions.
 6. Preserve relevant Railway logs and database backups.
 7. Patch, test with `npm run check` and `npm run security:scan`, then redeploy.
-8. Notify affected testers/users if account, phone, transcript, payment, or source evidence data may have been exposed.
+8. Notify affected testers/users if account, phone, payment, or source evidence data may have been exposed.
 
 ## Payment Security Notes
 
@@ -62,7 +62,7 @@ Run `npm run security:scan` before every deploy.
 
 ## Privacy And Data Retention Notes
 
-- Do not expose individual clickstream, exact user location, call transcripts, phone numbers, source photos, or account emails to venue managers.
+- Do not expose individual clickstream, exact user location, phone numbers, source photos, or account emails to venue managers.
 - Venue analytics are aggregated and low-count buckets are suppressed by `ANALYTICS_MIN_BUCKET_SIZE`.
 - Location is opt-in and one-time; the app must not store continuous movement trails.
 - Upload/source evidence should use private object storage or the server-side private evidence fallback with signed review URLs. Do not expose raw source URLs or data URLs publicly.

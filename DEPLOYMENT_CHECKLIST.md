@@ -20,9 +20,10 @@ Use this before merging a beta/hardening branch into `main` or deploying a Railw
 - Run `npm run build`.
 - Run `npm test`.
 - Run `npm run check`.
+- Run `npm run test:release:pintpath`.
 - Run `npm run security:scan`.
 - Run `npm run security:audit`.
-- Confirm no `.env` file, API keys, Stripe secrets, Supabase service-role keys, Twilio auth tokens, OpenAI keys, or ElevenLabs keys are committed.
+- Confirm no `.env` file, API keys, Stripe secrets, Supabase service-role keys, OpenAI keys, private Google Places keys, or source-evidence secrets are committed.
 - Confirm public map source does not contain legacy admin/debug UI strings.
 - Confirm Google Maps browser keys are HTTP-referrer restricted to localhost and the live beta domain.
 - Confirm Supabase OAuth providers and redirect URLs are configured if quick login is enabled: `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`.
@@ -58,7 +59,6 @@ ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
-ENABLE_LEGACY_CALL_AUTOMATION=false
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-browser-safe-anon-key
 SUPABASE_OAUTH_PROVIDERS=google,apple,facebook
@@ -118,14 +118,14 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Confirm points are awarded only after approval.
 - Confirm contributor unlock works after the configured threshold.
 - Confirm approved price records appear on the map with confidence and last verified date.
-- Confirm `/api/calls`, `/api/results`, and `/webhooks/*` return disabled/not-found responses because legacy call automation is off.
+- Confirm `/api/calls`, `/api/results`, and `/webhooks/*` return not-found responses because call automation is retired.
 - Submit a wrong-price report and feedback.
 - Confirm KPI/field-test dashboard records activity.
 - Open `/for-bars` and confirm it redirects to `/venue-portal` without exposing a public claim form.
 - Assign a venue manager in admin, log in as that user, and confirm `/venue-portal` only shows the assigned venue.
 - Confirm the venue portal can save profile details, beer/on-tap rows, happy hours, and deals/specials for the assigned venue only.
-- Confirm a Basic bar tier sees analytics/monthly report upgrade prompts, and Plus/Pro tiers can see aggregate-only suburb analytics once the privacy threshold is met.
-- Confirm authenticated non-admin users cannot submit bar-claim requests and only see the invite-only venue portal message.
+- Confirm a Basic venue tier sees analytics/monthly report upgrade prompts, and Plus/Pro tiers can see aggregate-only suburb analytics once the privacy threshold is met.
+- Confirm authenticated non-admin users cannot submit public claim requests and only see the invite-only venue portal message.
 - Submit a venue-manager update and confirm it remains pending review.
 - Check the main pages on a phone-width screen.
 
@@ -136,7 +136,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Rotate any provider key that was ever committed, shared in chat/screenshots, or exposed through public config.
 - Confirm `/config.js` only exposes browser-safe fields such as Google Maps browser key, map ID, field-test flag, and non-secret public settings.
 - Confirm `viewer/config.js` is ignored and not committed.
-- Confirm `ENABLE_LEGACY_CALL_AUTOMATION=false`. If the archived calling bot is ever re-enabled, add a separate Twilio/ElevenLabs security checklist before deploy.
+- Confirm retired call automation endpoints stay unavailable and no phone-call provider secrets are configured in Railway.
 - Confirm Stripe CLI delivered a signed test webhook to `/api/business/billing/webhook`.
 - Confirm audit logs redact email, phone, token, secret, raw payload, source image data, and precise coordinates.
 - Confirm analytics buckets below `ANALYTICS_MIN_BUCKET_SIZE` are suppressed in admin and venue-owner outputs.
@@ -155,10 +155,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
   - `FIELD_TEST_MODE=false`
   - `DEMO_BILLING_MODE=false`
   - `FREE_PRICE_REVEALS_PER_DAY=0`
-  - `ENABLE_LEGACY_CALL_AUTOMATION=false`
   - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`
-  - `ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=false`
-  - `ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false`
   - Remove Stripe price IDs to disable live checkout safely.
 
 ## 10. Merge Commands

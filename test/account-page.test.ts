@@ -11,6 +11,10 @@ function businessJs() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/business.js"), "utf8");
 }
 
+function businessCss() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/business.css"), "utf8");
+}
+
 function callbackHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/auth/callback.html"), "utf8");
 }
@@ -36,6 +40,12 @@ describe("account page shell", () => {
     expect(html).toContain('$("accountDashboard").hidden = false');
     expect(html).toContain('$("loggedOutView").hidden = false');
     expect(html).toContain('$("accountDashboard").hidden = true');
+  });
+
+  it("keeps hidden account states visually hidden even when display utility classes are present", () => {
+    const css = businessCss();
+
+    expect(css).toMatch(/\[hidden\]\s*\{[^}]*display:\s*none\s*!important;/s);
   });
 
   it("keeps contributor evidence copy private and reviewer-focused", () => {

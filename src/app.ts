@@ -15,9 +15,6 @@ import { notFoundHandler } from "./middleware/not-found.js";
 import { captureRawBody } from "./middleware/raw-body.js";
 
 type LazyRouters = {
-  callsRouter: RequestHandler;
-  resultsRouter: RequestHandler;
-  webhooksRouter: RequestHandler;
   adminRouter: RequestHandler;
   businessRouter: RequestHandler;
 };
@@ -52,110 +49,17 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     adminIngestionQueueRepository,
     env.SUPABASE_URL,
     env.SUPABASE_SERVICE_ROLE_KEY,
-    env.SUPABASE_RESULTS_TABLE,
+    env.SUPABASE_MENU_CAPTURE_TABLE,
     env.OPENAI_API_KEY,
   );
   const businessService = new BusinessService(businessRepository, env);
   businessService.logStartupSummary();
 
-  let callsRouter = createDisabledLegacyCallAutomationRouter();
-  let resultsRouter = createDisabledLegacyCallAutomationRouter();
-  let webhooksRouter = createDisabledLegacyCallAutomationRouter();
-
-  if (env.ENABLE_LEGACY_CALL_AUTOMATION) {
-    const [
-      { BeerPriceResultsRepository },
-      { CallRunsRepository },
-      { ElevenLabsService },
-      { SupabaseResultsSyncService },
-      { TwilioService },
-      { createCallsRouter },
-      { CallsService },
-      { createResultsRouter },
-      { ResultsService },
-      { createWebhooksRouter },
-      { WebhooksService },
-    ] = await Promise.all([
-      import("./db/beer-price-results.repository.js"),
-      import("./db/call-runs.repository.js"),
-      import("./lib/elevenlabs.js"),
-      import("./lib/supabase-results-sync.js"),
-      import("./lib/twilio.js"),
-      import("./modules/calls/calls.routes.js"),
-      import("./modules/calls/calls.service.js"),
-      import("./modules/results/results.routes.js"),
-      import("./modules/results/results.service.js"),
-      import("./modules/webhooks/webhooks.routes.js"),
-      import("./modules/webhooks/webhooks.service.js"),
-    ]);
-
-    const callRunsRepository = new CallRunsRepository(database);
-    const beerPriceResultsRepository = new BeerPriceResultsRepository(database);
-    const twilioService = new TwilioService(
-      env.TWILIO_ACCOUNT_SID,
-      env.TWILIO_AUTH_TOKEN,
-      env.TWILIO_PHONE_NUMBER,
-      env.TWILIO_CALL_TIME_LIMIT_SECONDS,
-    );
-    const elevenLabsService = new ElevenLabsService(
-      env.ELEVENLABS_API_KEY,
-      env.ELEVENLABS_WEBHOOK_SECRET,
-      env.NODE_ENV === "production" && !env.ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION,
-    );
-    const callsService = new CallsService(
-      callRunsRepository,
-      beerPriceResultsRepository,
-      twilioService,
-      env.PUBLIC_BASE_URL,
-      env.OUTBOUND_REPEAT_GUARD_SECONDS,
-      env.PARSE_CONFIDENCE_THRESHOLD,
-    );
-    const resultsService = new ResultsService(
-      callRunsRepository,
-      beerPriceResultsRepository,
-      env.PARSE_CONFIDENCE_THRESHOLD,
-    );
-    const supabaseResultsSyncService = new SupabaseResultsSyncService(
-      env.SUPABASE_URL,
-      env.SUPABASE_SERVICE_ROLE_KEY,
-      env.SUPABASE_RESULTS_TABLE,
-    );
-    const webhooksService = new WebhooksService(
-      callRunsRepository,
-      beerPriceResultsRepository,
-      elevenLabsService,
-      supabaseResultsSyncService,
-      env.ELEVENLABS_AGENT_ID,
-      env.PARSE_CONFIDENCE_THRESHOLD,
-    );
-
-    callsRouter = createCallsRouter(callsService, businessService);
-    resultsRouter = createResultsRouter(resultsService, businessService);
-    webhooksRouter = createWebhooksRouter({
-      webhooksService,
-      twilioService,
-      validateTwilioSignatures: env.TWILIO_VALIDATE_SIGNATURES,
-    });
-  } else {
-    logger.info("Legacy Twilio/ElevenLabs call automation disabled", {
-      featureFlag: "ENABLE_LEGACY_CALL_AUTOMATION",
-    });
-  }
-
   console.info("Backend services initialized.");
 
   return {
-    callsRouter,
-    resultsRouter,
-    webhooksRouter,
     adminRouter: createAdminRouter(adminService, businessService),
     businessRouter: createBusinessRouter(businessService),
-  };
-}
-
-function createDisabledLegacyCallAutomationRouter(): RequestHandler {
-  return (_req, _res, next) => {
-    next(new AppError("Legacy call automation is disabled.", 404));
   };
 }
 
@@ -396,12 +300,8 @@ export function createApp() {
     );
   });
 
-  app.use("/api/calls", createLazyMount((routers) => routers.callsRouter));
   app.use("/api/business", createLazyMount((routers) => routers.businessRouter));
   app.use("/api/admin", createLazyMount((routers) => routers.adminRouter));
-  app.use("/api/results", createLazyMount((routers) => routers.resultsRouter));
-  app.use("/webhooks", createLazyMount((routers) => routers.webhooksRouter));
-  app.use("/api", createLazyMount((routers) => routers.webhooksRouter));
   app.get("/for-bars", (_req, res) => {
     res.redirect(302, "/venue-portal");
   });

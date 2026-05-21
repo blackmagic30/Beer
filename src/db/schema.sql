@@ -1,93 +1,6 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE IF NOT EXISTS call_sessions (
-  session_id TEXT PRIMARY KEY,
-  conversation_id TEXT UNIQUE,
-  call_sid TEXT UNIQUE,
-  venue_name TEXT NOT NULL,
-  phone_number TEXT NOT NULL,
-  suburb TEXT NOT NULL,
-  call_status TEXT NOT NULL DEFAULT 'queued',
-  transcript_status TEXT NOT NULL DEFAULT 'pending',
-  requested_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  transcript_received_at TEXT,
-  raw_transcript TEXT,
-  notes TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_call_sessions_call_status
-  ON call_sessions (call_status, updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS call_runs (
-  id TEXT PRIMARY KEY,
-  call_sid TEXT UNIQUE,
-  conversation_id TEXT UNIQUE,
-  venue_id TEXT,
-  requested_beer TEXT,
-  script_variant TEXT,
-  venue_name TEXT NOT NULL,
-  phone_number TEXT NOT NULL,
-  suburb TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  ended_at TEXT,
-  duration_seconds INTEGER,
-  call_status TEXT NOT NULL DEFAULT 'queued',
-  raw_transcript TEXT,
-  parse_confidence REAL,
-  parse_status TEXT NOT NULL DEFAULT 'pending',
-  error_message TEXT,
-  is_test INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_call_runs_call_status
-  ON call_runs (call_status, updated_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_call_runs_phone_started
-  ON call_runs (phone_number, started_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_call_runs_parse_status
-  ON call_runs (parse_status, updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS beer_price_results (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  venue_id TEXT,
-  venue_name TEXT NOT NULL,
-  phone_number TEXT NOT NULL,
-  suburb TEXT NOT NULL,
-  beer_name TEXT NOT NULL,
-  price_text TEXT,
-  price_numeric REAL,
-  availability_status TEXT NOT NULL DEFAULT 'unknown',
-  available_on_tap INTEGER,
-  available_package_only INTEGER NOT NULL DEFAULT 0,
-  unavailable_reason TEXT,
-  timestamp TEXT NOT NULL,
-  raw_transcript TEXT NOT NULL,
-  confidence REAL NOT NULL,
-  happy_hour INTEGER NOT NULL DEFAULT 0,
-  happy_hour_days TEXT,
-  happy_hour_start TEXT,
-  happy_hour_end TEXT,
-  happy_hour_price REAL,
-  happy_hour_confidence REAL NOT NULL DEFAULT 0,
-  happy_hour_specials TEXT,
-  call_sid TEXT NOT NULL,
-  conversation_id TEXT,
-  needs_review INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(call_sid, beer_name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_beer_price_results_timestamp
-  ON beer_price_results (timestamp DESC);
-
-CREATE INDEX IF NOT EXISTS idx_beer_price_results_needs_review
-  ON beer_price_results (needs_review, timestamp DESC);
-
 CREATE TABLE IF NOT EXISTS admin_ingestion_queue (
   id TEXT PRIMARY KEY,
   venue_id TEXT NOT NULL,
@@ -527,8 +440,8 @@ CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_user
 CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_venue
   ON venue_manager_assignments (venue_id, status, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS bar_profiles (
-  bar_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS venue_profiles (
+  venue_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   address TEXT,
   suburb TEXT,
@@ -553,15 +466,15 @@ CREATE TABLE IF NOT EXISTS bar_profiles (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_bar_profiles_membership
-  ON bar_profiles (membership_tier, active, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_profiles_membership
+  ON venue_profiles (membership_tier, active, updated_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_bar_profiles_area
-  ON bar_profiles (area, suburb, active);
+CREATE INDEX IF NOT EXISTS idx_venue_profiles_area
+  ON venue_profiles (area, suburb, active);
 
-CREATE TABLE IF NOT EXISTS bar_beers (
+CREATE TABLE IF NOT EXISTS venue_beers (
   id TEXT PRIMARY KEY,
-  bar_id TEXT NOT NULL REFERENCES bar_profiles(bar_id) ON DELETE CASCADE,
+  venue_id TEXT NOT NULL REFERENCES venue_profiles(venue_id) ON DELETE CASCADE,
   beer_name TEXT NOT NULL,
   brewery TEXT,
   style TEXT,
@@ -576,15 +489,15 @@ CREATE TABLE IF NOT EXISTS bar_beers (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_bar_beers_bar
-  ON bar_beers (bar_id, on_tap, in_stock, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_beers_venue
+  ON venue_beers (venue_id, on_tap, in_stock, updated_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_bar_beers_name
-  ON bar_beers (beer_name, style);
+CREATE INDEX IF NOT EXISTS idx_venue_beers_name
+  ON venue_beers (beer_name, style);
 
-CREATE TABLE IF NOT EXISTS bar_happy_hours (
+CREATE TABLE IF NOT EXISTS venue_happy_hours (
   id TEXT PRIMARY KEY,
-  bar_id TEXT NOT NULL REFERENCES bar_profiles(bar_id) ON DELETE CASCADE,
+  venue_id TEXT NOT NULL REFERENCES venue_profiles(venue_id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   days_of_week_json TEXT NOT NULL DEFAULT '[]',
   start_time TEXT NOT NULL,
@@ -595,12 +508,12 @@ CREATE TABLE IF NOT EXISTS bar_happy_hours (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_bar_happy_hours_bar
-  ON bar_happy_hours (bar_id, active, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_happy_hours_venue
+  ON venue_happy_hours (venue_id, active, updated_at DESC);
 
-CREATE TABLE IF NOT EXISTS bar_specials (
+CREATE TABLE IF NOT EXISTS venue_specials (
   id TEXT PRIMARY KEY,
-  bar_id TEXT NOT NULL REFERENCES bar_profiles(bar_id) ON DELETE CASCADE,
+  venue_id TEXT NOT NULL REFERENCES venue_profiles(venue_id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   description TEXT NOT NULL,
   price REAL,
@@ -614,12 +527,12 @@ CREATE TABLE IF NOT EXISTS bar_specials (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_bar_specials_bar
-  ON bar_specials (bar_id, active, starts_at, ends_at);
+CREATE INDEX IF NOT EXISTS idx_venue_specials_venue
+  ON venue_specials (venue_id, active, starts_at, ends_at);
 
-CREATE TABLE IF NOT EXISTS bar_pending_changes (
+CREATE TABLE IF NOT EXISTS venue_pending_changes (
   id TEXT PRIMARY KEY,
-  bar_id TEXT NOT NULL,
+  venue_id TEXT NOT NULL,
   change_type TEXT NOT NULL,
   action TEXT NOT NULL,
   target_id TEXT,
@@ -634,18 +547,18 @@ CREATE TABLE IF NOT EXISTS bar_pending_changes (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_bar_pending_changes_bar_status
-  ON bar_pending_changes (bar_id, status, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_venue_status
+  ON venue_pending_changes (venue_id, status, submitted_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_bar_pending_changes_submitter_status
-  ON bar_pending_changes (submitted_by, status, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_submitter_status
+  ON venue_pending_changes (submitted_by, status, submitted_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_bar_pending_changes_status
-  ON bar_pending_changes (status, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_status
+  ON venue_pending_changes (status, submitted_at DESC);
 
-CREATE TABLE IF NOT EXISTS bar_analytics_events (
+CREATE TABLE IF NOT EXISTS venue_analytics_events (
   id TEXT PRIMARY KEY,
-  bar_id TEXT,
+  venue_id TEXT,
   area TEXT,
   suburb TEXT,
   event_type TEXT NOT NULL,
@@ -655,17 +568,17 @@ CREATE TABLE IF NOT EXISTS bar_analytics_events (
   created_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_bar_analytics_events_bar
-  ON bar_analytics_events (bar_id, event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_analytics_events_venue
+  ON venue_analytics_events (venue_id, event_type, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_bar_analytics_events_area
-  ON bar_analytics_events (area, event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_analytics_events_area
+  ON venue_analytics_events (area, event_type, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS bar_claim_requests (
+CREATE TABLE IF NOT EXISTS venue_claim_requests (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  bar_id TEXT,
-  bar_name TEXT NOT NULL,
+  venue_id TEXT,
+  venue_name TEXT NOT NULL,
   address TEXT,
   suburb TEXT,
   requester_name TEXT NOT NULL,
@@ -678,26 +591,26 @@ CREATE TABLE IF NOT EXISTS bar_claim_requests (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_bar_claim_requests_user
-  ON bar_claim_requests (user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_claim_requests_user
+  ON venue_claim_requests (user_id, status, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_bar_claim_requests_status
-  ON bar_claim_requests (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_claim_requests_status
+  ON venue_claim_requests (status, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_bar_claim_requests_bar
-  ON bar_claim_requests (bar_id, bar_name, suburb);
+CREATE INDEX IF NOT EXISTS idx_venue_claim_requests_venue
+  ON venue_claim_requests (venue_id, venue_name, suburb);
 
-CREATE TABLE IF NOT EXISTS monthly_bar_reports (
+CREATE TABLE IF NOT EXISTS venue_monthly_reports (
   id TEXT PRIMARY KEY,
-  bar_id TEXT NOT NULL REFERENCES bar_profiles(bar_id) ON DELETE CASCADE,
+  venue_id TEXT NOT NULL REFERENCES venue_profiles(venue_id) ON DELETE CASCADE,
   month TEXT NOT NULL,
   data_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
-  UNIQUE (bar_id, month)
+  UNIQUE (venue_id, month)
 );
 
-CREATE INDEX IF NOT EXISTS idx_monthly_bar_reports_bar
-  ON monthly_bar_reports (bar_id, month DESC);
+CREATE INDEX IF NOT EXISTS idx_venue_monthly_reports_venue
+  ON venue_monthly_reports (venue_id, month DESC);
 
 CREATE TABLE IF NOT EXISTS venue_partner_outreach (
   id TEXT PRIMARY KEY,

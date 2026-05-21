@@ -342,7 +342,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.post("/venue-portal/:venueId/profile", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
-    const body = parseWithSchema(barProfileSchema, req.body, "Invalid bar profile payload");
+    const body = parseWithSchema(barProfileSchema, req.body, "Invalid venue profile payload");
     const venueId = String(req.params.venueId ?? "");
     res.json(success(businessService.upsertBarProfile(account, venueId, body)));
   });
@@ -392,7 +392,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.post("/venue-portal/:venueId/billing/checkout", billingLimiter, async (req, res, next) => {
     try {
       const account = requireAccount(req, businessService);
-      const body = parseWithSchema(barTierCheckoutSchema, req.body, "Invalid bar tier checkout payload");
+      const body = parseWithSchema(barTierCheckoutSchema, req.body, "Invalid venue tier checkout payload");
       const venueId = String(req.params.venueId ?? "");
       const result = await businessService.createBarTierCheckout(account, venueId, body);
       res.status(201).json(success(result));

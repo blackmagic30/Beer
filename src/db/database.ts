@@ -15,37 +15,14 @@ function resolveSchemaPath(): string | URL {
   return path.resolve(process.cwd(), "src/db/schema.sql");
 }
 
-const beerPriceResultsColumns = [
-  { name: "venue_id", definition: "TEXT" },
-  { name: "availability_status", definition: "TEXT NOT NULL DEFAULT 'unknown'" },
-  { name: "available_on_tap", definition: "INTEGER" },
-  { name: "available_package_only", definition: "INTEGER NOT NULL DEFAULT 0" },
-  { name: "unavailable_reason", definition: "TEXT" },
-  { name: "happy_hour", definition: "INTEGER NOT NULL DEFAULT 0" },
-  { name: "happy_hour_days", definition: "TEXT" },
-  { name: "happy_hour_start", definition: "TEXT" },
-  { name: "happy_hour_end", definition: "TEXT" },
-  { name: "happy_hour_price", definition: "REAL" },
-  { name: "happy_hour_confidence", definition: "REAL NOT NULL DEFAULT 0" },
-  { name: "happy_hour_specials", definition: "TEXT" },
-] as const;
-
-const callRunsColumns = [
-  { name: "conversation_id", definition: "TEXT UNIQUE" },
-  { name: "venue_id", definition: "TEXT" },
-  { name: "requested_beer", definition: "TEXT" },
-  { name: "script_variant", definition: "TEXT" },
-  { name: "is_test", definition: "INTEGER NOT NULL DEFAULT 0" },
-] as const;
-
-const barProfilesColumns = [
+const venueProfilesColumns = [
   { name: "stripe_customer_id", definition: "TEXT" },
   { name: "stripe_subscription_id", definition: "TEXT" },
   { name: "subscription_status", definition: "TEXT" },
   { name: "tier_manual_override", definition: "INTEGER NOT NULL DEFAULT 0" },
 ] as const;
 
-const barAnalyticsEventsColumns = [
+const venueAnalyticsEventsColumns = [
   { name: "suburb", definition: "TEXT" },
 ] as const;
 
@@ -92,17 +69,11 @@ function ensureColumns(
 
 function ensureIndexes(database: BetterSqlite3.Database): void {
   database.exec(`
-    CREATE INDEX IF NOT EXISTS idx_call_runs_venue_id
-      ON call_runs (venue_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_venue_profiles_stripe_subscription
+      ON venue_profiles (stripe_subscription_id);
 
-    CREATE INDEX IF NOT EXISTS idx_beer_price_results_venue_id
-      ON beer_price_results (venue_id, timestamp DESC);
-
-    CREATE INDEX IF NOT EXISTS idx_bar_profiles_stripe_subscription
-      ON bar_profiles (stripe_subscription_id);
-
-    CREATE INDEX IF NOT EXISTS idx_bar_analytics_events_suburb
-      ON bar_analytics_events (suburb, event_type, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_venue_analytics_events_suburb
+      ON venue_analytics_events (suburb, event_type, created_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_active
       ON auth_sessions (user_id, revoked_at, expires_at DESC);
@@ -113,27 +84,149 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE INDEX IF NOT EXISTS idx_accounts_email_verified
       ON accounts (email_verified_at, updated_at DESC);
 
-    CREATE INDEX IF NOT EXISTS idx_bar_pending_changes_review
-      ON bar_pending_changes (status, reviewed_at DESC, submitted_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_review
+      ON venue_pending_changes (status, reviewed_at DESC, submitted_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_source_evidence_owner
       ON source_evidence_objects (owner_user_id, created_at DESC);
   `);
 }
 
-function normalizeLegacyBarTiers(database: BetterSqlite3.Database): void {
+function tableExists(database: BetterSqlite3.Database, tableName: string): boolean {
+  const row = database
+    .prepare("SELECT 1 AS exists_flag FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName) as { exists_flag: number } | undefined;
+  return Boolean(row);
+}
+
+function migrateLegacyVenuePartnerTables(database: BetterSqlite3.Database): void {
+  if (tableExists(database, "bar_profiles")) {
+    database.exec(`
+      INSERT OR IGNORE INTO venue_profiles (
+        venue_id, name, address, suburb, area, phone, website, instagram, description,
+        opening_hours_json, venue_tags_json, membership_tier, highlighted_name, premium_badge,
+        promoted, featured_special_eligible, stripe_customer_id, stripe_subscription_id,
+        subscription_status, tier_manual_override, active, created_at, updated_at
+      )
+      SELECT
+        bar_id, name, address, suburb, area, phone, website, instagram, description,
+        opening_hours_json, venue_tags_json, membership_tier, highlighted_name, premium_badge,
+        promoted, featured_special_eligible, stripe_customer_id, stripe_subscription_id,
+        subscription_status, tier_manual_override, active, created_at, updated_at
+      FROM bar_profiles;
+    `);
+  }
+
+  if (tableExists(database, "bar_beers")) {
+    database.exec(`
+      INSERT OR IGNORE INTO venue_beers (
+        id, venue_id, beer_name, brewery, style, abv, serve_size, price, currency,
+        on_tap, in_stock, notes, created_at, updated_at
+      )
+      SELECT
+        id, bar_id, beer_name, brewery, style, abv, serve_size, price, currency,
+        on_tap, in_stock, notes, created_at, updated_at
+      FROM bar_beers;
+    `);
+  }
+
+  if (tableExists(database, "bar_happy_hours")) {
+    database.exec(`
+      INSERT OR IGNORE INTO venue_happy_hours (
+        id, venue_id, title, days_of_week_json, start_time, end_time, description,
+        active, created_at, updated_at
+      )
+      SELECT
+        id, bar_id, title, days_of_week_json, start_time, end_time, description,
+        active, created_at, updated_at
+      FROM bar_happy_hours;
+    `);
+  }
+
+  if (tableExists(database, "bar_specials")) {
+    database.exec(`
+      INSERT OR IGNORE INTO venue_specials (
+        id, venue_id, title, description, price, discount, starts_at, ends_at,
+        schedule_note, exclusive, active, created_at, updated_at
+      )
+      SELECT
+        id, bar_id, title, description, price, discount, starts_at, ends_at,
+        schedule_note, exclusive, active, created_at, updated_at
+      FROM bar_specials;
+    `);
+  }
+
+  if (tableExists(database, "bar_pending_changes")) {
+    database.exec(`
+      INSERT OR IGNORE INTO venue_pending_changes (
+        id, venue_id, change_type, action, target_id, payload_json, status,
+        submitted_by, submitted_at, reviewed_by, reviewed_at, rejection_reason,
+        created_at, updated_at
+      )
+      SELECT
+        id, bar_id, change_type, action, target_id, payload_json, status,
+        submitted_by, submitted_at, reviewed_by, reviewed_at, rejection_reason,
+        created_at, updated_at
+      FROM bar_pending_changes;
+    `);
+  }
+
+  if (tableExists(database, "bar_analytics_events")) {
+    database.exec(`
+      INSERT OR IGNORE INTO venue_analytics_events (
+        id, venue_id, area, suburb, event_type, query_text, beer_name, beer_style, created_at
+      )
+      SELECT id, bar_id, area, suburb, event_type, query_text, beer_name, beer_style, created_at
+      FROM bar_analytics_events;
+    `);
+  }
+
+  if (tableExists(database, "bar_claim_requests")) {
+    database.exec(`
+      INSERT OR IGNORE INTO venue_claim_requests (
+        id, user_id, venue_id, venue_name, address, suburb, requester_name,
+        requester_role, contact_email, contact_phone, message, status, created_at, updated_at
+      )
+      SELECT
+        id, user_id, bar_id, bar_name, address, suburb, requester_name,
+        requester_role, contact_email, contact_phone, message, status, created_at, updated_at
+      FROM bar_claim_requests;
+    `);
+  }
+
+  if (tableExists(database, "monthly_bar_reports")) {
+    database.exec(`
+      INSERT OR IGNORE INTO venue_monthly_reports (id, venue_id, month, data_json, created_at)
+      SELECT id, bar_id, month, data_json, created_at
+      FROM monthly_bar_reports;
+    `);
+  }
+
   database.exec(`
-    UPDATE bar_profiles
+    DROP TABLE IF EXISTS monthly_bar_reports;
+    DROP TABLE IF EXISTS bar_analytics_events;
+    DROP TABLE IF EXISTS bar_claim_requests;
+    DROP TABLE IF EXISTS bar_pending_changes;
+    DROP TABLE IF EXISTS bar_specials;
+    DROP TABLE IF EXISTS bar_happy_hours;
+    DROP TABLE IF EXISTS bar_beers;
+    DROP TABLE IF EXISTS bar_profiles;
+  `);
+}
+
+function normalizeVenueTiers(database: BetterSqlite3.Database): void {
+  database.exec(`
+    UPDATE venue_profiles
        SET membership_tier = 'basic'
      WHERE membership_tier = 'free';
 
-    UPDATE bar_profiles
+    UPDATE venue_profiles
        SET membership_tier = 'plus'
      WHERE membership_tier = 'pro'
        AND highlighted_name = 0
        AND promoted = 0;
 
-    UPDATE bar_profiles
+    UPDATE venue_profiles
        SET membership_tier = 'pro'
      WHERE membership_tier = 'super_premium';
   `);
@@ -143,13 +236,12 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   const schema = fs.readFileSync(resolveSchemaPath(), "utf8");
 
   database.exec(schema);
-  ensureColumns(database, "call_runs", callRunsColumns);
-  ensureColumns(database, "beer_price_results", beerPriceResultsColumns);
-  ensureColumns(database, "bar_profiles", barProfilesColumns);
-  ensureColumns(database, "bar_analytics_events", barAnalyticsEventsColumns);
+  migrateLegacyVenuePartnerTables(database);
+  ensureColumns(database, "venue_profiles", venueProfilesColumns);
+  ensureColumns(database, "venue_analytics_events", venueAnalyticsEventsColumns);
   ensureColumns(database, "accounts", accountsColumns);
   ensureColumns(database, "auth_sessions", authSessionsColumns);
-  normalizeLegacyBarTiers(database);
+  normalizeVenueTiers(database);
   ensureIndexes(database);
 }
 

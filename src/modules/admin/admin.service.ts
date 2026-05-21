@@ -22,9 +22,9 @@ import type {
 } from "./admin.schemas.js";
 import {
   buildManualBeerEntry,
-  buildManualCallResultRow,
+  buildManualVenueCaptureRow,
   type AdminVenueSnapshot,
-  type ExistingCallResultSnapshot,
+  type ExistingVenueMenuCaptureSnapshot,
   type ManualBeerInput,
 } from "./manual-capture.js";
 
@@ -185,7 +185,7 @@ export class AdminService {
     private readonly ingestionQueueRepository: AdminIngestionQueueRepository | undefined,
     supabaseUrl?: string,
     supabaseServiceRoleKey?: string,
-    private readonly resultsTable = "call_results",
+    private readonly menuCaptureTable = "venue_menu_captures",
     openaiApiKey?: string,
   ) {
     if (supabaseUrl && supabaseServiceRoleKey) {
@@ -249,10 +249,10 @@ export class AdminService {
     return data as VenueRow;
   }
 
-  private async getLatestCallResult(venueId: string): Promise<ExistingCallResultSnapshot | null> {
+  private async getLatestVenueMenuCapture(venueId: string): Promise<ExistingVenueMenuCaptureSnapshot | null> {
     const supabase = this.getSupabase();
     const { data, error } = await supabase
-      .from(this.resultsTable)
+      .from(this.menuCaptureTable)
       .select("raw, cleaned")
       .eq("venue_id", venueId)
       .order("saved_at", { ascending: false })
@@ -269,7 +269,7 @@ export class AdminService {
     }
 
     const row = Array.isArray(data) ? data[0] : null;
-    return row ? (row as ExistingCallResultSnapshot) : null;
+    return row ? (row as ExistingVenueMenuCaptureSnapshot) : null;
   }
 
   private async persistManualCapture(input: AdminManualCaptureInput): Promise<{
@@ -279,19 +279,19 @@ export class AdminService {
   }> {
     const supabase = this.getSupabase();
     const venue = await this.getVenueById(input.venueId);
-    const latest = await this.getLatestCallResult(input.venueId);
+    const latest = await this.getLatestVenueMenuCapture(input.venueId);
     const savedAt = new Date().toISOString();
 
-    const row = buildManualCallResultRow({
+    const row = buildManualVenueCaptureRow({
       venue,
-      latestResult: latest,
+      latestCapture: latest,
       beers: input.beers,
       source: input.source,
       note: input.note,
       savedAt,
     });
 
-    const { error } = await supabase.from(this.resultsTable).insert(row);
+    const { error } = await supabase.from(this.menuCaptureTable).insert(row);
 
     if (error) {
       throw new ExternalServiceError("Failed to save manual venue capture", {

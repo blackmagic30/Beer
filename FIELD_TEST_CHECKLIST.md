@@ -25,10 +25,6 @@ SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
 ANALYTICS_MIN_BUCKET_SIZE=5
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
-TWILIO_VALIDATE_SIGNATURES=true
-ALLOW_UNSIGNED_TWILIO_WEBHOOKS_IN_PRODUCTION=false
-ELEVENLABS_WEBHOOK_SECRET=replace_with_elevenlabs_shared_secret
-ALLOW_UNSIGNED_ELEVENLABS_WEBHOOKS_IN_PRODUCTION=false
 ```
 
 For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you intentionally set `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` and clearly tell testers checkout is simulated. If Stripe test-mode checkout and webhooks have not passed end to end, use free limits, contributor unlocks, or explicit admin overrides instead of live payment claims.
@@ -95,8 +91,8 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 - Log in as the venue manager and open `/venue-portal`.
 - Confirm only the assigned venue is visible.
 - Confirm the Overview, Profile, Beers / stock, Happy hours, Deals & specials, Analytics, and Monthly report tabs load.
-- As a Basic bar account, confirm profile, beers, happy hours, and specials can be edited, while analytics/monthly reports show a Plus upgrade prompt.
-- Ask admin to set the bar tier to Plus or Pro for a demo, then confirm aggregate suburb-level analytics and monthly report preview appear once the privacy threshold is met.
+- As a Basic venue account, confirm profile, beers, happy hours, and specials can be edited, while analytics/monthly reports show a Plus upgrade prompt.
+- Ask admin to set the venue tier to Plus or Pro for a demo, then confirm aggregate suburb-level analytics and monthly report preview appear once the privacy threshold is met.
 - Confirm Pro shows premium display metadata in the returned profile, without changing public ranking behaviour.
 - As a verified user with no assigned venue, open `/venue-portal` and confirm it shows invite-only access rather than a claim form.
 - Confirm listing quality, wrong-price reports, requests, and update link are visible.

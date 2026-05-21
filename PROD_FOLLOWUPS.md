@@ -57,9 +57,15 @@ These are the remaining actions after the production-readiness pass. Priorities 
 
 ## P1: Provider Configuration Verification
 
-- Why it matters: Google Maps, OpenAI, Supabase, and Stripe all depend on provider-side restrictions/secrets that cannot be verified from local code alone. Twilio/ElevenLabs are archived and only matter if legacy call automation is re-enabled.
-- Suggested fix: Verify Google Maps referrer restrictions, Supabase OAuth redirect URLs/RLS, Stripe webhook secret, and OpenAI key scope in staging. If `ENABLE_LEGACY_CALL_AUTOMATION=true` is ever restored, add Twilio signature and ElevenLabs webhook-secret verification before deploy.
+- Why it matters: Google Maps, OpenAI, Supabase, and Stripe all depend on provider-side restrictions/secrets that cannot be verified from local code alone.
+- Suggested fix: Verify Google Maps referrer restrictions, Supabase OAuth redirect URLs/RLS, Stripe webhook secret, and OpenAI key scope in staging.
 - Blocks production: Yes until completed.
+
+## P1: Supabase Legacy Table Cleanup Verification
+
+- Why it matters: The active product now uses `venue_menu_captures`, `venue_price_records`, and crowdsourced submission tables. Old call-automation tables should not remain part of operational reporting once data has been reviewed/migrated.
+- Suggested fix: After applying `supabase/migrations/20260520010000_venue_menu_captures.sql`, verify whether old `call_logs`, `call_queue`, `call_results`, or `guinness_prices` tables contain data you still need. Export/back up anything important, then drop only the confirmed-unused legacy tables manually in Supabase.
+- Blocks production: No if the old tables are not exposed to browser clients and are ignored by active code. Should be completed before broad operational analytics cleanup.
 
 ## P2: Admin Audit Log UI And Export Controls
 
@@ -76,8 +82,16 @@ These are the remaining actions after the production-readiness pass. Priorities 
 ## P2: Formal Mobile/E2E Test Suite
 
 - Why it matters: The static viewer has a large amount of browser behavior that unit tests cannot fully cover.
-- Suggested fix: Add Playwright smoke tests for map load, auth, submission, venue portal pending change, admin approval, and mobile breakpoints.
+- Status: Repo-native Pint Path release-readiness coverage now exists in Vitest for auth, RBAC, submissions, source-evidence privacy, venue-manager pending approval, analytics privacy floors, Supabase migration contracts, and public-page smoke checks.
+- Still required: Add Playwright/mobile browser smoke tests for map load, OAuth callback, account dashboard, submission, venue portal pending change, admin approval, and mobile breakpoints.
 - Blocks production: Not strictly, but strongly recommended before broad public traffic.
+
+## P2: Local/Staging Dynamic Security Scan
+
+- Why it matters: Static tests cannot catch all browser/runtime issues such as reflected XSS, bad cache headers, or route-specific security regressions.
+- Status: Not automated by default because dynamic scanners must never hit `https://pintpath.au` production accidentally.
+- Suggested fix: Run OWASP ZAP or equivalent only against local, preview, or staging, then archive the report with the release checklist.
+- Blocks production: No for controlled beta. Recommended before broad public traffic.
 
 ## P3: Performance Profiling And Bundle Cleanup
 

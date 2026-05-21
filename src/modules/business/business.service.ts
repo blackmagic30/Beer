@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isIP } from "node:net";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
@@ -248,6 +249,12 @@ function getSourcePhotoMimeType(dataUrl: string): string | null {
 
 const BLOCKED_SOURCE_URL_EXTENSIONS = /\.(?:svg|html?|xhtml|xml|js|mjs|css)(?:[?#].*)?$/i;
 const PRIVATE_EVIDENCE_PREFIX = "private:evidence:";
+const BLOCKED_SOURCE_URL_HOSTNAMES = new Set([
+  "localhost",
+  "localhost.localdomain",
+  "ip6-localhost",
+  "ip6-loopback",
+]);
 
 function detectImageMimeType(bytes: Buffer): string | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
@@ -286,6 +293,52 @@ function detectImageMimeType(bytes: Buffer): string | null {
 function looksLikeActiveTextPayload(bytes: Buffer): boolean {
   const head = bytes.toString("utf8", 0, Math.min(bytes.length, 512)).trimStart().toLowerCase();
   return /^(?:<!doctype\s+html|<html|<script|<svg|<\?xml|@import|body\s*\{|\/\*)/.test(head);
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  const parts = hostname.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  const first = parts[0]!;
+  const second = parts[1]!;
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
+}
+
+function isPrivateIpv6(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe80:")
+  );
+}
+
+function isBlockedSourcePhotoHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!normalized || BLOCKED_SOURCE_URL_HOSTNAMES.has(normalized) || normalized.endsWith(".localhost")) {
+    return true;
+  }
+
+  const ipType = isIP(normalized);
+  if (ipType === 4) {
+    return isPrivateIpv4(normalized);
+  }
+  if (ipType === 6) {
+    return isPrivateIpv6(normalized);
+  }
+
+  return false;
 }
 
 function getBearerToken(header: string | undefined): string | null {
@@ -1632,6 +1685,10 @@ export class BusinessService {
 
     if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new AppError("Source photo URL must use HTTP or HTTPS.", 400);
+    }
+
+    if (isBlockedSourcePhotoHost(parsed.hostname)) {
+      throw new AppError("Source photo URL must not target local, private, or metadata network hosts.", 400);
     }
 
     if (BLOCKED_SOURCE_URL_EXTENSIONS.test(parsed.pathname)) {
@@ -3315,7 +3372,7 @@ export class BusinessService {
       venueId,
       beerId: null,
       suburb: profile.suburb,
-      metadata: { billingContext: "bar", tier: input.tier },
+      metadata: { billingContext: "venue", tier: input.tier },
     });
 
     if (this.config.DEMO_BILLING_MODE) {
@@ -3329,7 +3386,7 @@ export class BusinessService {
       this.auditSecurity({
         actor: account,
         action: "demo_subscription_grant",
-        targetType: "bar",
+        targetType: "venue",
         targetId: venueId,
         metadata: { tier: input.tier, mode: "demo" },
       });
@@ -3342,12 +3399,12 @@ export class BusinessService {
           ...tierCapabilities,
           analyticsLocked: !tierCapabilities.analytics,
         },
-        message: `${input.tier === "plus" ? "Plus" : "Pro"} demo tier activated for this bar.`,
+        message: `${input.tier === "plus" ? "Plus" : "Pro"} demo tier activated for this venue.`,
       };
     }
 
     if (!this.config.STRIPE_SECRET_KEY || !priceId) {
-      throw new AppError("Stripe checkout is not configured for this bar tier.", 503);
+      throw new AppError("Stripe checkout is not configured for this venue tier.", 503);
     }
 
     const successUrl = new URL(`/venue-portal?checkout=success&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
@@ -3364,10 +3421,10 @@ export class BusinessService {
         cancel_url: cancelUrl,
         "line_items[0][price]": priceId,
         "line_items[0][quantity]": "1",
-        "metadata[billing_context]": "bar",
+        "metadata[billing_context]": "venue",
         "metadata[user_id]": account.id,
-        "metadata[bar_id]": venueId,
-        "metadata[bar_membership_tier]": input.tier,
+        "metadata[venue_id]": venueId,
+        "metadata[venue_membership_tier]": input.tier,
         customer_email: account.email,
       }),
     });
@@ -3375,7 +3432,7 @@ export class BusinessService {
     const payload = (await response.json().catch(() => null)) as { url?: string; error?: { message?: string } } | null;
 
     if (!response.ok || !payload?.url) {
-      throw new ExternalServiceError("Stripe bar tier checkout session failed", {
+      throw new ExternalServiceError("Stripe venue tier checkout session failed", {
         status: response.status,
         message: payload?.error?.message,
       });
@@ -3384,7 +3441,7 @@ export class BusinessService {
     return {
       mode: "stripe",
       checkoutUrl: payload.url,
-      message: "Stripe checkout created for this bar tier.",
+      message: "Stripe checkout created for this venue tier.",
     };
   }
 
@@ -3500,14 +3557,14 @@ export class BusinessService {
     if (event.type === "checkout.session.completed") {
       const metadata = object.metadata as Record<string, string> | undefined;
       const billingContext = metadata?.billing_context;
-      const barId = metadata?.bar_id;
-      const barMembershipTier = metadata?.bar_membership_tier as BarMembershipTier | undefined;
+      const barId = metadata?.venue_id;
+      const barMembershipTier = metadata?.venue_membership_tier as BarMembershipTier | undefined;
       const subscriptionId = typeof object.subscription === "string" ? object.subscription : null;
       const userId = metadata?.user_id;
       const subscriptionStatus = metadata?.subscription_status as SubscriptionStatus | undefined;
       const customer = typeof object.customer === "string" ? object.customer : null;
 
-      if (billingContext === "bar" && barId && (barMembershipTier === "plus" || barMembershipTier === "pro")) {
+      if ((billingContext === "venue" || billingContext === "bar") && barId && (barMembershipTier === "plus" || barMembershipTier === "pro")) {
         const flags = tierFlags(barMembershipTier);
         this.repository.updateBarSubscription({
           barId,
@@ -3524,11 +3581,11 @@ export class BusinessService {
           venueId: barId,
           beerId: null,
           suburb: null,
-          metadata: { mode: "stripe", billingContext: "bar", tier: barMembershipTier },
+          metadata: { mode: "stripe", billingContext: "venue", tier: barMembershipTier },
         });
         this.auditSecurity({
           action: "stripe_subscription_update",
-          targetType: "bar",
+          targetType: "venue",
           targetId: barId,
           metadata: { eventType: event.type, tier: barMembershipTier, status: "active" },
         });
@@ -3596,11 +3653,11 @@ export class BusinessService {
           venueId: barProfile.barId,
           beerId: null,
           suburb: barProfile.suburb,
-          metadata: { mode: "stripe", billingContext: "bar" },
+          metadata: { mode: "stripe", billingContext: "venue" },
         });
         this.auditSecurity({
           action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
-          targetType: "bar",
+          targetType: "venue",
           targetId: barProfile.barId,
           metadata: { eventType: event.type, stripeStatus, shouldDowngrade },
         });

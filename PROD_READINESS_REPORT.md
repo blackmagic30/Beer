@@ -6,7 +6,7 @@ Date: 2026-05-14
 
 Pint Path is substantially hardened for a controlled Melbourne beta, but it is not yet ready for full-scale production deployment without provider/dashboard verification. The application now has strong server-side price gating, admin/venue-manager authorization tests, pending-review workflows for venue-manager changes, production admin MFA step-up guards, private source-evidence references with signed server URLs, Redis-capable rate limiting, Stripe webhook signature handling, upload validation, security audit logging, production config guards, and a CI path that runs build/test/secret scan/dependency audit.
 
-The remaining blockers are now mostly provider and operations verification: Supabase MFA/AAL2 must be configured and tested, private Supabase Storage should be verified before broad source-evidence uploads, Redis must be provisioned for production rate limiting, backup/restore and monitoring must be tested, and live Stripe/Supabase/Google configuration must be verified in staging. Twilio/ElevenLabs call automation is archived and disabled by default.
+The remaining blockers are now mostly provider and operations verification: Supabase MFA/AAL2 must be configured and tested, private Supabase Storage should be verified before broad source-evidence uploads, Redis must be provisioned for production rate limiting, backup/restore and monitoring must be tested, and live Stripe/Supabase/Google configuration must be verified in staging. The old phone-call automation surface has been retired from the active app.
 
 ## Production Readiness Verdict
 
@@ -21,13 +21,13 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 - Database: SQLite via `better-sqlite3`, initialized additively from `src/db/schema.sql`.
 - Auth: local Pint Path bearer sessions plus optional Supabase OAuth session exchange; production admin actions require verified email and AAL2 step-up claims.
 - Payments: Stripe Checkout/webhooks plus demo billing mode guarded by env.
-- External services: Supabase, Google Maps, OpenAI, Stripe. Legacy Twilio/ElevenLabs modules remain in the repo but are disabled unless `ENABLE_LEGACY_CALL_AUTOMATION=true`.
+- External services: Supabase, Google Maps, OpenAI, Stripe. Historical phone-call automation code is archived under `legacy/call-automation/` and is not built, mounted, or configured.
 - Hosting assumptions: Railway, with build `npm run build`, start `node dist/src/server.js`.
 - CI: GitHub Actions in `.github/workflows/ci.yml`.
 
 ## Major Risks Found
 
-- High-severity dependency advisory in transitive `axios` from `twilio`; patched through `npm audit fix`.
+- High-severity dependency advisory in a retired phone-provider dependency chain; patched and then removed with the retired package dependencies.
 - Production readiness only had a shallow `/health`; added `/ready` to initialize database-backed routers before allowing traffic.
 - Production config could silently start with HTTP public URL, no admin email list, no Google Maps key, missing source-evidence signing secret, no Redis limiter, or disabled admin MFA; added fail-fast guards.
 - Error logging redacted structured metadata but not top-level error messages/stacks; patched to redact before logging.
@@ -36,13 +36,22 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 
 ## Changes Made In This Pass
 
+- Retired the old phone-call prototype from the active app:
+  - moved source/scripts/tests to `legacy/call-automation/`
+  - removed active routes and package dependencies
+  - removed active env vars and deployment instructions
+  - excluded archived tests from the active Vitest suite
+- Removed fresh local SQLite call tables from `src/db/schema.sql`.
+- Renamed local venue partner tables from old `bar_*` names to `venue_*` names while preserving a startup migration for existing local SQLite databases.
+- Added Supabase `venue_menu_captures` migration as the product-correct replacement for the old `call_results` scratch table; it copies existing `call_results` rows forward if present but does not drop production data.
+- Updated venue portal and docs to use venue-focused language while preserving bar/pub as a public venue category.
 - Added Node runtime declaration and dependency audit script in `package.json`.
 - Added Redis-backed rate limiting via `ioredis` with production fail-closed behavior when Redis is unavailable unless an explicit temporary override is set.
 - Added production admin MFA/verified-email guards and tests for anonymous, normal, admin-without-MFA, and admin-with-MFA cases.
 - Added production verified-account guards for uploads/verifications and tests for unverified users.
 - Added private source-evidence object references and short-lived signed server URLs; public submission records no longer expose raw data URLs or external source URLs.
 - Added Supabase migration fields/policies for verified email, MFA claims, and the private `beermap-source-evidence` Storage bucket.
-- Added ElevenLabs webhook failure responses that return appropriate error status codes without exposing raw payload details.
+- Retired the old phone-call webhook surface from the active runtime.
 - Updated `package-lock.json` through `npm audit fix`:
   - `axios` to `1.16.1`
   - `follow-redirects` to `1.16.0`
@@ -139,7 +148,7 @@ P1 blockers before broad paid/public rollout:
 
 - No production deployment or production data was touched.
 - Local/test SQLite data only was used.
-- Live Stripe, Supabase, OpenAI, and Google provider credentials were not available locally, so provider-level verification remains a production/staging action. Twilio/ElevenLabs provider checks are deferred unless legacy call automation is re-enabled.
+- Live Stripe, Supabase, OpenAI, and Google provider credentials were not available locally, so provider-level verification remains a production/staging action.
 - The current target is full-scale production readiness, not merely a small private beta.
 
 ## Recommended Next Steps Before Launch

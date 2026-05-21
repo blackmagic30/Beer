@@ -51,14 +51,14 @@ export interface AdminVenueSnapshot {
   suburb: string | null;
 }
 
-export interface ExistingCallResultSnapshot {
+export interface ExistingVenueMenuCaptureSnapshot {
   raw: Record<string, unknown> | null;
   cleaned: Record<string, unknown> | null;
 }
 
-interface BuildManualCallResultRowInput {
+interface BuildManualVenueCaptureRowInput {
   venue: AdminVenueSnapshot;
-  latestResult: ExistingCallResultSnapshot | null;
+  latestCapture: ExistingVenueMenuCaptureSnapshot | null;
   beers: ManualBeerInput[];
   source: "manual_entry" | "menu_photo_ocr" | "source_ingestion";
   note?: string | null;
@@ -244,9 +244,9 @@ export function buildMenuItemsFromBeerEntries(
     }));
 }
 
-export function buildManualCallResultRow(input: BuildManualCallResultRowInput): Record<string, unknown> {
-  const existingRaw = isObjectRecord(input.latestResult?.raw) ? input.latestResult.raw : {};
-  const existingCleaned = isObjectRecord(input.latestResult?.cleaned) ? input.latestResult.cleaned : {};
+export function buildManualVenueCaptureRow(input: BuildManualVenueCaptureRowInput): Record<string, unknown> {
+  const existingRaw = isObjectRecord(input.latestCapture?.raw) ? input.latestCapture.raw : {};
+  const existingCleaned = isObjectRecord(input.latestCapture?.cleaned) ? input.latestCapture.cleaned : {};
   const existingBeers = extractBeerEntriesFromCleaned(existingCleaned);
   const incomingBeers = Object.fromEntries(
     input.beers.map((beer) => [toBeerKey(beer.name), buildManualBeerEntry(beer)]),

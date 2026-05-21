@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildManualBeerEntry,
-  buildManualCallResultRow,
+  buildManualVenueCaptureRow,
   extractBeerEntriesFromCleaned,
   toBeerKey,
 } from "../src/modules/admin/manual-capture.js";
@@ -42,13 +42,13 @@ describe("manual capture helpers", () => {
   });
 
   it("merges new manual beers into the latest venue snapshot", () => {
-    const row = buildManualCallResultRow({
+    const row = buildManualVenueCaptureRow({
       venue: {
         id: "venue-1",
         name: "The Duke of Wellington",
         suburb: "Melbourne",
       },
-      latestResult: {
+      latestCapture: {
         raw: {
           venue_id: "venue-1",
         },

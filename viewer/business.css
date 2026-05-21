@@ -576,6 +576,10 @@ h3 {
   display: none !important;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .field input,
 .field select,
 .field textarea {

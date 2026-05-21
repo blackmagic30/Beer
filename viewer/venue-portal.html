@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bar Dashboard | Pint Path</title>
+  <title>Venue Dashboard | Pint Path</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
@@ -13,12 +13,12 @@
     <div id="nav"></div>
 
     <section class="hero hero--compact">
-      <div class="eyebrow">Bar owner portal</div>
-      <h1>Manage your bar’s profile, taps, prices and specials.</h1>
-      <p class="lead">Assigned and verified bar accounts can keep venue details, beer stock, happy hours and deals up to date. Analytics stay privacy-safe and are only available on Plus and Pro tiers.</p>
+      <div class="eyebrow">Venue portal</div>
+      <h1>Manage your venue’s profile, taps, prices and specials.</h1>
+      <p class="lead">Assigned and verified venue accounts can keep details, beer stock, happy hours and deals up to date. Analytics stay privacy-safe and are only available on Plus and Pro tiers.</p>
     </section>
 
-    <section id="portalAccess" class="notice">Log in with an assigned bar-owner or venue-manager account to view this dashboard.</section>
+    <section id="portalAccess" class="notice">Log in with an assigned venue-manager account to view this dashboard.</section>
 
     <section id="claimPanel" class="panel is-hidden">
       <div class="sectionHeader">
@@ -39,7 +39,7 @@
     <section id="portalContent" class="is-hidden">
       <div class="dashboardShell">
         <aside class="dashboardSidebar panel">
-          <label class="field">Managed bar
+          <label class="field">Managed venue
             <select id="venueSelect"></select>
           </label>
           <div id="selectedVenueSummary" class="venueSummaryCard"></div>
@@ -99,13 +99,13 @@
             <form id="profileForm" class="panel form">
               <div class="sectionHeader">
                 <div>
-                  <h2>Bar profile details</h2>
+                  <h2>Venue profile details</h2>
                   <p class="muted">Keep contact details, opening notes and venue tags current.</p>
                 </div>
                 <button class="button button--primary" type="submit">Save profile</button>
               </div>
               <div class="grid grid--two">
-                <label class="field">Bar name
+                <label class="field">Venue name
                   <input name="name" required />
                 </label>
                 <label class="field">Suburb
@@ -595,10 +595,10 @@
 
       venueSelect.innerHTML = data.assignments.length
         ? data.assignments.map((assignment) => `<option value="${escapeHtml(assignment.venueId)}" ${data.selectedVenue?.venueId === assignment.venueId ? "selected" : ""}>${escapeHtml(assignment.venueName)}</option>`).join("")
-        : '<option>No assigned bars yet</option>';
+        : '<option>No assigned venues yet</option>';
 
       if (!data.selectedVenue || !data.profile) {
-        selectedVenueSummary.innerHTML = "<strong>No assigned bar selected yet.</strong><p class='muted'>Ask admin to assign your account to a venue.</p>";
+        selectedVenueSummary.innerHTML = "<strong>No assigned venue selected yet.</strong><p class='muted'>Ask admin to assign your account to a venue.</p>";
         return;
       }
 
@@ -771,7 +771,7 @@
         analyticsGate.innerHTML = `
           <h2>Analytics are available on Plus</h2>
           <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Plus to view privacy-safe suburb analytics and monthly reports.")}</p>
-          <div class="notice">Basic bar accounts can still manage profile details, beers, prices, happy hours, deals and specials.</div>
+          <div class="notice">Basic venue accounts can still manage profile details, beers, prices, happy hours, deals and specials.</div>
           <div class="actionRow">
             <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
             <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
@@ -782,7 +782,7 @@
 
       const analytics = data.analytics || {};
       analyticsGrid.innerHTML = [
-        ["Bar lookups", analytics.barLookups],
+        ["Venue lookups", analytics.barLookups],
         ["Profile views", analytics.profileViews],
         ["Beer list views", analytics.beerListViews],
         ["Specials views", analytics.specialsViews],
@@ -821,7 +821,7 @@
       monthlyReport.innerHTML = `
         <div class="grid grid--four">
           ${[
-            ["Bar lookups", report.totalBarLookups],
+            ["Venue lookups", report.totalBarLookups],
             ["Profile views", report.totalProfileViews],
             ["Beer list views", report.totalBeerListViews],
             ["Special/deal views", report.totalSpecialsDealsViews],
@@ -1051,13 +1051,13 @@
               body: JSON.stringify({ tier: upgradeTier }),
             });
             if (result.mode === "demo") {
-              MelbBeerBusiness.setStatus(portalAccess, result.message || "Demo bar tier activated.");
+              MelbBeerBusiness.setStatus(portalAccess, result.message || "Demo venue tier activated.");
               await loadPortal(selectedVenueId());
               return;
             }
             window.location.href = result.checkoutUrl;
           } catch (error) {
-            MelbBeerBusiness.setStatus(portalAccess, error.message || "Could not start bar tier checkout.", true);
+            MelbBeerBusiness.setStatus(portalAccess, error.message || "Could not start venue tier checkout.", true);
           }
           return;
         }

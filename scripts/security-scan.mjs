@@ -40,12 +40,8 @@ const patterns = [
     regex: /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g,
   },
   {
-    name: "Twilio auth token assignment",
-    regex: /\bTWILIO_AUTH_TOKEN\s*=\s*['"]?[A-Za-z0-9_-]{24,}['"]?/g,
-  },
-  {
     name: "Private config assignment",
-    regex: /\b(?:SERVICE_ROLE_KEY|OPENAI_API_KEY|ELEVENLABS_API_KEY|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET)\s*[:=]\s*['"]?[^'"\s#]{12,}/g,
+    regex: /\b(?:SERVICE_ROLE_KEY|OPENAI_API_KEY|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET)\s*[:=]\s*['"]?[^'"\s#]{12,}/g,
   },
 ];
 

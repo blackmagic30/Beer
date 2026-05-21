@@ -46,6 +46,13 @@
       flex-direction: column;
     }
 
+    #mainContent {
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      min-height: 0;
+    }
+
     #topbar {
       box-sizing: border-box;
       padding: 18px 20px 16px;
@@ -2989,6 +2996,7 @@
     </div>
   </div>
 
+  <main id="mainContent" role="main">
     <div id="mapShell">
       <div id="map"></div>
       <div id="mapOverlayTabs" aria-label="Map overlays">
@@ -3055,6 +3063,7 @@
     <div class="responsibleNote">
       Prices may change. Check with the venue before ordering. Drink responsibly. <a href="/privacy.html">Privacy</a>
     </div>
+  </main>
   <script>
     const viewerConfig =
       window.MELB_BEER_BOT_VIEWER_CONFIG &&
