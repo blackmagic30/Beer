@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Send Feedback | Pint Path</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell">
+    <div id="nav"></div>
+
+    <section class="hero hero--split feedbackHero">
+      <div>
+        <div class="eyebrow">Field-test feedback</div>
+        <h1>Tell us what felt confusing, useful, or broken.</h1>
+        <p class="lead">Pint Path is still being tuned for real Melbourne venue visits. Send quick notes here instead of burying feedback at the bottom of your account page.</p>
+      </div>
+      <div class="panel feedbackPromise">
+        <h2>What helps most</h2>
+        <ul class="cleanList">
+          <li>Where you were in the app</li>
+          <li>What you expected to happen</li>
+          <li>Whether the issue was on mobile or desktop</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="grid grid--two feedbackGrid">
+      <form id="feedbackForm" class="panel form">
+        <h2>Send feedback</h2>
+        <p class="muted">Feedback can be anonymous, but if you are signed in we can link it to your account for follow-up.</p>
+        <label class="field">Type
+          <select name="feedbackType">
+            <option value="general_feedback">General feedback</option>
+            <option value="bug">Bug</option>
+            <option value="wrong_data">Wrong data</option>
+            <option value="feature_idea">Feature idea</option>
+            <option value="venue_suggestion">Venue suggestion</option>
+          </select>
+        </label>
+        <label class="field">Venue, if relevant
+          <input name="venueName" placeholder="Optional venue name" />
+        </label>
+        <label class="field">Message
+          <textarea name="message" required maxlength="1200" placeholder="What should we improve?"></textarea>
+        </label>
+        <div class="actionRow">
+          <button id="feedbackSubmitButton" class="button button--primary" type="submit">Send feedback</button>
+          <a class="button" href="/">Back to map</a>
+        </div>
+        <div id="feedbackStatus" class="notice">We read every field-test note. Please do not include private ID documents or payment details.</div>
+      </form>
+
+      <article class="panel">
+        <div class="eyebrow">Privacy note</div>
+        <h2>Feedback is for product quality, not public venue data.</h2>
+        <p class="muted">Wrong prices should still be reported from a venue detail card where possible. General feedback here goes to admin review and is not published on the map.</p>
+        <div class="divider"></div>
+        <p class="helperCopy">If you are reporting a broken login, map, or upload flow, include the device/browser and the page you were on. Tiny details save us a lot of detective work.</p>
+      </article>
+    </section>
+
+    <p class="footerCopy">Prices may change. Check with the venue before ordering. Drink responsibly. <a href="/privacy.html">Privacy</a></p>
+  </main>
+
+  <script>
+    function $(id) {
+      return document.getElementById(id);
+    }
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      $("nav").innerHTML = MelbBeerBusiness.renderNav("feedback");
+      await MelbBeerBusiness.syncSupabaseSession().catch(() => null);
+
+      $("feedbackForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = $("feedbackSubmitButton");
+        const body = Object.fromEntries(new FormData($("feedbackForm")).entries());
+        button.disabled = true;
+        MelbBeerBusiness.setStatus($("feedbackStatus"), "Sending feedback...");
+
+        try {
+          const result = await MelbBeerBusiness.apiFetch("/api/business/feedback", {
+            method: "POST",
+            body: JSON.stringify({
+              anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
+              feedbackType: body.feedbackType,
+              message: body.message,
+              venueName: body.venueName || null,
+              venueId: null,
+            }),
+          });
+          $("feedbackForm").reset();
+          MelbBeerBusiness.setStatus($("feedbackStatus"), result.message || "Feedback saved for review. Thank you.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("feedbackStatus"), error.message, true);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+  </script>
+</body>
+</html>

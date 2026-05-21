@@ -107,7 +107,7 @@ const envSchema = z.object({
   SUPABASE_URL: optionalHttpUrlFromEnv,
   SUPABASE_ANON_KEY: optionalStringFromEnv,
   SUPABASE_SERVICE_ROLE_KEY: optionalStringFromEnv,
-  SUPABASE_OAUTH_PROVIDERS: z.preprocess(sanitizeEnvString, z.string()).default("google,apple,facebook"),
+  SUPABASE_OAUTH_PROVIDERS: z.preprocess(sanitizeEnvString, z.string()).default("google,apple"),
   SUPABASE_MENU_CAPTURE_TABLE: optionalStringFromEnv.default("venue_menu_captures"),
   ADMIN_EMAILS: optionalStringFromEnv,
   GOOGLE_MAPS_API_KEY: optionalStringFromEnv,

@@ -547,22 +547,28 @@ h3 {
 }
 
 .dayChecklist {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
   gap: 8px;
+  max-width: 100%;
 }
 
 .dayChip {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   border: 1px solid rgba(244, 214, 150, 0.16);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.055);
   color: #d9dfeb;
-  padding: 9px 11px;
+  padding: 10px 9px;
   font-size: 13px;
   font-weight: 850;
+  white-space: nowrap;
 }
 
 .dayChip input {
@@ -604,6 +610,21 @@ h3 {
 
 .field textarea {
   min-height: 102px;
+}
+
+.readonlySelect {
+  pointer-events: none;
+  opacity: 1;
+  cursor: default;
+  background:
+    linear-gradient(135deg, rgba(245, 199, 107, 0.08), rgba(255, 255, 255, 0.025)),
+    rgba(3, 7, 18, 0.52) !important;
+}
+
+.readonlySelect:disabled {
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  opacity: 1;
 }
 
 .notice {
@@ -1149,6 +1170,42 @@ h3 {
 .actionCard span {
   color: var(--muted);
   line-height: 1.5;
+}
+
+.accountSectionStack {
+  display: grid;
+  gap: 14px;
+}
+
+.accountWideForm {
+  max-width: 980px;
+}
+
+.feedbackHero {
+  align-items: stretch;
+}
+
+.feedbackPromise {
+  align-content: start;
+}
+
+.feedbackGrid {
+  align-items: start;
+}
+
+.cleanList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.divider {
+  height: 1px;
+  margin: 18px 0;
+  background: rgba(244, 214, 150, 0.14);
 }
 
 .submissionList {

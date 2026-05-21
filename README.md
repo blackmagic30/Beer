@@ -106,8 +106,8 @@ Business demo pages:
 Supabase auth/account foundation:
 
 - The beta keeps the existing Pint Path bearer-session system for app API access, but can exchange a Supabase Auth OAuth session for a local Pint Path session through `POST /api/business/auth/supabase-session`.
-- `/account.html` shows Google, Apple, and Facebook quick-login buttons when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured. Email/password signup/login still works through the existing Pint Path account flow.
-- Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google, name/email for Apple, and email/public_profile for Facebook.
+- `/account.html` shows Google and Apple quick-login buttons when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured. Email/password signup/login still works through the existing Pint Path account flow.
+- Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google and name/email for Apple.
 - Add OAuth redirect URLs for local and hosted callback pages, for example `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`.
 - New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
 - Production admin access expects Supabase Auth MFA/Auth Assurance Level 2 (`aal2`). Enable MFA factors in Supabase, require confirmed email, and verify the OAuth/session JWT contains `aal2` before relying on admin routes.
@@ -261,9 +261,9 @@ TRUST_PROXY=true
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_anon_browser_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-# Configure Google/Apple/Facebook OAuth providers in Supabase dashboard.
+# Configure Google/Apple OAuth providers in Supabase dashboard.
 # Redirect URLs: http://localhost:3000/auth/callback and https://pintpath.au/auth/callback.
-SUPABASE_OAUTH_PROVIDERS=google,apple,facebook
+SUPABASE_OAUTH_PROVIDERS=google,apple
 SUPABASE_MENU_CAPTURE_TABLE=venue_menu_captures
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 GOOGLE_MAPS_MAP_ID=optional_google_maps_map_id
@@ -303,7 +303,7 @@ What each one does:
 - `SUPABASE_URL`: Supabase project URL used for venue imports, map-sync result writes, and optional Supabase Auth OAuth login.
 - `SUPABASE_ANON_KEY`: browser-safe anon key used by `/account.html` for Supabase Auth OAuth. Never use the service-role key in browser config.
 - `SUPABASE_SERVICE_ROLE_KEY`: required for inserting venues and syncing reviewed/admin menu captures.
-- `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`; set this to providers configured in the Supabase dashboard, for example `google,apple,facebook`.
+- `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`; set this to providers configured in the Supabase dashboard, for example `google,apple`.
 - `SUPABASE_MENU_CAPTURE_TABLE`: server-side reviewed menu/manual capture table. Defaults to `venue_menu_captures`.
 - `GOOGLE_MAPS_API_KEY`: browser-safe Google Maps key used by the hosted viewer.
 - `GOOGLE_MAPS_MAP_ID`: optional Google Maps map ID for branded vector map styling.
@@ -484,7 +484,7 @@ window.MELB_BEER_BOT_VIEWER_CONFIG = {
     freePriceRevealsPerDay: 3,
     supabaseUrl: "https://your-project.supabase.co",
     supabaseAnonKey: "your_supabase_anon_browser_key",
-    supabaseOauthProviders: ["google", "apple", "facebook"],
+    supabaseOauthProviders: ["google", "apple"],
   },
 };
 ```

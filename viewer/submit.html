@@ -50,9 +50,9 @@
             <datalist id="venueSuggestions"></datalist>
             <span id="venueSearchHelp" class="fieldHint">Start typing a venue name, suburb, or street. Suggestions update as you type.</span>
           </label>
-          <label class="field">Choose venue
-            <select id="venueSelect" required></select>
-            <span id="venueChoiceHelp" class="fieldHint">Pick the matching venue from the list before submitting.</span>
+          <label class="field">Chosen venue
+            <select id="venueSelect" class="readonlySelect" required disabled aria-disabled="true" tabindex="-1"></select>
+            <span id="venueChoiceHelp" class="fieldHint">Search above and click the matching venue suggestion before submitting.</span>
           </label>
         </div>
         <div class="grid grid--two">
@@ -206,7 +206,12 @@
 
       venueSelect.value = venue.id;
       venueSearchHelp.textContent = `Selected ${venueLabel(venue)}.`;
-      venueChoiceHelp.textContent = "Venue selected. Continue with the submission type and details below.";
+      venueChoiceHelp.textContent = "Chosen venue locked. Continue with the submission type and details below.";
+    }
+
+    function clearSelectedVenue(message = "No venue chosen yet. Search above and click a venue suggestion.") {
+      venueSelect.value = "";
+      venueChoiceHelp.textContent = message;
     }
 
     function rowTemplate() {
@@ -482,14 +487,22 @@
     }
 
     async function loadVenues(query = "") {
+      const currentVenueId = venueSelect.value;
       const data = await MelbBeerBusiness.apiFetch(`/api/business/venues?q=${encodeURIComponent(query)}&limit=50`);
       venues = data.venues;
       venueSuggestions.innerHTML = venues.map((venue) => `<option value="${escapeHtml(venueLabel(venue))}"></option>`).join("");
       venueSelect.innerHTML = venues.length
-        ? venues.map((venue) => `<option value="${escapeHtml(venue.id)}">${escapeHtml(venueLabel(venue))}</option>`).join("")
+        ? `<option value="">No venue chosen yet</option>${venues.map((venue) => `<option value="${escapeHtml(venue.id)}">${escapeHtml(venueLabel(venue))}</option>`).join("")}`
         : '<option value="">No matching venues found</option>';
+      if (currentVenueId && venues.some((venue) => venue.id === currentVenueId)) {
+        venueSelect.value = currentVenueId;
+        return;
+      }
+      clearSelectedVenue(venues.length
+        ? "Search above and click the matching venue suggestion before submitting."
+        : "No match yet. Try a shorter venue name, suburb, or street.");
       venueChoiceHelp.textContent = venues.length
-        ? `Showing ${venues.length} matching venue${venues.length === 1 ? "" : "s"}. Pick the right one from this list.`
+        ? "Search above and click the matching venue suggestion before submitting."
         : "No match yet. Try a shorter venue name, suburb, or street.";
     }
 
@@ -541,13 +554,6 @@
       applySubmissionType();
       addBeerRowButton.addEventListener("click", appendBeerRow);
       submissionTypeSelect.addEventListener("change", applySubmissionType);
-      venueSelect.addEventListener("change", () => {
-        const selected = venues.find((venue) => venue.id === venueSelect.value);
-        if (selected) {
-          venueSearchInput.value = venueLabel(selected);
-          selectVenue(selected);
-        }
-      });
       venueSearchInput.addEventListener("input", () => {
         window.clearTimeout(venueSearchTimer);
         const selectedSuggestion = findVenueFromSearchValue(venueSearchInput.value);
@@ -556,8 +562,9 @@
           return;
         }
 
+        clearSelectedVenue();
         venueSearchHelp.textContent = venueSearchInput.value.trim()
-          ? "Searching venues. Pick a suggestion or choose the best match from the venue list."
+          ? "Searching venues. Pick a suggestion from the venue search field."
           : "Start typing a venue name, suburb, or street. Suggestions update as you type.";
         venueSearchTimer = window.setTimeout(async () => {
           await loadVenues(venueSearchInput.value);
@@ -585,7 +592,7 @@
         }
         const selected = venues.find((venue) => venue.id === venueSelect.value);
         if (!selected) {
-          MelbBeerBusiness.setStatus(status, "Choose a venue first.", true);
+          MelbBeerBusiness.setStatus(status, "Search and choose a venue first.", true);
           return;
         }
 
@@ -616,6 +623,7 @@
           });
           MelbBeerBusiness.setStatus(status, `${result.submission.venueName} submitted and pending review.`);
           submissionForm.reset();
+          clearSelectedVenue();
           observedAtInput.value = localDatetimeValue();
           beerRows.innerHTML = "";
           appendBeerRow();

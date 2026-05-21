@@ -19,6 +19,10 @@ function callbackHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/auth/callback.html"), "utf8");
 }
 
+function feedbackHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/feedback.html"), "utf8");
+}
+
 describe("account page shell", () => {
   it("renders separate logged-out auth and logged-in dashboard states", () => {
     const html = accountHtml();
@@ -68,6 +72,30 @@ describe("account page shell", () => {
     expect(html).toContain("Private until reviewed");
   });
 
+  it("keeps feedback on a dedicated page instead of clustering the account dashboard", () => {
+    const html = accountHtml();
+    const feedback = feedbackHtml();
+    const script = businessJs();
+
+    expect(html).not.toContain('id="feedbackForm"');
+    expect(html).toContain('href="/feedback.html"');
+    expect(feedback).toContain('id="feedbackForm"');
+    expect(feedback).toContain("Tell us what felt confusing, useful, or broken.");
+    expect(feedback).toContain('MelbBeerBusiness.renderNav("feedback")');
+    expect(feedback).toContain('MelbBeerBusiness.apiFetch("/api/business/feedback"');
+    expect(script).toContain('href="/feedback.html"');
+    expect(script).not.toContain('href="/account.html#feedbackForm"');
+  });
+
+  it("uses search-driven venue selection for quick uploads too", () => {
+    const html = accountHtml();
+
+    expect(html).toContain('id="quickVenueSelect" class="readonlySelect" required disabled');
+    expect(html).toContain("function clearQuickVenue");
+    expect(html).toContain("Search and choose a venue first.");
+    expect(html).not.toContain('quickVenueSelect").addEventListener("change"');
+  });
+
   it("uses Supabase OAuth and email auth before falling back to local demo auth", () => {
     const html = accountHtml();
     const script = businessJs();
@@ -75,6 +103,7 @@ describe("account page shell", () => {
     expect(html).toContain("Continue with Google");
     expect(html).toContain("Continue with Apple");
     expect(html).toContain("Continue with Email");
+    expect(html).not.toContain("Continue with Facebook");
     expect(html).toContain("MelbBeerBusiness.signUpWithEmail");
     expect(html).toContain("MelbBeerBusiness.signInWithEmail");
     expect(script).toContain("signInWithOAuth({");
@@ -82,6 +111,17 @@ describe("account page shell", () => {
     expect(script).toContain("signInWithPassword");
     expect(script).toContain("signUp({");
     expect(script).toContain("/auth/callback");
+  });
+
+  it("resets OAuth loading buttons when a provider flow is cancelled", () => {
+    const html = accountHtml();
+
+    expect(html).toContain("oauthLoginOpening: false");
+    expect(html).toContain("function setOauthButtonsLoading");
+    expect(html).toContain("function resetCancelledOauth");
+    expect(html).toContain("Secure login was cancelled. Choose Google, Apple, or email to continue.");
+    expect(html).toContain('window.addEventListener("pageshow", () => resetCancelledOauth())');
+    expect(html).toContain('window.addEventListener("focus", () => resetCancelledOauth())');
   });
 
   it("has a dedicated Supabase auth callback that exchanges the session and redirects safely", () => {

@@ -14,6 +14,6 @@ window.MELB_BEER_BOT_VIEWER_CONFIG = {
     // Only fill these for standalone/static local experiments. Never put a service-role key here.
     supabaseUrl: "https://your-project.supabase.co",
     supabaseAnonKey: "your_supabase_anon_browser_key",
-    supabaseOauthProviders: ["google", "apple", "facebook"],
+    supabaseOauthProviders: ["google", "apple"],
   },
 };

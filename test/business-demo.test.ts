@@ -71,7 +71,7 @@ function createBusinessService(
     SUPABASE_URL: undefined,
     SUPABASE_ANON_KEY: undefined,
     SUPABASE_SERVICE_ROLE_KEY: undefined,
-    SUPABASE_OAUTH_PROVIDERS: "google,apple,facebook",
+    SUPABASE_OAUTH_PROVIDERS: "google,apple",
     ADMIN_EMAILS: "admin@example.com",
     ...overrides,
   });

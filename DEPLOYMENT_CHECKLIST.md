@@ -61,7 +61,7 @@ SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-browser-safe-anon-key
-SUPABASE_OAUTH_PROVIDERS=google,apple,facebook
+SUPABASE_OAUTH_PROVIDERS=google,apple
 ```
 
 If you intentionally use simulated checkout for the private field test, set both:

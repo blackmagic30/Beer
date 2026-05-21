@@ -105,7 +105,7 @@ function getSupabaseConfig() {
 function getSupabaseOauthProviders() {
   const config = getViewerConfig();
   const business = getBusinessConfig();
-  const providers = business.supabaseOauthProviders || config.supabaseOauthProviders || ["google", "apple", "facebook"];
+  const providers = business.supabaseOauthProviders || config.supabaseOauthProviders || ["google", "apple"];
   return Array.isArray(providers) ? providers : String(providers).split(",").map((provider) => provider.trim()).filter(Boolean);
 }
 
@@ -195,7 +195,6 @@ async function signInWithOAuth(provider, options = {}) {
   const scopesByProvider = {
     google: "email profile",
     apple: "name email",
-    facebook: "email public_profile",
   };
 
   const returnTo = getSafeReturnPath(options.returnTo || getAuthReturnPathFromLocation());
@@ -287,7 +286,7 @@ async function requestPasswordReset(email) {
 
 function renderNav(active = "") {
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
-  const feedbackLink = isFieldTestMode() ? '<a href="/account.html#feedbackForm">Feedback</a>' : "";
+  const feedbackLink = isFieldTestMode() ? `<a ${active === "feedback" ? 'class="pill"' : ""} href="/feedback.html">Feedback</a>` : "";
   return `
     <nav class="topNav">
       <a class="brand" href="/">
@@ -316,7 +315,7 @@ function installFieldTestChrome() {
   const feedbackButton = document.createElement("a");
   feedbackButton.id = "fieldTestFeedbackButton";
   feedbackButton.className = "floatingFeedback";
-  feedbackButton.href = "/account.html#feedbackForm";
+  feedbackButton.href = "/feedback.html";
   feedbackButton.textContent = "Send feedback";
   document.body.appendChild(feedbackButton);
 }
