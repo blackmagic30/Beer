@@ -81,8 +81,14 @@
               </span>
               <span class="fieldHint">Use at least 8 characters.</span>
             </label>
+            <label class="field passwordField">Confirm password
+              <span class="passwordInputWrap">
+                <input name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+                <button class="passwordToggle" type="button" data-password-toggle>Show</button>
+              </span>
+            </label>
             <label class="field consentField">
-              <span><input name="ageConfirmed" type="checkbox" required /> I confirm I am 18 years or older.</span>
+              <span class="consentLine"><input name="ageConfirmed" type="checkbox" required /> <span>I confirm I am 18 years or older.</span></span>
               <span class="fieldHint">Pint Path does not store ID documents. Some future rewards may require verified 18+ status.</span>
             </label>
             <button class="button button--primary" type="submit">Create account</button>
@@ -602,10 +608,15 @@
       const submitButton = form.querySelector('button[type="submit"]');
       const body = Object.fromEntries(new FormData(form).entries());
       body.ageConfirmed = body.ageConfirmed === "on";
+      const isSignup = path.includes("signup");
 
       try {
-        setLoading(submitButton, true, path.includes("signup") ? "Creating..." : "Signing in...");
-        const isSignup = path.includes("signup");
+        if (isSignup && body.password !== body.confirmPassword) {
+          throw new Error("Passwords do not match.");
+        }
+        delete body.confirmPassword;
+
+        setLoading(submitButton, true, isSignup ? "Creating..." : "Signing in...");
         const supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient());
         if (isSignup) {
           await MelbBeerBusiness.trackEvent("signup_started", { source: "account_page" });

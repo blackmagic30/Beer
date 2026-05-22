@@ -113,6 +113,19 @@ describe("account page shell", () => {
     expect(script).toContain("/auth/callback");
   });
 
+  it("requires confirm password and keeps signup consent text readable", () => {
+    const html = accountHtml();
+    const css = businessCss();
+
+    expect(html).toContain("Confirm password");
+    expect(html).toContain('name="confirmPassword"');
+    expect(html).toContain("Passwords do not match.");
+    expect(html).toContain('class="consentLine"');
+    expect(css).toContain('.field input[type="checkbox"]');
+    expect(css).toContain("grid-template-columns: 18px minmax(0, 1fr)");
+    expect(css).toContain("font-size: clamp(42px, 5vw, 64px)");
+  });
+
   it("resets OAuth loading buttons when a provider flow is cancelled", () => {
     const html = accountHtml();
 
