@@ -134,6 +134,19 @@ export function createApp() {
   const app = express();
   const viewerDirectory = path.resolve(process.cwd(), "viewer");
   const allowedOrigins = getAllowedOrigins();
+  const cspConnectSources = [
+    "'self'",
+    "https://maps.googleapis.com",
+    "https://*.googleapis.com",
+    "https://*.google.com",
+    "https://*.gstatic.com",
+    "https://*.supabase.co",
+    "https://*.supabase.com",
+  ];
+
+  if (env.SUPABASE_URL) {
+    cspConnectSources.push(new URL(env.SUPABASE_URL).origin);
+  }
 
   app.set("trust proxy", env.TRUST_PROXY);
   app.use(
@@ -174,15 +187,7 @@ export function createApp() {
             "https://*.ggpht.com",
             "https://*.googleusercontent.com",
           ],
-          "connect-src": [
-            "'self'",
-            "https://maps.googleapis.com",
-            "https://*.googleapis.com",
-            "https://*.google.com",
-            "https://*.gstatic.com",
-            "https://*.supabase.co",
-            "https://*.supabase.com",
-          ],
+          "connect-src": cspConnectSources,
           "font-src": ["'self'", "data:", "https://fonts.gstatic.com"],
           // Safari upgrades localhost subresources when this directive is present,
           // which leaves external CSS/JS pages looking like raw HTML in local dev.
