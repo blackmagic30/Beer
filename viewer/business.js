@@ -256,17 +256,33 @@ async function signUpWithEmail(email, password, ageConfirmed) {
   }
 
   if (data.session?.access_token) {
-    const synced = await syncSupabaseSession();
+    let synced;
+    try {
+      synced = await syncSupabaseSession();
+    } catch {
+      return {
+        configured: true,
+        synced: false,
+        needsEmailConfirmation: true,
+        message: "Account created. Check your email to confirm your Pint Path login, then return here to sign in.",
+      };
+    }
+
     if (ageConfirmed) {
       await apiFetch("/api/business/account/age-confirm", {
         method: "POST",
         body: JSON.stringify({ ageConfirmed: true }),
-      });
+      }).catch(() => null);
     }
     return { ...synced, needsEmailConfirmation: false };
   }
 
-  return { configured: true, synced: false, needsEmailConfirmation: true };
+  return {
+    configured: true,
+    synced: false,
+    needsEmailConfirmation: true,
+    message: "Account created. Check your email to confirm your Pint Path login, then return here to sign in.",
+  };
 }
 
 async function requestPasswordReset(email) {

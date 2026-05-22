@@ -48,7 +48,7 @@
         <div class="authDivider"><span>Continue with Email</span></div>
 
         <form id="loginForm" class="form authForm" aria-labelledby="loginHeading">
-          <div id="loginPanel">
+          <div id="loginPanel" class="authPanelStack">
             <h2 id="loginHeading">Welcome back</h2>
             <p class="muted">Sign in to upload venue data, view your submissions, and track contribution progress.</p>
             <label class="field">Email
@@ -68,7 +68,7 @@
         </form>
 
         <form id="signupForm" class="form authForm is-hidden" aria-labelledby="signupHeading">
-          <div id="signupPanel">
+          <div id="signupPanel" class="authPanelStack">
             <h2 id="signupHeading">Create your contributor account</h2>
             <p class="muted">Use a real email so review notes and future contributor access can stay attached to you.</p>
             <label class="field">Email
@@ -619,7 +619,7 @@
         setLoading(submitButton, true, isSignup ? "Creating..." : "Signing in...");
         const supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient());
         if (isSignup) {
-          await MelbBeerBusiness.trackEvent("signup_started", { source: "account_page" });
+          MelbBeerBusiness.trackEvent("signup_started", { source: "account_page" }).catch(() => null);
         }
 
         if (supabaseConfigured) {
@@ -627,7 +627,7 @@
             const result = await MelbBeerBusiness.signUpWithEmail(body.email, body.password, body.ageConfirmed);
             if (result.needsEmailConfirmation) {
               form.reset();
-              MelbBeerBusiness.setStatus($("authStatus"), "Account created. Check your email to confirm your Pint Path login, then return here to sign in.");
+              MelbBeerBusiness.setStatus($("authStatus"), result.message || "Account created. Check your email to confirm your Pint Path login, then return here to sign in.");
               return;
             }
           } else {
@@ -648,7 +648,11 @@
           window.location.assign(nextPath);
         }
       } catch (error) {
-        MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
+        const message = error.message || "Account request failed.";
+        const friendlyMessage = isSignup && /load failed|failed to fetch|network/i.test(message)
+          ? "We could not finish account creation. If a confirmation email arrives, use it and then sign in. Otherwise, please try again."
+          : message;
+        MelbBeerBusiness.setStatus($("authStatus"), friendlyMessage, true);
       } finally {
         setLoading(submitButton, false);
       }

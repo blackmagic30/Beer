@@ -120,10 +120,25 @@ describe("account page shell", () => {
     expect(html).toContain("Confirm password");
     expect(html).toContain('name="confirmPassword"');
     expect(html).toContain("Passwords do not match.");
+    expect(html).toContain('id="signupPanel" class="authPanelStack"');
     expect(html).toContain('class="consentLine"');
     expect(css).toContain('.field input[type="checkbox"]');
+    expect(css).toContain(".authPanelStack");
+    expect(css).toContain("padding-right: 86px");
+    expect(css).toContain("position: absolute");
     expect(css).toContain("grid-template-columns: 18px minmax(0, 1fr)");
     expect(css).toContain("font-size: clamp(42px, 5vw, 64px)");
+  });
+
+  it("keeps signup telemetry and post-signup sync failures from trapping users on Load failed", () => {
+    const html = accountHtml();
+    const script = businessJs();
+
+    expect(html).toContain('trackEvent("signup_started", { source: "account_page" }).catch(() => null)');
+    expect(html).toContain("We could not finish account creation.");
+    expect(html).toContain("result.message ||");
+    expect(script).toContain("Account created. Check your email to confirm your Pint Path login");
+    expect(script).toContain("}).catch(() => null)");
   });
 
   it("resets OAuth loading buttons when a provider flow is cancelled", () => {
