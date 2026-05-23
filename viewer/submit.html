@@ -70,6 +70,14 @@
           </label>
         </div>
         <div id="typeGuidance" class="notice">Choose the submission type and the form will show the fields that matter.</div>
+        <div class="notice locationProofPanel">
+          <div>
+            <strong>Points need location proof</strong>
+            <p class="muted">Approved submissions earn points only when your saved upload location is within 200m of the chosen venue. Location is stored privately with this submission for review.</p>
+          </div>
+          <button id="captureLocationButton" class="button" type="button">Use my location for points</button>
+          <span id="uploadLocationStatus" class="fieldHint">Location not saved yet.</span>
+        </div>
         <label id="sourcePhotoField" class="field">Source photo/menu/receipt/happy-hour board
           <input id="sourcePhoto" type="file" accept="image/*" />
           <span id="sourcePhotoHint" class="fieldHint">Optional evidence helps reviewers approve the update faster.</span>
@@ -122,6 +130,9 @@
   <script>
     let venues = [];
     let venueSearchTimer = null;
+    let uploadLocation = null;
+    const UPLOAD_LOCATION_STORAGE_KEY = "pintPathUploadLocationProof";
+    const UPLOAD_LOCATION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
@@ -486,6 +497,78 @@
       });
     }
 
+    function formatAccuracy(meters) {
+      if (!Number.isFinite(Number(meters))) {
+        return "accuracy unavailable";
+      }
+      return Number(meters) < 1000
+        ? `±${Math.round(Number(meters))}m`
+        : `±${(Number(meters) / 1000).toFixed(1)}km`;
+    }
+
+    function persistUploadLocation(location) {
+      try {
+        if (!location) {
+          localStorage.removeItem(UPLOAD_LOCATION_STORAGE_KEY);
+          return;
+        }
+        localStorage.setItem(UPLOAD_LOCATION_STORAGE_KEY, JSON.stringify(location));
+      } catch {
+        // Local storage may be unavailable in private browsing. The in-memory proof still works.
+      }
+    }
+
+    function restoreUploadLocation() {
+      try {
+        const raw = localStorage.getItem(UPLOAD_LOCATION_STORAGE_KEY);
+        if (!raw) {
+          return;
+        }
+        const saved = JSON.parse(raw);
+        const capturedAt = Date.parse(saved?.capturedAt || "");
+        if (!Number.isFinite(capturedAt) || Date.now() - capturedAt > UPLOAD_LOCATION_MAX_AGE_MS) {
+          persistUploadLocation(null);
+          return;
+        }
+        uploadLocation = saved;
+        uploadLocationStatus.textContent = `Saved location proof restored for this upload (${formatAccuracy(saved.accuracyMeters)}).`;
+      } catch {
+        persistUploadLocation(null);
+      }
+    }
+
+    function captureUploadLocation() {
+      if (!navigator.geolocation) {
+        uploadLocation = null;
+        persistUploadLocation(null);
+        MelbBeerBusiness.setStatus(status, "Location is unavailable on this browser. You can still submit, but it will not earn points.", true);
+        uploadLocationStatus.textContent = "Location unavailable on this device.";
+        return;
+      }
+
+      uploadLocationStatus.textContent = "Requesting location...";
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          uploadLocation = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracyMeters: position.coords.accuracy,
+            capturedAt: new Date(position.timestamp || Date.now()).toISOString(),
+          };
+          persistUploadLocation(uploadLocation);
+          uploadLocationStatus.textContent = `Location saved for this upload (${formatAccuracy(position.coords.accuracy)}). It stays on this device until submitted.`;
+          MelbBeerBusiness.setStatus(status, "Location saved. If it is within 200m of the chosen venue, approved data can earn points.");
+        },
+        () => {
+          uploadLocation = null;
+          persistUploadLocation(null);
+          uploadLocationStatus.textContent = "Location permission denied or unavailable.";
+          MelbBeerBusiness.setStatus(status, "You can still submit, but points require saved location within 200m of the venue.", true);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
+      );
+    }
+
     async function loadVenues(query = "") {
       const currentVenueId = venueSelect.value;
       const data = await MelbBeerBusiness.apiFetch(`/api/business/venues?q=${encodeURIComponent(query)}&limit=50`);
@@ -552,7 +635,9 @@
       appendBeerRow();
       observedAtInput.value = localDatetimeValue();
       applySubmissionType();
+      restoreUploadLocation();
       addBeerRowButton.addEventListener("click", appendBeerRow);
+      captureLocationButton.addEventListener("click", captureUploadLocation);
       submissionTypeSelect.addEventListener("change", applySubmissionType);
       venueSearchInput.addEventListener("input", () => {
         window.clearTimeout(venueSearchTimer);
@@ -617,12 +702,16 @@
               submissionType: formData.get("submissionType"),
               observedAt,
               sourcePhotoDataUrl,
+              uploadLocation,
               notes: formData.get("notes") || null,
               items,
             }),
           });
-          MelbBeerBusiness.setStatus(status, `${result.submission.venueName} submitted and pending review.`);
+          MelbBeerBusiness.setStatus(status, result.statusCopy || `${result.submission.venueName} submitted and pending review.`);
           submissionForm.reset();
+          uploadLocation = null;
+          persistUploadLocation(null);
+          uploadLocationStatus.textContent = "Location not saved yet.";
           clearSelectedVenue();
           observedAtInput.value = localDatetimeValue();
           beerRows.innerHTML = "";

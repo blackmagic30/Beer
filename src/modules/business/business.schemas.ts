@@ -60,6 +60,13 @@ const dataImageUrlSchema = z
   .string()
   .regex(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "sourcePhotoDataUrl must be a base64 image data URL");
 
+const uploadLocationSchema = z.object({
+  latitude: z.coerce.number().min(-90).max(90),
+  longitude: z.coerce.number().min(-180).max(180),
+  accuracyMeters: z.coerce.number().min(0).max(5000).nullable().default(null),
+  capturedAt: z.string().datetime({ offset: true }),
+}).nullable().default(null);
+
 const nullableUrlSchema = z.preprocess((value) => {
   if (value == null || value === "") {
     return null;
@@ -141,6 +148,7 @@ export const createSubmissionSchema = z.object({
   observedAt: z.string().datetime({ offset: true }),
   sourcePhotoDataUrl: dataImageUrlSchema.nullable().default(null),
   sourcePhotoUrl: nullableTrimmedStringSchema.default(null),
+  uploadLocation: uploadLocationSchema,
   notes: nullableTrimmedStringSchema.default(null),
   items: z.array(submissionItemSchema).max(20).default([]),
 }).superRefine((value, ctx) => {
@@ -197,7 +205,7 @@ export const reviewSubmissionSchema = z.object({
   status: z.enum(["approved", "rejected", "needs_more_evidence", "fraud_flagged", "disputed"]),
   rejectionReason: nullableTrimmedStringSchema.default(null),
   fraudFlagged: z.boolean().default(false),
-  pointsAwarded: z.coerce.number().int().min(0).max(25).optional(),
+  pointsAwarded: z.coerce.number().min(0).max(25).optional(),
   confidence: confidenceSchema.default("photo_verified"),
 });
 
@@ -220,7 +228,7 @@ export const createMissionSchema = z.object({
   suburb: nullableTrimmedStringSchema.default(null),
   reason: z.string().trim().min(1).max(160),
   priority: z.enum(["low", "normal", "high"]).default("normal"),
-  points: z.coerce.number().int().min(0).max(20),
+  points: z.coerce.number().min(0).max(20),
   multiplier: z.coerce.number().min(0).max(5).default(1),
   active: z.boolean().default(true),
 });

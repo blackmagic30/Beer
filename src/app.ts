@@ -5,6 +5,7 @@ import helmet from "helmet";
 import type { Request, RequestHandler } from "express";
 
 import { env } from "./config/env.js";
+import { PREMIUM_PRICING } from "./config/business-rules.js";
 import { VIEWER_TRACKED_BEERS } from "./constants/beers.js";
 import { AppError } from "./lib/errors.js";
 import { success } from "./lib/http.js";
@@ -291,8 +292,8 @@ export function createApp() {
         demoBillingMode: env.DEMO_BILLING_MODE,
         fieldTestMode: env.FIELD_TEST_MODE,
         pricing: {
-          monthly: "A$1.99/month",
-          yearly: "A$19/year",
+          monthly: PREMIUM_PRICING.monthlyLabel,
+          yearly: PREMIUM_PRICING.yearlyLabel,
         },
       },
     };

@@ -452,6 +452,7 @@
             <strong>${submission.venueName}</strong>
             <span class="pill">${submission.submissionType}</span>
             <div class="muted">${submission.suburb || "Melbourne"} · observed ${MelbBeerBusiness.formatDate(submission.observedAt)}</div>
+            <div class="muted">Points location: ${submission.pointsEligibleByLocation ? "within 200m" : "not eligible"}${submission.distanceToVenueMeters != null ? ` · ${Math.round(Number(submission.distanceToVenueMeters))}m from venue` : ""}${submission.pointsEligibilityReason ? ` · ${escapeHtml(submission.pointsEligibilityReason)}` : ""}</div>
             <div class="muted">${submission.notes || "No notes"}</div>
             <button class="button button--primary" data-approve="${submission.id}">Approve</button>
             <button class="button" data-evidence="${submission.id}">Needs evidence</button>

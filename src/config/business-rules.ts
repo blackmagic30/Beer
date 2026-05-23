@@ -1,16 +1,18 @@
 export const PREMIUM_PRICING = {
-  monthlyAudCents: 199,
-  yearlyAudCents: 1900,
-  monthlyLabel: "A$1.99/month",
-  yearlyLabel: "A$19/year",
+  monthlyAudCents: 499,
+  yearlyAudCents: 5000,
+  monthlyLabel: "A$4.99/month",
+  yearlyLabel: "A$50/year",
 } as const;
 
 export const CONTRIBUTION_POINTS = {
-  recentConfirmation: 1,
-  stalePriceUpdate: 2,
-  menuPhoto: 3,
-  happyHourWithSource: 4,
-  fullVenueUpdate: 5,
+  veryFreshUpdate: 0.1,
+  weekOldUpdate: 0.5,
+  staleUpdate: 1,
+  newVenue: 5,
+  locationRadiusMeters: 200,
+  veryFreshHours: 24,
+  weekOldDays: 7,
 } as const;
 
 export const SUBMISSION_LIMITS = {
@@ -24,4 +26,3 @@ export const RESPONSIBLE_ALCOHOL_COPY = {
   rewardsDisabled:
     "Partner venue credit is planned for a future release and is not live in this demo.",
 } as const;
-

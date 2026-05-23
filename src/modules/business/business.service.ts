@@ -94,8 +94,33 @@ function addDays(baseIso: string, days: number): string {
   return date.toISOString();
 }
 
+function endOfMonthIso(baseIso: string): string {
+  const date = new Date(baseIso);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
+}
+
 function monthKeyFromIso(value: string): string {
   return value.slice(0, 7);
+}
+
+function roundPoints(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function distanceMetersBetween(
+  first: { latitude: number; longitude: number },
+  second: { latitude: number; longitude: number },
+): number {
+  const radiusMeters = 6_371_000;
+  const toRadians = (degrees: number) => degrees * Math.PI / 180;
+  const deltaLat = toRadians(second.latitude - first.latitude);
+  const deltaLon = toRadians(second.longitude - first.longitude);
+  const lat1 = toRadians(first.latitude);
+  const lat2 = toRadians(second.latitude);
+  const a =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+  return radiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function startOfTodayIso(): string {
@@ -1456,7 +1481,9 @@ export class BusinessService {
       canUseBeerSearch: hasFullAccess,
       canUseHappyHourActiveNow: true,
       canUseVerifiedOnly: hasFullAccess,
+      canViewSpecialDiscounts: hasFullAccess,
       freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.",
+      premiumScope: "Every verified beer price, premium filters, and venue special-discount details.",
       premiumUntil: account?.premiumUntil ?? null,
     };
   }
@@ -1542,9 +1569,10 @@ export class BusinessService {
       recentSearches: this.repository.listRecentSearches(account.id, 10),
       suggestedMissions,
       contributorProgress: {
-        pointsThisMonth: account.contributionPointsCurrentMonth,
+        pointsThisMonth: roundPoints(account.contributionPointsCurrentMonth),
         unlockThreshold: this.config.CONTRIBUTOR_UNLOCK_POINTS,
-        pointsNeeded: Math.max(0, this.config.CONTRIBUTOR_UNLOCK_POINTS - account.contributionPointsCurrentMonth),
+        pointsNeeded: roundPoints(Math.max(0, this.config.CONTRIBUTOR_UNLOCK_POINTS - account.contributionPointsCurrentMonth)),
+        unlockCopy: "Earn 15 approved points in a month to unlock premium until the end of that month.",
       },
       rewards: {
         status: "coming_soon",
@@ -1561,6 +1589,64 @@ export class BusinessService {
     };
   }
 
+  private getSubmissionLocationEligibility(input: CreateSubmissionInput): {
+    uploadLatitude: number | null;
+    uploadLongitude: number | null;
+    uploadAccuracyMeters: number | null;
+    uploadLocationCapturedAt: string | null;
+    distanceToVenueMeters: number | null;
+    pointsEligibleByLocation: boolean;
+    pointsEligibilityReason: string;
+  } {
+    if (!input.uploadLocation) {
+      return {
+        uploadLatitude: null,
+        uploadLongitude: null,
+        uploadAccuracyMeters: null,
+        uploadLocationCapturedAt: null,
+        distanceToVenueMeters: null,
+        pointsEligibleByLocation: false,
+        pointsEligibilityReason: "location_missing",
+      };
+    }
+
+    const venueLocation = this.repository.getVenueLocationCache(input.venueId);
+    const uploadLatitude = input.uploadLocation.latitude;
+    const uploadLongitude = input.uploadLocation.longitude;
+
+    if (
+      !venueLocation ||
+      venueLocation.latitude == null ||
+      venueLocation.longitude == null
+    ) {
+      return {
+        uploadLatitude,
+        uploadLongitude,
+        uploadAccuracyMeters: input.uploadLocation.accuracyMeters,
+        uploadLocationCapturedAt: input.uploadLocation.capturedAt,
+        distanceToVenueMeters: null,
+        pointsEligibleByLocation: false,
+        pointsEligibilityReason: "venue_location_unavailable",
+      };
+    }
+
+    const distanceToVenueMeters = Math.round(distanceMetersBetween(
+      { latitude: uploadLatitude, longitude: uploadLongitude },
+      { latitude: venueLocation.latitude, longitude: venueLocation.longitude },
+    ));
+    const pointsEligibleByLocation = distanceToVenueMeters <= CONTRIBUTION_POINTS.locationRadiusMeters;
+
+    return {
+      uploadLatitude,
+      uploadLongitude,
+      uploadAccuracyMeters: input.uploadLocation.accuracyMeters,
+      uploadLocationCapturedAt: input.uploadLocation.capturedAt,
+      distanceToVenueMeters,
+      pointsEligibleByLocation,
+      pointsEligibilityReason: pointsEligibleByLocation ? "within_200m" : "outside_200m",
+    };
+  }
+
   createSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
     if (account.status === "suspended") {
       throw new AppError("Suspended accounts cannot submit reward-eligible data.", 403);
@@ -1574,6 +1660,7 @@ export class BusinessService {
 
     const sourcePhotoUrl = this.resolveSourcePhoto(account, input);
     const now = nowIso();
+    const locationEligibility = this.getSubmissionLocationEligibility(input);
     const submission = this.repository.createSubmission({
       id: crypto.randomUUID(),
       userId: account.id,
@@ -1585,6 +1672,7 @@ export class BusinessService {
       sourcePhotoUrl,
       notes: input.notes,
       now,
+      ...locationEligibility,
       items: input.items.map((item) => {
         const beerName = canonicalizeTrackedBeerName(item.beerName);
         return {
@@ -1613,6 +1701,7 @@ export class BusinessService {
         submissionType: submission.submissionType,
         itemCount: input.items.length,
         hasSourcePhoto: Boolean(sourcePhotoUrl),
+        pointsEligibleByLocation: submission.pointsEligibleByLocation,
       },
     });
     this.recordUserActivity({
@@ -1624,12 +1713,15 @@ export class BusinessService {
         submissionType: submission.submissionType,
         venueId: submission.venueId,
         itemCount: input.items.length,
+        pointsEligibleByLocation: submission.pointsEligibleByLocation,
       },
     });
 
     return {
       submission,
-      statusCopy: "Submitted for review. Approved data can earn points and may unlock contributor access.",
+      statusCopy: submission.pointsEligibleByLocation
+        ? "Submitted for review. If approved, this can earn points toward this month's contributor unlock."
+        : "Submitted for review. Points need a saved upload location within 200m of the venue.",
       ocrStatus: sourcePhotoUrl ? "queued_for_review" : "not_requested",
     };
   }
@@ -2102,7 +2194,12 @@ export class BusinessService {
       throw new AppError("Submission has already been reviewed.", 409);
     }
 
-    const points = input.pointsAwarded ?? this.calculatePoints(submission.submission, submission.items);
+    const suggestedPoints = this.calculatePoints(submission.submission, submission.items);
+    const requestedPoints = input.pointsAwarded ?? suggestedPoints;
+    const points = submission.submission.pointsEligibleByLocation
+      ? roundPoints(Math.min(requestedPoints, suggestedPoints))
+      : 0;
+    const reviewedAt = nowIso();
     const result = this.repository.reviewSubmission({
       submissionId,
       reviewerId: admin.id,
@@ -2111,9 +2208,9 @@ export class BusinessService {
       fraudFlagged: input.fraudFlagged || input.status === "fraud_flagged",
       pointsAwarded: input.status === "approved" ? points : 0,
       confidence: input.confidence,
-      now: nowIso(),
+      now: reviewedAt,
       monthKey: monthKeyFromIso(submission.submission.observedAt),
-      premiumUntil: addDays(nowIso(), this.config.CONTRIBUTOR_UNLOCK_DAYS),
+      premiumUntil: endOfMonthIso(reviewedAt),
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
     });
     this.auditSecurity({
@@ -2125,6 +2222,8 @@ export class BusinessService {
         status: input.status,
         fraudFlagged: input.fraudFlagged,
         pointsAwarded: input.status === "approved" ? result.pointsAwarded : 0,
+        suggestedPoints,
+        pointsEligibilityReason: submission.submission.pointsEligibilityReason,
         venueId: result.submission.venueId,
       },
     });
@@ -2141,6 +2240,8 @@ export class BusinessService {
         submissionId,
         reviewedByAdmin: true,
         pointsAwarded: result.pointsAwarded,
+        suggestedPoints,
+        pointsEligibilityReason: result.submission.pointsEligibilityReason,
         status: input.status,
       },
     });
@@ -2166,27 +2267,27 @@ export class BusinessService {
   }
 
   calculatePoints(submission: BusinessSubmission, items: BusinessSubmissionItem[]): number {
-    const hasSource = Boolean(submission.sourcePhotoUrl);
-    const hasHappyHour = items.some((item) => item.isHappyHourPrice || item.happyHourDetails);
-    const hasThreePrices = items.filter((item) => item.price != null).length >= 3;
+    void items;
+    return this.calculateFreshnessPoints(this.repository.getLatestVenueDataTimestamp(submission.venueId));
+  }
 
-    if (hasHappyHour && hasSource) {
-      return CONTRIBUTION_POINTS.happyHourWithSource;
+  private calculateFreshnessPoints(lastVerifiedAt: string | null): number {
+    if (!lastVerifiedAt) {
+      return CONTRIBUTION_POINTS.newVenue;
     }
 
-    if (submission.submissionType === "full_venue_update" && (hasSource || hasThreePrices)) {
-      return CONTRIBUTION_POINTS.fullVenueUpdate;
+    const ageMs = Date.now() - new Date(lastVerifiedAt).getTime();
+    const ageHours = ageMs / (1000 * 60 * 60);
+    if (ageHours <= CONTRIBUTION_POINTS.veryFreshHours) {
+      return CONTRIBUTION_POINTS.veryFreshUpdate;
     }
 
-    if (hasSource) {
-      return CONTRIBUTION_POINTS.menuPhoto;
+    const ageDays = ageHours / 24;
+    if (ageDays <= CONTRIBUTION_POINTS.weekOldDays) {
+      return CONTRIBUTION_POINTS.weekOldUpdate;
     }
 
-    if (items.some((item) => item.price != null)) {
-      return CONTRIBUTION_POINTS.stalePriceUpdate;
-    }
-
-    return CONTRIBUTION_POINTS.recentConfirmation;
+    return CONTRIBUTION_POINTS.staleUpdate;
   }
 
   async listVenues(query: string | undefined, limit: number): Promise<VenueRow[]> {
@@ -2244,7 +2345,20 @@ export class BusinessService {
       });
     }
 
-    return (data ?? []) as VenueRow[];
+    const venues = (data ?? []) as VenueRow[];
+    const now = nowIso();
+    venues.forEach((venue) => {
+      this.repository.upsertVenueLocationCache({
+        venueId: venue.id,
+        venueName: venue.name,
+        suburb: venue.suburb,
+        latitude: venue.latitude,
+        longitude: venue.longitude,
+        now,
+      });
+    });
+
+    return venues;
   }
 
   seedDemoMissions() {
@@ -2282,7 +2396,12 @@ export class BusinessService {
 
   listMissions(query: { suburb?: string | undefined; sort?: string | undefined; limit: number }) {
     this.seedDemoMissions();
-    const missions = this.repository.listMissions({ activeOnly: true, suburb: query.suburb, limit: query.limit });
+    const missions = this.repository
+      .listMissions({ activeOnly: true, suburb: query.suburb, limit: query.limit })
+      .map((mission) => ({
+        ...mission,
+        points: this.calculateFreshnessPoints(mission.lastVerifiedAt),
+      }));
 
     switch (query.sort) {
       case "stale":
@@ -2302,7 +2421,12 @@ export class BusinessService {
       case "saved":
       case "points":
       default:
-        return missions;
+        return missions
+          .slice()
+          .sort((left, right) =>
+            (Number(right.points) * Number(right.multiplier || 1)) -
+            (Number(left.points) * Number(left.multiplier || 1)),
+          );
     }
   }
 

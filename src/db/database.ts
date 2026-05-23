@@ -45,6 +45,16 @@ const accountsColumns = [
   { name: "is_over_18_verified", definition: "INTEGER NOT NULL DEFAULT 0" },
 ] as const;
 
+const submissionColumns = [
+  { name: "upload_latitude", definition: "REAL" },
+  { name: "upload_longitude", definition: "REAL" },
+  { name: "upload_accuracy_meters", definition: "REAL" },
+  { name: "upload_location_captured_at", definition: "TEXT" },
+  { name: "distance_to_venue_meters", definition: "REAL" },
+  { name: "points_eligible_by_location", definition: "INTEGER NOT NULL DEFAULT 0" },
+  { name: "points_eligibility_reason", definition: "TEXT" },
+] as const;
+
 function ensureColumns(
   database: BetterSqlite3.Database,
   tableName: string,
@@ -89,6 +99,15 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_source_evidence_owner
       ON source_evidence_objects (owner_user_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_venue_location_cache_suburb
+      ON venue_location_cache (suburb, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_events_suburb_type_created
+      ON events (suburb, event_type, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_events_beer_created
+      ON events (beer_id, created_at DESC);
   `);
 }
 
@@ -241,6 +260,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "venue_analytics_events", venueAnalyticsEventsColumns);
   ensureColumns(database, "accounts", accountsColumns);
   ensureColumns(database, "auth_sessions", authSessionsColumns);
+  ensureColumns(database, "submissions", submissionColumns);
   normalizeVenueTiers(database);
   ensureIndexes(database);
 }

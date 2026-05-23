@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   stripe_customer_id TEXT,
   premium_until TEXT,
   trust_score INTEGER NOT NULL DEFAULT 50,
-  contribution_points_current_month INTEGER NOT NULL DEFAULT 0,
+  contribution_points_current_month REAL NOT NULL DEFAULT 0,
   approved_submission_count INTEGER NOT NULL DEFAULT 0,
   rejected_submission_count INTEGER NOT NULL DEFAULT 0,
   fraud_strike_count INTEGER NOT NULL DEFAULT 0,
@@ -141,7 +141,14 @@ CREATE TABLE IF NOT EXISTS submissions (
   observed_at TEXT NOT NULL,
   source_photo_url TEXT,
   notes TEXT,
-  points_awarded INTEGER NOT NULL DEFAULT 0,
+  points_awarded REAL NOT NULL DEFAULT 0,
+  upload_latitude REAL,
+  upload_longitude REAL,
+  upload_accuracy_meters REAL,
+  upload_location_captured_at TEXT,
+  distance_to_venue_meters REAL,
+  points_eligible_by_location INTEGER NOT NULL DEFAULT 0,
+  points_eligibility_reason TEXT,
   reviewed_by TEXT,
   reviewed_at TEXT,
   rejection_reason TEXT,
@@ -271,7 +278,7 @@ CREATE TABLE IF NOT EXISTS missions (
   suburb TEXT,
   reason TEXT NOT NULL,
   priority TEXT NOT NULL DEFAULT 'normal',
-  points INTEGER NOT NULL,
+  points REAL NOT NULL,
   multiplier REAL NOT NULL DEFAULT 1,
   active INTEGER NOT NULL DEFAULT 1,
   sponsor_flag INTEGER NOT NULL DEFAULT 0,
@@ -288,7 +295,7 @@ CREATE TABLE IF NOT EXISTS contribution_ledger (
   user_id TEXT NOT NULL,
   submission_id TEXT,
   venue_id TEXT NOT NULL,
-  points INTEGER NOT NULL,
+  points REAL NOT NULL,
   reason TEXT NOT NULL,
   month_key TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -298,6 +305,18 @@ CREATE TABLE IF NOT EXISTS contribution_ledger (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_contribution_ledger_user_venue_month
   ON contribution_ledger (user_id, venue_id, month_key);
+
+CREATE TABLE IF NOT EXISTS venue_location_cache (
+  venue_id TEXT PRIMARY KEY,
+  venue_name TEXT NOT NULL,
+  suburb TEXT,
+  latitude REAL,
+  longitude REAL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_venue_location_cache_suburb
+  ON venue_location_cache (suburb, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
@@ -317,6 +336,12 @@ CREATE INDEX IF NOT EXISTS idx_events_type_created
 
 CREATE INDEX IF NOT EXISTS idx_events_venue_created
   ON events (venue_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_events_suburb_type_created
+  ON events (suburb, event_type, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_events_beer_created
+  ON events (beer_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS account_preferences (
   user_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,

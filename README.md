@@ -79,20 +79,21 @@ For the intended beta role boundaries, private-data rules, and approval gates, s
 The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 
 - Free users can view the map, venue pins, suburbs, data freshness, missions, happy hours, and pint prices for Guinness, Carlton Draft, and Stone & Wood.
-- Premium users can unlock full map utility at A$1.99/month or A$19/year.
-- Contributors can earn temporary premium access through approved venue data. Defaults are 5 points for a valid full venue update and 15 approved monthly points for 30 days of access.
+- Premium users can unlock full map utility, every verified beer price, premium filters, and venue special-discount details at A$4.99/month or A$50/year.
+- Contributors can earn temporary premium access for the rest of the current month after 15 approved monthly contribution points.
 - Public submissions are queued as `pending` and do not become trusted map data until reviewed.
 - Approved submissions publish `venue_price_records`, which the map merges into existing venue data for existing venues.
-- Mission points are weighted by usefulness, not by number of bars visited. Repeated same-venue submissions in the same month are capped.
+- Mission points are weighted by usefulness, not by number of bars visited: venues updated in the last 24 hours are worth 0.1 points, week-old data is worth 0.5 points, stale data is worth 1 point, and venues with no trusted data are worth 5 points. Repeated same-venue submissions in the same month are capped.
 - Admin review lives at `/admin.html` and is protected by account role checks via `ADMIN_EMAILS`.
 - Retired call/result APIs are no longer mounted in the active app.
 - The public map no longer exposes legacy admin controls or direct browser reads of exact price records.
 - Exact price records are redacted by default unless they are part of the free preview: happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.
-- Analytics are captured as aggregate events only. No venue dashboard or individual clickstream export is live yet.
+- Analytics are captured as aggregate events only. Search, filter, happy-hour interest, map pin clicks, venue opens, beer-list views, and price reveal events feed admin and paid venue-tier reports without exporting individual clickstreams.
 - The admin KPI dashboard tracks early validation metrics, retention cohorts, data coverage, and potential partner leads from aggregated demand.
 - Users can save venues, beers, and suburbs, submit feedback, report wrong prices, and request missing venues or beers.
 - The public map includes retention filter chips, active happy-hour previews, recently verified price previews, and wrong-price reporting.
-- The public map supports optional one-time browser location for “near me” sorting, approximate venue distances, and active happy hours nearby. Location is only requested after the user taps “Use my location”; precise coordinates are kept in browser state and are not stored in analytics.
+- The public map supports optional one-time browser location for “near me” sorting, approximate venue distances, and active happy hours nearby. Location is only requested after the user taps “Use my location”; browsing coordinates are kept in browser state and analytics store only coarse context such as approximate suburb, selected radius, distance bucket, and coverage status.
+- Contributor uploads can optionally save an intentional one-time upload-location proof with the private submission record. The browser keeps the proof locally for up to 12 hours or until the submission succeeds, so a contributor can capture location at the venue and submit after signal returns. Approved submissions only earn points when that saved upload location is within 200m of the selected venue.
 
 Business demo pages:
 
@@ -113,7 +114,7 @@ Supabase auth/account foundation:
 - Production admin access expects Supabase Auth MFA/Auth Assurance Level 2 (`aal2`). Enable MFA factors in Supabase, require confirmed email, and verify the OAuth/session JWT contains `aal2` before relying on admin routes.
 - Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
 - Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
-- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` adds a detailed `public.user_price_submissions` table for future direct Supabase contributor uploads, protected so users can insert/select only their own pending rows while admins review status fields.
+- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` adds a detailed `public.user_price_submissions` table for future direct Supabase contributor uploads, protected so users can insert/select only their own pending rows while admins review status fields. `supabase/migrations/20260523000000_submission_location_points.sql` adds private upload-location proof fields and point-award tracking for contributor submissions.
 - `/account.html` now has two states: logged-out users see polished Supabase Google/Apple/email sign-in/create-account forms, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points. Supabase OAuth and password-reset redirects land on `/auth/callback`, exchange the session, and then return to the account page or requested upload page.
 - Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. Pint Path must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
 - Future rewards should use `canAccessAgeGatedRewards(...)`, which requires verified 18+ status, a latest verified age-check record, and a non-expired verification.
@@ -127,7 +128,7 @@ Venue partner demo layer:
 - Plus and Pro venue tiers unlock privacy-safe suburb-level analytics and monthly report previews. Venue-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` and `STRIPE_PRO_PRICE_ID` are configured.
 - Pro stores public display metadata only: highlighted name, `Pro` badge, promoted flag, and featured-special eligibility. It does not implement spammy ranking behaviour.
 - Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
-- Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, or another venue’s private data.
+- Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, private source evidence, or another venue’s private data.
 - The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.
 
 Venue owner TODOs before paid partner rollout:
@@ -136,7 +137,7 @@ Venue owner TODOs before paid partner rollout:
 - Add an admin approval interface for authenticated `venue_claim_requests`; claims are stored for manual review today.
 - Add stronger claim verification such as business email, phone, or document checks.
 - Replace monthly report previews with scheduled generated reports.
-- Feed `venue_analytics_events` from production map/search usage where useful; current portal also uses existing aggregate `events`.
+- Expand scheduled monthly reports from the aggregate `events` pipeline as production search/click volume grows.
 - Decide whether trusted venue-manager updates can publish as `venue_confirmed` automatically, or should remain admin-reviewed.
 - Replace suburb-based analytics with custom Pint Path areas such as Melbourne CBD, Fitzroy, Richmond, or Chapel Street once those boundaries are defined.
 
@@ -213,8 +214,8 @@ SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 STRIPE_SECRET_KEY=sk_test_or_live_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_PRICE_MONTHLY=price_monthly_199_aud
-STRIPE_PRICE_YEARLY=price_yearly_19_aud
+STRIPE_PRICE_MONTHLY=price_monthly_499_aud
+STRIPE_PRICE_YEARLY=price_yearly_50_aud
 STRIPE_PLUS_PRICE_ID=price_bar_plus_aud
 STRIPE_PRO_PRICE_ID=price_bar_pro_aud
 ```
@@ -288,8 +289,8 @@ SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
 FIELD_TEST_MODE=true
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_PRICE_MONTHLY=price_monthly_199_aud
-STRIPE_PRICE_YEARLY=price_yearly_19_aud
+STRIPE_PRICE_MONTHLY=price_monthly_499_aud
+STRIPE_PRICE_YEARLY=price_yearly_50_aud
 STRIPE_PLUS_PRICE_ID=price_venue_plus_aud
 STRIPE_PRO_PRICE_ID=price_venue_pro_aud
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_xxx
@@ -316,7 +317,7 @@ What each one does:
 - `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION`: production guard for uploads, verifications, and venue dashboard access. Keep `true`.
 - `FREE_PRICE_REVEALS_PER_DAY`: configurable daily exact-price previews for free users.
 - `CONTRIBUTOR_UNLOCK_POINTS`: approved monthly contribution points required for contributor access.
-- `CONTRIBUTOR_UNLOCK_DAYS`: number of premium days granted for contributor unlocks.
+- `CONTRIBUTOR_UNLOCK_DAYS`: legacy fallback setting. Contributor unlocks now expire at the end of the current month after the monthly point threshold is reached.
 - `ANALYTICS_MIN_BUCKET_SIZE`: minimum aggregate bucket count before dashboard analytics reveal a beer, suburb, or venue identity.
 - `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Public pages and controlled beta auth/write flows can boot without it using hashed in-memory buckets, but multi-instance production should configure Redis.
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: controlled-beta fallback for single-instance Railway deploys. Defaults to `true` so login stays available without Redis. Set `false` for full-scale production after `REDIS_URL` is configured and tested.
@@ -328,8 +329,8 @@ What each one does:
 - `FIELD_TEST_MODE`: shows beta feedback affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
 - `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.
 - `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.
-- `STRIPE_PRICE_MONTHLY`: Stripe price ID for the A$1.99/month plan.
-- `STRIPE_PRICE_YEARLY`: Stripe price ID for the A$19/year plan.
+- `STRIPE_PRICE_MONTHLY`: Stripe price ID for the A$4.99/month plan.
+- `STRIPE_PRICE_YEARLY`: Stripe price ID for the A$50/year plan.
 - `STRIPE_PLUS_PRICE_ID`: Stripe price ID for the paid Plus venue analytics tier.
 - `STRIPE_PRO_PRICE_ID`: Stripe price ID for the premium Pro venue tier.
 - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`: browser publishable key placeholder for future embedded Stripe UI.

@@ -100,6 +100,13 @@ export interface BusinessSubmission {
   sourcePhotoUrl: string | null;
   notes: string | null;
   pointsAwarded: number;
+  uploadLatitude: number | null;
+  uploadLongitude: number | null;
+  uploadAccuracyMeters: number | null;
+  uploadLocationCapturedAt: string | null;
+  distanceToVenueMeters: number | null;
+  pointsEligibleByLocation: boolean;
+  pointsEligibilityReason: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
   rejectionReason: string | null;
@@ -135,6 +142,15 @@ export interface BusinessMission {
   sponsorFlag: boolean;
   lastVerifiedAt: string | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface VenueLocationCache {
+  venueId: string;
+  venueName: string;
+  suburb: string | null;
+  latitude: number | null;
+  longitude: number | null;
   updatedAt: string;
 }
 
@@ -550,6 +566,13 @@ interface SubmissionRow {
   source_photo_url: string | null;
   notes: string | null;
   points_awarded: number;
+  upload_latitude: number | null;
+  upload_longitude: number | null;
+  upload_accuracy_meters: number | null;
+  upload_location_captured_at: string | null;
+  distance_to_venue_meters: number | null;
+  points_eligible_by_location: number;
+  points_eligibility_reason: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
   rejection_reason: string | null;
@@ -585,6 +608,15 @@ interface MissionRow {
   sponsor_flag: number;
   last_verified_at: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+interface VenueLocationCacheRow {
+  venue_id: string;
+  venue_name: string;
+  suburb: string | null;
+  latitude: number | null;
+  longitude: number | null;
   updated_at: string;
 }
 
@@ -901,6 +933,13 @@ function toSubmission(row: SubmissionRow): BusinessSubmission {
     sourcePhotoUrl: row.source_photo_url,
     notes: row.notes,
     pointsAwarded: row.points_awarded,
+    uploadLatitude: row.upload_latitude,
+    uploadLongitude: row.upload_longitude,
+    uploadAccuracyMeters: row.upload_accuracy_meters,
+    uploadLocationCapturedAt: row.upload_location_captured_at,
+    distanceToVenueMeters: row.distance_to_venue_meters,
+    pointsEligibleByLocation: Boolean(row.points_eligible_by_location),
+    pointsEligibilityReason: row.points_eligibility_reason,
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at,
     rejectionReason: row.rejection_reason,
@@ -940,6 +979,17 @@ function toMission(row: MissionRow): BusinessMission {
     sponsorFlag: Boolean(row.sponsor_flag),
     lastVerifiedAt: row.last_verified_at,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toVenueLocationCache(row: VenueLocationCacheRow): VenueLocationCache {
+  return {
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    suburb: row.suburb,
+    latitude: row.latitude,
+    longitude: row.longitude,
     updatedAt: row.updated_at,
   };
 }
@@ -1750,6 +1800,13 @@ export class BusinessRepository {
     observedAt: string;
     sourcePhotoUrl: string | null;
     notes: string | null;
+    uploadLatitude?: number | null;
+    uploadLongitude?: number | null;
+    uploadAccuracyMeters?: number | null;
+    uploadLocationCapturedAt?: string | null;
+    distanceToVenueMeters?: number | null;
+    pointsEligibleByLocation?: boolean;
+    pointsEligibilityReason?: string | null;
     items: Array<{
       id: string;
       beerName: string;
@@ -1768,8 +1825,10 @@ export class BusinessRepository {
         .prepare(
           `INSERT INTO submissions (
             id, user_id, venue_id, venue_name, suburb, status, submission_type, observed_at,
-            source_photo_url, notes, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+            source_photo_url, notes, upload_latitude, upload_longitude, upload_accuracy_meters,
+            upload_location_captured_at, distance_to_venue_meters, points_eligible_by_location,
+            points_eligibility_reason, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
@@ -1781,6 +1840,13 @@ export class BusinessRepository {
           input.observedAt,
           input.sourcePhotoUrl,
           input.notes,
+          input.uploadLatitude ?? null,
+          input.uploadLongitude ?? null,
+          input.uploadAccuracyMeters ?? null,
+          input.uploadLocationCapturedAt ?? null,
+          input.distanceToVenueMeters ?? null,
+          input.pointsEligibleByLocation ? 1 : 0,
+          input.pointsEligibilityReason ?? null,
           input.now,
           input.now,
         );
@@ -2234,6 +2300,45 @@ export class BusinessRepository {
       .prepare(`SELECT * FROM venue_price_records ${where} ORDER BY last_verified_at DESC LIMIT ?`)
       .all(...values) as PriceRecordRow[];
     return rows.map(toPriceRecord);
+  }
+
+  getLatestVenueDataTimestamp(venueId: string): string | null {
+    const row = this.database
+      .prepare("SELECT max(last_verified_at) AS last_verified_at FROM venue_price_records WHERE venue_id = ?")
+      .get(venueId) as { last_verified_at: string | null } | undefined;
+    return row?.last_verified_at ?? null;
+  }
+
+  upsertVenueLocationCache(input: {
+    venueId: string;
+    venueName: string;
+    suburb: string | null;
+    latitude: number | null;
+    longitude: number | null;
+    now: string;
+  }): VenueLocationCache {
+    this.database
+      .prepare(
+        `INSERT INTO venue_location_cache (
+          venue_id, venue_name, suburb, latitude, longitude, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(venue_id) DO UPDATE SET
+          venue_name = excluded.venue_name,
+          suburb = excluded.suburb,
+          latitude = excluded.latitude,
+          longitude = excluded.longitude,
+          updated_at = excluded.updated_at`,
+      )
+      .run(input.venueId, input.venueName, input.suburb, input.latitude, input.longitude, input.now);
+
+    return this.getVenueLocationCache(input.venueId)!;
+  }
+
+  getVenueLocationCache(venueId: string): VenueLocationCache | null {
+    const row = this.database
+      .prepare("SELECT * FROM venue_location_cache WHERE venue_id = ?")
+      .get(venueId) as VenueLocationCacheRow | undefined;
+    return row ? toVenueLocationCache(row) : null;
   }
 
   listVenueManagerPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {
@@ -3337,11 +3442,11 @@ export class BusinessRepository {
     const privacyFloorMet = areaSearches >= privacyThreshold;
 
     return {
-      barLookups: barEventCount(["venue_card_viewed", "venue_detail_opened"]),
-      profileViews: barEventCount(["venue_detail_opened", "venue_portal_viewed"]),
-      beerListViews: barEventCount(["price_view_revealed", "venue_detail_opened"]),
-      specialsViews: barEventCount(["happy_hour_active_now_used", "happy_hour_near_me_used"]),
-      markerClicks: barEventCount(["venue_card_viewed"]),
+      barLookups: barEventCount(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"]),
+      profileViews: barEventCount(["venue_detail_opened", "venue_profile_viewed", "venue_portal_viewed"]),
+      beerListViews: barEventCount(["beer_list_viewed", "price_view_revealed", "venue_detail_opened"]),
+      specialsViews: barEventCount(["deal_viewed", "special_viewed", "happy_hour_active_now_used", "happy_hour_near_me_used"]),
+      markerClicks: barEventCount(["map_pin_click"]),
       priceReveals: barEventCount(["price_view_revealed"]),
       areaSearches,
       areaBeerSearches: privacyFloorMet ? areaBeerSearches : [],
@@ -3592,7 +3697,7 @@ export class BusinessRepository {
 
     return {
       topSearchedBeers: grouped("beer_search_performed", "beer_id"),
-      topClickedVenues: grouped(["venue_card_viewed", "venue_detail_opened"], "venue_id"),
+      topClickedVenues: grouped(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"], "venue_id"),
       topSuburbs: grouped(
         [
           "search_performed",
@@ -3732,7 +3837,7 @@ export class BusinessRepository {
       subscriptionConversionRate: newUsers > 0 ? subscriptionConversions / newUsers : totalUsers > 0 ? subscriptionConversions / totalUsers : 0,
       totalVenueSearches: eventCount(["search_performed", "suburb_search_performed"]),
       totalBeerSearches: eventCount(["beer_search_performed"]),
-      totalVenueDetailViews: eventCount(["venue_card_viewed", "venue_detail_opened"]),
+      totalVenueDetailViews: eventCount(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"]),
       totalExactPriceReveals: eventCount(["price_view_revealed"]),
       totalBlockedPriceReveals: eventCount(["price_view_blocked_free_limit"]),
       totalMapFilterUses: eventCount([
@@ -3762,7 +3867,7 @@ export class BusinessRepository {
       venuesWithNoBeerPriceData: noDataVenueCount,
       activeMissions: count("SELECT count(*) AS count FROM missions WHERE active = 1"),
       missionCompletionCount: eventCount(["submission_completed"]),
-      potentialPartnerLeadCount: count("SELECT count(DISTINCT venue_id) AS count FROM events WHERE venue_id IS NOT NULL AND event_type IN ('venue_detail_opened', 'venue_card_viewed')"),
+      potentialPartnerLeadCount: count("SELECT count(DISTINCT venue_id) AS count FROM events WHERE venue_id IS NOT NULL AND event_type IN ('map_pin_click', 'venue_detail_opened', 'venue_card_viewed', 'venue_lookup')"),
       yearlyPaidUsers,
       usersTried,
       returnedThirtyDays,
@@ -3786,7 +3891,7 @@ export class BusinessRepository {
       })),
       topSearchedBeers: topEventGroup(["beer_search_performed"], "beer_id"),
       topSearchedSuburbs: topEventGroup(["search_performed", "suburb_search_performed", "beer_search_performed"], "suburb"),
-      topClickedVenues: topEventGroup(["venue_card_viewed", "venue_detail_opened"], "venue_id"),
+      topClickedVenues: topEventGroup(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"], "venue_id"),
       topVenuesNeedingData,
       highDemandVenuesWithStaleOrMissingData: highDemandMissing,
     };

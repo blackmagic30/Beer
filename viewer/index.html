@@ -3161,6 +3161,7 @@
     ]);
     let savedSuburbFilters = [];
     let venueRailSortMode = "smart";
+    let analyticsVenueRows = [];
     const userLocationState = {
       status: "idle",
       coords: null,
@@ -3307,6 +3308,201 @@
         radiusKm: userLocationState.radiusKm,
         ...extra,
       };
+    }
+
+    function getDistanceBucket(distanceKm) {
+      if (!Number.isFinite(distanceKm)) {
+        return null;
+      }
+
+      if (distanceKm < 0.5) return "under_500m";
+      if (distanceKm < 1) return "500m_to_1km";
+      if (distanceKm < 2) return "1km_to_2km";
+      if (distanceKm < 5) return "2km_to_5km";
+      if (distanceKm < 10) return "5km_to_10km";
+      return "10km_plus";
+    }
+
+    function getMelbourneTimeContext() {
+      try {
+        const parts = new Intl.DateTimeFormat("en-AU", {
+          timeZone: "Australia/Melbourne",
+          weekday: "short",
+          hour: "numeric",
+          hourCycle: "h23",
+        })
+          .formatToParts(new Date())
+          .reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+        const hour = Number(parts.hour);
+        const timeBucket = hour < 11
+          ? "morning"
+          : hour < 15
+            ? "lunch"
+            : hour < 18
+              ? "afternoon"
+              : hour < 22
+                ? "evening"
+                : "late";
+
+        return {
+          localDay: parts.weekday || null,
+          localHour: Number.isFinite(hour) ? hour : null,
+          localTimeBucket: timeBucket,
+        };
+      } catch {
+        return {
+          localDay: null,
+          localHour: null,
+          localTimeBucket: null,
+        };
+      }
+    }
+
+    function getAnalyticsRowsForView(viewState = getViewState()) {
+      if (!Array.isArray(analyticsVenueRows) || analyticsVenueRows.length === 0) {
+        return [];
+      }
+
+      return analyticsVenueRows.filter((row) => rowMatchesView(row, viewState));
+    }
+
+    function getNearestAnalyticsVenue(rows = getAnalyticsRowsForView()) {
+      if (!hasUserLocation()) {
+        return null;
+      }
+
+      return rows
+        .map((row) => ({
+          row,
+          distanceKm: getVenueDistanceKm(row),
+        }))
+        .filter((item) => Number.isFinite(item.distanceKm))
+        .sort((left, right) => left.distanceKm - right.distanceKm)[0] || null;
+    }
+
+    function inferSuburbContext(query, rows = getAnalyticsRowsForView()) {
+      const nearest = getNearestAnalyticsVenue(rows);
+      if (nearest) {
+        const venue = getVenueRecord(nearest.row.venues) || {};
+        return venue.suburb || nearest.row.suburb || null;
+      }
+
+      const queryKey = toSearchKey(query);
+      if (!queryKey) {
+        return null;
+      }
+
+      const exactSuburbMatch = rows.find((row) => {
+        const venue = getVenueRecord(row.venues) || {};
+        return toSearchKey(venue.suburb || row.suburb || "") === queryKey;
+      });
+      if (exactSuburbMatch) {
+        const venue = getVenueRecord(exactSuburbMatch.venues) || {};
+        return venue.suburb || exactSuburbMatch.suburb || null;
+      }
+
+      return null;
+    }
+
+    function getSearchIntent(viewState) {
+      if (viewState.filters.includes("happy_hour_near_me") || viewState.filters.includes("happy_hour_active_now")) {
+        return "happy_hour";
+      }
+
+      if (viewState.filters.includes("cheapest_near_me") || viewState.filters.includes("under_10")) {
+        return "price";
+      }
+
+      if (viewState.beerQuery) {
+        return "beer";
+      }
+
+      return viewState.venueQuery ? "venue_or_suburb" : "browse";
+    }
+
+    function getAnalyticsContext(extra = {}) {
+      const viewState = getViewState();
+      const rows = getAnalyticsRowsForView(viewState);
+      const nearest = getNearestAnalyticsVenue(rows);
+      const nearestVenue = nearest ? getVenueRecord(nearest.row.venues) || {} : {};
+      const timeContext = getMelbourneTimeContext();
+
+      return {
+        scope: viewState.scope,
+        onTapOnly: viewState.onTapOnly,
+        activeFilters: viewState.filters,
+        activeFilterCount: viewState.filters.length,
+        resultCount: rows.length,
+        beerQuery: viewState.beerQuery || null,
+        searchIntent: getSearchIntent(viewState),
+        locationStatus: userLocationState.status,
+        locationEnabled: hasUserLocation(),
+        inCoverageArea: userLocationState.coords ? !userLocationState.outsideMelbourne : null,
+        radiusKm: userLocationState.radiusKm,
+        approximateSuburb: nearestVenue.suburb || nearest?.row?.suburb || null,
+        distanceBucket: nearest ? getDistanceBucket(nearest.distanceKm) : null,
+        ...timeContext,
+        ...extra,
+      };
+    }
+
+    function getBeerAnalyticsKey(beerName) {
+      const meta = getTrackedBeerMeta(beerName);
+      return meta?.key || toSearchKey(meta?.name || beerName) || null;
+    }
+
+    function trackSearchAnalytics(eventType, query, extra = {}) {
+      const trimmedQuery = String(query || "").trim();
+      if (!trimmedQuery) {
+        return;
+      }
+
+      const viewState = getViewState();
+      const rows = getAnalyticsRowsForView(viewState);
+      const inferredSuburb = inferSuburbContext(trimmedQuery, rows);
+      const matchedBeer = eventType === "beer_search_performed"
+        ? getInferredBeerQuery(trimmedQuery) || getTrackedBeerDisplayName(trimmedQuery)
+        : null;
+      const metadata = getAnalyticsContext({
+        query: trimmedQuery.slice(0, 80),
+        suburb: inferredSuburb,
+        source: extra.source || "map_search",
+        searchKind: extra.searchKind || (viewState.beerQuery ? "beer" : "venue_or_suburb"),
+        beerId: matchedBeer ? getBeerAnalyticsKey(matchedBeer) : null,
+        matchedBeer,
+        ...extra,
+      });
+
+      void trackBusinessEvent(eventType, metadata);
+    }
+
+    function getVenueAnalyticsMetadata(record, source, extra = {}) {
+      const viewState = getViewState();
+      const venue = record?.venue || getVenueRecord(record?.row?.venues) || {};
+      const venueId = record?.row?.venue_id || venue.id || null;
+      const suburb = venue.suburb || record?.row?.suburb || null;
+      const beerItems = record?.row ? getDisplayBeerItems(record.row, viewState) : [];
+      const happyHourDetails = record?.row ? getHappyHourDetails(record.row) : null;
+      const distanceKm = record?.row ? getVenueDistanceKm(record.row) : null;
+
+      return getAnalyticsContext({
+        venueId,
+        venueName: venue.name || record?.row?.venue_name || null,
+        suburb,
+        source,
+        listedBeerCount: beerItems.length,
+        knownPriceCount: beerItems.filter(hasNumericPrice).length,
+        onTapCount: beerItems.filter((beer) => beer.availableOnTap === true || beer.availabilityLabel === "On tap").length,
+        hasHappyHour: Boolean(happyHourDetails?.exists || happyHourDetails),
+        happyHourActiveNow: record?.row ? hasActiveHappyHourNow(record.row) : false,
+        distanceBucket: Number.isFinite(distanceKm) ? getDistanceBucket(distanceKm) : undefined,
+        beerQuery: viewState.beerQuery || null,
+        ...extra,
+      });
+    }
+
+    function trackVenueAnalytics(eventType, record, source, extra = {}) {
+      void trackBusinessEvent(eventType, getVenueAnalyticsMetadata(record, source, extra));
     }
 
     function hasUserLocation() {
@@ -3558,12 +3754,15 @@
       venueDetailOverlayEl.classList.remove("is-hidden-panel");
       venueDetailOverlayEl.setAttribute("aria-hidden", "false");
       closeVenueDetailEl.focus({ preventScroll: true });
-      void trackBusinessEvent("venue_detail_opened", {
-        venueId: record.row.venue_id || record.venue.id || null,
-        venueName: record.venue.name || record.row.venue_name || null,
-        suburb: record.venue.suburb || record.row.suburb || null,
-        source,
-      });
+      trackVenueAnalytics("venue_detail_opened", record, source);
+      if (getDisplayBeerItems(record.row, getViewState()).length > 0) {
+        trackVenueAnalytics("beer_list_viewed", record, source);
+      }
+      if (getHappyHourDetails(record.row)?.exists) {
+        trackVenueAnalytics("deal_viewed", record, source, {
+          interactionType: "happy_hour_details",
+        });
+      }
     }
 
     closeVenueDetailEl.addEventListener("click", hideVenueDetailOverlay);
@@ -3814,9 +4013,10 @@
 
     venueRailSortCheapestEl.addEventListener("click", () => {
       venueRailSortMode = "cheapest";
-      void trackBusinessEvent("cheapest_sort_used", {
+      void trackBusinessEvent("cheapest_sort_used", getAnalyticsContext({
         beerQuery: beerSearchEl.value.trim() || null,
-      });
+        source: "visible_venues_sort",
+      }));
       if (typeof window.__melbBeerMapRefreshVisibleRail === "function") {
         window.__melbBeerMapRefreshVisibleRail();
       }
@@ -3833,6 +4033,7 @@
       venueRailSortMode = "nearest";
       void trackBusinessEvent("distance_sort_used", getLocationEventMetadata({
         beerQuery: beerSearchEl.value.trim() || null,
+        ...getAnalyticsContext({ source: "visible_venues_sort" }),
       }));
       if (typeof window.__melbBeerMapRefreshVisibleRail === "function") {
         window.__melbBeerMapRefreshVisibleRail();
@@ -5278,11 +5479,8 @@
             return;
           }
 
-          void trackBusinessEvent("venue_card_viewed", {
-            venueId: record.row.venue_id || record.venue.id || null,
-            venueName: record.venue.name || record.row.venue_name || null,
-            suburb: record.venue.suburb || record.row.suburb || null,
-            source: buttonEl.dataset.action,
+          trackVenueAnalytics("venue_card_viewed", record, buttonEl.dataset.action || "highlight", {
+            interactionType: "highlight_panel",
           });
         });
       });
@@ -5515,6 +5713,9 @@
           }
 
           const openVenueDetail = async () => {
+            trackVenueAnalytics("venue_card_viewed", record, "visible_venues", {
+              interactionType: "visible_venue_list",
+            });
             await openVenueDetailOverlay(record, "visible_venues");
           };
 
@@ -5639,7 +5840,6 @@
           fullscreenControl: true,
           ...(GOOGLE_MAPS_MAP_ID ? { mapId: GOOGLE_MAPS_MAP_ID } : {}),
         });
-        void trackBusinessEvent("map_viewed", { source: "map_page" });
 
         let rows = [];
         let allVenues = [];
@@ -5722,6 +5922,12 @@
             return mergeBusinessPriceRecords(mergedRow, venueRecords);
           });
         const venueRows = allVenueRows.filter((item) => hasCapturedBeerData(item) || hasHappyHourData(item));
+        analyticsVenueRows = allVenueRows;
+        void trackBusinessEvent("map_viewed", getAnalyticsContext({
+          source: "map_page",
+          totalVenueCount: allVenueRows.length,
+          venueDataCount: venueRows.length,
+        }));
 
         let liveMarkers = [];
         let markerRecords = [];
@@ -5951,7 +6157,7 @@
                 ? canShowHappyHourDetails
                   ? happyHourBrief || "Details are listed for this venue."
                   : liveHappyHourDetails.exists
-                    ? "Unlock full access to view times and specials."
+                    ? "Unlock full access to view times, specials, and discount details."
                     : "Checked where possible."
                 : "Add details if you spot one.";
               const accessValue = businessAccess.hasFullAccess
@@ -6052,7 +6258,7 @@
                   ? renderHappyHourPopupMarkup(liveHappyHourDetails)
                   : `
                 <div class="beerPopup__notice">
-                  Happy-hour data exists for this venue. Unlock full access to view the days, times, and specials.
+                  Happy-hour data exists for this venue. Unlock full access to view the days, times, specials, and discount details.
                 </div>
               `;
 
@@ -6100,6 +6306,9 @@
 
             marker.addListener("click", async () => {
               setActiveMarker(marker);
+              trackVenueAnalytics("map_pin_click", markerRecord, "marker", {
+                interactionType: "map_marker",
+              });
               await openVenueDetailOverlay(markerRecord, "marker");
               venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
                 cardEl.classList.toggle("is-active", cardEl.dataset.markerId === markerId);
@@ -6173,11 +6382,8 @@
             venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
               cardEl.classList.toggle("is-active", cardEl.dataset.markerId === record.id);
             });
-            void trackBusinessEvent("venue_card_viewed", {
-              venueId: record.row.venue_id || record.venue.id || null,
-              venueName: record.venue.name || record.row.venue_name || null,
-              suburb: record.venue.suburb || record.row.suburb || null,
-              source,
+            trackVenueAnalytics("venue_card_viewed", record, source || "highlight", {
+              interactionType: "highlight_panel",
             });
           });
         }
@@ -6211,8 +6417,9 @@
             : "Choose a radius, then tap Use my location to show nearby venues.";
           syncLocationUi();
           syncUserLocationOverlay(hasUserLocation() && hasNearMeFilter(getViewState()));
-          void trackBusinessEvent("radius_filter_changed", getLocationEventMetadata({
+          void trackBusinessEvent("radius_filter_changed", getAnalyticsContext({
             radiusKm: userLocationState.radiusKm,
+            source: "radius_select",
           }));
           renderMarkers();
         });
@@ -6222,7 +6429,10 @@
           advancedFiltersPanelEl.hidden = !isOpening;
           advancedFiltersToggleEl.setAttribute("aria-expanded", isOpening ? "true" : "false");
           if (isOpening) {
-            void trackBusinessEvent("map_filter_used", { filter: "advanced_filters_opened" });
+            void trackBusinessEvent("map_filter_used", getAnalyticsContext({
+              filter: "advanced_filters_opened",
+              source: "advanced_filters",
+            }));
           }
         });
 
@@ -6240,11 +6450,16 @@
           const query = venueSearchEl.value.trim();
           if (query) {
             const inferredBeer = getInferredBeerQuery(query);
-            void trackBusinessEvent(inferredBeer ? "beer_search_performed" : "search_performed", {
-              query: inferredBeer || query,
+            trackSearchAnalytics(inferredBeer ? "beer_search_performed" : "search_performed", inferredBeer || query, {
+              source: "unified_search",
+              searchKind: inferredBeer ? "beer" : "venue_or_suburb",
             });
             if (!inferredBeer) {
-              void trackBusinessEvent("suburb_search_performed", { query, suburb: query });
+              trackSearchAnalytics("suburb_search_performed", query, {
+                source: "unified_search",
+                searchKind: "suburb_or_area",
+                suburb: inferSuburbContext(query),
+              });
             }
           }
         });
@@ -6252,15 +6467,19 @@
         beerSearchEl.addEventListener("change", () => {
           const query = beerSearchEl.value.trim();
           if (query) {
-            void trackBusinessEvent("beer_search_performed", { query });
+            trackSearchAnalytics("beer_search_performed", query, {
+              source: "beer_search_input",
+              searchKind: "beer",
+            });
           }
           renderMarkers();
         });
         onTapOnlyEl.addEventListener("change", () => {
-          void trackBusinessEvent("map_filter_used", {
+          void trackBusinessEvent("map_filter_used", getAnalyticsContext({
             filter: "on_tap_only",
             enabled: onTapOnlyEl.checked,
-          });
+            source: "top_filter_bar",
+          }));
           renderMarkers();
         });
         clearFiltersEl.addEventListener("click", () => {
@@ -6269,7 +6488,10 @@
           onTapOnlyEl.checked = false;
           activeScope = "all";
           activeFilterChips.clear();
-          void trackBusinessEvent("map_filter_used", { filter: "clear_all" });
+          void trackBusinessEvent("map_filter_used", getAnalyticsContext({
+            filter: "clear_all",
+            source: "top_filter_bar",
+          }));
           renderMarkers();
         });
 
@@ -6278,7 +6500,11 @@
             const area = chipEl.dataset.areaChip || "";
             venueSearchEl.value = area;
             beerSearchEl.value = "";
-            void trackBusinessEvent("suburb_area_selected", { suburb: area, source: "area_quick_pick" });
+            trackSearchAnalytics("suburb_area_selected", area, {
+              suburb: area,
+              source: "area_quick_pick",
+              searchKind: "suburb_or_area",
+            });
             renderMarkers();
           });
         });
@@ -6292,7 +6518,7 @@
             onTapOnlyEl.checked = false;
             void trackBusinessEvent(
               activeScope === "needs_data" ? "needs_data_viewed" : "map_filter_used",
-              { scope: activeScope },
+              getAnalyticsContext({ scope: activeScope, source: "scope_filter" }),
             );
             renderMarkers();
           });
@@ -6368,11 +6594,11 @@
               cheapest_near_me: "cheapest_near_me_used",
               nearest: "distance_sort_used",
             };
-            void trackBusinessEvent(eventTypeByFilter[filter] || "map_filter_used", {
+            void trackBusinessEvent(eventTypeByFilter[filter] || "map_filter_used", getAnalyticsContext({
               filter,
               enabled: activeFilterChips.has(filter),
-              ...(isNearMeFilter(filter) ? getLocationEventMetadata() : {}),
-            });
+              source: "advanced_filter_chip",
+            }));
             renderMarkers();
           });
         });
@@ -6394,7 +6620,10 @@
             }
 
             if (beerSearchEl.value.trim()) {
-              void trackBusinessEvent("beer_search_performed", { query: beerSearchEl.value.trim() });
+              trackSearchAnalytics("beer_search_performed", beerSearchEl.value.trim(), {
+                source: "popular_beer_chip",
+                searchKind: "beer",
+              });
             }
             renderMarkers();
           });

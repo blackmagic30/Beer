@@ -369,6 +369,11 @@
       return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(Number(value));
     }
 
+    function formatPoints(value) {
+      const numeric = Number(value || 0);
+      return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
+    }
+
     function localDatetimeIso(date = new Date()) {
       return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     }
@@ -481,7 +486,7 @@
           <div class="listItem missionCard">
             <div class="missionCard__title">
               <strong>${escapeHtml(mission.venueName)}</strong>
-              <span class="pill">${Math.round(mission.points * mission.multiplier)} pts</span>
+              <span class="pill">${formatPoints(Number(mission.points || 0) * Number(mission.multiplier || 1))} pts</span>
             </div>
             <div class="missionCard__meta">${escapeHtml(mission.suburb || "Melbourne")} · ${escapeHtml(mission.reason)}</div>
             <a class="button missionCard__action" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}">Submit update</a>
@@ -554,7 +559,7 @@
       $("pendingMetric").textContent = stats.pendingVerificationCount ?? stats.pendingCount ?? 0;
       $("verifiedMetric").textContent = stats.verifiedCount ?? account.approvedSubmissionCount ?? 0;
       $("rejectedMetric").textContent = stats.rejectedCount ?? account.rejectedSubmissionCount ?? 0;
-      $("pointsMetric").textContent = stats.pointsThisMonth ?? account.contributionPointsCurrentMonth ?? 0;
+      $("pointsMetric").textContent = formatPoints(stats.pointsThisMonth ?? account.contributionPointsCurrentMonth ?? 0);
       $("trustMetric").textContent = stats.trustScore ?? account.trustScore ?? 0;
       $("verificationMetric").textContent = (result.verifications || []).length;
       $("fraudMetric").textContent = stats.fraudStrikes ?? account.fraudStrikeCount ?? 0;
@@ -565,8 +570,8 @@
       const percent = Math.min(100, Math.round((points / threshold) * 100));
       $("contributorProgressBar").style.width = `${percent}%`;
       $("contributorProgressCopy").textContent = progress.pointsNeeded > 0
-        ? `${progress.pointsNeeded} points until next contributor unlock.`
-        : "Contributor unlock threshold reached for this month.";
+        ? `${formatPoints(points)} / ${formatPoints(threshold)} points. ${formatPoints(progress.pointsNeeded)} more points unlock premium until month end.`
+        : `${formatPoints(points)} / ${formatPoints(threshold)} points. Contributor unlock reached for this month.`;
       $("rewardEligibilityCopy").textContent = result.ageVerification?.copy || "18+ verification will be required for some future rewards.";
       $("confirmAgeButton").style.display = account.ageConfirmedAt ? "none" : "inline-flex";
 

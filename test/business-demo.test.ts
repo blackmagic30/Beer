@@ -708,6 +708,29 @@ describe("production hardening", () => {
     }).records[0]?.price).toBe(17);
   });
 
+  it("includes special-discount details only in the full-access entitlement state", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const freeUser = createAccount(repository, "specials-free-user");
+    const premiumUser = updateSubscription(
+      repository,
+      createAccount(repository, "specials-premium-user").id,
+      "premium_monthly",
+    );
+
+    expect(service.getAccessState(freeUser, null)).toMatchObject({
+      hasFullAccess: false,
+      canViewSpecialDiscounts: false,
+      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.",
+      premiumScope: "Every verified beer price, premium filters, and venue special-discount details.",
+    });
+    expect(service.getAccessState(premiumUser, null)).toMatchObject({
+      hasFullAccess: true,
+      canViewSpecialDiscounts: true,
+      premiumScope: "Every verified beer price, premium filters, and venue special-discount details.",
+    });
+  });
+
   it("keeps exact price reads behind the business API in the public viewer", () => {
     const viewerHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
     const adminHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/admin.html"), "utf8");
@@ -1045,6 +1068,273 @@ describe("production hardening", () => {
       actorUserId: admin.id,
       targetId: submission.id,
     }));
+  });
+
+  it("stores upload location proof and awards dynamic points only inside the 200m venue radius", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const uploader = createAccount(repository, "dynamic-points-user");
+    const admin = createAccount(repository, "dynamic-points-admin", "admin");
+    const baseLocation = {
+      latitude: -37.9069,
+      longitude: 144.9964,
+      accuracyMeters: 18,
+      capturedAt: new Date().toISOString(),
+    };
+
+    repository.upsertVenueLocationCache({
+      venueId: "half-moon",
+      venueName: "Half Moon",
+      suburb: "Brighton",
+      latitude: -37.9069,
+      longitude: 144.9964,
+      now: NOW,
+    });
+
+    const submission = service.createSubmission(uploader, createSubmissionSchema.parse({
+      venueId: "half-moon",
+      venueName: "Half Moon",
+      suburb: "Brighton",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: PNG_DATA_URL,
+      sourcePhotoUrl: null,
+      uploadLocation: baseLocation,
+      notes: null,
+      items: [{
+        beerName: "Guinness",
+        servingSize: "pint",
+        price: 13,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    })).submission;
+
+    expect(submission.pointsEligibleByLocation).toBe(true);
+    expect(submission.distanceToVenueMeters).toBe(0);
+
+    const reviewed = service.reviewSubmission(admin, submission.id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      pointsAwarded: 25,
+      confidence: "photo_verified",
+    });
+
+    expect(reviewed.pointsAwarded).toBe(5);
+    expect(reviewed.account.contributionPointsCurrentMonth).toBe(5);
+
+    repository.upsertVenueLocationCache({
+      venueId: "far-away",
+      venueName: "Far Away Bar",
+      suburb: "Melbourne",
+      latitude: -37.8136,
+      longitude: 144.9631,
+      now: NOW,
+    });
+    const farSubmission = service.createSubmission(uploader, createSubmissionSchema.parse({
+      venueId: "far-away",
+      venueName: "Far Away Bar",
+      suburb: "Melbourne",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: PNG_DATA_URL,
+      sourcePhotoUrl: null,
+      uploadLocation: baseLocation,
+      notes: null,
+      items: [{
+        beerName: "Carlton Draft",
+        servingSize: "pint",
+        price: 12,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    })).submission;
+
+    expect(farSubmission.pointsEligibleByLocation).toBe(false);
+    expect(farSubmission.pointsEligibilityReason).toBe("outside_200m");
+    const farReviewed = service.reviewSubmission(admin, farSubmission.id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      pointsAwarded: 25,
+      confidence: "photo_verified",
+    });
+    expect(farReviewed.pointsAwarded).toBe(0);
+  });
+
+  it("scales contribution points by venue freshness", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "freshness-user");
+    const admin = createAccount(repository, "freshness-admin", "admin");
+
+    const seedExistingRecord = (venueId: string, observedAt: string) => {
+      const seedUser = createAccount(repository, `seed-${venueId}`);
+      const seedSubmission = repository.createSubmission({
+        id: `seed-submission-${venueId}`,
+        userId: seedUser.id,
+        venueId,
+        venueName: `Venue ${venueId}`,
+        suburb: "Melbourne",
+        submissionType: "single_beer_price",
+        observedAt,
+        sourcePhotoUrl: null,
+        notes: null,
+        now: observedAt,
+        items: [{
+          id: `seed-submission-${venueId}:item`,
+          beerName: "Guinness",
+          normalizedBeerId: "guinness",
+          servingSize: "pint",
+          price: 12,
+          isHappyHourPrice: false,
+          happyHourDetails: null,
+          isOnTap: "yes",
+          confidence: 0.9,
+        }],
+      });
+      repository.reviewSubmission({
+        submissionId: seedSubmission.id,
+        reviewerId: admin.id,
+        status: "approved",
+        rejectionReason: null,
+        fraudFlagged: false,
+        pointsAwarded: 0,
+        confidence: "photo_verified",
+        now: observedAt,
+        monthKey: observedAt.slice(0, 7),
+        premiumUntil: PREMIUM_UNTIL,
+        contributorUnlockPoints: 15,
+      });
+    };
+
+    const makeSubmission = (venueId: string) => {
+      repository.upsertVenueLocationCache({
+        venueId,
+        venueName: `Venue ${venueId}`,
+        suburb: "Melbourne",
+        latitude: -37.8,
+        longitude: 144.9,
+        now: NOW,
+      });
+      return service.createSubmission(user, createSubmissionSchema.parse({
+        venueId,
+        venueName: `Venue ${venueId}`,
+        suburb: "Melbourne",
+        submissionType: "single_beer_price",
+        observedAt: NOW,
+        sourcePhotoDataUrl: PNG_DATA_URL,
+        sourcePhotoUrl: null,
+        uploadLocation: {
+          latitude: -37.8,
+          longitude: 144.9,
+          accuracyMeters: 12,
+          capturedAt: new Date().toISOString(),
+        },
+        notes: null,
+        items: [{
+          beerName: "Guinness",
+          servingSize: "pint",
+          price: 13,
+          isHappyHourPrice: false,
+          happyHourDetails: null,
+          isOnTap: "yes",
+        }],
+      })).submission;
+    };
+
+    seedExistingRecord("fresh-venue", new Date().toISOString());
+    seedExistingRecord("week-venue", new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString());
+    seedExistingRecord("stale-venue", new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString());
+
+    const fresh = service.reviewSubmission(admin, makeSubmission("fresh-venue").id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      confidence: "photo_verified",
+    });
+    const week = service.reviewSubmission(admin, makeSubmission("week-venue").id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      confidence: "photo_verified",
+    });
+    const stale = service.reviewSubmission(admin, makeSubmission("stale-venue").id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      confidence: "photo_verified",
+    });
+    const missing = service.reviewSubmission(admin, makeSubmission("new-venue").id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      confidence: "photo_verified",
+    });
+
+    expect(fresh.pointsAwarded).toBe(0.1);
+    expect(week.pointsAwarded).toBe(0.5);
+    expect(stale.pointsAwarded).toBe(1);
+    expect(missing.pointsAwarded).toBe(5);
+  });
+
+  it("unlocks contributor premium at 15 monthly points until month end", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "monthly-unlock-user");
+    const admin = createAccount(repository, "monthly-unlock-admin", "admin");
+    const uploadLocation = {
+      latitude: -37.82,
+      longitude: 144.96,
+      accuracyMeters: 10,
+      capturedAt: new Date().toISOString(),
+    };
+
+    for (const venueId of ["unlock-venue-1", "unlock-venue-2", "unlock-venue-3"]) {
+      repository.upsertVenueLocationCache({
+        venueId,
+        venueName: venueId,
+        suburb: "Melbourne",
+        latitude: uploadLocation.latitude,
+        longitude: uploadLocation.longitude,
+        now: NOW,
+      });
+      const submission = service.createSubmission(user, createSubmissionSchema.parse({
+        venueId,
+        venueName: venueId,
+        suburb: "Melbourne",
+        submissionType: "single_beer_price",
+        observedAt: NOW,
+        sourcePhotoDataUrl: PNG_DATA_URL,
+        sourcePhotoUrl: null,
+        uploadLocation,
+        notes: null,
+        items: [{
+          beerName: "Stone & Wood",
+          servingSize: "pint",
+          price: 13,
+          isHappyHourPrice: false,
+          happyHourDetails: null,
+          isOnTap: "yes",
+        }],
+      })).submission;
+      service.reviewSubmission(admin, submission.id, {
+        status: "approved",
+        rejectionReason: null,
+        fraudFlagged: false,
+        confidence: "photo_verified",
+      });
+    }
+
+    const updated = repository.getAccountById(user.id)!;
+    const now = new Date();
+    const expectedMonthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
+    expect(updated.contributionPointsCurrentMonth).toBe(15);
+    expect(updated.subscriptionStatus).toBe("contributor_unlocked");
+    expect(updated.premiumUntil).toBe(expectedMonthEnd);
   });
 
   it("redacts sensitive metadata before writing security audit rows", () => {
@@ -1509,6 +1799,72 @@ describe("business demo contribution model", () => {
     expect(metadata.preciseLocation).toBeUndefined();
     expect(dashboard.metrics.totalNearMeUses).toBe(1);
     expect(dashboard.metrics.totalHappyHourNearMeUses).toBe(1);
+  });
+
+  it("captures privacy-safe search and click intent for paid venue reports", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "intent-user");
+
+    service.trackEvent(user, {
+      anonymousSessionId: null,
+      eventType: "beer_search_performed",
+      venueId: null,
+      beerId: "stone_and_wood",
+      suburb: "Richmond",
+      metadata: {
+        query: "Stone & Wood pint",
+        searchIntent: "beer",
+        approximateSuburb: "Richmond",
+        radiusKm: 2,
+        distanceBucket: "under_500m",
+        localTimeBucket: "evening",
+        latitude: -37.82,
+        longitude: 144.99,
+      },
+    });
+    service.trackEvent(user, {
+      anonymousSessionId: null,
+      eventType: "map_pin_click",
+      venueId: "analytics-venue-1",
+      beerId: null,
+      suburb: "Richmond",
+      metadata: {
+        source: "marker",
+        interactionType: "map_marker",
+        listedBeerCount: 3,
+        hasHappyHour: true,
+        preciseLocation: "-37.82,144.99",
+      },
+    });
+
+    const dashboard = repository.getAdminKpiDashboard({
+      since: null,
+      sevenDaysAgo: "2026-04-27T00:00:00.000Z",
+      thirtyDaysAgo: "2026-04-04T00:00:00.000Z",
+      staleBefore: "2026-02-04T00:00:00.000Z",
+      totalVenues: 1,
+    });
+    const venueAnalytics = repository.getBarAreaAnalytics({
+      barId: "analytics-venue-1",
+      area: "Richmond",
+      privacyThreshold: 1,
+    });
+    const stored = database
+      .prepare("SELECT metadata_json FROM events WHERE event_type = 'beer_search_performed' LIMIT 1")
+      .get() as { metadata_json: string } | undefined;
+    const metadata = JSON.parse(stored?.metadata_json ?? "{}") as Record<string, unknown>;
+
+    expect(dashboard.topSearchedBeers).toEqual([{ key: "stone_and_wood", count: 1 }]);
+    expect(dashboard.topClickedVenues).toEqual([{ key: "analytics-venue-1", count: 1 }]);
+    expect(venueAnalytics.markerClicks).toBe(1);
+    expect(venueAnalytics.barLookups).toBe(1);
+    expect(venueAnalytics.areaBeerSearches).toEqual([{ key: "stone_and_wood", count: 1 }]);
+    expect(metadata.approximateSuburb).toBe("Richmond");
+    expect(metadata.distanceBucket).toBe("under_500m");
+    expect(metadata.latitude).toBeUndefined();
+    expect(metadata.longitude).toBeUndefined();
+    expect(JSON.stringify(metadata)).not.toContain("-37.82");
   });
 
   it("stores onboarding preferences and saved items for retention shortcuts", () => {

@@ -546,9 +546,24 @@ h3 {
   margin: 0;
 }
 
+.locationProofPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.locationProofPanel p {
+  margin: 6px 0 0;
+}
+
+.locationProofPanel .fieldHint {
+  grid-column: 1 / -1;
+}
+
 .dayChecklist {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 8px;
   max-width: 100%;
 }
@@ -1472,8 +1487,14 @@ h3 {
   }
 
   .sectionHeader,
-  .dataRow {
+  .dataRow,
+  .locationProofPanel {
     flex-direction: column;
+  }
+
+  .locationProofPanel {
+    display: flex;
+    align-items: stretch;
   }
 
   .rowActions {

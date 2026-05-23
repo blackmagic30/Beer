@@ -48,7 +48,22 @@ describe("submit page auth gate", () => {
     const css = businessCss();
 
     expect(css).toContain(".dayChecklist");
-    expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(78px, 1fr))");
+    expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(96px, 1fr))");
     expect(css).toContain(".readonlySelect:disabled");
+  });
+
+  it("captures intentional upload-location proof for contributor points without auto-requesting on load", () => {
+    const html = submitHtml();
+
+    expect(html).toContain("Points need location proof");
+    expect(html).toContain("Use my location for points");
+    expect(html).toContain("function captureUploadLocation()");
+    expect(html).toContain("uploadLocation,");
+    expect(html).toContain("getCurrentPosition");
+    expect(html).toContain("UPLOAD_LOCATION_STORAGE_KEY");
+    expect(html).toContain("restoreUploadLocation()");
+    expect(html).toContain("localStorage.setItem");
+    expect(html).toContain("localStorage.removeItem");
+    expect(html).not.toContain("window.addEventListener(\"DOMContentLoaded\", captureUploadLocation");
   });
 });

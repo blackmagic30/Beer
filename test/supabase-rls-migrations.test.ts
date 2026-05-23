@@ -31,4 +31,15 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).toContain("grant select on public.age_verifications to authenticated");
     expect(sql).not.toContain("grant insert on public.age_verifications to authenticated");
   });
+
+  it("stores upload-location proof privately for point eligibility", () => {
+    const sql = migration("20260523000000_submission_location_points.sql");
+
+    expect(sql).toContain("upload_latitude");
+    expect(sql).toContain("upload_longitude");
+    expect(sql).toContain("distance_to_venue_meters");
+    expect(sql).toContain("points_eligible_by_location");
+    expect(sql).toContain("Do not expose publicly");
+    expect(sql).not.toMatch(/grant\s+select\s+on\s+public\.user_price_submissions\s+to\s+anon/i);
+  });
 });
