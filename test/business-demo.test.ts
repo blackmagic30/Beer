@@ -535,6 +535,66 @@ describe("Supabase account and verification foundation", () => {
     expect(JSON.stringify(dashboard.recentSubmissions)).not.toContain("private:evidence");
   });
 
+  it("exports account data without raw private evidence or exact upload coordinates", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const account = createAccount(repository, "export-user");
+
+    createSubmission(repository, {
+      id: "export-submission",
+      userId: account.id,
+      venueId: "export-venue",
+      venueName: "Export Venue",
+      beerName: "Stone & Wood Pacific Ale",
+      price: 11,
+      sourcePhotoUrl: "private:evidence:export-evidence",
+    });
+
+    const exported = service.exportAccountData(account);
+    const serialized = JSON.stringify(exported);
+
+    expect(exported).toEqual(expect.objectContaining({
+      exportFormat: "pint_path_account_export_v1",
+      account: expect.objectContaining({ id: account.id }),
+    }));
+    expect(serialized).toContain("hasPrivateEvidence");
+    expect(serialized).not.toContain("private:evidence");
+    expect(serialized).not.toContain("sourcePhotoUrl");
+    expect(serialized).not.toContain("uploadLatitude");
+    expect(repository.listUserActivityEvents(account.id, 10).map((event) => event.eventType))
+      .toContain("account_data_exported");
+  });
+
+  it("triages sensitive feedback and creates deletion requests through the support queue", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const account = createAccount(repository, "delete-request-user");
+
+    const security = service.submitFeedback(account, {
+      anonymousSessionId: null,
+      feedbackType: "security_report",
+      message: "Suspicious account activity.",
+      venueId: null,
+      venueName: null,
+    });
+    const deletion = service.requestAccountDeletion(account, {
+      message: "Please remove my contributor account.",
+    });
+
+    expect(security.feedback).toEqual(expect.objectContaining({
+      priority: "high",
+      triageReason: expect.stringContaining("Sensitive account/security"),
+    }));
+    expect(deletion.feedback).toEqual(expect.objectContaining({
+      feedbackType: "account_deletion_request",
+      priority: "high",
+    }));
+    expect(repository.listFeedback(10).map((item) => item.feedbackType))
+      .toEqual(expect.arrayContaining(["security_report", "account_deletion_request"]));
+    expect(repository.listUserActivityEvents(account.id, 10).map((event) => event.eventType))
+      .toContain("account_deletion_requested");
+  });
+
   it("saves account privacy settings and suppresses opted-out optional analytics", () => {
     const { database, repository } = createRepository();
     const service = createBusinessService(repository);
@@ -2316,7 +2376,7 @@ describe("business demo contribution model", () => {
       startsAt: null,
       endsAt: null,
       scheduleNote: "Thursdays from 5pm",
-      exclusive: false,
+      exclusive: true,
       active: true,
     });
 
@@ -2385,6 +2445,16 @@ describe("business demo contribution model", () => {
         sourceType: "venue_manager_portal",
         freePreviewIncluded: true,
       }),
+      expect.objectContaining({
+        displayKind: "special",
+        beerName: "Pint Path exclusive",
+        price: null,
+        priceRedacted: true,
+        specialExclusive: true,
+        specialDescription: null,
+        specialDiscount: null,
+        sourceType: "venue_manager_portal:pint_path_exclusive",
+      }),
     ]));
 
     const revealed = service.listPriceRecords(null, {
@@ -2406,6 +2476,32 @@ describe("business demo contribution model", () => {
         happyHourDetails: "$9 house pints, selected taps only.",
         happyHourStartTime: "16:00",
         happyHourEndTime: "18:00",
+      }),
+    ]));
+    expect(revealed.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displayKind: "special",
+        beerName: "Pint Path exclusive",
+        priceRedacted: true,
+        specialDescription: null,
+      }),
+    ]));
+
+    const adminRecords = service.listPriceRecords(admin, {
+      limit: 20,
+      venueId: "bar-1",
+      anonymousSessionId: null,
+      reveal: true,
+    });
+    expect(adminRecords.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displayKind: "special",
+        beerName: "Pint Path exclusive",
+        price: 25,
+        specialTitle: "Thursday burger and pint",
+        specialDescription: "Burger and selected pint special.",
+        specialScheduleNote: "Thursdays from 5pm",
+        specialExclusive: true,
       }),
     ]));
 

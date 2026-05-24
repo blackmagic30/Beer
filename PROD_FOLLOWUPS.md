@@ -2,6 +2,13 @@
 
 These are the remaining actions after the production-readiness pass. Priorities are based on a full-scale public production deployment, not a small controlled field test.
 
+## Recently Closed In-Repo Gaps
+
+- Optional analytics consent is now explicit in the browser: users see a privacy-choice banner, optional analytics are disabled until consent or signed-in privacy settings allow them, and Account remains the place to manage preferences.
+- Account export/deletion foundations now exist: signed-in users can download a quick JSON export and create a tracked deletion-review request. Private evidence files, raw tokens, passwords, and exact stored upload coordinates are not included in quick self-service export.
+- Feedback/support triage now assigns priority metadata so security, privacy, data export, deletion, billing, abuse, and moderation requests are easier for admins to prioritize.
+- A public beta `Status & Incidents` page now documents outage/security/privacy reporting and provider checks without pretending external monitoring/backups are verified.
+
 ## P0: Admin MFA / Step-Up Protection
 
 - Why it matters: Admins can approve submissions, publish venue data, assign venue managers, change user status, and access sensitive queues. Password-only admin accounts are too weak for full-scale production.
@@ -45,7 +52,8 @@ These are the remaining actions after the production-readiness pass. Priorities 
 ## P1: Production Monitoring And Alerting
 
 - Why it matters: Full-scale production needs rapid detection of outages, webhook failures, 5xx spikes, billing issues, suspicious auth activity, and DB/volume problems.
-- Suggested fix: Add uptime checks for `/health` and `/ready`, app error alerts, Stripe webhook alerts, login/rate-limit alerts, DB size/backup alerts, and incident escalation.
+- Status: In-repo status/incident page and deployment checklist exist. Provider monitoring and alerting are still manual setup tasks.
+- Suggested fix: Add external uptime checks for `/health` and `/ready`, app error alerts, Stripe webhook alerts, login/rate-limit alerts, DB size/backup alerts, and incident escalation.
 - Blocks production: Yes for full-scale launch.
 
 ## P1: Email Verification For Local Accounts
@@ -78,6 +86,13 @@ These are the remaining actions after the production-readiness pass. Priorities 
 - Why it matters: Logout-all exists, but users/admins cannot inspect active sessions.
 - Suggested fix: Add account UI for last-used session fingerprints and revoke controls.
 - Blocks production: No.
+
+## P2: Legal Review Of Terms, Privacy, Consent, And Data Requests
+
+- Why it matters: The repo now has stronger Terms, Privacy, consent, account export, and deletion-request UX, but legal enforceability depends on jurisdiction and business process.
+- Status: User-facing controls and policy pages exist in code.
+- Suggested fix: Have an Australian lawyer/privacy advisor review Terms, Privacy, cookie/analytics consent, account deletion/export wording, alcohol/responsible-service wording, and data-retention requirements before broad launch.
+- Blocks production: Not for controlled beta, but strongly recommended before public scale or venue sales.
 
 ## P2: Formal Mobile/E2E Test Suite
 

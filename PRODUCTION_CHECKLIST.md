@@ -21,6 +21,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - Confirm venue-manager changes create pending review records and do not publish until approved.
 - Confirm `ROLE_PERMISSION_MATRIX.md` matches intended product behavior.
 - Confirm `SECURITY.md`, `PROD_READINESS_REPORT.md`, and `PROD_FOLLOWUPS.md` are current.
+- Confirm cookie/analytics consent banner appears in a fresh browser and optional analytics remain off until the user chooses or saves signed-in privacy settings.
 
 ## Required Production Environment
 
@@ -75,6 +76,8 @@ Use this for a full production release. For smaller private beta releases, also 
 - Confirm 18+ flow.
 - Confirm uploads require login and store the authenticated user, not a client-supplied user id.
 - Confirm users cannot verify their own uploads.
+- Confirm signed-in Account page can download a quick account export and that the JSON does not include raw evidence URLs, raw tokens, passwords, or exact stored upload coordinates.
+- Confirm signed-in Account page can create an account deletion-review request and that the request appears in the admin support/feedback queue as high priority.
 - Confirm free reveal limit is enforced server-side.
 - Submit venue data and confirm it is pending.
 - Log in as admin and approve/reject a submission.
@@ -91,6 +94,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - Confirm source photo inline storage is rejected in production.
 - Confirm security audit rows are created for admin review, venue-manager assignment, billing grants, and webhook failures.
 - Confirm mobile Safari/Chrome smoke test: map, venue details, submit data, account, venue portal.
+- Open `/status.html` and confirm outage/security/privacy reporting copy and provider verification steps are visible.
 
 ## Monitoring And Alerting Checklist
 

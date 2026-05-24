@@ -2900,6 +2900,7 @@
       <div class="primaryFilterRow" aria-label="Primary map filters">
         <button class="filterChip" type="button" data-filter-chip="happy_hour_near_me">Happy hour near me</button>
         <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
+        <button class="filterChip" type="button" data-filter-chip="pint_path_specials">Pint Path specials</button>
       </div>
 
       <div class="popularBeerRow" aria-label="Popular beer filters">
@@ -4300,6 +4301,60 @@
       `;
     }
 
+    function formatSpecialWindow(special) {
+      const dateRange = [formatDateLabel(special.startsAt), formatDateLabel(special.endsAt)]
+        .filter(Boolean)
+        .join(" to ");
+
+      return [special.scheduleNote, dateRange].filter(Boolean).join(" · ");
+    }
+
+    function renderSpecialPopupMarkup(specials) {
+      if (!specials.length) {
+        return "";
+      }
+
+      const rows = specials.map((special) => {
+        const detailsLocked = special.priceRedacted;
+        const windowCopy = formatSpecialWindow(special);
+        const detailRows = detailsLocked
+          ? `
+            <div class="beerPopup__happyEmpty">
+              Pint Path special available. Unlock full access to view price, discount, and conditions.
+            </div>
+          `
+          : [
+              renderHappyHourField("Price", special.priceText),
+              renderHappyHourField("Discount", special.discount),
+              renderHappyHourField("When", windowCopy),
+              renderHappyHourField("Details", special.description),
+            ].filter(Boolean).join("");
+
+        return `
+          <div class="beerPopup__happy">
+            <div class="beerPopup__happyHeader">
+              <div>
+                <div class="beerPopup__happyEyebrow">${escapeHtml(special.exclusive ? "Pint Path exclusive" : "Venue special")}</div>
+                <div class="beerPopup__happyStatus">${escapeHtml(special.title)}</div>
+              </div>
+              ${special.lastVerifiedAt ? `<div class="beerPopup__happyCaptured">Updated ${escapeHtml(formatDateLabel(special.lastVerifiedAt) || "recently")}</div>` : ""}
+            </div>
+            ${detailRows ? `<div class="beerPopup__happyGrid">${detailRows}</div>` : `<div class="beerPopup__happyEmpty">Special details are listed for this venue.</div>`}
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="beerPopup__section">
+          <div class="beerPopup__sectionHeader">
+            <span>Pint Path specials</span>
+            <span class="beerPopup__sectionCount">${escapeHtml(`${specials.length} active`)}</span>
+          </div>
+          ${rows}
+        </div>
+      `;
+    }
+
     function normalizeBeerPriceNumeric(source) {
       return window.MelbBeerMapLogic.normalizeBeerPriceNumeric(source);
     }
@@ -4362,6 +4417,36 @@
       }
 
       return [];
+    }
+
+    function getSpecialItems(row) {
+      const cleaned = getCleanedRecord(row);
+      const specials = Array.isArray(cleaned.specials) ? cleaned.specials : [];
+
+      return specials
+        .filter((special) => special && typeof special === "object")
+        .filter((special) => special.active !== false)
+        .map((special) => ({
+          id: special.id || "",
+          title: special.title || (special.exclusive ? "Pint Path exclusive" : "Venue special"),
+          description: special.description || null,
+          priceText: special.price_redacted
+            ? "Unlock details"
+            : special.price_text || (normalizePositiveNumber(special.price) === null ? null : formatPriceValue(normalizePositiveNumber(special.price))),
+          priceRedacted: Boolean(special.price_redacted),
+          discount: special.discount || null,
+          startsAt: special.starts_at || null,
+          endsAt: special.ends_at || null,
+          scheduleNote: special.schedule_note || null,
+          exclusive: Boolean(special.exclusive),
+          sourceType: special.source_type || null,
+          lastVerifiedAt: special.last_verified_at || null,
+        }))
+        .sort((left, right) => Number(right.exclusive) - Number(left.exclusive) || left.title.localeCompare(right.title));
+    }
+
+    function hasPintPathSpecial(row) {
+      return getSpecialItems(row).some((special) => special.exclusive);
     }
 
     function hasNumericPrice(beer) {
@@ -4773,6 +4858,29 @@
       };
     }
 
+    function businessSpecialRecordToSource(record) {
+      const price = normalizePositiveNumber(record.price);
+      const isRedacted = Boolean(record.priceRedacted);
+
+      return {
+        id: record.id,
+        title: record.specialTitle || record.beerName || "Venue special",
+        description: record.specialDescription || null,
+        price,
+        price_text: isRedacted ? "Unlock details" : price === null ? null : formatPriceValue(price),
+        price_redacted: isRedacted,
+        discount: record.specialDiscount || null,
+        starts_at: record.specialStartsAt || null,
+        ends_at: record.specialEndsAt || null,
+        schedule_note: record.specialScheduleNote || null,
+        exclusive: Boolean(record.specialExclusive),
+        active: true,
+        confidence_label: record.confidence,
+        source_type: record.sourceType,
+        last_verified_at: record.lastVerifiedAt,
+      };
+    }
+
     function mergeBusinessPriceRecords(row, records = []) {
       if (!records.length) {
         return row;
@@ -4786,19 +4894,37 @@
       const happyHourRecords = records
         .filter((record) => record.isHappyHourPrice || record.displayKind === "happy_hour" || record.happyHourDetails)
         .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime());
+      const specialRecords = records
+        .filter((record) => record.displayKind === "special")
+        .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime());
+      const mergedSpecials = Array.isArray(cleaned.specials)
+        ? cleaned.specials.filter((special) => special && typeof special === "object")
+        : [];
+      const specialIds = new Set(mergedSpecials.map((special) => special.id).filter(Boolean));
+
+      specialRecords.forEach((record) => {
+        const source = businessSpecialRecordToSource(record);
+
+        if (!source.id || specialIds.has(source.id)) {
+          return;
+        }
+
+        mergedSpecials.push(source);
+        specialIds.add(source.id);
+      });
 
       records.forEach((record) => {
-        if (record.displayKind === "happy_hour") {
+        if (record.lastVerifiedAt) {
+          verifiedDates.push(record.lastVerifiedAt);
+        }
+
+        if (record.displayKind === "happy_hour" || record.displayKind === "special") {
           return;
         }
         mergedBeers[getBusinessBeerKey(record)] = {
           ...(mergedBeers[getBusinessBeerKey(record)] || {}),
           ...businessPriceRecordToBeerSource(record),
         };
-
-        if (record.lastVerifiedAt) {
-          verifiedDates.push(record.lastVerifiedAt);
-        }
       });
 
       const latestVerified = verifiedDates
@@ -4809,6 +4935,7 @@
         cleaned: {
           ...cleaned,
           beers: mergedBeers,
+          specials: mergedSpecials,
           business_record_venue_id: records[0]?.venueId || cleaned.business_record_venue_id || null,
           ...(happyHourRecords.length
             ? {
@@ -4832,6 +4959,7 @@
         saved_at: latestVerified || row.saved_at,
         beer_synced_at: latestVerified || row.beer_synced_at,
         happy_hour_synced_at: happyHourRecords[0]?.lastVerifiedAt || row.happy_hour_synced_at,
+        special_synced_at: specialRecords[0]?.lastVerifiedAt || row.special_synced_at,
       };
     }
 
@@ -4928,10 +5056,14 @@
       return Boolean(viewState.beerQuery);
     }
 
+    function hasUsefulVenueSignal(row) {
+      return hasCapturedBeerData(row) || Boolean(getHappyHourDetails(row)?.exists) || hasPintPathSpecial(row);
+    }
+
     function getNeutralMarkerVisual(row, viewState) {
       return window.MelbBeerMapLogic.getMarkerVisual(null, {
-        mappedOnly: viewState.scope !== "needs_data" && hasCapturedBeerData(row),
-        needsData: viewState.scope === "needs_data" || !hasCapturedBeerData(row),
+        mappedOnly: viewState.scope !== "needs_data" && hasUsefulVenueSignal(row),
+        needsData: viewState.scope === "needs_data" || !hasUsefulVenueSignal(row),
       });
     }
 
@@ -4976,9 +5108,14 @@
         }
       }
 
+      if (viewState.filters.includes("pint_path_specials") && !hasPintPathSpecial(row)) {
+        return false;
+      }
+
       if (viewState.filters.includes("best_options")) {
         const hasTrustworthyOption =
           hasActiveHappyHourNow(row) ||
+          hasPintPathSpecial(row) ||
           hasKnownPriceForView(row, viewState) ||
           isRecentlyVerified(row);
 
@@ -6134,6 +6271,7 @@
               const cleaned = getCleanedRecord(item);
               const liveBeerItems = getDisplayBeerItems(item, viewState);
               const liveHappyHourDetails = getHappyHourDetails(item);
+              const liveSpecials = getSpecialItems(item);
               const liveFeaturedBeer = getFeaturedBeer(item, viewState);
               const liveHasCapturedData = hasCapturedBeerData(item);
               const featuredBeerState = liveFeaturedBeer ? getBeerDisplayState(liveFeaturedBeer, markerId) : null;
@@ -6193,6 +6331,11 @@
                     <div class="beerPopup__summaryLabel">Happy hour</div>
                     <div class="beerPopup__summaryValue">${escapeHtml(happyHourValue)}</div>
                     <div class="beerPopup__summarySub">${escapeHtml(happyHourSub)}</div>
+                  </div>
+                  <div class="beerPopup__summaryCard">
+                    <div class="beerPopup__summaryLabel">Specials</div>
+                    <div class="beerPopup__summaryValue">${escapeHtml(liveSpecials.some((special) => special.exclusive) ? "Pint Path" : liveSpecials.length ? "Listed" : "None listed")}</div>
+                    <div class="beerPopup__summarySub">${escapeHtml(liveSpecials.length ? `${liveSpecials.length} active venue special${liveSpecials.length === 1 ? "" : "s"}` : "No exclusive listed yet.")}</div>
                   </div>
                   <div class="beerPopup__summaryCard">
                     <div class="beerPopup__summaryLabel">Trust</div>
@@ -6261,6 +6404,7 @@
                   Happy-hour data exists for this venue. Unlock full access to view the days, times, specials, and discount details.
                 </div>
               `;
+              const specialMarkup = renderSpecialPopupMarkup(liveSpecials);
 
               return `
                 <div class="beerPopup">
@@ -6283,6 +6427,7 @@
                   </div>
                   ${captureStatusMarkup}
                   ${happyHourMarkup}
+                  ${specialMarkup}
                   <div class="beerPopup__actions">
                     <a class="beerPopup__button beerPopup__button--primary" href="${escapeHtml(submitUrl)}">Update this venue</a>
                     <a class="beerPopup__button" href="/pricing.html">Unlock full map</a>
@@ -6588,6 +6733,7 @@
               best_options: "best_options_used",
               happy_hour_active_now: "happy_hour_active_now_used",
               happy_hour_near_me: "happy_hour_near_me_used",
+              pint_path_specials: "special_viewed",
               recently_verified_near_me: "recently_verified_near_me_used",
               under_10: "under_10_filter_used",
               verified_only: "verified_only_filter_used",

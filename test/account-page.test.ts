@@ -43,6 +43,10 @@ function securityHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/security.html"), "utf8");
 }
 
+function statusHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/status.html"), "utf8");
+}
+
 describe("account page shell", () => {
   it("renders separate logged-out auth and logged-in dashboard states", () => {
     const html = accountHtml();
@@ -219,6 +223,7 @@ describe("account page shell", () => {
     const trust = trustHtml();
     const community = communityHtml();
     const security = securityHtml();
+    const status = statusHtml();
     const feedback = feedbackHtml();
     const nav = businessJs();
 
@@ -231,6 +236,13 @@ describe("account page shell", () => {
     expect(security).toContain("Security & privacy");
     expect(security).toContain("Log out all sessions");
     expect(security).toContain("Security report");
+    expect(trust).toContain("/status.html");
+    expect(security).toContain("/status.html");
+    expect(status).toContain("Pint Path status and incident reporting.");
+    expect(status).toContain("Provider checks still need human verification");
+    expect(status).toContain("Railway");
+    expect(status).toContain("Supabase");
+    expect(status).toContain("Resend");
     expect(feedback).toContain("privacy_request");
     expect(feedback).toContain("data_export_request");
     expect(feedback).toContain("account_deletion_request");
@@ -249,14 +261,39 @@ describe("account page shell", () => {
     expect(html).toContain("Allow optional product analytics");
     expect(html).toContain("Include my aggregate activity in venue insights");
     expect(html).toContain('id="dataRequestForm"');
+    expect(html).toContain('id="downloadAccountDataButton"');
+    expect(html).toContain('id="requestAccountDeletionButton"');
+    expect(html).toContain("/api/business/account/export");
+    expect(html).toContain("/api/business/account/delete-request");
+    expect(html).toContain("downloadJson");
     expect(html).toContain('id="logoutAllButton"');
     expect(html).toContain("/api/business/account/privacy-settings");
     expect(html).toContain("/api/business/auth/logout-all");
     expect(html).toContain("/community.html");
     expect(css).toContain(".accountSecurityPanel");
+    expect(css).toContain(".quickPrivacyActions");
     expect(css).toContain(".toggleLine");
     expect(script).toContain("setPrivacyPreferenceCache");
     expect(script).toContain("pintPathOptionalAnalyticsEnabled");
     expect(script).toContain("pintPathVenueReportsEnabled");
+  });
+
+  it("adds cookie consent and accessibility chrome around optional analytics", () => {
+    const css = businessCss();
+    const script = businessJs();
+
+    expect(script).toContain("pintPathCookieConsent");
+    expect(script).toContain("function installCookieConsent");
+    expect(script).toContain("Essential only");
+    expect(script).toContain("Allow optional analytics");
+    expect(script).toContain("Manage in Account");
+    expect(script).toContain("function hasAnalyticsConsent");
+    expect(script).toContain("if (!hasAnalyticsConsent())");
+    expect(script).toContain('aria-label="Primary"');
+    expect(script).toContain("function installAccessibilityChrome");
+    expect(script).toContain("Skip to main content");
+    expect(css).toContain(".cookieConsent");
+    expect(css).toContain(".skipLink");
+    expect(css).toContain(":focus-visible");
   });
 });

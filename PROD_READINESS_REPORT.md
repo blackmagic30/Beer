@@ -1,12 +1,23 @@
 # Pint Path Production Readiness Report
 
-Date: 2026-05-14
+Date: 2026-05-25
 
 ## Executive Summary
 
 Pint Path is substantially hardened for a controlled Melbourne beta, but it is not yet ready for full-scale production deployment without provider/dashboard verification. The application now has strong server-side price gating, admin/venue-manager authorization tests, pending-review workflows for venue-manager changes, production admin MFA step-up guards, private source-evidence references with signed server URLs, Redis-capable rate limiting, Stripe webhook signature handling, upload validation, security audit logging, production config guards, and a CI path that runs build/test/secret scan/dependency audit.
 
 The remaining blockers are now mostly provider and operations verification: Supabase MFA/AAL2 must be configured and tested, private Supabase Storage should be verified before broad source-evidence uploads, Redis must be provisioned for production rate limiting, backup/restore and monitoring must be tested, and live Stripe/Supabase/Google configuration must be verified in staging. The old phone-call automation surface has been retired from the active app.
+
+## Latest Patch: Account Controls, Consent, And Incident UX
+
+This pass closed several in-repo product-trust gaps without touching production data:
+
+- Added a browser privacy-choice banner. Optional analytics are off until the user chooses “Allow optional analytics” or saves signed-in privacy settings.
+- Added account quick export and deletion-review request endpoints/actions. Quick export returns account/submission/activity data without raw evidence files, raw evidence paths, raw tokens, passwords, or exact stored upload coordinates.
+- Added feedback priority/triage metadata so security, privacy, deletion, data export, billing, abuse, and moderation requests rise above general product feedback in admin queues.
+- Added a public `/status.html` status-and-incidents page that explains outage, security, privacy, and provider verification paths without claiming external monitoring/backups are already verified.
+- Added global skip-to-main-content and focus-visible affordances for baseline keyboard accessibility.
+- Updated tests and production checklist entries for consent, account export/deletion review, status page, and support triage.
 
 ## Production Readiness Verdict
 
@@ -125,6 +136,13 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 | `npm audit --audit-level=high` | Passed | `found 0 vulnerabilities`. |
 | `npm run check` | Passed | Build, 220 tests, and expanded tracked/untracked secret scan passed. |
 | local compiled-server smoke: `/health` and `/ready` on port `3138` | Passed | Built server booted, `/health` and `/ready` returned success. Local interface self-check logged unreachable link-local interfaces, but loopback readiness passed. |
+| `npm run build` | Passed | TypeScript build and schema copy passed after latest account/consent/status patch. |
+| `npm test -- test/business-demo.test.ts test/account-page.test.ts` | Passed | Vitest ran the repo test suite; 16 files and 151 tests passed. |
+| `npm test` | Passed | 16 test files and 151 tests passed. |
+| `npm run check` | Passed | Build, full tests, and secret scan passed. |
+| `npm run security:scan` | Passed | 154 tracked/untracked files checked. |
+| `npm run security:audit` | Passed | `found 0 vulnerabilities`. |
+| `git diff --check` | Passed | No whitespace errors after latest patch. |
 
 If this document changes after final validation, rerun all commands in `PRODUCTION_CHECKLIST.md`.
 
@@ -143,6 +161,7 @@ P1 blockers before broad paid/public rollout:
 - Redis-backed rate limiting must be provisioned and smoke-tested with `REDIS_URL`; do not use the in-memory production override for full-scale launch.
 - Supabase Confirm Email/custom SMTP must be configured for verified-account onboarding. Local email/password self-serve remains blocked for production until verification is implemented.
 - Production observability is currently mostly logs/checklists rather than alerting/tracing/SLOs.
+- Legal/privacy review of Terms, Privacy, cookie/analytics consent, account export/deletion wording, and alcohol/responsible-service wording remains a human/provider task before broad public scale.
 
 ## Assumptions Made
 

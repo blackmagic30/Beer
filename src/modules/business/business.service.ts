@@ -17,6 +17,7 @@ import {
   type BusinessSubmission,
   type BusinessSubmissionItem,
   type ConfidenceLabel,
+  type FeedbackPriority,
   type PublicVenuePriceRecord,
   type ServingSize,
   type SourceEvidenceObject,
@@ -442,14 +443,31 @@ function isFullAccess(account: BusinessAccount | null): boolean {
 }
 
 function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceRecord & { priceRedacted: true } {
+  const isSpecial = record.displayKind === "special";
+
   return {
     ...record,
+    beerName: isSpecial
+      ? record.specialExclusive
+        ? "Pint Path exclusive"
+        : "Venue special"
+      : record.beerName,
     price: null,
     happyHourDetails: null,
     happyHourTitle: null,
     happyHourDays: [],
     happyHourStartTime: null,
     happyHourEndTime: null,
+    specialTitle: isSpecial
+      ? record.specialExclusive
+        ? "Pint Path exclusive"
+        : "Venue special"
+      : record.specialTitle ?? null,
+    specialDescription: isSpecial ? null : record.specialDescription ?? null,
+    specialDiscount: isSpecial ? null : record.specialDiscount ?? null,
+    specialStartsAt: isSpecial ? null : record.specialStartsAt ?? null,
+    specialEndsAt: isSpecial ? null : record.specialEndsAt ?? null,
+    specialScheduleNote: isSpecial ? null : record.specialScheduleNote ?? null,
     sourceSubmissionId: null,
     priceRedacted: true,
   };
@@ -1643,6 +1661,84 @@ export class BusinessService {
     };
   }
 
+  exportAccountData(account: BusinessAccount) {
+    const preferences = this.repository.getAccountPreferences(account.id);
+    const privacySettings =
+      this.repository.getAccountPrivacySettings(account.id) ??
+      this.repository.getDefaultAccountPrivacySettings(account.id);
+    const submissions = this.repository.listSubmissions({ userId: account.id, limit: 1000 }).map((submission) => {
+      const detail = this.repository.getSubmissionById(submission.id);
+      return {
+        id: submission.id,
+        venueId: submission.venueId,
+        venueName: submission.venueName,
+        suburb: submission.suburb,
+        status: submission.status,
+        submissionType: submission.submissionType,
+        observedAt: submission.observedAt,
+        notes: submission.notes,
+        pointsAwarded: submission.pointsAwarded,
+        pointsEligibleByLocation: submission.pointsEligibleByLocation,
+        pointsEligibilityReason: submission.pointsEligibilityReason,
+        distanceToVenueMeters: submission.distanceToVenueMeters,
+        uploadLocationCapturedAt: submission.uploadLocationCapturedAt,
+        uploadAccuracyMeters: submission.uploadAccuracyMeters,
+        hasPrivateEvidence: Boolean(submission.sourcePhotoUrl),
+        reviewedAt: submission.reviewedAt,
+        rejectionReason: submission.rejectionReason,
+        fraudFlagged: submission.fraudFlagged,
+        createdAt: submission.createdAt,
+        updatedAt: submission.updatedAt,
+        items: (detail?.items ?? []).map((item) => ({
+          id: item.id,
+          beerName: item.beerName,
+          servingSize: item.servingSize,
+          price: item.price,
+          isHappyHourPrice: item.isHappyHourPrice,
+          happyHourDetails: item.happyHourDetails,
+          isOnTap: item.isOnTap,
+          confidence: item.confidence,
+          createdAt: item.createdAt,
+        })),
+      };
+    });
+
+    this.recordUserActivity({
+      account,
+      eventType: "account_data_exported",
+      relatedEntityType: "account",
+      relatedEntityId: account.id,
+      metadata: { format: "json", submissionCount: submissions.length },
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "account_data_exported",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { submissionCount: submissions.length },
+    });
+
+    return {
+      exportedAt: nowIso(),
+      exportFormat: "pint_path_account_export_v1",
+      note: "Private evidence files, raw photo data, raw tokens, passwords, and exact stored upload coordinates are not included in this quick self-service export.",
+      account: sanitizeAccount(account),
+      profile: this.repository.getProfileById(account.id),
+      privacySettings,
+      preferences: preferences ?? null,
+      savedItems: this.repository.listSavedItems(account.id),
+      recentSearches: this.repository.listRecentSearches(account.id, 100),
+      submissions,
+      verifications: this.repository.listVerificationsForUser(account.id, 1000),
+      activity: this.repository.listUserActivityEvents(account.id, 1000),
+      ageVerification: {
+        latest: this.repository.getLatestAgeVerification(account.id),
+        status: account.ageVerificationStatus,
+        isOver18Verified: account.isOver18Verified,
+      },
+    };
+  }
+
   private getSubmissionLocationEligibility(input: CreateSubmissionInput): {
     uploadLatitude: number | null;
     uploadLongitude: number | null;
@@ -2037,8 +2133,43 @@ export class BusinessService {
     return { removed };
   }
 
+  private classifyFeedback(input: FeedbackInput): {
+    priority: FeedbackPriority;
+    triageReason: string;
+  } {
+    switch (input.feedbackType) {
+      case "security_report":
+      case "account_deletion_request":
+        return {
+          priority: "high",
+          triageReason: "Sensitive account/security request requires priority admin review.",
+        };
+      case "privacy_request":
+      case "data_export_request":
+      case "abuse_report":
+      case "moderation_appeal":
+      case "billing_support":
+        return {
+          priority: "medium",
+          triageReason: "Privacy, billing, abuse, or moderation workflow needs tracked follow-up.",
+        };
+      case "wrong_data":
+      case "venue_suggestion":
+        return {
+          priority: "normal",
+          triageReason: "Product/data quality feedback for normal triage.",
+        };
+      default:
+        return {
+          priority: "low",
+          triageReason: "General product feedback.",
+        };
+    }
+  }
+
   submitFeedback(account: BusinessAccount | null, input: FeedbackInput) {
     const now = nowIso();
+    const triage = this.classifyFeedback(input);
     const feedback = this.repository.createFeedback({
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
@@ -2047,6 +2178,8 @@ export class BusinessService {
       message: input.message,
       venueId: input.venueId,
       venueName: input.venueName,
+      priority: triage.priority,
+      triageReason: triage.triageReason,
       now,
     });
 
@@ -2059,9 +2192,52 @@ export class BusinessService {
       metadata: { feedbackType: input.feedbackType, feedbackId: feedback.id },
     });
 
+    if (["security_report", "privacy_request", "data_export_request", "account_deletion_request"].includes(input.feedbackType)) {
+      this.auditSecurity({
+        actor: account,
+        action: `feedback_${input.feedbackType}`,
+        targetType: "feedback",
+        targetId: feedback.id,
+        metadata: {
+          feedbackType: input.feedbackType,
+          priority: feedback.priority,
+          venueId: input.venueId,
+        },
+      });
+    }
+
     return {
       feedback,
       message: "Thanks. Feedback is saved for admin review.",
+    };
+  }
+
+  requestAccountDeletion(account: BusinessAccount, input: { message?: string | null | undefined }) {
+    const message = [
+      "Account deletion request from signed-in account.",
+      input.message ? `User note: ${input.message}` : null,
+      "Admin must verify ownership, retain legally required moderation/billing/security records, and confirm deletion manually.",
+    ].filter(Boolean).join("\n\n");
+
+    const result = this.submitFeedback(account, {
+      anonymousSessionId: null,
+      feedbackType: "account_deletion_request",
+      message,
+      venueId: null,
+      venueName: null,
+    });
+
+    this.recordUserActivity({
+      account,
+      eventType: "account_deletion_requested",
+      relatedEntityType: "feedback",
+      relatedEntityId: result.feedback.id,
+      metadata: { requestType: "account_deletion_request" },
+    });
+
+    return {
+      ...result,
+      message: "Deletion request saved. An admin will review retention requirements before removing account data.",
     };
   }
 

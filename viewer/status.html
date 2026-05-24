@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Status & Incidents | Pint Path</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell trustPage">
+    <div id="nav"></div>
+
+    <section class="hero hero--split">
+      <div>
+        <div class="eyebrow">Operational status</div>
+        <h1>Pint Path status and incident reporting.</h1>
+        <p class="lead">This beta status page explains how to report outages, privacy issues, account problems, and security concerns while production monitoring is being formalised.</p>
+      </div>
+      <article class="heroCard">
+        <strong>Current beta posture</strong>
+        <p>Public map browsing, account sign-in, uploads, and private evidence storage should be checked after every deploy. Provider dashboards remain the source of truth for uptime, backups, and mail delivery.</p>
+      </article>
+    </section>
+
+    <section class="grid grid--three">
+      <article class="card">
+        <div class="eyebrow">Report an outage</div>
+        <h2>Use Feedback</h2>
+        <p class="muted">If the map, login, uploads, or price reveals fail, use Feedback and select bug, security report, privacy request, or billing support as appropriate.</p>
+        <a class="button" href="/feedback.html">Send report</a>
+      </article>
+      <article class="card">
+        <div class="eyebrow">Security</div>
+        <h2>Do not exploit bugs</h2>
+        <p class="muted">Report access-control, private evidence, account, billing, or API issues promptly. Do not scrape private data or test other users’ accounts.</p>
+        <a class="button" href="/security.html">Security guidance</a>
+      </article>
+      <article class="card">
+        <div class="eyebrow">Privacy</div>
+        <h2>Data requests</h2>
+        <p class="muted">Signed-in users can download a quick account export and request deletion review from Account. Legal or complex requests remain manual review items.</p>
+        <a class="button" href="/account.html#privacyControlsSection">Account controls</a>
+      </article>
+    </section>
+
+    <section class="panel trustStack">
+      <div class="sectionHeader">
+        <div>
+          <div class="eyebrow">Launch operations</div>
+          <h2>Provider checks still need human verification</h2>
+        </div>
+        <p class="muted">This page is not a live external status monitor yet. Use these checks before treating a deploy as production-ready.</p>
+      </div>
+      <div class="policyMatrix">
+        <div class="policyRow"><strong>Railway</strong><span>Confirm health checks, latest deploy, logs, restart policy, and rollback target.</span></div>
+        <div class="policyRow"><strong>Supabase</strong><span>Confirm Auth provider health, RLS enabled, private storage bucket is private, and backup/PITR status.</span></div>
+        <div class="policyRow"><strong>Resend</strong><span>Confirm domain, DKIM/SPF/DMARC, bounce handling, and delivery for signup/reset emails.</span></div>
+        <div class="policyRow"><strong>Stripe</strong><span>Keep real payments disabled until signed webhook tests and product prices are confirmed.</span></div>
+        <div class="policyRow"><strong>Google Maps</strong><span>Confirm browser key referrer restrictions and server key restrictions before launch.</span></div>
+      </div>
+    </section>
+
+    <p class="footerCopy">
+      <a href="/trust.html">Trust Centre</a> ·
+      <a href="/security.html">Security</a> ·
+      <a href="/privacy.html">Privacy</a> ·
+      <a href="/terms.html">Terms</a>
+    </p>
+  </main>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("trust");
+    });
+  </script>
+</body>
+</html>

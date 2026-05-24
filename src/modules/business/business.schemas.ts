@@ -152,6 +152,10 @@ export const accountPrivacySettingsSchema = z.object({
   emailUpdatesEnabled: z.boolean().default(false),
 });
 
+export const accountDeletionRequestSchema = z.object({
+  message: nullableTrimmedStringSchema.default(null),
+});
+
 export const submissionItemSchema = z.object({
   beerName: z.string().trim().min(1).max(120),
   servingSize: servingSizeSchema.default("pint"),
@@ -610,6 +614,7 @@ export type AccountPrivacySettingsInput = z.infer<typeof accountPrivacySettingsS
 export type SaveItemInput = z.infer<typeof saveItemSchema>;
 export type RemoveSavedItemInput = z.infer<typeof removeSavedItemSchema>;
 export type FeedbackInput = z.infer<typeof feedbackSchema>;
+export type AccountDeletionRequestInput = z.infer<typeof accountDeletionRequestSchema>;
 export type WrongPriceReportInput = z.infer<typeof wrongPriceReportSchema>;
 export type VenueRequestInput = z.infer<typeof venueRequestSchema>;
 export type VenueInterestInput = z.infer<typeof venueInterestSchema>;

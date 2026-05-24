@@ -337,6 +337,10 @@
           <form id="dataRequestForm" class="panel form">
             <h2>Privacy, support, and appeals</h2>
             <p class="muted">Create a tracked request for export, deletion, correction, moderation appeals, security reports, or billing help.</p>
+            <div class="quickPrivacyActions">
+              <button id="downloadAccountDataButton" class="button" type="button">Download my data</button>
+              <button id="requestAccountDeletionButton" class="button button--danger" type="button">Request deletion review</button>
+            </div>
             <label class="field">Request type
               <select name="feedbackType">
                 <option value="data_export_request">Export my account data</option>
@@ -438,6 +442,18 @@
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
+    }
+
+    function downloadJson(filename, payload) {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     function formatPrice(value) {
@@ -1053,6 +1069,30 @@
           });
           $("dataRequestForm").reset();
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Request saved. We’ll review it through the support queue.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
+        }
+      });
+      $("downloadAccountDataButton").addEventListener("click", async () => {
+        try {
+          const result = await MelbBeerBusiness.apiFetch("/api/business/account/export");
+          downloadJson(`pint-path-account-export-${new Date().toISOString().slice(0, 10)}.json`, result);
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Account export downloaded. Private evidence files are not included in this quick export.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
+        }
+      });
+      $("requestAccountDeletionButton").addEventListener("click", async () => {
+        const confirmed = window.confirm("Request an admin review to delete your Pint Path account? This does not instantly delete moderation, billing, security, or legal records.");
+        if (!confirmed) {
+          return;
+        }
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/account/delete-request", {
+            method: "POST",
+            body: JSON.stringify({ message: "Self-service deletion review requested from account dashboard." }),
+          });
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Deletion review request saved. Admin will verify retention requirements before actioning it.");
         } catch (error) {
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }

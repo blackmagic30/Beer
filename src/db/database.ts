@@ -59,6 +59,11 @@ const submissionColumns = [
   { name: "points_eligibility_reason", definition: "TEXT" },
 ] as const;
 
+const feedbackColumns = [
+  { name: "priority", definition: "TEXT NOT NULL DEFAULT 'normal'" },
+  { name: "triage_reason", definition: "TEXT" },
+] as const;
+
 function ensureColumns(
   database: BetterSqlite3.Database,
   tableName: string,
@@ -112,6 +117,9 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_events_beer_created
       ON events (beer_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_feedback_priority_created
+      ON feedback (priority, created_at DESC);
   `);
 }
 
@@ -265,6 +273,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "accounts", accountsColumns);
   ensureColumns(database, "auth_sessions", authSessionsColumns);
   ensureColumns(database, "submissions", submissionColumns);
+  ensureColumns(database, "feedback", feedbackColumns);
   normalizeVenueTiers(database);
   ensureIndexes(database);
 }

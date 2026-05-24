@@ -34,6 +34,7 @@ export type FeedbackType =
   | "security_report"
   | "abuse_report"
   | "billing_support";
+export type FeedbackPriority = "low" | "normal" | "medium" | "high";
 export type RequestType = "missing_venue" | "missing_beer" | "verify_venue" | "verify_beer_at_venue";
 export type BarMembershipTier = "basic" | "plus" | "pro";
 type StoredBarMembershipTier = BarMembershipTier | "free" | "super_premium";
@@ -186,7 +187,14 @@ export interface PublicVenuePriceRecord {
   happyHourDays?: string[];
   happyHourStartTime?: string | null;
   happyHourEndTime?: string | null;
-  displayKind?: "beer" | "happy_hour";
+  displayKind?: "beer" | "happy_hour" | "special";
+  specialTitle?: string | null;
+  specialDescription?: string | null;
+  specialDiscount?: string | null;
+  specialStartsAt?: string | null;
+  specialEndsAt?: string | null;
+  specialScheduleNote?: string | null;
+  specialExclusive?: boolean;
   isOnTap: TapStatus;
   confidence: ConfidenceLabel;
   sourceType: string;
@@ -236,6 +244,8 @@ export interface FeedbackItem {
   venueId: string | null;
   venueName: string | null;
   status: string;
+  priority: FeedbackPriority;
+  triageReason: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -710,6 +720,8 @@ interface FeedbackRow {
   venue_id: string | null;
   venue_name: string | null;
   status: string;
+  priority: FeedbackPriority;
+  triage_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1137,6 +1149,8 @@ function toFeedback(row: FeedbackRow): FeedbackItem {
     venueId: row.venue_id,
     venueName: row.venue_name,
     status: row.status,
+    priority: row.priority,
+    triageReason: row.triage_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2445,6 +2459,9 @@ export class BusinessRepository {
     const happyWhere = venueId
       ? "WHERE happy.venue_id = ? AND happy.active = 1 AND profile.active = 1"
       : "WHERE happy.active = 1 AND profile.active = 1";
+    const specialWhere = venueId
+      ? "WHERE special.venue_id = ? AND special.active = 1 AND profile.active = 1"
+      : "WHERE special.active = 1 AND profile.active = 1";
     const beerRows = this.database
       .prepare(
         `SELECT
@@ -2473,6 +2490,20 @@ export class BusinessRepository {
          LIMIT ?`,
       )
       .all(...values) as Array<BarHappyHourRow & { profile_name: string | null; profile_suburb: string | null; profile_address: string | null }>;
+    const specialRows = this.database
+      .prepare(
+        `SELECT
+           special.*,
+           profile.name AS profile_name,
+           profile.suburb AS profile_suburb,
+           profile.address AS profile_address
+         FROM venue_specials special
+         INNER JOIN venue_profiles profile ON profile.venue_id = special.venue_id
+         ${specialWhere}
+         ORDER BY special.exclusive DESC, special.updated_at DESC
+         LIMIT ?`,
+      )
+      .all(...values) as Array<BarSpecialRow & { profile_name: string | null; profile_suburb: string | null; profile_address: string | null }>;
 
     return [
       ...beerRows.map((row) => ({
@@ -2516,6 +2547,34 @@ export class BusinessRepository {
         isOnTap: "unknown" as const,
         confidence: "venue_confirmed" as const,
         sourceType: "venue_manager_portal",
+        sourceSubmissionId: null,
+        lastVerifiedAt: row.updated_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      })),
+      ...specialRows.map((row) => ({
+        id: `venue_special:${row.id}`,
+        venueId: row.venue_id,
+        venueName: row.profile_name || row.venue_id,
+        venueAddress: row.profile_address,
+        suburb: row.profile_suburb,
+        beerName: row.exclusive ? "Pint Path exclusive" : row.title || "Venue special",
+        normalizedBeerId: null,
+        servingSize: "other" as const,
+        price: row.price,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        specialTitle: row.title,
+        specialDescription: row.description,
+        specialDiscount: row.discount,
+        specialStartsAt: row.starts_at,
+        specialEndsAt: row.ends_at,
+        specialScheduleNote: row.schedule_note,
+        specialExclusive: Boolean(row.exclusive),
+        displayKind: "special" as const,
+        isOnTap: "unknown" as const,
+        confidence: "venue_confirmed" as const,
+        sourceType: row.exclusive ? "venue_manager_portal:pint_path_exclusive" : "venue_manager_portal:special",
         sourceSubmissionId: null,
         lastVerifiedAt: row.updated_at,
         createdAt: row.created_at,
@@ -2702,13 +2761,16 @@ export class BusinessRepository {
     message: string;
     venueId: string | null;
     venueName: string | null;
+    priority: FeedbackPriority;
+    triageReason: string | null;
     now: string;
   }): FeedbackItem {
     this.database
       .prepare(
         `INSERT INTO feedback (
-          id, user_id, anonymous_session_id, feedback_type, message, venue_id, venue_name, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, user_id, anonymous_session_id, feedback_type, message, venue_id, venue_name,
+          priority, triage_reason, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -2718,6 +2780,8 @@ export class BusinessRepository {
         input.message,
         input.venueId,
         input.venueName,
+        input.priority,
+        input.triageReason,
         input.now,
         input.now,
       );
@@ -2727,7 +2791,18 @@ export class BusinessRepository {
 
   listFeedback(limit: number): FeedbackItem[] {
     const rows = this.database
-      .prepare("SELECT * FROM feedback ORDER BY created_at DESC LIMIT ?")
+      .prepare(
+        `SELECT * FROM feedback
+         ORDER BY
+           CASE priority
+             WHEN 'high' THEN 0
+             WHEN 'medium' THEN 1
+             WHEN 'normal' THEN 2
+             ELSE 3
+           END,
+           created_at DESC
+         LIMIT ?`,
+      )
       .all(limit) as FeedbackRow[];
     return rows.map(toFeedback);
   }

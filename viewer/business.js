@@ -5,6 +5,7 @@ const LEGAL_ACCEPTANCE_KEY = "pintPathLegalAcceptance";
 const LEGAL_POLICY_VERSION = "2026-05-24";
 const OPTIONAL_ANALYTICS_KEY = "pintPathOptionalAnalyticsEnabled";
 const VENUE_REPORTS_KEY = "pintPathVenueReportsEnabled";
+const COOKIE_CONSENT_KEY = "pintPathCookieConsent";
 
 function getAuthToken() {
   return window.localStorage.getItem(AUTH_TOKEN_KEY);
@@ -37,9 +38,35 @@ function boolStorageEnabled(key, fallback = true) {
   return value !== "false";
 }
 
+function getCookieConsentDecision() {
+  return window.localStorage.getItem(COOKIE_CONSENT_KEY);
+}
+
+function hasAnalyticsConsent() {
+  const explicitOptional = window.localStorage.getItem(OPTIONAL_ANALYTICS_KEY);
+  if (explicitOptional != null) {
+    return explicitOptional !== "false";
+  }
+
+  return getCookieConsentDecision() === "optional";
+}
+
+function setCookieConsentDecision(decision) {
+  const normalized = decision === "optional" ? "optional" : "essential";
+  window.localStorage.setItem(COOKIE_CONSENT_KEY, normalized);
+  if (normalized === "optional") {
+    window.localStorage.setItem(OPTIONAL_ANALYTICS_KEY, "true");
+    window.localStorage.setItem(VENUE_REPORTS_KEY, "true");
+  } else {
+    window.localStorage.setItem(OPTIONAL_ANALYTICS_KEY, "false");
+    window.localStorage.setItem(VENUE_REPORTS_KEY, "false");
+  }
+}
+
 function setPrivacyPreferenceCache(settings = {}) {
   if ("optionalAnalyticsEnabled" in settings) {
     window.localStorage.setItem(OPTIONAL_ANALYTICS_KEY, settings.optionalAnalyticsEnabled ? "true" : "false");
+    window.localStorage.setItem(COOKIE_CONSENT_KEY, settings.optionalAnalyticsEnabled ? "optional" : "essential");
   }
   if ("venueReportInclusionEnabled" in settings) {
     window.localStorage.setItem(VENUE_REPORTS_KEY, settings.venueReportInclusionEnabled ? "true" : "false");
@@ -401,7 +428,7 @@ function renderNav(active = "") {
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
   const feedbackLink = isFieldTestMode() ? `<a ${active === "feedback" ? 'class="pill"' : ""} href="/feedback.html">Feedback</a>` : "";
   return `
-    <nav class="topNav">
+    <nav class="topNav" aria-label="Primary">
       <a class="brand" href="/">
         <strong>Pint Path</strong>
         <span>Verified local price index</span>
@@ -434,6 +461,56 @@ function installFieldTestChrome() {
   document.body.appendChild(feedbackButton);
 }
 
+function installAccessibilityChrome() {
+  if (!document.getElementById("mainContent")) {
+    const main = document.querySelector("main");
+    if (main) {
+      main.id = "mainContent";
+      main.setAttribute("tabindex", "-1");
+    }
+  }
+
+  if (!document.getElementById("skipToMainContent")) {
+    const skipLink = document.createElement("a");
+    skipLink.id = "skipToMainContent";
+    skipLink.className = "skipLink";
+    skipLink.href = "#mainContent";
+    skipLink.textContent = "Skip to main content";
+    document.body.prepend(skipLink);
+  }
+}
+
+function installCookieConsent() {
+  if (getCookieConsentDecision() || window.localStorage.getItem(OPTIONAL_ANALYTICS_KEY) != null || document.getElementById("cookieConsent")) {
+    return;
+  }
+
+  const banner = document.createElement("aside");
+  banner.id = "cookieConsent";
+  banner.className = "cookieConsent";
+  banner.setAttribute("aria-label", "Cookie and analytics choices");
+  banner.innerHTML = `
+    <div>
+      <strong>Privacy choices</strong>
+      <p>Essential cookies keep login and security working. Optional analytics help improve map search and aggregate venue reports.</p>
+    </div>
+    <div class="cookieConsent__actions">
+      <button class="button" type="button" data-cookie-choice="essential">Essential only</button>
+      <button class="button button--primary" type="button" data-cookie-choice="optional">Allow optional analytics</button>
+      <a class="button" href="/account.html#privacyControlsSection">Manage in Account</a>
+    </div>
+  `;
+
+  banner.querySelectorAll("[data-cookie-choice]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setCookieConsentDecision(button.getAttribute("data-cookie-choice"));
+      banner.remove();
+    });
+  });
+
+  document.body.appendChild(banner);
+}
+
 function formatDate(value) {
   if (!value) {
     return "Not set";
@@ -450,7 +527,7 @@ function setStatus(element, message, isError = false) {
 
 async function trackEvent(eventType, metadata = {}) {
   try {
-    if (!boolStorageEnabled(OPTIONAL_ANALYTICS_KEY, true)) {
+    if (!hasAnalyticsConsent()) {
       return;
     }
     const safeMetadata = Object.fromEntries(
@@ -490,6 +567,9 @@ window.MelbBeerBusiness = {
   getSupabaseConfig,
   getSupabaseOauthProviders,
   getSupabaseClient,
+  getCookieConsentDecision,
+  setCookieConsentDecision,
+  hasAnalyticsConsent,
   getCanonicalBaseUrl,
   getSafeReturnPath,
   getAuthReturnPathFromLocation,
@@ -506,9 +586,15 @@ window.MelbBeerBusiness = {
   requestPasswordReset,
   renderNav,
   installFieldTestChrome,
+  installAccessibilityChrome,
+  installCookieConsent,
   formatDate,
   setStatus,
   trackEvent,
 };
 
-window.addEventListener("DOMContentLoaded", installFieldTestChrome);
+window.addEventListener("DOMContentLoaded", () => {
+  installAccessibilityChrome();
+  installFieldTestChrome();
+  installCookieConsent();
+});

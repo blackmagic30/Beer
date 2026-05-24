@@ -294,14 +294,14 @@
                   <input name="scheduleNote" placeholder="e.g. Fridays 4pm-7pm only" />
                 </label>
                 <div class="dayChecklist">
-                  <label class="dayChip"><input name="exclusive" type="checkbox" /> Exclusive special</label>
+                  <label class="dayChip"><input name="exclusive" type="checkbox" /> Pint Path exclusive</label>
                   <label class="dayChip"><input name="active" type="checkbox" checked /> Active</label>
                 </div>
                 <div class="actionRow">
                   <button class="button button--primary" type="submit">Save special</button>
                   <button id="resetSpecialForm" class="button" type="button">Clear form</button>
                 </div>
-                <div id="specialStatus" class="notice">Use this for current deals, weekly specials or future featured-special ideas.</div>
+                <div id="specialStatus" class="notice">Use this for current deals, weekly specials, or a Pint Path exclusive that can appear in the public map filter after review.</div>
               </form>
               <article class="panel">
                 <h2>Current deals and specials</h2>
@@ -751,7 +751,7 @@
           <div class="listItem dataRow">
             <div>
               <strong>${escapeHtml(item.title)}</strong>
-              <div class="muted">${item.active ? "Active" : "Inactive"}${item.exclusive ? " · Exclusive special" : ""}${item.price != null ? ` · ${money(item.price)}` : ""}</div>
+              <div class="muted">${item.active ? "Active" : "Inactive"}${item.exclusive ? " · Pint Path exclusive" : ""}${item.price != null ? ` · ${money(item.price)}` : ""}</div>
               <p class="helperCopy">${escapeHtml(item.description)}</p>
             </div>
             <div class="rowActions">

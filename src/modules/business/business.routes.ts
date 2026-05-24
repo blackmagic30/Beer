@@ -8,6 +8,7 @@ import { createRateLimiter } from "../../middleware/rate-limit.js";
 
 import {
   accountPreferencesSchema,
+  accountDeletionRequestSchema,
   accountPrivacySettingsSchema,
   adminDashboardQuerySchema,
   adminUserStatusSchema,
@@ -187,6 +188,17 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(accountPrivacySettingsSchema, req.body, "Invalid privacy settings payload");
     res.json(success(businessService.savePrivacySettings(account, body)));
+  });
+
+  router.get("/account/export", (req, res) => {
+    const account = requireAccount(req, businessService);
+    res.json(success(businessService.exportAccountData(account)));
+  });
+
+  router.post("/account/delete-request", (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(accountDeletionRequestSchema, req.body, "Invalid deletion request payload");
+    res.json(success(businessService.requestAccountDeletion(account, body)));
   });
 
   router.post("/account/saved-items", (req, res) => {

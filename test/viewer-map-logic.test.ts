@@ -212,6 +212,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('id="activeFilterSummary"');
     expect(html).toContain('data-area-chip="Fitzroy"');
     expect(html).toContain('data-filter-chip="best_options"');
+    expect(html).toContain('data-filter-chip="pint_path_specials"');
     expect(html).toContain('data-premium-filter="true"');
     expect(html).toContain('class="belowMapInsights"');
     expect(html).toContain('id="accessSummary"');
@@ -221,11 +222,18 @@ describe("viewer map UI wiring", () => {
   it("renders location-aware controls without requesting location on page load", () => {
     expect(html).toContain('id="useLocationButton"');
     expect(html).toContain('data-filter-chip="happy_hour_near_me"');
+    expect(html).toContain('data-filter-chip="pint_path_specials"');
     expect(html).toContain('data-filter-chip="recently_verified_near_me"');
     expect(html).toContain('data-filter-chip="nearest"');
     expect(html).toContain('id="nearMeRadiusSelect"');
     expect(html).toContain("navigator.geolocation.getCurrentPosition");
     expect(html).not.toContain("watchPosition");
+  });
+
+  it("renders a Pint Path specials filter and locked special-detail copy", () => {
+    expect(html).toContain("Pint Path specials");
+    expect(html).toContain("hasPintPathSpecial(row)");
+    expect(html).toContain("Pint Path special available. Unlock full access to view price, discount, and conditions.");
   });
 
   it("keeps the public map top area compact and touch-friendly on phones", () => {

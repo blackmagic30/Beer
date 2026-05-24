@@ -394,12 +394,17 @@ CREATE TABLE IF NOT EXISTS feedback (
   venue_id TEXT,
   venue_name TEXT,
   status TEXT NOT NULL DEFAULT 'open',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  triage_reason TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_feedback_status_created
   ON feedback (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_priority_created
+  ON feedback (priority, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS wrong_price_reports (
   id TEXT PRIMARY KEY,
