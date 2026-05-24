@@ -120,12 +120,14 @@ async function requestJson(
 function signup(
   harness: Harness,
   email: string,
-  input: { ageConfirmed?: boolean | undefined } = {},
+  input: { ageConfirmed?: boolean | undefined; termsAccepted?: boolean | undefined; privacyAccepted?: boolean | undefined } = {},
 ): { token: string; account: BusinessAccount } {
   const session = harness.service.signup({
     email,
     password: PASSWORD,
     ageConfirmed: input.ageConfirmed ?? true,
+    termsAccepted: input.termsAccepted ?? true,
+    privacyAccepted: input.privacyAccepted ?? true,
   });
   return {
     token: session.token,
@@ -549,6 +551,9 @@ describe("Pint Path release-readiness public contracts and accessibility smoke",
       "viewer/account.html",
       "viewer/submit.html",
       "viewer/venue-portal.html",
+      "viewer/trust.html",
+      "viewer/community.html",
+      "viewer/security.html",
     ];
 
     for (const page of pages) {

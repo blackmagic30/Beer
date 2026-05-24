@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BusinessRepository, type BarPendingChange, type SubmissionType, type SubscriptionStatus } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
 import { errorHandler } from "../src/middleware/error-handler.js";
-import { barHappyHourSchema, createSubmissionSchema, normalizeHappyHourTime } from "../src/modules/business/business.schemas.js";
+import { authSignupSchema, barHappyHourSchema, createSubmissionSchema, normalizeHappyHourTime } from "../src/modules/business/business.schemas.js";
 import { createBusinessRouter } from "../src/modules/business/business.routes.js";
 import { BusinessService, canAccessAgeGatedRewards } from "../src/modules/business/business.service.js";
 
@@ -535,6 +535,66 @@ describe("Supabase account and verification foundation", () => {
     expect(JSON.stringify(dashboard.recentSubmissions)).not.toContain("private:evidence");
   });
 
+  it("saves account privacy settings and suppresses opted-out optional analytics", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const account = createAccount(repository, "privacy-settings-user");
+
+    expect(service.getAccountDashboard(account).privacySettings).toEqual(expect.objectContaining({
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: true,
+      productResearchEnabled: true,
+      emailUpdatesEnabled: false,
+    }));
+
+    const saved = service.savePrivacySettings(account, {
+      optionalAnalyticsEnabled: false,
+      venueReportInclusionEnabled: false,
+      productResearchEnabled: false,
+      emailUpdatesEnabled: true,
+    });
+
+    expect(saved.privacySettings).toEqual(expect.objectContaining({
+      userId: account.id,
+      optionalAnalyticsEnabled: false,
+      venueReportInclusionEnabled: false,
+      productResearchEnabled: false,
+      emailUpdatesEnabled: true,
+    }));
+
+    service.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "beer_search_performed",
+      venueId: null,
+      beerId: "guinness",
+      suburb: "Richmond",
+      metadata: { privacyScope: "optional_analytics", query: "Guinness pint" },
+    });
+    service.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "map_pin_click",
+      venueId: "privacy-venue",
+      beerId: null,
+      suburb: "Richmond",
+      metadata: { privacyScope: "venue_insight" },
+    });
+    service.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "feedback_submitted",
+      venueId: null,
+      beerId: null,
+      suburb: null,
+      metadata: { feedbackType: "privacy_request" },
+    });
+
+    const eventRows = database
+      .prepare("SELECT event_type FROM events ORDER BY created_at")
+      .all() as Array<{ event_type: string }>;
+    expect(eventRows.map((row) => row.event_type)).toEqual(["feedback_submitted"]);
+    expect(repository.listUserActivityEvents(account.id, 10).map((event) => event.eventType))
+      .toContain("account_privacy_settings_updated");
+  });
+
   it("only allows age-gated reward eligibility for verified 18+ records that have not expired", () => {
     const { repository } = createRepository();
     const account = createAccount(repository, "age-user");
@@ -798,6 +858,24 @@ describe("production hardening", () => {
     }
   });
 
+  it("requires age, terms, and privacy acceptance before local account signup", () => {
+    expect(() => authSignupSchema.parse({
+      email: "legal@example.com",
+      password: "password123",
+      ageConfirmed: true,
+      termsAccepted: false,
+      privacyAccepted: true,
+    })).toThrow("You must accept the Terms and Conditions");
+
+    expect(() => authSignupSchema.parse({
+      email: "legal@example.com",
+      password: "password123",
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: false,
+    })).toThrow("You must accept the Privacy Policy");
+  });
+
   it("requires production admin email verification and MFA step-up", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, {
@@ -811,11 +889,15 @@ describe("production hardening", () => {
       email: "prod-admin@example.com",
       password: "password123",
       ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
     });
     const userSession = service.signup({
       email: "prod-user@example.com",
       password: "password123",
       ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
     });
 
     expect(() => service.requireAdmin(`Bearer ${userSession.token}`)).toThrow("Admin access required");
@@ -851,6 +933,8 @@ describe("production hardening", () => {
       email: "pending-admin@example.com",
       password: "password123",
       ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
     });
     repository.updateAccountSecurityClaims({
       userId: adminSession.account.id,
@@ -1454,6 +1538,8 @@ describe("production hardening", () => {
       email: "session-user@example.com",
       password: "password123",
       ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
     }, {
       ip: "203.0.113.10",
       userAgent: "Vitest Browser",

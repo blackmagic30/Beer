@@ -21,7 +21,19 @@ export type SubmissionType = "single_beer_price" | "full_venue_update" | "happy_
 export type ServingSize = "pint" | "pot" | "schooner" | "jug" | "bottle" | "can" | "other";
 export type TapStatus = "yes" | "no" | "unknown";
 export type SavedItemType = "venue" | "beer" | "suburb";
-export type FeedbackType = "bug" | "wrong_data" | "feature_idea" | "venue_suggestion" | "general_feedback";
+export type FeedbackType =
+  | "bug"
+  | "wrong_data"
+  | "feature_idea"
+  | "venue_suggestion"
+  | "general_feedback"
+  | "privacy_request"
+  | "data_export_request"
+  | "account_deletion_request"
+  | "moderation_appeal"
+  | "security_report"
+  | "abuse_report"
+  | "billing_support";
 export type RequestType = "missing_venue" | "missing_beer" | "verify_venue" | "verify_beer_at_venue";
 export type BarMembershipTier = "basic" | "plus" | "pro";
 type StoredBarMembershipTier = BarMembershipTier | "free" | "super_premium";
@@ -47,6 +59,10 @@ export interface BusinessAccount {
   mfaVerifiedAt: string | null;
   role: AccountRole;
   ageConfirmedAt: string | null;
+  termsAcceptedAt: string | null;
+  privacyAcceptedAt: string | null;
+  termsVersion: string | null;
+  privacyVersion: string | null;
   ageVerificationStatus: AgeVerificationStatus;
   isOver18Verified: boolean;
   subscriptionStatus: SubscriptionStatus;
@@ -186,6 +202,16 @@ export interface AccountPreferences {
   preferredBeers: string[];
   preferredUseCases: string[];
   onboardingCompletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountPrivacySettings {
+  userId: string;
+  optionalAnalyticsEnabled: boolean;
+  venueReportInclusionEnabled: boolean;
+  productResearchEnabled: boolean;
+  emailUpdatesEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -465,6 +491,10 @@ interface AccountRow {
   mfa_verified_at: string | null;
   role: AccountRole;
   age_confirmed_at: string | null;
+  terms_accepted_at: string | null;
+  privacy_accepted_at: string | null;
+  terms_version: string | null;
+  privacy_version: string | null;
   age_verification_status: AgeVerificationStatus;
   is_over_18_verified: number;
   subscription_status: SubscriptionStatus;
@@ -646,6 +676,16 @@ interface AccountPreferencesRow {
   preferred_beers_json: string;
   preferred_use_cases_json: string;
   onboarding_completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AccountPrivacySettingsRow {
+  user_id: string;
+  optional_analytics_enabled: number;
+  venue_report_inclusion_enabled: number;
+  product_research_enabled: number;
+  email_updates_enabled: number;
   created_at: string;
   updated_at: string;
 }
@@ -874,6 +914,10 @@ function toAccount(row: AccountRow): BusinessAccount {
     mfaVerifiedAt: row.mfa_verified_at,
     role: row.role,
     ageConfirmedAt: row.age_confirmed_at,
+    termsAcceptedAt: row.terms_accepted_at,
+    privacyAcceptedAt: row.privacy_accepted_at,
+    termsVersion: row.terms_version,
+    privacyVersion: row.privacy_version,
     ageVerificationStatus: row.age_verification_status,
     isOver18Verified: Boolean(row.is_over_18_verified),
     subscriptionStatus: row.subscription_status,
@@ -1053,6 +1097,18 @@ function toAccountPreferences(row: AccountPreferencesRow): AccountPreferences {
     preferredBeers: parseJsonArray(row.preferred_beers_json),
     preferredUseCases: parseJsonArray(row.preferred_use_cases_json),
     onboardingCompletedAt: row.onboarding_completed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toAccountPrivacySettings(row: AccountPrivacySettingsRow): AccountPrivacySettings {
+  return {
+    userId: row.user_id,
+    optionalAnalyticsEnabled: Boolean(row.optional_analytics_enabled),
+    venueReportInclusionEnabled: Boolean(row.venue_report_inclusion_enabled),
+    productResearchEnabled: Boolean(row.product_research_enabled),
+    emailUpdatesEnabled: Boolean(row.email_updates_enabled),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1369,14 +1425,20 @@ export class BusinessRepository {
     emailVerifiedAt?: string | null | undefined;
     mfaLevel?: string | undefined;
     mfaVerifiedAt?: string | null | undefined;
+    termsAcceptedAt?: string | null | undefined;
+    privacyAcceptedAt?: string | null | undefined;
+    termsVersion?: string | null | undefined;
+    privacyVersion?: string | null | undefined;
   }): BusinessAccount {
     const create = this.database.transaction(() => {
       this.database
         .prepare(
           `INSERT INTO accounts (
             id, email, password_hash, display_name, avatar_url, auth_provider, supabase_user_id,
-            email_verified_at, mfa_level, mfa_verified_at, role, subscription_status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            email_verified_at, mfa_level, mfa_verified_at, role, subscription_status,
+            terms_accepted_at, privacy_accepted_at, terms_version, privacy_version,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
@@ -1391,6 +1453,10 @@ export class BusinessRepository {
           input.mfaVerifiedAt ?? null,
           input.role,
           input.subscriptionStatus,
+          input.termsAcceptedAt ?? null,
+          input.privacyAcceptedAt ?? null,
+          input.termsVersion ?? null,
+          input.privacyVersion ?? null,
           input.now,
           input.now,
         );
@@ -1657,6 +1723,38 @@ export class BusinessRepository {
         .run(confirmedAt, userId);
     })();
     return this.getAccountById(userId)!;
+  }
+
+  updateLegalAcceptance(input: {
+    userId: string;
+    acceptedAt: string;
+    termsVersion: string;
+    privacyVersion: string;
+  }): BusinessAccount {
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE accounts
+           SET terms_accepted_at = COALESCE(terms_accepted_at, ?),
+               privacy_accepted_at = COALESCE(privacy_accepted_at, ?),
+               terms_version = COALESCE(terms_version, ?),
+               privacy_version = COALESCE(privacy_version, ?),
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(
+          input.acceptedAt,
+          input.acceptedAt,
+          input.termsVersion,
+          input.privacyVersion,
+          input.acceptedAt,
+          input.userId,
+        );
+      this.database
+        .prepare("UPDATE profiles SET updated_at = ? WHERE id = ?")
+        .run(input.acceptedAt, input.userId);
+    })();
+    return this.getAccountById(input.userId)!;
   }
 
   upsertAgeVerification(input: {
@@ -2467,6 +2565,59 @@ export class BusinessRepository {
         input.now,
       );
     return this.getAccountPreferences(input.userId)!;
+  }
+
+  getAccountPrivacySettings(userId: string): AccountPrivacySettings | null {
+    const row = this.database
+      .prepare("SELECT * FROM account_privacy_settings WHERE user_id = ?")
+      .get(userId) as AccountPrivacySettingsRow | undefined;
+    return row ? toAccountPrivacySettings(row) : null;
+  }
+
+  getDefaultAccountPrivacySettings(userId: string, now = new Date().toISOString()): AccountPrivacySettings {
+    return {
+      userId,
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: true,
+      productResearchEnabled: true,
+      emailUpdatesEnabled: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  upsertAccountPrivacySettings(input: {
+    userId: string;
+    optionalAnalyticsEnabled: boolean;
+    venueReportInclusionEnabled: boolean;
+    productResearchEnabled: boolean;
+    emailUpdatesEnabled: boolean;
+    now: string;
+  }): AccountPrivacySettings {
+    const existing = this.getAccountPrivacySettings(input.userId);
+    this.database
+      .prepare(
+        `INSERT INTO account_privacy_settings (
+          user_id, optional_analytics_enabled, venue_report_inclusion_enabled,
+          product_research_enabled, email_updates_enabled, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          optional_analytics_enabled = excluded.optional_analytics_enabled,
+          venue_report_inclusion_enabled = excluded.venue_report_inclusion_enabled,
+          product_research_enabled = excluded.product_research_enabled,
+          email_updates_enabled = excluded.email_updates_enabled,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.userId,
+        input.optionalAnalyticsEnabled ? 1 : 0,
+        input.venueReportInclusionEnabled ? 1 : 0,
+        input.productResearchEnabled ? 1 : 0,
+        input.emailUpdatesEnabled ? 1 : 0,
+        existing?.createdAt ?? input.now,
+        input.now,
+      );
+    return this.getAccountPrivacySettings(input.userId)!;
   }
 
   saveItem(input: {

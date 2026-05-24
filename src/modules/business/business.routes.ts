@@ -8,6 +8,7 @@ import { createRateLimiter } from "../../middleware/rate-limit.js";
 
 import {
   accountPreferencesSchema,
+  accountPrivacySettingsSchema,
   adminDashboardQuerySchema,
   adminUserStatusSchema,
   ageConfirmSchema,
@@ -26,6 +27,7 @@ import {
   createSubmissionSchema,
   eventTrackSchema,
   feedbackSchema,
+  legalAcceptanceSchema,
   missionsQuerySchema,
   priceRecordsQuerySchema,
   removeSavedItemSchema,
@@ -169,10 +171,22 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.confirmAge(account)));
   });
 
+  router.post("/account/legal-acceptance", (req, res) => {
+    const body = parseWithSchema(legalAcceptanceSchema, req.body, "Invalid legal acceptance payload");
+    const account = requireAccount(req, businessService);
+    res.json(success(businessService.acceptLegal(account, body)));
+  });
+
   router.post("/account/preferences", (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(accountPreferencesSchema, req.body, "Invalid preferences payload");
     res.json(success(businessService.savePreferences(account, body)));
+  });
+
+  router.post("/account/privacy-settings", (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(accountPrivacySettingsSchema, req.body, "Invalid privacy settings payload");
+    res.json(success(businessService.savePrivacySettings(account, body)));
   });
 
   router.post("/account/saved-items", (req, res) => {

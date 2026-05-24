@@ -44,6 +44,12 @@
           <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
           <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
         </div>
+        <div id="oauthConsentField" class="consentField authLegalConsent">
+          <p class="fieldHint">Required before Google or Apple can create a Pint Path account.</p>
+          <label class="consentLine"><input id="oauthAgeConfirmed" type="checkbox" /> <span>I confirm I am 18 years or older.</span></label>
+          <label class="consentLine"><input id="oauthTermsAccepted" type="checkbox" /> <span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms and Conditions</a>.</span></label>
+          <label class="consentLine"><input id="oauthPrivacyAccepted" type="checkbox" /> <span>I agree to the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
+        </div>
         <p id="oauthHelper" class="helperCopy">Social login appears when Supabase OAuth providers are configured.</p>
         <div class="authDivider"><span>Continue with Email</span></div>
 
@@ -51,19 +57,22 @@
           <div id="loginPanel" class="authPanelStack">
             <h2 id="loginHeading">Welcome back</h2>
             <p class="muted">Sign in to upload venue data, view your submissions, and track contribution progress.</p>
-            <label class="field">Email
-              <input name="email" type="email" autocomplete="email" required />
-            </label>
-            <label class="field passwordField">Password
-              <span class="passwordInputWrap">
-                <input name="password" type="password" autocomplete="current-password" required />
-                <button class="passwordToggle" type="button" data-password-toggle>Show</button>
-              </span>
-            </label>
-            <div class="actionRow">
-              <button class="button button--primary" type="submit">Sign in</button>
-              <button id="passwordResetButton" class="button" type="button">Forgot password</button>
+            <div class="authFields">
+              <label class="field">Email
+                <input name="email" type="email" autocomplete="email" required />
+              </label>
+              <label class="field passwordField">Password
+                <span class="passwordInputWrap">
+                  <input name="password" type="password" autocomplete="current-password" required />
+                  <button class="passwordToggle" type="button" data-password-toggle>Show</button>
+                </span>
+              </label>
             </div>
+            <div class="actionRow authActions">
+              <button class="button button--primary" type="submit">Sign in</button>
+              <button id="passwordResetButton" class="button" type="button">Reset password</button>
+            </div>
+            <p class="helperCopy authResetCopy">Forgot your password? Enter your email and we’ll send a secure reset link.</p>
           </div>
         </form>
 
@@ -71,26 +80,30 @@
           <div id="signupPanel" class="authPanelStack">
             <h2 id="signupHeading">Create your contributor account</h2>
             <p class="muted">Use a real email so review notes and future contributor access can stay attached to you.</p>
-            <label class="field">Email
-              <input name="email" type="email" autocomplete="email" required />
-            </label>
-            <label class="field passwordField">Password
-              <span class="passwordInputWrap">
-                <input name="password" type="password" autocomplete="new-password" minlength="8" required />
-                <button class="passwordToggle" type="button" data-password-toggle>Show</button>
-              </span>
-              <span class="fieldHint">Use at least 8 characters.</span>
-            </label>
-            <label class="field passwordField">Confirm password
-              <span class="passwordInputWrap">
-                <input name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
-                <button class="passwordToggle" type="button" data-password-toggle>Show</button>
-              </span>
-            </label>
-            <label class="field consentField">
-              <span class="consentLine"><input name="ageConfirmed" type="checkbox" required /> <span>I confirm I am 18 years or older.</span></span>
-              <span class="fieldHint">Pint Path does not store ID documents. Some future rewards may require verified 18+ status.</span>
-            </label>
+            <div class="authFields">
+              <label class="field">Email
+                <input name="email" type="email" autocomplete="email" required />
+              </label>
+              <label class="field passwordField">Password
+                <span class="passwordInputWrap">
+                  <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+                  <button class="passwordToggle" type="button" data-password-toggle>Show</button>
+                </span>
+                <span class="fieldHint">Use at least 8 characters.</span>
+              </label>
+              <label class="field passwordField">Confirm password
+                <span class="passwordInputWrap">
+                  <input name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+                  <button class="passwordToggle" type="button" data-password-toggle>Show</button>
+                </span>
+              </label>
+              <label class="field consentField">
+                <span class="consentLine"><input name="ageConfirmed" type="checkbox" required /> <span>I confirm I am 18 years or older.</span></span>
+                <span class="consentLine"><input name="termsAccepted" type="checkbox" required /> <span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms and Conditions</a>.</span></span>
+                <span class="consentLine"><input name="privacyAccepted" type="checkbox" required /> <span>I agree to the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></span>
+                <span class="fieldHint">Pint Path does not store ID documents. Accounts that exploit, scrape, spam, fake submissions, or bypass access controls may be restricted or banned.</span>
+              </label>
+            </div>
             <button class="button button--primary" type="submit">Create account</button>
           </div>
         </form>
@@ -289,6 +302,71 @@
         </div>
       </section>
 
+      <section id="privacyControlsSection" class="accountSectionStack">
+        <div class="sectionHeader">
+          <div>
+            <div class="eyebrow">Privacy and account controls</div>
+            <h2>Your data, sessions, and support requests</h2>
+            <p class="muted">Major-platform style controls for optional analytics, venue-report inclusion, account export, deletion requests, and appeals.</p>
+          </div>
+          <a class="button" href="/trust.html">Open Trust Centre</a>
+        </div>
+        <div class="grid grid--two">
+          <form id="privacySettingsForm" class="panel form">
+            <h2>Privacy settings</h2>
+            <p class="muted">These controls affect optional product analytics. Essential security, billing, moderation, and contribution records may still be kept.</p>
+            <label class="toggleLine">
+              <input name="optionalAnalyticsEnabled" type="checkbox" />
+              <span><strong>Allow optional product analytics</strong><em>Helps improve search, map filters, and app reliability.</em></span>
+            </label>
+            <label class="toggleLine">
+              <input name="venueReportInclusionEnabled" type="checkbox" />
+              <span><strong>Include my aggregate activity in venue insights</strong><em>Only privacy-safe suburb/venue buckets above thresholds are used.</em></span>
+            </label>
+            <label class="toggleLine">
+              <input name="productResearchEnabled" type="checkbox" />
+              <span><strong>Use my feedback for product research</strong><em>Helps prioritize coverage, missions, and mobile improvements.</em></span>
+            </label>
+            <label class="toggleLine">
+              <input name="emailUpdatesEnabled" type="checkbox" />
+              <span><strong>Email me product updates</strong><em>Off by default. Transactional account emails may still be sent.</em></span>
+            </label>
+            <button class="button button--primary" type="submit">Save privacy settings</button>
+          </form>
+
+          <form id="dataRequestForm" class="panel form">
+            <h2>Privacy, support, and appeals</h2>
+            <p class="muted">Create a tracked request for export, deletion, correction, moderation appeals, security reports, or billing help.</p>
+            <label class="field">Request type
+              <select name="feedbackType">
+                <option value="data_export_request">Export my account data</option>
+                <option value="account_deletion_request">Delete my account</option>
+                <option value="privacy_request">Correct or limit my data</option>
+                <option value="moderation_appeal">Appeal a strike, ban, or rejected submission</option>
+                <option value="security_report">Report a security issue</option>
+                <option value="abuse_report">Report abuse or fake submissions</option>
+                <option value="billing_support">Billing or subscription support</option>
+              </select>
+            </label>
+            <label class="field">Details
+              <textarea name="message" required maxlength="1200" placeholder="Tell us what you need. Do not include passwords, card numbers, ID documents, or private keys."></textarea>
+            </label>
+            <button class="button button--primary" type="submit">Send request</button>
+          </form>
+        </div>
+        <article class="panel accountSecurityPanel">
+          <div>
+            <h2>Account security</h2>
+            <p class="muted">If you used a shared device or think your account is unsafe, revoke all active Pint Path sessions and sign in again.</p>
+          </div>
+          <div class="actionRow">
+            <button id="logoutAllButton" class="button button--danger" type="button">Log out all sessions</button>
+            <a class="button" href="/security.html">Security page</a>
+            <a class="button" href="/community.html">Community rules</a>
+          </div>
+        </article>
+      </section>
+
       <section class="grid grid--two">
         <div class="panel">
           <h2>Saved items and searches</h2>
@@ -322,7 +400,7 @@
       </section>
     </section>
 
-    <p class="footerCopy">18+ only. Community data is verified where possible. Prices may change, venues may refuse service under RSA obligations, and availability is not guaranteed. <a href="/terms.html">Beta terms</a> · <a href="/privacy.html">Privacy</a></p>
+    <p class="footerCopy">18+ only. Community data is verified where possible. Prices may change, venues may refuse service under RSA obligations, and availability is not guaranteed. <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></p>
   </main>
 
   <script>
@@ -586,6 +664,12 @@
       Array.from($("preferencesForm").preferredUseCases.options).forEach((option) => {
         option.selected = (preferences.preferredUseCases || []).includes(option.value);
       });
+      const privacySettings = result.privacySettings || {};
+      $("privacySettingsForm").optionalAnalyticsEnabled.checked = privacySettings.optionalAnalyticsEnabled !== false;
+      $("privacySettingsForm").venueReportInclusionEnabled.checked = privacySettings.venueReportInclusionEnabled !== false;
+      $("privacySettingsForm").productResearchEnabled.checked = privacySettings.productResearchEnabled !== false;
+      $("privacySettingsForm").emailUpdatesEnabled.checked = Boolean(privacySettings.emailUpdatesEnabled);
+      MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings);
       renderSavedItems(result.savedItems || [], result.recentSearches || []);
       renderSuggestedMissions(result.suggestedMissions || []);
       renderRecentSubmissions(result.recentSubmissions || []);
@@ -613,11 +697,16 @@
       const submitButton = form.querySelector('button[type="submit"]');
       const body = Object.fromEntries(new FormData(form).entries());
       body.ageConfirmed = body.ageConfirmed === "on";
+      body.termsAccepted = body.termsAccepted === "on";
+      body.privacyAccepted = body.privacyAccepted === "on";
       const isSignup = path.includes("signup");
 
       try {
         if (isSignup && body.password !== body.confirmPassword) {
           throw new Error("Passwords do not match.");
+        }
+        if (isSignup && (!body.ageConfirmed || !body.termsAccepted || !body.privacyAccepted)) {
+          throw new Error("Confirm you are 18+ and accept the Terms and Privacy Policy to create an account.");
         }
         delete body.confirmPassword;
 
@@ -629,7 +718,13 @@
 
         if (supabaseConfigured) {
           if (isSignup) {
-            const result = await MelbBeerBusiness.signUpWithEmail(body.email, body.password, body.ageConfirmed);
+            const result = await MelbBeerBusiness.signUpWithEmail(
+              body.email,
+              body.password,
+              body.ageConfirmed,
+              body.termsAccepted,
+              body.privacyAccepted,
+            );
             if (result.needsEmailConfirmation) {
               form.reset();
               MelbBeerBusiness.setStatus($("authStatus"), result.message || "Account created. Check your email to confirm your Pint Path login, then return here to sign in.");
@@ -779,18 +874,30 @@
       });
       if (!supabaseConfigured || oauthButtons.every((button) => button.hidden)) {
         $("oauthStack").hidden = true;
+        $("oauthConsentField").hidden = true;
         $("oauthHelper").textContent = supabaseConfigured
           ? "No Supabase OAuth providers are enabled in this environment."
           : "Email login is available. Social login appears after Supabase Auth is configured.";
       }
 
+      const oauthLegalAcceptance = () => ({
+        ageConfirmed: $("oauthAgeConfirmed").checked,
+        termsAccepted: $("oauthTermsAccepted").checked,
+        privacyAccepted: $("oauthPrivacyAccepted").checked,
+      });
+
       oauthButtons.forEach((button) => {
         button.addEventListener("click", async () => {
           const provider = button.dataset.provider;
           try {
+            const legalAcceptance = oauthLegalAcceptance();
+            if (!legalAcceptance.ageConfirmed || !legalAcceptance.termsAccepted || !legalAcceptance.privacyAccepted) {
+              throw new Error("Confirm you are 18+ and accept the Terms and Privacy Policy before using social login.");
+            }
             setOauthButtonsLoading(true, button);
             await MelbBeerBusiness.signInWithOAuth(provider, {
               returnTo: MelbBeerBusiness.getAuthReturnPathFromLocation(),
+              legalAcceptance,
             });
           } catch (error) {
             setOauthButtonsLoading(false);
@@ -816,15 +923,19 @@
       $("signupForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
       $("loginForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
       $("passwordResetButton").addEventListener("click", async () => {
+        const resetButton = $("passwordResetButton");
         try {
           const email = $("loginForm").email.value || $("signupForm").email.value;
           if (!email) {
-            throw new Error("Enter your email first, then tap forgot password.");
+            throw new Error("Enter your email first, then choose Reset password.");
           }
+          setLoading(resetButton, true, "Sending reset link...");
           await MelbBeerBusiness.requestPasswordReset(email);
-          MelbBeerBusiness.setStatus($("authStatus"), "Password reset email requested. Check Supabase Auth email settings if it does not arrive.");
+          MelbBeerBusiness.setStatus($("authStatus"), "If an account exists for that email, a secure reset link has been sent.");
         } catch (error) {
           MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
+        } finally {
+          setLoading(resetButton, false);
         }
       });
       $("logoutButton").addEventListener("click", async () => {
@@ -902,6 +1013,56 @@
           });
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Preferences saved. Your suggested missions will use these areas.");
           await refreshAccount();
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
+        }
+      });
+      $("privacySettingsForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const settings = {
+          optionalAnalyticsEnabled: $("privacySettingsForm").optionalAnalyticsEnabled.checked,
+          venueReportInclusionEnabled: $("privacySettingsForm").venueReportInclusionEnabled.checked,
+          productResearchEnabled: $("privacySettingsForm").productResearchEnabled.checked,
+          emailUpdatesEnabled: $("privacySettingsForm").emailUpdatesEnabled.checked,
+        };
+        try {
+          const result = await MelbBeerBusiness.apiFetch("/api/business/account/privacy-settings", {
+            method: "POST",
+            body: JSON.stringify(settings),
+          });
+          MelbBeerBusiness.setPrivacyPreferenceCache(result.privacySettings || settings);
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Privacy settings saved.");
+          await refreshAccount();
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
+        }
+      });
+      $("dataRequestForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const body = Object.fromEntries(new FormData($("dataRequestForm")).entries());
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/feedback", {
+            method: "POST",
+            body: JSON.stringify({
+              anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
+              feedbackType: body.feedbackType,
+              message: body.message,
+              venueName: null,
+              venueId: null,
+            }),
+          });
+          $("dataRequestForm").reset();
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Request saved. We’ll review it through the support queue.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
+        }
+      });
+      $("logoutAllButton").addEventListener("click", async () => {
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/auth/logout-all", { method: "POST", body: "{}" });
+          await MelbBeerBusiness.getSupabaseClient()?.auth.signOut().catch(() => null);
+          MelbBeerBusiness.setAuthToken(null);
+          showLoggedOut("All Pint Path sessions have been logged out.");
         } catch (error) {
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }

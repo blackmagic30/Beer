@@ -71,6 +71,7 @@
           throw new Error(result.error || "No Supabase session was returned. Please try signing in again.");
         }
 
+        await MelbBeerBusiness.applyPendingLegalAcceptance();
         status.textContent = "Signed in. Taking you back...";
         const destination = safeReturnPath();
         window.localStorage.removeItem("pintPathAuthReturnTo");

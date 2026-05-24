@@ -25,7 +25,20 @@ const optionalTrimmedStringSchema = z.preprocess((value) => {
 const servingSizeSchema = z.enum(["pint", "pot", "schooner", "jug", "bottle", "can", "other"]);
 const tapStatusSchema = z.enum(["yes", "no", "unknown"]);
 const savedItemTypeSchema = z.enum(["venue", "beer", "suburb"]);
-const feedbackTypeSchema = z.enum(["bug", "wrong_data", "feature_idea", "venue_suggestion", "general_feedback"]);
+const feedbackTypeSchema = z.enum([
+  "bug",
+  "wrong_data",
+  "feature_idea",
+  "venue_suggestion",
+  "general_feedback",
+  "privacy_request",
+  "data_export_request",
+  "account_deletion_request",
+  "moderation_appeal",
+  "security_report",
+  "abuse_report",
+  "billing_support",
+]);
 const requestTypeSchema = z.enum(["missing_venue", "missing_beer", "verify_venue", "verify_beer_at_venue"]);
 const barMembershipTierSchema = z.enum(["basic", "plus", "pro"]);
 const partnerInterestStatusSchema = z.enum(["open", "contacted", "interested", "partner", "not_interested", "closed"]);
@@ -88,6 +101,8 @@ export const authSignupSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8),
   ageConfirmed: z.boolean().refine((value) => value === true, "You must confirm you are 18+."),
+  termsAccepted: z.boolean().refine((value) => value === true, "You must accept the Terms and Conditions."),
+  privacyAccepted: z.boolean().refine((value) => value === true, "You must accept the Privacy Policy."),
 });
 
 export const authLoginSchema = z.object({
@@ -101,6 +116,13 @@ export const authSupabaseSessionSchema = z.object({
 
 export const ageConfirmSchema = z.object({
   ageConfirmed: z.boolean().refine((value) => value === true, "You must confirm you are 18+."),
+});
+
+export const legalAcceptanceSchema = z.object({
+  termsAccepted: z.boolean().refine((value) => value === true, "You must accept the Terms and Conditions."),
+  privacyAccepted: z.boolean().refine((value) => value === true, "You must accept the Privacy Policy."),
+  termsVersion: z.string().trim().min(1).max(40).default("2026-05-24"),
+  privacyVersion: z.string().trim().min(1).max(40).default("2026-05-24"),
 });
 
 export const verificationSchema = z.object({
@@ -121,6 +143,13 @@ export const accountPreferencesSchema = z.object({
     "contributing_data",
   ])).max(8).default([]),
   onboardingCompleted: z.boolean().default(true),
+});
+
+export const accountPrivacySettingsSchema = z.object({
+  optionalAnalyticsEnabled: z.boolean().default(true),
+  venueReportInclusionEnabled: z.boolean().default(true),
+  productResearchEnabled: z.boolean().default(true),
+  emailUpdatesEnabled: z.boolean().default(false),
 });
 
 export const submissionItemSchema = z.object({
@@ -571,11 +600,13 @@ export const adminUserStatusSchema = z.object({
 export type AuthSignupInput = z.infer<typeof authSignupSchema>;
 export type AuthLoginInput = z.infer<typeof authLoginSchema>;
 export type AuthSupabaseSessionInput = z.infer<typeof authSupabaseSessionSchema>;
+export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
 export type VerificationInput = z.infer<typeof verificationSchema>;
 export type CreateSubmissionInput = z.infer<typeof createSubmissionSchema>;
 export type ReviewSubmissionInput = z.infer<typeof reviewSubmissionSchema>;
 export type EventTrackInput = z.infer<typeof eventTrackSchema>;
 export type AccountPreferencesInput = z.infer<typeof accountPreferencesSchema>;
+export type AccountPrivacySettingsInput = z.infer<typeof accountPrivacySettingsSchema>;
 export type SaveItemInput = z.infer<typeof saveItemSchema>;
 export type RemoveSavedItemInput = z.infer<typeof removeSavedItemSchema>;
 export type FeedbackInput = z.infer<typeof feedbackSchema>;

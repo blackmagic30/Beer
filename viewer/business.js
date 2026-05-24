@@ -1,6 +1,10 @@
 const AUTH_TOKEN_KEY = "melbBeerBusinessAuthToken";
 const ANON_SESSION_KEY = "melbBeerAnonSessionId";
 const AUTH_RETURN_KEY = "pintPathAuthReturnTo";
+const LEGAL_ACCEPTANCE_KEY = "pintPathLegalAcceptance";
+const LEGAL_POLICY_VERSION = "2026-05-24";
+const OPTIONAL_ANALYTICS_KEY = "pintPathOptionalAnalyticsEnabled";
+const VENUE_REPORTS_KEY = "pintPathVenueReportsEnabled";
 
 function getAuthToken() {
   return window.localStorage.getItem(AUTH_TOKEN_KEY);
@@ -23,6 +27,23 @@ function getAnonymousSessionId() {
   }
 
   return value;
+}
+
+function boolStorageEnabled(key, fallback = true) {
+  const value = window.localStorage.getItem(key);
+  if (value == null) {
+    return fallback;
+  }
+  return value !== "false";
+}
+
+function setPrivacyPreferenceCache(settings = {}) {
+  if ("optionalAnalyticsEnabled" in settings) {
+    window.localStorage.setItem(OPTIONAL_ANALYTICS_KEY, settings.optionalAnalyticsEnabled ? "true" : "false");
+  }
+  if ("venueReportInclusionEnabled" in settings) {
+    window.localStorage.setItem(VENUE_REPORTS_KEY, settings.venueReportInclusionEnabled ? "true" : "false");
+  }
 }
 
 function getViewerConfig() {
@@ -91,6 +112,64 @@ function getAuthCallbackUrl(returnTo = "/account.html") {
   const url = new URL("/auth/callback", getCanonicalBaseUrl());
   url.searchParams.set("returnTo", getSafeReturnPath(returnTo));
   return url.toString();
+}
+
+function legalAcceptancePayload(input = {}) {
+  return {
+    ageConfirmed: Boolean(input.ageConfirmed),
+    termsAccepted: Boolean(input.termsAccepted),
+    privacyAccepted: Boolean(input.privacyAccepted),
+    termsVersion: input.termsVersion || LEGAL_POLICY_VERSION,
+    privacyVersion: input.privacyVersion || LEGAL_POLICY_VERSION,
+  };
+}
+
+function setPendingLegalAcceptance(input) {
+  window.localStorage.setItem(LEGAL_ACCEPTANCE_KEY, JSON.stringify(legalAcceptancePayload(input)));
+}
+
+function getPendingLegalAcceptance() {
+  const raw = window.localStorage.getItem(LEGAL_ACCEPTANCE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return legalAcceptancePayload(JSON.parse(raw));
+  } catch {
+    window.localStorage.removeItem(LEGAL_ACCEPTANCE_KEY);
+    return null;
+  }
+}
+
+async function applyPendingLegalAcceptance() {
+  const acceptance = getPendingLegalAcceptance();
+  if (!acceptance) {
+    return null;
+  }
+
+  if (acceptance.ageConfirmed) {
+    await apiFetch("/api/business/account/age-confirm", {
+      method: "POST",
+      body: JSON.stringify({ ageConfirmed: true }),
+    }).catch(() => null);
+  }
+
+  if (acceptance.termsAccepted && acceptance.privacyAccepted) {
+    const result = await apiFetch("/api/business/account/legal-acceptance", {
+      method: "POST",
+      body: JSON.stringify({
+        termsAccepted: true,
+        privacyAccepted: true,
+        termsVersion: acceptance.termsVersion,
+        privacyVersion: acceptance.privacyVersion,
+      }),
+    });
+    window.localStorage.removeItem(LEGAL_ACCEPTANCE_KEY);
+    return result;
+  }
+
+  return null;
 }
 
 function getSupabaseConfig() {
@@ -199,6 +278,9 @@ async function signInWithOAuth(provider, options = {}) {
 
   const returnTo = getSafeReturnPath(options.returnTo || getAuthReturnPathFromLocation());
   window.localStorage.setItem(AUTH_RETURN_KEY, returnTo);
+  if (options.legalAcceptance) {
+    setPendingLegalAcceptance(options.legalAcceptance);
+  }
 
   const { error } = await client.auth.signInWithOAuth({
     provider,
@@ -231,7 +313,7 @@ async function signInWithEmail(email, password) {
   return syncSupabaseSession();
 }
 
-async function signUpWithEmail(email, password, ageConfirmed) {
+async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, privacyAccepted) {
   const client = getSupabaseClient();
   if (!client) {
     throw new Error("Supabase email signup is not configured for this environment.");
@@ -247,6 +329,10 @@ async function signUpWithEmail(email, password, ageConfirmed) {
       emailRedirectTo: getAuthCallbackUrl(returnTo),
       data: {
         age_confirmed: Boolean(ageConfirmed),
+        terms_accepted: Boolean(termsAccepted),
+        privacy_accepted: Boolean(privacyAccepted),
+        terms_version: LEGAL_POLICY_VERSION,
+        privacy_version: LEGAL_POLICY_VERSION,
       },
     },
   });
@@ -272,6 +358,17 @@ async function signUpWithEmail(email, password, ageConfirmed) {
       await apiFetch("/api/business/account/age-confirm", {
         method: "POST",
         body: JSON.stringify({ ageConfirmed: true }),
+      }).catch(() => null);
+    }
+    if (termsAccepted && privacyAccepted) {
+      await apiFetch("/api/business/account/legal-acceptance", {
+        method: "POST",
+        body: JSON.stringify({
+          termsAccepted: true,
+          privacyAccepted: true,
+          termsVersion: LEGAL_POLICY_VERSION,
+          privacyVersion: LEGAL_POLICY_VERSION,
+        }),
       }).catch(() => null);
     }
     return { ...synced, needsEmailConfirmation: false };
@@ -314,6 +411,7 @@ function renderNav(active = "") {
         <a ${active === "map" ? 'class="pill"' : ""} href="/">Map</a>
         <a ${active === "missions" ? 'class="pill"' : ""} href="/missions.html">Missions</a>
         <a ${active === "submit" ? 'class="pill"' : ""} href="/submit.html">Submit data</a>
+        <a ${active === "trust" ? 'class="pill"' : ""} href="/trust.html">Trust</a>
         <a ${active === "pricing" ? 'class="pill"' : ""} href="/pricing.html">Pricing</a>
         <a ${active === "account" ? 'class="pill"' : ""} href="/account.html">Account</a>
         ${feedbackLink}
@@ -352,9 +450,16 @@ function setStatus(element, message, isError = false) {
 
 async function trackEvent(eventType, metadata = {}) {
   try {
+    if (!boolStorageEnabled(OPTIONAL_ANALYTICS_KEY, true)) {
+      return;
+    }
     const safeMetadata = Object.fromEntries(
       Object.entries(metadata || {}).filter(([key]) => !/(latitude|longitude|\blat\b|\blng\b|coordinates?|gps|precise.?location)/i.test(key)),
     );
+    const hasVenueContext = Boolean(safeMetadata.venueId);
+    if (hasVenueContext && !boolStorageEnabled(VENUE_REPORTS_KEY, true)) {
+      return;
+    }
 
     await apiFetch("/api/business/events", {
       method: "POST",
@@ -364,7 +469,10 @@ async function trackEvent(eventType, metadata = {}) {
         venueId: safeMetadata.venueId || null,
         beerId: safeMetadata.beerId || null,
         suburb: safeMetadata.suburb || null,
-        metadata: safeMetadata,
+        metadata: {
+          ...safeMetadata,
+          privacyScope: hasVenueContext ? "venue_insight" : "optional_analytics",
+        },
       }),
     });
   } catch {
@@ -386,9 +494,12 @@ window.MelbBeerBusiness = {
   getSafeReturnPath,
   getAuthReturnPathFromLocation,
   getAuthCallbackUrl,
+  setPrivacyPreferenceCache,
   isFieldTestMode,
   apiFetch,
   syncSupabaseSession,
+  setPendingLegalAcceptance,
+  applyPendingLegalAcceptance,
   signInWithOAuth,
   signInWithEmail,
   signUpWithEmail,

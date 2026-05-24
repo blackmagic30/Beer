@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trust Centre | Pint Path</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell trustPage">
+    <div id="nav"></div>
+
+    <section class="hero hero--split">
+      <div>
+        <div class="eyebrow">Trust centre</div>
+        <h1>How Pint Path keeps beer-price data useful.</h1>
+        <p class="lead">Pint Path is built around verified Melbourne venue data, contributor accountability, private evidence, and privacy-safe venue insights.</p>
+      </div>
+      <article class="heroCard">
+        <strong>Our rule of thumb</strong>
+        <p>Public users see approved venue and price data. Raw photos, reviewer notes, account details, and individual analytics stay private.</p>
+      </article>
+    </section>
+
+    <section class="grid grid--three">
+      <article class="card">
+        <div class="eyebrow">Verified data</div>
+        <h2>Review before publishing</h2>
+        <p class="muted">Submissions can stay pending until evidence is checked. Approved records may be normalized before they appear on the public map.</p>
+      </article>
+      <article class="card">
+        <div class="eyebrow">Private evidence</div>
+        <h2>Photos are not public</h2>
+        <p class="muted">Menu photos, receipts, tap-list images, upload-location proof, OCR evidence, and reviewer notes are treated as private review material.</p>
+      </article>
+      <article class="card">
+        <div class="eyebrow">Venue insights</div>
+        <h2>Aggregate only</h2>
+        <p class="muted">Paid venue reports are designed around suburb and venue-level trends with privacy thresholds, not individual user clickstreams.</p>
+      </article>
+    </section>
+
+    <section class="panel trustStack">
+      <div class="sectionHeader">
+        <div>
+          <div class="eyebrow">What happens to data</div>
+          <h2>From upload to public map</h2>
+        </div>
+        <p class="muted">This is the path we are building toward for every contributor upload.</p>
+      </div>
+      <ol class="trustSteps">
+        <li><strong>Submit.</strong><span>A signed-in contributor uploads a venue, beer price, happy-hour update, or source photo.</span></li>
+        <li><strong>Protect.</strong><span>Raw evidence stays private and is linked to the contributor account for review and anti-abuse checks.</span></li>
+        <li><strong>Review.</strong><span>Reviewers verify freshness, serving size, venue, price, and whether points should be awarded.</span></li>
+        <li><strong>Publish.</strong><span>Only approved, normalized venue and beer-price data is shown publicly on the map.</span></li>
+      </ol>
+    </section>
+
+    <section class="grid grid--two">
+      <article class="panel">
+        <div class="eyebrow">Community rules</div>
+        <h2>Good data beats noisy data.</h2>
+        <p class="muted">Fake prices, duplicate submissions, old screenshots, spoofed locations, and abuse can lead to rejected submissions, lost points, or account restrictions.</p>
+        <a class="button" href="/community.html">Read Community Standards</a>
+      </article>
+      <article class="panel">
+        <div class="eyebrow">Security</div>
+        <h2>Report privacy or security issues quickly.</h2>
+        <p class="muted">Use the dedicated feedback categories for security reports, privacy requests, account deletion, moderation appeals, billing support, and abuse reports.</p>
+        <a class="button" href="/security.html">Open Security & Privacy</a>
+      </article>
+    </section>
+
+    <p class="footerCopy">
+      Prices may change. Check with the venue before ordering. Drink responsibly.
+      <a href="/privacy.html">Privacy</a> · <a href="/terms.html">Terms</a> · <a href="/feedback.html">Contact</a>
+    </p>
+  </main>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("trust");
+    });
+  </script>
+</body>
+</html>

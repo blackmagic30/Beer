@@ -42,4 +42,17 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).toContain("Do not expose publicly");
     expect(sql).not.toMatch(/grant\s+select\s+on\s+public\.user_price_submissions\s+to\s+anon/i);
   });
+
+  it("lets signed-in users manage only their own account privacy settings", () => {
+    const sql = migration("20260524010000_account_privacy_settings.sql");
+
+    expect(sql).toContain("create table if not exists public.account_privacy_settings");
+    expect(sql).toContain("alter table public.account_privacy_settings enable row level security");
+    expect(sql).toContain('create policy "privacy_settings_select_own"');
+    expect(sql).toContain('create policy "privacy_settings_insert_own"');
+    expect(sql).toContain('create policy "privacy_settings_update_own"');
+    expect(sql).toContain("auth.uid() = user_id");
+    expect(sql).toContain("revoke all on public.account_privacy_settings from anon");
+    expect(sql).toContain("grant select, insert, update on public.account_privacy_settings to authenticated");
+  });
 });

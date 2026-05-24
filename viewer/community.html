@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Community Standards | Pint Path</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell trustPage">
+    <div id="nav"></div>
+
+    <section class="hero">
+      <div class="eyebrow">Community Standards</div>
+      <h1>Submit what you actually saw at the venue.</h1>
+      <p class="lead">Pint Path works when contributors share fresh, venue-specific beer-price and happy-hour evidence. These standards protect the map, venues, and other users.</p>
+    </section>
+
+    <section class="grid grid--two">
+      <article class="panel">
+        <h2>Good submissions</h2>
+        <ul class="trustList">
+          <li>Use a current menu, tap list, receipt, or happy-hour board.</li>
+          <li>Choose the exact venue from Pint Path search before uploading.</li>
+          <li>Use the correct serving size, beer name, and price.</li>
+          <li>Upload from the venue where possible so points can be location-verified.</li>
+          <li>Add notes when something is unclear, seasonal, or limited.</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <h2>Not allowed</h2>
+        <ul class="trustList">
+          <li>Guessing prices, copying stale screenshots, or submitting a friend’s tip as your own visit.</li>
+          <li>Spoofing location, automating submissions, or creating accounts to farm points.</li>
+          <li>Uploading private IDs, payment details, staff/customer personal information, or unsafe content.</li>
+          <li>Submitting competitor sabotage, spam, harassment, or venue abuse.</li>
+          <li>Trying to bypass paid access, reviewer workflows, or security controls.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="panel trustStack">
+      <div class="sectionHeader">
+        <div>
+          <div class="eyebrow">Moderation</div>
+          <h2>What can happen after a report or review</h2>
+        </div>
+        <p class="muted">We keep enforcement proportional, but repeated or serious abuse can affect account access.</p>
+      </div>
+      <div class="policyMatrix">
+        <div class="policyRow"><strong>Minor mistake</strong><span>Submission rejected or marked needs more info.</span></div>
+        <div class="policyRow"><strong>Stale or low-value data</strong><span>Reduced points or no points, especially if the venue was just updated.</span></div>
+        <div class="policyRow"><strong>Suspicious activity</strong><span>Points removed, uploads limited, account reviewed, or evidence preserved for audit.</span></div>
+        <div class="policyRow"><strong>Abuse or exploitation</strong><span>Account restrictions, ban, or provider report where appropriate.</span></div>
+      </div>
+    </section>
+
+    <section class="grid grid--two">
+      <article class="panel">
+        <h2>Appeal or correct something</h2>
+        <p class="muted">If a submission was wrongly rejected or account action seems incorrect, use the moderation appeal category so it reaches the right queue.</p>
+        <a class="button button--primary" href="/feedback.html">Open feedback</a>
+      </article>
+      <article class="panel">
+        <h2>Responsible alcohol note</h2>
+        <p class="muted">Pint Path is an information tool, not a drinking challenge. Prices may change. Check with the venue before ordering and drink responsibly.</p>
+        <a class="button" href="/terms.html">Read Terms</a>
+      </article>
+    </section>
+
+    <p class="footerCopy"><a href="/trust.html">Trust Centre</a> · <a href="/privacy.html">Privacy</a> · <a href="/">Back to map</a></p>
+  </main>
+
+  <script>
+    window.addEventListener("DOMContentLoaded", () => {
+      nav.innerHTML = MelbBeerBusiness.renderNav("trust");
+    });
+  </script>
+</body>
+</html>

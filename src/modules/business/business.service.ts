@@ -29,6 +29,7 @@ import { redactSecrets } from "../../lib/redact.js";
 
 import type {
   AccountPreferencesInput,
+  AccountPrivacySettingsInput,
   AdminDashboardQuery,
   AuthLoginInput,
   AuthSignupInput,
@@ -44,6 +45,7 @@ import type {
   CreateSubmissionInput,
   EventTrackInput,
   FeedbackInput,
+  LegalAcceptanceInput,
   PriceRecordsQuery,
   RemoveSavedItemInput,
   ReviewSubmissionInput,
@@ -207,6 +209,10 @@ function sanitizeAccount(account: BusinessAccount) {
     email: account.email,
     role: account.role,
     ageConfirmedAt: account.ageConfirmedAt,
+    termsAcceptedAt: account.termsAcceptedAt,
+    privacyAcceptedAt: account.privacyAcceptedAt,
+    termsVersion: account.termsVersion,
+    privacyVersion: account.privacyVersion,
     subscriptionStatus: account.subscriptionStatus,
     premiumUntil: account.premiumUntil,
     trustScore: account.trustScore,
@@ -1202,6 +1208,10 @@ export class BusinessService {
       passwordHash: hashPassword(input.password),
       role: adminEmails.has(email) ? "admin" : "user",
       subscriptionStatus: adminEmails.has(email) ? "admin" : "free",
+      termsAcceptedAt: now,
+      privacyAcceptedAt: now,
+      termsVersion: "2026-05-24",
+      privacyVersion: "2026-05-24",
       now,
     });
     const confirmed = input.ageConfirmed ? this.repository.updateAgeConfirmed(account.id, now) : account;
@@ -1219,7 +1229,11 @@ export class BusinessService {
       eventType: "user_signup",
       relatedEntityType: "account",
       relatedEntityId: confirmed.id,
-      metadata: { authProvider: confirmed.authProvider },
+      metadata: {
+        authProvider: confirmed.authProvider,
+        termsVersion: confirmed.termsVersion,
+        privacyVersion: confirmed.privacyVersion,
+      },
     });
 
     if (input.ageConfirmed) {
@@ -1310,6 +1324,10 @@ export class BusinessService {
         emailVerifiedAt,
         mfaLevel: mfaClaims.mfaLevel,
         mfaVerifiedAt: mfaClaims.mfaVerifiedAt,
+        termsAcceptedAt: metadata.terms_accepted === true ? now : null,
+        privacyAcceptedAt: metadata.privacy_accepted === true ? now : null,
+        termsVersion: typeof metadata.terms_version === "string" ? metadata.terms_version : null,
+        privacyVersion: typeof metadata.privacy_version === "string" ? metadata.privacy_version : null,
         role: adminEmails.has(email) ? "admin" : "user",
         subscriptionStatus: adminEmails.has(email) ? "admin" : "free",
         now,
@@ -1351,6 +1369,15 @@ export class BusinessService {
       account = this.repository.updateAgeConfirmed(account.id, now);
     }
 
+    if ((metadata.terms_accepted === true || metadata.privacy_accepted === true) && (!account.termsAcceptedAt || !account.privacyAcceptedAt)) {
+      account = this.repository.updateLegalAcceptance({
+        userId: account.id,
+        acceptedAt: now,
+        termsVersion: typeof metadata.terms_version === "string" ? metadata.terms_version : "2026-05-24",
+        privacyVersion: typeof metadata.privacy_version === "string" ? metadata.privacy_version : "2026-05-24",
+      });
+    }
+
     this.recordUserActivity({
       account,
       eventType: "user_login",
@@ -1387,6 +1414,29 @@ export class BusinessService {
       relatedEntityType: "account",
       relatedEntityId: updated.id,
       metadata: { method: "self_attestation", ageThreshold: 18 },
+    });
+    return {
+      account: sanitizeAccount(updated),
+    };
+  }
+
+  acceptLegal(account: BusinessAccount, input: LegalAcceptanceInput) {
+    const acceptedAt = nowIso();
+    const updated = this.repository.updateLegalAcceptance({
+      userId: account.id,
+      acceptedAt,
+      termsVersion: input.termsVersion,
+      privacyVersion: input.privacyVersion,
+    });
+    this.recordUserActivity({
+      account: updated,
+      eventType: "legal_terms_accepted",
+      relatedEntityType: "account",
+      relatedEntityId: updated.id,
+      metadata: {
+        termsVersion: updated.termsVersion,
+        privacyVersion: updated.privacyVersion,
+      },
     });
     return {
       account: sanitizeAccount(updated),
@@ -1490,6 +1540,9 @@ export class BusinessService {
 
   getAccountDashboard(account: BusinessAccount) {
     const preferences = this.repository.getAccountPreferences(account.id);
+    const privacySettings =
+      this.repository.getAccountPrivacySettings(account.id) ??
+      this.repository.getDefaultAccountPrivacySettings(account.id);
     const savedItems = this.repository.listSavedItems(account.id);
     const savedSuburbs = savedItems
       .filter((item) => item.itemType === "suburb")
@@ -1565,6 +1618,7 @@ export class BusinessService {
         createdAt: null,
         updatedAt: null,
       },
+      privacySettings,
       savedItems,
       recentSearches: this.repository.listRecentSearches(account.id, 10),
       suggestedMissions,
@@ -1899,6 +1953,32 @@ export class BusinessService {
     });
 
     return { preferences };
+  }
+
+  savePrivacySettings(account: BusinessAccount, input: AccountPrivacySettingsInput) {
+    const now = nowIso();
+    const privacySettings = this.repository.upsertAccountPrivacySettings({
+      userId: account.id,
+      optionalAnalyticsEnabled: input.optionalAnalyticsEnabled,
+      venueReportInclusionEnabled: input.venueReportInclusionEnabled,
+      productResearchEnabled: input.productResearchEnabled,
+      emailUpdatesEnabled: input.emailUpdatesEnabled,
+      now,
+    });
+    this.recordUserActivity({
+      account,
+      eventType: "account_privacy_settings_updated",
+      relatedEntityType: "account",
+      relatedEntityId: account.id,
+      metadata: {
+        optionalAnalyticsEnabled: privacySettings.optionalAnalyticsEnabled,
+        venueReportInclusionEnabled: privacySettings.venueReportInclusionEnabled,
+        productResearchEnabled: privacySettings.productResearchEnabled,
+        emailUpdatesEnabled: privacySettings.emailUpdatesEnabled,
+      },
+    });
+
+    return { privacySettings };
   }
 
   saveItem(account: BusinessAccount, input: SaveItemInput) {
@@ -2517,6 +2597,19 @@ export class BusinessService {
 
   trackEvent(account: BusinessAccount | null, input: EventTrackInput): void {
     try {
+      const privacyScope = typeof input.metadata.privacyScope === "string" ? input.metadata.privacyScope : null;
+      if (account && privacyScope === "optional_analytics") {
+        const settings = this.repository.getAccountPrivacySettings(account.id);
+        if (settings && !settings.optionalAnalyticsEnabled) {
+          return;
+        }
+      }
+      if (account && privacyScope === "venue_insight") {
+        const settings = this.repository.getAccountPrivacySettings(account.id);
+        if (settings && (!settings.optionalAnalyticsEnabled || !settings.venueReportInclusionEnabled)) {
+          return;
+        }
+      }
       this.repository.recordEvent({
         id: crypto.randomUUID(),
         userId: account?.id ?? null,

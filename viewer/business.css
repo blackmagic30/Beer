@@ -309,6 +309,10 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .grid--four {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -951,6 +955,32 @@ h3 {
   text-transform: uppercase;
 }
 
+.legalPage .hero {
+  margin-bottom: 16px;
+}
+
+.legalStack {
+  display: grid;
+  gap: 22px;
+}
+
+.legalStack article {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid rgba(244, 214, 150, 0.1);
+  padding-bottom: 18px;
+}
+
+.legalStack article:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.legalStack h2,
+.legalStack p {
+  margin: 0;
+}
+
 .progressTrack {
   height: 8px;
   border-radius: 999px;
@@ -1033,7 +1063,7 @@ h3 {
 .authCard {
   display: grid;
   align-content: start;
-  gap: 16px;
+  gap: 18px;
   overflow: visible;
 }
 
@@ -1069,14 +1099,47 @@ h3 {
   line-height: 1.05;
 }
 
+.authForm {
+  min-width: 0;
+}
+
 .authPanelStack {
   display: grid;
-  gap: 14px;
+  gap: 18px;
 }
 
 .authPanelStack h2,
 .authPanelStack p {
   margin: 0;
+}
+
+.authFields {
+  display: grid;
+  gap: 18px;
+}
+
+.authActions {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.9fr) minmax(150px, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.authActions .button {
+  min-width: 0;
+  width: 100%;
+}
+
+.authResetCopy {
+  margin: -7px 0 0;
+}
+
+.authPanelStack > .button--primary {
+  width: 100%;
+}
+
+.passwordField {
+  gap: 9px;
 }
 
 .passwordInputWrap {
@@ -1108,11 +1171,26 @@ h3 {
 }
 
 .consentField {
-  gap: 10px;
+  gap: 11px;
   border: 1px solid rgba(244, 214, 150, 0.14);
   border-radius: 18px;
-  padding: 12px;
+  margin-top: 2px;
+  padding: 14px;
   background: rgba(255, 255, 255, 0.045);
+}
+
+.authLegalConsent {
+  display: grid;
+  margin-top: -6px;
+}
+
+.authLegalConsent .fieldHint {
+  margin: 0;
+}
+
+.consentLine a {
+  color: #ffe4a8;
+  font-weight: 950;
 }
 
 .consentLine {
@@ -1235,6 +1313,42 @@ h3 {
   gap: 14px;
 }
 
+.toggleLine {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.28);
+  padding: 13px;
+}
+
+.toggleLine input {
+  width: 18px;
+  height: 18px;
+  margin-top: 3px;
+  accent-color: var(--gold);
+}
+
+.toggleLine span {
+  display: grid;
+  gap: 4px;
+}
+
+.toggleLine em {
+  color: var(--muted);
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.accountSecurityPanel {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
 .accountWideForm {
   max-width: 980px;
 }
@@ -1258,6 +1372,55 @@ h3 {
   padding-left: 18px;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.trustPage .card {
+  min-height: auto;
+}
+
+.trustStack {
+  display: grid;
+  gap: 18px;
+  margin: 18px 0;
+}
+
+.trustSteps,
+.trustList {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.trustSteps {
+  padding: 0;
+  list-style: none;
+}
+
+.trustSteps li,
+.policyRow {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1fr);
+  gap: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 14px;
+}
+
+.trustSteps strong,
+.policyRow strong {
+  color: #ffe4a8;
+}
+
+.trustSteps span,
+.policyRow span {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.policyMatrix {
+  display: grid;
+  gap: 10px;
 }
 
 .divider {
@@ -1488,17 +1651,28 @@ h3 {
 
   .sectionHeader,
   .dataRow,
-  .locationProofPanel {
+  .locationProofPanel,
+  .accountSecurityPanel {
     flex-direction: column;
   }
 
-  .locationProofPanel {
+  .locationProofPanel,
+  .accountSecurityPanel {
     display: flex;
     align-items: stretch;
   }
 
+  .trustSteps li,
+  .policyRow {
+    grid-template-columns: 1fr;
+  }
+
   .rowActions {
     justify-content: flex-start;
+  }
+
+  .authActions {
+    grid-template-columns: 1fr;
   }
 
   .completionGrid {
@@ -1515,6 +1689,7 @@ h3 {
 
   .grid,
   .grid--two,
+  .grid--three,
   .grid--four,
   .tierGrid,
   .venueTrustStrip,

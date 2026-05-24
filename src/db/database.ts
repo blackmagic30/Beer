@@ -41,6 +41,10 @@ const accountsColumns = [
   { name: "email_verified_at", definition: "TEXT" },
   { name: "mfa_level", definition: "TEXT NOT NULL DEFAULT 'aal1'" },
   { name: "mfa_verified_at", definition: "TEXT" },
+  { name: "terms_accepted_at", definition: "TEXT" },
+  { name: "privacy_accepted_at", definition: "TEXT" },
+  { name: "terms_version", definition: "TEXT" },
+  { name: "privacy_version", definition: "TEXT" },
   { name: "age_verification_status", definition: "TEXT NOT NULL DEFAULT 'not_started'" },
   { name: "is_over_18_verified", definition: "INTEGER NOT NULL DEFAULT 0" },
 ] as const;

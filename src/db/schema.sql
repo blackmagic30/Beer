@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   mfa_verified_at TEXT,
   role TEXT NOT NULL DEFAULT 'user',
   age_confirmed_at TEXT,
+  terms_accepted_at TEXT,
+  privacy_accepted_at TEXT,
+  terms_version TEXT,
+  privacy_version TEXT,
   age_verification_status TEXT NOT NULL DEFAULT 'not_started',
   is_over_18_verified INTEGER NOT NULL DEFAULT 0,
   subscription_status TEXT NOT NULL DEFAULT 'free',
@@ -367,6 +371,19 @@ CREATE TABLE IF NOT EXISTS saved_items (
 
 CREATE INDEX IF NOT EXISTS idx_saved_items_user_type
   ON saved_items (user_id, item_type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS account_privacy_settings (
+  user_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+  optional_analytics_enabled INTEGER NOT NULL DEFAULT 1,
+  venue_report_inclusion_enabled INTEGER NOT NULL DEFAULT 1,
+  product_research_enabled INTEGER NOT NULL DEFAULT 1,
+  email_updates_enabled INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_privacy_settings_updated
+  ON account_privacy_settings (updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS feedback (
   id TEXT PRIMARY KEY,

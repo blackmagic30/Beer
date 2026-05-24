@@ -98,9 +98,12 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 Business demo pages:
 
 - `/pricing.html`: free, monthly, yearly, and contributor access copy.
-- `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, preferences, requests, feedback, and submission status.
+- `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, privacy preferences, requests, session controls, and submission status.
 - `/missions.html`: Needs Data mission board with sorting, quick-win guidance, and points.
 - `/submit.html`: venue data submission with manual rows and photo/source queue.
+- `/trust.html`: public trust centre explaining verification, private evidence, aggregate venue insights, and support paths.
+- `/community.html`: contributor community standards, moderation rules, anti-abuse expectations, and appeal paths.
+- `/security.html`: security/privacy support page for account controls, data requests, abuse reports, and responsible disclosure.
 - `/venue-portal`: invite-only, admin-assigned venue dashboard for profile details, beer stock/on-tap rows, prices, happy hours, deals/specials, listing quality, tier-gated analytics, monthly report previews, and pending review updates. `/for-bars` redirects here so public users do not see venue-owner operating details.
 - `/admin.html`: admin-only submission review, KPI dashboard, cohorts, coverage, partner leads, and review queues.
 
@@ -114,7 +117,7 @@ Supabase auth/account foundation:
 - Production admin access expects Supabase Auth MFA/Auth Assurance Level 2 (`aal2`). Enable MFA factors in Supabase, require confirmed email, and verify the OAuth/session JWT contains `aal2` before relying on admin routes.
 - Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
 - Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
-- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` adds a detailed `public.user_price_submissions` table for future direct Supabase contributor uploads, protected so users can insert/select only their own pending rows while admins review status fields. `supabase/migrations/20260523000000_submission_location_points.sql` adds private upload-location proof fields and point-award tracking for contributor submissions.
+- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` adds a detailed `public.user_price_submissions` table for future direct Supabase contributor uploads, protected so users can insert/select only their own pending rows while admins review status fields. `supabase/migrations/20260523000000_submission_location_points.sql` adds private upload-location proof fields and point-award tracking for contributor submissions. `supabase/migrations/20260524010000_account_privacy_settings.sql` adds per-user optional analytics, venue-insight inclusion, product-research, and email-update preferences with owner-only RLS.
 - `/account.html` now has two states: logged-out users see polished Supabase Google/Apple/email sign-in/create-account forms, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points. Supabase OAuth and password-reset redirects land on `/auth/callback`, exchange the session, and then return to the account page or requested upload page.
 - Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. Pint Path must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
 - Future rewards should use `canAccessAgeGatedRewards(...)`, which requires verified 18+ status, a latest verified age-check record, and a non-expired verification.
@@ -143,7 +146,7 @@ Venue owner TODOs before paid partner rollout:
 
 Responsible-alcohol guardrails:
 
-- 18+ confirmation is required for account signup and full price/submission flows.
+- 18+ confirmation plus Terms and Privacy Policy acceptance are required for account signup and full price/submission flows.
 - The demo does not collect government ID documents.
 - Copy is intentionally neutral: verified prices, data accuracy, and responsible use.
 - Partner venue credit/rewards are marked as coming soon and are disabled.

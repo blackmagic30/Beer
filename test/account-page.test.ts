@@ -23,6 +23,26 @@ function feedbackHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/feedback.html"), "utf8");
 }
 
+function termsHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/terms.html"), "utf8");
+}
+
+function privacyHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/privacy.html"), "utf8");
+}
+
+function trustHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/trust.html"), "utf8");
+}
+
+function communityHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/community.html"), "utf8");
+}
+
+function securityHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/security.html"), "utf8");
+}
+
 describe("account page shell", () => {
   it("renders separate logged-out auth and logged-in dashboard states", () => {
     const html = accountHtml();
@@ -106,11 +126,21 @@ describe("account page shell", () => {
     expect(html).not.toContain("Continue with Facebook");
     expect(html).toContain("MelbBeerBusiness.signUpWithEmail");
     expect(html).toContain("MelbBeerBusiness.signInWithEmail");
+    expect(html).toContain('id="passwordResetButton"');
+    expect(html).toContain("Reset password");
+    expect(html).toContain("Sending reset link...");
+    expect(html).toContain("If an account exists for that email, a secure reset link has been sent.");
+    expect(html).toContain('id="oauthTermsAccepted"');
+    expect(html).toContain('id="oauthPrivacyAccepted"');
+    expect(html).toContain("Confirm you are 18+ and accept the Terms and Privacy Policy before using social login.");
     expect(script).toContain("signInWithOAuth({");
     expect(script).toContain('provider,');
     expect(script).toContain("signInWithPassword");
     expect(script).toContain("signUp({");
     expect(script).toContain("/auth/callback");
+    expect(script).toContain("terms_accepted");
+    expect(script).toContain("privacy_accepted");
+    expect(script).toContain("applyPendingLegalAcceptance");
   });
 
   it("requires confirm password and keeps signup consent text readable", () => {
@@ -119,11 +149,19 @@ describe("account page shell", () => {
 
     expect(html).toContain("Confirm password");
     expect(html).toContain('name="confirmPassword"');
+    expect(html).toContain('name="termsAccepted"');
+    expect(html).toContain('name="privacyAccepted"');
+    expect(html).toContain("Terms and Conditions");
+    expect(html).toContain("Privacy Policy");
     expect(html).toContain("Passwords do not match.");
+    expect(html).toContain("Confirm you are 18+ and accept the Terms and Privacy Policy to create an account.");
     expect(html).toContain('id="signupPanel" class="authPanelStack"');
+    expect(html).toContain('class="authFields"');
     expect(html).toContain('class="consentLine"');
     expect(css).toContain('.field input[type="checkbox"]');
     expect(css).toContain(".authPanelStack");
+    expect(css).toContain(".authFields");
+    expect(css).toContain(".authActions");
     expect(css).toContain("padding-right: 86px");
     expect(css).toContain("position: absolute");
     expect(css).toContain("grid-template-columns: 18px minmax(0, 1fr)");
@@ -158,7 +196,67 @@ describe("account page shell", () => {
     expect(html).toContain("Finishing your Pint Path login");
     expect(html).toContain("exchangeCodeForSession");
     expect(html).toContain("MelbBeerBusiness.syncSupabaseSession");
+    expect(html).toContain("MelbBeerBusiness.applyPendingLegalAcceptance");
     expect(html).toContain("MelbBeerBusiness.getSafeReturnPath");
     expect(html).not.toContain("service_role");
+  });
+
+  it("publishes stronger beta Terms and Privacy pages for account consent", () => {
+    const terms = termsHtml();
+    const privacy = privacyHtml();
+
+    expect(terms).toContain("Terms and Conditions");
+    expect(terms).toContain("warn, restrict, suspend, or permanently ban accounts");
+    expect(terms).toContain("exploit the points system");
+    expect(terms).toContain("scrape protected data");
+    expect(privacy).toContain("Privacy Policy");
+    expect(privacy).toContain("Venue reports are aggregate-only");
+    expect(privacy).toContain("We do not store raw ID documents");
+    expect(privacy).toContain("one-time upload-location proof");
+  });
+
+  it("adds a trust centre with community, security, privacy, and support paths", () => {
+    const trust = trustHtml();
+    const community = communityHtml();
+    const security = securityHtml();
+    const feedback = feedbackHtml();
+    const nav = businessJs();
+
+    expect(nav).toContain('href="/trust.html"');
+    expect(trust).toContain("Trust Centre");
+    expect(trust).toContain("Raw photos, reviewer notes, account details, and individual analytics stay private.");
+    expect(trust).toContain("Read Community Standards");
+    expect(community).toContain("Submit what you actually saw at the venue.");
+    expect(community).toContain("Spoofing location");
+    expect(security).toContain("Security & privacy");
+    expect(security).toContain("Log out all sessions");
+    expect(security).toContain("Security report");
+    expect(feedback).toContain("privacy_request");
+    expect(feedback).toContain("data_export_request");
+    expect(feedback).toContain("account_deletion_request");
+    expect(feedback).toContain("moderation_appeal");
+    expect(feedback).toContain("security_report");
+    expect(feedback).toContain("abuse_report");
+    expect(feedback).toContain("billing_support");
+  });
+
+  it("exposes signed-in privacy controls without clustering feedback back into account", () => {
+    const html = accountHtml();
+    const css = businessCss();
+    const script = businessJs();
+
+    expect(html).toContain('id="privacySettingsForm"');
+    expect(html).toContain("Allow optional product analytics");
+    expect(html).toContain("Include my aggregate activity in venue insights");
+    expect(html).toContain('id="dataRequestForm"');
+    expect(html).toContain('id="logoutAllButton"');
+    expect(html).toContain("/api/business/account/privacy-settings");
+    expect(html).toContain("/api/business/auth/logout-all");
+    expect(html).toContain("/community.html");
+    expect(css).toContain(".accountSecurityPanel");
+    expect(css).toContain(".toggleLine");
+    expect(script).toContain("setPrivacyPreferenceCache");
+    expect(script).toContain("pintPathOptionalAnalyticsEnabled");
+    expect(script).toContain("pintPathVenueReportsEnabled");
   });
 });

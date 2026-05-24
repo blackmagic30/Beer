@@ -3,32 +3,67 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Privacy | Pint Path</title>
+  <title>Privacy Policy | Pint Path</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
-  <main class="pageShell">
+  <main class="pageShell legalPage">
     <div id="nav"></div>
     <section class="hero">
-      <div class="eyebrow">Privacy summary</div>
-      <h1>Simple, honest beta data use.</h1>
-      <p class="lead">We collect only what helps the field test work: accounts, submissions, searches, clicks, feedback, and aggregate usage events.</p>
+      <div class="eyebrow">Privacy Policy</div>
+      <h1>Clear rules for Pint Path data.</h1>
+      <p class="lead">Pint Path collects only the information needed to run a Melbourne beer price, happy-hour, contribution, and venue-insight platform safely.</p>
+      <p class="muted">Last updated: 24 May 2026. This policy is written for the beta and should be reviewed by an Australian privacy/legal professional before a large public launch.</p>
     </section>
 
-    <section class="panel">
-      <h2>What we collect</h2>
-      <p class="muted">Account email, 18+ confirmation timestamp, saved items, venue submissions, reports, requests, feedback, and app usage events such as searches, filters, venue views, map pin clicks, happy-hour interest, beer-list views, and price reveals.</p>
-      <h2>How it is used</h2>
-      <p class="muted">We use aggregated analytics to improve venue coverage, understand demand, decide which Melbourne venues need verification next, and produce privacy-safe suburb reports for paid venue tiers. Venue reports use thresholds so tiny buckets are suppressed.</p>
-      <h2>Location</h2>
-      <p class="muted">Location is only used when you choose “Use my location”. Browsing location stays in your browser for nearby venues, approximate distances, and happy hours. Search and click analytics may include coarse context such as approximate suburb, selected radius, and distance bucket, but not exact latitude/longitude. If you submit venue data, you can also save a one-time private upload-location proof so reviewers know the update was captured near the venue before awarding points. That proof can stay on your device for up to 12 hours or until the submission succeeds. We do not continuously track your location, publish precise coordinates, or sell individual location data to venues.</p>
-      <h2>What is not sold</h2>
-      <p class="muted">Individual user clickstream, names, account emails, exact user locations, and private source evidence are not sold or exposed to venues. Admin and venue dashboards show aggregate counts only. You can request deletion or corrections through the feedback form during the beta.</p>
+    <section class="panel legalStack">
+      <article>
+        <h2>What we collect</h2>
+        <p class="muted">We may collect account details such as email address, display name, sign-in provider, account status, subscription/access tier, 18+ self-confirmation status, contribution points, fraud strikes, upload counts, review outcomes, support/feedback messages, saved venues/beers/suburbs, and preferences you choose to save.</p>
+        <p class="muted">When you submit data, we collect the venue, beer, serving size, price, happy-hour details, notes, timestamps, and private source evidence such as menu photos, receipt photos, or tap-list photos. Raw evidence is not public map data.</p>
+      </article>
+
+      <article>
+        <h2>Search, analytics, and venue reports</h2>
+        <p class="muted">We collect product analytics such as searches, filters, map marker clicks, venue views, price reveals, happy-hour interest, beer-list views, suburb context, radius selections, and interaction timestamps. These events help us improve coverage and generate paid venue insights.</p>
+        <p class="muted">Venue reports are aggregate-only. We do not sell or expose individual user names, emails, exact user locations, private click paths, raw source evidence, or individual account data to venues. Small data buckets are suppressed so venue reports do not expose tiny or identifying groups.</p>
+      </article>
+
+      <article>
+        <h2>Location</h2>
+        <p class="muted">Location is used only when you choose a location feature, such as “Use my location”, near-me sorting, or upload-location proof. Nearby browsing uses approximate browser location for distances and map relevance. Analytics may store coarse context such as suburb, distance bucket, or selected radius, but not continuous movement trails.</p>
+        <p class="muted">If you submit venue data, we may save a private, one-time upload-location proof so reviewers can decide whether contribution points should be awarded. This is used to reduce fake submissions from home and is not shown publicly or sold to venues.</p>
+      </article>
+
+      <article>
+        <h2>Age and rewards</h2>
+        <p class="muted">Pint Path is intended for adults aged 18+ in Victoria. We may store an 18+ confirmation status and, in future, a third-party age-verification provider reference. We do not store raw ID documents, licence numbers, passport numbers, Medicare numbers, or ID images.</p>
+      </article>
+
+      <article>
+        <h2>How we use information</h2>
+        <p class="muted">We use information to operate accounts, authenticate users, prevent abuse, review submissions, publish verified public price data, calculate contribution points, provide paid access, support users, improve map coverage, prepare privacy-safe venue reports, and protect the integrity of the platform.</p>
+      </article>
+
+      <article>
+        <h2>Who can access information</h2>
+        <p class="muted">You can access your own account and submission information. Admins/reviewers can access private submission evidence where needed to verify data and investigate abuse. Assigned venue managers can see only their own venue tools and aggregate insights that meet privacy thresholds. Public users see only approved public venue, beer-price, and happy-hour data.</p>
+      </article>
+
+      <article>
+        <h2>Security and retention</h2>
+        <p class="muted">We use authentication, server-side authorization, private storage for evidence, rate limits, audit logging, and review workflows to protect the service. No online service is perfectly secure, so users should not upload sensitive ID documents or unnecessary personal information. We keep data while needed for the service, auditability, abuse prevention, legal obligations, and product analytics, then delete or aggregate where practical.</p>
+      </article>
+
+      <article>
+        <h2>Your choices</h2>
+        <p class="muted">You can browse public map data without an account. Uploading, verification, saved items, and contributor features require an account. Signed-in users can manage optional analytics and venue-report inclusion from the account page. You can request correction, deletion, export, or account support through the feedback page. Some records may need to be retained for fraud prevention, payment records, moderation, audit logs, or legal reasons.</p>
+      </article>
     </section>
 
-    <p class="footerCopy"><a href="/terms.html">Beta terms</a> · <a href="/feedback.html">Contact through feedback</a></p>
+    <p class="footerCopy"><a href="/terms.html">Terms and Conditions</a> · <a href="/trust.html">Trust Centre</a> · <a href="/security.html">Security</a> · <a href="/feedback.html">Contact through feedback</a> · <a href="/">Back to map</a></p>
   </main>
   <script>
     window.addEventListener("DOMContentLoaded", () => {
