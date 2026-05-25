@@ -403,9 +403,6 @@ CREATE TABLE IF NOT EXISTS feedback (
 CREATE INDEX IF NOT EXISTS idx_feedback_status_created
   ON feedback (status, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_feedback_priority_created
-  ON feedback (priority, created_at DESC);
-
 CREATE TABLE IF NOT EXISTS wrong_price_reports (
   id TEXT PRIMARY KEY,
   user_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,

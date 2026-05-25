@@ -372,6 +372,39 @@ describe("Supabase account and verification foundation", () => {
     expect(database.prepare("PRAGMA table_info(user_activity_events)").all()).not.toHaveLength(0);
   });
 
+  it("migrates legacy feedback tables before creating priority indexes", () => {
+    const database = new BetterSqlite3(":memory:");
+    openDatabases.push(database);
+    database.exec(`
+      CREATE TABLE feedback (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        anonymous_session_id TEXT,
+        feedback_type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        venue_id TEXT,
+        venue_name TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+
+    initializeDatabaseSchema(database);
+
+    const feedbackColumns = database
+      .prepare("PRAGMA table_info(feedback)")
+      .all()
+      .map((column: { name: string }) => column.name);
+    const feedbackIndexes = database
+      .prepare("PRAGMA index_list(feedback)")
+      .all()
+      .map((index: { name: string }) => index.name);
+
+    expect(feedbackColumns).toEqual(expect.arrayContaining(["priority", "triage_reason"]));
+    expect(feedbackIndexes).toContain("idx_feedback_priority_created");
+  });
+
   it("creates an app-facing profile row when an account is created", () => {
     const { repository } = createRepository();
     const account = createAccount(repository, "profile-user");
