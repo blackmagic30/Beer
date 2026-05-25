@@ -22,6 +22,9 @@ type Bucket = {
 const buckets = new Map<string, Bucket>();
 let redisClient: Redis | null | undefined;
 let warnedMemoryFallback = false;
+let lastRedisFailureLogAt = 0;
+const REDIS_CONNECT_TIMEOUT_MS = 1_500;
+const REDIS_FAILURE_LOG_INTERVAL_MS = 60_000;
 
 function warnMemoryFallback(reason: string): void {
   if (warnedMemoryFallback || env.NODE_ENV !== "production") {
@@ -76,11 +79,81 @@ function getRedisClient(): Redis | null {
   return redisClient;
 }
 
+function redisErrorMetadata(error: unknown): Record<string, string> {
+  if (!(error instanceof Error)) {
+    return { errorName: "UnknownRedisError" };
+  }
+
+  const maybeCode = "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+
+  return {
+    errorName: error.name,
+    ...(maybeCode ? { errorCode: maybeCode } : {}),
+  };
+}
+
+function logRedisFailure(error: unknown): void {
+  const now = Date.now();
+  if (now - lastRedisFailureLogAt < REDIS_FAILURE_LOG_INTERVAL_MS) {
+    return;
+  }
+
+  lastRedisFailureLogAt = now;
+  logger.error("Redis-backed rate limiter unavailable", {
+    redisStatus: redisClient?.status ?? "not_initialized",
+    ...redisErrorMetadata(error),
+  });
+}
+
+async function ensureRedisReady(client: Redis): Promise<void> {
+  if (client.status === "ready") {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      client.off("ready", onReady);
+      client.off("error", onError);
+    };
+
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      callback();
+    };
+
+    const onReady = () => settle(resolve);
+    const onError = (error: Error) => settle(() => reject(error));
+    const timer = setTimeout(
+      () => settle(() => reject(new Error("Redis connection timed out"))),
+      REDIS_CONNECT_TIMEOUT_MS,
+    );
+
+    client.once("ready", onReady);
+    client.once("error", onError);
+
+    if (client.status === "wait" || client.status === "end" || client.status === "close") {
+      client.connect().catch(onError);
+    }
+  });
+}
+
 async function incrementRedisBucket(key: string, windowMs: number, now: number): Promise<Bucket | null> {
   const client = getRedisClient();
   if (!client) {
     return null;
   }
+
+  await ensureRedisReady(client);
 
   const count = await client.incr(key);
   if (count === 1) {
@@ -126,7 +199,8 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
 
       bucket = await incrementRedisBucket(key, options.windowMs, now)
         ?? incrementMemoryBucket(key, options.windowMs, now);
-    } catch {
+    } catch (error) {
+      logRedisFailure(error);
       if (env.NODE_ENV === "production" && !env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
         next(new AppError("Rate limiter unavailable. Please try again shortly.", 503));
         return;
