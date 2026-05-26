@@ -167,6 +167,20 @@ a {
   font-size: 0.82rem;
 }
 
+.button:disabled,
+.button.is-loading {
+  cursor: progress;
+  opacity: 0.78;
+  transform: none;
+  box-shadow: none;
+}
+
+.pricingNoticeStack {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+
 .oauthStack {
   display: grid;
   gap: 10px;

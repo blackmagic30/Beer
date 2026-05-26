@@ -17,6 +17,11 @@
       <p class="lead">Browse the map for free with happy hours and pint prices for Guinness, Carlton Draft, and Stone & Wood, or unlock every verified beer price, premium filter, and special-discount detail.</p>
     </section>
 
+    <section class="pricingNoticeStack" aria-live="polite">
+      <div id="billingModeNotice" class="notice">Choose a plan to start checkout.</div>
+      <div id="status" class="notice">Log in and confirm 18+ before starting checkout.</div>
+    </section>
+
     <section class="grid">
       <article class="card">
         <h2>Free</h2>
@@ -28,13 +33,13 @@
         <h2>Monthly</h2>
         <div class="price">A$4.99</div>
         <p class="muted">Unlimited exact prices, premium filters, and venue special-discount details for one month at a time.</p>
-        <button class="button button--primary" data-plan="monthly">Start monthly</button>
+        <button class="button button--primary" type="button" data-plan="monthly">Start monthly</button>
       </article>
       <article class="card">
         <h2>Yearly</h2>
         <div class="price">A$50</div>
         <p class="muted">Best value for regular checking across Melbourne and Victoria venues, including special discounts where venues publish them.</p>
-        <button class="button button--primary" data-plan="yearly">Start yearly</button>
+        <button class="button button--primary" type="button" data-plan="yearly">Start yearly</button>
       </article>
     </section>
 
@@ -45,9 +50,6 @@
       <a class="button" href="/submit.html">Submit venue data</a>
       <p class="footerCopy">Partner venue credit is not active for this field test. Pint Path is 18+ only. Prices may change and availability is not guaranteed. <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></p>
     </section>
-
-    <div id="billingModeNotice" class="notice" style="margin-top:16px;">Choose a plan to start checkout.</div>
-    <div id="status" class="notice" style="margin-top:16px;">Log in and confirm 18+ before starting checkout.</div>
   </main>
 
   <script>
@@ -58,10 +60,67 @@
         ? "Field-test billing is in demo mode: no live payment will be taken."
         : "Stripe checkout is enabled. Use configured Stripe test mode until live payments are intentionally switched on.";
       void MelbBeerBusiness.trackEvent("pricing_page_viewed");
+
+      const setCheckoutBusy = (button, busy) => {
+        document.querySelectorAll("[data-plan]").forEach((planButton) => {
+          planButton.disabled = busy;
+          planButton.classList.toggle("is-loading", busy && planButton === button);
+        });
+        if (button) {
+          button.textContent = busy ? "Starting checkout..." : button.dataset.plan === "yearly" ? "Start yearly" : "Start monthly";
+        }
+      };
+
+      const showCheckoutStatus = (message, isError = false) => {
+        MelbBeerBusiness.setStatus(status, message, isError);
+        status.scrollIntoView({ behavior: "smooth", block: "center" });
+      };
+
+      const goToAccount = (message) => {
+        showCheckoutStatus(`${message} Taking you to Account now...`, true);
+        window.setTimeout(() => {
+          window.location.href = "/account.html?next=/pricing.html";
+        }, 650);
+      };
+
+      const ensureReadyForCheckout = async () => {
+        if (!MelbBeerBusiness.getAuthToken()) {
+          await MelbBeerBusiness.syncSupabaseSession().catch(() => null);
+        }
+
+        if (!MelbBeerBusiness.getAuthToken()) {
+          goToAccount("Please sign in before starting checkout.");
+          return false;
+        }
+
+        try {
+          const dashboard = await MelbBeerBusiness.apiFetch("/api/business/account");
+          if (!dashboard?.account?.ageConfirmedAt) {
+            goToAccount("Please confirm you are 18+ before starting checkout.");
+            return false;
+          }
+          return true;
+        } catch (error) {
+          const message = error?.message || "";
+          if (/account required|authorization|session|token|login|log in|sign in/i.test(message)) {
+            MelbBeerBusiness.setAuthToken(null);
+            goToAccount("Your session needs a quick sign-in refresh.");
+            return false;
+          }
+          throw error;
+        }
+      };
+
       document.querySelectorAll("[data-plan]").forEach((button) => {
         button.addEventListener("click", async () => {
+          const plan = button.dataset.plan;
           try {
-            const plan = button.dataset.plan;
+            if (!(await ensureReadyForCheckout())) {
+              return;
+            }
+
+            setCheckoutBusy(button, true);
+            showCheckoutStatus(`Opening secure Stripe checkout for the ${plan} plan...`);
             const result = await MelbBeerBusiness.apiFetch("/api/business/billing/checkout", {
               method: "POST",
               body: JSON.stringify({ plan }),
@@ -74,9 +133,24 @@
               MelbBeerBusiness.setStatus(status, "Demo subscription activated. Your account now has premium access.");
               return;
             }
-            window.location.href = result.checkoutUrl;
+            if (!result.checkoutUrl) {
+              throw new Error("Stripe did not return a checkout URL. Check the Stripe price IDs in Railway.");
+            }
+            window.location.assign(result.checkoutUrl);
           } catch (error) {
-            MelbBeerBusiness.setStatus(status, error.message || "Checkout failed. Log in and confirm 18+ first.", true);
+            const message = error?.message || "Checkout failed. Log in and confirm 18+ first.";
+            if (/18\+|age/i.test(message)) {
+              goToAccount("Please confirm you are 18+ before starting checkout.");
+              return;
+            }
+            if (/account required|authorization|session|token|login|log in|sign in/i.test(message)) {
+              MelbBeerBusiness.setAuthToken(null);
+              goToAccount("Please sign in before starting checkout.");
+              return;
+            }
+            showCheckoutStatus(message, true);
+          } finally {
+            setCheckoutBusy(button, false);
           }
         });
       });

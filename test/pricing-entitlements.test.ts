@@ -52,4 +52,20 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).not.toContain("Raw photos");
     expect(pricingHtml).not.toContain("source evidence");
   });
+
+  it("routes users through account readiness before opening Stripe checkout", () => {
+    const pricingHtml = readRepoFile("viewer/pricing.html");
+    const businessCss = readRepoFile("viewer/business.css");
+
+    expect(pricingHtml).toContain('type="button" data-plan="monthly"');
+    expect(pricingHtml).toContain('type="button" data-plan="yearly"');
+    expect(pricingHtml).toContain("/account.html?next=/pricing.html");
+    expect(pricingHtml).toContain("Please sign in before starting checkout.");
+    expect(pricingHtml).toContain("Please confirm you are 18+ before starting checkout.");
+    expect(pricingHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/account")');
+    expect(pricingHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
+    expect(pricingHtml).toContain("Opening secure Stripe checkout");
+    expect(businessCss).toContain(".pricingNoticeStack");
+    expect(businessCss).toContain(".button:disabled");
+  });
 });
