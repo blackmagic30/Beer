@@ -59,7 +59,9 @@ describe("premium pricing and entitlements", () => {
 
     expect(pricingHtml).toContain('type="button" data-plan="monthly"');
     expect(pricingHtml).toContain('type="button" data-plan="yearly"');
-    expect(pricingHtml).toContain("/account.html?next=/pricing.html");
+    expect(pricingHtml).toContain('new URL("/account.html", window.location.origin)');
+    expect(pricingHtml).toContain('accountUrl.searchParams.set("next", "/pricing.html")');
+    expect(pricingHtml).toContain('accountUrl.searchParams.set("checkoutPlan", plan)');
     expect(pricingHtml).toContain('document.getElementById("status")');
     expect(pricingHtml).toContain('const statusNotice');
     expect(pricingHtml).not.toContain("MelbBeerBusiness.setStatus(status,");

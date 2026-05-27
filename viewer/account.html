@@ -413,6 +413,7 @@
       quickVenues: [],
       quickVenueSearchTimer: null,
       oauthLoginOpening: false,
+      checkoutResumeStarted: false,
     };
 
     const statusLabels = {
@@ -466,6 +467,11 @@
     function formatPoints(value) {
       const numeric = Number(value || 0);
       return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
+    }
+
+    function pendingCheckoutPlan() {
+      const plan = new URLSearchParams(window.location.search).get("checkoutPlan");
+      return plan === "monthly" || plan === "yearly" ? plan : null;
     }
 
     function localDatetimeIso(date = new Date()) {
@@ -691,6 +697,47 @@
       renderRecentSubmissions(result.recentSubmissions || []);
     }
 
+    async function resumeCheckoutIfRequested(result) {
+      const plan = pendingCheckoutPlan();
+      if (!plan || state.checkoutResumeStarted) {
+        return;
+      }
+
+      if (!result?.account?.ageConfirmedAt) {
+        MelbBeerBusiness.setStatus(
+          $("dashboardStatus"),
+          "Confirm you are 18+ on this account before starting checkout.",
+          true,
+        );
+        $("confirmAgeButton").scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+
+      state.checkoutResumeStarted = true;
+      try {
+        MelbBeerBusiness.setStatus($("dashboardStatus"), `Account confirmed. Opening ${plan} checkout...`);
+        const checkout = await MelbBeerBusiness.apiFetch("/api/business/billing/checkout", {
+          method: "POST",
+          body: JSON.stringify({ plan }),
+        });
+        if (checkout.mode === "demo") {
+          await MelbBeerBusiness.apiFetch("/api/business/billing/demo-subscribe", {
+            method: "POST",
+            body: JSON.stringify({ plan }),
+          });
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Demo subscription activated. Your account now has premium access.");
+          return;
+        }
+        if (!checkout.checkoutUrl) {
+          throw new Error("Stripe did not return a checkout URL. Check the Stripe price IDs in Railway.");
+        }
+        window.location.assign(checkout.checkoutUrl);
+      } catch (error) {
+        state.checkoutResumeStarted = false;
+        MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not start checkout from your account.", true);
+      }
+    }
+
     async function refreshAccount() {
       const token = MelbBeerBusiness.getAuthToken();
       if (!token) {
@@ -701,6 +748,7 @@
       try {
         const result = await MelbBeerBusiness.apiFetch("/api/business/account");
         renderDashboard(result);
+        await resumeCheckoutIfRequested(result);
       } catch (error) {
         MelbBeerBusiness.setAuthToken(null);
         showLoggedOut(error.message || "Please sign in again.", true);
@@ -759,6 +807,9 @@
 
         form.reset();
         await refreshAccount();
+        if (pendingCheckoutPlan()) {
+          return;
+        }
         const nextPath = MelbBeerBusiness.getAuthReturnPathFromLocation();
         if (nextPath && nextPath !== "/account.html" && !nextPath.startsWith("/account.html")) {
           window.location.assign(nextPath);

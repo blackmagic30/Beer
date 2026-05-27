@@ -88,6 +88,19 @@ describe("account page shell", () => {
     expect(html).toContain("hadApiToken || hadSupabaseSession ? \"You have been logged out.\" : \"Enter your details to continue.\"");
   });
 
+  it("can resume premium checkout after account session refresh", () => {
+    const html = accountHtml();
+
+    expect(html).toContain("function pendingCheckoutPlan");
+    expect(html).toContain('plan === "monthly" || plan === "yearly"');
+    expect(html).toContain("checkoutResumeStarted");
+    expect(html).toContain("async function resumeCheckoutIfRequested");
+    expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
+    expect(html).toContain("Confirm you are 18+ on this account before starting checkout.");
+    expect(html).toContain("Opening ${plan} checkout");
+    expect(html).toContain("await resumeCheckoutIfRequested(result)");
+  });
+
   it("keeps contributor evidence copy private and reviewer-focused", () => {
     const html = accountHtml();
 

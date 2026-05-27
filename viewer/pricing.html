@@ -81,10 +81,15 @@
         statusNotice.scrollIntoView({ behavior: "smooth", block: "center" });
       };
 
-      const goToAccount = (message) => {
+      const goToAccount = (message, plan = null) => {
         showCheckoutStatus(`${message} Taking you to Account now...`, true);
         window.setTimeout(() => {
-          window.location.href = "/account.html?next=/pricing.html";
+          const accountUrl = new URL("/account.html", window.location.origin);
+          accountUrl.searchParams.set("next", "/pricing.html");
+          if (plan) {
+            accountUrl.searchParams.set("checkoutPlan", plan);
+          }
+          window.location.href = accountUrl.toString();
         }, 650);
       };
 
@@ -107,27 +112,27 @@
         }
       };
 
-      const ensureReadyForCheckout = async () => {
+      const ensureReadyForCheckout = async (plan) => {
         if (!MelbBeerBusiness.getAuthToken()) {
           await trySyncSession();
         }
 
         if (!MelbBeerBusiness.getAuthToken()) {
-          goToAccount("Please sign in before starting checkout.");
+          goToAccount("Please sign in before starting checkout.", plan);
           return false;
         }
 
         try {
           const dashboard = await getAccountDashboard();
           if (!dashboard?.account?.ageConfirmedAt) {
-            goToAccount("Please confirm you are 18+ before starting checkout.");
+            goToAccount("Please confirm you are 18+ before starting checkout.", plan);
             return false;
           }
           return true;
         } catch (error) {
           if (isSessionError(error)) {
             MelbBeerBusiness.setAuthToken(null);
-            goToAccount("Your session needs a quick sign-in refresh.");
+            goToAccount("Your session needs a quick sign-in refresh.", plan);
             return false;
           }
           throw error;
@@ -138,7 +143,7 @@
         button.addEventListener("click", async () => {
           const plan = button.dataset.plan;
           try {
-            if (!(await ensureReadyForCheckout())) {
+            if (!(await ensureReadyForCheckout(plan))) {
               return;
             }
 
@@ -163,12 +168,12 @@
           } catch (error) {
             const message = error?.message || "Checkout failed. Log in and confirm 18+ first.";
             if (/18\+|age/i.test(message)) {
-              goToAccount("Please confirm you are 18+ before starting checkout.");
+              goToAccount("Please confirm you are 18+ before starting checkout.", plan);
               return;
             }
             if (/account required|authorization|session|token|login|log in|sign in/i.test(message)) {
               MelbBeerBusiness.setAuthToken(null);
-              goToAccount("Please sign in before starting checkout.");
+              goToAccount("Please sign in before starting checkout.", plan);
               return;
             }
             showCheckoutStatus(message, true);
