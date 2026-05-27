@@ -192,6 +192,44 @@ function hashPassword(password: string): string {
   return `scrypt:${salt}:${hash}`;
 }
 
+function describeStripeCheckoutFailure(status: number, stripeMessage?: string | null): string {
+  const message = stripeMessage?.trim() ?? "";
+  const normalized = message.toLowerCase();
+
+  if (status === 401 || normalized.includes("api key")) {
+    return "Stripe rejected the secret key. Check STRIPE_SECRET_KEY and confirm it is from the same test/live mode as your Price IDs.";
+  }
+
+  if (
+    normalized.includes("no such price") ||
+    normalized.includes("price does not exist") ||
+    normalized.includes("price id")
+  ) {
+    return "Stripe price ID was not found. Check STRIPE_PRICE_MONTHLY and STRIPE_PRICE_YEARLY in Railway, and make sure they match the same test/live mode as STRIPE_SECRET_KEY.";
+  }
+
+  if (normalized.includes("inactive") && normalized.includes("price")) {
+    return "Stripe price is inactive. Activate the monthly/yearly Stripe Price or update Railway to use an active recurring Price ID.";
+  }
+
+  if (
+    normalized.includes("recurring") ||
+    normalized.includes("subscription") && normalized.includes("price")
+  ) {
+    return "Stripe checkout needs a recurring subscription Price. Use Stripe recurring monthly/yearly Price IDs, not one-time product prices.";
+  }
+
+  if (status === 403) {
+    return "Stripe refused this request. Check that the Stripe key has permission to create Checkout Sessions.";
+  }
+
+  if (status >= 500) {
+    return "Stripe is temporarily unavailable. Please try again shortly.";
+  }
+
+  return "Stripe checkout session failed. Check the Stripe Dashboard request log for the exact setup issue.";
+}
+
 function verifyPassword(password: string, stored: string): boolean {
   const [scheme, salt, hash] = stored.split(":");
 
@@ -3736,7 +3774,7 @@ export class BusinessService {
     const payload = (await response.json().catch(() => null)) as { url?: string; error?: { message?: string } } | null;
 
     if (!response.ok || !payload?.url) {
-      throw new ExternalServiceError("Stripe checkout session failed", {
+      throw new ExternalServiceError(describeStripeCheckoutFailure(response.status, payload?.error?.message), {
         status: response.status,
         message: payload?.error?.message,
       });
@@ -3825,7 +3863,7 @@ export class BusinessService {
     const payload = (await response.json().catch(() => null)) as { url?: string; error?: { message?: string } } | null;
 
     if (!response.ok || !payload?.url) {
-      throw new ExternalServiceError("Stripe venue tier checkout session failed", {
+      throw new ExternalServiceError(describeStripeCheckoutFailure(response.status, payload?.error?.message), {
         status: response.status,
         message: payload?.error?.message,
       });

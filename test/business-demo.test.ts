@@ -1624,6 +1624,48 @@ describe("production hardening", () => {
     expect(() => stripeService.handleDemoSubscription(user, "monthly")).toThrow("Demo billing is not enabled");
   });
 
+  it("surfaces actionable Stripe checkout setup failures without exposing secrets", async () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "stripe-setup-user");
+    const originalFetch = globalThis.fetch;
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRICE_MONTHLY: "price_missing_monthly",
+      STRIPE_PRICE_YEARLY: "price_missing_yearly",
+    });
+
+    try {
+      globalThis.fetch = (async () => new Response(JSON.stringify({
+        error: {
+          message: "No such price: 'price_missing_monthly'",
+        },
+      }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+      await expect(service.createCheckout(user, { plan: "monthly" })).rejects.toThrow(
+        "Stripe price ID was not found",
+      );
+
+      globalThis.fetch = (async () => new Response(JSON.stringify({
+        error: {
+          message: "Invalid API Key provided",
+        },
+      }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+      await expect(service.createCheckout(user, { plan: "yearly" })).rejects.toThrow(
+        "Stripe rejected the secret key",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("rejects expired, revoked, and suspended sessions and supports logout flows", () => {
     const { database, repository } = createRepository();
     const service = createBusinessService(repository);
