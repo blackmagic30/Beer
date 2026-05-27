@@ -63,6 +63,9 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain('document.getElementById("status")');
     expect(pricingHtml).toContain('const statusNotice');
     expect(pricingHtml).not.toContain("MelbBeerBusiness.setStatus(status,");
+    expect(pricingHtml).toContain("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
+    expect(pricingHtml).toContain("const trySyncSession");
+    expect(pricingHtml).toContain("MelbBeerBusiness.syncSupabaseSession()");
     expect(pricingHtml).toContain("Please sign in before starting checkout.");
     expect(pricingHtml).toContain("Please confirm you are 18+ before starting checkout.");
     expect(pricingHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/account")');

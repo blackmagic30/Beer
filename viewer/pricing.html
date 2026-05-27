@@ -6,6 +6,7 @@
   <title>Pricing | Pint Path</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -87,9 +88,28 @@
         }, 650);
       };
 
+      const isSessionError = (error) => /account required|authorization|session|token|login|log in|sign in/i.test(error?.message || "");
+
+      const trySyncSession = async () => {
+        const result = await MelbBeerBusiness.syncSupabaseSession().catch(() => null);
+        return Boolean(result?.synced && MelbBeerBusiness.getAuthToken());
+      };
+
+      const getAccountDashboard = async () => {
+        try {
+          return await MelbBeerBusiness.apiFetch("/api/business/account");
+        } catch (error) {
+          if (!isSessionError(error) || !(await trySyncSession())) {
+            throw error;
+          }
+
+          return MelbBeerBusiness.apiFetch("/api/business/account");
+        }
+      };
+
       const ensureReadyForCheckout = async () => {
         if (!MelbBeerBusiness.getAuthToken()) {
-          await MelbBeerBusiness.syncSupabaseSession().catch(() => null);
+          await trySyncSession();
         }
 
         if (!MelbBeerBusiness.getAuthToken()) {
@@ -98,15 +118,14 @@
         }
 
         try {
-          const dashboard = await MelbBeerBusiness.apiFetch("/api/business/account");
+          const dashboard = await getAccountDashboard();
           if (!dashboard?.account?.ageConfirmedAt) {
             goToAccount("Please confirm you are 18+ before starting checkout.");
             return false;
           }
           return true;
         } catch (error) {
-          const message = error?.message || "";
-          if (/account required|authorization|session|token|login|log in|sign in/i.test(message)) {
+          if (isSessionError(error)) {
             MelbBeerBusiness.setAuthToken(null);
             goToAccount("Your session needs a quick sign-in refresh.");
             return false;
