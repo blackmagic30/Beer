@@ -54,6 +54,10 @@
 
   <script>
     window.addEventListener("DOMContentLoaded", () => {
+      const nav = document.getElementById("nav");
+      const billingModeNotice = document.getElementById("billingModeNotice");
+      const statusNotice = document.getElementById("status");
+
       nav.innerHTML = MelbBeerBusiness.renderNav("pricing");
       const businessConfig = MelbBeerBusiness.getBusinessConfig();
       billingModeNotice.textContent = businessConfig.demoBillingMode
@@ -72,8 +76,8 @@
       };
 
       const showCheckoutStatus = (message, isError = false) => {
-        MelbBeerBusiness.setStatus(status, message, isError);
-        status.scrollIntoView({ behavior: "smooth", block: "center" });
+        MelbBeerBusiness.setStatus(statusNotice, message, isError);
+        statusNotice.scrollIntoView({ behavior: "smooth", block: "center" });
       };
 
       const goToAccount = (message) => {
@@ -130,7 +134,7 @@
                 method: "POST",
                 body: JSON.stringify({ plan }),
               });
-              MelbBeerBusiness.setStatus(status, "Demo subscription activated. Your account now has premium access.");
+              showCheckoutStatus("Demo subscription activated. Your account now has premium access.");
               return;
             }
             if (!result.checkoutUrl) {

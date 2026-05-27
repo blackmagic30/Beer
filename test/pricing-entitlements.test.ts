@@ -60,6 +60,9 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain('type="button" data-plan="monthly"');
     expect(pricingHtml).toContain('type="button" data-plan="yearly"');
     expect(pricingHtml).toContain("/account.html?next=/pricing.html");
+    expect(pricingHtml).toContain('document.getElementById("status")');
+    expect(pricingHtml).toContain('const statusNotice');
+    expect(pricingHtml).not.toContain("MelbBeerBusiness.setStatus(status,");
     expect(pricingHtml).toContain("Please sign in before starting checkout.");
     expect(pricingHtml).toContain("Please confirm you are 18+ before starting checkout.");
     expect(pricingHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/account")');
