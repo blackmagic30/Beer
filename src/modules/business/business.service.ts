@@ -43,6 +43,7 @@ import type {
   BarSpecialInput,
   BarTierCheckoutInput,
   CheckoutInput,
+  CheckoutSessionInput,
   CreateSubmissionInput,
   EventTrackInput,
   FeedbackInput,
@@ -79,6 +80,18 @@ interface StripeEvent {
   type: string;
   data?: {
     object?: Record<string, unknown>;
+  };
+}
+
+interface StripeCheckoutSession {
+  id?: string;
+  status?: string | null;
+  payment_status?: string | null;
+  customer?: string | { id?: string | null } | null;
+  subscription?: string | { id?: string | null } | null;
+  metadata?: Record<string, string> | null;
+  error?: {
+    message?: string;
   };
 }
 
@@ -574,6 +587,19 @@ function formEncode(value: Record<string, string>): URLSearchParams {
   }
 
   return params;
+}
+
+function stripeObjectId(value: unknown): string | null {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+
+  if (value && typeof value === "object" && "id" in value) {
+    const id = (value as { id?: unknown }).id;
+    return typeof id === "string" && id.trim().length > 0 ? id : null;
+  }
+
+  return null;
 }
 
 function cleanStringList(values: string[]): string[] {
@@ -3751,7 +3777,9 @@ export class BusinessService {
       throw new AppError("Stripe checkout is not configured for this plan.", 503);
     }
 
-    const successUrl = new URL("/account.html?checkout=success", this.config.PUBLIC_BASE_URL).toString();
+    const successUrl = new URL("/account.html?checkout=success", this.config.PUBLIC_BASE_URL);
+    successUrl.searchParams.set("session_id", "{CHECKOUT_SESSION_ID}");
+    const successUrlWithSession = successUrl.toString().replace("%7BCHECKOUT_SESSION_ID%7D", "{CHECKOUT_SESSION_ID}");
     const cancelUrl = new URL("/pricing.html?checkout=cancelled", this.config.PUBLIC_BASE_URL).toString();
     const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
@@ -3761,7 +3789,7 @@ export class BusinessService {
       },
       body: formEncode({
         mode: "subscription",
-        success_url: successUrl,
+        success_url: successUrlWithSession,
         cancel_url: cancelUrl,
         "line_items[0][price]": priceId,
         "line_items[0][quantity]": "1",
@@ -3783,6 +3811,89 @@ export class BusinessService {
     return {
       mode: "stripe",
       checkoutUrl: payload.url,
+    };
+  }
+
+  async reconcileCheckoutSession(account: BusinessAccount, input: CheckoutSessionInput) {
+    if (this.config.DEMO_BILLING_MODE) {
+      return {
+        account: sanitizeAccount(account),
+        access: this.getAccessState(account, null),
+        message: "Demo billing is active. No Stripe checkout confirmation is needed.",
+      };
+    }
+
+    if (!this.config.STRIPE_SECRET_KEY) {
+      throw new AppError("Stripe checkout confirmation is not configured.", 503);
+    }
+
+    const response = await fetch(
+      `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(input.sessionId)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
+        },
+      },
+    );
+    const payload = (await response.json().catch(() => null)) as StripeCheckoutSession | null;
+
+    if (!response.ok || !payload) {
+      throw new ExternalServiceError(describeStripeCheckoutFailure(response.status, payload?.error?.message), {
+        status: response.status,
+        message: payload?.error?.message,
+      });
+    }
+
+    const metadata = payload.metadata ?? {};
+    if (metadata.user_id !== account.id) {
+      this.auditSecurity({
+        actor: account,
+        action: "stripe_checkout_session_mismatch",
+        targetType: "account",
+        targetId: account.id,
+        metadata: { sessionPrefix: input.sessionId.slice(0, 12), checkoutUserIdPresent: Boolean(metadata.user_id) },
+      });
+      throw new AppError("This Stripe checkout session does not belong to your account.", 403);
+    }
+
+    const subscriptionStatus = metadata.subscription_status;
+    if (subscriptionStatus !== "premium_monthly" && subscriptionStatus !== "premium_yearly") {
+      throw new AppError("Stripe checkout session is missing Pint Path subscription metadata.", 400);
+    }
+
+    const sessionComplete = payload.status === "complete" || payload.payment_status === "paid";
+    if (!sessionComplete) {
+      throw new AppError("Stripe checkout has not completed yet. Please wait a few seconds and refresh Account.", 409);
+    }
+
+    const updated = this.repository.updateSubscription({
+      userId: account.id,
+      subscriptionStatus,
+      stripeCustomerId: stripeObjectId(payload.customer),
+      premiumUntil: null,
+      now: nowIso(),
+    });
+    this.trackEvent(updated, {
+      anonymousSessionId: null,
+      eventType: "subscription_created",
+      venueId: null,
+      beerId: null,
+      suburb: null,
+      metadata: { mode: "stripe", source: "checkout_return", subscriptionStatus },
+    });
+    this.auditSecurity({
+      actor: updated,
+      action: "stripe_subscription_update",
+      targetType: "account",
+      targetId: updated.id,
+      metadata: { source: "checkout_return", subscriptionStatus },
+    });
+
+    return {
+      account: sanitizeAccount(updated),
+      access: this.getAccessState(updated, null),
+      message: "Stripe checkout confirmed. Premium access is now active.",
     };
   }
 

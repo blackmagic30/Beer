@@ -92,13 +92,20 @@ describe("account page shell", () => {
     const html = accountHtml();
 
     expect(html).toContain("function pendingCheckoutPlan");
+    expect(html).toContain("function pendingStripeCheckoutSessionId");
     expect(html).toContain('plan === "monthly" || plan === "yearly"');
     expect(html).toContain("checkoutResumeStarted");
+    expect(html).toContain("checkoutReconcileStarted");
     expect(html).toContain("async function resumeCheckoutIfRequested");
+    expect(html).toContain("async function reconcileCheckoutReturnIfNeeded");
     expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
+    expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout/reconcile"');
     expect(html).toContain("Confirm you are 18+ on this account before starting checkout.");
     expect(html).toContain("Opening ${plan} checkout");
+    expect(html).toContain("Confirming your Stripe checkout");
+    expect(html).toContain("session_id");
     expect(html).toContain("await resumeCheckoutIfRequested(result)");
+    expect(html).toContain("await reconcileCheckoutReturnIfNeeded()");
   });
 
   it("keeps contributor evidence copy private and reviewer-focused", () => {

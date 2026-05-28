@@ -1666,6 +1666,111 @@ describe("production hardening", () => {
     }
   });
 
+  it("adds a Checkout Session ID to Stripe success returns and can reconcile completed sessions", async () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "stripe-return-user");
+    const originalFetch = globalThis.fetch;
+    let checkoutRequestBody = "";
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRICE_MONTHLY: "price_test_monthly",
+      STRIPE_PRICE_YEARLY: "price_test_yearly",
+    });
+
+    try {
+      globalThis.fetch = (async (_url, init) => {
+        checkoutRequestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({ url: "https://checkout.stripe.com/c/pay/cs_test_return" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      await expect(service.createCheckout(user, { plan: "monthly" })).resolves.toMatchObject({ mode: "stripe" });
+      expect(decodeURIComponent(checkoutRequestBody)).toContain("checkout=success");
+      expect(decodeURIComponent(checkoutRequestBody)).toContain("session_id={CHECKOUT_SESSION_ID}");
+
+      globalThis.fetch = (async (url) => {
+        expect(String(url)).toContain("/v1/checkout/sessions/cs_test_return");
+        return new Response(JSON.stringify({
+          id: "cs_test_return",
+          status: "complete",
+          payment_status: "paid",
+          customer: "cus_test_return",
+          subscription: "sub_test_return",
+          metadata: {
+            user_id: user.id,
+            subscription_status: "premium_monthly",
+          },
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      const reconciled = await service.reconcileCheckoutSession(user, { sessionId: "cs_test_return" });
+      expect(reconciled.account.subscriptionStatus).toBe("premium_monthly");
+      expect(reconciled.message).toContain("Premium access");
+      expect(repository.getAccountById(user.id)?.stripeCustomerId).toBe("cus_test_return");
+      expect(repository.listSecurityAuditLogs(10).some((row) => row.action === "stripe_subscription_update")).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects Checkout Session reconciliation for wrong users or incomplete payments", async () => {
+    const { repository } = createRepository();
+    const user = createAccount(repository, "stripe-owner-user");
+    const otherUser = createAccount(repository, "stripe-other-user");
+    const originalFetch = globalThis.fetch;
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+    });
+
+    try {
+      globalThis.fetch = (async () => new Response(JSON.stringify({
+        id: "cs_test_wrong_user",
+        status: "complete",
+        payment_status: "paid",
+        customer: "cus_wrong",
+        metadata: {
+          user_id: otherUser.id,
+          subscription_status: "premium_yearly",
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+      await expect(service.reconcileCheckoutSession(user, { sessionId: "cs_test_wrong_user" })).rejects.toThrow(
+        "does not belong to your account",
+      );
+      expect(repository.getAccountById(user.id)?.subscriptionStatus).toBe("free");
+
+      globalThis.fetch = (async () => new Response(JSON.stringify({
+        id: "cs_test_incomplete",
+        status: "open",
+        payment_status: "unpaid",
+        metadata: {
+          user_id: user.id,
+          subscription_status: "premium_yearly",
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+      await expect(service.reconcileCheckoutSession(user, { sessionId: "cs_test_incomplete" })).rejects.toThrow(
+        "has not completed yet",
+      );
+      expect(repository.getAccountById(user.id)?.subscriptionStatus).toBe("free");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("rejects expired, revoked, and suspended sessions and supports logout flows", () => {
     const { database, repository } = createRepository();
     const service = createBusinessService(repository);

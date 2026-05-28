@@ -414,6 +414,7 @@
       quickVenueSearchTimer: null,
       oauthLoginOpening: false,
       checkoutResumeStarted: false,
+      checkoutReconcileStarted: false,
     };
 
     const statusLabels = {
@@ -472,6 +473,16 @@
     function pendingCheckoutPlan() {
       const plan = new URLSearchParams(window.location.search).get("checkoutPlan");
       return plan === "monthly" || plan === "yearly" ? plan : null;
+    }
+
+    function pendingStripeCheckoutSessionId() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("checkout") !== "success") {
+        return null;
+      }
+
+      const sessionId = params.get("session_id");
+      return sessionId && sessionId.length >= 8 ? sessionId : null;
     }
 
     function localDatetimeIso(date = new Date()) {
@@ -738,6 +749,40 @@
       }
     }
 
+    async function reconcileCheckoutReturnIfNeeded() {
+      const sessionId = pendingStripeCheckoutSessionId();
+      if (!sessionId || state.checkoutReconcileStarted) {
+        return false;
+      }
+
+      state.checkoutReconcileStarted = true;
+      try {
+        MelbBeerBusiness.setStatus($("dashboardStatus"), "Confirming your Stripe checkout...");
+        const result = await MelbBeerBusiness.apiFetch("/api/business/billing/checkout/reconcile", {
+          method: "POST",
+          body: JSON.stringify({ sessionId }),
+        });
+        const accountResult = await MelbBeerBusiness.apiFetch("/api/business/account");
+        renderDashboard(accountResult);
+        MelbBeerBusiness.setStatus(
+          $("dashboardStatus"),
+          result.message || "Premium access is active. Thanks for supporting Pint Path.",
+        );
+        const cleanedUrl = new URL(window.location.href);
+        cleanedUrl.searchParams.delete("session_id");
+        window.history.replaceState({}, "", cleanedUrl.toString());
+        return true;
+      } catch (error) {
+        state.checkoutReconcileStarted = false;
+        MelbBeerBusiness.setStatus(
+          $("dashboardStatus"),
+          error.message || "Stripe checkout completed, but Pint Path could not confirm it yet. Please refresh shortly.",
+          true,
+        );
+        return false;
+      }
+    }
+
     async function refreshAccount() {
       const token = MelbBeerBusiness.getAuthToken();
       if (!token) {
@@ -748,7 +793,10 @@
       try {
         const result = await MelbBeerBusiness.apiFetch("/api/business/account");
         renderDashboard(result);
-        await resumeCheckoutIfRequested(result);
+        const reconciled = await reconcileCheckoutReturnIfNeeded();
+        if (!reconciled) {
+          await resumeCheckoutIfRequested(result);
+        }
       } catch (error) {
         MelbBeerBusiness.setAuthToken(null);
         showLoggedOut(error.message || "Please sign in again.", true);

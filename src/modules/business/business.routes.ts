@@ -24,6 +24,7 @@ import {
   authSupabaseSessionSchema,
   authSignupSchema,
   checkoutSchema,
+  checkoutSessionSchema,
   createMissionSchema,
   createSubmissionSchema,
   eventTrackSchema,
@@ -503,6 +504,17 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       const body = parseWithSchema(checkoutSchema, req.body, "Invalid checkout payload");
       const result = await businessService.createCheckout(account, body);
       res.status(201).json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/billing/checkout/reconcile", billingLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      const body = parseWithSchema(checkoutSessionSchema, req.body, "Invalid checkout confirmation payload");
+      const result = await businessService.reconcileCheckoutSession(account, body);
+      res.json(success(result));
     } catch (error) {
       next(error);
     }

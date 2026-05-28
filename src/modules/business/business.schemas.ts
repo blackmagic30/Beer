@@ -586,6 +586,10 @@ export const checkoutSchema = z.object({
   plan: z.enum(["monthly", "yearly"]),
 });
 
+export const checkoutSessionSchema = z.object({
+  sessionId: z.string().trim().min(8).max(255),
+});
+
 export const barTierCheckoutSchema = z.object({
   tier: z.enum(["plus", "pro"]),
 });
@@ -632,5 +636,6 @@ export type BarPendingChangeReviewInput = z.infer<typeof barPendingChangeReviewS
 export type AdminDashboardQuery = z.infer<typeof adminDashboardQuerySchema>;
 export type RetentionQuery = z.infer<typeof retentionQuerySchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
+export type CheckoutSessionInput = z.infer<typeof checkoutSessionSchema>;
 export type BarTierCheckoutInput = z.infer<typeof barTierCheckoutSchema>;
 export type PriceRecordsQuery = z.infer<typeof priceRecordsQuerySchema>;
