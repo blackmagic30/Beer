@@ -158,6 +158,10 @@ export interface BusinessMission {
   active: boolean;
   sponsorFlag: boolean;
   lastVerifiedAt: string | null;
+  venueAddress?: string | null;
+  distanceMeters?: number | null;
+  distanceKm?: number | null;
+  freshnessLabel?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -2419,6 +2423,32 @@ export class BusinessRepository {
       .prepare("SELECT max(last_verified_at) AS last_verified_at FROM venue_price_records WHERE venue_id = ?")
       .get(venueId) as { last_verified_at: string | null } | undefined;
     return row?.last_verified_at ?? null;
+  }
+
+  venueHasPublishedBeerRecord(input: {
+    venueId: string;
+    beerName: string;
+    normalizedBeerId?: string | null;
+  }): boolean {
+    const normalizedBeerId = input.normalizedBeerId?.trim();
+    if (normalizedBeerId) {
+      const row = this.database
+        .prepare("SELECT 1 AS exists_flag FROM venue_price_records WHERE venue_id = ? AND normalized_beer_id = ? LIMIT 1")
+        .get(input.venueId, normalizedBeerId) as { exists_flag: number } | undefined;
+      if (row) {
+        return true;
+      }
+    }
+
+    const beerName = input.beerName.trim().toLowerCase();
+    if (!beerName) {
+      return false;
+    }
+
+    const row = this.database
+      .prepare("SELECT 1 AS exists_flag FROM venue_price_records WHERE venue_id = ? AND lower(trim(beer_name)) = ? LIMIT 1")
+      .get(input.venueId, beerName) as { exists_flag: number } | undefined;
+    return Boolean(row);
   }
 
   upsertVenueLocationCache(input: {

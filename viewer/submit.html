@@ -70,6 +70,7 @@
           </label>
         </div>
         <div id="typeGuidance" class="notice">Choose the submission type and the form will show the fields that matter.</div>
+        <div id="missionContext" class="notice missionContext is-hidden"></div>
         <div class="notice locationProofPanel">
           <div>
             <strong>Points need location proof</strong>
@@ -630,11 +631,25 @@
       const params = new URLSearchParams(window.location.search);
       const initialVenueId = params.get("venueId");
       const initialVenueName = params.get("venueName") || "";
+      const missionId = params.get("missionId") || "";
+      const missionReason = params.get("missionReason") || "";
+      const initialSubmissionType = params.get("type");
       seedTrackedBeerLookup();
       populateTrackedBeerSuggestions();
       appendBeerRow();
       observedAtInput.value = localDatetimeValue();
+      if (["full_venue_update", "single_beer_price", "happy_hour_update", "photo_upload"].includes(initialSubmissionType)) {
+        submissionTypeSelect.value = initialSubmissionType;
+      }
       applySubmissionType();
+      if (missionId) {
+        missionContext.classList.remove("is-hidden");
+        missionContext.innerHTML = `
+          <strong>Mission accepted</strong>
+          <span>${escapeHtml(missionReason || "Submit the requested venue update.")}</span>
+          <span class="fieldHint">Your upload should match this mission so reviewers can award the right points.</span>
+        `;
+      }
       restoreUploadLocation();
       addBeerRowButton.addEventListener("click", appendBeerRow);
       captureLocationButton.addEventListener("click", captureUploadLocation);
@@ -665,7 +680,11 @@
         venueSelect.value = initialVenueId;
         selectVenue(venues.find((venue) => venue.id === initialVenueId));
       }
-      await MelbBeerBusiness.trackEvent("submission_started");
+      await MelbBeerBusiness.trackEvent("submission_started", {
+        missionId: missionId || null,
+        missionReason: missionReason || null,
+        submissionType: submissionTypeSelect.value,
+      });
 
       submissionForm.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -692,6 +711,13 @@
             MelbBeerBusiness.setStatus(status, validationError, true);
             return;
           }
+          const missionNote = missionId
+            ? `Mission ${missionId}: ${missionReason || "Pint Path mission"}`
+            : "";
+          const notes = [
+            missionNote,
+            String(formData.get("notes") || "").trim(),
+          ].filter(Boolean).join("\n\n") || null;
 
           const result = await MelbBeerBusiness.apiFetch("/api/business/submissions", {
             method: "POST",
@@ -703,7 +729,7 @@
               observedAt,
               sourcePhotoDataUrl,
               uploadLocation,
-              notes: formData.get("notes") || null,
+              notes,
               items,
             }),
           });

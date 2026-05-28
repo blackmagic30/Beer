@@ -14,6 +14,7 @@ import {
   type BusinessAccount,
   type BarMembershipTier,
   type BarProfile,
+  type BusinessMission,
   type BusinessSubmission,
   type BusinessSubmissionItem,
   type ConfidenceLabel,
@@ -73,6 +74,29 @@ interface VenueRow {
   postcode: string | null;
   latitude: number | null;
   longitude: number | null;
+}
+
+interface MissionAreaLookup {
+  latitude: number;
+  longitude: number;
+  label: string;
+  source: "google_geocode" | "local_cache";
+  confidence: "exact" | "approximate";
+}
+
+interface GoogleGeocodeResponse {
+  status?: string;
+  error_message?: string;
+  results?: Array<{
+    formatted_address?: string;
+    geometry?: {
+      location?: {
+        lat?: number;
+        lng?: number;
+      };
+      location_type?: string;
+    };
+  }>;
 }
 
 interface StripeEvent {
@@ -724,6 +748,8 @@ export class BusinessService {
       | "SUPABASE_SERVICE_ROLE_KEY"
       | "SUPABASE_OAUTH_PROVIDERS"
       | "ADMIN_EMAILS"
+      | "GOOGLE_MAPS_API_KEY"
+      | "GOOGLE_PLACES_API_KEY"
     >,
   ) {
     const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
@@ -2587,8 +2613,14 @@ export class BusinessService {
   }
 
   calculatePoints(submission: BusinessSubmission, items: BusinessSubmissionItem[]): number {
-    void items;
-    return this.calculateFreshnessPoints(this.repository.getLatestVenueDataTimestamp(submission.venueId));
+    const freshnessPoints = this.calculateFreshnessPoints(this.repository.getLatestVenueDataTimestamp(submission.venueId));
+    const includesNewDrink = items.some((item) => !this.repository.venueHasPublishedBeerRecord({
+      venueId: submission.venueId,
+      beerName: item.beerName,
+      normalizedBeerId: item.normalizedBeerId,
+    }));
+
+    return includesNewDrink ? Math.max(freshnessPoints, CONTRIBUTION_POINTS.newVenue) : freshnessPoints;
   }
 
   private calculateFreshnessPoints(lastVerifiedAt: string | null): number {
@@ -2714,16 +2746,262 @@ export class BusinessService {
     return { created: missions.length };
   }
 
-  listMissions(query: { suburb?: string | undefined; sort?: string | undefined; limit: number }) {
+  private missionFreshnessLabel(lastVerifiedAt: string | null): string {
+    if (!lastVerifiedAt) {
+      return "No approved data yet";
+    }
+
+    const ageMs = Date.now() - new Date(lastVerifiedAt).getTime();
+    const ageHours = ageMs / (1000 * 60 * 60);
+    if (ageHours <= CONTRIBUTION_POINTS.veryFreshHours) {
+      return "Updated in the last 24 hours";
+    }
+
+    const ageDays = ageHours / 24;
+    if (ageDays <= CONTRIBUTION_POINTS.weekOldDays) {
+      return "Updated this week";
+    }
+
+    return "Stale for 7+ days";
+  }
+
+  private missionDynamicPoints(mission: Pick<BusinessMission, "lastVerifiedAt" | "reason">): number {
+    const freshnessPoints = this.calculateFreshnessPoints(mission.lastVerifiedAt);
+    const reason = mission.reason.toLowerCase();
+    const isNewHighValueWork = !mission.lastVerifiedAt
+      || reason.includes("no data")
+      || reason.includes("no prices")
+      || reason.includes("new venue")
+      || /(?:new|missing).*(?:beer|drink|price)/i.test(reason);
+
+    return isNewHighValueWork
+      ? Math.max(freshnessPoints, CONTRIBUTION_POINTS.newVenue)
+      : freshnessPoints;
+  }
+
+  async resolveMissionArea(query: string): Promise<{
+    location: MissionAreaLookup | null;
+    message: string;
+  }> {
+    const normalizedQuery = query.trim().replace(/\s+/g, " ");
+    if (normalizedQuery.length < 2) {
+      throw new AppError("Enter a suburb, street, or venue to find nearby missions.", 400);
+    }
+
+    const googleLocation = await this.resolveMissionAreaWithGoogle(normalizedQuery);
+    if (googleLocation) {
+      return {
+        location: googleLocation,
+        message: `Showing missions near ${googleLocation.label}.`,
+      };
+    }
+
+    const cachedLocation = this.resolveMissionAreaFromLocalCache(normalizedQuery);
+    if (cachedLocation) {
+      return {
+        location: cachedLocation,
+        message: `Showing missions near ${cachedLocation.label}.`,
+      };
+    }
+
+    return {
+      location: null,
+      message: "We could not find that Melbourne area yet. Try a nearby suburb, street, or venue name.",
+    };
+  }
+
+  private async resolveMissionAreaWithGoogle(query: string): Promise<MissionAreaLookup | null> {
+    const apiKey = this.config.GOOGLE_PLACES_API_KEY ?? this.config.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      return null;
+    }
+
+    const address = /(?:melbourne|victoria|\bvic\b|australia)/i.test(query)
+      ? query
+      : `${query}, Melbourne VIC, Australia`;
+    const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    url.searchParams.set("address", address);
+    url.searchParams.set("components", "country:AU|administrative_area:VIC");
+    url.searchParams.set("bounds", "-38.5,144.3|-37.4,145.6");
+    url.searchParams.set("key", apiKey);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4500);
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        return null;
+      }
+
+      const body = await response.json() as GoogleGeocodeResponse;
+      const result = body.results?.find((candidate) => {
+        const latitude = candidate.geometry?.location?.lat;
+        const longitude = candidate.geometry?.location?.lng;
+        return typeof latitude === "number" && typeof longitude === "number";
+      });
+
+      if (!result) {
+        if (body.status && body.status !== "ZERO_RESULTS") {
+          logger.warn("Google geocode lookup did not return a usable result", {
+            status: body.status,
+            error: body.error_message ? redactSecrets(body.error_message) : undefined,
+          });
+        }
+        return null;
+      }
+
+      const latitude = result.geometry!.location!.lat!;
+      const longitude = result.geometry!.location!.lng!;
+      return {
+        latitude,
+        longitude,
+        label: result.formatted_address?.replace(/,\s*Australia$/i, "") ?? query,
+        source: "google_geocode",
+        confidence: result.geometry?.location_type === "ROOFTOP" ? "exact" : "approximate",
+      };
+    } catch (error) {
+      logger.warn("Google geocode lookup failed; falling back to cached venue locations", {
+        error: error instanceof Error ? redactSecrets(error.message) : "unknown",
+      });
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private resolveMissionAreaFromLocalCache(query: string): MissionAreaLookup | null {
+    const terms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .map((term) => term.trim())
+      .filter(Boolean);
+    if (!terms.length) {
+      return null;
+    }
+
+    const matches = this.repository
+      .listMissions({ activeOnly: true, suburb: undefined, limit: 500 })
+      .map((mission) => {
+        const profile = this.repository.getBarProfile(mission.venueId);
+        const location = this.repository.getVenueLocationCache(mission.venueId);
+        return {
+          mission,
+          profile,
+          location,
+          searchable: [mission.venueName, mission.suburb, mission.reason, profile?.address, profile?.suburb]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase(),
+        };
+      })
+      .filter((entry) =>
+        typeof entry.location?.latitude === "number" &&
+        typeof entry.location?.longitude === "number" &&
+        terms.every((term) => entry.searchable.includes(term)),
+      );
+
+    if (!matches.length) {
+      return null;
+    }
+
+    const bestMatches = matches.slice(0, 20);
+    const latitude = bestMatches.reduce((sum, entry) => sum + entry.location!.latitude!, 0) / bestMatches.length;
+    const longitude = bestMatches.reduce((sum, entry) => sum + entry.location!.longitude!, 0) / bestMatches.length;
+    const first = bestMatches[0]!;
+    const suburb = first.profile?.suburb ?? first.mission.suburb;
+    const label = matches.length === 1
+      ? [first.mission.venueName, suburb].filter(Boolean).join(", ")
+      : suburb ?? query;
+
+    return {
+      latitude,
+      longitude,
+      label,
+      source: "local_cache",
+      confidence: matches.length === 1 ? "exact" : "approximate",
+    };
+  }
+
+  listMissions(query: {
+    suburb?: string | undefined;
+    q?: string | undefined;
+    latitude?: number | undefined;
+    longitude?: number | undefined;
+    radiusKm?: number | undefined;
+    sort?: string | undefined;
+    limit: number;
+  }): BusinessMission[] {
     this.seedDemoMissions();
+    const hasLocation = typeof query.latitude === "number" && typeof query.longitude === "number";
+    const radiusMeters = Math.max(100, Math.min(50_000, Number(query.radiusKm || 5) * 1000));
+    const searchTerms = String(query.q || "")
+      .toLowerCase()
+      .split(/\s+/)
+      .map((term) => term.trim())
+      .filter(Boolean);
     const missions = this.repository
       .listMissions({ activeOnly: true, suburb: query.suburb, limit: query.limit })
       .map((mission) => ({
         ...mission,
-        points: this.calculateFreshnessPoints(mission.lastVerifiedAt),
-      }));
+        lastVerifiedAt: this.repository.getLatestVenueDataTimestamp(mission.venueId) ?? mission.lastVerifiedAt,
+        venueAddress: this.repository.getBarProfile(mission.venueId)?.address ?? null,
+      }))
+      .map((mission) => {
+        const venueLocation = this.repository.getVenueLocationCache(mission.venueId);
+        const canMeasureDistance = hasLocation
+          && typeof venueLocation?.latitude === "number"
+          && typeof venueLocation?.longitude === "number";
+        const distanceMeters = canMeasureDistance
+          ? Math.round(distanceMetersBetween(
+            { latitude: query.latitude!, longitude: query.longitude! },
+            { latitude: venueLocation!.latitude!, longitude: venueLocation!.longitude! },
+          ))
+          : null;
+
+        return {
+          ...mission,
+          points: this.missionDynamicPoints(mission),
+          distanceMeters,
+          distanceKm: distanceMeters == null ? null : Math.round((distanceMeters / 1000) * 10) / 10,
+          freshnessLabel: this.missionFreshnessLabel(mission.lastVerifiedAt),
+        };
+      })
+      .filter((mission) => {
+        if (hasLocation && (mission.distanceMeters == null || mission.distanceMeters > radiusMeters)) {
+          return false;
+        }
+
+        if (!searchTerms.length) {
+          return true;
+        }
+
+        const searchable = [mission.venueName, mission.suburb, mission.venueAddress, mission.reason]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return searchTerms.every((term) => searchable.includes(term));
+      });
 
     switch (query.sort) {
+      case "nearby":
+        return missions
+          .slice()
+          .sort((left, right) => {
+            if (left.distanceMeters == null && right.distanceMeters == null) {
+              return (Number(right.points) * Number(right.multiplier || 1)) -
+                (Number(left.points) * Number(left.multiplier || 1));
+            }
+            if (left.distanceMeters == null) {
+              return 1;
+            }
+            if (right.distanceMeters == null) {
+              return -1;
+            }
+            return left.distanceMeters - right.distanceMeters;
+          });
       case "stale":
         return missions
           .slice()

@@ -19,13 +19,18 @@
 
     <section class="panel">
       <div class="grid grid--two">
-        <label class="field">Search suburb, venue, or reason
-          <input id="suburbFilter" placeholder="Try Sandringham, Rooftop Bar, happy hour, South Melb…" autocomplete="off" />
-          <span class="fieldHint">Partial names work. Search by suburb, venue name, or data need.</span>
+        <label class="field">Search street, suburb, venue, or reason
+          <input id="suburbFilter" placeholder="Try Brunswick, Chapel St, Rooftop Bar, happy hour…" autocomplete="off" />
+          <span class="fieldHint">Search an area when location is off, or use your current location for nearby missions.</span>
+          <span class="missionSearchActions">
+            <button id="resolveMissionAreaButton" class="button button--secondary" type="button">Find missions near this area</button>
+            <button id="clearMissionAreaButton" class="button button--secondary" type="button" hidden>Clear area</button>
+          </span>
         </label>
         <label class="field">Sort
           <select id="missionSort">
             <option value="points">Highest points</option>
+            <option value="nearby">Nearest missions</option>
             <option value="saved">My saved suburbs</option>
             <option value="stale">Stale data</option>
             <option value="no_data">No data</option>
@@ -34,6 +39,18 @@
             <option value="high_demand">High demand</option>
           </select>
         </label>
+      </div>
+      <div class="missionToolbar" aria-label="Mission location controls">
+        <button id="useMissionLocationButton" class="button button--primary" type="button">Use my location</button>
+        <label class="field missionRadiusField">Within
+          <select id="missionRadiusSelect">
+            <option value="1">1 km</option>
+            <option value="2" selected>2 km</option>
+            <option value="5">5 km</option>
+            <option value="10">10 km</option>
+          </select>
+        </label>
+        <span id="missionLocationStatus" class="helperCopy">Location off. Search a suburb, street, or venue instead.</span>
       </div>
       <p id="missionsHelp" class="helperCopy" style="margin-top:14px;">Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.</p>
       <div id="missionsList" class="list" style="margin-top:16px;"></div>
@@ -45,6 +62,7 @@
   <script>
     let missionCache = [];
     let searchTimer = null;
+    let missionLocation = null;
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -67,6 +85,14 @@
       return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
     }
 
+    function formatDistance(meters) {
+      const numeric = Number(meters);
+      if (!Number.isFinite(numeric)) {
+        return null;
+      }
+      return numeric < 1000 ? `${Math.round(numeric)} m away` : `${(numeric / 1000).toFixed(1)} km away`;
+    }
+
     function missionMatches(mission, query) {
       const terms = normalizeSearch(query).split(" ").filter(Boolean);
 
@@ -83,6 +109,28 @@
       return terms.every((term) => searchable.includes(term));
     }
 
+    function submissionTypeForMission(mission) {
+      const reason = String(mission.reason || "").toLowerCase();
+      if (reason.includes("happy")) {
+        return "happy_hour_update";
+      }
+      if (!mission.lastVerifiedAt || reason.includes("no data")) {
+        return "full_venue_update";
+      }
+      return "single_beer_price";
+    }
+
+    function missionSubmitHref(mission) {
+      const params = new URLSearchParams({
+        missionId: String(mission.id),
+        venueId: String(mission.venueId),
+        venueName: String(mission.venueName),
+        missionReason: String(mission.reason || "Pint Path mission"),
+        type: submissionTypeForMission(mission),
+      });
+      return `/submit.html?${params.toString()}`;
+    }
+
     function suggestedSearches() {
       const suburbs = [...new Set(missionCache.map((mission) => mission.suburb).filter(Boolean))].slice(0, 4);
       const venues = [...new Set(missionCache.map((mission) => mission.venueName).filter(Boolean))].slice(0, 3);
@@ -90,17 +138,20 @@
     }
 
     function renderMissions() {
-      const query = suburbFilter.value.trim();
+      const query = missionLocation?.source === "area_lookup" ? "" : suburbFilter.value.trim();
       const missions = missionCache.filter((mission) => missionMatches(mission, query));
 
       missionsHelp.textContent = query
         ? `Showing missions matching "${query}". You can search partial suburb names, venue names, or reasons like stale prices and happy hour.`
+        : missionLocation?.source === "area_lookup"
+          ? `Showing missions within ${missionRadiusSelect.value} km of ${missionLocation.label}.`
         : "Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.";
 
       missionsList.innerHTML = missions.length
         ? missions.map((mission) => {
           const points = formatPoints(Number(mission.points || 0) * Number(mission.multiplier || 1));
           const reason = String(mission.reason || "");
+          const distanceCopy = formatDistance(mission.distanceMeters);
           const suggestedAction = reason.toLowerCase().includes("happy")
             ? "confirm happy hour details or upload a board photo"
             : mission.lastVerifiedAt
@@ -115,15 +166,15 @@
                     <strong>${escapeHtml(mission.venueName)}</strong>
                     <span class="pill">${points} pts</span>
                   </div>
-                  <div class="missionCard__meta">${escapeHtml(mission.suburb || "Melbourne")} · ${escapeHtml(reason)}</div>
+                  <div class="missionCard__meta">${escapeHtml(mission.suburb || "Melbourne")} · ${distanceCopy ? `${escapeHtml(distanceCopy)} · ` : ""}${escapeHtml(reason)}</div>
                 </div>
                 <div class="missionCard__badges">
                   ${Number(mission.multiplier || 1) > 1 ? `<span class="pill">${escapeHtml(mission.multiplier)}x bonus</span>` : ""}
                 </div>
               </div>
-              <div class="missionCard__actionCopy">Last verified: ${escapeHtml(MelbBeerBusiness.formatDate(mission.lastVerifiedAt))}</div>
+              <div class="missionCard__actionCopy">${escapeHtml(mission.freshnessLabel || "Freshness unknown")} · Last verified: ${escapeHtml(MelbBeerBusiness.formatDate(mission.lastVerifiedAt))}</div>
               <div class="missionCard__actionCopy">Suggested action: ${escapeHtml(suggestedAction)}</div>
-              <a class="button button--primary missionCard__action" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}" data-mission="${escapeHtml(mission.id)}">Submit update</a>
+              <a class="button button--primary missionCard__action" href="${escapeHtml(missionSubmitHref(mission))}" data-mission="${escapeHtml(mission.id)}">Accept mission</a>
             </article>
           `;
         }).join("")
@@ -139,20 +190,166 @@
       });
     }
 
+    function updateMissionLocationStatus() {
+      clearMissionAreaButton.hidden = !missionLocation;
+      if (!missionLocation) {
+        missionLocationStatus.textContent = "Location off. Search a suburb, street, or venue instead.";
+        useMissionLocationButton.textContent = "Use my location";
+        return;
+      }
+
+      if (missionLocation.source === "area_lookup") {
+        missionLocationStatus.textContent = `Area set · showing missions within ${missionRadiusSelect.value} km of ${missionLocation.label}.`;
+        useMissionLocationButton.textContent = "Use my location";
+        return;
+      }
+
+      missionLocationStatus.textContent = `Location on · showing missions within ${missionRadiusSelect.value} km.`;
+      useMissionLocationButton.textContent = "Location on";
+    }
+
     async function loadMissions() {
-      const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?sort=${encodeURIComponent(missionSort.value)}&limit=200`);
+      const params = new URLSearchParams({
+        sort: missionSort.value,
+        limit: "200",
+      });
+      const query = suburbFilter.value.trim();
+      if (query && missionLocation?.source !== "area_lookup") {
+        params.set("q", query);
+      }
+      if (missionLocation) {
+        params.set("latitude", String(missionLocation.latitude));
+        params.set("longitude", String(missionLocation.longitude));
+        params.set("radiusKm", missionRadiusSelect.value);
+      }
+      const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?${params.toString()}`);
       missionCache = data.missions || [];
-      await MelbBeerBusiness.trackEvent("mission_board_viewed", { search: suburbFilter.value || null, sort: missionSort.value });
+      await MelbBeerBusiness.trackEvent("mission_board_viewed", {
+        search: suburbFilter.value || null,
+        sort: missionSort.value,
+        radiusKm: missionLocation ? missionRadiusSelect.value : null,
+        locationEnabled: Boolean(missionLocation),
+        locationSource: missionLocation?.source || null,
+      });
       renderMissions();
+    }
+
+    async function resolveMissionArea() {
+      const query = suburbFilter.value.trim();
+      if (query.length < 2) {
+        missionLocationStatus.textContent = "Enter a suburb, street, or venue first.";
+        return;
+      }
+
+      resolveMissionAreaButton.disabled = true;
+      resolveMissionAreaButton.textContent = "Finding area...";
+      missionLocationStatus.textContent = "Looking up that Melbourne area without sharing your precise location.";
+      try {
+        const data = await MelbBeerBusiness.apiFetch(`/api/business/geocode?q=${encodeURIComponent(query)}`);
+        if (!data.location) {
+          missionLocation = null;
+          updateMissionLocationStatus();
+          missionsHelp.textContent = data.message || "We could not find that area yet. Try a nearby suburb, street, or venue.";
+          await loadMissions();
+          return;
+        }
+
+        missionLocation = {
+          latitude: data.location.latitude,
+          longitude: data.location.longitude,
+          label: data.location.label || query,
+          source: "area_lookup",
+        };
+        missionSort.value = "nearby";
+        updateMissionLocationStatus();
+        await MelbBeerBusiness.trackEvent("mission_area_lookup_used", {
+          query,
+          radiusKm: missionRadiusSelect.value,
+          lookupSource: data.location.source || null,
+          confidence: data.location.confidence || null,
+        });
+        await loadMissions();
+      } catch {
+        missionLocation = null;
+        updateMissionLocationStatus();
+        missionsHelp.textContent = "Area lookup is unavailable right now. You can still search by suburb, venue, or reason.";
+        await loadMissions();
+      } finally {
+        resolveMissionAreaButton.disabled = false;
+        resolveMissionAreaButton.textContent = "Find missions near this area";
+      }
+    }
+
+    async function clearMissionArea() {
+      missionLocation = null;
+      updateMissionLocationStatus();
+      await loadMissions();
+    }
+
+    async function enableMissionLocation() {
+      if (!navigator.geolocation) {
+        missionLocationStatus.textContent = "Location is unavailable in this browser. Search a suburb or street instead.";
+        return;
+      }
+
+      useMissionLocationButton.disabled = true;
+      useMissionLocationButton.textContent = "Finding nearby missions...";
+      missionLocationStatus.textContent = "Use your location to show nearby missions. We do not continuously track it.";
+      try {
+        const position = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: false,
+            timeout: 9000,
+            maximumAge: 5 * 60 * 1000,
+          });
+        });
+        missionLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          label: "your location",
+          source: "device",
+        };
+        missionSort.value = "nearby";
+        updateMissionLocationStatus();
+        await MelbBeerBusiness.trackEvent("mission_location_enabled", { radiusKm: missionRadiusSelect.value });
+        await loadMissions();
+      } catch {
+        missionLocation = null;
+        updateMissionLocationStatus();
+        missionLocationStatus.textContent = "Location permission was denied or unavailable. Search a suburb, street, or venue instead.";
+      } finally {
+        useMissionLocationButton.disabled = false;
+        updateMissionLocationStatus();
+      }
     }
 
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("missions");
       suburbFilter.addEventListener("input", () => {
+        if (missionLocation?.source === "area_lookup") {
+          missionLocation = null;
+          updateMissionLocationStatus();
+        }
         window.clearTimeout(searchTimer);
-        searchTimer = window.setTimeout(renderMissions, 90);
+        searchTimer = window.setTimeout(loadMissions, 180);
+      });
+      suburbFilter.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          resolveMissionArea();
+        }
       });
       missionSort.addEventListener("change", loadMissions);
+      missionRadiusSelect.addEventListener("change", async () => {
+        if (missionLocation) {
+          updateMissionLocationStatus();
+          await MelbBeerBusiness.trackEvent("mission_radius_changed", { radiusKm: missionRadiusSelect.value });
+          await loadMissions();
+        }
+      });
+      useMissionLocationButton.addEventListener("click", enableMissionLocation);
+      resolveMissionAreaButton.addEventListener("click", resolveMissionArea);
+      clearMissionAreaButton.addEventListener("click", clearMissionArea);
       await loadMissions();
     });
   </script>

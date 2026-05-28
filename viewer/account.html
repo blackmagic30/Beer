@@ -167,84 +167,21 @@
 
       <section class="accountActionsGrid" aria-label="Quick actions">
         <a class="actionCard" href="/submit.html">
-          <strong>Upload beer price</strong>
-          <span>Add a current price from a venue visit.</span>
+          <strong>Submit venue data</strong>
+          <span>Add beer prices, happy hours, or menu photos from the full submission flow.</span>
         </a>
-        <button id="focusUploadFormButton" class="actionCard" type="button">
+        <a class="actionCard" href="/submit.html?type=photo_upload">
           <strong>Upload menu/photo</strong>
           <span>Attach private evidence for review.</span>
-        </button>
+        </a>
         <a class="actionCard" href="#recentSubmissionsSection">
           <strong>View my submissions</strong>
           <span>See pending, verified, and rejected updates.</span>
         </a>
-        <a class="actionCard" href="#profileToolsSection">
-          <strong>Edit profile</strong>
-          <span>Save preferences, beers, and suburbs.</span>
+        <a class="actionCard" href="#accountSettingsHub">
+          <strong>Account settings</strong>
+          <span>Manage preferences, privacy, security, and support requests.</span>
         </a>
-      </section>
-
-      <section id="uploadPanel" class="panel accountUploadPanel">
-        <div class="sectionHeader">
-          <div>
-            <h2>Quick beer price upload</h2>
-            <p class="muted">Pick an existing venue, add the beer details, and optionally attach private menu/photo evidence.</p>
-          </div>
-          <span class="pill">Private until reviewed</span>
-        </div>
-        <form id="quickUploadForm" class="form">
-          <div class="grid grid--two">
-            <label class="field">Search venue
-              <input id="quickVenueSearch" type="search" list="quickVenueSuggestions" placeholder="Try Half Moon, Fitzroy, Richmond..." autocomplete="off" required />
-              <datalist id="quickVenueSuggestions"></datalist>
-              <span id="quickVenueHelp" class="fieldHint">Choose a venue from the Pint Path venue list.</span>
-            </label>
-            <label class="field">Selected venue
-              <select id="quickVenueSelect" class="readonlySelect" required disabled aria-disabled="true" tabindex="-1"></select>
-              <span class="fieldHint">Search above and click the matching venue suggestion. Submissions attach to that venue_id.</span>
-            </label>
-          </div>
-          <div class="grid grid--two">
-            <label class="field">Beer name
-              <input id="quickBeerName" name="beerName" placeholder="Guinness, Carlton Draft..." required />
-            </label>
-            <label class="field">Serving size
-              <select id="quickServingSize" name="servingSize">
-                <option value="pint">Pint</option>
-                <option value="schooner">Schooner</option>
-                <option value="pot">Pot</option>
-                <option value="jug">Jug</option>
-                <option value="can">Can</option>
-                <option value="bottle">Bottle</option>
-                <option value="other">Custom/other</option>
-              </select>
-            </label>
-          </div>
-          <div class="grid grid--two">
-            <label class="field">Price (AUD)
-              <input id="quickPrice" name="price" type="number" min="0" max="250" step="0.01" placeholder="13.50" required />
-            </label>
-            <label class="field">On tap?
-              <select id="quickOnTap" name="isOnTap">
-                <option value="yes">Yes</option>
-                <option value="unknown">Unknown</option>
-                <option value="no">No</option>
-              </select>
-            </label>
-          </div>
-          <label class="field">Private menu/photo evidence
-            <input id="quickSourcePhoto" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/*" />
-            <span class="fieldHint">Optional. Evidence is stored privately and is only available to you and authorized reviewers.</span>
-          </label>
-          <label class="field">Notes
-            <textarea id="quickNotes" name="notes" placeholder="Optional conditions, board text, or source notes"></textarea>
-          </label>
-          <div class="actionRow">
-            <button id="quickUploadSubmitButton" class="button button--primary" type="submit">Submit for review</button>
-            <a class="button" href="/submit.html">Use full submission form</a>
-          </div>
-          <div id="quickUploadStatus" class="notice">Approved data can earn points and may unlock contributor access.</div>
-        </form>
       </section>
 
       <section id="recentSubmissionsSection" class="panel">
@@ -258,15 +195,22 @@
         <div id="recentSubmissionsList" class="submissionList"></div>
       </section>
 
-      <section id="profileToolsSection" class="accountSectionStack">
+      <section id="accountSettingsHub" class="accountSectionStack settingsHub">
         <div class="sectionHeader">
           <div>
-            <div class="eyebrow">Account tools</div>
-            <h2>Preferences and shortcuts</h2>
-            <p class="muted">A lighter layout for the things that personalise your map without crowding the dashboard.</p>
+            <div class="eyebrow">Account settings</div>
+            <h2>Manage your Pint Path account</h2>
+            <p class="muted">Preferences, privacy, support, and security are grouped here so the main dashboard stays focused.</p>
           </div>
           <a class="button" href="/feedback.html">Send feedback</a>
         </div>
+        <nav class="settingsNav" aria-label="Account settings sections">
+          <a href="#preferencesForm">Preferences</a>
+          <a href="#saveItemForm">Watchlist</a>
+          <a href="#privacySettingsForm">Privacy</a>
+          <a href="#dataRequestForm">Support</a>
+          <a href="#securitySettingsCard">Security</a>
+        </nav>
         <div class="grid grid--two">
           <form id="preferencesForm" class="panel form">
             <h2>Preferences</h2>
@@ -302,7 +246,7 @@
         </div>
       </section>
 
-      <section id="privacyControlsSection" class="accountSectionStack">
+      <section id="privacyControlsSection" class="accountSectionStack settingsHub">
         <div class="sectionHeader">
           <div>
             <div class="eyebrow">Privacy and account controls</div>
@@ -358,7 +302,7 @@
             <button class="button button--primary" type="submit">Send request</button>
           </form>
         </div>
-        <article class="panel accountSecurityPanel">
+        <article id="securitySettingsCard" class="panel accountSecurityPanel">
           <div>
             <h2>Account security</h2>
             <p class="muted">If you used a shared device or think your account is unsafe, revoke all active Pint Path sessions and sign in again.</p>
@@ -410,8 +354,6 @@
   <script>
     const state = {
       accountData: null,
-      quickVenues: [],
-      quickVenueSearchTimer: null,
       oauthLoginOpening: false,
       checkoutResumeStarted: false,
       checkoutReconcileStarted: false,
@@ -487,26 +429,6 @@
 
     function localDatetimeIso(date = new Date()) {
       return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-    }
-
-    function venueLabel(venue) {
-      return `${venue.name}${venue.suburb ? `, ${venue.suburb}` : ""}${venue.address ? ` · ${venue.address}` : ""}`;
-    }
-
-    function normalizeText(value) {
-      return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
-    }
-
-    function findQuickVenueFromSearchValue(value) {
-      const normalized = normalizeText(value);
-      if (!normalized) {
-        return null;
-      }
-      return state.quickVenues.find((venue) => normalizeText(venueLabel(venue)) === normalized) || null;
-    }
-
-    function selectedQuickVenue() {
-      return state.quickVenues.find((venue) => venue.id === $("quickVenueSelect").value) || null;
     }
 
     function setLoading(button, loading, loadingCopy = "Working...") {
@@ -591,6 +513,28 @@
       ].join("");
     }
 
+    function submissionTypeForMission(mission) {
+      const reason = String(mission.reason || "").toLowerCase();
+      if (reason.includes("happy")) {
+        return "happy_hour_update";
+      }
+      if (!mission.lastVerifiedAt || reason.includes("no data")) {
+        return "full_venue_update";
+      }
+      return "single_beer_price";
+    }
+
+    function missionSubmitHref(mission) {
+      const params = new URLSearchParams({
+        missionId: String(mission.id),
+        venueId: String(mission.venueId),
+        venueName: String(mission.venueName),
+        missionReason: String(mission.reason || "Pint Path mission"),
+        type: submissionTypeForMission(mission),
+      });
+      return `/submit.html?${params.toString()}`;
+    }
+
     function renderSuggestedMissions(missions) {
       $("suggestedMissions").innerHTML = missions.length
         ? missions.map((mission) => `
@@ -600,7 +544,7 @@
               <span class="pill">${formatPoints(Number(mission.points || 0) * Number(mission.multiplier || 1))} pts</span>
             </div>
             <div class="missionCard__meta">${escapeHtml(mission.suburb || "Melbourne")} · ${escapeHtml(mission.reason)}</div>
-            <a class="button missionCard__action" href="/submit.html?venueId=${encodeURIComponent(mission.venueId)}&venueName=${encodeURIComponent(mission.venueName)}">Submit update</a>
+            <a class="button missionCard__action" href="${escapeHtml(missionSubmitHref(mission))}">Submit update</a>
           </div>
         `).join("")
         : '<div class="listItem emptyState">Save a suburb or open Missions to get suggested venues. Try areas like <strong>Fitzroy</strong>, <strong>Sandringham</strong>, or <strong>South Melbourne</strong>.</div>';
@@ -873,101 +817,6 @@
       }
     }
 
-    async function loadQuickVenues(query = "") {
-      const currentVenueId = $("quickVenueSelect").value;
-      const data = await MelbBeerBusiness.apiFetch(`/api/business/venues?q=${encodeURIComponent(query)}&limit=30`);
-      state.quickVenues = data.venues || [];
-      $("quickVenueSuggestions").innerHTML = state.quickVenues
-        .map((venue) => `<option value="${escapeHtml(venueLabel(venue))}"></option>`)
-        .join("");
-      $("quickVenueSelect").innerHTML = state.quickVenues.length
-        ? `<option value="">No venue chosen yet</option>${state.quickVenues.map((venue) => `<option value="${escapeHtml(venue.id)}">${escapeHtml(venueLabel(venue))}</option>`).join("")}`
-        : '<option value="">No matching venues found</option>';
-      if (currentVenueId && state.quickVenues.some((venue) => venue.id === currentVenueId)) {
-        $("quickVenueSelect").value = currentVenueId;
-        return;
-      }
-      clearQuickVenue(state.quickVenues.length
-        ? "Search above and click the matching venue suggestion."
-        : "No matching venues yet. Try a shorter name, suburb, or street.");
-    }
-
-    function clearQuickVenue(message = "No venue chosen yet. Search above and click a venue suggestion.") {
-      $("quickVenueSelect").value = "";
-      $("quickVenueHelp").textContent = state.quickVenues.length
-        ? message
-        : "No matching venues yet. Try a shorter name, suburb, or street.";
-    }
-
-    function selectQuickVenue(venue) {
-      if (!venue) {
-        return;
-      }
-      $("quickVenueSelect").value = venue.id;
-      $("quickVenueSearch").value = venueLabel(venue);
-      $("quickVenueHelp").textContent = `Selected ${venueLabel(venue)}.`;
-    }
-
-    function readPhotoDataUrl(file) {
-      return new Promise((resolve, reject) => {
-        if (!file) {
-          resolve(null);
-          return;
-        }
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(new Error("Could not read source photo."));
-        reader.readAsDataURL(file);
-      });
-    }
-
-    async function submitQuickUpload(event) {
-      event.preventDefault();
-      const selected = selectedQuickVenue();
-      if (!selected) {
-        MelbBeerBusiness.setStatus($("quickUploadStatus"), "Search and choose a venue first.", true);
-        return;
-      }
-
-      const submitButton = $("quickUploadSubmitButton");
-      try {
-        setLoading(submitButton, true, "Submitting...");
-        const price = $("quickPrice").value.trim();
-        const sourcePhotoDataUrl = await readPhotoDataUrl($("quickSourcePhoto").files[0]);
-        const result = await MelbBeerBusiness.apiFetch("/api/business/submissions", {
-          method: "POST",
-          body: JSON.stringify({
-            venueId: selected.id,
-            venueName: selected.name,
-            suburb: selected.suburb || null,
-            submissionType: "single_beer_price",
-            observedAt: new Date().toISOString(),
-            sourcePhotoDataUrl,
-            sourcePhotoUrl: null,
-            notes: $("quickNotes").value.trim() || null,
-            items: [{
-              beerName: $("quickBeerName").value.trim(),
-              servingSize: $("quickServingSize").value,
-              price: price ? Number(price) : null,
-              isHappyHourPrice: false,
-              happyHourDetails: null,
-              isOnTap: $("quickOnTap").value,
-            }],
-          }),
-        });
-        $("quickUploadForm").reset();
-        $("quickVenueSearch").value = "";
-        clearQuickVenue();
-        await loadQuickVenues("");
-        MelbBeerBusiness.setStatus($("quickUploadStatus"), `${result.submission.venueName} submitted and pending review.`);
-        await refreshAccount();
-      } catch (error) {
-        MelbBeerBusiness.setStatus($("quickUploadStatus"), error.message, true);
-      } finally {
-        setLoading(submitButton, false);
-      }
-    }
-
     function installPasswordToggles() {
       document.querySelectorAll("[data-password-toggle]").forEach((button) => {
         button.addEventListener("click", () => {
@@ -1089,30 +938,6 @@
         } catch (error) {
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
-      });
-      $("focusUploadFormButton").addEventListener("click", () => {
-        $("uploadPanel").scrollIntoView({ behavior: "smooth", block: "start" });
-        $("quickSourcePhoto").focus();
-      });
-      $("quickUploadForm").addEventListener("submit", submitQuickUpload);
-      $("quickVenueSearch").addEventListener("input", () => {
-        window.clearTimeout(state.quickVenueSearchTimer);
-        const matched = findQuickVenueFromSearchValue($("quickVenueSearch").value);
-        if (matched) {
-          selectQuickVenue(matched);
-          return;
-        }
-        clearQuickVenue();
-        $("quickVenueHelp").textContent = $("quickVenueSearch").value.trim()
-          ? "Searching venues. Pick a suggestion from the venue search field."
-          : "Choose a venue from the Pint Path venue list.";
-        state.quickVenueSearchTimer = window.setTimeout(async () => {
-          await loadQuickVenues($("quickVenueSearch").value);
-          const postSearchMatch = findQuickVenueFromSearchValue($("quickVenueSearch").value);
-          if (postSearchMatch) {
-            selectQuickVenue(postSearchMatch);
-          }
-        }, 180);
       });
       $("preferencesForm").addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -1249,7 +1074,6 @@
       });
       await MelbBeerBusiness.syncSupabaseSession()
         .catch((error) => MelbBeerBusiness.setStatus($("authStatus"), error.message, true));
-      await loadQuickVenues("");
       await refreshAccount();
       const authError = new URLSearchParams(window.location.search).get("authError");
       if (authError) {

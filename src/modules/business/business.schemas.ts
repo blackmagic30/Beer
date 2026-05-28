@@ -244,8 +244,16 @@ export const reviewSubmissionSchema = z.object({
 
 export const missionsQuerySchema = z.object({
   suburb: optionalTrimmedStringSchema,
-  sort: z.enum(["points", "saved", "stale", "no_data", "missing_happy_hour", "most_requested", "high_demand"]).default("points"),
+  q: optionalTrimmedStringSchema,
+  latitude: z.coerce.number().min(-90).max(90).optional(),
+  longitude: z.coerce.number().min(-180).max(180).optional(),
+  radiusKm: z.coerce.number().min(0.1).max(50).default(5),
+  sort: z.enum(["points", "saved", "stale", "no_data", "missing_happy_hour", "most_requested", "high_demand", "nearby"]).default("points"),
   limit: z.coerce.number().int().min(1).max(200).default(100),
+});
+
+export const geocodeQuerySchema = z.object({
+  q: z.string().trim().min(2).max(120),
 });
 
 export const priceRecordsQuerySchema = z.object({

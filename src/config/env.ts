@@ -112,6 +112,7 @@ const envSchema = z.object({
   ADMIN_EMAILS: optionalStringFromEnv,
   GOOGLE_MAPS_API_KEY: optionalStringFromEnv,
   GOOGLE_MAPS_MAP_ID: optionalStringFromEnv,
+  GOOGLE_PLACES_API_KEY: optionalStringFromEnv,
   OPENAI_API_KEY: optionalStringFromEnv,
   FREE_PRICE_REVEALS_PER_DAY: z.coerce.number().int().min(0).default(5),
   CONTRIBUTOR_UNLOCK_POINTS: z.coerce.number().int().min(1).default(15),

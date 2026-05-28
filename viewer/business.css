@@ -579,9 +579,20 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.missionContext {
+  display: grid;
+  gap: 4px;
+  border-color: rgba(245, 199, 107, 0.28);
+  background: rgba(245, 199, 107, 0.08);
+}
+
+.missionContext strong {
+  color: var(--gold);
+}
+
 .dayChecklist {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
   gap: 8px;
   max-width: 100%;
 }
@@ -593,13 +604,14 @@ h3 {
   gap: 7px;
   width: 100%;
   min-width: 0;
+  overflow: hidden;
   box-sizing: border-box;
   border: 1px solid rgba(244, 214, 150, 0.16);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.055);
   color: #d9dfeb;
   padding: 10px 9px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 850;
   white-space: nowrap;
 }
@@ -747,6 +759,47 @@ h3 {
 .missionCard__action {
   justify-self: start;
   margin-top: 2px;
+}
+
+.missionToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 22px;
+  background: rgba(3, 7, 18, 0.22);
+  padding: 10px;
+}
+
+.missionSearchActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.missionSearchActions .button {
+  min-height: 40px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.missionRadiusField {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+  width: auto;
+  min-width: 160px;
+  margin: 0;
+}
+
+.missionRadiusField select {
+  width: auto;
+  min-width: 96px;
+  padding: 10px 12px;
 }
 
 .featureList,
@@ -1022,8 +1075,7 @@ h3 {
 
 .authIntro,
 .authCard,
-.accountHero,
-.accountUploadPanel {
+.accountHero {
   overflow: hidden;
 }
 
@@ -1327,6 +1379,48 @@ h3 {
   gap: 14px;
 }
 
+.settingsHub {
+  scroll-margin-top: 100px;
+}
+
+.settingsNav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  border: 1px solid rgba(244, 214, 150, 0.12);
+  border-radius: 999px;
+  background: rgba(3, 7, 18, 0.28);
+  padding: 8px;
+}
+
+.settingsNav a {
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #dbe3ef;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.settingsNav a:hover {
+  border-color: rgba(245, 199, 107, 0.36);
+  background: rgba(245, 199, 107, 0.1);
+}
+
+.pricingTierGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.card--highlight {
+  border-color: rgba(245, 199, 107, 0.42);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(245, 199, 107, 0.18), transparent 44%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)),
+    var(--panel);
+}
+
 .toggleLine {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1589,26 +1683,6 @@ h3 {
   text-decoration: none;
 }
 
-.skipLink {
-  position: fixed;
-  left: 16px;
-  top: 12px;
-  z-index: 100;
-  transform: translateY(-140%);
-  border: 1px solid rgba(244, 214, 150, 0.35);
-  border-radius: 999px;
-  background: #111827;
-  color: #fff7e8;
-  padding: 10px 14px;
-  font-weight: 900;
-  text-decoration: none;
-  transition: transform 160ms ease;
-}
-
-.skipLink:focus {
-  transform: translateY(0);
-}
-
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 3px solid rgba(244, 214, 150, 0.82);
   outline-offset: 3px;
@@ -1690,7 +1764,8 @@ h3 {
   .dashboardShell,
   .authShell,
   .accountHero,
-  .tierGrid {
+  .tierGrid,
+  .pricingTierGrid {
     grid-template-columns: 1fr;
   }
 
@@ -1800,10 +1875,19 @@ h3 {
     align-items: stretch;
     flex-direction: column;
   }
+
+  .dayChecklist {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsNav {
+    border-radius: 22px;
+  }
 }
 
 @media (min-width: 761px) and (max-width: 1040px) {
-  .metricGrid {
+  .metricGrid,
+  .pricingTierGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

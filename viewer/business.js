@@ -469,15 +469,6 @@ function installAccessibilityChrome() {
       main.setAttribute("tabindex", "-1");
     }
   }
-
-  if (!document.getElementById("skipToMainContent")) {
-    const skipLink = document.createElement("a");
-    skipLink.id = "skipToMainContent";
-    skipLink.className = "skipLink";
-    skipLink.href = "#mainContent";
-    skipLink.textContent = "Skip to main content";
-    document.body.prepend(skipLink);
-  }
 }
 
 function installCookieConsent() {

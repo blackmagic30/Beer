@@ -48,8 +48,25 @@ describe("submit page auth gate", () => {
     const css = businessCss();
 
     expect(css).toContain(".dayChecklist");
-    expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(96px, 1fr))");
+    expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(82px, 1fr))");
+    expect(css).toContain(".dayChip");
     expect(css).toContain(".readonlySelect:disabled");
+  });
+
+  it("carries accepted mission context into submission payloads", () => {
+    const html = submitHtml();
+    const css = businessCss();
+
+    expect(html).toContain('id="missionContext"');
+    expect(html).toContain("const missionId = params.get(\"missionId\") || \"\"");
+    expect(html).toContain("const missionReason = params.get(\"missionReason\") || \"\"");
+    expect(html).toContain("const initialSubmissionType = params.get(\"type\")");
+    expect(html).toContain("submissionTypeSelect.value = initialSubmissionType");
+    expect(html).toContain("Mission accepted");
+    expect(html).toContain("Your upload should match this mission");
+    expect(html).toContain("Mission ${missionId}: ${missionReason || \"Pint Path mission\"}");
+    expect(html).toContain("missionId: missionId || null");
+    expect(css).toContain(".missionContext");
   });
 
   it("captures intentional upload-location proof for contributor points without auto-requesting on load", () => {

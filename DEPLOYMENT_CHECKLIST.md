@@ -26,6 +26,7 @@ Use this before merging a beta/hardening branch into `main` or deploying a Railw
 - Confirm no `.env` file, API keys, Stripe secrets, Supabase service-role keys, OpenAI keys, private Google Places keys, or source-evidence secrets are committed.
 - Confirm public map source does not contain legacy admin/debug UI strings.
 - Confirm Google Maps browser keys are HTTP-referrer restricted to localhost and the live beta domain.
+- Confirm the server Google Places/geocoding key is not exposed in `/config.js` and has Places API plus Geocoding API enabled for venue imports and mission area lookup.
 - Confirm Supabase OAuth providers and redirect URLs are configured if quick login is enabled: `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`.
 - Confirm Supabase Row Level Security policies from `supabase/migrations/20260512000000_auth_profiles_activity.sql` are reviewed before any direct browser writes are enabled.
 

@@ -69,6 +69,8 @@ function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessS
     SUPABASE_SERVICE_ROLE_KEY: undefined,
     SUPABASE_OAUTH_PROVIDERS: "google,apple",
     ADMIN_EMAILS: "admin@pintpath.test",
+    GOOGLE_MAPS_API_KEY: undefined,
+    GOOGLE_PLACES_API_KEY: undefined,
     ...overrides,
   });
 

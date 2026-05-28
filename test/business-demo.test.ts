@@ -73,6 +73,8 @@ function createBusinessService(
     SUPABASE_SERVICE_ROLE_KEY: undefined,
     SUPABASE_OAUTH_PROVIDERS: "google,apple",
     ADMIN_EMAILS: "admin@example.com",
+    GOOGLE_MAPS_API_KEY: undefined,
+    GOOGLE_PLACES_API_KEY: undefined,
     ...overrides,
   });
 }
@@ -1388,7 +1390,7 @@ describe("production hardening", () => {
       });
     };
 
-    const makeSubmission = (venueId: string) => {
+    const makeSubmission = (venueId: string, submitter = user, beerName = "Guinness") => {
       repository.upsertVenueLocationCache({
         venueId,
         venueName: `Venue ${venueId}`,
@@ -1397,7 +1399,7 @@ describe("production hardening", () => {
         longitude: 144.9,
         now: NOW,
       });
-      return service.createSubmission(user, createSubmissionSchema.parse({
+      return service.createSubmission(submitter, createSubmissionSchema.parse({
         venueId,
         venueName: `Venue ${venueId}`,
         suburb: "Melbourne",
@@ -1413,7 +1415,7 @@ describe("production hardening", () => {
         },
         notes: null,
         items: [{
-          beerName: "Guinness",
+          beerName,
           servingSize: "pint",
           price: 13,
           isHappyHourPrice: false,
@@ -1451,11 +1453,19 @@ describe("production hardening", () => {
       fraudFlagged: false,
       confidence: "photo_verified",
     });
+    const newDrinkUser = createAccount(repository, "new-drink-user");
+    const newDrink = service.reviewSubmission(admin, makeSubmission("fresh-venue", newDrinkUser, "Stone & Wood Pacific Ale").id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      confidence: "photo_verified",
+    });
 
     expect(fresh.pointsAwarded).toBe(0.1);
     expect(week.pointsAwarded).toBe(0.5);
     expect(stale.pointsAwarded).toBe(1);
     expect(missing.pointsAwarded).toBe(5);
+    expect(newDrink.pointsAwarded).toBe(5);
   });
 
   it("unlocks contributor premium at 15 monthly points until month end", () => {
@@ -2000,6 +2010,120 @@ describe("business demo contribution model", () => {
 
     const missions = repository.listMissions({ activeOnly: true, limit: 10 });
     expect(missions.map((mission) => mission.id)).toEqual(["mission-high", "mission-normal"]);
+  });
+
+  it("scales mission points by freshness and supports nearby and address search", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const freshAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const staleAt = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString();
+
+    repository.createMission({
+      id: "mission-fresh",
+      venueId: "venue-fresh",
+      venueName: "Fresh Arms",
+      suburb: "Fitzroy",
+      reason: "recent prices",
+      priority: "normal",
+      points: 2,
+      multiplier: 1,
+      lastVerifiedAt: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    repository.createMission({
+      id: "mission-stale",
+      venueId: "venue-stale",
+      venueName: "Stale Hotel",
+      suburb: "Fitzroy",
+      reason: "stale prices",
+      priority: "normal",
+      points: 2,
+      multiplier: 1,
+      lastVerifiedAt: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    repository.createMission({
+      id: "mission-new-drinks",
+      venueId: "venue-new-drinks",
+      venueName: "New Tap Room",
+      suburb: "Collingwood",
+      reason: "missing new beer prices",
+      priority: "high",
+      points: 2,
+      multiplier: 1,
+      lastVerifiedAt: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    const insertPriceRecord = database.prepare(
+      `INSERT INTO venue_price_records (
+        id, venue_id, venue_name, suburb, beer_name, serving_size, price,
+        is_happy_hour_price, is_on_tap, confidence, source_type, last_verified_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'yes', 'photo_verified', 'test_fixture', ?, ?, ?)`,
+    );
+    insertPriceRecord.run("record-fresh", "venue-fresh", "Fresh Arms", "Fitzroy", "Guinness", "pint", 12, freshAt, freshAt, freshAt);
+    insertPriceRecord.run("record-stale", "venue-stale", "Stale Hotel", "Fitzroy", "Carlton Draft", "pint", 11, staleAt, staleAt, staleAt);
+
+    repository.upsertVenueLocationCache({
+      venueId: "venue-fresh",
+      venueName: "Fresh Arms",
+      suburb: "Fitzroy",
+      latitude: -37.798,
+      longitude: 144.978,
+      now: NOW,
+    });
+    repository.upsertVenueLocationCache({
+      venueId: "venue-stale",
+      venueName: "Stale Hotel",
+      suburb: "Fitzroy",
+      latitude: -37.805,
+      longitude: 144.98,
+      now: NOW,
+    });
+    repository.upsertVenueLocationCache({
+      venueId: "venue-new-drinks",
+      venueName: "New Tap Room",
+      suburb: "Collingwood",
+      latitude: -37.815,
+      longitude: 144.984,
+      now: NOW,
+    });
+    database.prepare(
+      `INSERT INTO venue_profiles (venue_id, name, address, suburb, area, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run("venue-new-drinks", "New Tap Room", "99 Smith Street", "Collingwood", "Collingwood", NOW, NOW);
+
+    const missions = service.listMissions({ limit: 20, sort: "points" });
+    const byId = new Map(missions.map((mission) => [mission.id, mission]));
+    expect(byId.get("mission-fresh")?.points).toBe(0.1);
+    expect(byId.get("mission-stale")?.points).toBe(1);
+    expect(byId.get("mission-new-drinks")?.points).toBe(5);
+    expect(byId.get("mission-fresh")?.freshnessLabel).toBe("Updated in the last 24 hours");
+    expect(byId.get("mission-stale")?.freshnessLabel).toBe("Stale for 7+ days");
+
+    const nearby = service.listMissions({
+      latitude: -37.798,
+      longitude: 144.978,
+      radiusKm: 1,
+      sort: "nearby",
+      limit: 20,
+    });
+    expect(nearby.map((mission) => mission.id)).toEqual(["mission-fresh", "mission-stale"]);
+    expect(nearby[0]?.distanceMeters).toBe(0);
+
+    const searched = service.listMissions({ q: "smith", sort: "points", limit: 20 });
+    expect(searched.map((mission) => mission.id)).toEqual(["mission-new-drinks"]);
+
+    const area = await service.resolveMissionArea("Smith Street");
+    expect(area.location).toEqual(expect.objectContaining({
+      latitude: -37.815,
+      longitude: 144.984,
+      label: "New Tap Room, Collingwood",
+      source: "local_cache",
+    }));
   });
 
   it("stores only aggregate analytics preview counts for admin review", () => {

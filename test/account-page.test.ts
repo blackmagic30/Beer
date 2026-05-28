@@ -55,7 +55,9 @@ describe("account page shell", () => {
     expect(html).toContain('id="accountDashboard"');
     expect(html).toContain("Pint Path Contributor Account");
     expect(html).toContain("Contributor dashboard");
-    expect(html).toContain("Quick beer price upload");
+    expect(html).not.toContain("Quick beer price upload");
+    expect(html).toContain("Manage your Pint Path account");
+    expect(html).toContain('id="accountSettingsHub"');
     expect(html).toContain("Recent submissions");
     expect(html).toContain("How verification works");
     expect(html).not.toContain("Current status");
@@ -111,9 +113,9 @@ describe("account page shell", () => {
   it("keeps contributor evidence copy private and reviewer-focused", () => {
     const html = accountHtml();
 
-    expect(html).toContain("Evidence is stored privately");
+    expect(html).toContain("Private evidence");
     expect(html).toContain("Raw photos, receipts, OCR evidence, and reviewer notes are not public map data");
-    expect(html).toContain("Private until reviewed");
+    expect(html).toContain("Submitted data stays pending until verified or approved.");
   });
 
   it("keeps feedback on a dedicated page instead of clustering the account dashboard", () => {
@@ -131,13 +133,21 @@ describe("account page shell", () => {
     expect(script).not.toContain('href="/account.html#feedbackForm"');
   });
 
-  it("uses search-driven venue selection for quick uploads too", () => {
+  it("moves account actions into submit flows and a settings hub", () => {
     const html = accountHtml();
 
-    expect(html).toContain('id="quickVenueSelect" class="readonlySelect" required disabled');
-    expect(html).toContain("function clearQuickVenue");
-    expect(html).toContain("Search and choose a venue first.");
-    expect(html).not.toContain('quickVenueSelect").addEventListener("change"');
+    expect(html).toContain('href="/submit.html"');
+    expect(html).toContain('href="/submit.html?type=photo_upload"');
+    expect(html).toContain('href="#accountSettingsHub"');
+    expect(html).toContain('href="#privacySettingsForm"');
+    expect(html).toContain('href="#dataRequestForm"');
+    expect(html).toContain('href="#securitySettingsCard"');
+    expect(html).toContain("function missionSubmitHref");
+    expect(html).toContain("missionId: String(mission.id)");
+    expect(html).toContain("missionReason: String(mission.reason || \"Pint Path mission\")");
+    expect(html).not.toContain('id="quickVenueSelect"');
+    expect(html).not.toContain("function clearQuickVenue");
+    expect(html).not.toContain("submitQuickUpload");
   });
 
   it("uses Supabase OAuth and email auth before falling back to local demo auth", () => {
@@ -311,9 +321,10 @@ describe("account page shell", () => {
     expect(script).toContain("if (!hasAnalyticsConsent())");
     expect(script).toContain('aria-label="Primary"');
     expect(script).toContain("function installAccessibilityChrome");
-    expect(script).toContain("Skip to main content");
+    expect(script).toContain('main.id = "mainContent"');
+    expect(script).not.toContain("Skip to main content");
     expect(css).toContain(".cookieConsent");
-    expect(css).toContain(".skipLink");
+    expect(css).not.toContain(".skipLink");
     expect(css).toContain(":focus-visible");
   });
 });

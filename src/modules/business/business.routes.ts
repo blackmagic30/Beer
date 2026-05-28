@@ -29,6 +29,7 @@ import {
   createSubmissionSchema,
   eventTrackSchema,
   feedbackSchema,
+  geocodeQuerySchema,
   legalAcceptanceSchema,
   missionsQuerySchema,
   priceRecordsQuerySchema,
@@ -123,6 +124,13 @@ const eventLimiter = createRateLimiter({
   keyPrefix: "business:events",
   windowMs: 10 * 60_000,
   max: 240,
+  keyGenerator: rateLimitIdentity,
+});
+
+const lookupLimiter = createRateLimiter({
+  keyPrefix: "business:lookups",
+  windowMs: 10 * 60_000,
+  max: 60,
   keyGenerator: rateLimitIdentity,
 });
 
@@ -318,6 +326,16 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const query = parseWithSchema(missionsQuerySchema, req.query, "Invalid missions query");
     const missions = businessService.listMissions(query);
     res.json(success({ missions }));
+  });
+
+  router.get("/geocode", lookupLimiter, async (req, res, next) => {
+    try {
+      const query = parseWithSchema(geocodeQuerySchema, req.query, "Invalid geocode query");
+      const result = await businessService.resolveMissionArea(query.q);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/missions", (req, res) => {

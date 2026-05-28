@@ -27,6 +27,10 @@ describe("premium pricing and entitlements", () => {
     expect(appSource).toContain("yearly: PREMIUM_PRICING.yearlyLabel");
     expect(pricingHtml).toContain("A$4.99");
     expect(pricingHtml).toContain("A$50");
+    expect(pricingHtml).toContain("Freemium");
+    expect(pricingHtml).toContain("15 pts");
+    expect(pricingHtml).toContain("Earn 15 approved contribution points");
+    expect(pricingHtml).toContain('class="grid pricingTierGrid"');
     expect(readme).toContain("A$4.99/month");
     expect(readme).toContain("A$50/year");
     expect(envExample).toContain("STRIPE_PRICE_MONTHLY=price_monthly_499_aud");

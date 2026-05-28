@@ -311,7 +311,7 @@ What each one does:
 - `SUPABASE_MENU_CAPTURE_TABLE`: server-side reviewed menu/manual capture table. Defaults to `venue_menu_captures`.
 - `GOOGLE_MAPS_API_KEY`: browser-safe Google Maps key used by the hosted viewer.
 - `GOOGLE_MAPS_MAP_ID`: optional Google Maps map ID for branded vector map styling.
-- `GOOGLE_PLACES_API_KEY`: server-side key used by the venue import scripts. If absent, the importer falls back to `GOOGLE_MAPS_API_KEY`.
+- `GOOGLE_PLACES_API_KEY`: server-side key used by venue imports and mission area geocoding. Enable Places API and Geocoding API on this key. If absent, server lookups fall back to `GOOGLE_MAPS_API_KEY` where possible.
 - `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup. In production this can be left blank while the official ABN/admin email is pending; the public site will still boot, but admin routes will return `403` until the allowlist is configured.
 - `SESSION_TTL_DAYS`: normal account bearer-session lifetime. Defaults to `60`.
 - `ADMIN_SESSION_TTL_DAYS`: shorter admin bearer-session lifetime. Defaults to `7`.
@@ -409,7 +409,7 @@ Recommended Google Maps browser key referrers once hosted:
 Recommended Google key split long-term:
 
 - `.env` `GOOGLE_MAPS_API_KEY`: browser Google Maps key for web map rendering
-- `.env` `GOOGLE_PLACES_API_KEY`: server-side key for venue import/search
+- `.env` `GOOGLE_PLACES_API_KEY`: server-side key for venue import/search and mission area geocoding
 - later: dedicated iOS key for the App Store app
 - later: dedicated Android key for the Play Store app
 
@@ -514,12 +514,13 @@ For hosted staging, also allow:
 Make sure the same Google Cloud project has:
 
 - `Maps JavaScript API` enabled
+- `Geocoding API` enabled on the server-side Places/geocoding key if mission street/suburb lookup is used
 - billing enabled
 
 Long-term recommended key split:
 
 - browser web viewer: Google Maps browser key via `/config.js` or `viewer/config.js`
-- server-side venue import: `GOOGLE_PLACES_API_KEY`
+- server-side venue import and mission geocoding: `GOOGLE_PLACES_API_KEY`
 - iOS app: dedicated iOS Maps key
 - Android app: dedicated Android Maps key
 
