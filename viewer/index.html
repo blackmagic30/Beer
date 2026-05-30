@@ -2888,7 +2888,7 @@
         </label>
 
         <div class="toolbar__right">
-          <button id="advancedFiltersToggle" class="utilityButton" type="button" aria-expanded="false" aria-controls="advancedFiltersPanel">Advanced filters</button>
+          <button id="advancedFiltersToggle" class="utilityButton" type="button" aria-expanded="false" aria-controls="advancedFiltersPanel" hidden>Advanced filters</button>
         </div>
       </div>
 
@@ -2898,7 +2898,6 @@
       </div>
 
       <div class="primaryFilterRow" aria-label="Primary map filters">
-        <button class="filterChip" type="button" data-filter-chip="happy_hour_near_me">Happy hour near me</button>
         <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
         <button class="filterChip" type="button" data-filter-chip="pint_path_specials">Pint Path specials</button>
       </div>
@@ -2916,7 +2915,7 @@
         <div class="advancedFiltersPanel__header">
           <div>
             <h2 class="advancedFiltersPanel__title">Advanced filters</h2>
-            <p class="advancedFiltersPanel__copy">Use deeper filters when you need a narrower answer. Free users can preview locked options.</p>
+            <p class="advancedFiltersPanel__copy">Premium and contributor access unlock deeper filters when you need a narrower answer.</p>
           </div>
           <button id="advancedFiltersApply" class="utilityButton" type="button">Apply filters</button>
         </div>
@@ -3095,6 +3094,18 @@
     const PRICE_REVEAL_DAY_KEY = new Date().toISOString().slice(0, 10);
     const PRICE_REVEAL_STORAGE_KEY = `melbBeerRevealedVenues:${PRICE_REVEAL_DAY_KEY}`;
     const LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference";
+    const FREE_PREVIEW_BEER_CHIPS = Object.freeze([
+      { label: "Guinness", query: "Guinness" },
+      { label: "Carlton Draft", query: "Carlton Draft" },
+      { label: "Stone & Wood", query: "Stone & Wood" },
+    ]);
+    const FREE_PREVIEW_BEER_KEYS = new Set([
+      "guinness",
+      "carlton draft",
+      "carlton draught",
+      "stone wood",
+      "stone wood pacific ale",
+    ].map(toSearchKey));
     const DEFAULT_BEER_SEARCH_PLACEHOLDER = TRACKED_BEERS.length >= 3
       ? `Search ${TRACKED_BEERS.slice(0, 3).map((beer) => beer.name).join(", ")}…`
       : "Search a beer";
@@ -3272,6 +3283,7 @@
       }
       syncAuthenticatedNavLinks();
       syncAdminNavLink();
+      syncAdvancedFiltersAvailability();
       beerSearchEl.disabled = false;
       beerSearchEl.placeholder = DEFAULT_BEER_SEARCH_PLACEHOLDER;
       onTapOnlyEl.disabled = false;
@@ -3280,6 +3292,17 @@
         chipEl.title = "Popular beer shortcut";
       });
       syncAdvancedFilterLocks();
+    }
+
+    function syncAdvancedFiltersAvailability() {
+      const canUseAdvancedFilters = Boolean(businessAccess.hasFullAccess);
+      advancedFiltersToggleEl.hidden = !canUseAdvancedFilters;
+      advancedFiltersToggleEl.disabled = !canUseAdvancedFilters;
+
+      if (!canUseAdvancedFilters) {
+        advancedFiltersPanelEl.hidden = true;
+        advancedFiltersToggleEl.setAttribute("aria-expanded", "false");
+      }
     }
 
     function getAccessLabel() {
@@ -4006,6 +4029,13 @@
       return partialMatch?.name || "";
     }
 
+    function isFreePreviewBeerQuery(query) {
+      const queryKey = toSearchKey(query);
+      const trackedBeer = getTrackedBeerMeta(query);
+      const trackedKey = trackedBeer ? toSearchKey(trackedBeer.name) : "";
+      return FREE_PREVIEW_BEER_KEYS.has(queryKey) || FREE_PREVIEW_BEER_KEYS.has(trackedKey);
+    }
+
     function isAdvancedFilterLocked(filter) {
       return !businessAccess.hasFullAccess && premiumAdvancedFilters.has(filter);
     }
@@ -4036,36 +4066,15 @@
         return;
       }
 
-      const preferredBeerNames = ["Guinness", "Carlton Draught", "Stone & Wood"];
-      const preferredBeerKeys = preferredBeerNames.map(toSearchKey);
-      const seenBeerKeys = new Set();
-      const featuredBeers = [
-        ...preferredBeerKeys
-          .map((key) => TRACKED_BEER_BY_KEY.get(key))
-          .filter(Boolean),
-        ...TRACKED_BEERS,
-      ]
-        .filter((beer) => {
-          const key = toSearchKey(beer.name);
-          if (!key || seenBeerKeys.has(key)) {
-            return false;
-          }
-          seenBeerKeys.add(key);
-          return true;
-        })
-        .slice(0, 3);
-
-      beerChipHostEl.innerHTML = '<span class="filterGroup__label">Popular beers</span>' + featuredBeers
+      beerChipHostEl.innerHTML = '<span class="filterGroup__label">Popular beers</span>' + FREE_PREVIEW_BEER_CHIPS
         .map(
           (beer) => `
-            <button class="filterChip" type="button" data-beer-chip="${escapeHtml(beer.name)}">
-              ${escapeHtml(beer.name)}
+            <button class="filterChip" type="button" data-beer-chip="${escapeHtml(beer.query)}">
+              ${escapeHtml(beer.label)}
             </button>
           `,
         )
-        .join("") + (TRACKED_BEERS.length > featuredBeers.length
-          ? '<span class="filterHint" aria-hidden="true">Search for more beers…</span>'
-          : "");
+        .join("");
 
       beerChipEls = Array.from(document.querySelectorAll("[data-beer-chip]"));
       syncBusinessAccessUi();
@@ -5108,11 +5117,16 @@
       const searchQuery = venueSearchEl.value.trim();
       const explicitBeerQuery = beerSearchEl.value.trim();
       const inferredBeerQuery = explicitBeerQuery || getInferredBeerQuery(searchQuery);
+      const canUseBeerQuery = Boolean(
+        inferredBeerQuery &&
+        (businessAccess.hasFullAccess || isFreePreviewBeerQuery(inferredBeerQuery)),
+      );
+      const beerQuery = canUseBeerQuery ? inferredBeerQuery : "";
 
       return {
         scope: activeScope,
-        venueQuery: inferredBeerQuery ? "" : searchQuery,
-        beerQuery: inferredBeerQuery,
+        venueQuery: beerQuery ? "" : searchQuery,
+        beerQuery,
         onTapOnly: onTapOnlyEl.checked,
         filters: Array.from(activeFilterChips),
       };
@@ -5265,15 +5279,21 @@
     }
 
     function buildBeerSuggestionList(rows) {
-      const labels = new Set(TRACKED_BEERS.map((beer) => beer.name));
+      const labels = new Set(
+        businessAccess.hasFullAccess
+          ? TRACKED_BEERS.map((beer) => beer.name)
+          : FREE_PREVIEW_BEER_CHIPS.map((beer) => beer.label),
+      );
 
-      rows.forEach((row) => {
-        getBeerItems(row).forEach((beer) => {
-          if (beer.label) {
-            labels.add(getTrackedBeerDisplayName(beer.label));
-          }
+      if (businessAccess.hasFullAccess) {
+        rows.forEach((row) => {
+          getBeerItems(row).forEach((beer) => {
+            if (beer.label) {
+              labels.add(getTrackedBeerDisplayName(beer.label));
+            }
+          });
         });
-      });
+      }
 
       beerSuggestionsEl.innerHTML = Array.from(labels)
         .sort((left, right) => left.localeCompare(right))
@@ -6641,6 +6661,10 @@
         });
 
         advancedFiltersToggleEl.addEventListener("click", () => {
+          if (advancedFiltersToggleEl.hidden || advancedFiltersToggleEl.disabled) {
+            return;
+          }
+
           const isOpening = advancedFiltersPanelEl.hidden;
           advancedFiltersPanelEl.hidden = !isOpening;
           advancedFiltersToggleEl.setAttribute("aria-expanded", isOpening ? "true" : "false");

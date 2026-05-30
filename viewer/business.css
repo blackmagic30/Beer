@@ -1036,6 +1036,22 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.accountHighlightsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(320px, 1.5fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.accountHighlightsGrid .metricCard,
+.accountHighlightsGrid .panel {
+  min-height: 100%;
+}
+
+.accountDiscountFeature {
+  grid-column: auto;
+}
+
 .discountPassResult {
   display: flex;
   align-items: center;
@@ -1337,10 +1353,6 @@ h3 {
 .accountIdentityCard strong {
   margin: 0;
   overflow-wrap: anywhere;
-}
-
-.accountMetricGrid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .accountPrimaryGrid {
@@ -1855,6 +1867,7 @@ h3 {
   }
 
   .authTrustGrid,
+  .accountHighlightsGrid,
   .accountMetricGrid,
   .accountActionsGrid {
     grid-template-columns: 1fr;

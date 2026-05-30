@@ -201,19 +201,22 @@ describe("viewer map UI wiring", () => {
     expect(html).not.toContain(">$0<");
   });
 
-  it("renders the simplified public header, primary controls, and collapsed advanced filters", () => {
+  it("renders the simplified public header, primary controls, and contributor-only advanced filters", () => {
     expect(html).toContain('id="topbarBusinessLinks"');
     expect(html).toContain('id="accessPill"');
     expect(html).toContain('class="controlDeck"');
     expect(html).toContain("Find a venue fast");
     expect(html).toContain('placeholder="Search beer, venue or suburb"');
     expect(html).toContain('id="advancedFiltersToggle"');
+    expect(html).toContain('aria-controls="advancedFiltersPanel" hidden');
     expect(html).toContain('id="advancedFiltersPanel" class="advancedFiltersPanel" hidden');
     expect(html).toContain('id="activeFilterSummary"');
     expect(html).toContain('data-area-chip="Fitzroy"');
     expect(html).toContain('data-filter-chip="best_options"');
     expect(html).toContain('data-filter-chip="pint_path_specials"');
     expect(html).toContain('data-premium-filter="true"');
+    expect(html).toContain("syncAdvancedFiltersAvailability");
+    expect(html).toContain("advancedFiltersToggleEl.hidden = !canUseAdvancedFilters");
     expect(html).toContain('class="belowMapInsights"');
     expect(html).toContain('id="accessSummary"');
     expect(html).toContain("Drink responsibly");
@@ -221,7 +224,8 @@ describe("viewer map UI wiring", () => {
 
   it("renders location-aware controls and only auto-requests after a saved opt-in", () => {
     expect(html).toContain('id="useLocationButton"');
-    expect(html).toContain('data-filter-chip="happy_hour_near_me"');
+    expect(html).not.toContain('data-filter-chip="happy_hour_near_me"');
+    expect(html).toContain('data-filter-chip="happy_hour_active_now"');
     expect(html).toContain('data-filter-chip="pint_path_specials"');
     expect(html).toContain('data-filter-chip="recently_verified_near_me"');
     expect(html).toContain('data-filter-chip="nearest"');
@@ -231,6 +235,15 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('disableUserLocation("use_location_button_off")');
     expect(html).toContain("navigator.geolocation.getCurrentPosition");
     expect(html).not.toContain("watchPosition");
+  });
+
+  it("limits public beer shortcut chips to the free preview beers", () => {
+    expect(html).toContain('label: "Guinness", query: "Guinness"');
+    expect(html).toContain('label: "Carlton Draft", query: "Carlton Draft"');
+    expect(html).toContain('label: "Stone & Wood", query: "Stone & Wood"');
+    expect(html).toContain("FREE_PREVIEW_BEER_CHIPS");
+    expect(html).toContain("FREE_PREVIEW_BEER_KEYS");
+    expect(html).not.toContain("Search for more beers");
   });
 
   it("renders a Pint Path specials filter and locked special-detail copy", () => {

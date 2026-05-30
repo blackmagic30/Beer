@@ -27,6 +27,10 @@ function feedbackHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/feedback.html"), "utf8");
 }
 
+function statsHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/stats.html"), "utf8");
+}
+
 function termsHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/terms.html"), "utf8");
 }
@@ -64,6 +68,8 @@ describe("account page shell", () => {
     expect(html).toContain('id="accountSettingsHub"');
     expect(html).toContain("Recent submissions");
     expect(html).toContain("How verification works");
+    expect(html).toContain("Pint Path discount pass");
+    expect(html).toContain('href="/stats.html"');
     expect(html).not.toContain("Current status");
   });
 
@@ -142,6 +148,7 @@ describe("account page shell", () => {
 
     expect(html).toContain('href="/submit.html"');
     expect(html).toContain('href="/submit.html?type=photo_upload"');
+    expect(html).toContain('href="/stats.html"');
     expect(html).toContain('href="#accountSettingsHub"');
     expect(html).toContain('data-settings-target="preferences"');
     expect(html).toContain('data-settings-target="watchlist"');
@@ -154,6 +161,31 @@ describe("account page shell", () => {
     expect(html).not.toContain('id="quickVenueSelect"');
     expect(html).not.toContain("function clearQuickVenue");
     expect(html).not.toContain("submitQuickUpload");
+  });
+
+  it("keeps Account focused on account ID, savings, and discount pass while moving detailed stats to My Stats", () => {
+    const html = accountHtml();
+    const stats = statsHtml();
+    const css = businessCss();
+
+    expect(html).toContain('class="accountHighlightsGrid"');
+    expect(html).toContain('id="accountIdMetric"');
+    expect(html).toContain('id="savingsMetric"');
+    expect(html).toContain('id="refreshDiscountPassButton"');
+    expect(html).not.toContain('id="totalUploadsMetric"');
+    expect(html).not.toContain('id="pendingMetric"');
+    expect(html).not.toContain('id="leaderboardMetric"');
+
+    expect(stats).toContain("Contributor stats");
+    expect(stats).toContain('id="totalUploadsMetric"');
+    expect(stats).toContain('id="pendingMetric"');
+    expect(stats).toContain('id="verifiedMetric"');
+    expect(stats).toContain('id="leaderboardMetric"');
+    expect(stats).toContain('id="discountRedemptionsMetric"');
+    expect(stats).toContain('MelbBeerBusiness.apiFetch("/api/business/account"');
+    expect(stats).toContain('href="/account.html"');
+    expect(css).toContain(".accountHighlightsGrid");
+    expect(css).toContain(".accountDiscountFeature");
   });
 
   it("opens account settings sections on demand instead of rendering every panel open", () => {

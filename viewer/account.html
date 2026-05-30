@@ -109,7 +109,7 @@
         <div>
           <div class="eyebrow">My account</div>
           <h1>Contributor dashboard</h1>
-          <p class="lead">Track your uploads, review status, contribution points, and private evidence in one place.</p>
+          <p class="lead">Your Pint Path ID, savings, and rotating discount pass in one clean place.</p>
         </div>
         <div class="heroCard accountIdentityCard">
           <span class="muted">Signed in as</span>
@@ -121,18 +121,38 @@
 
       <div id="dashboardStatus" class="notice" role="status">Loading your account...</div>
 
-      <section class="metricGrid accountMetricGrid" aria-label="Contributor stats">
-        <div class="metricCard"><div id="totalUploadsMetric" class="metricValue">0</div><div class="metricLabel">Total uploads</div></div>
-        <div class="metricCard"><div id="pendingMetric" class="metricValue">0</div><div class="metricLabel">Pending review</div></div>
-        <div class="metricCard"><div id="verifiedMetric" class="metricValue">0</div><div class="metricLabel">Verified</div></div>
-        <div class="metricCard"><div id="rejectedMetric" class="metricValue">0</div><div class="metricLabel">Rejected</div></div>
-        <div class="metricCard"><div id="pointsMetric" class="metricValue">0</div><div class="metricLabel">Points this month</div></div>
-        <div class="metricCard"><div id="trustMetric" class="metricValue">0</div><div class="metricLabel">Trust score</div></div>
-        <div class="metricCard"><div id="verificationMetric" class="metricValue">0</div><div class="metricLabel">Community verifications</div></div>
-        <div class="metricCard"><div id="fraudMetric" class="metricValue">0</div><div class="metricLabel">Fraud strikes</div></div>
-        <div class="metricCard"><div id="accountIdMetric" class="metricValue metricValue--small">—</div><div class="metricLabel">Account ID</div></div>
-        <div class="metricCard"><div id="leaderboardMetric" class="metricValue">—</div><div class="metricLabel">Monthly rank</div></div>
-        <div class="metricCard"><div id="savingsMetric" class="metricValue">A$0</div><div class="metricLabel">Saved with discounts</div></div>
+      <section class="accountHighlightsGrid" aria-label="Account highlights">
+        <article class="metricCard">
+          <div id="savingsMetric" class="metricValue">A$0</div>
+          <div class="metricLabel">Total saved</div>
+          <p class="helperCopy">Estimated from Pint Path discount redemptions logged by venues.</p>
+        </article>
+
+        <article class="metricCard">
+          <div id="accountIdMetric" class="metricValue metricValue--small">—</div>
+          <div class="metricLabel">Account ID</div>
+          <p class="helperCopy">Your public contributor ID for leaderboard ranking and discount lookup.</p>
+        </article>
+
+        <article class="panel discountPassPanel accountDiscountFeature">
+          <div class="sectionHeader">
+            <div>
+              <h2>Pint Path discount pass</h2>
+              <p class="muted">Premium and contributor accounts can show a rotating code or QR to redeem venue specials.</p>
+            </div>
+            <span class="pill">Rotates per session</span>
+          </div>
+          <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate rotating code</button>
+          <div id="discountPassResult" class="discountPassResult is-hidden" hidden>
+            <div>
+              <span class="metricLabel">Current code</span>
+              <div id="discountPassCode" class="discountCode">------</div>
+              <p id="discountPassExpires" class="helperCopy"></p>
+            </div>
+            <img id="discountPassQr" class="discountPassQr" alt="Pint Path discount QR code" />
+          </div>
+          <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special. Redemptions are logged to calculate your estimated savings.</p>
+        </article>
       </section>
 
       <section class="grid grid--two accountPrimaryGrid">
@@ -158,26 +178,6 @@
           </ol>
           <p class="helperCopy">Raw photos, receipts, OCR evidence, and reviewer notes are not public map data.</p>
         </article>
-
-        <article class="panel discountPassPanel">
-          <div class="sectionHeader">
-            <div>
-              <h2>Pint Path discount pass</h2>
-              <p class="muted">Premium and contributor accounts can show a rotating code or QR to redeem venue specials.</p>
-            </div>
-            <span class="pill">Rotates per session</span>
-          </div>
-          <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate rotating code</button>
-          <div id="discountPassResult" class="discountPassResult is-hidden" hidden>
-            <div>
-              <span class="metricLabel">Current code</span>
-              <div id="discountPassCode" class="discountCode">------</div>
-              <p id="discountPassExpires" class="helperCopy"></p>
-            </div>
-            <img id="discountPassQr" class="discountPassQr" alt="Pint Path discount QR code" />
-          </div>
-          <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special. Redemptions are logged to calculate your estimated savings.</p>
-        </article>
       </section>
 
       <section class="accountActionsGrid" aria-label="Quick actions">
@@ -192,6 +192,10 @@
         <a class="actionCard" href="#recentSubmissionsSection">
           <strong>View my submissions</strong>
           <span>See pending, verified, and rejected updates.</span>
+        </a>
+        <a class="actionCard" href="/stats.html">
+          <strong>My stats</strong>
+          <span>Open uploads, points, leaderboard rank, trust, and verification metrics.</span>
         </a>
         <a class="actionCard" href="#accountSettingsHub">
           <strong>Account settings</strong>
@@ -604,7 +608,6 @@
       state.accountData = result;
       showDashboard();
       const account = result.account;
-      const stats = result.dashboardStats || {};
       $("accountEmail").textContent = account.email;
       $("accountTierPill").textContent = account.subscriptionStatus.replaceAll("_", " ");
       $("accessBadgeRow").innerHTML = [
@@ -614,17 +617,7 @@
           : "<span>Free preview: happy hours + core pint prices</span>",
         account.emailVerifiedAt ? "<span>Email verified</span>" : "<span>Email verification pending</span>",
       ].join("");
-      $("totalUploadsMetric").textContent = stats.totalUploads ?? 0;
-      $("pendingMetric").textContent = stats.pendingVerificationCount ?? stats.pendingCount ?? 0;
-      $("verifiedMetric").textContent = stats.verifiedCount ?? account.approvedSubmissionCount ?? 0;
-      $("rejectedMetric").textContent = stats.rejectedCount ?? account.rejectedSubmissionCount ?? 0;
-      $("pointsMetric").textContent = formatPoints(stats.pointsThisMonth ?? account.contributionPointsCurrentMonth ?? 0);
-      $("trustMetric").textContent = stats.trustScore ?? account.trustScore ?? 0;
-      $("verificationMetric").textContent = (result.verifications || []).length;
-      $("fraudMetric").textContent = stats.fraudStrikes ?? account.fraudStrikeCount ?? 0;
       $("accountIdMetric").textContent = result.leaderboard?.accountId || account.publicAccountId || "—";
-      const leaderboardRank = result.leaderboard?.monthRank;
-      $("leaderboardMetric").textContent = leaderboardRank ? `#${leaderboardRank.rank}` : "—";
       $("savingsMetric").textContent = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
       const discountPassButton = $("refreshDiscountPassButton");
       if (discountPassButton) {
