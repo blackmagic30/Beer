@@ -73,7 +73,7 @@
         <h2>Venue partner interest</h2>
         <p class="muted">Venue partner interest and invite-only venue manager assignments. Public self-claiming is disabled during beta.</p>
         <div id="venueInterestRequests" class="list"></div>
-        <h3>Authenticated bar claims</h3>
+        <h3>Authenticated venue claims</h3>
         <div id="barClaimRequests" class="list"></div>
       </div>
       <div class="panel">
@@ -137,7 +137,7 @@
         <div id="pendingSubmissions" class="list"></div>
       </div>
       <div class="panel">
-        <h2>Pending bar changes</h2>
+        <h2>Pending venue changes</h2>
         <p class="muted">Manager edits stay private until approved here.</p>
         <div id="pendingBarChanges" class="list"></div>
       </div>
@@ -306,7 +306,7 @@
             <div class="muted">${escapeHtml(claim.message || claim.address || "No message supplied")}</div>
           </article>
         `).join("")
-        : '<div class="listItem muted">No authenticated bar claims yet.</div>';
+        : '<div class="listItem muted">No authenticated venue claims yet.</div>';
 
       venueManagerAssignments.innerHTML = data.assignments.length
         ? data.assignments.map((assignment) => `
@@ -328,7 +328,7 @@
           <article class="listItem">
             <strong>${escapeHtml(change.changeType.replace("_", " "))} · ${escapeHtml(change.action)}</strong>
             <span class="pill">${escapeHtml(change.status)}</span>
-            <div class="muted">${escapeHtml(change.barId)} · submitted by ${escapeHtml(change.submittedBy)} · ${escapeHtml(change.submittedAt)}</div>
+            <div class="muted">${escapeHtml(change.venueId || change.barId)} · submitted by ${escapeHtml(change.submittedBy)} · ${escapeHtml(change.submittedAt)}</div>
             <div class="muted">${escapeHtml(summarizePendingPayload(change.payload))}</div>
             <div class="actionRow">
               <button class="button button--small button--primary" type="button" data-review-change="${escapeHtml(change.id)}" data-review-status="approved">Approve</button>
@@ -336,9 +336,9 @@
             </div>
           </article>
         `).join("")
-        : '<div class="listItem muted">No pending bar changes.</div>';
+        : '<div class="listItem muted">No pending venue changes.</div>';
       pendingBarChanges.querySelectorAll("[data-review-change]").forEach((button) => {
-        button.addEventListener("click", () => reviewBarChange(button.dataset.reviewChange, button.dataset.reviewStatus));
+        button.addEventListener("click", () => reviewVenueChange(button.dataset.reviewChange, button.dataset.reviewStatus));
       });
     }
 
@@ -365,17 +365,17 @@
       }
     }
 
-    async function reviewBarChange(id, status) {
+    async function reviewVenueChange(id, status) {
       if (!id || !status) return;
       try {
-        await MelbBeerBusiness.apiFetch(`/api/business/admin/bar-pending-changes/${encodeURIComponent(id)}/review`, {
+        await MelbBeerBusiness.apiFetch(`/api/business/admin/venue-pending-changes/${encodeURIComponent(id)}/review`, {
           method: "POST",
           body: JSON.stringify({
             status,
             rejectionReason: status === "rejected" ? "Rejected during admin review." : null,
           }),
         });
-        MelbBeerBusiness.setStatus(statusEl, status === "approved" ? "Bar change approved and published." : "Bar change rejected.");
+        MelbBeerBusiness.setStatus(statusEl, status === "approved" ? "Venue change approved and published." : "Venue change rejected.");
         await loadAdmin();
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message, true);

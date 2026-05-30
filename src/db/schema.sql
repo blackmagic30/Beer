@@ -30,6 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_venue_status
 
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
+  public_account_id TEXT UNIQUE,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   display_name TEXT,
@@ -68,6 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_accounts_stripe_customer
 
 CREATE TABLE IF NOT EXISTS profiles (
   id TEXT PRIMARY KEY,
+  public_account_id TEXT UNIQUE,
   email TEXT,
   display_name TEXT,
   username TEXT,
@@ -98,6 +100,53 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
   ON auth_sessions (user_id, expires_at DESC);
+
+CREATE TABLE IF NOT EXISTS account_discount_passes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  session_token_hash TEXT NOT NULL,
+  code_hash TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  last_used_at TEXT,
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (session_token_hash) REFERENCES auth_sessions(token_hash) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_discount_passes_user
+  ON account_discount_passes (user_id, status, expires_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_account_discount_passes_session
+  ON account_discount_passes (session_token_hash, status, expires_at DESC);
+
+CREATE TABLE IF NOT EXISTS discount_redemptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  public_account_id TEXT NOT NULL,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  suburb TEXT,
+  special_id TEXT,
+  item_name TEXT,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  estimated_savings_cents INTEGER NOT NULL DEFAULT 0,
+  discount_pass_id TEXT,
+  redeemed_by_user_id TEXT,
+  redeemed_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (discount_pass_id) REFERENCES account_discount_passes(id) ON DELETE SET NULL,
+  FOREIGN KEY (redeemed_by_user_id) REFERENCES accounts(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_discount_redemptions_user
+  ON discount_redemptions (user_id, redeemed_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_discount_redemptions_venue
+  ON discount_redemptions (venue_id, redeemed_at DESC);
 
 CREATE TABLE IF NOT EXISTS security_audit_log (
   id TEXT PRIMARY KEY,

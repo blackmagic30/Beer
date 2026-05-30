@@ -32,7 +32,7 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 - Database: SQLite via `better-sqlite3`, initialized additively from `src/db/schema.sql`.
 - Auth: local Pint Path bearer sessions plus optional Supabase OAuth session exchange; production admin actions require verified email and AAL2 step-up claims.
 - Payments: Stripe Checkout/webhooks plus demo billing mode guarded by env.
-- External services: Supabase, Google Maps, OpenAI, Stripe. Historical phone-call automation code is archived under `legacy/call-automation/` and is not built, mounted, or configured.
+- External services: Supabase, Google Maps, OpenAI, Stripe. Historical phone-call automation code has been removed from the repository and is not built, mounted, or configured.
 - Hosting assumptions: Railway, with build `npm run build`, start `node dist/src/server.js`.
 - CI: GitHub Actions in `.github/workflows/ci.yml`.
 
@@ -47,11 +47,10 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 
 ## Changes Made In This Pass
 
-- Retired the old phone-call prototype from the active app:
-  - moved source/scripts/tests to `legacy/call-automation/`
+- Retired the old phone-call prototype from the app:
+  - removed the legacy Twilio/ElevenLabs source/scripts/tests from the repository
   - removed active routes and package dependencies
   - removed active env vars and deployment instructions
-  - excluded archived tests from the active Vitest suite
 - Removed fresh local SQLite call tables from `src/db/schema.sql`.
 - Renamed local venue partner tables from old `bar_*` names to `venue_*` names while preserving a startup migration for existing local SQLite databases.
 - Added Supabase `venue_menu_captures` migration as the product-correct replacement for the old `call_results` scratch table; it copies existing `call_results` rows forward if present but does not drop production data.

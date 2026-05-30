@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import type BetterSqlite3 from "better-sqlite3";
 
 import { redactSecrets } from "../lib/redact.js";
@@ -49,6 +51,7 @@ export type ConfidenceLabel =
 
 export interface BusinessAccount {
   id: string;
+  publicAccountId: string;
   email: string;
   passwordHash: string;
   displayName: string | null;
@@ -81,6 +84,7 @@ export interface BusinessAccount {
 
 export interface PublicProfile {
   id: string;
+  publicAccountId: string | null;
   email: string | null;
   displayName: string | null;
   username: string | null;
@@ -492,8 +496,47 @@ export interface AgeVerification {
   updatedAt: string;
 }
 
+export interface LeaderboardEntry {
+  rank: number;
+  accountId: string;
+  displayName: string;
+  approvedSubmissions: number;
+  points: number;
+}
+
+export interface AccountDiscountPass {
+  id: string;
+  userId: string;
+  sessionTokenHash: string;
+  codeHash: string;
+  status: "active" | "revoked";
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+}
+
+export interface DiscountRedemption {
+  id: string;
+  userId: string;
+  publicAccountId: string;
+  venueId: string;
+  venueName: string;
+  suburb: string | null;
+  specialId: string | null;
+  itemName: string | null;
+  quantity: number;
+  estimatedSavingsCents: number;
+  discountPassId: string | null;
+  redeemedByUserId: string | null;
+  redeemedAt: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
 interface AccountRow {
   id: string;
+  public_account_id: string | null;
   email: string;
   password_hash: string;
   display_name: string | null;
@@ -526,6 +569,7 @@ interface AccountRow {
 
 interface ProfileRow {
   id: string;
+  public_account_id: string | null;
   email: string | null;
   display_name: string | null;
   username: string | null;
@@ -916,9 +960,40 @@ interface MonthlyBarReportRow {
   created_at: string;
 }
 
+interface AccountDiscountPassRow {
+  id: string;
+  user_id: string;
+  session_token_hash: string;
+  code_hash: string;
+  status: "active" | "revoked";
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+  last_used_at: string | null;
+}
+
+interface DiscountRedemptionRow {
+  id: string;
+  user_id: string;
+  public_account_id: string;
+  venue_id: string;
+  venue_name: string;
+  suburb: string | null;
+  special_id: string | null;
+  item_name: string | null;
+  quantity: number;
+  estimated_savings_cents: number;
+  discount_pass_id: string | null;
+  redeemed_by_user_id: string | null;
+  redeemed_at: string;
+  metadata_json: string;
+  created_at: string;
+}
+
 function toAccount(row: AccountRow): BusinessAccount {
   return {
     id: row.id,
+    publicAccountId: row.public_account_id ?? row.id,
     email: row.email,
     passwordHash: row.password_hash,
     displayName: row.display_name,
@@ -967,6 +1042,7 @@ function toSourceEvidenceObject(row: SourceEvidenceObjectRow): SourceEvidenceObj
 function toProfile(row: ProfileRow): PublicProfile {
   return {
     id: row.id,
+    publicAccountId: row.public_account_id,
     email: row.email,
     displayName: row.display_name,
     username: row.username,
@@ -977,6 +1053,40 @@ function toProfile(row: ProfileRow): PublicProfile {
     isOver18Verified: Boolean(row.is_over_18_verified),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function toAccountDiscountPass(row: AccountDiscountPassRow): AccountDiscountPass {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    sessionTokenHash: row.session_token_hash,
+    codeHash: row.code_hash,
+    status: row.status,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    revokedAt: row.revoked_at,
+    lastUsedAt: row.last_used_at,
+  };
+}
+
+function toDiscountRedemption(row: DiscountRedemptionRow): DiscountRedemption {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    publicAccountId: row.public_account_id,
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    suburb: row.suburb,
+    specialId: row.special_id,
+    itemName: row.item_name,
+    quantity: row.quantity,
+    estimatedSavingsCents: row.estimated_savings_cents,
+    discountPassId: row.discount_pass_id,
+    redeemedByUserId: row.redeemed_by_user_id,
+    redeemedAt: row.redeemed_at,
+    metadata: parseJsonObject(row.metadata_json),
+    createdAt: row.created_at,
   };
 }
 
@@ -1429,6 +1539,25 @@ function toAgeVerification(row: AgeVerificationRow): AgeVerification {
 export class BusinessRepository {
   constructor(private readonly database: BetterSqlite3.Database) {}
 
+  private generatePublicAccountId(): string {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      let randomPart = "";
+      for (let index = 0; index < 8; index += 1) {
+        randomPart += alphabet[crypto.randomInt(alphabet.length)]!;
+      }
+      const candidate = `PP-${randomPart}`;
+      const exists = this.database
+        .prepare("SELECT 1 FROM accounts WHERE public_account_id = ? LIMIT 1")
+        .get(candidate);
+      if (!exists) {
+        return candidate;
+      }
+    }
+
+    throw new Error("Unable to generate unique public account ID");
+  }
+
   createAccount(input: {
     id: string;
     email: string;
@@ -1448,18 +1577,20 @@ export class BusinessRepository {
     termsVersion?: string | null | undefined;
     privacyVersion?: string | null | undefined;
   }): BusinessAccount {
+    const publicAccountId = this.generatePublicAccountId();
     const create = this.database.transaction(() => {
       this.database
         .prepare(
           `INSERT INTO accounts (
-            id, email, password_hash, display_name, avatar_url, auth_provider, supabase_user_id,
+            id, public_account_id, email, password_hash, display_name, avatar_url, auth_provider, supabase_user_id,
             email_verified_at, mfa_level, mfa_verified_at, role, subscription_status,
             terms_accepted_at, privacy_accepted_at, terms_version, privacy_version,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
+          publicAccountId,
           input.email,
           input.passwordHash,
           input.displayName ?? null,
@@ -1481,6 +1612,7 @@ export class BusinessRepository {
 
       this.upsertProfile({
         id: input.id,
+        publicAccountId,
         email: input.email,
         displayName: input.displayName ?? null,
         username: null,
@@ -1499,6 +1631,7 @@ export class BusinessRepository {
 
   upsertProfile(input: {
     id: string;
+    publicAccountId?: string | null | undefined;
     email: string | null;
     displayName: string | null;
     username: string | null;
@@ -1512,10 +1645,11 @@ export class BusinessRepository {
     this.database
       .prepare(
         `INSERT INTO profiles (
-          id, email, display_name, username, avatar_url, role, account_status,
+          id, public_account_id, email, display_name, username, avatar_url, role, account_status,
           age_verification_status, is_over_18_verified, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          public_account_id = COALESCE(excluded.public_account_id, profiles.public_account_id),
           email = excluded.email,
           display_name = excluded.display_name,
           avatar_url = excluded.avatar_url,
@@ -1527,6 +1661,7 @@ export class BusinessRepository {
       )
       .run(
         input.id,
+        input.publicAccountId ?? null,
         input.email,
         input.displayName,
         input.username,
@@ -1605,6 +1740,7 @@ export class BusinessRepository {
       if (account) {
         this.upsertProfile({
           id: account.id,
+          publicAccountId: account.publicAccountId,
           email: account.email,
           displayName: input.displayName,
           username: null,
@@ -1618,6 +1754,13 @@ export class BusinessRepository {
       }
     })();
     return this.getAccountById(input.userId)!;
+  }
+
+  getAccountByPublicAccountId(publicAccountId: string): BusinessAccount | null {
+    const row = this.database
+      .prepare("SELECT * FROM accounts WHERE upper(public_account_id) = upper(?) LIMIT 1")
+      .get(publicAccountId) as AccountRow | undefined;
+    return row ? toAccount(row) : null;
   }
 
   updateAccountSecurityClaims(input: {
@@ -2094,6 +2237,231 @@ export class BusinessRepository {
       .prepare("SELECT * FROM user_activity_events WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
       .all(userId, limit) as UserActivityEventRow[];
     return rows.map(toUserActivityEvent);
+  }
+
+  listLeaderboard(input: { period: "month" | "all_time"; limit: number; now: string }): LeaderboardEntry[] {
+    const values: unknown[] = [];
+    const monthFilter = input.period === "month" ? "AND COALESCE(s.reviewed_at, s.updated_at) >= ?" : "";
+
+    if (input.period === "month") {
+      const start = new Date(input.now);
+      start.setUTCDate(1);
+      start.setUTCHours(0, 0, 0, 0);
+      values.push(start.toISOString());
+    }
+
+    values.push(input.limit);
+
+    const rows = this.database
+      .prepare(
+        `SELECT
+           a.id AS user_id,
+           COALESCE(a.public_account_id, a.id) AS account_id,
+           COALESCE(NULLIF(a.display_name, ''), NULLIF(p.display_name, ''), COALESCE(a.public_account_id, a.id)) AS display_name,
+           count(s.id) AS approved_submissions,
+           COALESCE(sum(s.points_awarded), 0) AS points
+         FROM submissions s
+         JOIN accounts a ON a.id = s.user_id
+         LEFT JOIN profiles p ON p.id = a.id
+         WHERE s.status = 'approved'
+           AND COALESCE(s.fraud_flagged, 0) = 0
+           AND a.status != 'suspended'
+           ${monthFilter}
+         GROUP BY a.id
+         HAVING count(s.id) > 0
+         ORDER BY approved_submissions DESC, points DESC, min(COALESCE(s.reviewed_at, s.updated_at)) ASC, account_id ASC
+         LIMIT ?`,
+      )
+      .all(...values) as Array<{
+        user_id: string;
+        account_id: string;
+        display_name: string;
+        approved_submissions: number;
+        points: number;
+      }>;
+
+    return rows.map((row, index) => ({
+      rank: index + 1,
+      accountId: row.account_id,
+      displayName: row.display_name,
+      approvedSubmissions: Number(row.approved_submissions ?? 0),
+      points: Number(row.points ?? 0),
+    }));
+  }
+
+  getLeaderboardRank(input: { userId: string; period: "month" | "all_time"; now: string }): LeaderboardEntry | null {
+    const account = this.getAccountById(input.userId);
+    if (!account) {
+      return null;
+    }
+
+    return (
+      this.listLeaderboard({
+        period: input.period,
+        limit: 10_000,
+        now: input.now,
+      }).find((entry) => entry.accountId === account.publicAccountId) ?? null
+    );
+  }
+
+  createDiscountPass(input: {
+    id: string;
+    userId: string;
+    sessionTokenHash: string;
+    codeHash: string;
+    createdAt: string;
+    expiresAt: string;
+  }): AccountDiscountPass {
+    this.database
+      .prepare(
+        `INSERT INTO account_discount_passes (
+          id, user_id, session_token_hash, code_hash, status, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+      )
+      .run(input.id, input.userId, input.sessionTokenHash, input.codeHash, input.createdAt, input.expiresAt);
+
+    return this.getDiscountPassById(input.id)!;
+  }
+
+  getDiscountPassById(id: string): AccountDiscountPass | null {
+    const row = this.database
+      .prepare("SELECT * FROM account_discount_passes WHERE id = ?")
+      .get(id) as AccountDiscountPassRow | undefined;
+    return row ? toAccountDiscountPass(row) : null;
+  }
+
+  getActiveDiscountPassByCodeHash(input: { codeHash: string; now: string }): AccountDiscountPass | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM account_discount_passes
+         WHERE code_hash = ?
+           AND status = 'active'
+           AND revoked_at IS NULL
+           AND expires_at > ?
+         LIMIT 1`,
+      )
+      .get(input.codeHash, input.now) as AccountDiscountPassRow | undefined;
+    return row ? toAccountDiscountPass(row) : null;
+  }
+
+  revokeDiscountPassesForSession(input: { sessionTokenHash: string; revokedAt: string }): number {
+    const result = this.database
+      .prepare(
+        `UPDATE account_discount_passes
+         SET status = 'revoked', revoked_at = ?
+         WHERE session_token_hash = ?
+           AND status = 'active'
+           AND revoked_at IS NULL`,
+      )
+      .run(input.revokedAt, input.sessionTokenHash);
+    return result.changes;
+  }
+
+  revokeDiscountPassesForUser(input: { userId: string; revokedAt: string }): number {
+    const result = this.database
+      .prepare(
+        `UPDATE account_discount_passes
+         SET status = 'revoked', revoked_at = ?
+         WHERE user_id = ?
+           AND status = 'active'
+           AND revoked_at IS NULL`,
+      )
+      .run(input.revokedAt, input.userId);
+    return result.changes;
+  }
+
+  markDiscountPassUsed(input: { id: string; lastUsedAt: string }): void {
+    this.database
+      .prepare(
+        `UPDATE account_discount_passes
+         SET status = 'revoked',
+             last_used_at = ?,
+             revoked_at = COALESCE(revoked_at, ?)
+         WHERE id = ?`,
+      )
+      .run(input.lastUsedAt, input.lastUsedAt, input.id);
+  }
+
+  createDiscountRedemption(input: {
+    id: string;
+    userId: string;
+    publicAccountId: string;
+    venueId: string;
+    venueName: string;
+    suburb: string | null;
+    specialId: string | null;
+    itemName: string | null;
+    quantity: number;
+    estimatedSavingsCents: number;
+    discountPassId: string | null;
+    redeemedByUserId: string | null;
+    redeemedAt: string;
+    metadata: Record<string, unknown>;
+  }): DiscountRedemption {
+    this.database
+      .prepare(
+        `INSERT INTO discount_redemptions (
+          id, user_id, public_account_id, venue_id, venue_name, suburb, special_id, item_name,
+          quantity, estimated_savings_cents, discount_pass_id, redeemed_by_user_id,
+          redeemed_at, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.publicAccountId,
+        input.venueId,
+        input.venueName,
+        input.suburb,
+        input.specialId,
+        input.itemName,
+        input.quantity,
+        input.estimatedSavingsCents,
+        input.discountPassId,
+        input.redeemedByUserId,
+        input.redeemedAt,
+        JSON.stringify(redactSecrets(input.metadata)),
+        input.redeemedAt,
+      );
+
+    return this.getDiscountRedemptionById(input.id)!;
+  }
+
+  getDiscountRedemptionById(id: string): DiscountRedemption | null {
+    const row = this.database
+      .prepare("SELECT * FROM discount_redemptions WHERE id = ?")
+      .get(id) as DiscountRedemptionRow | undefined;
+    return row ? toDiscountRedemption(row) : null;
+  }
+
+  listDiscountRedemptionsForUser(userId: string, limit: number): DiscountRedemption[] {
+    const rows = this.database
+      .prepare("SELECT * FROM discount_redemptions WHERE user_id = ? ORDER BY redeemed_at DESC LIMIT ?")
+      .all(userId, limit) as DiscountRedemptionRow[];
+    return rows.map(toDiscountRedemption);
+  }
+
+  getDiscountRedemptionStats(userId: string): {
+    totalRedemptions: number;
+    estimatedSavingsCents: number;
+    uniqueVenues: number;
+  } {
+    const row = this.database
+      .prepare(
+        `SELECT
+           count(*) AS total_redemptions,
+           COALESCE(sum(estimated_savings_cents), 0) AS estimated_savings_cents,
+           count(DISTINCT venue_id) AS unique_venues
+         FROM discount_redemptions
+         WHERE user_id = ?`,
+      )
+      .get(userId) as { total_redemptions: number; estimated_savings_cents: number; unique_venues: number } | undefined;
+
+    return {
+      totalRedemptions: Number(row?.total_redemptions ?? 0),
+      estimatedSavingsCents: Number(row?.estimated_savings_cents ?? 0),
+      uniqueVenues: Number(row?.unique_venues ?? 0),
+    };
   }
 
   getSubmissionById(id: string): { submission: BusinessSubmission; items: BusinessSubmissionItem[] } | null {
@@ -3351,7 +3719,7 @@ export class BusinessRepository {
       .prepare("SELECT * FROM venue_beers WHERE id = ? AND venue_id = ?")
       .get(input.id, input.barId) as BarBeerRow | undefined;
     if (!row) {
-      throw new Error("Beer row belongs to another bar");
+      throw new Error("Beer row belongs to another venue");
     }
     return toBarBeer(row);
   }
@@ -3417,7 +3785,7 @@ export class BusinessRepository {
       .prepare("SELECT * FROM venue_happy_hours WHERE id = ? AND venue_id = ?")
       .get(input.id, input.barId) as BarHappyHourRow | undefined;
     if (!row) {
-      throw new Error("Happy-hour row belongs to another bar");
+      throw new Error("Happy-hour row belongs to another venue");
     }
     return toBarHappyHour(row);
   }
@@ -3490,7 +3858,7 @@ export class BusinessRepository {
       .prepare("SELECT * FROM venue_specials WHERE id = ? AND venue_id = ?")
       .get(input.id, input.barId) as BarSpecialRow | undefined;
     if (!row) {
-      throw new Error("Special row belongs to another bar");
+      throw new Error("Special row belongs to another venue");
     }
     return toBarSpecial(row);
   }
@@ -3599,6 +3967,10 @@ export class BusinessRepository {
     return row ? toMonthlyBarReport(row) : null;
   }
 
+  getVenueMonthlyReport(input: { venueId: string; month: string }): MonthlyBarReport | null {
+    return this.getMonthlyBarReport({ barId: input.venueId, month: input.month });
+  }
+
   upsertMonthlyBarReport(input: { id: string; barId: string; month: string; data: Record<string, unknown>; createdAt: string }): MonthlyBarReport {
     this.database
       .prepare(
@@ -3608,6 +3980,16 @@ export class BusinessRepository {
       )
       .run(input.id, input.barId, input.month, JSON.stringify(input.data), input.createdAt);
     return this.getMonthlyBarReport({ barId: input.barId, month: input.month })!;
+  }
+
+  upsertVenueMonthlyReport(input: { id: string; venueId: string; month: string; data: Record<string, unknown>; createdAt: string }): MonthlyBarReport {
+    return this.upsertMonthlyBarReport({
+      id: input.id,
+      barId: input.venueId,
+      month: input.month,
+      data: input.data,
+      createdAt: input.createdAt,
+    });
   }
 
   recordBarAnalyticsEvent(input: {
@@ -3628,6 +4010,30 @@ export class BusinessRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(input.id, input.barId, input.area, input.suburb ?? input.area, input.eventType, input.queryText, input.beerName, input.beerStyle, input.createdAt);
+  }
+
+  recordVenueAnalyticsEvent(input: {
+    id: string;
+    venueId: string | null;
+    area: string | null;
+    suburb?: string | null | undefined;
+    eventType: string;
+    queryText: string | null;
+    beerName: string | null;
+    beerStyle: string | null;
+    createdAt: string;
+  }): void {
+    this.recordBarAnalyticsEvent({
+      id: input.id,
+      barId: input.venueId,
+      area: input.area,
+      suburb: input.suburb,
+      eventType: input.eventType,
+      queryText: input.queryText,
+      beerName: input.beerName,
+      beerStyle: input.beerStyle,
+      createdAt: input.createdAt,
+    });
   }
 
   getBarAreaAnalytics(input: {
@@ -3710,6 +4116,20 @@ export class BusinessRepository {
       privacyFloorMet,
       privacyThreshold,
     };
+  }
+
+  getVenueAreaAnalytics(input: {
+    venueId: string;
+    area: string | null;
+    month?: string | undefined;
+    privacyThreshold?: number | undefined;
+  }) {
+    return this.getBarAreaAnalytics({
+      barId: input.venueId,
+      area: input.area,
+      month: input.month,
+      privacyThreshold: input.privacyThreshold,
+    });
   }
 
   upsertVenuePartnerOutreach(input: {

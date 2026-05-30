@@ -93,6 +93,39 @@
               <p class="helperCopy">Manager edits are saved privately until Pint Path admin approval. Public map/listing views keep showing the last approved data.</p>
               <div id="pendingChanges" class="list"></div>
             </article>
+
+            <article class="panel" style="margin-top:16px;">
+              <div class="sectionHeader">
+                <div>
+                  <h2>Redeem Pint Path discount</h2>
+                  <p class="muted">Enter the user’s current rotating code after they show it at the venue.</p>
+                </div>
+                <span class="pill">Explicit redemption only</span>
+              </div>
+              <form id="discountRedemptionForm" class="form">
+                <div class="grid grid--two">
+                  <label class="field">User code
+                    <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="ABC123" required />
+                  </label>
+                  <label class="field">Drink or special
+                    <input name="itemName" placeholder="e.g. Pint Path special pint" />
+                  </label>
+                </div>
+                <div class="grid grid--two">
+                  <label class="field">Quantity
+                    <input name="quantity" type="number" min="1" max="20" value="1" />
+                  </label>
+                  <label class="field">Estimated savings (A$)
+                    <input name="estimatedSavingsDollars" type="number" min="0" max="1000" step="0.01" value="0" />
+                  </label>
+                </div>
+                <label class="field">Notes
+                  <textarea name="notes" placeholder="Optional staff note"></textarea>
+                </label>
+                <button class="button button--primary" type="submit">Redeem discount</button>
+              </form>
+              <div id="discountRedemptionStatus" class="notice" role="status">Enter a current code to redeem.</div>
+            </article>
           </section>
 
           <section class="tabPanel is-hidden" data-panel="profile">
@@ -400,6 +433,10 @@
 
     function money(value) {
       return value == null ? "No verified price" : new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(value);
+    }
+
+    function formatCurrency(value) {
+      return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(Number(value || 0));
     }
 
     function prettyTier(value) {
@@ -867,6 +904,12 @@
       seedTrackedBeerLookup();
       populateBeerSuggestions();
       renderTimeSuggestions();
+      const discountRedemptionFormElement = document.getElementById("discountRedemptionForm");
+      const discountRedemptionStatus = document.getElementById("discountRedemptionStatus");
+      const discountCodeFromQr = new URLSearchParams(window.location.search).get("discountCode");
+      if (discountCodeFromQr && discountRedemptionFormElement) {
+        field(discountRedemptionFormElement, "code").value = discountCodeFromQr.toUpperCase();
+      }
       field(beerForm, "beerName").addEventListener("change", updateBeerCatalogueState);
       field(beerForm, "beerName").addEventListener("input", () => {
         if (!field(beerForm, "isNewBeer").checked) {
@@ -1009,6 +1052,34 @@
           MelbBeerBusiness.setStatus(specialStatus, error.message || "Could not save special.", true);
         }
       });
+
+      if (discountRedemptionFormElement) {
+        discountRedemptionFormElement.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (!selectedVenueId()) return;
+          const savingsDollars = Number(field(discountRedemptionFormElement, "estimatedSavingsDollars").value || 0);
+          const body = {
+            code: field(discountRedemptionFormElement, "code").value,
+            itemName: field(discountRedemptionFormElement, "itemName").value || null,
+            quantity: Number(field(discountRedemptionFormElement, "quantity").value || 1),
+            estimatedSavingsCents: Math.round(Math.max(0, savingsDollars) * 100),
+            notes: field(discountRedemptionFormElement, "notes").value || null,
+          };
+          try {
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/discount-redemptions`, {
+              method: "POST",
+              body: JSON.stringify(body),
+            });
+            MelbBeerBusiness.setStatus(
+              discountRedemptionStatus,
+              `Redeemed for account ${result.accountId}. Estimated savings ${formatCurrency(result.estimatedSavingsDollars)}.`,
+            );
+            discountRedemptionFormElement.reset();
+          } catch (error) {
+            MelbBeerBusiness.setStatus(discountRedemptionStatus, error.message || "Could not redeem discount.", true);
+          }
+        });
+      }
 
       resetBeerForm.addEventListener("click", () => {
         resetForm(beerForm);

@@ -14,9 +14,7 @@ import {
   adminUserStatusSchema,
   ageConfirmSchema,
   barBeerSchema,
-  barClaimRequestSchema,
   barHappyHourSchema,
-  barPendingChangeReviewSchema,
   barProfileSchema,
   barSpecialSchema,
   barTierCheckoutSchema,
@@ -27,9 +25,11 @@ import {
   checkoutSessionSchema,
   createMissionSchema,
   createSubmissionSchema,
+  discountRedemptionSchema,
   eventTrackSchema,
   feedbackSchema,
   geocodeQuerySchema,
+  leaderboardQuerySchema,
   legalAcceptanceSchema,
   missionsQuerySchema,
   priceRecordsQuerySchema,
@@ -39,7 +39,9 @@ import {
   saveItemSchema,
   submissionsQuerySchema,
   venueRequestSchema,
+  venueClaimRequestSchema,
   verificationSchema,
+  venuePendingChangeReviewSchema,
   venueInterestSchema,
   venueInterestStatusSchema,
   venueManagerAssignmentSchema,
@@ -173,6 +175,15 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/account", (req, res) => {
     const account = requireAccount(req, businessService);
     res.json(success(businessService.getAccountDashboard(account)));
+  });
+
+  router.post("/account/discount-pass", async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      res.json(success(await businessService.getDiscountPass(account, getAuthorization(req))));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/account/age-confirm", (req, res) => {
@@ -354,6 +365,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     })));
   });
 
+  router.get("/leaderboard", (req, res) => {
+    const account = getOptionalAccount(req, businessService);
+    const query = parseWithSchema(leaderboardQuerySchema, req.query, "Invalid leaderboard query");
+    res.json(success(businessService.getLeaderboard(account, query)));
+  });
+
   router.post("/events", eventLimiter, (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const body = parseWithSchema(eventTrackSchema, req.body, "Invalid analytics event payload");
@@ -372,10 +389,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getVenuePortal(account, query)));
   });
 
-  router.post("/bar-claim-requests", writeLimiter, (req, res) => {
-    const account = requireAccount(req, businessService);
-    const body = parseWithSchema(barClaimRequestSchema, req.body, "Invalid bar claim request payload");
-    res.status(201).json(success(businessService.createBarClaimRequest(account, body)));
+  router.post("/venue-claim-requests", writeLimiter, (req, res) => {
+    const account = requireAdmin(req, businessService);
+    const body = parseWithSchema(venueClaimRequestSchema, req.body, "Invalid venue claim request payload");
+    res.status(201).json(success(businessService.createVenueClaimRequest(account, body)));
   });
 
   router.post("/venue-portal/:venueId/submissions", writeLimiter, (req, res) => {
@@ -425,6 +442,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const body = parseWithSchema(barSpecialSchema, req.body, "Invalid deal or special payload");
     const venueId = String(req.params.venueId ?? "");
     res.status(201).json(success(businessService.upsertBarSpecial(account, venueId, body)));
+  });
+
+  router.post("/venue-portal/:venueId/discount-redemptions", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(discountRedemptionSchema, req.body, "Invalid discount redemption payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.status(201).json(success(businessService.redeemDiscountPass(account, venueId, body)));
   });
 
   router.delete("/venue-portal/:venueId/specials/:specialId", writeLimiter, (req, res) => {
@@ -478,11 +502,11 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getVenuePartnerAdmin(admin)));
   });
 
-  router.post("/admin/bar-pending-changes/:id/review", (req, res) => {
+  router.post("/admin/venue-pending-changes/:id/review", (req, res) => {
     const admin = requireAdmin(req, businessService);
-    const body = parseWithSchema(barPendingChangeReviewSchema, req.body, "Invalid pending bar change review payload");
+    const body = parseWithSchema(venuePendingChangeReviewSchema, req.body, "Invalid pending venue change review payload");
     const changeId = String(req.params.id ?? "");
-    res.json(success(businessService.reviewBarPendingChange(admin, changeId, body)));
+    res.json(success(businessService.reviewVenuePendingChange(admin, changeId, body)));
   });
 
   router.post("/admin/venue-managers", (req, res) => {

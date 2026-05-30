@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { isIP } from "node:net";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import * as QRCode from "qrcode";
 
 import { CONTRIBUTION_POINTS, PREMIUM_PRICING, SUBMISSION_LIMITS } from "../../config/business-rules.js";
 import type { Env } from "../../config/env.js";
@@ -46,9 +47,11 @@ import type {
   CheckoutInput,
   CheckoutSessionInput,
   CreateSubmissionInput,
+  DiscountRedemptionInput,
   EventTrackInput,
   FeedbackInput,
   LegalAcceptanceInput,
+  LeaderboardQuery,
   PriceRecordsQuery,
   RemoveSavedItemInput,
   ReviewSubmissionInput,
@@ -134,6 +137,12 @@ function addDays(baseIso: string, days: number): string {
   return date.toISOString();
 }
 
+function addMinutes(baseIso: string, minutes: number): string {
+  const date = new Date(baseIso);
+  date.setUTCMinutes(date.getUTCMinutes() + minutes);
+  return date.toISOString();
+}
+
 function endOfMonthIso(baseIso: string): string {
   const date = new Date(baseIso);
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
@@ -214,6 +223,18 @@ function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+const DISCOUNT_PASS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateDiscountCode(): string {
+  return Array.from({ length: 6 }, () =>
+    DISCOUNT_PASS_CODE_ALPHABET[crypto.randomInt(DISCOUNT_PASS_CODE_ALPHABET.length)]!,
+  ).join("");
+}
+
+function hashDiscountCode(code: string): string {
+  return crypto.createHash("sha256").update(code.trim().toUpperCase()).digest("hex");
+}
+
 function hashRequestFingerprint(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   if (!normalized) {
@@ -282,6 +303,7 @@ function verifyPassword(password: string, stored: string): boolean {
 function sanitizeAccount(account: BusinessAccount) {
   return {
     id: account.id,
+    publicAccountId: account.publicAccountId,
     email: account.email,
     role: account.role,
     ageConfirmedAt: account.ageConfirmedAt,
@@ -964,13 +986,13 @@ export class BusinessService {
 
   private requireVerifiedBarAccount(account: BusinessAccount): void {
     if (account.status !== "active") {
-      throw new AppError("Your account must be active to manage a bar.", 403);
+      throw new AppError("Your account must be active to manage a venue.", 403);
     }
 
-    this.requireVerifiedEmail(account, "Verify your email before managing a bar.");
+    this.requireVerifiedEmail(account, "Verify your email before managing a venue.");
 
     if (!account.ageConfirmedAt) {
-      throw new AppError("Verify your account before managing a bar. Confirm 18+ from your account page first.", 403);
+      throw new AppError("Verify your account before managing a venue. Confirm 18+ from your account page first.", 403);
     }
   }
 
@@ -1293,12 +1315,12 @@ export class BusinessService {
 
     this.auditSecurity({
       actor: admin,
-      action: "admin_bar_pending_change_unknown_type",
-      targetType: "bar_pending_change",
+      action: "admin_venue_pending_change_unknown_type",
+      targetType: "venue_pending_change",
       targetId: change.id,
       metadata: { changeType: change.changeType },
     });
-    throw new AppError("Unsupported pending bar change type.", 400);
+    throw new AppError("Unsupported pending venue change type.", 400);
   }
 
   signup(input: AuthSignupInput, context?: SessionRequestContext | undefined) {
@@ -1583,35 +1605,46 @@ export class BusinessService {
     }
 
     const account = this.requireAccount(authorizationHeader, context);
+    const now = nowIso();
+    const tokenHash = hashToken(token);
     const revoked = this.repository.revokeSession({
-      tokenHash: hashToken(token),
-      revokedAt: nowIso(),
+      tokenHash,
+      revokedAt: now,
+    });
+    const revokedDiscountPasses = this.repository.revokeDiscountPassesForSession({
+      sessionTokenHash: tokenHash,
+      revokedAt: now,
     });
     this.auditSecurity({
       actor: account,
       action: "logout",
       targetType: "account",
       targetId: account.id,
-      metadata: { revoked },
+      metadata: { revoked, revokedDiscountPasses },
       context,
     });
-    return { revoked };
+    return { revoked, revokedDiscountPasses };
   }
 
   logoutAll(account: BusinessAccount, context?: SessionRequestContext | undefined) {
+    const now = nowIso();
     const revokedCount = this.repository.revokeUserSessions({
       userId: account.id,
-      revokedAt: nowIso(),
+      revokedAt: now,
+    });
+    const revokedDiscountPasses = this.repository.revokeDiscountPassesForUser({
+      userId: account.id,
+      revokedAt: now,
     });
     this.auditSecurity({
       actor: account,
       action: "logout_all",
       targetType: "account",
       targetId: account.id,
-      metadata: { revokedCount },
+      metadata: { revokedCount, revokedDiscountPasses },
       context,
     });
-    return { revokedCount };
+    return { revokedCount, revokedDiscountPasses };
   }
 
   getAccessState(account: BusinessAccount | null, anonymousSessionId: string | null) {
@@ -1640,9 +1673,182 @@ export class BusinessService {
       canUseHappyHourActiveNow: true,
       canUseVerifiedOnly: hasFullAccess,
       canViewSpecialDiscounts: hasFullAccess,
+      canUseDiscountPass: hasFullAccess,
       freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.",
       premiumScope: "Every verified beer price, premium filters, and venue special-discount details.",
       premiumUntil: account?.premiumUntil ?? null,
+    };
+  }
+
+  getLeaderboard(account: BusinessAccount | null, query: LeaderboardQuery) {
+    const now = nowIso();
+    const entries = this.repository.listLeaderboard({ period: query.period, limit: query.limit, now });
+    const me = account ? this.repository.getLeaderboardRank({ userId: account.id, period: query.period, now }) : null;
+
+    if (account) {
+      this.recordUserActivity({
+        account,
+        eventType: "leaderboard_viewed",
+        relatedEntityType: "leaderboard",
+        relatedEntityId: query.period,
+        metadata: { period: query.period },
+      });
+    }
+
+    return {
+      period: query.period,
+      entries,
+      me,
+      copy: "Leaderboard rankings count approved Pint Path submissions only. Rejected, pending, and fraud-flagged updates do not count.",
+    };
+  }
+
+  async getDiscountPass(account: BusinessAccount, authorizationHeader: string | undefined) {
+    if (!isFullAccess(account)) {
+      throw new AppError("Discount passes are for premium or contributor accounts.", 403);
+    }
+
+    const token = getBearerToken(authorizationHeader);
+    if (!token) {
+      throw new AppError("Login required.", 401);
+    }
+
+    const now = nowIso();
+    const sessionTokenHash = hashToken(token);
+    this.repository.revokeDiscountPassesForSession({ sessionTokenHash, revokedAt: now });
+
+    let passId = "";
+    let code = "";
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        code = generateDiscountCode();
+        passId = crypto.randomUUID();
+        this.repository.createDiscountPass({
+          id: passId,
+          userId: account.id,
+          sessionTokenHash,
+          codeHash: hashDiscountCode(code),
+          createdAt: now,
+          expiresAt: addMinutes(now, 30),
+        });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError || !passId || !code) {
+      throw new AppError("Could not generate a discount pass right now.", 500);
+    }
+
+    const pass = this.repository.getDiscountPassById(passId);
+    if (!pass) {
+      throw new AppError("Could not generate a discount pass right now.", 500);
+    }
+
+    const redeemUrl = new URL("/venue-portal.html", this.config.PUBLIC_BASE_URL);
+    redeemUrl.searchParams.set("discountCode", code);
+    redeemUrl.searchParams.set("accountId", account.publicAccountId);
+    const qrDataUrl = await QRCode.toDataURL(redeemUrl.toString(), {
+      margin: 1,
+      width: 240,
+    });
+
+    this.recordUserActivity({
+      account,
+      eventType: "discount_pass_viewed",
+      relatedEntityType: "discount_pass",
+      relatedEntityId: pass.id,
+      metadata: { expiresAt: pass.expiresAt },
+    });
+
+    return {
+      accountId: account.publicAccountId,
+      code,
+      qrDataUrl,
+      redeemUrl: redeemUrl.toString(),
+      expiresAt: pass.expiresAt,
+      validMinutes: 30,
+      copy: "This code is personal, rotates per session, and should only be shown to venue staff when redeeming a Pint Path special.",
+    };
+  }
+
+  redeemDiscountPass(account: BusinessAccount, venueId: string, input: DiscountRedemptionInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const now = nowIso();
+    const pass = this.repository.getActiveDiscountPassByCodeHash({
+      codeHash: hashDiscountCode(input.code),
+      now,
+    });
+
+    if (!pass) {
+      throw new AppError("Discount code expired or not found. Ask the user to refresh their Pint Path discount pass.", 404);
+    }
+
+    const user = this.repository.getAccountById(pass.userId);
+    if (!user || !isFullAccess(user)) {
+      throw new AppError("This account does not currently have discount access.", 403);
+    }
+
+    const venueName = assignment?.venueName ?? venueId;
+    const suburb = assignment?.suburb ?? null;
+    const redemption = this.repository.createDiscountRedemption({
+      id: crypto.randomUUID(),
+      userId: user.id,
+      publicAccountId: user.publicAccountId,
+      venueId,
+      venueName,
+      suburb,
+      specialId: input.specialId,
+      itemName: input.itemName,
+      quantity: input.quantity,
+      estimatedSavingsCents: input.estimatedSavingsCents,
+      discountPassId: pass.id,
+      redeemedByUserId: account.id,
+      redeemedAt: now,
+      metadata: {
+        notes: input.notes,
+        redeemedByRole: account.role,
+      },
+    });
+
+    this.repository.markDiscountPassUsed({ id: pass.id, lastUsedAt: now });
+    this.recordUserActivity({
+      account: user,
+      eventType: "discount_redeemed",
+      relatedEntityType: "venue",
+      relatedEntityId: venueId,
+      metadata: {
+        venueName,
+        suburb,
+        itemName: input.itemName,
+        quantity: input.quantity,
+        estimatedSavingsCents: input.estimatedSavingsCents,
+      },
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "discount_redeemed",
+      targetType: "venue",
+      targetId: venueId,
+      metadata: {
+        publicAccountId: user.publicAccountId,
+        itemName: input.itemName,
+        quantity: input.quantity,
+        estimatedSavingsCents: input.estimatedSavingsCents,
+      },
+    });
+
+    return {
+      redemption,
+      accountId: user.publicAccountId,
+      venueId,
+      venueName,
+      suburb,
+      estimatedSavingsDollars: Number((redemption.estimatedSavingsCents / 100).toFixed(2)),
+      copy: "Discount redemption logged. Pint Path uses these explicit redemptions to show users their savings and provide aggregate venue insights.",
     };
   }
 
@@ -1697,6 +1903,10 @@ export class BusinessService {
     const rejectedCount = submissions.filter((submission) =>
       ["rejected", "disputed", "fraud_flagged"].includes(submission.status),
     ).length;
+    const dashboardNow = nowIso();
+    const leaderboardRank = this.repository.getLeaderboardRank({ userId: account.id, period: "month", now: dashboardNow });
+    const discountStats = this.repository.getDiscountRedemptionStats(account.id);
+    const recentDiscountRedemptions = this.repository.listDiscountRedemptionsForUser(account.id, 10);
 
     return {
       account: sanitizeAccount(account),
@@ -1735,6 +1945,20 @@ export class BusinessService {
         unlockThreshold: this.config.CONTRIBUTOR_UNLOCK_POINTS,
         pointsNeeded: roundPoints(Math.max(0, this.config.CONTRIBUTOR_UNLOCK_POINTS - account.contributionPointsCurrentMonth)),
         unlockCopy: "Earn 15 approved points in a month to unlock premium until the end of that month.",
+      },
+      leaderboard: {
+        accountId: account.publicAccountId,
+        monthRank: leaderboardRank,
+        copy: "Leaderboard counts approved submissions only.",
+      },
+      discounts: {
+        eligible: isFullAccess(account),
+        totalRedemptions: discountStats.totalRedemptions,
+        estimatedSavingsCents: discountStats.estimatedSavingsCents,
+        estimatedSavingsDollars: Number((discountStats.estimatedSavingsCents / 100).toFixed(2)),
+        uniqueVenues: discountStats.uniqueVenues,
+        recentRedemptions: recentDiscountRedemptions,
+        copy: "Discount redemptions are logged only when you show your rotating code or QR at a venue.",
       },
       rewards: {
         status: "coming_soon",
@@ -3218,15 +3442,15 @@ export class BusinessService {
     const capabilities = getBarTierCapabilities(profile.membershipTier, isAdmin);
     const venueInsightPrivacyThreshold = Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE);
     const analytics = capabilities.analytics
-      ? this.repository.getBarAreaAnalytics({
-          barId: selectedVenueId,
+      ? this.repository.getVenueAreaAnalytics({
+          venueId: selectedVenueId,
           area: profile.area ?? profile.suburb ?? suburb,
           month: monthKeyFromIso(nowIso()),
           privacyThreshold: venueInsightPrivacyThreshold,
         })
       : null;
     const savedMonthlyReport = capabilities.monthlyReports
-      ? this.repository.getMonthlyBarReport({ barId: selectedVenueId, month: monthKeyFromIso(nowIso()) })
+      ? this.repository.getVenueMonthlyReport({ venueId: selectedVenueId, month: monthKeyFromIso(nowIso()) })
       : null;
     const monthlyReport = capabilities.monthlyReports
       ? savedMonthlyReport ?? {
@@ -3300,7 +3524,7 @@ export class BusinessService {
       analytics,
       monthlyReport,
       updateLink,
-      qrCopy: "Copy this update link or turn it into a QR code for your bar/tap-list area.",
+      qrCopy: "Copy this update link or turn it into a QR code for your venue/tap-list area.",
       privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
     };
   }
@@ -3344,6 +3568,10 @@ export class BusinessService {
       claim,
       message: "Claim request submitted. Admin will manually verify and assign access if approved.",
     };
+  }
+
+  createVenueClaimRequest(account: BusinessAccount, input: BarClaimRequestInput) {
+    return this.createBarClaimRequest(account, input);
   }
 
   createVenueManagerSubmission(account: BusinessAccount, venueId: string, input: CreateSubmissionInput) {
@@ -3707,11 +3935,11 @@ export class BusinessService {
 
     const change = this.repository.getBarPendingChangeById(changeId);
     if (!change) {
-      throw new AppError("Pending bar change not found.", 404);
+      throw new AppError("Pending venue change not found.", 404);
     }
 
     if (change.status !== "pending") {
-      throw new AppError("Pending bar change has already been reviewed.", 409);
+      throw new AppError("Pending venue change has already been reviewed.", 409);
     }
 
     const now = nowIso();
@@ -3729,11 +3957,11 @@ export class BusinessService {
 
     this.auditSecurity({
       actor: admin,
-      action: "admin_bar_pending_change_review",
-      targetType: "bar_pending_change",
+      action: "admin_venue_pending_change_review",
+      targetType: "venue_pending_change",
       targetId: change.id,
       metadata: {
-        barId: change.barId,
+        venueId: change.barId,
         changeType: change.changeType,
         action: change.action,
         status: input.status,
@@ -3742,8 +3970,12 @@ export class BusinessService {
 
     return {
       pendingChange: reviewed,
-      message: input.status === "approved" ? "Bar change approved and published." : "Bar change rejected. Public data was not changed.",
+      message: input.status === "approved" ? "Venue change approved and published." : "Venue change rejected. Public data was not changed.",
     };
+  }
+
+  reviewVenuePendingChange(admin: BusinessAccount, changeId: string, input: BarPendingChangeReviewInput) {
+    return this.reviewBarPendingChange(admin, changeId, input);
   }
 
   assignVenueManager(admin: BusinessAccount, input: VenueManagerAssignmentInput) {

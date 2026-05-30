@@ -592,17 +592,19 @@ h3 {
 
 .dayChecklist {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(106px, 1fr));
+  gap: 10px;
   max-width: 100%;
+  align-items: stretch;
 }
 
 .dayChip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
+  min-height: 42px;
   min-width: 0;
   overflow: hidden;
   box-sizing: border-box;
@@ -610,15 +612,17 @@ h3 {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.055);
   color: #d9dfeb;
-  padding: 10px 9px;
+  padding: 10px 12px;
   font-size: 12px;
   font-weight: 850;
+  line-height: 1;
   white-space: nowrap;
 }
 
 .dayChip input {
-  width: 15px;
-  height: 15px;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
   margin: 0;
   accent-color: var(--gold);
 }
@@ -1014,12 +1018,55 @@ h3 {
   color: var(--text);
 }
 
+.metricValue--small {
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  letter-spacing: 0.02em;
+  word-break: break-word;
+}
+
 .metricLabel {
   color: var(--muted);
   font-size: 11px;
   font-weight: 950;
   letter-spacing: 0.11em;
   text-transform: uppercase;
+}
+
+.discountPassPanel {
+  grid-column: 1 / -1;
+}
+
+.discountPassResult {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid rgba(245, 199, 107, 0.28);
+  border-radius: 24px;
+  background: rgba(8, 13, 25, 0.58);
+}
+
+.discountPassResult.is-hidden {
+  display: none;
+}
+
+.discountCode {
+  font-family: var(--display-font);
+  font-size: clamp(2rem, 5vw, 4rem);
+  font-weight: 950;
+  letter-spacing: 0.2em;
+  color: var(--gold);
+}
+
+.discountPassQr {
+  width: 140px;
+  height: 140px;
+  border-radius: 24px;
+  background: #fff;
+  padding: 10px;
+  object-fit: contain;
 }
 
 .legalPage .hero {
@@ -1767,6 +1814,11 @@ h3 {
   .tierGrid,
   .pricingTierGrid {
     grid-template-columns: 1fr;
+  }
+
+  .discountPassResult {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .authIntro {

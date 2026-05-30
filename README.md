@@ -117,7 +117,7 @@ Supabase auth/account foundation:
 - Production admin access expects Supabase Auth MFA/Auth Assurance Level 2 (`aal2`). Enable MFA factors in Supabase, require confirmed email, and verify the OAuth/session JWT contains `aal2` before relying on admin routes.
 - Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
 - Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
-- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` adds a detailed `public.user_price_submissions` table for future direct Supabase contributor uploads, protected so users can insert/select only their own pending rows while admins review status fields. `supabase/migrations/20260523000000_submission_location_points.sql` adds private upload-location proof fields and point-award tracking for contributor submissions. `supabase/migrations/20260524010000_account_privacy_settings.sql` adds per-user optional analytics, venue-insight inclusion, product-research, and email-update preferences with owner-only RLS.
+- Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` added an early direct-Supabase contributor scaffold, but the canonical production contribution path is now the Express `POST /api/business/submissions` flow so uploads consistently attach the authenticated user, private evidence, location eligibility, review workflow, and points ledger. `supabase/migrations/20260530000000_deprecate_direct_supabase_contributor_tables.sql` keeps those older direct tables for history while revoking browser writes. `supabase/migrations/20260523000000_submission_location_points.sql` adds private upload-location proof fields and point-award tracking for contributor submissions. `supabase/migrations/20260524010000_account_privacy_settings.sql` adds per-user optional analytics, venue-insight inclusion, product-research, and email-update preferences with owner-only RLS.
 - `/account.html` now has two states: logged-out users see polished Supabase Google/Apple/email sign-in/create-account forms, while authenticated users see a contributor dashboard with stats, recent submissions, private-evidence copy, and quick beer-price upload entry points. Supabase OAuth and password-reset redirects land on `/auth/callback`, exchange the session, and then return to the account page or requested upload page.
 - Age-gated reward readiness is only a foundation: `age_verifications` stores status, `18+` threshold, provider name/reference, expiry, and booleans. Pint Path must not store raw ID documents, ID images, licence/passport/Medicare numbers, or raw proof-of-ID data.
 - Future rewards should use `canAccessAgeGatedRewards(...)`, which requires verified 18+ status, a latest verified age-check record, and a non-expired verification.
@@ -128,7 +128,7 @@ Venue partner demo layer:
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
 - Basic venue accounts can manage profile details, beers/stock/on-tap status, prices, happy hours, and deals/specials.
-- Plus and Pro venue tiers unlock privacy-safe suburb-level analytics and monthly report previews. Venue-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` and `STRIPE_PRO_PRICE_ID` are configured.
+- Plus and Pro venue tiers unlock privacy-safe suburb-level analytics and monthly report previews. Venue-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` and `STRIPE_PRO_PRICE_ID` are configured with Stripe `price_...` IDs.
 - Pro stores public display metadata only: highlighted name, `Pro` badge, promoted flag, and featured-special eligibility. It does not implement spammy ranking behaviour.
 - Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
 - Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, private source evidence, or another venue’s private data.
@@ -219,8 +219,8 @@ STRIPE_SECRET_KEY=sk_test_or_live_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_499_aud
 STRIPE_PRICE_YEARLY=price_yearly_50_aud
-STRIPE_PLUS_PRICE_ID=price_bar_plus_aud
-STRIPE_PRO_PRICE_ID=price_bar_pro_aud
+STRIPE_PLUS_PRICE_ID=price_venue_plus_aud
+STRIPE_PRO_PRICE_ID=price_venue_pro_aud
 ```
 
 Stripe test-mode webhook check:
@@ -596,9 +596,9 @@ That inner-ring backfill:
 
 ## Legacy Call Automation Archive
 
-The old outbound phone-call automation has been removed from the active app. Its source is parked under `legacy/call-automation/` for historical reference only. It is not built, tested, mounted, or configured by Pint Path, and the package dependencies have been removed.
+The old outbound phone-call automation has been removed from the repository and is no longer built, tested, mounted, configured, or documented as a supported Pint Path feature.
 
-Do not configure phone-call provider secrets in Railway for the active product. If that idea ever comes back, rebuild it as a separate, security-reviewed feature instead of re-enabling it casually.
+Do not configure phone-call provider secrets in Railway for the active product. If that idea ever comes back, rebuild it as a separate, security-reviewed feature from git history instead of re-enabling it casually.
 
 ## Viewer Data Source
 

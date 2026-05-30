@@ -188,6 +188,17 @@ function updateSubscription(
   });
 }
 
+function createSession(repository: BusinessRepository, userId: string, token: string, expiresAt = PREMIUM_UNTIL) {
+  repository.createSession({
+    tokenHash: crypto.createHash("sha256").update(token).digest("hex"),
+    userId,
+    createdAt: NOW,
+    expiresAt,
+  });
+
+  return `Bearer ${token}`;
+}
+
 function createStripeSignature(payload: object, secret: string, timestamp = "1777881600") {
   const body = Buffer.from(JSON.stringify(payload));
   const signature = crypto
@@ -354,6 +365,7 @@ describe("Supabase account and verification foundation", () => {
     const sessionColumns = database.prepare("PRAGMA table_info(auth_sessions)").all().map((column: { name: string }) => column.name);
 
     expect(accountColumns).toEqual(expect.arrayContaining([
+      "public_account_id",
       "display_name",
       "avatar_url",
       "auth_provider",
@@ -1932,6 +1944,165 @@ describe("business demo contribution model", () => {
     expect(repository.getAccountById(user.id)?.contributionPointsCurrentMonth).toBe(5);
   });
 
+  it("assigns public account IDs and ranks approved submissions without exposing email addresses", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "leaderboard-admin", "admin");
+    const firstUser = createAccount(repository, "leaderboard-first");
+    const secondUser = createAccount(repository, "leaderboard-second");
+
+    ["leaderboard-venue-1", "leaderboard-venue-2"].forEach((venueId, index) => {
+      const submission = createSubmission(repository, {
+        id: `leaderboard-first-${index}`,
+        userId: firstUser.id,
+        venueId,
+        venueName: `Leaderboard Venue ${index}`,
+      });
+      approve(repository, submission.id, admin.id);
+    });
+
+    const approvedSecond = createSubmission(repository, {
+      id: "leaderboard-second-approved",
+      userId: secondUser.id,
+      venueId: "leaderboard-venue-3",
+    });
+    approve(repository, approvedSecond.id, admin.id);
+    createSubmission(repository, {
+      id: "leaderboard-second-pending",
+      userId: secondUser.id,
+      venueId: "leaderboard-venue-4",
+    });
+
+    const leaderboard = service.getLeaderboard(firstUser, { period: "all_time", limit: 10 });
+    expect(firstUser.publicAccountId).toMatch(/^PP-[A-Z0-9]{8}$/);
+    expect(secondUser.publicAccountId).toMatch(/^PP-[A-Z0-9]{8}$/);
+    expect(leaderboard.entries[0]).toEqual(expect.objectContaining({
+      accountId: firstUser.publicAccountId,
+      rank: 1,
+      approvedSubmissions: 2,
+    }));
+    expect(leaderboard.entries[1]).toEqual(expect.objectContaining({
+      accountId: secondUser.publicAccountId,
+      rank: 2,
+      approvedSubmissions: 1,
+    }));
+    expect(leaderboard.me?.accountId).toBe(firstUser.publicAccountId);
+    expect(JSON.stringify(leaderboard)).not.toContain(firstUser.email);
+    expect(JSON.stringify(leaderboard)).not.toContain(secondUser.email);
+  });
+
+  it("generates rotating discount passes without storing raw codes and revokes them on logout", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const premiumUser = updateSubscription(
+      repository,
+      createAccount(repository, "discount-pass-user").id,
+      "premium_monthly",
+      PREMIUM_UNTIL,
+    );
+    const authHeader = createSession(repository, premiumUser.id, "discount-pass-session-token");
+
+    const pass = await service.getDiscountPass(premiumUser, authHeader);
+    const storedPass = database
+      .prepare("SELECT code_hash, status FROM account_discount_passes WHERE user_id = ?")
+      .get(premiumUser.id) as { code_hash: string; status: string };
+
+    expect(pass.accountId).toBe(premiumUser.publicAccountId);
+    expect(pass.code).toMatch(/^[A-Z0-9]{6}$/);
+    expect(pass.qrDataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(pass.redeemUrl).toContain("venue-portal.html");
+    expect(storedPass.status).toBe("active");
+    expect(storedPass.code_hash).not.toBe(pass.code);
+
+    const logout = service.logout(authHeader);
+    const revokedPass = database
+      .prepare("SELECT status, revoked_at FROM account_discount_passes WHERE user_id = ?")
+      .get(premiumUser.id) as { status: string; revoked_at: string | null };
+    expect(logout.revokedDiscountPasses).toBe(1);
+    expect(revokedPass.status).toBe("revoked");
+    expect(revokedPass.revoked_at).toBeTruthy();
+  });
+
+  it("logs explicit discount redemptions only for assigned venues and adds savings to the account dashboard", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "discount-admin", "admin");
+    const manager = createAccount(repository, "discount-manager");
+    const otherManager = createAccount(repository, "discount-other-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "discount-venue-a",
+      venueName: "Discount Venue A",
+      suburb: "Fitzroy",
+    });
+    service.assignVenueManager(admin, {
+      userId: otherManager.id,
+      venueId: "discount-venue-b",
+      venueName: "Discount Venue B",
+      suburb: "Brunswick",
+    });
+
+    const premiumUser = updateSubscription(
+      repository,
+      createAccount(repository, "discount-premium-user").id,
+      "premium_yearly",
+      PREMIUM_UNTIL,
+    );
+    const pass = await service.getDiscountPass(
+      premiumUser,
+      createSession(repository, premiumUser.id, "discount-redemption-token"),
+    );
+    const assignedManager = repository.getAccountById(manager.id)!;
+    const unassignedManager = repository.getAccountById(otherManager.id)!;
+
+    expect(() =>
+      service.redeemDiscountPass(unassignedManager, "discount-venue-a", {
+        code: pass.code,
+        specialId: null,
+        itemName: "House pint",
+        quantity: 1,
+        estimatedSavingsCents: 300,
+        notes: "Wrong venue attempt",
+      }),
+    ).toThrow("You can only access assigned venues.");
+
+    const redemption = service.redeemDiscountPass(assignedManager, "discount-venue-a", {
+      code: pass.code,
+      specialId: "special-1",
+      itemName: "House pint",
+      quantity: 2,
+      estimatedSavingsCents: 600,
+      notes: "Staff confirmed at till.",
+    });
+    expect(() =>
+      service.redeemDiscountPass(assignedManager, "discount-venue-a", {
+        code: pass.code,
+        specialId: "special-1",
+        itemName: "Second attempt",
+        quantity: 1,
+        estimatedSavingsCents: 300,
+        notes: "Replay attempt",
+      }),
+    ).toThrow("Discount code expired or not found.");
+
+    const dashboard = service.getAccountDashboard(premiumUser);
+    expect(redemption.accountId).toBe(premiumUser.publicAccountId);
+    expect(redemption.venueName).toBe("Discount Venue A");
+    expect(redemption.estimatedSavingsDollars).toBe(6);
+    expect(dashboard.discounts).toEqual(expect.objectContaining({
+      totalRedemptions: 1,
+      estimatedSavingsCents: 600,
+      estimatedSavingsDollars: 6,
+      uniqueVenues: 1,
+    }));
+    expect(dashboard.discounts.recentRedemptions[0]).toEqual(expect.objectContaining({
+      venueName: "Discount Venue A",
+      itemName: "House pint",
+      estimatedSavingsCents: 600,
+    }));
+  });
+
   it("publishes approved submission items as photo-verified public price records", () => {
     const { repository } = createRepository();
     const user = createAccount(repository, "submitter");
@@ -2295,8 +2466,8 @@ describe("business demo contribution model", () => {
       staleBefore: "2026-02-04T00:00:00.000Z",
       totalVenues: 1,
     });
-    const venueAnalytics = repository.getBarAreaAnalytics({
-      barId: "analytics-venue-1",
+    const venueAnalytics = repository.getVenueAreaAnalytics({
+      venueId: "analytics-venue-1",
       area: "Richmond",
       privacyThreshold: 1,
     });
@@ -2957,6 +3128,44 @@ describe("business demo contribution model", () => {
       expect((await publicAfter.json()).data.records).toEqual(expect.arrayContaining([
         expect.objectContaining({ beerName: "Asahi Super Dry", price: null, priceRedacted: true }),
       ]));
+    });
+  });
+
+  it("blocks normal users from direct venue-manager claim API access", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "direct-claim-user");
+    const token = "direct-claim-user-token";
+    createSession(repository, user.id, token);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+
+    await withHttpServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/business/venue-claim-requests`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          venueName: "Direct Claim Pub",
+          address: "1 Test Street",
+          suburb: "Fitzroy",
+          requesterName: "Normal User",
+          requesterRole: "Owner",
+          contactEmail: "normal@example.com",
+          contactPhone: null,
+          message: "Trying to bypass the invite-only portal.",
+        }),
+      });
+
+      expect(response.status).toBe(403);
+      const body = await response.json() as { error: { message: string } };
+      expect(body.error.message).toContain("Admin access required");
+      expect(repository.listBarClaimRequests({ limit: 10 })).toHaveLength(0);
     });
   });
 

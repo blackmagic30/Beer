@@ -3000,11 +3000,7 @@
   <main id="mainContent" role="main">
     <div id="mapShell">
       <div id="map"></div>
-      <div id="mapOverlayTabs" aria-label="Map overlays">
-        <button class="overlayTab is-active" type="button" data-overlay-panel="list">Visible venues</button>
-        <button class="overlayTab is-active" type="button" data-overlay-panel="legend">Map guide</button>
-      </div>
-      <aside id="venueRail" class="overlayPanel" aria-live="polite">
+      <aside id="venueRail" class="overlayPanel is-hidden-panel" aria-live="polite" aria-hidden="true">
         <div class="venueRail__header">
           <div class="venueRail__headerTop">
             <div>
@@ -3026,7 +3022,7 @@
         </div>
         <div id="venueRailBody" class="venueRail__body"></div>
       </aside>
-      <aside id="mapLegend" class="overlayPanel" aria-live="polite">
+      <aside id="mapLegend" class="overlayPanel is-hidden-panel" aria-live="polite" aria-hidden="true">
         <div class="legend__header">
           <div>
             <div class="legend__eyebrow">Map guide</div>
@@ -3184,6 +3180,7 @@
       canUseVerifiedOnly: false,
     };
     const revealedVenueIds = new Set(readJsonArray(PRICE_REVEAL_STORAGE_KEY));
+    const MAP_OVERLAYS_ENABLED = false;
     const MAP_OVERLAY_STORAGE_KEY = "melbBeerMapOverlayState";
     const mobileOverlayQuery = window.matchMedia("(max-width: 900px)");
     const TRACKED_BEER_BY_KEY = new Map();
@@ -3799,17 +3796,28 @@
       }
     }
 
-    const savedOverlayState = readOverlayState();
-    let overlayPanelState = savedOverlayState || {
-      list: !mobileOverlayQuery.matches,
-      legend: !mobileOverlayQuery.matches,
+    const savedOverlayState = MAP_OVERLAYS_ENABLED ? readOverlayState() : null;
+    let overlayPanelState = MAP_OVERLAYS_ENABLED && savedOverlayState ? savedOverlayState : {
+      list: false,
+      legend: false,
     };
 
     function persistOverlayState() {
+      if (!MAP_OVERLAYS_ENABLED) {
+        return;
+      }
       window.localStorage.setItem(MAP_OVERLAY_STORAGE_KEY, JSON.stringify(overlayPanelState));
     }
 
     function syncOverlayPanels() {
+      if (!MAP_OVERLAYS_ENABLED) {
+        venueRailEl.classList.add("is-hidden-panel");
+        mapLegendEl.classList.add("is-hidden-panel");
+        venueRailEl.setAttribute("aria-hidden", "true");
+        mapLegendEl.setAttribute("aria-hidden", "true");
+        return;
+      }
+
       const isMobile = mobileOverlayQuery.matches;
       if (isMobile && overlayPanelState.list && overlayPanelState.legend) {
         overlayPanelState = {
@@ -3824,6 +3832,8 @@
 
       venueRailEl.classList.toggle("is-hidden-panel", !listVisible);
       mapLegendEl.classList.toggle("is-hidden-panel", !legendVisible);
+      venueRailEl.setAttribute("aria-hidden", listVisible ? "false" : "true");
+      mapLegendEl.setAttribute("aria-hidden", legendVisible ? "false" : "true");
       overlayTabEls.forEach((tabEl) => {
         const panel = tabEl.dataset.overlayPanel;
         const isActive = panel === "list" ? listVisible : legendVisible;

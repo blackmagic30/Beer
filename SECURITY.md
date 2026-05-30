@@ -2,7 +2,7 @@
 
 ## Supported Beta Posture
 
-Pint Path is a Melbourne beta running on a Node.js, TypeScript, Express, SQLite, Supabase, Google Maps, OpenAI, Stripe, and Railway stack. The old phone-call automation surface has been retired from the active app; historical code is parked under `legacy/call-automation/` and is not built or mounted.
+Pint Path is a Melbourne beta running on a Node.js, TypeScript, Express, SQLite, Supabase, Google Maps, OpenAI, Stripe, and Railway stack. The old phone-call automation surface has been removed from the repository and is not built or mounted.
 
 The beta security posture is designed to protect:
 

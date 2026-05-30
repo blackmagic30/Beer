@@ -484,9 +484,9 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         createdAt: NOW,
       });
     }
-    harness.repository.recordBarAnalyticsEvent({
+    harness.repository.recordVenueAnalyticsEvent({
       id: "style-below-floor",
-      barId: null,
+      venueId: null,
       area: "Fitzroy",
       suburb: "Fitzroy",
       eventType: "beer_style_search",
@@ -514,9 +514,9 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       createdAt: NOW,
     });
     for (let index = 0; index < 10; index += 1) {
-      harness.repository.recordBarAnalyticsEvent({
+      harness.repository.recordVenueAnalyticsEvent({
         id: `style-at-floor:${index}`,
-        barId: null,
+        venueId: null,
         area: "Fitzroy",
         suburb: "Fitzroy",
         eventType: "beer_style_search",

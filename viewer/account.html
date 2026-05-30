@@ -138,6 +138,9 @@
         <div class="metricCard"><div id="trustMetric" class="metricValue">0</div><div class="metricLabel">Trust score</div></div>
         <div class="metricCard"><div id="verificationMetric" class="metricValue">0</div><div class="metricLabel">Community verifications</div></div>
         <div class="metricCard"><div id="fraudMetric" class="metricValue">0</div><div class="metricLabel">Fraud strikes</div></div>
+        <div class="metricCard"><div id="accountIdMetric" class="metricValue metricValue--small">—</div><div class="metricLabel">Account ID</div></div>
+        <div class="metricCard"><div id="leaderboardMetric" class="metricValue">—</div><div class="metricLabel">Monthly rank</div></div>
+        <div class="metricCard"><div id="savingsMetric" class="metricValue">A$0</div><div class="metricLabel">Saved with discounts</div></div>
       </section>
 
       <section class="grid grid--two accountPrimaryGrid">
@@ -162,6 +165,26 @@
             <li><strong>Verified or rejected</strong><span>Approved prices may be normalized and shown publicly on the map.</span></li>
           </ol>
           <p class="helperCopy">Raw photos, receipts, OCR evidence, and reviewer notes are not public map data.</p>
+        </article>
+
+        <article class="panel discountPassPanel">
+          <div class="sectionHeader">
+            <div>
+              <h2>Pint Path discount pass</h2>
+              <p class="muted">Premium and contributor accounts can show a rotating code or QR to redeem venue specials.</p>
+            </div>
+            <span class="pill">Rotates per session</span>
+          </div>
+          <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate rotating code</button>
+          <div id="discountPassResult" class="discountPassResult is-hidden" hidden>
+            <div>
+              <span class="metricLabel">Current code</span>
+              <div id="discountPassCode" class="discountCode">------</div>
+              <p id="discountPassExpires" class="helperCopy"></p>
+            </div>
+            <img id="discountPassQr" class="discountPassQr" alt="Pint Path discount QR code" />
+          </div>
+          <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special. Redemptions are logged to calculate your estimated savings.</p>
         </article>
       </section>
 
@@ -412,6 +435,10 @@
       return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
     }
 
+    function formatMoney(value) {
+      return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(Number(value || 0));
+    }
+
     function pendingCheckoutPlan() {
       const plan = new URLSearchParams(window.location.search).get("checkoutPlan");
       return plan === "monthly" || plan === "yearly" ? plan : null;
@@ -618,6 +645,20 @@
       $("trustMetric").textContent = stats.trustScore ?? account.trustScore ?? 0;
       $("verificationMetric").textContent = (result.verifications || []).length;
       $("fraudMetric").textContent = stats.fraudStrikes ?? account.fraudStrikeCount ?? 0;
+      $("accountIdMetric").textContent = result.leaderboard?.accountId || account.publicAccountId || "—";
+      const leaderboardRank = result.leaderboard?.monthRank;
+      $("leaderboardMetric").textContent = leaderboardRank ? `#${leaderboardRank.rank}` : "—";
+      $("savingsMetric").textContent = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
+      const discountPassButton = $("refreshDiscountPassButton");
+      if (discountPassButton) {
+        discountPassButton.disabled = !result.discounts?.eligible;
+        discountPassButton.textContent = result.discounts?.eligible ? "Generate rotating code" : "Premium/contributor only";
+      }
+      const discountPassResult = $("discountPassResult");
+      if (discountPassResult) {
+        discountPassResult.hidden = true;
+        discountPassResult.classList.add("is-hidden");
+      }
 
       const progress = result.contributorProgress || {};
       const threshold = Math.max(1, progress.unlockThreshold || 15);
@@ -937,6 +978,26 @@
           await refreshAccount();
         } catch (error) {
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
+        }
+      });
+      $("refreshDiscountPassButton").addEventListener("click", async () => {
+        const button = $("refreshDiscountPassButton");
+        try {
+          setLoading(button, true, "Generating...");
+          const pass = await MelbBeerBusiness.apiFetch("/api/business/account/discount-pass", {
+            method: "POST",
+            body: "{}",
+          });
+          $("discountPassCode").textContent = pass.code;
+          $("discountPassQr").src = pass.qrDataUrl;
+          $("discountPassResult").hidden = false;
+          $("discountPassResult").classList.remove("is-hidden");
+          $("discountPassExpires").textContent = `Expires ${MelbBeerBusiness.formatDate(pass.expiresAt)}. Refresh the page or sign in again for a new session code.`;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Rotating discount pass generated. Only show it to venue staff when redeeming a Pint Path special.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not generate a discount pass.", true);
+        } finally {
+          setLoading(button, false);
         }
       });
       $("preferencesForm").addEventListener("submit", async (event) => {

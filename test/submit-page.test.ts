@@ -48,7 +48,8 @@ describe("submit page auth gate", () => {
     const css = businessCss();
 
     expect(css).toContain(".dayChecklist");
-    expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(82px, 1fr))");
+    expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(106px, 1fr))");
+    expect(css).toContain("min-height: 42px");
     expect(css).toContain(".dayChip");
     expect(css).toContain(".readonlySelect:disabled");
   });

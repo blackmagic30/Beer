@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 
 import BetterSqlite3 from "better-sqlite3";
@@ -34,6 +35,7 @@ const authSessionsColumns = [
 ] as const;
 
 const accountsColumns = [
+  { name: "public_account_id", definition: "TEXT" },
   { name: "display_name", definition: "TEXT" },
   { name: "avatar_url", definition: "TEXT" },
   { name: "auth_provider", definition: "TEXT NOT NULL DEFAULT 'local'" },
@@ -47,6 +49,10 @@ const accountsColumns = [
   { name: "privacy_version", definition: "TEXT" },
   { name: "age_verification_status", definition: "TEXT NOT NULL DEFAULT 'not_started'" },
   { name: "is_over_18_verified", definition: "INTEGER NOT NULL DEFAULT 0" },
+] as const;
+
+const profilesColumns = [
+  { name: "public_account_id", definition: "TEXT" },
 ] as const;
 
 const submissionColumns = [
@@ -63,6 +69,8 @@ const feedbackColumns = [
   { name: "priority", definition: "TEXT NOT NULL DEFAULT 'normal'" },
   { name: "triage_reason", definition: "TEXT" },
 ] as const;
+
+const PUBLIC_ACCOUNT_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function ensureColumns(
   database: BetterSqlite3.Database,
@@ -100,8 +108,26 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE INDEX IF NOT EXISTS idx_accounts_supabase_user
       ON accounts (supabase_user_id);
 
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_public_account
+      ON accounts (public_account_id);
+
+    CREATE INDEX IF NOT EXISTS idx_profiles_public_account
+      ON profiles (public_account_id);
+
     CREATE INDEX IF NOT EXISTS idx_accounts_email_verified
       ON accounts (email_verified_at, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_account_discount_passes_user
+      ON account_discount_passes (user_id, status, expires_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_account_discount_passes_session
+      ON account_discount_passes (session_token_hash, status, expires_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_discount_redemptions_user
+      ON discount_redemptions (user_id, redeemed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_discount_redemptions_venue
+      ON discount_redemptions (venue_id, redeemed_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_review
       ON venue_pending_changes (status, reviewed_at DESC, submitted_at DESC);
@@ -121,6 +147,43 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE INDEX IF NOT EXISTS idx_feedback_priority_created
       ON feedback (priority, created_at DESC);
   `);
+}
+
+function generatePublicAccountId(database: BetterSqlite3.Database): string {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    let randomPart = "";
+    for (let index = 0; index < 8; index += 1) {
+      randomPart += PUBLIC_ACCOUNT_ID_ALPHABET[crypto.randomInt(PUBLIC_ACCOUNT_ID_ALPHABET.length)]!;
+    }
+    const candidate = `PP-${randomPart}`;
+    const exists = database
+      .prepare("SELECT 1 FROM accounts WHERE public_account_id = ? LIMIT 1")
+      .get(candidate);
+    if (!exists) {
+      return candidate;
+    }
+  }
+
+  throw new Error("Unable to generate unique public account ID");
+}
+
+function backfillPublicAccountIds(database: BetterSqlite3.Database): void {
+  const rows = database
+    .prepare("SELECT id FROM accounts WHERE public_account_id IS NULL OR trim(public_account_id) = ''")
+    .all() as Array<{ id: string }>;
+
+  const updateAccount = database.prepare("UPDATE accounts SET public_account_id = ? WHERE id = ?");
+  const updateProfile = database.prepare("UPDATE profiles SET public_account_id = ? WHERE id = ?");
+
+  const backfill = database.transaction(() => {
+    for (const row of rows) {
+      const publicAccountId = generatePublicAccountId(database);
+      updateAccount.run(publicAccountId, row.id);
+      updateProfile.run(publicAccountId, row.id);
+    }
+  });
+
+  backfill();
 }
 
 function tableExists(database: BetterSqlite3.Database, tableName: string): boolean {
@@ -271,10 +334,12 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "venue_profiles", venueProfilesColumns);
   ensureColumns(database, "venue_analytics_events", venueAnalyticsEventsColumns);
   ensureColumns(database, "accounts", accountsColumns);
+  ensureColumns(database, "profiles", profilesColumns);
   ensureColumns(database, "auth_sessions", authSessionsColumns);
   ensureColumns(database, "submissions", submissionColumns);
   ensureColumns(database, "feedback", feedbackColumns);
   normalizeVenueTiers(database);
+  backfillPublicAccountIds(database);
   ensureIndexes(database);
 }
 

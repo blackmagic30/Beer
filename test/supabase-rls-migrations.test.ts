@@ -55,4 +55,32 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).toContain("revoke all on public.account_privacy_settings from anon");
     expect(sql).toContain("grant select, insert, update on public.account_privacy_settings to authenticated");
   });
+
+  it("deprecates direct Supabase contributor scaffolds in favour of the server-side submission API", () => {
+    const sql = migration("20260530000000_deprecate_direct_supabase_contributor_tables.sql");
+
+    expect(sql).toContain("/api/business/submissions");
+    expect(sql).toContain("alter table public.beermap_uploads enable row level security");
+    expect(sql).toContain("alter table public.beermap_verifications enable row level security");
+    expect(sql).toContain("alter table public.user_price_submissions enable row level security");
+    expect(sql).toContain("revoke all on public.beermap_uploads from anon");
+    expect(sql).toContain("revoke all on public.beermap_verifications from anon");
+    expect(sql).toContain("revoke all on public.user_price_submissions from anon");
+    expect(sql).toContain("revoke insert, update, delete on public.beermap_uploads from authenticated");
+    expect(sql).toContain("revoke insert, update, delete on public.beermap_verifications from authenticated");
+    expect(sql).toContain("revoke insert, update, delete on public.user_price_submissions from authenticated");
+    expect(sql).not.toMatch(/grant\s+insert\s+on\s+public\.(beermap_uploads|beermap_verifications|user_price_submissions)\s+to\s+authenticated/i);
+  });
+
+  it("creates privacy-safe account IDs and hashed discount passes without storing raw pass codes", () => {
+    const sql = migration("20260529000000_account_leaderboard_discount_passes.sql");
+
+    expect(sql).toContain("create extension if not exists pgcrypto with schema extensions");
+    expect(sql).toContain("profiles_public_account_id_key");
+    expect(sql).toContain("private.generate_public_account_id()");
+    expect(sql).toContain("session_token_hash text not null");
+    expect(sql).toContain("code_hash text not null unique");
+    expect(sql).toContain("Raw codes are not stored");
+    expect(sql).not.toContain("code text not null");
+  });
 });

@@ -598,6 +598,22 @@ export const checkoutSessionSchema = z.object({
   sessionId: z.string().trim().min(8).max(255),
 });
 
+export const leaderboardQuerySchema = z.object({
+  period: z.enum(["month", "all_time"]).default("month"),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+export const discountRedemptionSchema = z.object({
+  code: z.string().trim()
+    .regex(/^[A-Za-z0-9]{6}$/, "Use the current 6-character Pint Path discount code.")
+    .transform((value) => value.toUpperCase()),
+  specialId: nullableTrimmedStringSchema.default(null),
+  itemName: nullableTrimmedStringSchema.default(null),
+  quantity: z.coerce.number().int().min(1).max(20).default(1),
+  estimatedSavingsCents: z.coerce.number().int().min(0).max(100_000).default(0),
+  notes: nullableTrimmedStringSchema.default(null),
+});
+
 export const barTierCheckoutSchema = z.object({
   tier: z.enum(["plus", "pro"]),
 });
@@ -606,6 +622,9 @@ export const barPendingChangeReviewSchema = z.object({
   status: z.enum(["approved", "rejected"]),
   rejectionReason: nullableTrimmedStringSchema.default(null),
 });
+
+export const venueClaimRequestSchema = barClaimRequestSchema;
+export const venuePendingChangeReviewSchema = barPendingChangeReviewSchema;
 
 export const adminUserStatusSchema = z.object({
   status: z.enum(["active", "warned", "suspended"]),
@@ -641,9 +660,13 @@ export type BarHappyHourInput = z.infer<typeof barHappyHourSchema>;
 export type BarSpecialInput = z.infer<typeof barSpecialSchema>;
 export type BarClaimRequestInput = z.infer<typeof barClaimRequestSchema>;
 export type BarPendingChangeReviewInput = z.infer<typeof barPendingChangeReviewSchema>;
+export type VenueClaimRequestInput = z.infer<typeof venueClaimRequestSchema>;
+export type VenuePendingChangeReviewInput = z.infer<typeof venuePendingChangeReviewSchema>;
 export type AdminDashboardQuery = z.infer<typeof adminDashboardQuerySchema>;
 export type RetentionQuery = z.infer<typeof retentionQuerySchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
 export type CheckoutSessionInput = z.infer<typeof checkoutSessionSchema>;
+export type LeaderboardQuery = z.infer<typeof leaderboardQuerySchema>;
+export type DiscountRedemptionInput = z.infer<typeof discountRedemptionSchema>;
 export type BarTierCheckoutInput = z.infer<typeof barTierCheckoutSchema>;
 export type PriceRecordsQuery = z.infer<typeof priceRecordsQuerySchema>;
