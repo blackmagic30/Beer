@@ -215,18 +215,24 @@
           <div>
             <div class="eyebrow">Account settings</div>
             <h2>Manage your Pint Path account</h2>
-            <p class="muted">Preferences, privacy, support, and security are grouped here so the main dashboard stays focused.</p>
+            <p class="muted">Choose one area to open. The dashboard stays clean until you need a specific account tool.</p>
           </div>
           <a class="button" href="/feedback.html">Send feedback</a>
         </div>
-        <nav class="settingsNav" aria-label="Account settings sections">
-          <a href="#preferencesForm">Preferences</a>
-          <a href="#saveItemForm">Watchlist</a>
-          <a href="#privacySettingsForm">Privacy</a>
-          <a href="#dataRequestForm">Support</a>
-          <a href="#securitySettingsCard">Security</a>
+        <nav class="settingsNav" aria-label="Account settings sections" role="tablist">
+          <button class="settingsNavButton" type="button" role="tab" data-settings-target="preferences" aria-controls="settingsPreferencesPanel" aria-selected="false">Preferences</button>
+          <button class="settingsNavButton" type="button" role="tab" data-settings-target="watchlist" aria-controls="settingsWatchlistPanel" aria-selected="false">Watchlist</button>
+          <button class="settingsNavButton" type="button" role="tab" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
+          <button class="settingsNavButton" type="button" role="tab" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
+          <button class="settingsNavButton" type="button" role="tab" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
         </nav>
-        <div class="grid grid--two">
+
+        <article id="settingsEmptyPanel" class="panel settingsEmptyPanel">
+          <h2>What would you like to manage?</h2>
+          <p class="muted">Open Preferences, Watchlist, Privacy, Support, or Security above. Only one section opens at a time.</p>
+        </article>
+
+        <div id="settingsPreferencesPanel" class="settingsPanel" data-settings-panel="preferences" role="tabpanel" hidden>
           <form id="preferencesForm" class="panel form">
             <h2>Preferences</h2>
             <p class="muted">Save a few defaults so the map and missions feel more local to you.</p>
@@ -243,37 +249,40 @@
             </label>
             <button class="button button--primary" type="submit">Save preferences</button>
           </form>
-
-          <form id="saveItemForm" class="panel form">
-            <h2>Watchlist shortcuts</h2>
-            <p class="muted">Keep venues, beers, and suburbs handy. Alerts can come later.</p>
-            <label class="field">Type
-              <select name="itemType">
-                <option value="venue">Venue</option>
-                <option value="beer">Beer</option>
-                <option value="suburb">Suburb</option>
-              </select>
-            </label>
-            <label class="field">Name <input name="label" placeholder="Rooftop Bar or Carlton Draft" required /></label>
-            <label class="field">Suburb, if relevant <input name="suburb" placeholder="Melbourne" /></label>
-            <button class="button button--primary" type="submit">Save shortcut</button>
-          </form>
         </div>
-      </section>
 
-      <section id="privacyControlsSection" class="accountSectionStack settingsHub">
-        <div class="sectionHeader">
-          <div>
-            <div class="eyebrow">Privacy and account controls</div>
-            <h2>Your data, sessions, and support requests</h2>
-            <p class="muted">Major-platform style controls for optional analytics, venue-report inclusion, account export, deletion requests, and appeals.</p>
+        <div id="settingsWatchlistPanel" class="settingsPanel" data-settings-panel="watchlist" role="tabpanel" hidden>
+          <div class="grid grid--two">
+            <form id="saveItemForm" class="panel form">
+              <h2>Watchlist shortcuts</h2>
+              <p class="muted">Keep venues, beers, and suburbs handy. Alerts can come later.</p>
+              <label class="field">Type
+                <select name="itemType">
+                  <option value="venue">Venue</option>
+                  <option value="beer">Beer</option>
+                  <option value="suburb">Suburb</option>
+                </select>
+              </label>
+              <label class="field">Name <input name="label" placeholder="Rooftop Bar or Carlton Draft" required /></label>
+              <label class="field">Suburb, if relevant <input name="suburb" placeholder="Melbourne" /></label>
+              <button class="button button--primary" type="submit">Save shortcut</button>
+            </form>
+            <div class="panel">
+              <h2>Saved items and searches</h2>
+              <div id="savedItemsList" class="list"></div>
+            </div>
           </div>
-          <a class="button" href="/trust.html">Open Trust Centre</a>
         </div>
-        <div class="grid grid--two">
+
+        <div id="settingsPrivacyPanel" class="settingsPanel" data-settings-panel="privacy" role="tabpanel" hidden>
           <form id="privacySettingsForm" class="panel form">
-            <h2>Privacy settings</h2>
-            <p class="muted">These controls affect optional product analytics. Essential security, billing, moderation, and contribution records may still be kept.</p>
+            <div class="sectionHeader">
+              <div>
+                <h2>Privacy settings</h2>
+                <p class="muted">Optional analytics controls. Essential security, billing, moderation, and contribution records may still be kept.</p>
+              </div>
+              <a class="button" href="/trust.html">Open Trust Centre</a>
+            </div>
             <label class="toggleLine">
               <input name="optionalAnalyticsEnabled" type="checkbox" />
               <span><strong>Allow optional product analytics</strong><em>Helps improve search, map filters, and app reliability.</em></span>
@@ -292,74 +301,72 @@
             </label>
             <button class="button button--primary" type="submit">Save privacy settings</button>
           </form>
+        </div>
 
-          <form id="dataRequestForm" class="panel form">
-            <h2>Privacy, support, and appeals</h2>
-            <p class="muted">Create a tracked request for export, deletion, correction, moderation appeals, security reports, or billing help.</p>
-            <div class="quickPrivacyActions">
-              <button id="downloadAccountDataButton" class="button" type="button">Download my data</button>
-              <button id="requestAccountDeletionButton" class="button button--danger" type="button">Request deletion review</button>
+        <div id="settingsSupportPanel" class="settingsPanel" data-settings-panel="support" role="tabpanel" hidden>
+          <div class="grid grid--two">
+            <form id="dataRequestForm" class="panel form">
+              <h2>Privacy, support, and appeals</h2>
+              <p class="muted">Create a tracked request for export, deletion, correction, moderation appeals, security reports, or billing help.</p>
+              <div class="quickPrivacyActions">
+                <button id="downloadAccountDataButton" class="button" type="button">Download my data</button>
+                <button id="requestAccountDeletionButton" class="button button--danger" type="button">Request deletion review</button>
+              </div>
+              <label class="field">Request type
+                <select name="feedbackType">
+                  <option value="data_export_request">Export my account data</option>
+                  <option value="account_deletion_request">Delete my account</option>
+                  <option value="privacy_request">Correct or limit my data</option>
+                  <option value="moderation_appeal">Appeal a strike, ban, or rejected submission</option>
+                  <option value="security_report">Report a security issue</option>
+                  <option value="abuse_report">Report abuse or fake submissions</option>
+                  <option value="billing_support">Billing or subscription support</option>
+                </select>
+              </label>
+              <label class="field">Details
+                <textarea name="message" required maxlength="1200" placeholder="Tell us what you need. Do not include passwords, card numbers, ID documents, or private keys."></textarea>
+              </label>
+              <button class="button button--primary" type="submit">Send request</button>
+            </form>
+            <form id="requestForm" class="panel form">
+              <h2>Request a venue or beer</h2>
+              <p class="muted">Use this when a venue, beer, or verification task is missing from Pint Path.</p>
+              <label class="field">Request type
+                <select name="requestType">
+                  <option value="missing_venue">Add a missing venue</option>
+                  <option value="missing_beer">Add a missing beer</option>
+                  <option value="verify_venue">Verify a venue</option>
+                  <option value="verify_beer_at_venue">Verify a beer at a venue</option>
+                </select>
+              </label>
+              <label class="field">Venue <input name="venueName" placeholder="Venue name" /></label>
+              <label class="field">Beer <input name="beerName" placeholder="Beer name, if relevant" /></label>
+              <label class="field">Suburb <input name="suburb" placeholder="Melbourne" /></label>
+              <label class="field">Notes <textarea name="notes" placeholder="What should we check?"></textarea></label>
+              <button class="button button--primary" type="submit">Send request</button>
+            </form>
+          </div>
+        </div>
+
+        <div id="settingsSecurityPanel" class="settingsPanel" data-settings-panel="security" role="tabpanel" hidden>
+          <article id="securitySettingsCard" class="panel accountSecurityPanel">
+            <div>
+              <h2>Account security</h2>
+              <p class="muted">If you used a shared device or think your account is unsafe, revoke all active Pint Path sessions and sign in again.</p>
             </div>
-            <label class="field">Request type
-              <select name="feedbackType">
-                <option value="data_export_request">Export my account data</option>
-                <option value="account_deletion_request">Delete my account</option>
-                <option value="privacy_request">Correct or limit my data</option>
-                <option value="moderation_appeal">Appeal a strike, ban, or rejected submission</option>
-                <option value="security_report">Report a security issue</option>
-                <option value="abuse_report">Report abuse or fake submissions</option>
-                <option value="billing_support">Billing or subscription support</option>
-              </select>
-            </label>
-            <label class="field">Details
-              <textarea name="message" required maxlength="1200" placeholder="Tell us what you need. Do not include passwords, card numbers, ID documents, or private keys."></textarea>
-            </label>
-            <button class="button button--primary" type="submit">Send request</button>
-          </form>
-        </div>
-        <article id="securitySettingsCard" class="panel accountSecurityPanel">
-          <div>
-            <h2>Account security</h2>
-            <p class="muted">If you used a shared device or think your account is unsafe, revoke all active Pint Path sessions and sign in again.</p>
-          </div>
-          <div class="actionRow">
-            <button id="logoutAllButton" class="button button--danger" type="button">Log out all sessions</button>
-            <a class="button" href="/security.html">Security page</a>
-            <a class="button" href="/community.html">Community rules</a>
-          </div>
-        </article>
-      </section>
-
-      <section class="grid grid--two">
-        <div class="panel">
-          <h2>Saved items and searches</h2>
-          <div id="savedItemsList" class="list"></div>
-        </div>
-        <div class="panel">
-          <h2>Suggested missions</h2>
-          <p class="helperCopy">Quick ways to earn points and help keep Melbourne venue data accurate.</p>
-          <div id="suggestedMissions" class="list"></div>
+            <div class="actionRow">
+              <button id="logoutAllButton" class="button button--danger" type="button">Log out all sessions</button>
+              <a class="button" href="/security.html">Security page</a>
+              <a class="button" href="/community.html">Community rules</a>
+            </div>
+          </article>
         </div>
       </section>
 
-      <section class="accountSectionStack">
-        <form id="requestForm" class="panel form accountWideForm">
-          <h2>Request a venue or beer</h2>
-          <p class="muted">Use this when a venue, beer, or verification task is missing from Pint Path.</p>
-          <label class="field">Request type
-            <select name="requestType">
-              <option value="missing_venue">Add a missing venue</option>
-              <option value="missing_beer">Add a missing beer</option>
-              <option value="verify_venue">Verify a venue</option>
-              <option value="verify_beer_at_venue">Verify a beer at a venue</option>
-            </select>
-          </label>
-          <label class="field">Venue <input name="venueName" placeholder="Venue name" /></label>
-          <label class="field">Beer <input name="beerName" placeholder="Beer name, if relevant" /></label>
-          <label class="field">Suburb <input name="suburb" placeholder="Melbourne" /></label>
-          <label class="field">Notes <textarea name="notes" placeholder="What should we check?"></textarea></label>
-          <button class="button button--primary" type="submit">Send request</button>
-        </form>
+      <section class="panel">
+        <h2>Suggested missions</h2>
+        <p class="helperCopy">Quick ways to earn points and help keep Melbourne venue data accurate.</p>
+        <div id="suggestedMissions" class="list"></div>
       </section>
     </section>
 
@@ -512,6 +519,24 @@
       $("showLoginButton").classList.toggle("is-active", showLogin);
       $("showSignupButton").classList.toggle("is-active", !showLogin);
       MelbBeerBusiness.setStatus($("authStatus"), showLogin ? "Sign in with email and password." : "Create an account to start contributing.");
+    }
+
+    function showAccountSettingsPanel(target) {
+      const panels = Array.from(document.querySelectorAll("[data-settings-panel]"));
+      const buttons = Array.from(document.querySelectorAll("[data-settings-target]"));
+      const isValidTarget = panels.some((panel) => panel.dataset.settingsPanel === target);
+
+      $("settingsEmptyPanel").hidden = isValidTarget;
+      panels.forEach((panel) => {
+        const active = panel.dataset.settingsPanel === target;
+        panel.hidden = !active;
+        panel.classList.toggle("is-active", active);
+      });
+      buttons.forEach((button) => {
+        const active = button.dataset.settingsTarget === target;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
     }
 
     function renderSavedItems(items, recentSearches) {
@@ -907,6 +932,10 @@
       });
       $("showLoginButton").addEventListener("click", () => showAuthTab("login"));
       $("showSignupButton").addEventListener("click", () => showAuthTab("signup"));
+      document.querySelectorAll("[data-settings-target]").forEach((button) => {
+        button.addEventListener("click", () => showAccountSettingsPanel(button.dataset.settingsTarget));
+      });
+      showAccountSettingsPanel(null);
       $("signupForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
       $("loginForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
       $("passwordResetButton").addEventListener("click", async () => {

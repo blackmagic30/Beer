@@ -1440,20 +1440,49 @@ h3 {
   padding: 8px;
 }
 
-.settingsNav a {
+.settingsNavButton {
   border: 1px solid rgba(148, 163, 184, 0.15);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.045);
   color: #dbe3ef;
+  cursor: pointer;
+  font: inherit;
   padding: 9px 12px;
   font-size: 13px;
   font-weight: 900;
   text-decoration: none;
 }
 
-.settingsNav a:hover {
+.settingsNavButton:hover,
+.settingsNavButton.is-active {
   border-color: rgba(245, 199, 107, 0.36);
   background: rgba(245, 199, 107, 0.1);
+}
+
+.settingsNavButton.is-active {
+  color: var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(245, 199, 107, 0.2);
+}
+
+.settingsPanel {
+  animation: fadeUp 180ms ease both;
+}
+
+.settingsEmptyPanel {
+  border-style: dashed;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .pricingTierGrid {

@@ -143,15 +143,37 @@ describe("account page shell", () => {
     expect(html).toContain('href="/submit.html"');
     expect(html).toContain('href="/submit.html?type=photo_upload"');
     expect(html).toContain('href="#accountSettingsHub"');
-    expect(html).toContain('href="#privacySettingsForm"');
-    expect(html).toContain('href="#dataRequestForm"');
-    expect(html).toContain('href="#securitySettingsCard"');
+    expect(html).toContain('data-settings-target="preferences"');
+    expect(html).toContain('data-settings-target="watchlist"');
+    expect(html).toContain('data-settings-target="privacy"');
+    expect(html).toContain('data-settings-target="support"');
+    expect(html).toContain('data-settings-target="security"');
     expect(html).toContain("function missionSubmitHref");
     expect(html).toContain("missionId: String(mission.id)");
     expect(html).toContain("missionReason: String(mission.reason || \"Pint Path mission\")");
     expect(html).not.toContain('id="quickVenueSelect"');
     expect(html).not.toContain("function clearQuickVenue");
     expect(html).not.toContain("submitQuickUpload");
+  });
+
+  it("opens account settings sections on demand instead of rendering every panel open", () => {
+    const html = accountHtml();
+    const css = businessCss();
+
+    expect(html).toContain('id="settingsEmptyPanel"');
+    expect(html).toContain('data-settings-panel="preferences" role="tabpanel" hidden');
+    expect(html).toContain('data-settings-panel="watchlist" role="tabpanel" hidden');
+    expect(html).toContain('data-settings-panel="privacy" role="tabpanel" hidden');
+    expect(html).toContain('data-settings-panel="support" role="tabpanel" hidden');
+    expect(html).toContain('data-settings-panel="security" role="tabpanel" hidden');
+    expect(html).toContain("function showAccountSettingsPanel");
+    expect(html).toContain('document.querySelectorAll("[data-settings-target]")');
+    expect(html).toContain("showAccountSettingsPanel(button.dataset.settingsTarget)");
+    expect(html).toContain("showAccountSettingsPanel(null)");
+    expect(html).not.toContain('id="privacyControlsSection"');
+    expect(css).toContain(".settingsNavButton");
+    expect(css).toContain(".settingsPanel");
+    expect(css).toContain(".settingsEmptyPanel");
   });
 
   it("uses Supabase OAuth and email auth before falling back to local demo auth", () => {
