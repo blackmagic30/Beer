@@ -148,9 +148,9 @@ describe("account page shell", () => {
     expect(html).toContain('data-settings-target="privacy"');
     expect(html).toContain('data-settings-target="support"');
     expect(html).toContain('data-settings-target="security"');
-    expect(html).toContain("function missionSubmitHref");
-    expect(html).toContain("missionId: String(mission.id)");
-    expect(html).toContain("missionReason: String(mission.reason || \"Pint Path mission\")");
+    expect(html).not.toContain("Suggested missions");
+    expect(html).not.toContain('id="suggestedMissions"');
+    expect(html).not.toContain("function missionSubmitHref");
     expect(html).not.toContain('id="quickVenueSelect"');
     expect(html).not.toContain("function clearQuickVenue");
     expect(html).not.toContain("submitQuickUpload");

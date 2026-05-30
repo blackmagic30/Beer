@@ -363,11 +363,6 @@
         </div>
       </section>
 
-      <section class="panel">
-        <h2>Suggested missions</h2>
-        <p class="helperCopy">Quick ways to earn points and help keep Melbourne venue data accurate.</p>
-        <div id="suggestedMissions" class="list"></div>
-      </section>
     </section>
 
     <p class="footerCopy">18+ only. Community data is verified where possible. Prices may change, venues may refuse service under RSA obligations, and availability is not guaranteed. <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></p>
@@ -559,43 +554,6 @@
       ].join("");
     }
 
-    function submissionTypeForMission(mission) {
-      const reason = String(mission.reason || "").toLowerCase();
-      if (reason.includes("happy")) {
-        return "happy_hour_update";
-      }
-      if (!mission.lastVerifiedAt || reason.includes("no data")) {
-        return "full_venue_update";
-      }
-      return "single_beer_price";
-    }
-
-    function missionSubmitHref(mission) {
-      const params = new URLSearchParams({
-        missionId: String(mission.id),
-        venueId: String(mission.venueId),
-        venueName: String(mission.venueName),
-        missionReason: String(mission.reason || "Pint Path mission"),
-        type: submissionTypeForMission(mission),
-      });
-      return `/submit.html?${params.toString()}`;
-    }
-
-    function renderSuggestedMissions(missions) {
-      $("suggestedMissions").innerHTML = missions.length
-        ? missions.map((mission) => `
-          <div class="listItem missionCard">
-            <div class="missionCard__title">
-              <strong>${escapeHtml(mission.venueName)}</strong>
-              <span class="pill">${formatPoints(Number(mission.points || 0) * Number(mission.multiplier || 1))} pts</span>
-            </div>
-            <div class="missionCard__meta">${escapeHtml(mission.suburb || "Melbourne")} · ${escapeHtml(mission.reason)}</div>
-            <a class="button missionCard__action" href="${escapeHtml(missionSubmitHref(mission))}">Submit update</a>
-          </div>
-        `).join("")
-        : '<div class="listItem emptyState">Save a suburb or open Missions to get suggested venues. Try areas like <strong>Fitzroy</strong>, <strong>Sandringham</strong>, or <strong>South Melbourne</strong>.</div>';
-    }
-
     function statusBadge(status) {
       const label = statusLabels[status] || status;
       return `<span class="statusBadge statusBadge--${escapeHtml(status)}">${escapeHtml(label)}</span>`;
@@ -708,7 +666,6 @@
       $("privacySettingsForm").emailUpdatesEnabled.checked = Boolean(privacySettings.emailUpdatesEnabled);
       MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings);
       renderSavedItems(result.savedItems || [], result.recentSearches || []);
-      renderSuggestedMissions(result.suggestedMissions || []);
       renderRecentSubmissions(result.recentSubmissions || []);
     }
 
