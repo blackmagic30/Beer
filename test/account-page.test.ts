@@ -7,6 +7,10 @@ function accountHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/account.html"), "utf8");
 }
 
+function mapHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
+}
+
 function businessJs() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/business.js"), "utf8");
 }
@@ -156,17 +160,19 @@ describe("account page shell", () => {
 
     expect(html).toContain("Continue with Google");
     expect(html).toContain("Continue with Apple");
-    expect(html).toContain("Continue with Email");
     expect(html).not.toContain("Continue with Facebook");
+    expect(html.indexOf("Welcome back")).toBeLessThan(html.indexOf("Continue with Google"));
+    expect(html.indexOf("Reset password")).toBeLessThan(html.indexOf("Continue with Google"));
     expect(html).toContain("MelbBeerBusiness.signUpWithEmail");
     expect(html).toContain("MelbBeerBusiness.signInWithEmail");
     expect(html).toContain('id="passwordResetButton"');
     expect(html).toContain("Reset password");
     expect(html).toContain("Sending reset link...");
     expect(html).toContain("If an account exists for that email, a secure reset link has been sent.");
-    expect(html).toContain('id="oauthTermsAccepted"');
-    expect(html).toContain('id="oauthPrivacyAccepted"');
-    expect(html).toContain("Confirm you are 18+ and accept the Terms and Privacy Policy before using social login.");
+    expect(html).not.toContain('id="oauthTermsAccepted"');
+    expect(html).not.toContain('id="oauthPrivacyAccepted"');
+    expect(html).not.toContain("before using social login");
+    expect(html).toContain("Google and Apple sign-in appears");
     expect(script).toContain("signInWithOAuth({");
     expect(script).toContain('provider,');
     expect(script).toContain("signInWithPassword");
@@ -175,6 +181,21 @@ describe("account page shell", () => {
     expect(script).toContain("terms_accepted");
     expect(script).toContain("privacy_accepted");
     expect(script).toContain("applyPendingLegalAcceptance");
+  });
+
+  it("keeps Missions and Submit data navigation behind authenticated session hints", () => {
+    const html = mapHtml();
+    const script = businessJs();
+
+    expect(script).toContain("function hasAuthenticatedSessionHint");
+    expect(script).toContain("function hasCachedSupabaseSession");
+    expect(script).toContain("const authenticatedLinks = hasAuthenticatedSessionHint()");
+    expect(script).toContain('href="/missions.html">Missions');
+    expect(script).toContain('href="/submit.html">Submit data');
+    expect(html).toContain('href="/missions.html" data-auth-required');
+    expect(html).toContain('href="/submit.html" class="primary" data-auth-required');
+    expect(html).toContain("function syncAuthenticatedNavLinks");
+    expect(html).toContain('document.querySelectorAll("[data-auth-required]")');
   });
 
   it("requires confirm password and keeps signup consent text readable", () => {

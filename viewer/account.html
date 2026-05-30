@@ -40,19 +40,6 @@
           <button id="showSignupButton" class="authTab" type="button" role="tab" aria-controls="signupPanel">Create account</button>
         </div>
 
-        <div id="oauthStack" class="oauthStack" aria-label="Quick login options">
-          <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
-          <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
-        </div>
-        <div id="oauthConsentField" class="consentField authLegalConsent">
-          <p class="fieldHint">Required before Google or Apple can create a Pint Path account.</p>
-          <label class="consentLine"><input id="oauthAgeConfirmed" type="checkbox" /> <span>I confirm I am 18 years or older.</span></label>
-          <label class="consentLine"><input id="oauthTermsAccepted" type="checkbox" /> <span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms and Conditions</a>.</span></label>
-          <label class="consentLine"><input id="oauthPrivacyAccepted" type="checkbox" /> <span>I agree to the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
-        </div>
-        <p id="oauthHelper" class="helperCopy">Social login appears when Supabase OAuth providers are configured.</p>
-        <div class="authDivider"><span>Continue with Email</span></div>
-
         <form id="loginForm" class="form authForm" aria-labelledby="loginHeading">
           <div id="loginPanel" class="authPanelStack">
             <h2 id="loginHeading">Welcome back</h2>
@@ -73,6 +60,11 @@
               <button id="passwordResetButton" class="button" type="button">Reset password</button>
             </div>
             <p class="helperCopy authResetCopy">Forgot your password? Enter your email and we’ll send a secure reset link.</p>
+            <div id="oauthStack" class="oauthStack" aria-label="Quick login options">
+              <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
+              <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
+            </div>
+            <p id="oauthHelper" class="helperCopy">Google and Apple sign-in appears when Supabase OAuth providers are configured.</p>
           </div>
         </form>
 
@@ -501,6 +493,7 @@
       $("accountEmail").textContent = "Not signed in";
       $("dashboardStatus").textContent = "Sign in to load your contributor dashboard.";
       $("logoutButton").disabled = true;
+      $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
       MelbBeerBusiness.setStatus($("authStatus"), message, isError);
     }
 
@@ -509,6 +502,7 @@
       $("accountDashboard").hidden = false;
       $("accountDashboard").classList.remove("is-hidden");
       $("logoutButton").disabled = false;
+      $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
     }
 
     function showAuthTab(tab) {
@@ -879,30 +873,18 @@
       });
       if (!supabaseConfigured || oauthButtons.every((button) => button.hidden)) {
         $("oauthStack").hidden = true;
-        $("oauthConsentField").hidden = true;
         $("oauthHelper").textContent = supabaseConfigured
           ? "No Supabase OAuth providers are enabled in this environment."
           : "Email login is available. Social login appears after Supabase Auth is configured.";
       }
 
-      const oauthLegalAcceptance = () => ({
-        ageConfirmed: $("oauthAgeConfirmed").checked,
-        termsAccepted: $("oauthTermsAccepted").checked,
-        privacyAccepted: $("oauthPrivacyAccepted").checked,
-      });
-
       oauthButtons.forEach((button) => {
         button.addEventListener("click", async () => {
           const provider = button.dataset.provider;
           try {
-            const legalAcceptance = oauthLegalAcceptance();
-            if (!legalAcceptance.ageConfirmed || !legalAcceptance.termsAccepted || !legalAcceptance.privacyAccepted) {
-              throw new Error("Confirm you are 18+ and accept the Terms and Privacy Policy before using social login.");
-            }
             setOauthButtonsLoading(true, button);
             await MelbBeerBusiness.signInWithOAuth(provider, {
               returnTo: MelbBeerBusiness.getAuthReturnPathFromLocation(),
-              legalAcceptance,
             });
           } catch (error) {
             setOauthButtonsLoading(false);

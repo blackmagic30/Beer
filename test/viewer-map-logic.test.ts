@@ -219,13 +219,16 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("Drink responsibly");
   });
 
-  it("renders location-aware controls without requesting location on page load", () => {
+  it("renders location-aware controls and only auto-requests after a saved opt-in", () => {
     expect(html).toContain('id="useLocationButton"');
     expect(html).toContain('data-filter-chip="happy_hour_near_me"');
     expect(html).toContain('data-filter-chip="pint_path_specials"');
     expect(html).toContain('data-filter-chip="recently_verified_near_me"');
     expect(html).toContain('data-filter-chip="nearest"');
     expect(html).toContain('id="nearMeRadiusSelect"');
+    expect(html).toContain('LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference"');
+    expect(html).toContain('requestUserLocation("saved_location_preference")');
+    expect(html).toContain('disableUserLocation("use_location_button_off")');
     expect(html).toContain("navigator.geolocation.getCurrentPosition");
     expect(html).not.toContain("watchPosition");
   });

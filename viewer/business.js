@@ -19,6 +19,29 @@ function setAuthToken(token) {
   }
 }
 
+function hasCachedSupabaseSession() {
+  try {
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index) || "";
+      if (!/^sb-.+-auth-token$/.test(key)) {
+        continue;
+      }
+      const value = window.localStorage.getItem(key) || "";
+      if (value.includes("access_token")) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
+function hasAuthenticatedSessionHint() {
+  return Boolean(getAuthToken() || hasCachedSupabaseSession());
+}
+
 function getAnonymousSessionId() {
   let value = window.localStorage.getItem(ANON_SESSION_KEY);
 
@@ -427,6 +450,12 @@ async function requestPasswordReset(email) {
 function renderNav(active = "") {
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
   const feedbackLink = isFieldTestMode() ? `<a ${active === "feedback" ? 'class="pill"' : ""} href="/feedback.html">Feedback</a>` : "";
+  const authenticatedLinks = hasAuthenticatedSessionHint()
+    ? `
+        <a ${active === "missions" ? 'class="pill"' : ""} href="/missions.html">Missions</a>
+        <a ${active === "submit" ? 'class="pill"' : ""} href="/submit.html">Submit data</a>
+      `
+    : "";
   return `
     <nav class="topNav" aria-label="Primary">
       <a class="brand" href="/">
@@ -436,8 +465,7 @@ function renderNav(active = "") {
       ${betaPill}
       <div class="navLinks">
         <a ${active === "map" ? 'class="pill"' : ""} href="/">Map</a>
-        <a ${active === "missions" ? 'class="pill"' : ""} href="/missions.html">Missions</a>
-        <a ${active === "submit" ? 'class="pill"' : ""} href="/submit.html">Submit data</a>
+        ${authenticatedLinks}
         <a ${active === "trust" ? 'class="pill"' : ""} href="/trust.html">Trust</a>
         <a ${active === "pricing" ? 'class="pill"' : ""} href="/pricing.html">Pricing</a>
         <a ${active === "account" ? 'class="pill"' : ""} href="/account.html">Account</a>
@@ -552,6 +580,7 @@ window.MelbBeerBusiness = {
   AUTH_TOKEN_KEY,
   getAuthToken,
   setAuthToken,
+  hasAuthenticatedSessionHint,
   getAnonymousSessionId,
   getViewerConfig,
   getBusinessConfig,

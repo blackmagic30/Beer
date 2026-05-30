@@ -2853,8 +2853,8 @@
       <div class="topbar__actions">
         <div id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation">
           <a href="/" aria-current="page">Map</a>
-          <a href="/missions.html">Missions</a>
-          <a href="/submit.html" class="primary">Submit data</a>
+          <a href="/missions.html" data-auth-required>Missions</a>
+          <a href="/submit.html" class="primary" data-auth-required>Submit data</a>
           <a href="/pricing.html">Pricing</a>
           <a href="/account.html">Account</a>
           <span id="accessPill" class="accessPill">Free preview</span>
@@ -3094,6 +3094,7 @@
     const BUSINESS_CONFIG = viewerConfig.business || {};
     const PRICE_REVEAL_DAY_KEY = new Date().toISOString().slice(0, 10);
     const PRICE_REVEAL_STORAGE_KEY = `melbBeerRevealedVenues:${PRICE_REVEAL_DAY_KEY}`;
+    const LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference";
     const DEFAULT_BEER_SEARCH_PLACEHOLDER = TRACKED_BEERS.length >= 3
       ? `Search ${TRACKED_BEERS.slice(0, 3).map((beer) => beer.name).join(", ")}…`
       : "Search a beer";
@@ -3164,7 +3165,9 @@
       coords: null,
       radiusKm: NEAR_ME_DEFAULT_RADIUS_KM,
       outsideMelbourne: false,
-      message: "Location off. Tap once to show approximate distances and nearby happy hours.",
+      message: hasSavedLocationPreference()
+        ? "Location preference saved. We’ll ask your browser for one-time location when the map loads."
+        : "Location off. Tap once to show approximate distances and nearby happy hours.",
     };
     let businessAccess = {
       hasFullAccess: false,
@@ -3208,6 +3211,26 @@
       window.localStorage.setItem(PRICE_REVEAL_STORAGE_KEY, JSON.stringify(Array.from(revealedVenueIds)));
     }
 
+    function hasSavedLocationPreference() {
+      try {
+        return window.localStorage.getItem(LOCATION_PREFERENCE_STORAGE_KEY) === "enabled";
+      } catch {
+        return false;
+      }
+    }
+
+    function setSavedLocationPreference(enabled) {
+      try {
+        if (enabled) {
+          window.localStorage.setItem(LOCATION_PREFERENCE_STORAGE_KEY, "enabled");
+        } else {
+          window.localStorage.removeItem(LOCATION_PREFERENCE_STORAGE_KEY);
+        }
+      } catch {
+        // Storage can be disabled in private browsing; location still works for the current page.
+      }
+    }
+
     async function refreshBusinessAccess() {
       if (!window.MelbBeerBusiness) {
         return;
@@ -3229,6 +3252,13 @@
       syncBusinessAccessUi();
     }
 
+    function syncAuthenticatedNavLinks() {
+      const isAuthenticated = Boolean(window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.());
+      document.querySelectorAll("[data-auth-required]").forEach((link) => {
+        link.hidden = !isAuthenticated;
+      });
+    }
+
     function syncBusinessAccessUi() {
       const fullAccess = Boolean(businessAccess.hasFullAccess);
       businessBannerEl.style.display = fullAccess ? "none" : "flex";
@@ -3240,6 +3270,7 @@
       if (fullAccess && advancedFiltersNoticeEl) {
         advancedFiltersNoticeEl.hidden = true;
       }
+      syncAuthenticatedNavLinks();
       syncAdminNavLink();
       beerSearchEl.disabled = false;
       beerSearchEl.placeholder = DEFAULT_BEER_SEARCH_PLACEHOLDER;
@@ -3570,6 +3601,9 @@
           : isEnabled
             ? "Location on"
             : "Use my location";
+      useLocationButtonEl.title = isEnabled
+        ? "Location is on for this device. Tap to turn it off."
+        : "Use your browser location for nearby venues. If allowed, Pint Path remembers this device preference.";
       useLocationButtonEl.disabled = userLocationState.status === "requesting";
       useLocationButtonEl.classList.toggle("is-active", isEnabled);
       useLocationButtonEl.classList.toggle(
@@ -3578,11 +3612,28 @@
       );
     }
 
-    async function requestUserLocation(reason = "manual") {
+    function disableUserLocation(reason = "manual") {
+      userLocationState.status = "idle";
+      userLocationState.coords = null;
+      userLocationState.outsideMelbourne = false;
+      userLocationState.message = "Location off. Tap once to show approximate distances and nearby happy hours.";
+      setSavedLocationPreference(false);
+      syncLocationUi();
+
+      if (typeof window.__melbBeerMapAfterLocationChange === "function") {
+        window.__melbBeerMapAfterLocationChange(reason);
+      }
+    }
+
+    async function requestUserLocation(reason = "manual", options = {}) {
+      const shouldRemember = options.remember !== false;
       if (hasUserLocation()) {
         userLocationState.message = userLocationState.outsideMelbourne
           ? `Location on · ${userLocationState.radiusKm} km radius. Melbourne venues are still shown because this app covers Victoria only.`
           : `Location on · showing approximate distances within ${userLocationState.radiusKm} km.`;
+        if (shouldRemember) {
+          setSavedLocationPreference(true);
+        }
         syncLocationUi();
         return true;
       }
@@ -3596,6 +3647,7 @@
       if (!navigator.geolocation) {
         userLocationState.status = "unavailable";
         userLocationState.message = "Location is unavailable on this device or browser.";
+        setSavedLocationPreference(false);
         syncLocationUi();
         void trackBusinessEvent("location_permission_denied", getLocationEventMetadata({ reason, status: "unavailable" }));
         return false;
@@ -3621,6 +3673,7 @@
       if (!position.ok) {
         userLocationState.status = position.error?.code === 1 ? "denied" : "unavailable";
         userLocationState.coords = null;
+        setSavedLocationPreference(false);
         userLocationState.message = position.error?.code === 1
           ? "Location permission was denied. Search a suburb instead."
           : "Location is unavailable right now. Search a suburb instead.";
@@ -3644,6 +3697,9 @@
       userLocationState.message = userLocationState.outsideMelbourne
         ? `Location on · this app currently covers Melbourne venues. Distances are approximate.`
         : `Location on · showing approximate distances within ${userLocationState.radiusKm} km.`;
+      if (shouldRemember) {
+        setSavedLocationPreference(true);
+      }
       syncLocationUi();
       void trackBusinessEvent("location_permission_granted", getLocationEventMetadata({ reason }));
       void trackBusinessEvent("near_me_enabled", getLocationEventMetadata({ reason }));
@@ -5966,6 +6022,7 @@
 
     async function init() {
       try {
+        syncAuthenticatedNavLinks();
         await refreshBusinessAccess();
         await loadGoogleMapsScript();
         if (googleMapsAuthFailed) {
@@ -6557,10 +6614,14 @@
         });
 
         useLocationButtonEl.addEventListener("click", async () => {
-          const alreadyEnabled = hasUserLocation();
+          if (hasUserLocation()) {
+            disableUserLocation("use_location_button_off");
+            return;
+          }
+
           const granted = await requestUserLocation("use_location_button");
 
-          if (granted && alreadyEnabled) {
+          if (granted) {
             focusMapAroundUser("use_location_button");
           }
         });
@@ -6786,6 +6847,14 @@
         });
         buildBeerSuggestionList(venueRows);
         renderMarkers();
+
+        if (hasSavedLocationPreference()) {
+          void requestUserLocation("saved_location_preference").then((granted) => {
+            if (granted) {
+              focusMapAroundUser("saved_location_preference");
+            }
+          });
+        }
       } catch (error) {
         fail("Viewer failed", error);
       }
