@@ -1043,6 +1043,30 @@ h3 {
   align-items: stretch;
 }
 
+.accountDashboard .accountHero {
+  order: 1;
+}
+
+.accountDashboard #dashboardStatus {
+  order: 2;
+}
+
+.accountDashboard #accountSettingsHub {
+  order: 3;
+}
+
+.accountDashboard .accountHighlightsGrid {
+  order: 4;
+}
+
+.accountDashboard .accountPrimaryGrid {
+  order: 5;
+}
+
+.accountDashboard #recentSubmissionsSection {
+  order: 6;
+}
+
 .accountHighlightsGrid .metricCard,
 .accountHighlightsGrid .panel {
   min-height: 100%;

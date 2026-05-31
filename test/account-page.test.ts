@@ -210,6 +210,8 @@ describe("account page shell", () => {
     expect(css).toContain(".settingsNavButton");
     expect(css).toContain(".settingsPanel");
     expect(css).toContain(".settingsEmptyPanel");
+    expect(css).toContain(".accountDashboard #accountSettingsHub");
+    expect(css).toContain("order: 3;");
   });
 
   it("uses Supabase OAuth and email auth before falling back to local demo auth", () => {

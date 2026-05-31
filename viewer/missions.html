@@ -153,10 +153,10 @@
           const reason = String(mission.reason || "");
           const distanceCopy = formatDistance(mission.distanceMeters);
           const suggestedAction = reason.toLowerCase().includes("happy")
-            ? "confirm happy hour details or upload a board photo"
+            ? "confirm the happy-hour days, times, and conditions"
             : mission.lastVerifiedAt
-              ? "confirm one stale price or upload a menu photo"
-              : "add 3 beer prices with a source photo";
+              ? "confirm one stale beer price"
+              : "add 3 current beer prices";
 
           return `
             <article class="listItem missionCard">

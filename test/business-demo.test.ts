@@ -267,6 +267,30 @@ describe("submission payload validation", () => {
     expect(result.success).toBe(false);
   });
 
+  it("requires three beer rows for full venue updates", () => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      submissionType: "full_venue_update",
+      items: [{
+        beerName: "Guinness",
+        servingSize: "pint",
+        price: 13,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }, {
+        beerName: "Carlton Draught",
+        servingSize: "pint",
+        price: 12,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("requires source evidence for photo/source uploads", () => {
     const result = createSubmissionSchema.safeParse({
       ...baseSubmission,
@@ -276,6 +300,24 @@ describe("submission payload validation", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("allows happy-hour updates without forcing a source photo upload", () => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      submissionType: "happy_hour_update",
+      sourcePhotoDataUrl: null,
+      items: [{
+        beerName: "Happy hour specials",
+        servingSize: "pint",
+        price: null,
+        isHappyHourPrice: true,
+        happyHourDetails: "Mon-Fri, 5pm-7pm. $9 house pints.",
+        isOnTap: "unknown",
+      }],
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 

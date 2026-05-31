@@ -195,10 +195,10 @@ export const createSubmissionSchema = z.object({
     });
   }
 
-  if (value.submissionType === "full_venue_update" && !hasPhoto && value.items.length < 3) {
+  if (value.submissionType === "full_venue_update" && value.items.length < 3) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "A full venue update needs either source evidence or at least 3 beer rows.",
+      message: "A full venue update needs at least 3 beer rows.",
       path: ["items"],
     });
   }
@@ -219,13 +219,6 @@ export const createSubmissionSchema = z.object({
     });
   }
 
-  if (value.submissionType === "happy_hour_update" && !hasPhoto) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Happy-hour updates need a source photo, screenshot, or notes with enough evidence.",
-      path: ["sourcePhotoDataUrl"],
-    });
-  }
 });
 
 export const submissionsQuerySchema = z.object({

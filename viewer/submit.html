@@ -55,20 +55,15 @@
             <span id="venueChoiceHelp" class="fieldHint">Search above and click the matching venue suggestion before submitting.</span>
           </label>
         </div>
-        <div class="grid grid--two">
-          <label class="field">Submission type
-            <select id="submissionTypeSelect" name="submissionType">
-              <option value="full_venue_update">Full venue update</option>
-              <option value="single_beer_price">Single beer price</option>
-              <option value="happy_hour_update">Happy-hour update</option>
-              <option value="photo_upload">Photo/source upload</option>
-            </select>
-          </label>
-          <label class="field">Observed date/time
-            <input id="observedAtInput" name="observedAt" type="datetime-local" required />
-            <span class="fieldHint">Defaults to your current local date and time. Adjust it if the menu/photo was from another visit.</span>
-          </label>
-        </div>
+        <label class="field">Submission type
+          <select id="submissionTypeSelect" name="submissionType">
+            <option value="full_venue_update">Full venue update</option>
+            <option value="single_beer_price">Single beer price</option>
+            <option value="happy_hour_update">Happy-hour update</option>
+            <option value="photo_upload">Photo/source upload</option>
+          </select>
+          <span class="fieldHint">Pint Path records the submit time automatically when this update is sent.</span>
+        </label>
         <div id="typeGuidance" class="notice">Choose the submission type and the form will show the fields that matter.</div>
         <div id="missionContext" class="notice missionContext is-hidden"></div>
         <div class="notice locationProofPanel">
@@ -79,9 +74,9 @@
           <button id="captureLocationButton" class="button" type="button">Use my location for points</button>
           <span id="uploadLocationStatus" class="fieldHint">Location not saved yet.</span>
         </div>
-        <label id="sourcePhotoField" class="field">Source photo/menu/receipt/happy-hour board
-          <input id="sourcePhoto" type="file" accept="image/*" />
-          <span id="sourcePhotoHint" class="fieldHint">Optional evidence helps reviewers approve the update faster.</span>
+        <label id="sourcePhotoField" class="field is-hidden">Source photo/menu/receipt/happy-hour board
+          <input id="sourcePhoto" type="file" accept="image/*" disabled />
+          <span id="sourcePhotoHint" class="fieldHint">Upload a clear menu, tap-list, receipt, or venue board for review.</span>
         </label>
         <div id="happyHourSection" class="submitModeBlock is-hidden">
           <div class="field">
@@ -119,7 +114,6 @@
           <datalist id="trackedBeerSuggestions"></datalist>
           <button id="addBeerRowButton" class="button" type="button">Add beer row</button>
         </div>
-        <label class="field">Notes <textarea name="notes" placeholder="Optional notes, conditions, or source details"></textarea></label>
         <button class="button button--primary" type="submit">Submit for review</button>
       </form>
       <div id="status" class="notice" style="margin-top:16px;">Submissions are reviewed before trusted publication. False or abusive data can receive fraud strikes.</div>
@@ -143,11 +137,6 @@
         { key: "stone_and_wood", name: "Stone & Wood", aliases: ["stone and wood", "stone & wood"] },
       ];
     const trackedBeerLookup = new Map();
-
-    function localDatetimeValue(date = new Date()) {
-      const localTime = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-      return localTime.toISOString().slice(0, 16);
-    }
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -313,7 +302,12 @@
       beerRowsSection.classList.toggle("is-hidden", !usesBeerRows);
       happyHourSection.classList.toggle("is-hidden", !isHappyHour);
       addBeerRowButton.classList.toggle("is-hidden", isSingle);
-      sourcePhoto.required = isHappyHour || isPhotoOnly;
+      sourcePhotoField.classList.toggle("is-hidden", !isPhotoOnly);
+      sourcePhoto.disabled = !isPhotoOnly;
+      sourcePhoto.required = isPhotoOnly;
+      if (!isPhotoOnly) {
+        sourcePhoto.value = "";
+      }
       happyHourStartTime.required = isHappyHour;
       happyHourEndTime.required = isHappyHour;
       happyHourSpecialsInput.required = isHappyHour;
@@ -330,20 +324,20 @@
 
       const copy = {
         full_venue_update: {
-          guidance: "Full venue update: add at least 3 beer rows, or attach a clear menu/tap-list photo if you only have the source image.",
-          source: "Optional, but a clear menu, tap-list, receipt, or venue screenshot makes approval easier.",
+          guidance: "Full venue update: add at least 3 current beer rows from the venue.",
+          source: "Use Photo/source upload if you only want to send a menu, tap-list, receipt, or venue board.",
           rowsTitle: "Venue beer rows",
           rowsHint: "Add 3 or more beers with serving size, price, and tap status when possible.",
         },
         single_beer_price: {
           guidance: "Single beer price: use this when you only know one current beer price at the venue.",
-          source: "Optional evidence is helpful, especially if the price changed recently.",
+          source: "Use Photo/source upload for evidence-only submissions.",
           rowsTitle: "Single beer price",
           rowsHint: "Add one beer, serving size, and price. Pint is the standard default.",
         },
         happy_hour_update: {
-          guidance: "Happy-hour update: tick the days, add the start and finish time, then describe the specials from a current source photo.",
-          source: "Required for happy-hour updates so reviewers can verify the days, times, and conditions.",
+          guidance: "Happy-hour update: tick the days, add the start and finish time, then describe the specials and conditions.",
+          source: "Use Photo/source upload if you want to send a happy-hour board photo instead.",
           rowsTitle: "",
           rowsHint: "",
         },
@@ -434,11 +428,11 @@
         }
       }
 
-      if (type === "full_venue_update" && !hasPhoto && items.length < 3) {
-        return "A full venue update needs either a source photo or at least 3 beer rows.";
+      if (type === "full_venue_update" && items.length < 3) {
+        return "A full venue update needs at least 3 beer rows.";
       }
 
-      if ((type === "happy_hour_update" || type === "photo_upload") && !hasPhoto) {
+      if (type === "photo_upload" && !hasPhoto) {
         return "Attach a clear source photo, menu, receipt, or screenshot for this submission type.";
       }
 
@@ -637,7 +631,6 @@
       seedTrackedBeerLookup();
       populateTrackedBeerSuggestions();
       appendBeerRow();
-      observedAtInput.value = localDatetimeValue();
       if (["full_venue_update", "single_beer_price", "happy_hour_update", "photo_upload"].includes(initialSubmissionType)) {
         submissionTypeSelect.value = initialSubmissionType;
       }
@@ -702,9 +695,10 @@
 
         try {
           const formData = new FormData(submissionForm);
-          const observedLocal = String(formData.get("observedAt"));
-          const observedAt = new Date(observedLocal).toISOString();
-          const sourcePhotoDataUrl = await readPhotoDataUrl(sourcePhoto.files[0]);
+          const observedAt = new Date().toISOString();
+          const sourcePhotoDataUrl = submissionTypeSelect.value === "photo_upload"
+            ? await readPhotoDataUrl(sourcePhoto.files[0])
+            : null;
           const items = collectItems();
           const validationError = validateSubmission(items, Boolean(sourcePhotoDataUrl));
           if (validationError) {
@@ -714,10 +708,7 @@
           const missionNote = missionId
             ? `Mission ${missionId}: ${missionReason || "Pint Path mission"}`
             : "";
-          const notes = [
-            missionNote,
-            String(formData.get("notes") || "").trim(),
-          ].filter(Boolean).join("\n\n") || null;
+          const notes = missionNote || null;
 
           const result = await MelbBeerBusiness.apiFetch("/api/business/submissions", {
             method: "POST",
@@ -739,7 +730,6 @@
           persistUploadLocation(null);
           uploadLocationStatus.textContent = "Location not saved yet.";
           clearSelectedVenue();
-          observedAtInput.value = localDatetimeValue();
           beerRows.innerHTML = "";
           appendBeerRow();
           applySubmissionType();

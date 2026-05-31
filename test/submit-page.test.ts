@@ -44,6 +44,25 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain('venueSelect.addEventListener("change"');
   });
 
+  it("keeps submit-time, notes, and evidence fields constrained by submission type", () => {
+    const html = submitHtml();
+
+    expect(html).not.toContain("Observed date/time");
+    expect(html).not.toContain('name="observedAt"');
+    expect(html).not.toContain('name="notes" placeholder="Optional notes, conditions, or source details"');
+    expect(html).toContain('id="sourcePhotoField" class="field is-hidden"');
+    expect(html).toContain('id="sourcePhoto" type="file" accept="image/*" disabled');
+    expect(html).toContain("sourcePhotoField.classList.toggle(\"is-hidden\", !isPhotoOnly)");
+    expect(html).toContain("sourcePhoto.disabled = !isPhotoOnly");
+    expect(html).toContain("sourcePhoto.required = isPhotoOnly");
+    expect(html).toContain("const observedAt = new Date().toISOString();");
+    expect(html).toContain('submissionTypeSelect.value === "photo_upload"');
+    expect(html).toContain("const notes = missionNote || null;");
+    expect(html).toContain("A full venue update needs at least 3 beer rows.");
+    expect(html).not.toContain("A full venue update needs either a source photo");
+    expect(html).not.toContain("Happy-hour updates need a source photo");
+  });
+
   it("keeps happy-hour day controls inside a responsive grid", () => {
     const css = businessCss();
 
