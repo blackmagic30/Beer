@@ -1501,6 +1501,79 @@ h3 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.pricingCard,
+.venuePricingCard {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.pricingCard__body,
+.venuePricingCard__body {
+  display: grid;
+  gap: 14px;
+}
+
+.pricingCard__actions,
+.venuePricingCard__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.pricingCard__actions .button,
+.venuePricingCard__actions .button {
+  display: inline-flex;
+  align-items: center;
+  min-width: 136px;
+  justify-content: center;
+}
+
+.venuePricingSection {
+  margin-top: 28px;
+}
+
+.venuePricingGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.venuePricingCard {
+  min-height: 430px;
+}
+
+.tierBadge {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid rgba(119, 217, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(119, 217, 255, 0.08);
+  color: #d6f3ff;
+  padding: 7px 11px;
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tierBadge--gold {
+  border-color: rgba(245, 199, 107, 0.34);
+  background: rgba(245, 199, 107, 0.11);
+  color: #ffe8aa;
+}
+
+.tierBadge--blue {
+  border-color: rgba(139, 184, 255, 0.32);
+  background: rgba(139, 184, 255, 0.11);
+  color: #d9e8ff;
+}
+
+.tierList {
+  padding-left: 21px;
+}
+
 .card--highlight {
   border-color: rgba(245, 199, 107, 0.42);
   background:
@@ -1853,7 +1926,8 @@ h3 {
   .authShell,
   .accountHero,
   .tierGrid,
-  .pricingTierGrid {
+  .pricingTierGrid,
+  .venuePricingGrid {
     grid-template-columns: 1fr;
   }
 
@@ -1981,7 +2055,8 @@ h3 {
 
 @media (min-width: 761px) and (max-width: 1040px) {
   .metricGrid,
-  .pricingTierGrid {
+  .pricingTierGrid,
+  .venuePricingGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

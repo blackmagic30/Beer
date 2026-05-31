@@ -23,32 +23,110 @@
       <div id="status" class="notice">Log in and confirm 18+ before starting checkout.</div>
     </section>
 
-    <section class="grid pricingTierGrid">
-      <article class="card">
-        <h2>Free</h2>
-        <div class="price">A$0</div>
-        <p class="muted">See venue pins, happy hours, data freshness, and core pint prices for Guinness, Carlton Draft, and Stone & Wood.</p>
-        <a class="button" href="/">Open map</a>
+    <section class="grid pricingTierGrid" aria-label="User access options">
+      <article class="card pricingCard">
+        <div class="pricingCard__body">
+          <h2>Free</h2>
+          <div class="price">A$0</div>
+          <p class="muted">See venue pins, happy hours, data freshness, and core pint prices for Guinness, Carlton Draft, and Stone & Wood.</p>
+        </div>
+        <div class="pricingCard__actions">
+          <a class="button" href="/">Open map</a>
+        </div>
       </article>
-      <article class="card card--highlight">
-        <h2>Freemium</h2>
-        <div class="price">15 pts</div>
-        <p class="muted">Earn 15 approved contribution points in a month to unlock premium access for the rest of the month.</p>
-        <a class="button button--primary" href="/missions.html">Find missions</a>
-        <a class="button" href="/submit.html">Submit venue data</a>
+      <article class="card card--highlight pricingCard">
+        <div class="pricingCard__body">
+          <h2>Freemium</h2>
+          <div class="price">15 pts</div>
+          <p class="muted">Earn 15 approved contribution points in a month to unlock premium access for the rest of the month.</p>
+        </div>
+        <div class="pricingCard__actions">
+          <a class="button button--primary" href="/missions.html">Start freemium</a>
+        </div>
       </article>
-      <article class="card">
-        <h2>Monthly</h2>
-        <div class="price">A$4.99</div>
-        <p class="muted">Unlimited exact prices, premium filters, and venue special-discount details for one month at a time.</p>
-        <button class="button button--primary" type="button" data-plan="monthly">Start monthly</button>
+      <article class="card pricingCard">
+        <div class="pricingCard__body">
+          <h2>Monthly</h2>
+          <div class="price">A$4.99</div>
+          <p class="muted">Unlimited exact prices, premium filters, and venue special-discount details for one month at a time.</p>
+        </div>
+        <div class="pricingCard__actions">
+          <button class="button button--primary" type="button" data-plan="monthly">Start monthly</button>
+        </div>
       </article>
-      <article class="card">
-        <h2>Yearly</h2>
-        <div class="price">A$50</div>
-        <p class="muted">Best value for regular checking across Melbourne and Victoria venues, including special discounts where venues publish them.</p>
-        <button class="button button--primary" type="button" data-plan="yearly">Start yearly</button>
+      <article class="card pricingCard">
+        <div class="pricingCard__body">
+          <h2>Yearly</h2>
+          <div class="price">A$50</div>
+          <p class="muted">Best value for regular checking across Melbourne and Victoria venues, including special discounts where venues publish them.</p>
+        </div>
+        <div class="pricingCard__actions">
+          <button class="button button--primary" type="button" data-plan="yearly">Start yearly</button>
+        </div>
       </article>
+    </section>
+
+    <section class="venuePricingSection" aria-labelledby="venuePricingTitle">
+      <div class="sectionHeader">
+        <div>
+          <div class="eyebrow">For venues</div>
+          <h2 id="venuePricingTitle">Venue tools use the same secure Pint Path login.</h2>
+        </div>
+        <p>Bars do not need a separate login. Managers sign in through the normal account page, then approved venue access unlocks the venue portal for their assigned venue only.</p>
+      </div>
+
+      <div class="grid venuePricingGrid">
+        <article class="card venuePricingCard">
+          <div class="venuePricingCard__body">
+            <span class="tierBadge">Basic</span>
+            <h3>Keep your listing accurate</h3>
+            <p class="muted">A simple operational tier for venue teams who want locals to see current details.</p>
+            <ul class="cleanList tierList">
+              <li>Edit public venue profile details after approval.</li>
+              <li>Submit beers on tap, prices, stock notes, and happy hours.</li>
+              <li>Add Pint Path specials for discovery on the map.</li>
+              <li>Menu photos and evidence stay private for review.</li>
+            </ul>
+          </div>
+          <div class="venuePricingCard__actions">
+            <a class="button" href="/account.html?next=/venue-portal.html">Use account login</a>
+          </div>
+        </article>
+
+        <article class="card venuePricingCard card--highlight">
+          <div class="venuePricingCard__body">
+            <span class="tierBadge tierBadge--gold">Plus</span>
+            <h3>Understand local demand</h3>
+            <p class="muted">Privacy-safe suburb insights for venues that want to plan better specials and tap lists.</p>
+            <ul class="cleanList tierList">
+              <li>Everything in Basic.</li>
+              <li>Suburb-level search and interaction trends.</li>
+              <li>Monthly venue reports for views, lookups, and specials.</li>
+              <li>Suppressed low-count data to protect user and competitor privacy.</li>
+            </ul>
+          </div>
+          <div class="venuePricingCard__actions">
+            <a class="button button--primary" href="/venue-portal.html">Open venue portal</a>
+          </div>
+        </article>
+
+        <article class="card venuePricingCard">
+          <div class="venuePricingCard__body">
+            <span class="tierBadge tierBadge--blue">Pro</span>
+            <h3>Stand out in discovery</h3>
+            <p class="muted">Premium display metadata for future featured placement without exposing private analytics.</p>
+            <ul class="cleanList tierList">
+              <li>Everything in Plus.</li>
+              <li>Premium venue badge and highlighted venue name metadata.</li>
+              <li>Eligibility for featured Pint Path specials.</li>
+              <li>More prominent discovery options as partner tools roll out.</li>
+            </ul>
+          </div>
+          <div class="venuePricingCard__actions">
+            <a class="button" href="/venue-portal.html">View Pro tools</a>
+          </div>
+        </article>
+      </div>
     </section>
     <p class="footerCopy">Freemium access unlocks after approved review. Partner venue credit is not active for this field test. Pint Path is 18+ only. Prices may change and availability is not guaranteed. <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></p>
   </main>

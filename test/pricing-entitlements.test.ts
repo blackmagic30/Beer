@@ -30,6 +30,17 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Freemium");
     expect(pricingHtml).toContain("15 pts");
     expect(pricingHtml).toContain("Earn 15 approved contribution points");
+    expect(pricingHtml).toContain("Start freemium");
+    expect(pricingHtml).toContain("For venues");
+    expect(pricingHtml).toContain("Venue tools use the same secure Pint Path login.");
+    expect(pricingHtml).toContain("Bars do not need a separate login.");
+    expect(pricingHtml).toContain("Basic");
+    expect(pricingHtml).toContain("Plus");
+    expect(pricingHtml).toContain("Pro");
+    expect(pricingHtml).toContain("Suburb-level search and interaction trends.");
+    expect(pricingHtml).toContain("Monthly venue reports");
+    expect(pricingHtml).toContain("Premium venue badge");
+    expect(pricingHtml).toContain('href="/venue-portal.html"');
     expect(pricingHtml).toContain('class="grid pricingTierGrid"');
     expect(readme).toContain("A$4.99/month");
     expect(readme).toContain("A$50/year");
@@ -78,6 +89,8 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
     expect(pricingHtml).toContain("Opening secure Stripe checkout");
     expect(businessCss).toContain(".pricingNoticeStack");
+    expect(businessCss).toContain(".pricingCard__actions");
+    expect(businessCss).toContain(".venuePricingGrid");
     expect(businessCss).toContain(".button:disabled");
   });
 });
