@@ -155,7 +155,7 @@
         </article>
       </section>
 
-      <section class="grid grid--two accountPrimaryGrid">
+      <section class="grid grid--two accountPrimaryGrid accountPrimaryGrid--single">
         <article class="panel accountProgressPanel">
           <div class="sectionHeader">
             <div>
@@ -168,39 +168,6 @@
           <p id="rewardEligibilityCopy" class="helperCopy">18+ verification will be required for some future rewards.</p>
           <button id="confirmAgeButton" class="button" type="button">Confirm I am 18+</button>
         </article>
-
-        <article class="panel verificationPanel">
-          <h2>How verification works</h2>
-          <ol class="timelineList">
-            <li><strong>Submitted</strong><span>Your beer price or photo is saved privately.</span></li>
-            <li><strong>Pending review</strong><span>Admins or trusted community reviewers check the evidence.</span></li>
-            <li><strong>Verified or rejected</strong><span>Approved prices may be normalized and shown publicly on the map.</span></li>
-          </ol>
-          <p class="helperCopy">Raw photos, receipts, OCR evidence, and reviewer notes are not public map data.</p>
-        </article>
-      </section>
-
-      <section class="accountActionsGrid" aria-label="Quick actions">
-        <a class="actionCard" href="/submit.html">
-          <strong>Submit venue data</strong>
-          <span>Add beer prices, happy hours, or menu photos from the full submission flow.</span>
-        </a>
-        <a class="actionCard" href="/submit.html?type=photo_upload">
-          <strong>Upload menu/photo</strong>
-          <span>Attach private evidence for review.</span>
-        </a>
-        <a class="actionCard" href="#recentSubmissionsSection">
-          <strong>View my submissions</strong>
-          <span>See pending, verified, and rejected updates.</span>
-        </a>
-        <a class="actionCard" href="/stats.html">
-          <strong>My stats</strong>
-          <span>Open uploads, points, leaderboard rank, trust, and verification metrics.</span>
-        </a>
-        <a class="actionCard" href="#accountSettingsHub">
-          <strong>Account settings</strong>
-          <span>Manage preferences, privacy, security, and support requests.</span>
-        </a>
       </section>
 
       <section id="recentSubmissionsSection" class="panel">
@@ -209,7 +176,6 @@
             <h2>Recent submissions</h2>
             <p class="muted">Your private submission history. Public map data only updates after verification.</p>
           </div>
-          <a class="button" href="/submit.html">Submit more data</a>
         </div>
         <div id="recentSubmissionsList" class="submissionList"></div>
       </section>
@@ -223,17 +189,19 @@
           </div>
           <a class="button" href="/feedback.html">Send feedback</a>
         </div>
-        <nav class="settingsNav" aria-label="Account settings sections" role="tablist">
-          <button class="settingsNavButton" type="button" role="tab" data-settings-target="preferences" aria-controls="settingsPreferencesPanel" aria-selected="false">Preferences</button>
-          <button class="settingsNavButton" type="button" role="tab" data-settings-target="watchlist" aria-controls="settingsWatchlistPanel" aria-selected="false">Watchlist</button>
-          <button class="settingsNavButton" type="button" role="tab" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
-          <button class="settingsNavButton" type="button" role="tab" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
-          <button class="settingsNavButton" type="button" role="tab" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
+        <nav class="settingsNav" aria-label="Account settings sections">
+          <a class="settingsNavButton" href="#recentSubmissionsSection">View submissions</a>
+          <a class="settingsNavButton" href="/stats.html">My stats</a>
+          <button class="settingsNavButton" type="button" data-settings-target="preferences" aria-controls="settingsPreferencesPanel" aria-selected="false">Preferences</button>
+          <button class="settingsNavButton" type="button" data-settings-target="watchlist" aria-controls="settingsWatchlistPanel" aria-selected="false">Watchlist</button>
+          <button class="settingsNavButton" type="button" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
+          <button class="settingsNavButton" type="button" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
+          <button class="settingsNavButton" type="button" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
         </nav>
 
         <article id="settingsEmptyPanel" class="panel settingsEmptyPanel">
           <h2>What would you like to manage?</h2>
-          <p class="muted">Open Preferences, Watchlist, Privacy, Support, or Security above. Only one section opens at a time.</p>
+          <p class="muted">Open submissions, stats, preferences, watchlist, privacy, support, or security from the buttons above.</p>
         </article>
 
         <div id="settingsPreferencesPanel" class="settingsPanel" data-settings-panel="preferences" role="tabpanel" hidden>
@@ -569,8 +537,7 @@
         list.innerHTML = `
           <div class="emptyState accountEmptyState">
             <strong>No uploads yet.</strong>
-            <span>Submit your first beer price and it will appear here while reviewers check it.</span>
-            <a class="button button--primary" href="/submit.html">Submit your first beer price</a>
+            <span>Your uploads will appear here after you submit data from the Submit Data page.</span>
           </div>
         `;
         return;

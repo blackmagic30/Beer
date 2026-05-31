@@ -67,7 +67,7 @@ describe("account page shell", () => {
     expect(html).toContain("Manage your Pint Path account");
     expect(html).toContain('id="accountSettingsHub"');
     expect(html).toContain("Recent submissions");
-    expect(html).toContain("How verification works");
+    expect(html).not.toContain("How verification works");
     expect(html).toContain("Pint Path discount pass");
     expect(html).toContain('href="/stats.html"');
     expect(html).not.toContain("Current status");
@@ -122,10 +122,11 @@ describe("account page shell", () => {
 
   it("keeps contributor evidence copy private and reviewer-focused", () => {
     const html = accountHtml();
+    const trust = trustHtml();
 
     expect(html).toContain("Private evidence");
-    expect(html).toContain("Raw photos, receipts, OCR evidence, and reviewer notes are not public map data");
     expect(html).toContain("Submitted data stays pending until verified or approved.");
+    expect(trust).toContain("Raw photos, reviewer notes, account details, and individual analytics stay private.");
   });
 
   it("keeps feedback on a dedicated page instead of clustering the account dashboard", () => {
@@ -146,10 +147,11 @@ describe("account page shell", () => {
   it("moves account actions into submit flows and a settings hub", () => {
     const html = accountHtml();
 
-    expect(html).toContain('href="/submit.html"');
-    expect(html).toContain('href="/submit.html?type=photo_upload"');
+    expect(html).not.toContain('class="accountActionsGrid"');
+    expect(html).not.toContain('href="/submit.html"');
+    expect(html).not.toContain('href="/submit.html?type=photo_upload"');
+    expect(html).toContain('href="#recentSubmissionsSection"');
     expect(html).toContain('href="/stats.html"');
-    expect(html).toContain('href="#accountSettingsHub"');
     expect(html).toContain('data-settings-target="preferences"');
     expect(html).toContain('data-settings-target="watchlist"');
     expect(html).toContain('data-settings-target="privacy"');
@@ -193,6 +195,8 @@ describe("account page shell", () => {
     const css = businessCss();
 
     expect(html).toContain('id="settingsEmptyPanel"');
+    expect(html).toContain('href="#recentSubmissionsSection"');
+    expect(html).toContain('href="/stats.html"');
     expect(html).toContain('data-settings-panel="preferences" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="watchlist" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="privacy" role="tabpanel" hidden');
@@ -247,7 +251,8 @@ describe("account page shell", () => {
     expect(script).toContain('href="/missions.html">Missions');
     expect(script).toContain('href="/submit.html">Submit data');
     expect(html).toContain('href="/missions.html" data-auth-required');
-    expect(html).toContain('href="/submit.html" class="primary" data-auth-required');
+    expect(html).toContain('href="/submit.html" data-auth-required');
+    expect(html).not.toContain('href="/submit.html" class="primary" data-auth-required');
     expect(html).toContain("function syncAuthenticatedNavLinks");
     expect(html).toContain('document.querySelectorAll("[data-auth-required]")');
   });
@@ -331,10 +336,13 @@ describe("account page shell", () => {
     const status = statusHtml();
     const feedback = feedbackHtml();
     const nav = businessJs();
+    const css = businessCss();
 
     expect(nav).toContain('href="/trust.html"');
     expect(trust).toContain("Trust Centre");
     expect(trust).toContain("Raw photos, reviewer notes, account details, and individual analytics stay private.");
+    expect(trust).toContain("trustActionCard");
+    expect(css).toContain(".trustActionCard__actions");
     expect(trust).toContain("Read Community Standards");
     expect(community).toContain("Submit what you actually saw at the venue.");
     expect(community).toContain("Spoofing location");

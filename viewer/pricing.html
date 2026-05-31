@@ -66,7 +66,7 @@
       </article>
     </section>
 
-    <section class="venuePricingSection" aria-labelledby="venuePricingTitle">
+    <section id="venuePricingSection" class="venuePricingSection is-hidden" aria-labelledby="venuePricingTitle" hidden>
       <div class="sectionHeader">
         <div>
           <div class="eyebrow">For venues</div>
@@ -136,6 +136,7 @@
       const nav = document.getElementById("nav");
       const billingModeNotice = document.getElementById("billingModeNotice");
       const statusNotice = document.getElementById("status");
+      const venuePricingSection = document.getElementById("venuePricingSection");
 
       nav.innerHTML = MelbBeerBusiness.renderNav("pricing");
       const businessConfig = MelbBeerBusiness.getBusinessConfig();
@@ -189,6 +190,37 @@
           return MelbBeerBusiness.apiFetch("/api/business/account");
         }
       };
+
+      const setVenuePricingVisible = (visible) => {
+        if (!venuePricingSection) {
+          return;
+        }
+        venuePricingSection.hidden = !visible;
+        venuePricingSection.classList.toggle("is-hidden", !visible);
+      };
+
+      const refreshVenuePricingVisibility = async () => {
+        setVenuePricingVisible(false);
+
+        if (!MelbBeerBusiness.getAuthToken()) {
+          await trySyncSession();
+        }
+
+        if (!MelbBeerBusiness.getAuthToken()) {
+          return;
+        }
+
+        try {
+          const portal = await MelbBeerBusiness.apiFetch("/api/business/venue-portal");
+          const assignments = Array.isArray(portal?.assignments) ? portal.assignments : [];
+          const hasVenueAccess = assignments.length > 0 || Boolean(portal?.selectedVenue);
+          setVenuePricingVisible(hasVenueAccess);
+        } catch (_error) {
+          setVenuePricingVisible(false);
+        }
+      };
+
+      void refreshVenuePricingVisibility();
 
       const ensureReadyForCheckout = async (plan) => {
         if (!MelbBeerBusiness.getAuthToken()) {

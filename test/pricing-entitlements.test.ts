@@ -42,6 +42,11 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Premium venue badge");
     expect(pricingHtml).toContain('href="/venue-portal.html"');
     expect(pricingHtml).toContain('class="grid pricingTierGrid"');
+    expect(pricingHtml).toContain('id="venuePricingSection"');
+    expect(pricingHtml).toContain('class="venuePricingSection is-hidden"');
+    expect(pricingHtml).toContain("setVenuePricingVisible(false)");
+    expect(pricingHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/venue-portal")');
+    expect(pricingHtml).toContain("setVenuePricingVisible(hasVenueAccess)");
     expect(readme).toContain("A$4.99/month");
     expect(readme).toContain("A$50/year");
     expect(envExample).toContain("STRIPE_PRICE_MONTHLY=price_monthly_499_aud");

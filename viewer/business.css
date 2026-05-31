@@ -1357,6 +1357,11 @@ h3 {
 
 .accountPrimaryGrid {
   align-items: stretch;
+  margin-top: 22px;
+}
+
+.accountPrimaryGrid--single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .accountProgressPanel,
@@ -1645,6 +1650,24 @@ h3 {
 
 .trustPage .card {
   min-height: auto;
+}
+
+.trustActionCard {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 330px;
+}
+
+.trustActionCard__body {
+  display: grid;
+  gap: 12px;
+}
+
+.trustActionCard__actions {
+  display: flex;
+  align-items: center;
+  margin-top: auto;
 }
 
 .trustStack {
