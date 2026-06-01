@@ -55,7 +55,7 @@ a {
 .pageShell {
   width: min(1160px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 24px 0 56px;
+  padding: 24px 0 96px;
 }
 
 .topNav,
@@ -135,8 +135,11 @@ a {
   font: inherit;
   font-size: 14px;
   font-weight: 850;
+  line-height: 1.15;
   text-decoration: none;
+  text-align: center;
   cursor: pointer;
+  white-space: normal;
   transition: transform 150ms ease, border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
 }
 
@@ -319,6 +322,16 @@ h3 {
   gap: 16px;
 }
 
+.grid > *,
+.metricGrid > *,
+.accountHighlightsGrid > *,
+.accountPrimaryGrid > *,
+.accountActionsGrid > *,
+.pricingTierGrid > *,
+.venuePricingGrid > * {
+  min-width: 0;
+}
+
 .grid--two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -341,6 +354,10 @@ h3 {
   margin-bottom: 16px;
 }
 
+.sectionHeader > * {
+  min-width: 0;
+}
+
 .sectionHeader > p {
   max-width: 520px;
   margin: 0;
@@ -350,6 +367,7 @@ h3 {
 .panel,
 .card {
   position: relative;
+  min-width: 0;
   border-radius: var(--radius-xl);
   padding: 22px;
   overflow: hidden;
@@ -1005,6 +1023,7 @@ h3 {
 
 .metricCard {
   position: relative;
+  min-width: 0;
   border-radius: var(--radius-lg);
   padding: 16px;
   overflow: hidden;
@@ -1021,6 +1040,7 @@ h3 {
 .metricValue--small {
   font-size: clamp(1.35rem, 3vw, 2rem);
   letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
@@ -1039,7 +1059,7 @@ h3 {
 .accountHighlightsGrid {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(320px, 1.5fr);
-  gap: 14px;
+  gap: clamp(14px, 1.8vw, 20px);
   align-items: stretch;
 }
 
@@ -1069,11 +1089,75 @@ h3 {
 
 .accountHighlightsGrid .metricCard,
 .accountHighlightsGrid .panel {
+  box-sizing: border-box;
   min-height: 100%;
+  padding: clamp(22px, 2.1vw, 30px);
+}
+
+.accountHighlightsGrid .metricCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.accountHighlightsGrid .metricCard .metricValue {
+  line-height: 0.96;
+}
+
+.accountHighlightsGrid .metricCard .helperCopy {
+  max-width: 26rem;
+  margin: 0;
 }
 
 .accountDiscountFeature {
   grid-column: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.accountDiscountFeature .sectionHeader {
+  align-items: flex-start;
+  gap: 22px;
+  margin-bottom: 0;
+}
+
+.accountDiscountFeature .sectionHeader > div {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.accountDiscountFeature .sectionHeader h2,
+.accountDiscountFeature .sectionHeader p {
+  margin: 0;
+}
+
+.accountDiscountFeature .sectionHeader p {
+  max-width: 42rem;
+  line-height: 1.55;
+}
+
+.accountDiscountFeature .pill {
+  flex: 0 0 auto;
+  justify-content: center;
+  max-width: 94px;
+  padding: 9px 12px;
+  text-align: center;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.accountDiscountFeature > .button {
+  align-self: flex-start;
+  margin-top: 10px;
+}
+
+.accountDiscountFeature > .helperCopy {
+  max-width: 42rem;
+  margin: 0;
+  line-height: 1.65;
 }
 
 .discountPassResult {
@@ -1081,7 +1165,7 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  margin-top: 16px;
+  margin-top: 0;
   padding: 18px;
   border: 1px solid rgba(245, 199, 107, 0.28);
   border-radius: 24px;
@@ -1098,6 +1182,7 @@ h3 {
   font-weight: 950;
   letter-spacing: 0.2em;
   color: var(--gold);
+  overflow-wrap: anywhere;
 }
 
 .discountPassQr {
@@ -1960,7 +2045,14 @@ h3 {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+  }
+
+  .navLinks a {
     white-space: nowrap;
+  }
+
+  .button {
+    white-space: normal;
   }
 
   .hero {
@@ -2073,6 +2165,21 @@ h3 {
     border-radius: 24px;
   }
 
+  .accountHighlightsGrid .metricCard,
+  .accountHighlightsGrid .panel {
+    min-height: auto;
+    padding: 20px;
+  }
+
+  .accountDiscountFeature .sectionHeader {
+    gap: 14px;
+  }
+
+  .accountDiscountFeature .pill {
+    align-self: flex-start;
+    max-width: none;
+  }
+
   .floatingFeedback {
     right: 12px;
     bottom: 12px;
@@ -2105,5 +2212,13 @@ h3 {
   .pricingTierGrid,
   .venuePricingGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .accountHighlightsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .accountDiscountFeature {
+    grid-column: 1 / -1;
   }
 }

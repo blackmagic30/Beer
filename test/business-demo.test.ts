@@ -2324,11 +2324,14 @@ describe("business demo contribution model", () => {
       sort: "nearby",
       limit: 20,
     });
-    expect(nearby.map((mission) => mission.id)).toEqual(["mission-fresh", "mission-stale"]);
-    expect(nearby[0]?.distanceMeters).toBe(0);
+    const nearbyManualIds = nearby
+      .map((mission) => mission.id)
+      .filter((id) => id.startsWith("mission-"));
+    expect(nearbyManualIds).toEqual(["mission-fresh", "mission-stale"]);
+    expect(nearby.find((mission) => mission.id === "mission-fresh")?.distanceMeters).toBe(0);
 
     const searched = service.listMissions({ q: "smith", sort: "points", limit: 20 });
-    expect(searched.map((mission) => mission.id)).toEqual(["mission-new-drinks"]);
+    expect(searched.map((mission) => mission.id)).toContain("mission-new-drinks");
 
     const area = await service.resolveMissionArea("Smith Street");
     expect(area.location).toEqual(expect.objectContaining({
@@ -2336,6 +2339,91 @@ describe("business demo contribution model", () => {
       longitude: 144.984,
       label: "New Tap Room, Collingwood",
       source: "local_cache",
+    }));
+  });
+
+  it("auto-generates mission values from venue coverage, beer gaps, and freshness", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const freshAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const staleAt = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString();
+
+    repository.upsertVenueLocationCache({
+      venueId: "auto-empty",
+      venueName: "Empty Mission Bar",
+      suburb: "Carlton",
+      latitude: -37.8,
+      longitude: 144.966,
+      now: NOW,
+    });
+    repository.upsertVenueLocationCache({
+      venueId: "auto-fresh",
+      venueName: "Fresh Mission Bar",
+      suburb: "Fitzroy",
+      latitude: -37.802,
+      longitude: 144.979,
+      now: NOW,
+    });
+    repository.upsertVenueLocationCache({
+      venueId: "auto-stale",
+      venueName: "Stale Mission Bar",
+      suburb: "Brunswick",
+      latitude: -37.766,
+      longitude: 144.963,
+      now: NOW,
+    });
+
+    const insertPriceRecord = database.prepare(
+      `INSERT INTO venue_price_records (
+        id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size, price,
+        is_happy_hour_price, is_on_tap, confidence, source_type, last_verified_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'yes', 'photo_verified', 'test_fixture', ?, ?, ?)`,
+    );
+    insertPriceRecord.run(
+      "auto-record-fresh-guinness",
+      "auto-fresh",
+      "Fresh Mission Bar",
+      "Fitzroy",
+      "Guinness",
+      "guinness",
+      "pint",
+      13,
+      freshAt,
+      freshAt,
+      freshAt,
+    );
+    insertPriceRecord.run(
+      "auto-record-stale-carlton",
+      "auto-stale",
+      "Stale Mission Bar",
+      "Brunswick",
+      "Carlton Draft",
+      "carlton_draft",
+      "pint",
+      12,
+      staleAt,
+      staleAt,
+      staleAt,
+    );
+
+    const missions = service.listMissions({ limit: 50, sort: "points" });
+    const byId = new Map(missions.map((mission) => [mission.id, mission]));
+
+    expect(byId.get("auto:venue:auto-empty:coverage")).toEqual(expect.objectContaining({
+      points: 5,
+      reason: "New or empty venue - add first verified beer prices",
+    }));
+    expect(byId.get("auto:venue:auto-fresh:beer:guinness")).toEqual(expect.objectContaining({
+      points: 0.1,
+      reason: expect.stringContaining("recently updated"),
+    }));
+    expect(byId.get("auto:venue:auto-fresh:beer:carlton_draft")).toEqual(expect.objectContaining({
+      points: 5,
+      reason: "Missing Carlton Draft price - add this drink",
+    }));
+    expect(byId.get("auto:venue:auto-stale:menu-freshness")).toEqual(expect.objectContaining({
+      points: 1,
+      reason: expect.stringContaining("Stale drink menu"),
     }));
   });
 

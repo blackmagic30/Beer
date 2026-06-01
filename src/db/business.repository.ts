@@ -170,6 +170,15 @@ export interface BusinessMission {
   updatedAt: string;
 }
 
+export interface MissionVenueCandidate {
+  venueId: string;
+  venueName: string;
+  suburb: string | null;
+  latestVerifiedAt: string | null;
+  recordCount: number;
+  happyHourLastVerifiedAt: string | null;
+}
+
 export interface VenueLocationCache {
   venueId: string;
   venueName: string;
@@ -2775,6 +2784,161 @@ export class BusinessRepository {
       )
       .all(...values) as MissionRow[];
     return rows.map(toMission);
+  }
+
+  listMissionVenueCandidates(limit: number): MissionVenueCandidate[] {
+    const rows = this.database
+      .prepare(
+        `WITH known_venue_ids AS (
+           SELECT venue_id FROM venue_location_cache WHERE venue_id IS NOT NULL AND venue_id != ''
+           UNION
+           SELECT venue_id FROM venue_price_records WHERE venue_id IS NOT NULL AND venue_id != ''
+           UNION
+           SELECT venue_id FROM venue_profiles WHERE venue_id IS NOT NULL AND venue_id != '' AND active = 1
+           UNION
+           SELECT venue_id FROM venue_requests WHERE venue_id IS NOT NULL AND venue_id != ''
+           UNION
+           SELECT venue_id FROM missions WHERE venue_id IS NOT NULL AND venue_id != '' AND id NOT LIKE 'auto:%'
+         )
+         SELECT
+           ids.venue_id AS venue_id,
+           COALESCE(
+             (SELECT name FROM venue_profiles profile WHERE profile.venue_id = ids.venue_id AND profile.active = 1 LIMIT 1),
+             (SELECT venue_name FROM venue_location_cache location WHERE location.venue_id = ids.venue_id LIMIT 1),
+             (SELECT venue_name FROM venue_price_records record WHERE record.venue_id = ids.venue_id ORDER BY record.last_verified_at DESC LIMIT 1),
+             (SELECT venue_name FROM venue_requests request WHERE request.venue_id = ids.venue_id ORDER BY request.created_at DESC LIMIT 1),
+             (SELECT venue_name FROM missions mission WHERE mission.venue_id = ids.venue_id AND mission.id NOT LIKE 'auto:%' ORDER BY mission.updated_at DESC LIMIT 1),
+             ids.venue_id
+           ) AS venue_name,
+           COALESCE(
+             (SELECT suburb FROM venue_profiles profile WHERE profile.venue_id = ids.venue_id AND profile.active = 1 LIMIT 1),
+             (SELECT suburb FROM venue_location_cache location WHERE location.venue_id = ids.venue_id LIMIT 1),
+             (SELECT suburb FROM venue_price_records record WHERE record.venue_id = ids.venue_id ORDER BY record.last_verified_at DESC LIMIT 1),
+             (SELECT suburb FROM venue_requests request WHERE request.venue_id = ids.venue_id ORDER BY request.created_at DESC LIMIT 1),
+             (SELECT suburb FROM missions mission WHERE mission.venue_id = ids.venue_id AND mission.id NOT LIKE 'auto:%' ORDER BY mission.updated_at DESC LIMIT 1)
+           ) AS suburb,
+           (SELECT max(last_verified_at) FROM venue_price_records record WHERE record.venue_id = ids.venue_id) AS latest_verified_at,
+           (SELECT count(*) FROM venue_price_records record WHERE record.venue_id = ids.venue_id) AS record_count,
+           (
+             SELECT max(last_verified_at)
+             FROM venue_price_records record
+             WHERE record.venue_id = ids.venue_id
+               AND (
+                 record.is_happy_hour_price = 1
+                 OR (record.happy_hour_details IS NOT NULL AND trim(record.happy_hour_details) != '')
+               )
+           ) AS happy_hour_last_verified_at
+         FROM known_venue_ids ids
+         ORDER BY latest_verified_at IS NOT NULL, latest_verified_at ASC, venue_name ASC
+         LIMIT ?`,
+      )
+      .all(limit) as Array<{
+        venue_id: string;
+        venue_name: string;
+        suburb: string | null;
+        latest_verified_at: string | null;
+        record_count: number;
+        happy_hour_last_verified_at: string | null;
+      }>;
+
+    return rows.map((row) => ({
+      venueId: row.venue_id,
+      venueName: row.venue_name,
+      suburb: row.suburb,
+      latestVerifiedAt: row.latest_verified_at,
+      recordCount: Number(row.record_count ?? 0),
+      happyHourLastVerifiedAt: row.happy_hour_last_verified_at,
+    }));
+  }
+
+  getLatestVenueBeerTimestamp(input: {
+    venueId: string;
+    normalizedBeerId?: string | null;
+    beerNames: readonly string[];
+  }): string | null {
+    const normalizedBeerId = input.normalizedBeerId?.trim();
+    const names = Array.from(new Set(input.beerNames
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean)));
+    const clauses: string[] = [];
+    const values: unknown[] = [input.venueId];
+
+    if (normalizedBeerId) {
+      clauses.push("normalized_beer_id = ?");
+      values.push(normalizedBeerId);
+    }
+
+    if (names.length) {
+      clauses.push(`lower(trim(beer_name)) IN (${names.map(() => "?").join(", ")})`);
+      values.push(...names);
+    }
+
+    if (!clauses.length) {
+      return null;
+    }
+
+    const row = this.database
+      .prepare(
+        `SELECT max(last_verified_at) AS last_verified_at
+         FROM venue_price_records
+         WHERE venue_id = ?
+           AND (${clauses.join(" OR ")})`,
+      )
+      .get(...values) as { last_verified_at: string | null } | undefined;
+
+    return row?.last_verified_at ?? null;
+  }
+
+  replaceAutoMissions(
+    missions: Array<Omit<BusinessMission, "active" | "sponsorFlag"> & { active?: boolean; sponsorFlag?: boolean }>,
+    now: string,
+  ): number {
+    const replace = this.database.transaction((generatedMissions: typeof missions) => {
+      this.database
+        .prepare("UPDATE missions SET active = 0, updated_at = ? WHERE id LIKE 'auto:%'")
+        .run(now);
+
+      const upsertMission = this.database.prepare(
+        `INSERT INTO missions (
+          id, venue_id, venue_name, suburb, reason, priority, points, multiplier,
+          active, sponsor_flag, last_verified_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          venue_id = excluded.venue_id,
+          venue_name = excluded.venue_name,
+          suburb = excluded.suburb,
+          reason = excluded.reason,
+          priority = excluded.priority,
+          points = excluded.points,
+          multiplier = excluded.multiplier,
+          active = excluded.active,
+          sponsor_flag = excluded.sponsor_flag,
+          last_verified_at = excluded.last_verified_at,
+          updated_at = excluded.updated_at`,
+      );
+
+      for (const mission of generatedMissions) {
+        upsertMission.run(
+          mission.id,
+          mission.venueId,
+          mission.venueName,
+          mission.suburb,
+          mission.reason,
+          mission.priority,
+          mission.points,
+          mission.multiplier,
+          mission.active === false ? 0 : 1,
+          mission.sponsorFlag ? 1 : 0,
+          mission.lastVerifiedAt,
+          mission.createdAt,
+          mission.updatedAt,
+        );
+      }
+
+      return generatedMissions.length;
+    });
+
+    return replace(missions);
   }
 
   listLatestPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {

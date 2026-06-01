@@ -16,6 +16,7 @@ import {
   type BarMembershipTier,
   type BarProfile,
   type BusinessMission,
+  type MissionVenueCandidate,
   type BusinessSubmission,
   type BusinessSubmissionItem,
   type ConfidenceLabel,
@@ -25,7 +26,7 @@ import {
   type SourceEvidenceObject,
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
-import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, normalizeBeerSearchKey } from "../../constants/beers.js";
+import { SUPPORTED_BEERS, VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, normalizeBeerSearchKey } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { redactSecrets } from "../../lib/redact.js";
@@ -101,6 +102,13 @@ interface GoogleGeocodeResponse {
     };
   }>;
 }
+
+const AUTO_MISSION_VENUE_LIMIT = 2_000;
+const AUTO_MISSION_TARGET_BEERS = [
+  SUPPORTED_BEERS.guinness,
+  SUPPORTED_BEERS.carlton_draft,
+  SUPPORTED_BEERS.stone_and_wood,
+] as const;
 
 interface StripeEvent {
   id: string;
@@ -3003,6 +3011,124 @@ export class BusinessService {
       : freshnessPoints;
   }
 
+  private missionPriorityForPoints(points: number): "low" | "normal" | "high" {
+    if (points >= CONTRIBUTION_POINTS.staleUpdate) {
+      return "high";
+    }
+
+    if (points >= CONTRIBUTION_POINTS.weekOldUpdate) {
+      return "normal";
+    }
+
+    return "low";
+  }
+
+  private missionReasonForFreshness(scope: string, lastVerifiedAt: string | null): string {
+    if (!lastVerifiedAt) {
+      return `Missing ${scope} - add current venue data`;
+    }
+
+    const points = this.calculateFreshnessPoints(lastVerifiedAt);
+    if (points <= CONTRIBUTION_POINTS.veryFreshUpdate) {
+      return `Confirm current ${scope} - recently updated`;
+    }
+
+    if (points <= CONTRIBUTION_POINTS.weekOldUpdate) {
+      return `Weekly ${scope} check - confirm it is still current`;
+    }
+
+    return `Stale ${scope} - update with current venue data`;
+  }
+
+  private buildAutoMissionsForVenue(
+    candidate: MissionVenueCandidate,
+    now: string,
+  ): Array<Omit<BusinessMission, "active" | "sponsorFlag"> & { active?: boolean; sponsorFlag?: boolean }> {
+    const baseMission = (
+      suffix: string,
+      reason: string,
+      points: number,
+      lastVerifiedAt: string | null,
+      multiplier = 1,
+    ) => ({
+      id: `auto:venue:${candidate.venueId}:${suffix}`,
+      venueId: candidate.venueId,
+      venueName: candidate.venueName,
+      suburb: candidate.suburb,
+      reason,
+      priority: this.missionPriorityForPoints(points),
+      points,
+      multiplier,
+      lastVerifiedAt,
+      createdAt: now,
+      updatedAt: now,
+      active: true,
+      sponsorFlag: false,
+    });
+
+    if (candidate.recordCount === 0) {
+      return [
+        baseMission(
+          "coverage",
+          "New or empty venue - add first verified beer prices",
+          CONTRIBUTION_POINTS.newVenue,
+          null,
+          1.2,
+        ),
+      ];
+    }
+
+    const missions = [
+      baseMission(
+        "menu-freshness",
+        this.missionReasonForFreshness("drink menu", candidate.latestVerifiedAt),
+        this.calculateFreshnessPoints(candidate.latestVerifiedAt),
+        candidate.latestVerifiedAt,
+      ),
+    ];
+
+    for (const beer of AUTO_MISSION_TARGET_BEERS) {
+      const lastVerifiedAt = this.repository.getLatestVenueBeerTimestamp({
+        venueId: candidate.venueId,
+        normalizedBeerId: beer.key,
+        beerNames: [beer.name, ...beer.aliases],
+      });
+      const points = this.calculateFreshnessPoints(lastVerifiedAt);
+      const reason = lastVerifiedAt
+        ? this.missionReasonForFreshness(`${beer.name} price`, lastVerifiedAt)
+        : `Missing ${beer.name} price - add this drink`;
+
+      missions.push(baseMission(`beer:${beer.key}`, reason, points, lastVerifiedAt));
+    }
+
+    const happyHourLastVerifiedAt = candidate.happyHourLastVerifiedAt ?? candidate.latestVerifiedAt;
+    const happyHourPoints = this.calculateFreshnessPoints(happyHourLastVerifiedAt);
+    missions.push(baseMission(
+      "happy-hour",
+      candidate.happyHourLastVerifiedAt
+        ? this.missionReasonForFreshness("happy-hour details", candidate.happyHourLastVerifiedAt)
+        : "Missing happy-hour details - add current specials",
+      happyHourPoints,
+      happyHourLastVerifiedAt,
+    ));
+
+    return missions;
+  }
+
+  private refreshAutoMissions(): { candidates: number; generated: number } {
+    const candidates = this.repository.listMissionVenueCandidates(AUTO_MISSION_VENUE_LIMIT);
+    if (!candidates.length) {
+      return { candidates: 0, generated: 0 };
+    }
+
+    const now = nowIso();
+    const missions = candidates.flatMap((candidate) => this.buildAutoMissionsForVenue(candidate, now));
+    return {
+      candidates: candidates.length,
+      generated: this.repository.replaceAutoMissions(missions, now),
+    };
+  }
+
   async resolveMissionArea(query: string): Promise<{
     location: MissionAreaLookup | null;
     message: string;
@@ -3097,6 +3223,8 @@ export class BusinessService {
   }
 
   private resolveMissionAreaFromLocalCache(query: string): MissionAreaLookup | null {
+    this.refreshAutoMissions();
+
     const terms = query
       .toLowerCase()
       .split(/\s+/)
@@ -3127,16 +3255,20 @@ export class BusinessService {
         terms.every((term) => entry.searchable.includes(term)),
       );
 
-    if (!matches.length) {
+    const uniqueMatches = Array.from(
+      new Map(matches.map((entry) => [entry.mission.venueId, entry])).values(),
+    );
+
+    if (!uniqueMatches.length) {
       return null;
     }
 
-    const bestMatches = matches.slice(0, 20);
+    const bestMatches = uniqueMatches.slice(0, 20);
     const latitude = bestMatches.reduce((sum, entry) => sum + entry.location!.latitude!, 0) / bestMatches.length;
     const longitude = bestMatches.reduce((sum, entry) => sum + entry.location!.longitude!, 0) / bestMatches.length;
     const first = bestMatches[0]!;
     const suburb = first.profile?.suburb ?? first.mission.suburb;
-    const label = matches.length === 1
+    const label = uniqueMatches.length === 1
       ? [first.mission.venueName, suburb].filter(Boolean).join(", ")
       : suburb ?? query;
 
@@ -3145,7 +3277,7 @@ export class BusinessService {
       longitude,
       label,
       source: "local_cache",
-      confidence: matches.length === 1 ? "exact" : "approximate",
+      confidence: uniqueMatches.length === 1 ? "exact" : "approximate",
     };
   }
 
@@ -3158,16 +3290,22 @@ export class BusinessService {
     sort?: string | undefined;
     limit: number;
   }): BusinessMission[] {
-    this.seedDemoMissions();
+    const refreshed = this.refreshAutoMissions();
+    if (refreshed.candidates === 0 && this.repository.countMissions() === 0) {
+      this.seedDemoMissions();
+    }
+
     const hasLocation = typeof query.latitude === "number" && typeof query.longitude === "number";
     const radiusMeters = Math.max(100, Math.min(50_000, Number(query.radiusKm || 5) * 1000));
+    const resultLimit = Math.max(1, query.limit);
+    const missionFetchLimit = Math.max(resultLimit * 8, 100);
     const searchTerms = String(query.q || "")
       .toLowerCase()
       .split(/\s+/)
       .map((term) => term.trim())
       .filter(Boolean);
     const missions = this.repository
-      .listMissions({ activeOnly: true, suburb: query.suburb, limit: query.limit })
+      .listMissions({ activeOnly: true, suburb: query.suburb, limit: missionFetchLimit })
       .map((mission) => ({
         ...mission,
         lastVerifiedAt: this.repository.getLatestVenueDataTimestamp(mission.venueId) ?? mission.lastVerifiedAt,
@@ -3225,19 +3363,23 @@ export class BusinessService {
               return -1;
             }
             return left.distanceMeters - right.distanceMeters;
-          });
+          })
+          .slice(0, resultLimit);
       case "stale":
         return missions
           .slice()
-          .sort((left, right) => String(left.lastVerifiedAt ?? "").localeCompare(String(right.lastVerifiedAt ?? "")));
+          .sort((left, right) => String(left.lastVerifiedAt ?? "").localeCompare(String(right.lastVerifiedAt ?? "")))
+          .slice(0, resultLimit);
       case "no_data":
         return missions
           .slice()
-          .sort((left, right) => Number(Boolean(left.lastVerifiedAt)) - Number(Boolean(right.lastVerifiedAt)));
+          .sort((left, right) => Number(Boolean(left.lastVerifiedAt)) - Number(Boolean(right.lastVerifiedAt)))
+          .slice(0, resultLimit);
       case "missing_happy_hour":
         return missions
           .slice()
-          .sort((left, right) => Number(/happy/i.test(right.reason)) - Number(/happy/i.test(left.reason)));
+          .sort((left, right) => Number(/happy/i.test(right.reason)) - Number(/happy/i.test(left.reason)))
+          .slice(0, resultLimit);
       case "most_requested":
       case "high_demand":
       case "saved":
@@ -3248,7 +3390,8 @@ export class BusinessService {
           .sort((left, right) =>
             (Number(right.points) * Number(right.multiplier || 1)) -
             (Number(left.points) * Number(left.multiplier || 1)),
-          );
+          )
+          .slice(0, resultLimit);
     }
   }
 
