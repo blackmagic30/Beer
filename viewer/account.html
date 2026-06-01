@@ -170,16 +170,6 @@
         </article>
       </section>
 
-      <section id="recentSubmissionsSection" class="panel">
-        <div class="sectionHeader">
-          <div>
-            <h2>Recent submissions</h2>
-            <p class="muted">Your private submission history. Public map data only updates after verification.</p>
-          </div>
-        </div>
-        <div id="recentSubmissionsList" class="submissionList"></div>
-      </section>
-
       <section id="accountSettingsHub" class="accountSectionStack settingsHub">
         <div class="sectionHeader">
           <div>
@@ -190,8 +180,8 @@
           <a class="button" href="/feedback.html">Send feedback</a>
         </div>
         <nav class="settingsNav" aria-label="Account settings sections">
-          <a class="settingsNavButton" href="#recentSubmissionsSection">View submissions</a>
-          <a class="settingsNavButton" href="/stats.html">My stats</a>
+          <button class="settingsNavButton" type="button" data-settings-target="submissions" aria-controls="settingsSubmissionsPanel" aria-selected="false">View submissions</button>
+          <button class="settingsNavButton" type="button" data-settings-target="stats" aria-controls="settingsStatsPanel" aria-selected="false">My stats</button>
           <button class="settingsNavButton" type="button" data-settings-target="preferences" aria-controls="settingsPreferencesPanel" aria-selected="false">Preferences</button>
           <button class="settingsNavButton" type="button" data-settings-target="watchlist" aria-controls="settingsWatchlistPanel" aria-selected="false">Watchlist</button>
           <button class="settingsNavButton" type="button" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
@@ -203,6 +193,31 @@
           <h2>What would you like to manage?</h2>
           <p class="muted">Open submissions, stats, preferences, watchlist, privacy, support, or security from the buttons above.</p>
         </article>
+
+        <div id="settingsSubmissionsPanel" class="settingsPanel" data-settings-panel="submissions" role="tabpanel" hidden>
+          <section id="recentSubmissionsSection" class="panel">
+            <div class="sectionHeader">
+              <div>
+                <h2>Recent submissions</h2>
+                <p class="muted">Your private submission history. Public map data only updates after verification.</p>
+              </div>
+            </div>
+            <div id="recentSubmissionsList" class="submissionList"></div>
+          </section>
+        </div>
+
+        <div id="settingsStatsPanel" class="settingsPanel" data-settings-panel="stats" role="tabpanel" hidden>
+          <section class="panel">
+            <div class="sectionHeader">
+              <div>
+                <h2>My stats</h2>
+                <p class="muted">Your contribution totals, unlock progress, and discount activity in one place.</p>
+              </div>
+              <a class="button" href="/missions.html">Find missions</a>
+            </div>
+            <div id="accountStatsGrid" class="statsGrid accountStatsGrid"></div>
+          </section>
+        </div>
 
         <div id="settingsPreferencesPanel" class="settingsPanel" data-settings-panel="preferences" role="tabpanel" hidden>
           <form id="preferencesForm" class="panel form">
@@ -571,6 +586,49 @@
       }).join("");
     }
 
+    function renderAccountStatsPanel(result) {
+      const grid = $("accountStatsGrid");
+      if (!grid) {
+        return;
+      }
+
+      const submissions = Array.isArray(result.recentSubmissions) ? result.recentSubmissions : [];
+      const countStatus = (statuses) => submissions.filter((submission) =>
+        statuses.includes(String(submission.status || "").toLowerCase()),
+      ).length;
+      const stats = result.stats || {};
+      const progress = result.contributorProgress || {};
+      const account = result.account || {};
+      const points = Number(progress.pointsThisMonth || 0);
+      const threshold = Math.max(1, Number(progress.unlockThreshold || 15));
+      const pointsNeeded = Number(progress.pointsNeeded ?? Math.max(0, threshold - points));
+      const totalUploads = Number(stats.totalUploads ?? stats.total_uploads ?? result.totalUploads ?? submissions.length ?? 0);
+      const pendingCount = Number(stats.pendingCount ?? stats.pending ?? countStatus(["pending", "needs_more_info"]));
+      const verifiedCount = Number(stats.verifiedCount ?? stats.verified ?? countStatus(["verified", "approved"]));
+      const rejectedCount = Number(stats.rejectedCount ?? stats.rejected ?? countStatus(["rejected"]));
+      const trustScore = Number(stats.trustScore ?? account.trustScore ?? 0);
+      const savings = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
+      const accountId = result.leaderboard?.accountId || account.publicAccountId || "—";
+      const metrics = [
+        ["Total uploads", totalUploads, "All beer price, venue, happy-hour, and source uploads linked to your account."],
+        ["Pending review", pendingCount, "Submissions waiting for reviewer checks before they can affect the public map."],
+        ["Verified", verifiedCount, "Approved contributions that can count toward contributor unlocks."],
+        ["Rejected", rejectedCount, "Rejected uploads stay private and can be used to improve future submissions."],
+        ["Points this month", formatPoints(points), `${formatPoints(pointsNeeded)} more points until contributor access.`],
+        ["Trust score", `${trustScore}%`, "A working signal for future contributor reliability and moderation priority."],
+        ["Total saved", savings, "Estimated from Pint Path discount redemptions logged by venues."],
+        ["Account ID", accountId, "Your public contributor ID for leaderboard ranking and discount lookup."],
+      ];
+
+      grid.innerHTML = metrics.map(([label, value, helper]) => `
+        <article class="metricCard">
+          <div class="metricValue metricValue--small">${escapeHtml(value)}</div>
+          <div class="metricLabel">${escapeHtml(label)}</div>
+          <p class="helperCopy">${escapeHtml(helper)}</p>
+        </article>
+      `).join("");
+    }
+
     function renderDashboard(result) {
       state.accountData = result;
       showDashboard();
@@ -627,6 +685,7 @@
       MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings);
       renderSavedItems(result.savedItems || [], result.recentSearches || []);
       renderRecentSubmissions(result.recentSubmissions || []);
+      renderAccountStatsPanel(result);
     }
 
     async function resumeCheckoutIfRequested(result) {

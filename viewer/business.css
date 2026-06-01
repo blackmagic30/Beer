@@ -131,6 +131,10 @@ a {
   background: rgba(255, 255, 255, 0.055);
   color: #f8fafc;
   border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
   padding: 10px 14px;
   font: inherit;
   font-size: 14px;
@@ -165,7 +169,7 @@ a {
 }
 
 .button--small {
-  min-height: 34px;
+  min-height: 38px;
   padding: 8px 11px;
   font-size: 0.82rem;
 }
@@ -279,6 +283,7 @@ a {
 .eyebrow {
   display: inline-flex;
   width: fit-content;
+  margin-bottom: 14px;
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid rgba(245, 199, 107, 0.28);
@@ -622,7 +627,7 @@ h3 {
   justify-content: center;
   gap: 8px;
   width: 100%;
-  min-height: 42px;
+  min-height: 44px;
   min-width: 0;
   overflow: hidden;
   box-sizing: border-box;
@@ -638,9 +643,9 @@ h3 {
 }
 
 .dayChip input {
-  flex: 0 0 16px;
-  width: 16px;
-  height: 16px;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
   margin: 0;
   accent-color: var(--gold);
 }
@@ -668,9 +673,9 @@ h3 {
 }
 
 .field input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  min-width: 18px;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
   margin: 2px 0 0;
   padding: 0;
   border-radius: 5px;
@@ -725,6 +730,19 @@ h3 {
   gap: 12px;
 }
 
+.missionList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  align-items: stretch;
+  margin-top: 18px;
+}
+
+.missionList .emptyState,
+.missionLoadMore {
+  grid-column: 1 / -1;
+}
+
 .listItem {
   position: relative;
   border-radius: var(--radius-lg);
@@ -741,9 +759,11 @@ h3 {
 }
 
 .missionCard {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   align-items: start;
+  min-height: 260px;
 }
 
 .missionCard__top {
@@ -752,6 +772,7 @@ h3 {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  width: 100%;
 }
 
 .missionCard__title {
@@ -776,11 +797,21 @@ h3 {
 .missionCard__actionCopy {
   color: var(--muted);
   line-height: 1.55;
+  width: 100%;
 }
 
 .missionCard__action {
-  justify-self: start;
-  margin-top: 2px;
+  align-self: flex-start;
+  margin-top: auto;
+}
+
+.missionLoadMore {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 0 2px;
 }
 
 .missionToolbar {
@@ -1572,7 +1603,11 @@ h3 {
   background: rgba(255, 255, 255, 0.045);
   color: #dbe3ef;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font: inherit;
+  min-height: 42px;
   padding: 9px 12px;
   font-size: 13px;
   font-weight: 900;
@@ -1748,6 +1783,20 @@ h3 {
   align-items: start;
 }
 
+.accountStatsGrid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.accountStatsGrid .metricCard {
+  min-height: 180px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.025)),
+    rgba(15, 23, 42, 0.58);
+  border-color: rgba(244, 214, 150, 0.12);
+}
+
 .cleanList {
   display: grid;
   gap: 10px;
@@ -1766,6 +1815,10 @@ h3 {
   flex-direction: column;
   gap: 18px;
   min-height: 330px;
+}
+
+.trustActionCard .eyebrow {
+  margin-bottom: 0;
 }
 
 .trustActionCard__body {
@@ -1953,6 +2006,9 @@ h3 {
 }
 
 .footerCopy a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
   color: #ffe4a8;
   font-weight: 800;
 }
@@ -1971,6 +2027,7 @@ h3 {
   color: #17120a;
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.32);
   padding: 12px 15px;
+  min-height: 44px;
   font-size: 13px;
   font-weight: 950;
   text-decoration: none;
@@ -2015,6 +2072,10 @@ h3 {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.cookieConsent__actions .button {
+  min-height: 44px;
 }
 
 .quickPrivacyActions {

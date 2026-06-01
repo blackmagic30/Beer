@@ -53,7 +53,7 @@
         <span id="missionLocationStatus" class="helperCopy">Location off. Search a suburb, street, or venue instead.</span>
       </div>
       <p id="missionsHelp" class="helperCopy" style="margin-top:14px;">Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.</p>
-      <div id="missionsList" class="list" style="margin-top:16px;"></div>
+      <div id="missionsList" class="list missionList"></div>
     </section>
 
     <p class="footerCopy">Mission points change with data freshness: recent updates are worth less, stale updates are worth more, and venues with no data are highest value. Points only unlock after review and location proof near the venue. <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></p>
@@ -63,6 +63,14 @@
     let missionCache = [];
     let searchTimer = null;
     let missionLocation = null;
+    const INITIAL_MISSION_COUNT = 5;
+    const MISSION_PAGE_SIZE = 5;
+    let visibleMissionCount = INITIAL_MISSION_COUNT;
+    const missionRandomOrder = new Map();
+
+    function $(id) {
+      return document.getElementById(id);
+    }
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -137,9 +145,42 @@
       return [...suburbs, ...venues].filter(Boolean);
     }
 
+    function missionKey(mission) {
+      return String(mission.id || mission.venueId || `${mission.venueName}-${mission.reason}`);
+    }
+
+    function resetVisibleMissions() {
+      visibleMissionCount = INITIAL_MISSION_COUNT;
+    }
+
+    function rememberMissionOrder(missions) {
+      missions.forEach((mission) => {
+        const key = missionKey(mission);
+        if (!missionRandomOrder.has(key)) {
+          missionRandomOrder.set(key, Math.random());
+        }
+      });
+    }
+
+    function orderedMissionsForDisplay(missions) {
+      if (missionLocation) {
+        return [...missions].sort((a, b) => {
+          const aDistance = Number.isFinite(Number(a.distanceMeters)) ? Number(a.distanceMeters) : Number.POSITIVE_INFINITY;
+          const bDistance = Number.isFinite(Number(b.distanceMeters)) ? Number(b.distanceMeters) : Number.POSITIVE_INFINITY;
+          return aDistance - bDistance;
+        });
+      }
+
+      rememberMissionOrder(missions);
+      return [...missions].sort((a, b) => (missionRandomOrder.get(missionKey(a)) || 0) - (missionRandomOrder.get(missionKey(b)) || 0));
+    }
+
     function renderMissions() {
       const query = missionLocation?.source === "area_lookup" ? "" : suburbFilter.value.trim();
-      const missions = missionCache.filter((mission) => missionMatches(mission, query));
+      const filteredMissions = missionCache.filter((mission) => missionMatches(mission, query));
+      const missions = orderedMissionsForDisplay(filteredMissions);
+      const visibleMissions = missions.slice(0, visibleMissionCount);
+      const hiddenCount = Math.max(0, missions.length - visibleMissions.length);
 
       missionsHelp.textContent = query
         ? `Showing missions matching "${query}". You can search partial suburb names, venue names, or reasons like stale prices and happy hour.`
@@ -148,7 +189,7 @@
         : "Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.";
 
       missionsList.innerHTML = missions.length
-        ? missions.map((mission) => {
+        ? visibleMissions.map((mission) => {
           const points = formatPoints(Number(mission.points || 0) * Number(mission.multiplier || 1));
           const reason = String(mission.reason || "");
           const distanceCopy = formatDistance(mission.distanceMeters);
@@ -177,7 +218,12 @@
               <a class="button button--primary missionCard__action" href="${escapeHtml(missionSubmitHref(mission))}" data-mission="${escapeHtml(mission.id)}">Accept mission</a>
             </article>
           `;
-        }).join("")
+        }).join("") + (hiddenCount ? `
+          <div class="missionLoadMore">
+            <span class="helperCopy">Showing ${visibleMissions.length} of ${missions.length} missions.</span>
+            <button id="loadMoreMissionsButton" class="button" type="button">Load more</button>
+          </div>
+        ` : "")
         : `
           <div class="listItem emptyState">
             <strong>No active missions matched "${escapeHtml(query || "that search")}".</strong>
@@ -188,6 +234,13 @@
       missionsList.querySelectorAll("[data-mission]").forEach((link) => {
         link.addEventListener("click", () => MelbBeerBusiness.trackEvent("mission_opened", { missionId: link.dataset.mission }));
       });
+      const loadMoreButton = $("loadMoreMissionsButton");
+      if (loadMoreButton) {
+        loadMoreButton.addEventListener("click", () => {
+          visibleMissionCount += MISSION_PAGE_SIZE;
+          renderMissions();
+        });
+      }
     }
 
     function updateMissionLocationStatus() {
@@ -224,6 +277,7 @@
       }
       const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?${params.toString()}`);
       missionCache = data.missions || [];
+      rememberMissionOrder(missionCache);
       await MelbBeerBusiness.trackEvent("mission_board_viewed", {
         search: suburbFilter.value || null,
         sort: missionSort.value,
@@ -244,6 +298,7 @@
       resolveMissionAreaButton.disabled = true;
       resolveMissionAreaButton.textContent = "Finding area...";
       missionLocationStatus.textContent = "Looking up that Melbourne area without sharing your precise location.";
+      resetVisibleMissions();
       try {
         const data = await MelbBeerBusiness.apiFetch(`/api/business/geocode?q=${encodeURIComponent(query)}`);
         if (!data.location) {
@@ -283,6 +338,7 @@
     async function clearMissionArea() {
       missionLocation = null;
       updateMissionLocationStatus();
+      resetVisibleMissions();
       await loadMissions();
     }
 
@@ -295,6 +351,7 @@
       useMissionLocationButton.disabled = true;
       useMissionLocationButton.textContent = "Finding nearby missions...";
       missionLocationStatus.textContent = "Use your location to show nearby missions. We do not continuously track it.";
+      resetVisibleMissions();
       try {
         const position = await new Promise((resolve, reject) => {
           navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -330,6 +387,7 @@
           missionLocation = null;
           updateMissionLocationStatus();
         }
+        resetVisibleMissions();
         window.clearTimeout(searchTimer);
         searchTimer = window.setTimeout(loadMissions, 180);
       });
@@ -339,11 +397,15 @@
           resolveMissionArea();
         }
       });
-      missionSort.addEventListener("change", loadMissions);
+      missionSort.addEventListener("change", () => {
+        resetVisibleMissions();
+        loadMissions();
+      });
       missionRadiusSelect.addEventListener("change", async () => {
         if (missionLocation) {
           updateMissionLocationStatus();
           await MelbBeerBusiness.trackEvent("mission_radius_changed", { radiusKm: missionRadiusSelect.value });
+          resetVisibleMissions();
           await loadMissions();
         }
       });

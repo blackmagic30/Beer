@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 
 import BetterSqlite3 from "better-sqlite3";
 import express from "express";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BusinessRepository, type BusinessAccount } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
@@ -28,7 +28,13 @@ type Harness = {
 
 const openDatabases: BetterSqlite3.Database[] = [];
 
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(NOW));
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   while (openDatabases.length > 0) {
     openDatabases.pop()?.close();
   }

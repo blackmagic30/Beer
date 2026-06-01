@@ -214,6 +214,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('data-area-chip="Fitzroy"');
     expect(html).toContain('data-filter-chip="best_options"');
     expect(html).toContain('data-filter-chip="pint_path_specials"');
+    expect(html).toContain('aria-label="Specials filters"');
+    expect(html).toContain('<span class="filterGroup__label">Specials</span>');
     expect(html).toContain('data-premium-filter="true"');
     expect(html).toContain("syncAdvancedFiltersAvailability");
     expect(html).toContain("advancedFiltersToggleEl.hidden = !canUseAdvancedFilters");
@@ -258,7 +260,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("-webkit-overflow-scrolling: touch");
     expect(html).toContain("-webkit-line-clamp: 2");
     expect(html).toContain("font-size: 16px");
-    expect(html).toContain(".primaryFilterRow,\n      .popularBeerRow");
+    expect(html).toContain(".specialsFilterRow,\n      .popularBeerRow");
     expect(html).toContain(".advancedFiltersGrid {\n        grid-template-columns: 1fr;");
     expect(html).toContain("min-height: 62dvh");
   });

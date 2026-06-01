@@ -21,6 +21,7 @@ describe("missions page", () => {
     expect(html).toContain('id="resolveMissionAreaButton"');
     expect(html).toContain('id="clearMissionAreaButton"');
     expect(html).toContain('id="missionRadiusSelect"');
+    expect(html).toContain('id="missionsList" class="list missionList"');
     expect(html).toContain('<option value="nearby">Nearest missions</option>');
     expect(html).toContain("/api/business/geocode");
     expect(html).toContain("mission_area_lookup_used");
@@ -33,8 +34,18 @@ describe("missions page", () => {
     expect(html).toContain("type: submissionTypeForMission(mission)");
     expect(html).toContain("Accept mission");
     expect(html).toContain("Mission points change with data freshness");
+    expect(html).toContain("const INITIAL_MISSION_COUNT = 5");
+    expect(html).toContain("const MISSION_PAGE_SIZE = 5");
+    expect(html).toContain("let visibleMissionCount = INITIAL_MISSION_COUNT");
+    expect(html).toContain("function orderedMissionsForDisplay");
+    expect(html).toContain("const visibleMissions = missions.slice(0, visibleMissionCount)");
+    expect(html).toContain('id="loadMoreMissionsButton"');
+    expect(html).toContain("visibleMissionCount += MISSION_PAGE_SIZE");
+    expect(html).toContain("formatDistance(mission.distanceMeters)");
     expect(css).toContain(".missionToolbar");
     expect(css).toContain(".missionSearchActions");
     expect(css).toContain(".missionRadiusField");
+    expect(css).toContain(".missionList");
+    expect(css).toContain(".missionLoadMore");
   });
 });

@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 
 import BetterSqlite3 from "better-sqlite3";
 import express from "express";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BusinessRepository, type BarPendingChange, type SubmissionType, type SubscriptionStatus } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
@@ -27,6 +27,11 @@ const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
 const WEBP_DATA_URL = `data:image/webp;base64,${Buffer.from("RIFF0000WEBPVP8 ", "ascii").toString("base64")}`;
 
 let openDatabases: BetterSqlite3.Database[] = [];
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(NOW));
+});
 
 function createRepository() {
   const database = new BetterSqlite3(":memory:");
@@ -232,6 +237,7 @@ async function withHttpServer(
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   openDatabases.forEach((database) => database.close());
   openDatabases = [];
 });

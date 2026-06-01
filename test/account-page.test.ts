@@ -27,10 +27,6 @@ function feedbackHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/feedback.html"), "utf8");
 }
 
-function statsHtml() {
-  return fs.readFileSync(path.resolve(process.cwd(), "viewer/stats.html"), "utf8");
-}
-
 function termsHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/terms.html"), "utf8");
 }
@@ -69,7 +65,8 @@ describe("account page shell", () => {
     expect(html).toContain("Recent submissions");
     expect(html).not.toContain("How verification works");
     expect(html).toContain("Pint Path discount pass");
-    expect(html).toContain('href="/stats.html"');
+    expect(html).not.toContain('href="/stats.html"');
+    expect(html).toContain('data-settings-target="stats"');
     expect(html).not.toContain("Current status");
   });
 
@@ -140,6 +137,7 @@ describe("account page shell", () => {
     expect(feedback).toContain("Tell us what felt confusing, useful, or broken.");
     expect(feedback).toContain('MelbBeerBusiness.renderNav("feedback")');
     expect(feedback).toContain('MelbBeerBusiness.apiFetch("/api/business/feedback"');
+    expect(feedback.indexOf("Privacy note")).toBeLessThan(feedback.indexOf('id="feedbackForm"'));
     expect(script).toContain('href="/feedback.html"');
     expect(script).not.toContain('href="/account.html#feedbackForm"');
   });
@@ -150,8 +148,10 @@ describe("account page shell", () => {
     expect(html).not.toContain('class="accountActionsGrid"');
     expect(html).not.toContain('href="/submit.html"');
     expect(html).not.toContain('href="/submit.html?type=photo_upload"');
-    expect(html).toContain('href="#recentSubmissionsSection"');
-    expect(html).toContain('href="/stats.html"');
+    expect(html).not.toContain('href="#recentSubmissionsSection"');
+    expect(html).not.toContain('href="/stats.html"');
+    expect(html).toContain('data-settings-target="submissions"');
+    expect(html).toContain('data-settings-target="stats"');
     expect(html).toContain('data-settings-target="preferences"');
     expect(html).toContain('data-settings-target="watchlist"');
     expect(html).toContain('data-settings-target="privacy"');
@@ -167,7 +167,6 @@ describe("account page shell", () => {
 
   it("keeps Account focused on account ID, savings, and discount pass while moving detailed stats to My Stats", () => {
     const html = accountHtml();
-    const stats = statsHtml();
     const css = businessCss();
 
     expect(html).toContain('class="accountHighlightsGrid"');
@@ -177,16 +176,12 @@ describe("account page shell", () => {
     expect(html).not.toContain('id="totalUploadsMetric"');
     expect(html).not.toContain('id="pendingMetric"');
     expect(html).not.toContain('id="leaderboardMetric"');
-
-    expect(stats).toContain("Contributor stats");
-    expect(stats).toContain('id="totalUploadsMetric"');
-    expect(stats).toContain('id="pendingMetric"');
-    expect(stats).toContain('id="verifiedMetric"');
-    expect(stats).toContain('id="leaderboardMetric"');
-    expect(stats).toContain('id="discountRedemptionsMetric"');
-    expect(stats).toContain('MelbBeerBusiness.apiFetch("/api/business/account"');
-    expect(stats).toContain('href="/account.html"');
+    expect(html).toContain('id="settingsStatsPanel"');
+    expect(html).toContain('id="accountStatsGrid"');
+    expect(html).toContain("function renderAccountStatsPanel");
+    expect(html).toContain("renderAccountStatsPanel(result)");
     expect(css).toContain(".accountHighlightsGrid");
+    expect(css).toContain(".accountStatsGrid");
     expect(css).toContain(".accountDiscountFeature");
   });
 
@@ -195,8 +190,12 @@ describe("account page shell", () => {
     const css = businessCss();
 
     expect(html).toContain('id="settingsEmptyPanel"');
-    expect(html).toContain('href="#recentSubmissionsSection"');
-    expect(html).toContain('href="/stats.html"');
+    expect(html).toContain('data-settings-target="submissions" aria-controls="settingsSubmissionsPanel"');
+    expect(html).toContain('data-settings-target="stats" aria-controls="settingsStatsPanel"');
+    expect(html).not.toContain('href="#recentSubmissionsSection"');
+    expect(html).not.toContain('href="/stats.html"');
+    expect(html).toContain('data-settings-panel="submissions" role="tabpanel" hidden');
+    expect(html).toContain('data-settings-panel="stats" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="preferences" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="watchlist" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="privacy" role="tabpanel" hidden');
@@ -343,7 +342,10 @@ describe("account page shell", () => {
     expect(nav).toContain('href="/trust.html"');
     expect(trust).toContain("Trust Centre");
     expect(trust).toContain("Raw photos, reviewer notes, account details, and individual analytics stay private.");
+    expect(trust).toContain("trustFeatureGrid");
     expect(trust).toContain("trustActionCard");
+    expect(css).toContain("margin-bottom: 14px");
+    expect(css).toContain(".trustActionCard .eyebrow");
     expect(css).toContain(".trustActionCard__actions");
     expect(trust).toContain("Read Community Standards");
     expect(community).toContain("Submit what you actually saw at the venue.");
