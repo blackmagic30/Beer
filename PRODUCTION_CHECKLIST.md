@@ -35,6 +35,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
 - `GOOGLE_MAPS_API_KEY` is set and HTTP-referrer restricted to the live domain.
 - `REDIS_URL` is set to Railway Redis/Upstash/managed Redis. Do not use `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` except for a time-boxed emergency beta.
+- `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false` for normal production. If it is ever set to `true`, record the incident reason, owner, expiry time, and rollback plan.
 - `SOURCE_EVIDENCE_SIGNING_SECRET` is a unique 32+ character random secret.
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300` or shorter for production.
 - `DEMO_BILLING_MODE=false` unless a private beta intentionally enables demo billing with `ALLOW_DEMO_BILLING_IN_PRODUCTION=true`.
@@ -90,6 +91,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - Confirm Plus/Pro venue tier sees only privacy-safe aggregate analytics above bucket threshold.
 - Confirm Stripe signed test webhook updates a subscription and replayed event does not double-process.
 - Confirm invalid/missing Stripe webhook signatures are rejected.
+- Confirm stale Stripe webhook signatures outside the configured five-minute tolerance are rejected.
 - Confirm `/api/calls`, `/api/results`, and `/webhooks/*` are disabled/not found.
 - Confirm source photo inline storage is rejected in production.
 - Confirm security audit rows are created for admin review, venue-manager assignment, billing grants, and webhook failures.

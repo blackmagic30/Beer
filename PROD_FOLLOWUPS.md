@@ -4,6 +4,8 @@ These are the remaining actions after the production-readiness pass. Priorities 
 
 ## Recently Closed In-Repo Gaps
 
+- Production rate limiting now fails closed by default when Redis is not configured. `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false` is the safe default; any production in-memory fallback must be an explicit temporary exception.
+- Stripe webhook verification now enforces the signed timestamp freshness window in addition to raw-body HMAC verification and event idempotency.
 - Optional analytics consent is now explicit in the browser: users see a privacy-choice banner, optional analytics are disabled until consent or signed-in privacy settings allow them, and Account remains the place to manage preferences.
 - Account export/deletion foundations now exist: signed-in users can download a quick JSON export and create a tracked deletion-review request. Private evidence files, raw tokens, passwords, and exact stored upload coordinates are not included in quick self-service export.
 - Feedback/support triage now assigns priority metadata so security, privacy, data export, deletion, billing, abuse, and moderation requests are easier for admins to prioritize.
@@ -33,7 +35,8 @@ These are the remaining actions after the production-readiness pass. Priorities 
 ## P1: Live Stripe End-To-End Verification
 
 - Why it matters: Billing entitlements are security-sensitive and revenue-critical.
-- Suggested fix: Use Stripe test mode and Stripe CLI forwarding to verify Checkout, signed webhooks, replay idempotency, subscription deletion, and invoice failure behavior against the deployed preview.
+- Status: In-repo webhook signature verification, timestamp freshness, and event idempotency tests pass locally.
+- Still required: Use Stripe test mode and Stripe CLI forwarding to verify Checkout, signed webhooks, replay idempotency, subscription deletion, and invoice failure behavior against the deployed preview.
 - Blocks production: Yes for paid launch. Not blocking if checkout is disabled and only free/contributor access is used.
 
 ## P1: Supabase RLS Application And Formal Audit
@@ -45,7 +48,7 @@ These are the remaining actions after the production-readiness pass. Priorities 
 ## P1: Distributed Rate Limiting
 
 - Why it matters: Current in-memory limiter is per-process. Multi-instance Railway scaling or edge bypass can weaken auth, billing, reveal, upload, and feedback abuse controls.
-- Status: Redis-backed rate limiting is implemented when `REDIS_URL` is set. Production startup requires `REDIS_URL` unless `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` is explicitly set. Redis failures fail closed in production unless the same override is set.
+- Status: Redis-backed rate limiting is implemented when `REDIS_URL` is set. Production rate-limited routes now fail closed by default if Redis is missing or unavailable unless `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` is explicitly set. Redis failures fail closed in production unless the same override is set.
 - Still required: Provision Railway Redis/Upstash, set `REDIS_URL`, and smoke-test auth/upload/reveal/payment limits in staging.
 - Blocks production: No once Redis is provisioned and verified. Blocks horizontal/full-scale launch if the explicit in-memory override is used.
 

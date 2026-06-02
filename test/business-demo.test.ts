@@ -204,7 +204,7 @@ function createSession(repository: BusinessRepository, userId: string, token: st
   return `Bearer ${token}`;
 }
 
-function createStripeSignature(payload: object, secret: string, timestamp = "1777881600") {
+function createStripeSignature(payload: object, secret: string, timestamp = String(Math.floor(Date.now() / 1000))) {
   const body = Buffer.from(JSON.stringify(payload));
   const signature = crypto
     .createHmac("sha256", secret)
@@ -1917,8 +1917,12 @@ describe("production hardening", () => {
     expect(service.handleStripeWebhook(signed.body, signed.header)).toEqual({ received: true });
     expect(repository.listSecurityAuditLogs(10).filter((row) => row.action === "stripe_subscription_update")).toHaveLength(1);
     expect(() => service.handleStripeWebhook(signed.body, undefined)).toThrow("Missing Stripe webhook signature");
-    expect(() => service.handleStripeWebhook(signed.body, "t=1777881600,v1=bad")).toThrow("Invalid Stripe webhook signature");
-    expect(() => service.handleStripeWebhook(signed.body, `t=1777881600,v1=${"z".repeat(64)}`)).toThrow("Invalid Stripe webhook signature");
+    const freshTimestamp = String(Math.floor(Date.now() / 1000));
+    expect(() => service.handleStripeWebhook(signed.body, `t=${freshTimestamp},v1=bad`)).toThrow("Invalid Stripe webhook signature");
+    expect(() => service.handleStripeWebhook(signed.body, `t=${freshTimestamp},v1=${"z".repeat(64)}`)).toThrow("Invalid Stripe webhook signature");
+    const staleTimestamp = String(Math.floor(new Date(NOW).getTime() / 1000) - 600);
+    const staleSigned = createStripeSignature({ ...payload, id: "evt_checkout_stale" }, "whsec_test", staleTimestamp);
+    expect(() => service.handleStripeWebhook(staleSigned.body, staleSigned.header)).toThrow("Invalid Stripe webhook signature");
     expect(repository.listSecurityAuditLogs(10).some((row) => row.action === "stripe_webhook_signature_failed")).toBe(true);
 
     const deletedPayload = {

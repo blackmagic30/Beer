@@ -1,12 +1,22 @@
 # Pint Path Production Readiness Report
 
 Date: 2026-05-25
+Latest update: 2026-06-02
 
 ## Executive Summary
 
 Pint Path is substantially hardened for a controlled Melbourne beta, but it is not yet ready for full-scale production deployment without provider/dashboard verification. The application now has strong server-side price gating, admin/venue-manager authorization tests, pending-review workflows for venue-manager changes, production admin MFA step-up guards, private source-evidence references with signed server URLs, Redis-capable rate limiting, Stripe webhook signature handling, upload validation, security audit logging, production config guards, and a CI path that runs build/test/secret scan/dependency audit.
 
 The remaining blockers are now mostly provider and operations verification: Supabase MFA/AAL2 must be configured and tested, private Supabase Storage should be verified before broad source-evidence uploads, Redis must be provisioned for production rate limiting, backup/restore and monitoring must be tested, and live Stripe/Supabase/Google configuration must be verified in staging. The old phone-call automation surface has been retired from the active app.
+
+## Latest Patch: Production Guard Tightening
+
+This pass focused on the highest-risk code paths that can be verified locally without touching production:
+
+- Changed production rate limiting to fail closed by default when Redis is not configured. `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION` now defaults to `false`, so in-memory fallback must be an explicit, time-boxed emergency choice rather than the default.
+- Hardened Stripe webhook verification by rejecting missing/non-numeric timestamps and signatures outside a five-minute tolerance window. This reduces replay risk while preserving raw-body signature verification and existing idempotency checks.
+- Re-ran the core validation suite, dependency audit, secret scan, whitespace check, and a local compiled-server smoke test for `/health`, `/ready`, and `/api/business/config`.
+- Confirmed `/api/business/config` returned only browser-safe public configuration during the smoke test; no service-role keys, Stripe secrets, or provider secrets were exposed.
 
 ## Latest Patch: Account Controls, Consent, And Incident UX
 
@@ -142,6 +152,11 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 | `npm run security:scan` | Passed | 154 tracked/untracked files checked. |
 | `npm run security:audit` | Passed | `found 0 vulnerabilities`. |
 | `git diff --check` | Passed | No whitespace errors after latest patch. |
+| `npm run check` | Failed once, then passed | Initial failure was a stale Stripe webhook timestamp regression test using the fake test clock incorrectly; patched the test and reran successfully. Final run: build passed, 19 test files and 179 tests passed, secret scan passed. |
+| `npm run security:audit` | Passed | `found 0 vulnerabilities` after latest production guard pass. |
+| `npm audit --audit-level=high` | Passed | `found 0 vulnerabilities` after latest production guard pass. |
+| `git diff --check` | Passed | No whitespace errors after latest production guard pass. |
+| local compiled-server smoke: `/health`, `/ready`, `/api/business/config` on port `3141` | Passed | Built server booted locally. `/health` and `/ready` returned success; `/api/business/config` returned browser-safe config only. |
 
 If this document changes after final validation, rerun all commands in `PRODUCTION_CHECKLIST.md`.
 
@@ -157,7 +172,7 @@ P0 blockers for full-scale production:
 P1 blockers before broad paid/public rollout:
 - Live Stripe Checkout/webhook flow needs provider-backed test verification.
 - Supabase RLS migration/policies need to be applied and audited before any direct browser writes. The migration has been expanded but not applied to a real project here.
-- Redis-backed rate limiting must be provisioned and smoke-tested with `REDIS_URL`; do not use the in-memory production override for full-scale launch.
+- Redis-backed rate limiting must be provisioned and smoke-tested with `REDIS_URL`; the repo now fails closed by default in production if Redis is missing. Do not use the in-memory production override for full-scale launch.
 - Supabase Confirm Email/custom SMTP must be configured for verified-account onboarding. Local email/password self-serve remains blocked for production until verification is implemented.
 - Production observability is currently mostly logs/checklists rather than alerting/tracing/SLOs.
 - Legal/privacy review of Terms, Privacy, cookie/analytics consent, account export/deletion wording, and alcohol/responsible-service wording remains a human/provider task before broad public scale.

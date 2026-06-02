@@ -109,6 +109,7 @@ const AUTO_MISSION_TARGET_BEERS = [
   SUPPORTED_BEERS.carlton_draft,
   SUPPORTED_BEERS.stone_and_wood,
 ] as const;
+const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 
 interface StripeEvent {
   id: string;
@@ -4722,6 +4723,19 @@ export class BusinessService {
 
     if (!timestamp || !signed) {
       throw new AppError("Invalid Stripe webhook signature.", 400);
+    }
+
+    if (!/^\d+$/.test(timestamp)) {
+      throw new AppError("Invalid Stripe webhook signature.", 401);
+    }
+
+    const timestampSeconds = Number(timestamp);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (
+      !Number.isSafeInteger(timestampSeconds) ||
+      Math.abs(nowSeconds - timestampSeconds) > STRIPE_WEBHOOK_TOLERANCE_SECONDS
+    ) {
+      throw new AppError("Invalid Stripe webhook signature.", 401);
     }
 
     if (!/^[a-f0-9]{64}$/i.test(signed)) {

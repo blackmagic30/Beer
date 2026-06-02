@@ -57,7 +57,7 @@ describe("environment safety defaults", () => {
     expect(env.NODE_ENV).toBe("production");
     expect(env.SOURCE_EVIDENCE_SIGNING_SECRET).toBeUndefined();
     expect(env.REDIS_URL).toBeUndefined();
-    expect(env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION).toBe(true);
+    expect(env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION).toBe(false);
   });
 
   it("still blocks explicit production demo billing without the override", async () => {
