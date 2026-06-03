@@ -4,6 +4,7 @@ dist
 .env.*
 !.env.example
 .DS_Store
+supabase/.temp/
 data/*
 !data/.gitkeep
 *.sqlite

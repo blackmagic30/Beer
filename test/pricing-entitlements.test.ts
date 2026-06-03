@@ -10,7 +10,7 @@ function readRepoFile(filePath: string) {
 }
 
 describe("premium pricing and entitlements", () => {
-  it("uses the current Pint Path premium prices across app config and public copy", () => {
+  it("keeps consumer prices out of public pricing while showing venue plans", () => {
     const appSource = readRepoFile("src/app.ts");
     const pricingHtml = readRepoFile("viewer/pricing.html");
     const readme = readRepoFile("README.md");
@@ -25,28 +25,30 @@ describe("premium pricing and entitlements", () => {
 
     expect(appSource).toContain("monthly: PREMIUM_PRICING.monthlyLabel");
     expect(appSource).toContain("yearly: PREMIUM_PRICING.yearlyLabel");
-    expect(pricingHtml).toContain("A$4.99");
-    expect(pricingHtml).toContain("A$50");
-    expect(pricingHtml).toContain("Freemium");
-    expect(pricingHtml).toContain("15 pts");
-    expect(pricingHtml).toContain("Earn 15 approved contribution points");
-    expect(pricingHtml).toContain("Start freemium");
+    expect(pricingHtml).toContain("Venue pricing");
     expect(pricingHtml).toContain("For venues");
     expect(pricingHtml).toContain("Venue tools use the same secure Pint Path login.");
     expect(pricingHtml).toContain("Bars do not need a separate login.");
-    expect(pricingHtml).toContain("Basic");
+    expect(pricingHtml).toContain("Free");
     expect(pricingHtml).toContain("Plus");
     expect(pricingHtml).toContain("Pro");
+    expect(pricingHtml).toContain("A$0");
+    expect(pricingHtml).toContain("A$149");
+    expect(pricingHtml).toContain("A$299");
+    expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
+    expect(pricingHtml).toContain("No analytics or monthly reports.");
     expect(pricingHtml).toContain("Suburb-level search and interaction trends.");
     expect(pricingHtml).toContain("Monthly venue reports");
     expect(pricingHtml).toContain("Premium venue badge");
     expect(pricingHtml).toContain('href="/venue-portal.html"');
-    expect(pricingHtml).toContain('class="grid pricingTierGrid"');
     expect(pricingHtml).toContain('id="venuePricingSection"');
-    expect(pricingHtml).toContain('class="venuePricingSection is-hidden"');
-    expect(pricingHtml).toContain("setVenuePricingVisible(false)");
-    expect(pricingHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/venue-portal")');
-    expect(pricingHtml).toContain("setVenuePricingVisible(hasVenueAccess)");
+    expect(pricingHtml).toContain('class="venuePricingSection"');
+    expect(pricingHtml).not.toContain("Freemium");
+    expect(pricingHtml).not.toContain("15 pts");
+    expect(pricingHtml).not.toContain("A$4.99");
+    expect(pricingHtml).not.toContain("A$50");
+    expect(pricingHtml).not.toContain('type="button" data-plan="monthly"');
+    expect(pricingHtml).not.toContain('type="button" data-plan="yearly"');
     expect(readme).toContain("A$4.99/month");
     expect(readme).toContain("A$50/year");
     expect(envExample).toContain("STRIPE_PRICE_MONTHLY=price_monthly_499_aud");
@@ -64,8 +66,8 @@ describe("premium pricing and entitlements", () => {
     const mapHtml = readRepoFile("viewer/index.html");
     const readme = readRepoFile("README.md");
 
-    expect(pricingHtml).toContain("special-discount detail");
-    expect(pricingHtml).toContain("venue special-discount details");
+    expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
+    expect(pricingHtml).toContain("Add reviewed Pint Path specials.");
     expect(mapHtml).toContain("Unlock full access to view times, specials, and discount details.");
     expect(mapHtml).toContain("Unlock full access to view the days, times, specials, and discount details.");
     expect(readme).toContain("venue special-discount details");
@@ -73,28 +75,16 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).not.toContain("source evidence");
   });
 
-  it("routes users through account readiness before opening Stripe checkout", () => {
+  it("does not expose consumer checkout on the venue pricing page", () => {
     const pricingHtml = readRepoFile("viewer/pricing.html");
     const businessCss = readRepoFile("viewer/business.css");
 
-    expect(pricingHtml).toContain('type="button" data-plan="monthly"');
-    expect(pricingHtml).toContain('type="button" data-plan="yearly"');
-    expect(pricingHtml).toContain('new URL("/account.html", window.location.origin)');
-    expect(pricingHtml).toContain('accountUrl.searchParams.set("next", "/pricing.html")');
-    expect(pricingHtml).toContain('accountUrl.searchParams.set("checkoutPlan", plan)');
-    expect(pricingHtml).toContain('document.getElementById("status")');
-    expect(pricingHtml).toContain('const statusNotice');
-    expect(pricingHtml).not.toContain("MelbBeerBusiness.setStatus(status,");
-    expect(pricingHtml).toContain("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
-    expect(pricingHtml).toContain("const trySyncSession");
-    expect(pricingHtml).toContain("MelbBeerBusiness.syncSupabaseSession()");
-    expect(pricingHtml).toContain("Please sign in before starting checkout.");
-    expect(pricingHtml).toContain("Please confirm you are 18+ before starting checkout.");
-    expect(pricingHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/account")');
-    expect(pricingHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
-    expect(pricingHtml).toContain("Opening secure Stripe checkout");
-    expect(businessCss).toContain(".pricingNoticeStack");
-    expect(businessCss).toContain(".pricingCard__actions");
+    expect(pricingHtml).not.toContain('data-plan="monthly"');
+    expect(pricingHtml).not.toContain('data-plan="yearly"');
+    expect(pricingHtml).not.toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
+    expect(pricingHtml).not.toContain("Opening secure Stripe checkout");
+    expect(pricingHtml).not.toContain("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
+    expect(pricingHtml).toContain('MelbBeerBusiness.trackEvent("pricing_page_viewed", { pricingContext: "venue" })');
     expect(businessCss).toContain(".venuePricingGrid");
     expect(businessCss).toContain(".button:disabled");
   });

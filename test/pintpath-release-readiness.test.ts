@@ -384,7 +384,7 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     expect(publishedRecords.some((record) => record.beerName === "Asahi Super Dry" && record.price === 12))
       .toBe(true);
 
-    const rejectedSpecial = harness.service.upsertBarSpecial(updatedManagerA, "venue-a", {
+    expect(() => harness.service.upsertBarSpecial(updatedManagerA, "venue-a", {
       id: null,
       title: "Synthetic rejected special",
       description: "Should not publish.",
@@ -395,11 +395,7 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       scheduleNote: null,
       exclusive: false,
       active: true,
-    }) as { pendingChange: { id: string } };
-    harness.service.reviewBarPendingChange(admin, rejectedSpecial.pendingChange.id, {
-      status: "rejected",
-      rejectionReason: "Synthetic rejection.",
-    });
+    })).toThrow("Plus or Pro venue tier required");
     expect(harness.service.getVenuePortal(updatedManagerA, { venueId: "venue-a" }).inventory.specials)
       .toEqual([]);
 

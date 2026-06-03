@@ -68,6 +68,130 @@
       </div>
     </section>
 
+    <section class="panel" style="margin-bottom:16px;">
+      <div class="sectionHeader">
+        <div>
+          <div class="eyebrow">Data capture</div>
+          <h2>Venue, pint, menu photo, and source review tools</h2>
+        </div>
+        <button id="refreshAdminDataTools" class="button" type="button">Refresh queue</button>
+      </div>
+      <div id="adminCaptureMetrics" class="metricGrid"></div>
+    </section>
+
+    <section class="grid grid--two" style="margin-bottom:16px;">
+      <div class="panel form">
+        <h2>Add beers to a venue</h2>
+        <p class="muted">Manual entries and OCR results merge into the latest reviewed menu capture snapshot.</p>
+        <label class="field">Search venues
+          <input id="adminVenueSearch" type="search" placeholder="Venue, suburb, or address" />
+        </label>
+        <label class="field">Choose venue
+          <select id="adminVenueSelect" class="adminVenueSelect" size="8"></select>
+        </label>
+        <div id="adminSelectedVenue" class="notice">No venue selected yet.</div>
+
+        <label class="field">Menu photo OCR
+          <input id="adminMenuPhoto" type="file" accept="image/*" capture="environment" />
+        </label>
+        <div class="actionRow">
+          <button id="adminOcrButton" class="button" type="button">Read menu photo</button>
+          <button id="adminAddBeerRow" class="button" type="button">Add beer row</button>
+        </div>
+        <div id="adminOcrResult" class="fieldHint"></div>
+
+        <div id="adminBeerRows" class="adminBeerRows"></div>
+        <label class="field">Notes
+          <textarea id="adminCaptureNote" rows="3" placeholder="Optional reviewer notes"></textarea>
+        </label>
+        <button id="adminSaveBeers" class="button button--primary" type="button">Save beers to venue</button>
+        <div id="adminCaptureStatus" class="notice">Choose a venue and add at least one pint row.</div>
+      </div>
+
+      <form id="adminCreateVenueForm" class="panel form">
+        <h2>Add new pub or bar</h2>
+        <p class="muted">Creates a Supabase venue row, then selects it for beer capture.</p>
+        <label class="field">Name
+          <input name="name" required placeholder="The Duke of Wellington" />
+        </label>
+        <label class="field">Phone
+          <input name="phone" placeholder="+61..." />
+        </label>
+        <label class="field">Address
+          <input name="address" required placeholder="146 Flinders St, Melbourne VIC 3000" />
+        </label>
+        <div class="grid grid--two">
+          <label class="field">Suburb
+            <input name="suburb" placeholder="Melbourne" />
+          </label>
+          <label class="field">State
+            <input name="state" value="VIC" />
+          </label>
+        </div>
+        <div class="grid grid--two">
+          <label class="field">Postcode
+            <input name="postcode" inputmode="numeric" placeholder="3000" />
+          </label>
+          <label class="field">Website
+            <input name="website" type="url" placeholder="https://..." />
+          </label>
+        </div>
+        <div class="grid grid--two">
+          <label class="field">Latitude
+            <input name="latitude" required type="number" step="any" placeholder="-37.8136" />
+          </label>
+          <label class="field">Longitude
+            <input name="longitude" required type="number" step="any" placeholder="144.9631" />
+          </label>
+        </div>
+        <button class="button button--primary" type="submit">Create venue</button>
+        <div id="adminCreateVenueStatus" class="notice">New venues need coordinates before capture can start.</div>
+      </form>
+    </section>
+
+    <section class="grid grid--two" style="margin-bottom:16px;">
+      <form id="adminSourceQueueForm" class="panel form">
+        <h2>Queue source ingestion</h2>
+        <p class="muted">Queue a selected venue source for OCR and admin review before publishing.</p>
+        <label class="field">Source type
+          <select name="sourceType">
+            <option value="menu_photo_upload">Menu photo upload</option>
+            <option value="source_image_url">Source image URL</option>
+            <option value="source_reference">Source reference</option>
+          </select>
+        </label>
+        <label class="field">Direct image URL
+          <input name="sourceUrl" type="url" placeholder="https://..." />
+        </label>
+        <label class="field">Upload image
+          <input id="adminSourceImage" type="file" accept="image/*" capture="environment" />
+        </label>
+        <label class="field">Notes
+          <textarea name="note" rows="3" placeholder="Where this source came from"></textarea>
+        </label>
+        <button class="button button--primary" type="submit">Queue source</button>
+        <div id="adminSourceQueueStatus" class="notice">Select a venue above, then add a source URL or image.</div>
+      </form>
+
+      <div class="panel">
+        <div class="sectionHeader">
+          <div>
+            <h2>Source ingestion review</h2>
+            <p class="muted">Review OCR output, publish clean rows, or reject noisy sources.</p>
+          </div>
+          <label class="field" style="max-width:220px;">Status
+            <select id="adminIngestionStatus">
+              <option value="pending_review">Pending</option>
+              <option value="published">Published</option>
+              <option value="rejected">Rejected</option>
+              <option value="">All</option>
+            </select>
+          </label>
+        </div>
+        <div id="adminIngestionQueue" class="list"></div>
+      </div>
+    </section>
+
     <section class="grid grid--two" style="margin-bottom:16px;">
       <div class="panel">
         <h2>Venue partner interest</h2>
@@ -183,6 +307,15 @@
         : `<div class="listItem muted">${empty}</div>`;
     }
 
+    let adminDataToolsStatus = {
+      enabled: false,
+      ocrEnabled: false,
+      queueEnabled: false,
+    };
+    let adminVenues = [];
+    let selectedAdminVenueId = null;
+    let adminCaptureSource = "manual_entry";
+
     function renderKpis(data) {
       const metrics = data.metrics;
       headlineMetrics.innerHTML = [
@@ -275,6 +408,518 @@
           </div>
         `).join("")
         : '<div class="listItem muted">No partner-lead signals yet.</div>';
+    }
+
+    function setLocalNotice(element, message, isWarning = false) {
+      element.textContent = message;
+      element.className = `notice ${isWarning ? "notice--warning" : ""}`;
+    }
+
+    function renderAdminCaptureMetrics() {
+      adminCaptureMetrics.innerHTML = [
+        renderMetric("Manual captures", adminDataToolsStatus.enabled ? "Ready" : "Off"),
+        renderMetric("Menu OCR", adminDataToolsStatus.ocrEnabled ? "Ready" : "Off"),
+        renderMetric("Source queue", adminDataToolsStatus.queueEnabled ? "Ready" : "Off"),
+        renderMetric("Venues loaded", adminVenues.length),
+      ].join("");
+      syncAdminCaptureControls();
+    }
+
+    function syncAdminCaptureControls() {
+      const captureEnabled = Boolean(adminDataToolsStatus.enabled);
+      const queueEnabled = Boolean(adminDataToolsStatus.queueEnabled);
+      adminOcrButton.disabled = !adminDataToolsStatus.ocrEnabled;
+      adminSaveBeers.disabled = !captureEnabled;
+      adminCreateVenueForm.querySelectorAll("input, button").forEach((element) => {
+        element.disabled = !captureEnabled;
+      });
+      adminSourceQueueForm.querySelectorAll("input, select, textarea, button").forEach((element) => {
+        element.disabled = !queueEnabled;
+      });
+    }
+
+    function buildAvailabilityFields(choice) {
+      switch (choice) {
+        case "no_pints":
+          return {
+            availabilityStatus: "unavailable",
+            availableOnTap: true,
+            availablePackageOnly: false,
+            unavailableReason: "no_pints",
+          };
+        case "cans_only":
+          return {
+            availabilityStatus: "package_only",
+            availableOnTap: false,
+            availablePackageOnly: true,
+            unavailableReason: "cans_only",
+          };
+        case "bottles_only":
+          return {
+            availabilityStatus: "package_only",
+            availableOnTap: false,
+            availablePackageOnly: true,
+            unavailableReason: "bottles_only",
+          };
+        case "not_on_tap":
+          return {
+            availabilityStatus: "unavailable",
+            availableOnTap: false,
+            availablePackageOnly: false,
+            unavailableReason: "not_on_tap",
+          };
+        case "unavailable":
+          return {
+            availabilityStatus: "unavailable",
+            availableOnTap: false,
+            availablePackageOnly: false,
+            unavailableReason: "not_stocked",
+          };
+        case "unknown":
+          return {
+            availabilityStatus: "unknown",
+            availableOnTap: null,
+            availablePackageOnly: false,
+            unavailableReason: null,
+          };
+        default:
+          return {
+            availabilityStatus: "on_tap",
+            availableOnTap: true,
+            availablePackageOnly: false,
+            unavailableReason: null,
+          };
+      }
+    }
+
+    function availabilityChoiceFromBeer(beer) {
+      if (!beer) return "on_tap";
+      if (beer.availabilityStatus === "package_only") {
+        return beer.unavailableReason === "bottles_only" ? "bottles_only" : "cans_only";
+      }
+      if (beer.availabilityStatus === "unavailable") {
+        if (beer.unavailableReason === "no_pints") return "no_pints";
+        return beer.unavailableReason === "not_on_tap" ? "not_on_tap" : "unavailable";
+      }
+      if (beer.availabilityStatus === "unknown") return "unknown";
+      return "on_tap";
+    }
+
+    function createBeerRowElement(beer = {}) {
+      const row = document.createElement("div");
+      const confidence = beer.confidence == null ? null : Math.round(Number(beer.confidence) * 100);
+      row.className = "adminBeerRow";
+      row.innerHTML = `
+        <label class="field">
+          Beer name
+          <input data-role="name" type="text" placeholder="Guinness" value="${escapeHtml(beer.name || "")}" />
+        </label>
+        <label class="field">
+          Pint price
+          <input data-role="priceNumeric" type="number" step="0.01" min="0" placeholder="14" value="${beer.priceNumeric ?? ""}" />
+        </label>
+        <label class="field">
+          Price text
+          <input data-role="priceText" type="text" placeholder="$14 pint" value="${escapeHtml(beer.priceText || "")}" />
+        </label>
+        <label class="field">
+          Availability
+          <select data-role="availability">
+            <option value="on_tap">On tap</option>
+            <option value="no_pints">No pints</option>
+            <option value="cans_only">Cans only</option>
+            <option value="bottles_only">Bottles only</option>
+            <option value="not_on_tap">Not on tap</option>
+            <option value="unavailable">Unavailable</option>
+            <option value="unknown">Unknown</option>
+          </select>
+        </label>
+        <label class="field">
+          Review
+          <select data-role="needsReview">
+            <option value="false">Clean</option>
+            <option value="true">Needs review</option>
+          </select>
+        </label>
+        <div class="adminBeerRow__meta">
+          ${confidence == null ? "Manual row" : `OCR confidence ${confidence}%`}
+          ${beer.notes ? ` · ${escapeHtml(beer.notes)}` : ""}
+        </div>
+        <button class="button button--small button--danger" data-role="removeRow" type="button">Remove</button>
+      `;
+      row.querySelector('[data-role="availability"]').value = availabilityChoiceFromBeer(beer);
+      row.querySelector('[data-role="needsReview"]').value = beer.needsReview ? "true" : "false";
+      row.querySelector('[data-role="removeRow"]').addEventListener("click", () => {
+        const container = row.parentElement;
+        row.remove();
+        if (container && !container.querySelector(".adminBeerRow")) {
+          container.appendChild(createBeerRowElement());
+        }
+      });
+      return row;
+    }
+
+    function setBeerRows(container, beers) {
+      container.innerHTML = "";
+      const rows = beers && beers.length ? beers : [{}];
+      rows.forEach((beer) => {
+        container.appendChild(createBeerRowElement(beer));
+      });
+    }
+
+    function collectBeerRows(container) {
+      return Array.from(container.querySelectorAll(".adminBeerRow"))
+        .map((row) => {
+          const name = row.querySelector('[data-role="name"]').value.trim();
+          if (!name) return null;
+
+          const priceNumericRaw = row.querySelector('[data-role="priceNumeric"]').value.trim();
+          const priceNumeric = priceNumericRaw ? Number(priceNumericRaw) : null;
+          if (priceNumericRaw && !Number.isFinite(priceNumeric)) {
+            throw new Error(`Enter a valid price for ${name}.`);
+          }
+
+          const availability = buildAvailabilityFields(row.querySelector('[data-role="availability"]').value);
+          if (availability.availabilityStatus === "on_tap" && priceNumeric === null) {
+            throw new Error(`Add a pint price for ${name}, or change its availability.`);
+          }
+
+          return {
+            name,
+            servingSize: "pint",
+            priceNumeric,
+            priceText: row.querySelector('[data-role="priceText"]').value.trim() || null,
+            ...availability,
+            needsReview: row.querySelector('[data-role="needsReview"]').value === "true",
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function getSelectedAdminVenue() {
+      return adminVenues.find((venue) => venue.id === selectedAdminVenueId) || null;
+    }
+
+    function renderSelectedAdminVenue() {
+      const venue = getSelectedAdminVenue();
+      if (!venue) {
+        setLocalNotice(adminSelectedVenue, "No venue selected yet.", true);
+        return;
+      }
+      setLocalNotice(
+        adminSelectedVenue,
+        `${venue.name}${venue.suburb ? ` · ${venue.suburb}` : ""}${venue.address ? ` · ${venue.address}` : ""}`,
+      );
+    }
+
+    function renderAdminVenueOptions() {
+      const searchValue = adminVenueSearch.value.trim().toLowerCase();
+      const filteredVenues = adminVenues
+        .filter((venue) => {
+          if (!searchValue) return true;
+          return [venue.name, venue.suburb, venue.address]
+            .filter(Boolean)
+            .some((value) => String(value).toLowerCase().includes(searchValue));
+        })
+        .slice(0, 250);
+
+      if (!filteredVenues.some((venue) => venue.id === selectedAdminVenueId)) {
+        selectedAdminVenueId = filteredVenues[0]?.id || null;
+      }
+
+      adminVenueSelect.innerHTML = filteredVenues.length
+        ? filteredVenues.map((venue) => `
+          <option value="${escapeHtml(venue.id)}" ${venue.id === selectedAdminVenueId ? "selected" : ""}>
+            ${escapeHtml(`${venue.name}${venue.suburb ? ` · ${venue.suburb}` : ""}`)}
+          </option>
+        `).join("")
+        : '<option value="">No venues found</option>';
+
+      if (selectedAdminVenueId) {
+        adminVenueSelect.value = selectedAdminVenueId;
+      }
+      renderSelectedAdminVenue();
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("Failed to read image file."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function compressImageFile(file) {
+      const rawDataUrl = await readFileAsDataUrl(file);
+      const image = await new Promise((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error("Failed to load image."));
+        element.src = rawDataUrl;
+      });
+      const maxDimension = 1600;
+      const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Image compression is unavailable in this browser.");
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/jpeg", 0.82);
+    }
+
+    async function loadAdminVenues() {
+      let lookupError = null;
+      try {
+        const result = await MelbBeerBusiness.apiFetch("/api/business/venues?limit=1000");
+        adminVenues = result.venues || [];
+      } catch (error) {
+        adminVenues = [];
+        selectedAdminVenueId = null;
+        lookupError = error;
+      }
+      renderAdminVenueOptions();
+      if (lookupError) {
+        setLocalNotice(adminSelectedVenue, lookupError.message || "Venue lookup unavailable.", true);
+      }
+      renderAdminCaptureMetrics();
+    }
+
+    async function loadAdminStatus() {
+      try {
+        adminDataToolsStatus = await MelbBeerBusiness.apiFetch("/api/admin/status");
+      } catch (error) {
+        adminDataToolsStatus = { enabled: false, ocrEnabled: false, queueEnabled: false };
+        setLocalNotice(adminCaptureStatus, error.message || "Admin capture tools unavailable.", true);
+      }
+      renderAdminCaptureMetrics();
+    }
+
+    async function loadAdminIngestionQueue() {
+      try {
+        const params = new URLSearchParams({ limit: "25" });
+        if (adminIngestionStatus.value) {
+          params.set("status", adminIngestionStatus.value);
+        }
+        const result = await MelbBeerBusiness.apiFetch(`/api/admin/ingestions?${params.toString()}`);
+        renderAdminIngestionQueue(result.items || []);
+      } catch (error) {
+        adminIngestionQueue.innerHTML = `<div class="listItem muted">${escapeHtml(error.message || "Source queue unavailable.")}</div>`;
+      }
+    }
+
+    async function loadAdminDataTools() {
+      await Promise.all([
+        loadAdminStatus(),
+        loadAdminVenues(),
+        loadAdminIngestionQueue(),
+      ]);
+    }
+
+    function renderAdminIngestionQueue(items) {
+      adminIngestionQueue.innerHTML = items.length
+        ? items.map((item) => {
+          const beers = item.reviewBeers || item.extractedBeers || [];
+          return `
+            <article class="listItem adminIngestionItem" data-ingestion-id="${escapeHtml(item.id)}">
+              <div class="adminIngestionItem__header">
+                <div>
+                  <strong>${escapeHtml(item.venueName)}</strong>
+                  <div class="muted">${escapeHtml(item.sourceType)} · ${escapeHtml(item.status)} · ${escapeHtml(MelbBeerBusiness.formatDate(item.createdAt))}</div>
+                  <div class="muted">${escapeHtml(item.capturedNotes || item.note || "No source notes")}</div>
+                </div>
+                <span class="pill">${item.overallConfidence == null ? "No confidence" : `${Math.round(Number(item.overallConfidence) * 100)}% confidence`}</span>
+              </div>
+              <div class="adminQueueBeerRows" data-ingestion-beers="${escapeHtml(item.id)}"></div>
+              <label class="field" style="margin-top:12px;">Review note
+                <textarea data-ingestion-note rows="2" placeholder="Optional publish or rejection note"></textarea>
+              </label>
+              ${item.status === "pending_review" ? `
+                <div class="actionRow" style="margin-top:10px;">
+                  <button class="button button--small button--primary" type="button" data-publish-ingestion>Publish rows</button>
+                  <button class="button button--small button--danger" type="button" data-reject-ingestion>Reject source</button>
+                </div>
+              ` : ""}
+            </article>
+          `;
+        }).join("")
+        : '<div class="listItem muted">No source ingestion items for this filter.</div>';
+
+      adminIngestionQueue.querySelectorAll(".adminIngestionItem").forEach((article, index) => {
+        const beers = items[index]?.reviewBeers || items[index]?.extractedBeers || [];
+        const rowsContainer = article.querySelector(".adminQueueBeerRows");
+        setBeerRows(rowsContainer, beers);
+      });
+      adminIngestionQueue.querySelectorAll("[data-publish-ingestion]").forEach((button) => {
+        button.addEventListener("click", () => publishQueuedIngestion(button.closest(".adminIngestionItem")));
+      });
+      adminIngestionQueue.querySelectorAll("[data-reject-ingestion]").forEach((button) => {
+        button.addEventListener("click", () => rejectQueuedIngestion(button.closest(".adminIngestionItem")));
+      });
+    }
+
+    async function handleMenuOcr() {
+      try {
+        if (!adminDataToolsStatus.ocrEnabled) {
+          throw new Error("Menu OCR is not enabled on this deployment.");
+        }
+        const venue = getSelectedAdminVenue();
+        if (!venue) {
+          throw new Error("Choose a venue before reading a menu photo.");
+        }
+        const file = adminMenuPhoto.files?.[0];
+        if (!file) {
+          throw new Error("Choose a menu photo first.");
+        }
+
+        adminOcrButton.disabled = true;
+        adminOcrButton.classList.add("is-loading");
+        adminOcrButton.textContent = "Reading...";
+        adminOcrResult.textContent = "Reading menu photo...";
+        const imageDataUrl = await compressImageFile(file);
+        const result = await MelbBeerBusiness.apiFetch("/api/admin/captures/menu-photo-ocr", {
+          method: "POST",
+          body: JSON.stringify({
+            venueNameHint: venue.name,
+            imageDataUrl,
+          }),
+        });
+        adminCaptureSource = "menu_photo_ocr";
+        setBeerRows(adminBeerRows, result.beers || []);
+        if (result.capturedNotes && !adminCaptureNote.value.trim()) {
+          adminCaptureNote.value = result.capturedNotes;
+        }
+        adminOcrResult.textContent = `OCR found ${(result.beers || []).length} beer item${(result.beers || []).length === 1 ? "" : "s"}${result.venueNameGuess ? ` · venue guess: ${result.venueNameGuess}` : ""}.`;
+      } catch (error) {
+        adminOcrResult.textContent = error.message || "Menu OCR failed.";
+      } finally {
+        adminOcrButton.textContent = "Read menu photo";
+        adminOcrButton.classList.remove("is-loading");
+        syncAdminCaptureControls();
+      }
+    }
+
+    async function saveManualCapture() {
+      try {
+        const venue = getSelectedAdminVenue();
+        if (!venue) {
+          throw new Error("Choose a venue before saving beers.");
+        }
+        const beers = collectBeerRows(adminBeerRows);
+        if (!beers.length) {
+          throw new Error("Add at least one beer row.");
+        }
+
+        setLocalNotice(adminCaptureStatus, "Saving reviewed beer rows...");
+        const result = await MelbBeerBusiness.apiFetch("/api/admin/captures/manual", {
+          method: "POST",
+          body: JSON.stringify({
+            venueId: venue.id,
+            source: adminCaptureSource,
+            note: adminCaptureNote.value.trim() || null,
+            beers,
+          }),
+        });
+        setLocalNotice(adminCaptureStatus, `Saved ${result.beerCount} beer item${result.beerCount === 1 ? "" : "s"} for ${result.venue.name}.`);
+        adminCaptureSource = "manual_entry";
+      } catch (error) {
+        setLocalNotice(adminCaptureStatus, error.message || "Failed to save beer rows.", true);
+      }
+    }
+
+    async function handleCreateVenue(event) {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const body = Object.fromEntries(form.entries());
+      try {
+        setLocalNotice(adminCreateVenueStatus, "Creating venue...");
+        const result = await MelbBeerBusiness.apiFetch("/api/admin/venues", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        const venue = result.venue;
+        adminVenues.unshift(venue);
+        selectedAdminVenueId = venue.id;
+        adminVenueSearch.value = venue.name;
+        renderAdminVenueOptions();
+        event.currentTarget.reset();
+        event.currentTarget.elements.state.value = "VIC";
+        setLocalNotice(adminCreateVenueStatus, `${venue.name} was created and selected.`);
+      } catch (error) {
+        setLocalNotice(adminCreateVenueStatus, error.message || "Failed to create venue.", true);
+      }
+    }
+
+    async function handleQueueSource(event) {
+      event.preventDefault();
+      const venue = getSelectedAdminVenue();
+      const form = new FormData(event.currentTarget);
+      try {
+        if (!venue) {
+          throw new Error("Choose a venue before queueing a source.");
+        }
+        const file = adminSourceImage.files?.[0];
+        const sourceUrl = String(form.get("sourceUrl") || "").trim();
+        if (!file && !sourceUrl) {
+          throw new Error("Add a source image URL or upload an image.");
+        }
+
+        setLocalNotice(adminSourceQueueStatus, "Queueing source and reading OCR...");
+        const imageDataUrl = file ? await compressImageFile(file) : null;
+        const result = await MelbBeerBusiness.apiFetch("/api/admin/ingestions/queue", {
+          method: "POST",
+          body: JSON.stringify({
+            venueId: venue.id,
+            sourceType: form.get("sourceType"),
+            sourceUrl: sourceUrl || null,
+            imageDataUrl,
+            note: String(form.get("note") || "").trim() || null,
+          }),
+        });
+        event.currentTarget.reset();
+        setLocalNotice(adminSourceQueueStatus, `Queued ${result.queueItem.extractedBeers.length} extracted beer item${result.queueItem.extractedBeers.length === 1 ? "" : "s"} for review.`);
+        adminIngestionStatus.value = "pending_review";
+        await loadAdminIngestionQueue();
+      } catch (error) {
+        setLocalNotice(adminSourceQueueStatus, error.message || "Failed to queue source.", true);
+      }
+    }
+
+    async function publishQueuedIngestion(article) {
+      if (!article) return;
+      try {
+        const beers = collectBeerRows(article.querySelector(".adminQueueBeerRows"));
+        if (!beers.length) {
+          throw new Error("Keep at least one beer row before publishing.");
+        }
+        const note = article.querySelector("[data-ingestion-note]").value.trim() || null;
+        await MelbBeerBusiness.apiFetch(`/api/admin/ingestions/${encodeURIComponent(article.dataset.ingestionId)}/publish`, {
+          method: "POST",
+          body: JSON.stringify({ beers, note }),
+        });
+        MelbBeerBusiness.setStatus(statusEl, "Source ingestion published.");
+        await loadAdminIngestionQueue();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message || "Failed to publish source ingestion.", true);
+      }
+    }
+
+    async function rejectQueuedIngestion(article) {
+      if (!article) return;
+      try {
+        const note = article.querySelector("[data-ingestion-note]").value.trim() || null;
+        await MelbBeerBusiness.apiFetch(`/api/admin/ingestions/${encodeURIComponent(article.dataset.ingestionId)}/reject`, {
+          method: "POST",
+          body: JSON.stringify({ note }),
+        });
+        MelbBeerBusiness.setStatus(statusEl, "Source ingestion rejected.");
+        await loadAdminIngestionQueue();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message || "Failed to reject source ingestion.", true);
+      }
     }
 
     function renderVenuePartners(data) {
@@ -482,6 +1127,7 @@
       renderPartnerLeads(leads);
       renderQueues(queues);
       renderVenuePartners(venuePartners);
+      await loadAdminDataTools();
       adminContentEl.hidden = false;
       MelbBeerBusiness.setStatus(statusEl, "Admin tools loaded.");
     }
@@ -495,6 +1141,23 @@
       rangeSelect.addEventListener("change", loadAdmin);
       managerAssignForm.addEventListener("submit", handleManagerAssign);
       outreachForm.addEventListener("submit", handleOutreach);
+      refreshAdminDataTools.addEventListener("click", loadAdminDataTools);
+      adminVenueSearch.addEventListener("input", renderAdminVenueOptions);
+      adminVenueSelect.addEventListener("change", () => {
+        selectedAdminVenueId = adminVenueSelect.value || null;
+        renderSelectedAdminVenue();
+      });
+      adminAddBeerRow.addEventListener("click", () => {
+        adminCaptureSource = "manual_entry";
+        adminBeerRows.appendChild(createBeerRowElement());
+      });
+      adminOcrButton.addEventListener("click", handleMenuOcr);
+      adminSaveBeers.addEventListener("click", saveManualCapture);
+      adminCreateVenueForm.addEventListener("submit", handleCreateVenue);
+      adminSourceQueueForm.addEventListener("submit", handleQueueSource);
+      adminIngestionStatus.addEventListener("change", loadAdminIngestionQueue);
+      setBeerRows(adminBeerRows, []);
+      renderAdminCaptureMetrics();
       try {
         await loadAdmin();
       } catch (error) {

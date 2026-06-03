@@ -2862,6 +2862,7 @@
       <div class="topbar__actions">
         <div id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation">
           <a href="/" aria-current="page">Map</a>
+          <a id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard</a>
           <a href="/missions.html" data-auth-required>Missions</a>
           <a href="/submit.html" data-auth-required>Submit data</a>
           <a href="/pricing.html">Pricing</a>
@@ -3124,6 +3125,7 @@
     const businessBannerEl = document.getElementById("businessBanner");
     const businessBannerCopyEl = document.getElementById("businessBannerCopy");
     const topbarBusinessLinksEl = document.getElementById("topbarBusinessLinks");
+    const venueDashboardLinkEl = document.getElementById("venueDashboardLink");
     const accessPillEl = document.getElementById("accessPill");
     const venueSearchEl = document.getElementById("venueSearch");
     const beerSearchEl = document.getElementById("beerSearch");
@@ -3277,9 +3279,13 @@
 
     function syncAuthenticatedNavLinks() {
       const isAuthenticated = Boolean(window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.());
+      const isVenueManager = Boolean(window.MelbBeerBusiness?.isVenueManagerContext?.());
       document.querySelectorAll("[data-auth-required]").forEach((link) => {
-        link.hidden = !isAuthenticated;
+        link.hidden = !isAuthenticated || isVenueManager;
       });
+      if (venueDashboardLinkEl) {
+        venueDashboardLinkEl.hidden = !isVenueManager;
+      }
     }
 
     function syncBusinessAccessUi() {

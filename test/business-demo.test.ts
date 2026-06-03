@@ -499,6 +499,11 @@ describe("Supabase account and verification foundation", () => {
               user_metadata: {
                 full_name: "OAuth User",
                 avatar_url: "https://example.com/avatar.png",
+                age_confirmed: true,
+                terms_accepted: true,
+                privacy_accepted: true,
+                terms_version: "user-controlled",
+                privacy_version: "user-controlled",
               },
             },
           },
@@ -514,6 +519,9 @@ describe("Supabase account and verification foundation", () => {
     expect(result.token.length).toBeGreaterThan(30);
     expect(result.account.email).toBe("oauth-user@example.com");
     expect(linkedAccount?.id).toBe(result.account.id);
+    expect(linkedAccount?.ageConfirmedAt).toBeNull();
+    expect(linkedAccount?.termsAcceptedAt).toBeNull();
+    expect(linkedAccount?.privacyAcceptedAt).toBeNull();
     expect(profile).toEqual(expect.objectContaining({
       id: result.account.id,
       email: "oauth-user@example.com",
@@ -968,8 +976,13 @@ describe("production hardening", () => {
     expect(viewerHtml).not.toMatch(/<div[^>]+id="debug"/);
     expect(viewerHtml).not.toMatch(/<button[^>]+id="debugToggle"/);
     expect(adminHtml).toMatch(/<div[^>]+id="adminContent" hidden>/);
+    expect(adminHtml).toContain("/api/admin/status");
+    expect(adminHtml).toContain("/api/admin/captures/manual");
+    expect(adminHtml).toContain("/api/admin/ingestions/queue");
+    expect(adminHtml).toContain("id=\"adminBeerRows\"");
     expect(adminHtml).not.toContain("Admin secret");
     expect(adminHtml).not.toContain("Unlock admin actions");
+    expect(adminHtml).not.toContain("x-admin-secret");
     expect(legacyMapHtml).not.toContain("Fetching venues from Supabase");
     expect(legacyMapHtml).not.toContain("<div id=\"debug\"");
   });
@@ -1228,17 +1241,32 @@ describe("production hardening", () => {
     })).submission.sourcePhotoUrl;
     expect(storedWebp).toMatch(/^private:evidence:/);
 
+    const verifiedProductionUser = repository.updateAccountSecurityClaims({
+      userId: user.id,
+      emailVerifiedAt: NOW,
+      now: NOW,
+    });
+    const productionBlockedService = createBusinessService(repository, {
+      NODE_ENV: "production",
+      ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
+      SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
+    });
+    expect(() => productionBlockedService.createSubmission(
+      verifiedProductionUser,
+      createSubmissionSchema.parse({
+        ...baseSubmission,
+        venueId: "venue-photo-prod-blocked",
+        sourcePhotoDataUrl: PNG_DATA_URL,
+      }),
+    )).toThrow("Inline image evidence storage is disabled in production");
+
     const productionOverrideService = createBusinessService(repository, {
       NODE_ENV: "production",
       ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: true,
       SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
     });
     expect(productionOverrideService.createSubmission(
-      repository.updateAccountSecurityClaims({
-        userId: user.id,
-        emailVerifiedAt: NOW,
-        now: NOW,
-      }),
+      verifiedProductionUser,
       createSubmissionSchema.parse({
         ...baseSubmission,
         venueId: "venue-photo-prod-override",
@@ -2952,7 +2980,7 @@ describe("business demo contribution model", () => {
       instagram: "https://instagram.com/corner",
       description: "Live music venue with a rotating tap list.",
       openingHours: { note: "Mon-Sun midday-late" },
-      venueTags: ["has food", "live music", "near public transport"],
+      venueTags: ["has food", "live music"],
       membershipTier: "pro",
       active: true,
     });
@@ -2960,6 +2988,35 @@ describe("business demo contribution model", () => {
     expect(profilePending.status).toBe("pending");
     expect(profilePending.changeType).toBe("profile");
     expect(repository.getBarProfile("bar-1")).toBeNull();
+
+    expect(() => service.upsertBarSpecial(managerAccount, "bar-1", {
+      id: null,
+      title: "Free tier special attempt",
+      description: "Should not be accepted on the Free tier.",
+      price: 20,
+      discount: null,
+      startsAt: null,
+      endsAt: null,
+      scheduleNote: null,
+      exclusive: true,
+      active: true,
+    })).toThrow("Plus or Pro venue tier required");
+
+    service.upsertBarProfile(admin, "bar-1", {
+      name: "Corner Hotel",
+      address: "57 Swan St, Richmond",
+      suburb: "Richmond",
+      area: "Richmond",
+      phone: "0399999999",
+      website: "https://corner.example",
+      instagram: "https://instagram.com/corner",
+      description: "Live music venue with a rotating tap list.",
+      openingHours: { note: "Mon-Sun midday-late" },
+      venueTags: ["has food", "live music"],
+      membershipTier: "plus",
+      active: true,
+    });
+    expect(repository.getBarProfile("bar-1")?.membershipTier).toBe("plus");
 
     const beer = service.upsertBarBeer(managerAccount, "bar-1", {
       id: null,
@@ -3008,8 +3065,7 @@ describe("business demo contribution model", () => {
     expect(portal.inventory.beers).toHaveLength(0);
     expect(portal.inventory.happyHours).toHaveLength(0);
     expect(portal.inventory.specials).toHaveLength(0);
-    expect(portal.tier.analyticsLocked).toBe(true);
-    expect(portal.insights.aggregateInsights).toBeNull();
+    expect(portal.tier.analyticsLocked).toBe(false);
 
     const adminPortal = service.getVenuePortal(admin, { venueId: "bar-1" });
     expect(adminPortal.pendingChanges).toHaveLength(4);
@@ -3031,13 +3087,13 @@ describe("business demo contribution model", () => {
     }
 
     const approvedPortal = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
-    expect(approvedPortal.profile.membershipTier).toBe("basic");
+    expect(approvedPortal.profile.membershipTier).toBe("plus");
     expect(approvedPortal.profile.highlightedName).toBe(false);
     expect(approvedPortal.inventory.beers).toHaveLength(1);
     expect(approvedPortal.inventory.happyHours).toHaveLength(1);
     expect(approvedPortal.inventory.specials).toHaveLength(1);
     expect(approvedPortal.pendingChanges).toHaveLength(0);
-    expect(approvedPortal.tier.analyticsLocked).toBe(true);
+    expect(approvedPortal.tier.analyticsLocked).toBe(false);
 
     const publicPreview = service.listPriceRecords(null, {
       limit: 20,
@@ -3194,6 +3250,74 @@ describe("business demo contribution model", () => {
     expect(afterPriceApproval.records).toEqual(expect.arrayContaining([
       expect.objectContaining({ beerName: "Carlton Draught", price: 15.5 }),
     ]));
+  });
+
+  it("limits Free venue accounts to beer and happy-hour data", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "free-bar-admin", "admin");
+    const manager = createAccount(repository, "free-bar-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "free-bar-1",
+      venueName: "Free Bar",
+      suburb: "Brunswick",
+    });
+    service.upsertBarProfile(admin, "free-bar-1", {
+      name: "Free Bar",
+      address: null,
+      suburb: "Brunswick",
+      area: "Brunswick",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "Free tier venue.",
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      active: true,
+    });
+    const managerAccount = repository.getAccountById(manager.id)!;
+
+    const freePortal = service.getVenuePortal(managerAccount, { venueId: "free-bar-1" });
+    expect(freePortal.tier.canManageSpecials).toBe(false);
+    expect(freePortal.tier.analyticsLocked).toBe(true);
+    expect(freePortal.analytics).toBeNull();
+
+    expect(service.upsertBarBeer(managerAccount, "free-bar-1", {
+      id: null,
+      beerName: "Asahi Super Dry",
+      brewery: "Asahi",
+      style: "Lager",
+      abv: 5,
+      serveSize: "pint",
+      price: 12,
+      onTap: true,
+      inStock: true,
+      notes: null,
+    })).toEqual(expect.objectContaining({ pendingChange: expect.objectContaining({ changeType: "beer" }) }));
+    expect(service.upsertBarHappyHour(managerAccount, "free-bar-1", {
+      id: null,
+      title: "Weekday happy hour",
+      daysOfWeek: ["mon"],
+      startTime: "16:00",
+      endTime: "18:00",
+      description: "$9 pints.",
+      active: true,
+    })).toEqual(expect.objectContaining({ pendingChange: expect.objectContaining({ changeType: "happy_hour" }) }));
+    expect(() => service.upsertBarSpecial(managerAccount, "free-bar-1", {
+      id: null,
+      title: "Free tier special attempt",
+      description: "Should not be accepted on Free.",
+      price: 20,
+      discount: null,
+      startsAt: null,
+      endsAt: null,
+      scheduleNote: null,
+      exclusive: true,
+      active: true,
+    })).toThrow("Plus or Pro venue tier required");
   });
 
   it("keeps direct venue-portal API writes pending until admin approval", async () => {

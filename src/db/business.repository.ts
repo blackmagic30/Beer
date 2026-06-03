@@ -3021,9 +3021,10 @@ export class BusinessRepository {
     const happyWhere = venueId
       ? "WHERE happy.venue_id = ? AND happy.active = 1 AND profile.active = 1"
       : "WHERE happy.active = 1 AND profile.active = 1";
+    const paidSpecialTierWhere = "profile.membership_tier IN ('plus', 'pro')";
     const specialWhere = venueId
-      ? "WHERE special.venue_id = ? AND special.active = 1 AND profile.active = 1"
-      : "WHERE special.active = 1 AND profile.active = 1";
+      ? `WHERE special.venue_id = ? AND special.active = 1 AND profile.active = 1 AND ${paidSpecialTierWhere}`
+      : `WHERE special.active = 1 AND profile.active = 1 AND ${paidSpecialTierWhere}`;
     const beerRows = this.database
       .prepare(
         `SELECT

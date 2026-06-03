@@ -696,18 +696,19 @@ function tierFlags(tier: BarMembershipTier) {
 
 function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
   const analytics = admin || tier === "plus" || tier === "pro";
+  const canManageSpecials = admin || tier === "plus" || tier === "pro";
   return {
     tier,
     canManageProfile: true,
     canManageInventory: true,
     canManageHappyHours: true,
-    canManageSpecials: true,
+    canManageSpecials,
     analytics,
     monthlyReports: analytics,
     premiumDisplay: tier === "pro",
     upgradeCopy: analytics
       ? null
-      : "Upgrade to Plus to see privacy-safe suburb analytics, search trends, and monthly report previews.",
+      : "Upgrade to Plus to add Pint Path specials, see privacy-safe suburb analytics, and preview monthly reports.",
   };
 }
 
@@ -1040,6 +1041,17 @@ export class BusinessService {
     return assignment;
   }
 
+  private requireBarSpecialsTier(account: BusinessAccount, venueId: string): void {
+    if (this.isAdmin(account)) {
+      return;
+    }
+
+    const membershipTier = this.repository.getBarProfile(venueId)?.membershipTier ?? "basic";
+    if (!getBarTierCapabilities(membershipTier).canManageSpecials) {
+      throw new AppError("Plus or Pro venue tier required to manage Pint Path specials.", 403);
+    }
+  }
+
   private buildDefaultBarProfile(input: { barId: string; name: string; suburb: string | null }): BarProfile {
     const now = nowIso();
     return {
@@ -1216,6 +1228,10 @@ export class BusinessService {
       }
 
       if (change.changeType === "special") {
+        const membershipTier = this.repository.getBarProfile(change.barId)?.membershipTier ?? "basic";
+        if (!getBarTierCapabilities(membershipTier).canManageSpecials) {
+          throw new AppError("Plus or Pro venue tier required to publish Pint Path specials.", 403);
+        }
         this.repository.deleteBarSpecial({ id: change.targetId, barId: change.barId });
         return;
       }
@@ -1300,6 +1316,10 @@ export class BusinessService {
     if (change.changeType === "special") {
       const payload = change.payload;
       const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
+      const membershipTier = this.repository.getBarProfile(change.barId)?.membershipTier ?? "basic";
+      if (!getBarTierCapabilities(membershipTier).canManageSpecials) {
+        throw new AppError("Plus or Pro venue tier required to publish Pint Path specials.", 403);
+      }
       this.ensureBarProfile({
         barId: change.barId,
         name: this.repository.getBarProfile(change.barId)?.name ?? change.barId,
@@ -1463,10 +1483,10 @@ export class BusinessService {
         emailVerifiedAt,
         mfaLevel: mfaClaims.mfaLevel,
         mfaVerifiedAt: mfaClaims.mfaVerifiedAt,
-        termsAcceptedAt: metadata.terms_accepted === true ? now : null,
-        privacyAcceptedAt: metadata.privacy_accepted === true ? now : null,
-        termsVersion: typeof metadata.terms_version === "string" ? metadata.terms_version : null,
-        privacyVersion: typeof metadata.privacy_version === "string" ? metadata.privacy_version : null,
+        termsAcceptedAt: null,
+        privacyAcceptedAt: null,
+        termsVersion: null,
+        privacyVersion: null,
         role: adminEmails.has(email) ? "admin" : "user",
         subscriptionStatus: adminEmails.has(email) ? "admin" : "free",
         now,
@@ -1502,19 +1522,6 @@ export class BusinessService {
 
     if (account.status === "suspended") {
       throw new AppError("Account access is suspended.", 403);
-    }
-
-    if (metadata.age_confirmed === true && !account.ageConfirmedAt) {
-      account = this.repository.updateAgeConfirmed(account.id, now);
-    }
-
-    if ((metadata.terms_accepted === true || metadata.privacy_accepted === true) && (!account.termsAcceptedAt || !account.privacyAcceptedAt)) {
-      account = this.repository.updateLegalAcceptance({
-        userId: account.id,
-        acceptedAt: now,
-        termsVersion: typeof metadata.terms_version === "string" ? metadata.terms_version : "2026-05-24",
-        privacyVersion: typeof metadata.privacy_version === "string" ? metadata.privacy_version : "2026-05-24",
-      });
     }
 
     this.recordUserActivity({
@@ -2204,6 +2211,10 @@ export class BusinessService {
     input: Pick<CreateSubmissionInput, "sourcePhotoDataUrl" | "sourcePhotoUrl">,
   ): string | null {
     if (input.sourcePhotoDataUrl) {
+      if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
+        throw new AppError("Inline image evidence storage is disabled in production.", 503);
+      }
+
       const mimeType = getSourcePhotoMimeType(input.sourcePhotoDataUrl);
       if (!mimeType || !SUBMISSION_LIMITS.allowedImageMimeTypes.includes(mimeType as never)) {
         throw new AppError("Upload must be a JPEG, PNG, WebP, HEIC, or HEIF image.", 400);
@@ -3661,7 +3672,7 @@ export class BusinessService {
       inventory: {
         beers: this.repository.listBarBeers(selectedVenueId),
         happyHours: this.repository.listBarHappyHours(selectedVenueId),
-        specials: this.repository.listBarSpecials(selectedVenueId),
+        specials: capabilities.canManageSpecials ? this.repository.listBarSpecials(selectedVenueId) : [],
       },
       pendingChanges: this.repository.listBarPendingChanges({ barId: selectedVenueId, status: "pending", limit: 100 }),
       insights,
@@ -3986,6 +3997,7 @@ export class BusinessService {
 
   upsertBarSpecial(account: BusinessAccount, venueId: string, input: BarSpecialInput) {
     const assignment = this.requireAssignedVenue(account, venueId);
+    this.requireBarSpecialsTier(account, venueId);
     const existing = input.id ? this.repository.getBarSpecialById(input.id) : null;
     if (existing && existing.barId !== venueId) {
       throw new AppError("Special belongs to another venue.", 403);
@@ -4038,6 +4050,7 @@ export class BusinessService {
 
   deleteBarSpecial(account: BusinessAccount, venueId: string, specialId: string) {
     const assignment = this.requireAssignedVenue(account, venueId);
+    this.requireBarSpecialsTier(account, venueId);
     const existing = this.repository.getBarSpecialById(specialId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Special not found for this venue.", 404);

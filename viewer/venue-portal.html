@@ -14,8 +14,8 @@
 
     <section class="hero hero--compact">
       <div class="eyebrow">Venue portal</div>
-      <h1>Manage your venue’s profile, taps, prices and specials.</h1>
-      <p class="lead">Assigned and verified venue accounts can keep details, beer stock, happy hours and deals up to date. Analytics stay privacy-safe and are only available on Plus and Pro tiers.</p>
+      <h1>Manage your venue’s beer data and happy hours.</h1>
+      <p class="lead">Assigned and verified venue accounts can keep beer stock and happy hours up to date. Plus and Pro tiers add reviewed Pint Path specials and privacy-safe analytics.</p>
     </section>
 
     <section id="portalAccess" class="notice">Log in with an assigned venue-manager account to view this dashboard.</section>
@@ -48,7 +48,7 @@
             <button class="tabButton" type="button" data-tab="profile">Profile</button>
             <button class="tabButton" type="button" data-tab="beers">Beers / stock</button>
             <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
-            <button class="tabButton" type="button" data-tab="specials">Deals & specials</button>
+            <button class="tabButton" type="button" data-tab="specials" data-specials-only>Deals & specials</button>
             <button class="tabButton" type="button" data-tab="analytics">Analytics</button>
             <button class="tabButton" type="button" data-tab="report">Monthly report</button>
           </nav>
@@ -69,11 +69,13 @@
                 <div class="actionRow">
                   <button class="button button--primary" type="button" data-jump-tab="beers">Add beer on tap</button>
                   <button class="button" type="button" data-jump-tab="happy-hours">Add happy hour</button>
-                  <button class="button" type="button" data-jump-tab="specials">Add special</button>
+                  <button class="button" type="button" data-jump-tab="specials" data-specials-only>Add special</button>
                   <button class="button" type="button" data-jump-tab="profile">Edit profile</button>
                 </div>
               </article>
             </div>
+
+            <article id="tierGuide" class="panel tierGuide" style="margin-top:16px;"></article>
 
             <div class="grid grid--two" style="margin-top:16px;">
               <article class="panel">
@@ -156,19 +158,9 @@
                   <input name="website" placeholder="https://..." />
                 </label>
               </div>
-              <div class="grid grid--two">
-                <label class="field">Instagram / social link
-                  <input name="instagram" placeholder="https://instagram.com/..." />
-                </label>
-                <label class="field">Membership tier
-                  <select name="membershipTier">
-                    <option value="basic">Basic</option>
-                    <option value="plus">Plus</option>
-                    <option value="pro">Pro</option>
-                  </select>
-                  <span class="fieldHint">Only admin can change tier. Non-admin saves keep the existing tier.</span>
-                </label>
-              </div>
+              <label class="field">Instagram / social link
+                <input name="instagram" placeholder="https://instagram.com/..." />
+              </label>
               <label class="field">Short description
                 <textarea name="description" placeholder="A short venue description for future listing pages."></textarea>
               </label>
@@ -297,7 +289,15 @@
           </section>
 
           <section class="tabPanel is-hidden" data-panel="specials">
-            <div class="grid grid--two">
+            <article id="specialsGate" class="panel is-hidden">
+              <h2>Pint Path specials are a paid venue feature</h2>
+              <p class="muted">Free venue accounts can add beer data and happy-hour data only. Upgrade to Plus or Pro to add reviewed Pint Path specials.</p>
+              <div class="actionRow">
+                <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
+                <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+              </div>
+            </article>
+            <div id="specialsEditor" class="grid grid--two">
               <form id="specialForm" class="panel form">
                 <h2>Deals and specials</h2>
                 <input name="id" type="hidden" />
@@ -410,7 +410,7 @@
       ];
     const trackedBeerLookup = new Map();
     let lastBeerAutofill = { brewery: "", style: "", abv: "" };
-    const tagOptions = ["has food", "outdoor seating", "good for groups", "sports on TV", "dog friendly", "live music", "near public transport"];
+    const tagOptions = ["has food", "outdoor seating", "good for groups", "sports on TV", "dog friendly", "live music"];
     const dayOptions = [
       ["mon", "Mon"],
       ["tue", "Tue"],
@@ -440,7 +440,11 @@
     }
 
     function prettyTier(value) {
-      return value === "pro" ? "Pro" : value === "plus" ? "Plus" : "Basic";
+      return value === "pro" ? "Pro" : value === "plus" ? "Plus" : "Free";
+    }
+
+    function portalCanManageSpecials(data = currentPortal) {
+      return Boolean(data?.tier?.canManageSpecials);
     }
 
     function nullableNumber(value) {
@@ -591,12 +595,31 @@
     }
 
     function showTab(name) {
+      const nextName = name === "specials" && !portalCanManageSpecials() ? "beers" : name;
       document.querySelectorAll(".tabButton").forEach((button) => {
-        button.classList.toggle("is-active", button.dataset.tab === name);
+        button.classList.toggle("is-active", button.dataset.tab === nextName);
       });
       document.querySelectorAll(".tabPanel").forEach((panel) => {
-        panel.classList.toggle("is-hidden", panel.dataset.panel !== name);
+        panel.classList.toggle("is-hidden", panel.dataset.panel !== nextName);
       });
+    }
+
+    function syncTierControls(data) {
+      const canSpecials = portalCanManageSpecials(data);
+      document.querySelectorAll("[data-specials-only]").forEach((element) => {
+        element.hidden = !canSpecials;
+        if ("disabled" in element) {
+          element.disabled = !canSpecials;
+        }
+      });
+      if (window.specialsGate && window.specialsEditor) {
+        specialsGate.classList.toggle("is-hidden", canSpecials);
+        specialsEditor.classList.toggle("is-hidden", !canSpecials);
+      }
+      const visiblePanel = document.querySelector(".tabPanel:not(.is-hidden)");
+      if (!canSpecials && visiblePanel?.dataset.panel === "specials") {
+        showTab("beers");
+      }
     }
 
     function renderChecklist(container, options, selected = []) {
@@ -641,6 +664,7 @@
 
       const profile = data.profile;
       const tier = data.tier || { tier: profile.membershipTier, analyticsLocked: true };
+      syncTierControls(data);
       selectedVenueSummary.innerHTML = `
         <strong>${escapeHtml(profile.name)}</strong>
         <span>${escapeHtml(profile.suburb || "Melbourne")}</span>
@@ -658,9 +682,8 @@
       const completion = [
         ["Profile", Boolean(profile.name && profile.suburb && profile.description)],
         ["Beers added", beers.length > 0],
-        ["Deals added", specials.length > 0],
         ["Happy hours", happyHours.length > 0],
-      ];
+      ].concat(tier.canManageSpecials ? [["Deals added", specials.length > 0]] : []);
       completionGrid.innerHTML = completion.map(([label, done]) => `
         <div class="completionItem ${done ? "is-complete" : ""}">
           <strong>${done ? "Done" : "Next"}</strong>
@@ -673,6 +696,7 @@
       renderHappyHours(happyHours);
       renderSpecials(specials);
       renderOverviewData(data);
+      renderTierGuide(data);
       renderPendingChanges(data.pendingChanges || []);
       renderAnalytics(data);
       renderMonthlyReport(data);
@@ -687,7 +711,6 @@
       field(profileForm, "instagram").value = profile.instagram || "";
       field(profileForm, "description").value = profile.description || "";
       field(profileForm, "openingHoursNote").value = profile.openingHours?.note || "";
-      field(profileForm, "membershipTier").value = profile.membershipTier || "basic";
       field(profileForm, "active").checked = Boolean(profile.active);
       renderChecklist(venueTags, tagOptions, profile.venueTags || []);
     }
@@ -713,6 +736,46 @@
           </div>
         `).join("")
         : '<div class="listItem muted">No verified price rows yet. Add beers, upload a tap-list source, or submit verified data for review.</div>';
+    }
+
+    function renderTierGuide(data) {
+      const tier = data.tier || {};
+      const tierName = prettyTier(tier.tier || data.profile?.membershipTier);
+      const included = [
+        "Beer data and tap-list updates",
+        "Happy-hour data",
+        "Profile edits submitted for review",
+      ];
+      const locked = [];
+      if (!tier.canManageSpecials) locked.push("Pint Path specials");
+      if (tier.analyticsLocked) locked.push("Analytics and monthly reports");
+      if (tier.tier !== "pro") locked.push("Premium venue display");
+
+      tierGuide.innerHTML = `
+        <div>
+          <div class="eyebrow">Current plan</div>
+          <h2>${escapeHtml(tierName)} venue access</h2>
+          <p class="muted">${tier.canManageSpecials
+            ? "This venue can submit reviewed specials and see privacy-safe demand signals when enough local data exists."
+            : "Free venues can keep beer data and happy-hour data current without exposing analytics or specials tools."}</p>
+        </div>
+        <div class="tierGuide__lists">
+          <div>
+            <strong>Included</strong>
+            <ul class="cleanList tierList">${included.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          </div>
+          <div>
+            <strong>${locked.length ? "Locked" : "Unlocked"}</strong>
+            <ul class="cleanList tierList">${(locked.length ? locked : ["Pint Path specials", "Analytics and monthly reports", "Premium venue display"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          </div>
+        </div>
+        ${tier.analyticsLocked || !tier.canManageSpecials ? `
+          <div class="actionRow">
+            <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
+            <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+          </div>
+        ` : ""}
+      `;
     }
 
     function renderPendingChanges(changes) {
@@ -808,7 +871,7 @@
         analyticsGate.innerHTML = `
           <h2>Analytics are available on Plus</h2>
           <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Plus to view privacy-safe suburb analytics and monthly reports.")}</p>
-          <div class="notice">Basic venue accounts can still manage profile details, beers, prices, happy hours, deals and specials.</div>
+          <div class="notice">Free venue accounts can still add beer data and happy-hour data. Plus unlocks reviewed Pint Path specials and analytics.</div>
           <div class="actionRow">
             <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
             <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
@@ -901,6 +964,7 @@
       MelbBeerBusiness.installFieldTestChrome();
       renderChecklist(venueTags, tagOptions);
       renderChecklist(happyHourDays, dayOptions);
+      syncTierControls({ tier: { canManageSpecials: false } });
       seedTrackedBeerLookup();
       populateBeerSuggestions();
       renderTimeSuggestions();
@@ -925,7 +989,10 @@
         await loadPortal(new URLSearchParams(window.location.search).get("venueId"));
       } catch (error) {
         claimPanel.classList.add("is-hidden");
-        MelbBeerBusiness.setStatus(portalAccess, error.message || "Bar dashboard unavailable. Log in, confirm 18+, or ask admin to assign your account to a venue.", true);
+        const message = /login required/i.test(error.message || "")
+          ? "Log in with an assigned venue-manager account to view this dashboard."
+          : error.message || "Bar dashboard unavailable. Log in, confirm 18+, or ask admin to assign your account to a venue.";
+        MelbBeerBusiness.setStatus(portalAccess, message, true);
       }
 
       document.querySelectorAll(".tabButton").forEach((button) => {
@@ -953,7 +1020,6 @@
           description: field(profileForm, "description").value || null,
           openingHours: field(profileForm, "openingHoursNote").value ? { note: field(profileForm, "openingHoursNote").value } : {},
           venueTags: checkedValues(venueTags),
-          membershipTier: field(profileForm, "membershipTier").value,
           active: field(profileForm, "active").checked,
         };
         try {
@@ -1032,6 +1098,10 @@
       specialForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (!selectedVenueId()) return;
+        if (!portalCanManageSpecials()) {
+          MelbBeerBusiness.setStatus(specialStatus, "Pint Path specials are available on Plus and Pro venue tiers.", true);
+          return;
+        }
         const body = {
           id: field(specialForm, "id").value || null,
           title: field(specialForm, "title").value,
@@ -1150,6 +1220,10 @@
 
         const specialId = target.dataset.editSpecial;
         if (specialId) {
+          if (!portalCanManageSpecials()) {
+            MelbBeerBusiness.setStatus(portalAccess, "Pint Path specials are available on Plus and Pro venue tiers.", true);
+            return;
+          }
           const item = currentPortal.inventory.specials.find((entry) => entry.id === specialId);
           if (!item) return;
           field(specialForm, "id").value = item.id;
@@ -1174,6 +1248,10 @@
         for (const [key, route] of deleteTargets) {
           const id = target.dataset[key];
           if (!id) continue;
+          if (route === "specials" && !portalCanManageSpecials()) {
+            MelbBeerBusiness.setStatus(portalAccess, "Pint Path specials are available on Plus and Pro venue tiers.", true);
+            return;
+          }
           try {
             await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/${route}/${encodeURIComponent(id)}`, { method: "DELETE" });
             await loadPortal(selectedVenueId());

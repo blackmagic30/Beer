@@ -73,7 +73,7 @@
 
         await MelbBeerBusiness.applyPendingLegalAcceptance();
         status.textContent = "Signed in. Taking you back...";
-        const destination = safeReturnPath();
+        const destination = result.account?.role === "venue_manager" ? "/venue-portal.html" : safeReturnPath();
         window.localStorage.removeItem("pintPathAuthReturnTo");
         window.location.replace(destination);
       } catch (error) {

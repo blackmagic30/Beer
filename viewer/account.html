@@ -476,6 +476,7 @@
     }
 
     function showLoggedOut(message = "Enter your details to continue.", isError = false) {
+      MelbBeerBusiness.setAccountContext(null);
       $("loggedOutView").hidden = false;
       $("accountDashboard").hidden = true;
       $("accountDashboard").classList.add("is-hidden");
@@ -631,6 +632,7 @@
 
     function renderDashboard(result) {
       state.accountData = result;
+      MelbBeerBusiness.setAccountContext(result.account);
       showDashboard();
       const account = result.account;
       $("accountEmail").textContent = account.email;
@@ -767,7 +769,7 @@
       const token = MelbBeerBusiness.getAuthToken();
       if (!token) {
         showLoggedOut();
-        return;
+        return null;
       }
 
       try {
@@ -777,9 +779,11 @@
         if (!reconciled) {
           await resumeCheckoutIfRequested(result);
         }
+        return result;
       } catch (error) {
         MelbBeerBusiness.setAuthToken(null);
         showLoggedOut(error.message || "Please sign in again.", true);
+        return null;
       }
     }
 
@@ -831,11 +835,16 @@
             body: JSON.stringify(body),
           });
           MelbBeerBusiness.setAuthToken(result.token);
+          MelbBeerBusiness.setAccountContext(result.account);
         }
 
         form.reset();
-        await refreshAccount();
+        const dashboard = await refreshAccount();
         if (pendingCheckoutPlan()) {
+          return;
+        }
+        if (dashboard?.account?.role === "venue_manager") {
+          window.location.assign("/venue-portal.html");
           return;
         }
         const nextPath = MelbBeerBusiness.getAuthReturnPathFromLocation();

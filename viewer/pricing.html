@@ -6,67 +6,18 @@
   <title>Pricing | Pint Path</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
   <main class="pageShell">
     <div id="nav"></div>
     <section class="hero">
-      <div class="eyebrow">Premium access</div>
-      <h1>Full Melbourne beer-price access, or earn it by helping keep data accurate.</h1>
-      <p class="lead">Browse the map for free with happy hours and pint prices for Guinness, Carlton Draft, and Stone & Wood, or unlock every verified beer price, premium filter, and special-discount detail.</p>
+      <div class="eyebrow">Venue pricing</div>
+      <h1>Bar plans for keeping Pint Path venue data current.</h1>
+      <p class="lead">Verified bars use the venue dashboard to publish fresh beer data and happy-hour data. Paid venue tiers add reviewed specials, privacy-safe analytics, and premium display tools.</p>
     </section>
 
-    <section class="pricingNoticeStack" aria-live="polite">
-      <div id="billingModeNotice" class="notice">Choose a plan to start checkout.</div>
-      <div id="status" class="notice">Log in and confirm 18+ before starting checkout.</div>
-    </section>
-
-    <section class="grid pricingTierGrid" aria-label="User access options">
-      <article class="card pricingCard">
-        <div class="pricingCard__body">
-          <h2>Free</h2>
-          <div class="price">A$0</div>
-          <p class="muted">See venue pins, happy hours, data freshness, and core pint prices for Guinness, Carlton Draft, and Stone & Wood.</p>
-        </div>
-        <div class="pricingCard__actions">
-          <a class="button" href="/">Open map</a>
-        </div>
-      </article>
-      <article class="card card--highlight pricingCard">
-        <div class="pricingCard__body">
-          <h2>Freemium</h2>
-          <div class="price">15 pts</div>
-          <p class="muted">Earn 15 approved contribution points in a month to unlock premium access for the rest of the month.</p>
-        </div>
-        <div class="pricingCard__actions">
-          <a class="button button--primary" href="/missions.html">Start freemium</a>
-        </div>
-      </article>
-      <article class="card pricingCard">
-        <div class="pricingCard__body">
-          <h2>Monthly</h2>
-          <div class="price">A$4.99</div>
-          <p class="muted">Unlimited exact prices, premium filters, and venue special-discount details for one month at a time.</p>
-        </div>
-        <div class="pricingCard__actions">
-          <button class="button button--primary" type="button" data-plan="monthly">Start monthly</button>
-        </div>
-      </article>
-      <article class="card pricingCard">
-        <div class="pricingCard__body">
-          <h2>Yearly</h2>
-          <div class="price">A$50</div>
-          <p class="muted">Best value for regular checking across Melbourne and Victoria venues, including special discounts where venues publish them.</p>
-        </div>
-        <div class="pricingCard__actions">
-          <button class="button button--primary" type="button" data-plan="yearly">Start yearly</button>
-        </div>
-      </article>
-    </section>
-
-    <section id="venuePricingSection" class="venuePricingSection is-hidden" aria-labelledby="venuePricingTitle" hidden>
+    <section id="venuePricingSection" class="venuePricingSection" aria-labelledby="venuePricingTitle">
       <div class="sectionHeader">
         <div>
           <div class="eyebrow">For venues</div>
@@ -78,14 +29,15 @@
       <div class="grid venuePricingGrid">
         <article class="card venuePricingCard">
           <div class="venuePricingCard__body">
-            <span class="tierBadge">Basic</span>
-            <h3>Keep your listing accurate</h3>
-            <p class="muted">A simple operational tier for venue teams who want locals to see current details.</p>
+            <span class="tierBadge">Free</span>
+            <h3>Beer data and happy-hour data</h3>
+            <div class="price">A$0</div>
+            <p class="muted">For verified bars that only need the essentials visible on the map.</p>
             <ul class="cleanList tierList">
-              <li>Edit public venue profile details after approval.</li>
-              <li>Submit beers on tap, prices, stock notes, and happy hours.</li>
-              <li>Add Pint Path specials for discovery on the map.</li>
-              <li>Menu photos and evidence stay private for review.</li>
+              <li>Add and maintain beer data after admin review.</li>
+              <li>Add and maintain happy-hour data after admin review.</li>
+              <li>No Pint Path specials on the Free plan.</li>
+              <li>No analytics or monthly reports.</li>
             </ul>
           </div>
           <div class="venuePricingCard__actions">
@@ -97,9 +49,11 @@
           <div class="venuePricingCard__body">
             <span class="tierBadge tierBadge--gold">Plus</span>
             <h3>Understand local demand</h3>
-            <p class="muted">Privacy-safe suburb insights for venues that want to plan better specials and tap lists.</p>
+            <div class="price">A$149</div>
+            <p class="muted">For venues that want reviewed specials and privacy-safe demand signals.</p>
             <ul class="cleanList tierList">
-              <li>Everything in Basic.</li>
+              <li>Everything in Free.</li>
+              <li>Add reviewed Pint Path specials.</li>
               <li>Suburb-level search and interaction trends.</li>
               <li>Monthly venue reports for views, lookups, and specials.</li>
               <li>Suppressed low-count data to protect user and competitor privacy.</li>
@@ -114,7 +68,8 @@
           <div class="venuePricingCard__body">
             <span class="tierBadge tierBadge--blue">Pro</span>
             <h3>Stand out in discovery</h3>
-            <p class="muted">Premium display metadata for future featured placement without exposing private analytics.</p>
+            <div class="price">A$299</div>
+            <p class="muted">For partner venues that want premium display metadata alongside Plus insights.</p>
             <ul class="cleanList tierList">
               <li>Everything in Plus.</li>
               <li>Premium venue badge and highlighted venue name metadata.</li>
@@ -128,170 +83,14 @@
         </article>
       </div>
     </section>
-    <p class="footerCopy">Freemium access unlocks after approved review. Partner venue credit is not active for this field test. Pint Path is 18+ only. Prices may change and availability is not guaranteed. <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></p>
+    <p class="footerCopy">Venue access is assigned after Pint Path verifies the bar contact. Pint Path is 18+ only. Prices may change and availability is not guaranteed. <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></p>
   </main>
 
   <script>
     window.addEventListener("DOMContentLoaded", () => {
       const nav = document.getElementById("nav");
-      const billingModeNotice = document.getElementById("billingModeNotice");
-      const statusNotice = document.getElementById("status");
-      const venuePricingSection = document.getElementById("venuePricingSection");
-
       nav.innerHTML = MelbBeerBusiness.renderNav("pricing");
-      const businessConfig = MelbBeerBusiness.getBusinessConfig();
-      billingModeNotice.textContent = businessConfig.demoBillingMode
-        ? "Field-test billing is in demo mode: no live payment will be taken."
-        : "Stripe checkout is enabled. Use configured Stripe test mode until live payments are intentionally switched on.";
-      void MelbBeerBusiness.trackEvent("pricing_page_viewed");
-
-      const setCheckoutBusy = (button, busy) => {
-        document.querySelectorAll("[data-plan]").forEach((planButton) => {
-          planButton.disabled = busy;
-          planButton.classList.toggle("is-loading", busy && planButton === button);
-        });
-        if (button) {
-          button.textContent = busy ? "Starting checkout..." : button.dataset.plan === "yearly" ? "Start yearly" : "Start monthly";
-        }
-      };
-
-      const showCheckoutStatus = (message, isError = false) => {
-        MelbBeerBusiness.setStatus(statusNotice, message, isError);
-        statusNotice.scrollIntoView({ behavior: "smooth", block: "center" });
-      };
-
-      const goToAccount = (message, plan = null) => {
-        showCheckoutStatus(`${message} Taking you to Account now...`, true);
-        window.setTimeout(() => {
-          const accountUrl = new URL("/account.html", window.location.origin);
-          accountUrl.searchParams.set("next", "/pricing.html");
-          if (plan) {
-            accountUrl.searchParams.set("checkoutPlan", plan);
-          }
-          window.location.href = accountUrl.toString();
-        }, 650);
-      };
-
-      const isSessionError = (error) => /account required|authorization|session|token|login|log in|sign in/i.test(error?.message || "");
-
-      const trySyncSession = async () => {
-        const result = await MelbBeerBusiness.syncSupabaseSession().catch(() => null);
-        return Boolean(result?.synced && MelbBeerBusiness.getAuthToken());
-      };
-
-      const getAccountDashboard = async () => {
-        try {
-          return await MelbBeerBusiness.apiFetch("/api/business/account");
-        } catch (error) {
-          if (!isSessionError(error) || !(await trySyncSession())) {
-            throw error;
-          }
-
-          return MelbBeerBusiness.apiFetch("/api/business/account");
-        }
-      };
-
-      const setVenuePricingVisible = (visible) => {
-        if (!venuePricingSection) {
-          return;
-        }
-        venuePricingSection.hidden = !visible;
-        venuePricingSection.classList.toggle("is-hidden", !visible);
-      };
-
-      const refreshVenuePricingVisibility = async () => {
-        setVenuePricingVisible(false);
-
-        if (!MelbBeerBusiness.getAuthToken()) {
-          await trySyncSession();
-        }
-
-        if (!MelbBeerBusiness.getAuthToken()) {
-          return;
-        }
-
-        try {
-          const portal = await MelbBeerBusiness.apiFetch("/api/business/venue-portal");
-          const assignments = Array.isArray(portal?.assignments) ? portal.assignments : [];
-          const hasVenueAccess = assignments.length > 0 || Boolean(portal?.selectedVenue);
-          setVenuePricingVisible(hasVenueAccess);
-        } catch (_error) {
-          setVenuePricingVisible(false);
-        }
-      };
-
-      void refreshVenuePricingVisibility();
-
-      const ensureReadyForCheckout = async (plan) => {
-        if (!MelbBeerBusiness.getAuthToken()) {
-          await trySyncSession();
-        }
-
-        if (!MelbBeerBusiness.getAuthToken()) {
-          goToAccount("Please sign in before starting checkout.", plan);
-          return false;
-        }
-
-        try {
-          const dashboard = await getAccountDashboard();
-          if (!dashboard?.account?.ageConfirmedAt) {
-            goToAccount("Please confirm you are 18+ before starting checkout.", plan);
-            return false;
-          }
-          return true;
-        } catch (error) {
-          if (isSessionError(error)) {
-            MelbBeerBusiness.setAuthToken(null);
-            goToAccount("Your session needs a quick sign-in refresh.", plan);
-            return false;
-          }
-          throw error;
-        }
-      };
-
-      document.querySelectorAll("[data-plan]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const plan = button.dataset.plan;
-          try {
-            if (!(await ensureReadyForCheckout(plan))) {
-              return;
-            }
-
-            setCheckoutBusy(button, true);
-            showCheckoutStatus(`Opening secure Stripe checkout for the ${plan} plan...`);
-            const result = await MelbBeerBusiness.apiFetch("/api/business/billing/checkout", {
-              method: "POST",
-              body: JSON.stringify({ plan }),
-            });
-            if (result.mode === "demo") {
-              await MelbBeerBusiness.apiFetch("/api/business/billing/demo-subscribe", {
-                method: "POST",
-                body: JSON.stringify({ plan }),
-              });
-              showCheckoutStatus("Demo subscription activated. Your account now has premium access.");
-              return;
-            }
-            if (!result.checkoutUrl) {
-              throw new Error("Stripe did not return a checkout URL. Check the Stripe price IDs in Railway.");
-            }
-            window.location.assign(result.checkoutUrl);
-          } catch (error) {
-            const message = error?.message || "Checkout failed. Log in and confirm 18+ first.";
-            if (/18\+|age/i.test(message)) {
-              goToAccount("Please confirm you are 18+ before starting checkout.", plan);
-              return;
-            }
-            if (/account required|authorization|session|token|login|log in|sign in/i.test(message)) {
-              MelbBeerBusiness.setAuthToken(null);
-              goToAccount("Please sign in before starting checkout.", plan);
-              return;
-            }
-            showCheckoutStatus(message, true);
-          } finally {
-            setCheckoutBusy(button, false);
-          }
-        });
-      });
+      void MelbBeerBusiness.trackEvent("pricing_page_viewed", { pricingContext: "venue" });
     });
   </script>
 </body>

@@ -83,4 +83,53 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).toContain("Raw codes are not stored");
     expect(sql).not.toContain("code text not null");
   });
+
+  it("hardens private security-definer helpers against public execution and mutable search paths", () => {
+    const sql = migration("20260603000000_harden_private_helper_functions.sql");
+
+    expect(sql).toContain("revoke all on schema private from public");
+    expect(sql).toContain("revoke all on all functions in schema private from public");
+    expect(sql).toContain("grant usage on schema private to authenticated");
+    expect(sql).toContain("set search_path = pg_catalog");
+    expect(sql).toContain("revoke all on function private.beermap_upload_owner(uuid) from public");
+    expect(sql).toContain("grant execute on function private.beermap_upload_owner(uuid) to authenticated");
+    expect(sql).toContain("revoke all on function private.beermap_is_admin(uuid) from public");
+    expect(sql).toContain("grant execute on function private.beermap_is_admin(uuid) to authenticated");
+    expect(sql).toContain("revoke all on function private.generate_public_account_id() from public");
+    expect(sql).toContain("revoke all on function private.create_profile_for_new_user() from public");
+    expect(sql).not.toContain("raw_user_meta_data ->> 'terms_accepted'");
+    expect(sql).not.toContain("raw_user_meta_data ->> 'privacy_accepted'");
+    expect(sql).not.toContain("raw_user_meta_data ->> 'terms_version'");
+    expect(sql).not.toContain("raw_user_meta_data ->> 'privacy_version'");
+  });
+
+  it("captures live Supabase advisor hardening for public RPCs and RLS policies", () => {
+    const sql = migration("20260603111859_harden_live_supabase_advisor_findings.sql");
+
+    expect(sql).toContain("server_only_no_client_access");
+    expect(sql).toContain("revoke all on function public.can_manage_venue(uuid) from public, anon, authenticated");
+    expect(sql).toContain("revoke all on function public.get_bar_dashboard_analytics(uuid, timestamp with time zone, timestamp with time zone, integer) from public, anon, authenticated");
+    expect(sql).toContain("alter function public.set_updated_at() set search_path = pg_catalog");
+    expect(sql).toContain("to authenticated");
+    expect(sql).toContain("using ((select auth.uid()) = id)");
+    expect(sql).toContain("private.beermap_is_admin((select auth.uid()))");
+    expect(sql).toContain("drop policy if exists \"bar members can read own venue\" on public.venues");
+    expect(sql).toContain("create index if not exists idx_beermap_verifications_upload_id");
+    expect(sql).toContain("create index if not exists idx_discount_redemptions_redeemed_by_user_id");
+  });
+
+  it("tunes remaining live RLS policies without widening owner/admin access", () => {
+    const sql = migration("20260603114139_tune_remaining_rls_advisor_policies.sql");
+
+    expect(sql).toContain("privacy_settings_select_own_or_admin");
+    expect(sql).toContain("uploads_select_own_or_admin");
+    expect(sql).toContain("user_price_submissions_select_own_or_admin");
+    expect(sql).toContain("(select auth.uid()) = user_id");
+    expect(sql).toContain("private.beermap_is_admin((select auth.uid()))");
+    expect(sql).toContain("drop policy if exists \"privacy_settings_admin_select\"");
+    expect(sql).toContain("drop policy if exists \"uploads_admin_select\"");
+    expect(sql).toContain("drop policy if exists \"user_price_submissions_admin_select\"");
+    expect(sql).toContain("discount_redemptions_select_own");
+    expect(sql).not.toContain("roles = '{public}'");
+  });
 });

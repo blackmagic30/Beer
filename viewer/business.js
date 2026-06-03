@@ -1,4 +1,5 @@
 const AUTH_TOKEN_KEY = "melbBeerBusinessAuthToken";
+const ACCOUNT_CONTEXT_KEY = "pintPathAccountContext";
 const ANON_SESSION_KEY = "melbBeerAnonSessionId";
 const AUTH_RETURN_KEY = "pintPathAuthReturnTo";
 const LEGAL_ACCEPTANCE_KEY = "pintPathLegalAcceptance";
@@ -16,7 +17,41 @@ function setAuthToken(token) {
     window.localStorage.setItem(AUTH_TOKEN_KEY, token);
   } else {
     window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    setAccountContext(null);
   }
+}
+
+function setAccountContext(account) {
+  if (!account || typeof account !== "object") {
+    window.localStorage.removeItem(ACCOUNT_CONTEXT_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(ACCOUNT_CONTEXT_KEY, JSON.stringify({
+    id: account.id || null,
+    role: account.role || null,
+    status: account.status || null,
+    email: account.email || null,
+  }));
+}
+
+function getAccountContext() {
+  const raw = window.localStorage.getItem(ACCOUNT_CONTEXT_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    window.localStorage.removeItem(ACCOUNT_CONTEXT_KEY);
+    return null;
+  }
+}
+
+function isVenueManagerContext() {
+  return getAccountContext()?.role === "venue_manager";
 }
 
 function hasCachedSupabaseSession() {
@@ -312,6 +347,7 @@ async function syncSupabaseSession() {
     body: JSON.stringify({ accessToken: data.session.access_token }),
   });
   setAuthToken(result.token);
+  setAccountContext(result.account);
   return { configured: true, synced: true, account: result.account };
 }
 
@@ -450,12 +486,19 @@ async function requestPasswordReset(email) {
 function renderNav(active = "") {
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
   const feedbackLink = isFieldTestMode() ? `<a ${active === "feedback" ? 'class="pill"' : ""} href="/feedback.html">Feedback</a>` : "";
-  const authenticatedLinks = hasAuthenticatedSessionHint()
+  const venueManagerNav = active === "venue-portal" || isVenueManagerContext();
+  const authenticatedLinks = hasAuthenticatedSessionHint() && !venueManagerNav
     ? `
         <a ${active === "missions" ? 'class="pill"' : ""} href="/missions.html">Missions</a>
         <a ${active === "submit" ? 'class="pill"' : ""} href="/submit.html">Submit data</a>
       `
     : "";
+  const dashboardLink = venueManagerNav
+    ? `<a ${active === "venue-portal" ? 'class="pill"' : ""} href="/venue-portal.html">Dashboard</a>`
+    : "";
+  const trustLink = venueManagerNav
+    ? ""
+    : `<a ${active === "trust" ? 'class="pill"' : ""} href="/trust.html">Trust</a>`;
   return `
     <nav class="topNav" aria-label="Primary">
       <a class="brand" href="/">
@@ -465,8 +508,9 @@ function renderNav(active = "") {
       ${betaPill}
       <div class="navLinks">
         <a ${active === "map" ? 'class="pill"' : ""} href="/">Map</a>
+        ${dashboardLink}
         ${authenticatedLinks}
-        <a ${active === "trust" ? 'class="pill"' : ""} href="/trust.html">Trust</a>
+        ${trustLink}
         <a ${active === "pricing" ? 'class="pill"' : ""} href="/pricing.html">Pricing</a>
         <a ${active === "account" ? 'class="pill"' : ""} href="/account.html">Account</a>
         ${feedbackLink}
@@ -578,8 +622,12 @@ async function trackEvent(eventType, metadata = {}) {
 
 window.MelbBeerBusiness = {
   AUTH_TOKEN_KEY,
+  ACCOUNT_CONTEXT_KEY,
   getAuthToken,
   setAuthToken,
+  setAccountContext,
+  getAccountContext,
+  isVenueManagerContext,
   hasAuthenticatedSessionHint,
   getAnonymousSessionId,
   getViewerConfig,

@@ -536,6 +536,14 @@ h3 {
   gap: 14px;
 }
 
+.form > * {
+  min-width: 0;
+}
+
+.form p {
+  overflow-wrap: anywhere;
+}
+
 .field {
   display: grid;
   gap: 8px;
@@ -693,6 +701,64 @@ h3 {
 
 .field textarea {
   min-height: 102px;
+}
+
+.adminVenueSelect {
+  min-height: 176px;
+}
+
+.adminBeerRows,
+.adminQueueBeerRows {
+  display: grid;
+  gap: 12px;
+}
+
+.adminBeerRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  border: 1px solid rgba(244, 214, 150, 0.13);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.3);
+  padding: 12px;
+}
+
+.adminBeerRow .field {
+  gap: 6px;
+}
+
+.adminBeerRow .field input,
+.adminBeerRow .field select {
+  min-height: 42px;
+  padding: 10px 11px;
+  border-radius: 13px;
+  font-size: 13px;
+}
+
+.adminBeerRow__meta {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.adminBeerRow > .button {
+  justify-self: start;
+}
+
+.adminIngestionItem {
+  display: grid;
+  gap: 12px;
+}
+
+.adminIngestionItem__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
 }
 
 .readonlySelect {
@@ -995,6 +1061,36 @@ h3 {
 
 .completionItem.is-complete strong {
   color: var(--green);
+}
+
+.tierGuide {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.tierGuide__lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tierGuide__lists > div {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.26);
+  padding: 13px;
+}
+
+.tierGuide__lists strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .dataRow {
@@ -2127,7 +2223,9 @@ h3 {
   .accountHero,
   .tierGrid,
   .pricingTierGrid,
-  .venuePricingGrid {
+  .venuePricingGrid,
+  .tierGuide,
+  .tierGuide__lists {
     grid-template-columns: 1fr;
   }
 
@@ -2226,6 +2324,18 @@ h3 {
     border-radius: 24px;
   }
 
+  .adminBeerRow {
+    grid-template-columns: 1fr;
+  }
+
+  .adminBeerRow__meta {
+    grid-column: 1;
+  }
+
+  .adminBeerRow > .button {
+    justify-self: stretch;
+  }
+
   .accountHighlightsGrid .metricCard,
   .accountHighlightsGrid .panel {
     min-height: auto;
@@ -2273,6 +2383,22 @@ h3 {
   .pricingTierGrid,
   .venuePricingGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tierGuide {
+    grid-template-columns: 1fr;
+  }
+
+  .adminBeerRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .adminBeerRow__meta {
+    grid-column: 1 / -1;
+  }
+
+  .adminBeerRow > .button {
+    justify-self: start;
   }
 
   .accountHighlightsGrid {

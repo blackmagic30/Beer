@@ -242,19 +242,24 @@ describe("account page shell", () => {
     expect(script).toContain("applyPendingLegalAcceptance");
   });
 
-  it("keeps Missions and Submit data navigation behind authenticated session hints", () => {
+  it("keeps contributor navigation behind auth hints and gives venue managers a dashboard link", () => {
     const html = mapHtml();
     const script = businessJs();
 
     expect(script).toContain("function hasAuthenticatedSessionHint");
     expect(script).toContain("function hasCachedSupabaseSession");
-    expect(script).toContain("const authenticatedLinks = hasAuthenticatedSessionHint()");
+    expect(script).toContain("function isVenueManagerContext");
+    expect(script).toContain('const venueManagerNav = active === "venue-portal" || isVenueManagerContext()');
+    expect(script).toContain("const authenticatedLinks = hasAuthenticatedSessionHint() && !venueManagerNav");
+    expect(script).toContain('href="/venue-portal.html">Dashboard');
     expect(script).toContain('href="/missions.html">Missions');
     expect(script).toContain('href="/submit.html">Submit data');
+    expect(html).toContain('id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard');
     expect(html).toContain('href="/missions.html" data-auth-required');
     expect(html).toContain('href="/submit.html" data-auth-required');
     expect(html).not.toContain('href="/submit.html" class="primary" data-auth-required');
     expect(html).toContain("function syncAuthenticatedNavLinks");
+    expect(html).toContain("window.MelbBeerBusiness?.isVenueManagerContext?.()");
     expect(html).toContain('document.querySelectorAll("[data-auth-required]")');
   });
 
@@ -313,6 +318,7 @@ describe("account page shell", () => {
     expect(html).toContain("MelbBeerBusiness.syncSupabaseSession");
     expect(html).toContain("MelbBeerBusiness.applyPendingLegalAcceptance");
     expect(html).toContain("MelbBeerBusiness.getSafeReturnPath");
+    expect(html).toContain('result.account?.role === "venue_manager" ? "/venue-portal.html" : safeReturnPath()');
     expect(html).not.toContain("service_role");
   });
 
