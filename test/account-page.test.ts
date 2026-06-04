@@ -180,8 +180,14 @@ describe("account page shell", () => {
     expect(html).toContain('id="accountStatsGrid"');
     expect(html).toContain("function renderAccountStatsPanel");
     expect(html).toContain("renderAccountStatsPanel(result)");
+    expect(html).toContain("accountStatsProgressCard");
+    expect(html).toContain("same premium map access as a paid user");
+    expect(html).toContain("accountStatCard--");
     expect(css).toContain(".accountHighlightsGrid");
     expect(css).toContain(".accountStatsGrid");
+    expect(css).toContain("display: grid;");
+    expect(css).toContain(".accountStatsProgressCard");
+    expect(css).toContain(".accountStatCard .helperCopy");
     expect(css).toContain(".accountDiscountFeature");
   });
 
@@ -226,8 +232,13 @@ describe("account page shell", () => {
     expect(html).toContain("MelbBeerBusiness.signInWithEmail");
     expect(html).toContain('id="passwordResetButton"');
     expect(html).toContain("Reset password");
+    expect(html).toContain('id="resendConfirmationButton"');
+    expect(html).toContain("Resend confirmation");
     expect(html).toContain("Sending reset link...");
+    expect(html).toContain("Sending confirmation...");
     expect(html).toContain("If an account exists for that email, a secure reset link has been sent.");
+    expect(html).toContain("If a Supabase signup exists for that email, a confirmation email has been sent.");
+    expect(html).toContain("No Supabase confirmation email was sent.");
     expect(html).not.toContain('id="oauthTermsAccepted"');
     expect(html).not.toContain('id="oauthPrivacyAccepted"');
     expect(html).not.toContain("before using social login");
@@ -236,6 +247,9 @@ describe("account page shell", () => {
     expect(script).toContain('provider,');
     expect(script).toContain("signInWithPassword");
     expect(script).toContain("signUp({");
+    expect(script).toContain("resendSignupConfirmation");
+    expect(script).toContain("auth.resend({");
+    expect(script).toContain('type: "signup"');
     expect(script).toContain("/auth/callback");
     expect(script).toContain("terms_accepted");
     expect(script).toContain("privacy_accepted");
@@ -277,7 +291,11 @@ describe("account page shell", () => {
     expect(html).toContain("Confirm you are 18+ and accept the Terms and Privacy Policy to create an account.");
     expect(html).toContain('id="signupPanel" class="authPanelStack"');
     expect(html).toContain('class="authFields"');
-    expect(html).toContain('class="consentLine"');
+    expect(html).toContain('class="field consentField" role="group" aria-label="Account consent"');
+    expect(html).toContain('<label class="consentLine"><input name="ageConfirmed"');
+    expect(html).toContain('<label class="consentLine"><input name="termsAccepted"');
+    expect(html).toContain('<label class="consentLine"><input name="privacyAccepted"');
+    expect(html).toContain('authParams.get("supabaseAuth") !== "1"');
     expect(css).toContain('.field input[type="checkbox"]');
     expect(css).toContain(".authPanelStack");
     expect(css).toContain(".authFields");

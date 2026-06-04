@@ -24,7 +24,7 @@ const optionalTrimmedStringSchema = z.preprocess((value) => {
 
 const servingSizeSchema = z.enum(["pint", "pot", "schooner", "jug", "bottle", "can", "other"]);
 const tapStatusSchema = z.enum(["yes", "no", "unknown"]);
-const savedItemTypeSchema = z.enum(["venue", "beer", "suburb"]);
+const savedItemTypeSchema = z.enum(["venue", "beer", "suburb", "night_plan"]);
 const feedbackTypeSchema = z.enum([
   "bug",
   "wrong_data",
@@ -298,6 +298,8 @@ export const eventTrackSchema = z.object({
     "saved_beer_removed",
     "saved_suburb_added",
     "saved_suburb_removed",
+    "saved_night_plan_added",
+    "saved_night_plan_removed",
     "mission_board_viewed",
     "mission_opened",
     "submission_started",
@@ -330,6 +332,7 @@ export const eventTrackSchema = z.object({
     "share_link_copied",
     "venue_shared",
     "search_shared",
+    "directions_clicked",
     "quick_submit_started",
     "venue_partner_page_viewed",
     "venue_interest_submitted",
@@ -578,6 +581,22 @@ export const adminDashboardQuerySchema = z.object({
   range: z.enum(["today", "7d", "30d", "month", "all"]).default("7d"),
 });
 
+const reportMonthSchema = z.string().trim().regex(/^\d{4}-\d{2}$/, "Use YYYY-MM, for example 2026-05.");
+
+export const monthlyReportGenerateSchema = z.object({
+  month: reportMonthSchema.optional(),
+  venueId: nullableTrimmedStringSchema.default(null),
+  dryRun: z.boolean().default(false),
+});
+
+export const monthlyReportDeliverySchema = monthlyReportGenerateSchema.extend({
+  deliver: z.boolean().default(true),
+});
+
+export const monthlyReportExportQuerySchema = z.object({
+  format: z.enum(["json", "csv"]).default("json"),
+});
+
 export const retentionQuerySchema = z.object({
   groupBy: z.enum(["week", "month"]).default("week"),
   limit: z.coerce.number().int().min(1).max(24).default(12),
@@ -656,6 +675,9 @@ export type BarPendingChangeReviewInput = z.infer<typeof barPendingChangeReviewS
 export type VenueClaimRequestInput = z.infer<typeof venueClaimRequestSchema>;
 export type VenuePendingChangeReviewInput = z.infer<typeof venuePendingChangeReviewSchema>;
 export type AdminDashboardQuery = z.infer<typeof adminDashboardQuerySchema>;
+export type MonthlyReportGenerateInput = z.infer<typeof monthlyReportGenerateSchema>;
+export type MonthlyReportDeliveryInput = z.infer<typeof monthlyReportDeliverySchema>;
+export type MonthlyReportExportQuery = z.infer<typeof monthlyReportExportQuerySchema>;
 export type RetentionQuery = z.infer<typeof retentionQuerySchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
 export type CheckoutSessionInput = z.infer<typeof checkoutSessionSchema>;

@@ -62,6 +62,8 @@ function createBusinessService(
     ADMIN_MFA_MAX_AGE_MINUTES: 720,
     REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
     ANALYTICS_MIN_BUCKET_SIZE: 5,
+    REPORT_TIMEZONE: "Australia/Melbourne",
+    REPORT_EMAIL_MODE: "disabled",
     ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
     SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
     SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: 300,
@@ -2682,7 +2684,24 @@ describe("business demo contribution model", () => {
     expect(preferences.preferredSuburbs).toEqual(["Fitzroy", "Richmond"]);
     expect(saved.label).toBe("Fitzroy");
     expect(repository.listSavedItems(user.id)).toHaveLength(1);
+    const nightPlan = repository.saveItem({
+      id: "saved-night-plan-1",
+      userId: user.id,
+      itemType: "night_plan",
+      itemId: "current-night-plan",
+      label: "2 stops night plan",
+      suburb: "Fitzroy",
+      metadata: {
+        venueIds: ["venue-1", "venue-2"],
+        venueNames: ["Alpha Bar", "Beta Bar"],
+        suburbs: ["Fitzroy", "Richmond"],
+      },
+      now: NOW,
+    });
+    expect(nightPlan.itemType).toBe("night_plan");
+    expect(repository.listSavedItems(user.id)).toHaveLength(2);
     expect(repository.removeSavedItem({ userId: user.id, itemType: "suburb", itemId: "fitzroy" })).toBe(true);
+    expect(repository.removeSavedItem({ userId: user.id, itemType: "night_plan", itemId: "current-night-plan" })).toBe(true);
     expect(repository.listSavedItems(user.id)).toHaveLength(0);
   });
 
@@ -3668,6 +3687,70 @@ describe("business demo contribution model", () => {
     expect(proProfile.profile.premiumBadge).toBe("Pro");
     expect(proProfile.profile.promoted).toBe(true);
     expect(proProfile.profile.featuredSpecialEligible).toBe(true);
+  });
+
+  it("exposes only public tier metadata on venue discovery rows", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "public-tier-admin", "admin");
+
+    service.seedDemoMissions();
+    service.upsertBarProfile(admin, "demo:rooftop-bar", {
+      name: "Rooftop Bar",
+      address: null,
+      suburb: "Melbourne",
+      area: "Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "Premium skyline venue.",
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "pro",
+      active: true,
+    });
+
+    const venues = await service.listVenues(undefined, 20);
+    const proVenue = venues.find((venue) => venue.id === "demo:rooftop-bar");
+    const freeVenue = venues.find((venue) => venue.id === "demo:fitzroy-beer-garden");
+
+    expect(proVenue?.membershipTier).toBe("pro");
+    expect(proVenue?.premiumBadge).toBe("Pro");
+    expect(proVenue?.highlightedName).toBe(true);
+    expect(proVenue?.promoted).toBe(true);
+    expect(proVenue).not.toHaveProperty("stripeCustomerId");
+    expect(proVenue).not.toHaveProperty("stripeSubscriptionId");
+    expect(freeVenue?.membershipTier).toBe("basic");
+    expect(freeVenue?.premiumBadge).toBeNull();
+  });
+
+  it("serves a public venue detail lookup without private billing metadata", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "public-venue-detail-admin", "admin");
+
+    service.upsertBarProfile(admin, "venue-detail-1", {
+      name: "Moonlit Taproom",
+      address: "10 Test Lane",
+      suburb: "Fitzroy",
+      area: "Fitzroy",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "A launch-ready venue.",
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "plus",
+      active: true,
+    });
+
+    const venue = await service.getPublicVenueById("venue-detail-1");
+
+    expect(venue?.name).toBe("Moonlit Taproom");
+    expect(venue?.suburb).toBe("Fitzroy");
+    expect(venue?.membershipTier).toBe("plus");
+    expect(venue).not.toHaveProperty("stripeCustomerId");
+    expect(await service.getPublicVenueById("missing-venue")).toBeNull();
   });
 
   it("activates Plus and Pro bar tiers through demo checkout without Stripe keys", async () => {

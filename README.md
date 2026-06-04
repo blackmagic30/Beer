@@ -56,6 +56,7 @@
 - `POST /api/business/venue-interest`
 - `GET /api/business/venue-portal`
 - `POST /api/business/venue-portal/:venueId/submissions`
+- `GET /api/business/venue-portal/:venueId/reports/:month/export`
 - `GET /api/business/admin/kpis`
 - `GET /api/business/admin/retention`
 - `GET /api/business/admin/coverage`
@@ -64,6 +65,8 @@
 - `GET /api/business/admin/venue-partners`
 - `POST /api/business/admin/venue-managers`
 - `POST /api/business/admin/venue-managers/revoke`
+- `POST /api/business/admin/reports/monthly/generate`
+- `POST /api/business/admin/reports/monthly/deliver`
 - `POST /api/business/admin/venue-interest/:id/status`
 - `POST /api/business/admin/venue-outreach`
 - `POST /api/business/billing/checkout`
@@ -104,7 +107,7 @@ Business demo pages:
 - `/trust.html`: public trust centre explaining verification, private evidence, aggregate venue insights, and support paths.
 - `/community.html`: contributor community standards, moderation rules, anti-abuse expectations, and appeal paths.
 - `/security.html`: security/privacy support page for account controls, data requests, abuse reports, and responsible disclosure.
-- `/venue-portal`: invite-only, admin-assigned venue dashboard for profile details, beer stock/on-tap rows, prices, happy hours, tier-gated specials, listing quality, tier-gated analytics, monthly report previews, and pending review updates. `/for-bars` redirects here so public users do not see venue-owner operating details.
+- `/venue-portal`: invite-only, admin-assigned venue dashboard for profile details, beer stock/on-tap rows, prices, happy hours, tier-gated specials, listing quality, tier-gated analytics, generated monthly reports, exports, and pending review updates. `/for-bars` redirects here so public users do not see venue-owner operating details.
 - `/admin.html`: admin-only submission review, KPI dashboard, cohorts, coverage, partner leads, and review queues.
 
 Supabase auth/account foundation:
@@ -129,7 +132,7 @@ Venue partner demo layer:
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
 - Free/Basic venue accounts can add beer data and happy-hour data only; Pint Path specials, venue analytics, and monthly reports stay locked.
-- Plus A$149 and Pro A$299 venue tiers unlock reviewed Pint Path specials, privacy-safe suburb-level analytics, and monthly report previews. Venue-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` and `STRIPE_PRO_PRICE_ID` are configured with Stripe `price_...` IDs.
+- Plus A$149 and Pro A$299 venue tiers unlock reviewed Pint Path specials, privacy-safe suburb-level analytics, and protected monthly report generation/export. Venue-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` and `STRIPE_PRO_PRICE_ID` are configured with Stripe `price_...` IDs.
 - Pro stores public display metadata only: highlighted name, `Pro` badge, promoted flag, and featured-special eligibility. It does not implement spammy ranking behaviour.
 - Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
 - Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, private source evidence, or another venue’s private data.
@@ -140,8 +143,8 @@ Venue owner TODOs before paid partner rollout:
 - Add a full Stripe Customer Portal/manage-billing flow for venue tiers if paid venue subscriptions move beyond Checkout.
 - Add an admin approval interface for authenticated `venue_claim_requests`; claims are stored for manual review today.
 - Add stronger claim verification such as business email, phone, or document checks.
-- Replace monthly report previews with scheduled generated reports.
-- Expand scheduled monthly reports from the aggregate `events` pipeline as production search/click volume grows.
+- Integrate a real report email provider after staging verifies recipient scoping; current report delivery is disabled/mock-only.
+- Expand generated monthly reports from the aggregate `events` pipeline as production search/click volume grows.
 - Decide whether trusted venue-manager updates can publish as `venue_confirmed` automatically, or should remain admin-reviewed.
 - Replace suburb-based analytics with custom Pint Path areas such as Melbourne CBD, Fitzroy, Richmond, or Chapel Street once those boundaries are defined.
 
@@ -182,7 +185,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
 - Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
 - Run `npm run test:release:pintpath` before a release candidate. This executes the repo-native Pint Path release-readiness suite against synthetic/local data only, plus secret and dependency checks. See `docs/release-readiness-checklist.md` for provider-only blockers that still need staging/manual verification.
-- Production startup now requires an HTTPS `PUBLIC_BASE_URL` and a `GOOGLE_MAPS_API_KEY`; admin routes stay locked until `ADMIN_EMAILS` is configured with the approved owner/admin email.
+- Production startup now requires an HTTPS `PUBLIC_BASE_URL`, `GOOGLE_MAPS_API_KEY`, and `GOOGLE_MAPS_MAP_ID`; admin routes stay locked until `ADMIN_EMAILS` is configured with the approved owner/admin email.
 - `/ready` initializes the database-backed routers and should be used as the deeper readiness check after `/health`.
 - See `FIELD_TEST_CHECKLIST.md` before showing the app to real users.
 - See `DEPLOYMENT_CHECKLIST.md` before merging to `main` or deploying the Railway beta; it includes backup, migration, security scan, smoke-test, and rollback steps.
@@ -211,6 +214,10 @@ ANALYTICS_MIN_BUCKET_SIZE=5
 REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
 ADMIN_MFA_MAX_AGE_MINUTES=720
 REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true
+GOOGLE_MAPS_API_KEY=your_google_maps_browser_key
+GOOGLE_MAPS_MAP_ID=your_google_vector_map_id
+REPORT_TIMEZONE=Australia/Melbourne
+REPORT_EMAIL_MODE=disabled
 REDIS_URL=redis://default:replace_me@host:6379
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
@@ -223,6 +230,8 @@ STRIPE_PRICE_YEARLY=price_yearly_50_aud
 STRIPE_PLUS_PRICE_ID=price_venue_plus_aud
 STRIPE_PRO_PRICE_ID=price_venue_pro_aud
 ```
+
+Run `npm run readiness:providers` after configuring env. It checks required provider values without printing secrets.
 
 Stripe test-mode webhook check:
 
@@ -271,7 +280,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 SUPABASE_OAUTH_PROVIDERS=google,apple
 SUPABASE_MENU_CAPTURE_TABLE=venue_menu_captures
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
-GOOGLE_MAPS_MAP_ID=optional_google_maps_map_id
+GOOGLE_MAPS_MAP_ID=your_google_vector_map_id
 GOOGLE_PLACES_API_KEY=your_server_side_google_places_api_key
 ADMIN_EMAILS=you@example.com
 SESSION_TTL_DAYS=60
@@ -283,6 +292,8 @@ FREE_PRICE_REVEALS_PER_DAY=5
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
 ANALYTICS_MIN_BUCKET_SIZE=5
+REPORT_TIMEZONE=Australia/Melbourne
+REPORT_EMAIL_MODE=disabled
 REDIS_URL=
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 DEMO_BILLING_MODE=true
@@ -311,7 +322,7 @@ What each one does:
 - `SUPABASE_OAUTH_PROVIDERS`: comma-separated provider buttons to show on `/account.html`; set this to providers configured in the Supabase dashboard, for example `google,apple`.
 - `SUPABASE_MENU_CAPTURE_TABLE`: server-side reviewed menu/manual capture table. Defaults to `venue_menu_captures`.
 - `GOOGLE_MAPS_API_KEY`: browser-safe Google Maps key used by the hosted viewer.
-- `GOOGLE_MAPS_MAP_ID`: optional Google Maps map ID for branded vector map styling.
+- `GOOGLE_MAPS_MAP_ID`: production-required JavaScript/vector Google Maps Map ID for branded map styling and AdvancedMarkerElement support. Local development can fall back to `DEMO_MAP_ID`.
 - `GOOGLE_PLACES_API_KEY`: server-side key used by venue imports and mission area geocoding. Enable Places API and Geocoding API on this key. If absent, server lookups fall back to `GOOGLE_MAPS_API_KEY` where possible.
 - `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup. In production this can be left blank while the official ABN/admin email is pending; the public site will still boot, but admin routes will return `403` until the allowlist is configured.
 - `SESSION_TTL_DAYS`: normal account bearer-session lifetime. Defaults to `60`.
@@ -323,11 +334,14 @@ What each one does:
 - `CONTRIBUTOR_UNLOCK_POINTS`: approved monthly contribution points required for contributor access.
 - `CONTRIBUTOR_UNLOCK_DAYS`: legacy fallback setting. Contributor unlocks now expire at the end of the current month after the monthly point threshold is reached.
 - `ANALYTICS_MIN_BUCKET_SIZE`: minimum aggregate bucket count before dashboard analytics reveal a beer, suburb, or venue identity.
+- `REPORT_TIMEZONE`: timezone used for generated monthly report boundaries. Keep `Australia/Melbourne` for the current market.
+- `REPORT_EMAIL_MODE`: `disabled` prevents any report email payloads; `mock` is for staging/tests only and does not send real email.
 - `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Configure this for Railway/production before exposing auth, uploads, price reveals, feedback, or checkout publicly.
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: emergency fallback for a single-instance controlled beta only. Defaults to `false`; leave it false for full-scale production so protected routes fail closed if Redis is missing or unavailable.
 - `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe. Keep this `false` for production beta.
 - `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.
 - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: legacy emergency override for demo image evidence. Leave `false`; evidence should use private references and signed URLs.
+- `SOURCE_EVIDENCE_SIGNING_SECRET`: private 32+ character server-side secret used to sign short-lived source-evidence review/download URLs. Generate it with `openssl rand -base64 32`; never commit it or expose it through `/config.js`.
 - `SOURCE_EVIDENCE_SIGNING_SECRET`: 32+ character random secret used to sign short-lived source evidence URLs. Public pages can boot without it, but source-evidence review/download links fail closed in production until configured.
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`: signed evidence URL lifetime. Defaults to `300`.
 - `FIELD_TEST_MODE`: shows beta feedback affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
@@ -421,7 +435,9 @@ PUBLIC_BASE_URL=https://pintpath.au
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 GOOGLE_MAPS_API_KEY=your_google_maps_browser_key
-GOOGLE_MAPS_MAP_ID=optional_google_maps_map_id
+GOOGLE_MAPS_MAP_ID=your_google_vector_map_id
+REPORT_TIMEZONE=Australia/Melbourne
+REPORT_EMAIL_MODE=disabled
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 ```
@@ -482,7 +498,7 @@ Then set:
 ```js
 window.MELB_BEER_BOT_VIEWER_CONFIG = {
   googleMapsApiKey: "your_google_maps_browser_key",
-  googleMapsMapId: "",
+  googleMapsMapId: "your_google_vector_map_id",
   trackedBeers: [],
   business: {
     fieldTestMode: true,
@@ -498,8 +514,16 @@ Notes:
 
 - Do not use standalone static mode for public beta price data, because it cannot enforce server-side price gating.
 - `googleMapsApiKey` should be a browser key restricted by HTTP referrers
-- `googleMapsMapId` is optional for now, but it gives you a clean path to branded vector map styling later
+- `googleMapsMapId` is required for production AdvancedMarkerElement/vector map styling. Local-only tests can fall back to Google's `DEMO_MAP_ID`.
 - `supabaseAnonKey` is public and only for Supabase Auth OAuth. Never put a service-role key in `viewer/config.js`.
+
+Create the Google Maps Map ID in Google Cloud before launch:
+
+1. Enable Maps JavaScript API in the Pint Path Google Cloud project.
+2. Open Google Maps Platform Map Management.
+3. Create a Map ID named `Pint Path Production Vector Map`.
+4. Choose JavaScript and vector map styling.
+5. Copy the Map ID into Railway/local env as `GOOGLE_MAPS_MAP_ID`.
 
 For local browser testing, allow these referrers on the Google Maps browser key:
 
@@ -515,6 +539,7 @@ For hosted staging, also allow:
 Make sure the same Google Cloud project has:
 
 - `Maps JavaScript API` enabled
+- a JavaScript/vector Map ID configured as `GOOGLE_MAPS_MAP_ID`
 - `Geocoding API` enabled on the server-side Places/geocoding key if mission street/suburb lookup is used
 - billing enabled
 
@@ -658,6 +683,7 @@ npm run check
 ### Map does not load
 
 - Confirm `GOOGLE_MAPS_API_KEY` is set in Railway/local env.
+- Confirm `GOOGLE_MAPS_MAP_ID` is set in production; AdvancedMarkerElement requires a map ID.
 - Confirm the browser key allows `https://pintpath.au/*`, `http://localhost:3000/*`, and `http://127.0.0.1:3000/*`.
 - Open `/config.js` and confirm it only contains browser-safe public settings.
 - Confirm `/api/business/venues` returns public venue data.

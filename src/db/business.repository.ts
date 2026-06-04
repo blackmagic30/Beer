@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import type BetterSqlite3 from "better-sqlite3";
 
 import { redactSecrets } from "../lib/redact.js";
+import { DEFAULT_REPORT_TIMEZONE, getZonedMonthRangeIso } from "../lib/time.js";
 
 export type AccountRole = "user" | "admin" | "venue_manager";
 export type AccountStatus = "active" | "warned" | "suspended";
@@ -22,7 +23,7 @@ export type SubmissionStatus =
 export type SubmissionType = "single_beer_price" | "full_venue_update" | "happy_hour_update" | "photo_upload";
 export type ServingSize = "pint" | "pot" | "schooner" | "jug" | "bottle" | "can" | "other";
 export type TapStatus = "yes" | "no" | "unknown";
-export type SavedItemType = "venue" | "beer" | "suburb";
+export type SavedItemType = "venue" | "beer" | "suburb" | "night_plan";
 export type FeedbackType =
   | "bug"
   | "wrong_data"
@@ -1487,6 +1488,18 @@ function toMonthlyBarReport(row: MonthlyBarReportRow): MonthlyBarReport {
     data: parseJsonObject(row.data_json),
     createdAt: row.created_at,
   };
+}
+
+function getReportMonthRange(month: string | undefined, timezone = DEFAULT_REPORT_TIMEZONE): { startIso: string; endIso: string } | null {
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+    return null;
+  }
+
+  try {
+    return getZonedMonthRangeIso(month, timezone);
+  } catch {
+    return null;
+  }
 }
 
 function toSecurityAuditLog(row: SecurityAuditLogRow): SecurityAuditLog {
@@ -3687,6 +3700,26 @@ export class BusinessRepository {
     return row ? toBarProfile(row) : null;
   }
 
+  listReportableBarProfiles(input: { venueId?: string | null | undefined; limit: number }): BarProfile[] {
+    const clauses = ["active = 1", "membership_tier IN ('plus', 'pro')"];
+    const values: unknown[] = [];
+
+    if (input.venueId) {
+      clauses.push("venue_id = ?");
+      values.push(input.venueId);
+    }
+
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM venue_profiles
+         WHERE ${clauses.join(" AND ")}
+         ORDER BY membership_tier DESC, updated_at DESC
+         LIMIT ?`,
+      )
+      .all(...values, input.limit) as BarProfileRow[];
+    return rows.map(toBarProfile);
+  }
+
   upsertBarProfile(input: {
     barId: string;
     name: string;
@@ -4205,18 +4238,19 @@ export class BusinessRepository {
     barId: string;
     area: string | null;
     month?: string | undefined;
+    timezone?: string | undefined;
     privacyThreshold?: number | undefined;
   }) {
     const privacyThreshold = Math.max(1, input.privacyThreshold ?? 10);
-    const since = input.month ? `${input.month}-01T00:00:00.000Z` : null;
+    const monthRange = getReportMonthRange(input.month, input.timezone);
     const count = (sql: string, values: unknown[] = []) => {
       const row = this.database.prepare(sql).get(...values) as { count: number } | undefined;
       return Number(row?.count ?? 0);
     };
     const grouped = (sql: string, values: unknown[] = []) =>
       this.database.prepare(sql).all(...values) as Array<{ key: string; count: number }>;
-    const rangeClause = since ? "AND created_at >= ?" : "";
-    const rangeValues = since ? [since] : [];
+    const rangeClause = monthRange ? "AND created_at >= ? AND created_at < ?" : "";
+    const rangeValues = monthRange ? [monthRange.startIso, monthRange.endIso] : [];
     const eventAreaClause = input.area ? "AND lower(COALESCE(suburb, '')) = lower(?)" : "";
     const barAreaClause = input.area ? "AND lower(COALESCE(suburb, area, '')) = lower(?)" : "";
     const areaValues = input.area ? [input.area] : [];
@@ -4232,6 +4266,16 @@ export class BusinessRepository {
         [input.barId, ...eventTypes, ...rangeValues],
       );
     };
+    const barMetadataEventCount = (eventType: string, metadataPath: string, metadataValue: string) =>
+      count(
+        `SELECT count(*) AS count
+         FROM events
+         WHERE venue_id = ?
+           AND event_type = ?
+           AND json_extract(metadata_json, ?) = ?
+           ${rangeClause}`,
+        [input.barId, eventType, metadataPath, metadataValue, ...rangeValues],
+      );
 
     const areaBeerSearches = grouped(
       `SELECT COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer') AS key, count(*) AS count
@@ -4275,11 +4319,16 @@ export class BusinessRepository {
       specialsViews: barEventCount(["deal_viewed", "special_viewed", "happy_hour_active_now_used", "happy_hour_near_me_used"]),
       markerClicks: barEventCount(["map_pin_click"]),
       priceReveals: barEventCount(["price_view_revealed"]),
+      directionsClicks: barEventCount(["directions_clicked"]) +
+        barMetadataEventCount("venue_lookup", "$.interactionType", "directions_click"),
+      saves: barEventCount(["saved_venue_added", "saved_night_plan_added"]),
+      shares: barEventCount(["venue_shared", "share_link_copied", "search_shared"]),
       areaSearches,
       areaBeerSearches: privacyFloorMet ? areaBeerSearches : [],
       areaStyleSearches: privacyFloorMet ? areaStyleSearches : [],
       privacyFloorMet,
       privacyThreshold,
+      timezone: input.timezone ?? DEFAULT_REPORT_TIMEZONE,
     };
   }
 
@@ -4287,12 +4336,14 @@ export class BusinessRepository {
     venueId: string;
     area: string | null;
     month?: string | undefined;
+    timezone?: string | undefined;
     privacyThreshold?: number | undefined;
   }) {
     return this.getBarAreaAnalytics({
       barId: input.venueId,
       area: input.area,
       month: input.month,
+      timezone: input.timezone,
       privacyThreshold: input.privacyThreshold,
     });
   }

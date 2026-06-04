@@ -123,6 +123,8 @@ const envSchema = z.object({
   ADMIN_MFA_MAX_AGE_MINUTES: z.coerce.number().int().min(5).max(1440).default(720),
   REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: booleanFromEnv.default(true),
   ANALYTICS_MIN_BUCKET_SIZE: z.coerce.number().int().min(1).max(100).default(5),
+  REPORT_TIMEZONE: z.preprocess(sanitizeEnvString, z.string().min(1)).default("Australia/Melbourne"),
+  REPORT_EMAIL_MODE: z.enum(["disabled", "mock"]).default("disabled"),
   REDIS_URL: optionalStringFromEnv,
   ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(false),
   DEMO_BILLING_MODE: demoBillingModeFromEnv,
@@ -166,6 +168,10 @@ if (parsedEnv.data.NODE_ENV === "production") {
 
   if (!parsedEnv.data.GOOGLE_MAPS_API_KEY) {
     throw new Error("GOOGLE_MAPS_API_KEY is required in production so the public map does not silently fail.");
+  }
+
+  if (!parsedEnv.data.GOOGLE_MAPS_MAP_ID) {
+    throw new Error("GOOGLE_MAPS_MAP_ID is required in production for Google AdvancedMarkerElement/vector map styling.");
   }
 
   if (!parsedEnv.data.REQUIRE_ADMIN_MFA_IN_PRODUCTION) {

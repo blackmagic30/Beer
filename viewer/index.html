@@ -10,17 +10,34 @@
   <script src="./business.js"></script>
   <style>
     :root {
-      --page-bg: #06101f;
-      --panel-bg: rgba(10, 18, 32, 0.9);
-      --panel-border: rgba(148, 163, 184, 0.16);
-      --panel-muted: #94a3b8;
-      --panel-text: #f8fafc;
-      --chip-bg: rgba(15, 23, 42, 0.85);
-      --chip-active-bg: linear-gradient(135deg, #f59e0b 0%, #fb7185 100%);
-      --chip-active-text: #0f172a;
-      --accent: #38bdf8;
-      --accent-soft: rgba(56, 189, 248, 0.16);
-      --shadow-lg: 0 24px 60px rgba(2, 6, 23, 0.38);
+      --bg-base: #070a12;
+      --bg-surface: #0d1220;
+      --bg-surface-elevated: #121a2c;
+      --bg-card: #151f34;
+      --bg-card-hover: #1a2740;
+      --text-primary: #f8fafc;
+      --text-secondary: #cbd5e1;
+      --text-muted: #94a3b8;
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --border-medium: rgba(255, 255, 255, 0.14);
+      --border-strong: rgba(255, 255, 255, 0.22);
+      --accent-electric-blue: #38bdf8;
+      --accent-neon-cyan: #22d3ee;
+      --accent-violet: #8b5cf6;
+      --accent-magenta: #d946ef;
+      --accent-gold: #f5c542;
+      --accent-lime: #a3e635;
+      --page-bg: var(--bg-base);
+      --panel-bg: rgba(13, 18, 32, 0.9);
+      --panel-border: var(--border-medium);
+      --panel-muted: var(--text-muted);
+      --panel-text: var(--text-primary);
+      --chip-bg: rgba(21, 31, 52, 0.82);
+      --chip-active-bg: linear-gradient(135deg, var(--accent-electric-blue) 0%, var(--accent-neon-cyan) 44%, var(--accent-violet) 100%);
+      --chip-active-text: #06101f;
+      --accent: var(--accent-neon-cyan);
+      --accent-soft: rgba(34, 211, 238, 0.16);
+      --shadow-lg: 0 28px 76px rgba(0, 0, 0, 0.44);
     }
 
     html, body {
@@ -29,9 +46,10 @@
       height: 100%;
       overflow-x: hidden;
       background:
-        radial-gradient(circle at top left, rgba(56, 189, 248, 0.14), transparent 28%),
-        radial-gradient(circle at top right, rgba(251, 113, 133, 0.12), transparent 24%),
-        linear-gradient(180deg, #08111f 0%, #0f172a 100%);
+        radial-gradient(circle at top left, rgba(34, 211, 238, 0.14), transparent 28%),
+        radial-gradient(circle at top right, rgba(139, 92, 246, 0.16), transparent 24%),
+        radial-gradient(circle at 60% 90%, rgba(245, 197, 66, 0.1), transparent 28%),
+        linear-gradient(180deg, var(--bg-base) 0%, var(--bg-surface) 100%);
       font-family: "Avenir Next", "Segoe UI Variable", "Segoe UI", sans-serif;
     }
 
@@ -146,8 +164,8 @@
 
     .topbar__businessLinks a.primary {
       border-color: transparent;
-      background: linear-gradient(135deg, #f59e0b 0%, #fb7185 100%);
-      color: #111827;
+      background: var(--chip-active-bg);
+      color: var(--chip-active-text);
     }
 
     .accessPill {
@@ -180,8 +198,8 @@
     }
 
     .accessPill--admin::before {
-      background: #f5c76b;
-      box-shadow: 0 0 0 4px rgba(245, 199, 107, 0.18);
+      background: #f5c542;
+      box-shadow: 0 0 0 4px rgba(245, 197, 66, 0.18);
     }
 
     .controlDeck {
@@ -336,8 +354,8 @@
       margin-left: 8px;
       padding: 2px 6px;
       border-radius: 999px;
-      background: rgba(244, 214, 150, 0.12);
-      color: #f5c76b;
+      background: rgba(139, 92, 246, 0.16);
+      color: #ddd6fe;
       font-size: 10px;
       font-weight: 950;
       letter-spacing: 0.04em;
@@ -357,16 +375,16 @@
       gap: 12px;
       align-items: center;
       padding: 12px 14px;
-      border: 1px solid rgba(245, 158, 11, 0.28);
+      border: 1px solid rgba(34, 211, 238, 0.28);
       border-radius: 18px;
-      background: rgba(245, 158, 11, 0.12);
-      color: #fde68a;
+      background: rgba(34, 211, 238, 0.1);
+      color: #cffafe;
       font-size: 13px;
       line-height: 1.45;
     }
 
     .businessBanner a {
-      color: #fef3c7;
+      color: #e0f2fe;
       font-weight: 900;
     }
 
@@ -436,10 +454,10 @@
     .advancedFiltersPanel__notice {
       margin: 0;
       padding: 10px 12px;
-      border: 1px solid rgba(244, 214, 150, 0.16);
+      border: 1px solid rgba(34, 211, 238, 0.18);
       border-radius: 15px;
-      background: rgba(245, 199, 107, 0.08);
-      color: #ffe4a8;
+      background: rgba(34, 211, 238, 0.08);
+      color: #cffafe;
     }
 
     .advancedFiltersGrid {
@@ -463,7 +481,7 @@
     }
 
     .advancedFilterSection__title {
-      color: #f5c76b;
+      color: #22d3ee;
       font-size: 11px;
       font-weight: 950;
       letter-spacing: 0.11em;
@@ -490,6 +508,14 @@
 
     .activeFilterSummary strong {
       color: #ffffff;
+    }
+
+    .activeFilterSummary__actions {
+      display: inline-flex;
+      flex: 0 0 auto;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
     }
 
     .locationStrip {
@@ -646,6 +672,137 @@
       gap: 10px;
     }
 
+    .mapPersonalPanels {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .mapPersonalPanels:empty {
+      display: none;
+    }
+
+    .mapPersonalPanel {
+      min-width: 0;
+      padding: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 20px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.024)),
+        rgba(15, 23, 42, 0.68);
+      color: #e2e8f0;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
+    }
+
+    .mapPersonalPanel[hidden] {
+      display: none;
+    }
+
+    .mapPersonalPanel--plan {
+      border-color: rgba(245, 197, 66, 0.24);
+      background:
+        radial-gradient(circle at 12% 0%, rgba(245, 197, 66, 0.1), transparent 38%),
+        linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.024)),
+        rgba(15, 23, 42, 0.7);
+    }
+
+    .mapPersonalPanel__header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .mapPersonalPanel__eyebrow {
+      color: #22d3ee;
+      font-size: 10px;
+      font-weight: 950;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .mapPersonalPanel h2 {
+      margin: 2px 0 0;
+      color: #ffffff;
+      font-size: 18px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+
+    .mapPersonalPanel__link {
+      appearance: none;
+      min-height: 38px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.055);
+      color: #cbd5e1;
+      padding: 7px 10px;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .mapPersonalPanel__list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .mapPersonalItem {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 48px;
+      padding: 9px 10px;
+      border: 1px solid rgba(148, 163, 184, 0.12);
+      border-radius: 15px;
+      background: rgba(2, 6, 23, 0.28);
+    }
+
+    .mapPersonalItem__button,
+    .mapPersonalItem__remove {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .mapPersonalItem__button {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+      padding: 0;
+      text-align: left;
+    }
+
+    .mapPersonalItem__button strong {
+      overflow: hidden;
+      color: #ffffff;
+      font-size: 13px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .mapPersonalItem__button span {
+      overflow: hidden;
+      color: #94a3b8;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .mapPersonalItem__remove {
+      min-width: 36px;
+      min-height: 36px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 999px;
+      color: #cbd5e1;
+    }
+
     .highlightPanel {
       border: 1px solid rgba(148, 163, 184, 0.14);
       border-radius: 18px;
@@ -760,10 +917,152 @@
       min-height: 420px;
     }
 
+    .searchAreaButton {
+      position: absolute;
+      top: 18px;
+      left: 50%;
+      z-index: 5;
+      transform: translateX(-50%);
+      min-height: 44px;
+      border: 1px solid rgba(34, 211, 238, 0.38);
+      border-radius: 999px;
+      background:
+        linear-gradient(135deg, rgba(56, 189, 248, 0.96), rgba(34, 211, 238, 0.94), rgba(139, 92, 246, 0.92));
+      color: #06101f;
+      padding: 10px 16px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 950;
+      cursor: pointer;
+      box-shadow: 0 18px 44px rgba(34, 211, 238, 0.16), 0 14px 34px rgba(0, 0, 0, 0.26);
+    }
+
+    .searchAreaButton[hidden] {
+      display: none;
+    }
+
+    .advancedMapPin {
+      --pin-bg: #2563eb;
+      --pin-border: #bfdbfe;
+      --pin-color: #ffffff;
+      --pin-size: 26px;
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: var(--pin-size);
+      height: var(--pin-size);
+      border: 3px solid var(--pin-border);
+      border-radius: 999px;
+      background: var(--pin-bg);
+      color: var(--pin-color);
+      font-size: 10px;
+      font-weight: 950;
+      line-height: 1;
+      letter-spacing: 0.01em;
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.18),
+        0 0 18px rgba(34, 211, 238, 0.18),
+        0 10px 24px rgba(0, 0, 0, 0.32);
+      transform: translateY(-2px);
+      transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+      user-select: none;
+    }
+
+    .advancedMapPin::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -8px;
+      width: 10px;
+      height: 10px;
+      border-right: 3px solid var(--pin-border);
+      border-bottom: 3px solid var(--pin-border);
+      background: var(--pin-bg);
+      transform: translateX(-50%) rotate(45deg);
+      box-shadow: 6px 8px 16px rgba(0, 0, 0, 0.22);
+    }
+
+    .advancedMapPin__glyph {
+      position: relative;
+      z-index: 1;
+      max-width: calc(var(--pin-size) - 6px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .advancedMapPin--plus {
+      box-shadow:
+        0 0 0 1px rgba(34, 211, 238, 0.26),
+        0 0 20px rgba(34, 211, 238, 0.24),
+        0 12px 28px rgba(0, 0, 0, 0.34);
+    }
+
+    .advancedMapPin--pro {
+      box-shadow:
+        0 0 0 1px rgba(245, 197, 66, 0.34),
+        0 0 24px rgba(245, 197, 66, 0.28),
+        0 0 38px rgba(139, 92, 246, 0.14),
+        0 14px 32px rgba(0, 0, 0, 0.36);
+    }
+
+    .advancedMapPin--cluster {
+      --pin-size: 38px;
+      border-width: 3px;
+      font-size: 12px;
+    }
+
+    .advancedMapPin--user {
+      --pin-bg: #38bdf8;
+      --pin-border: #eff6ff;
+      --pin-color: #082f49;
+      --pin-size: 30px;
+      font-size: 9px;
+      box-shadow:
+        0 0 0 4px rgba(56, 189, 248, 0.16),
+        0 0 22px rgba(56, 189, 248, 0.3),
+        0 12px 28px rgba(0, 0, 0, 0.34);
+    }
+
+    .advancedMapPin.is-selected {
+      --pin-border: #f5c542;
+      transform: translateY(-5px) scale(1.12);
+      box-shadow:
+        0 0 0 4px rgba(245, 197, 66, 0.18),
+        0 0 28px rgba(245, 197, 66, 0.36),
+        0 18px 42px rgba(0, 0, 0, 0.42);
+    }
+
     .belowMapInsights {
       display: grid;
       gap: 10px;
       margin: 0 12px 12px;
+    }
+
+    .mapToast {
+      position: fixed;
+      left: 50%;
+      bottom: max(18px, env(safe-area-inset-bottom));
+      z-index: 40;
+      transform: translateX(-50%);
+      width: min(460px, calc(100% - 28px));
+      padding: 12px 14px;
+      border: 1px solid rgba(34, 211, 238, 0.28);
+      border-radius: 18px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.035)),
+        rgba(7, 10, 18, 0.94);
+      color: #f8fafc;
+      box-shadow: 0 22px 60px rgba(0, 0, 0, 0.42);
+      text-align: center;
+      font-size: 13px;
+      font-weight: 850;
+      backdrop-filter: blur(18px);
+    }
+
+    .mapToast[hidden] {
+      display: none;
     }
 
     #mapOverlayTabs {
@@ -783,6 +1082,10 @@
       box-shadow: var(--shadow-lg);
     }
 
+    #mapOverlayTabs[hidden] {
+      display: none;
+    }
+
     .overlayTab {
       appearance: none;
       border: none;
@@ -798,8 +1101,8 @@
     }
 
     .overlayTab.is-active {
-      background: linear-gradient(135deg, #f59e0b 0%, #fb7185 100%);
-      color: #0f172a;
+      background: var(--chip-active-bg);
+      color: var(--chip-active-text);
     }
 
     .overlayTab:not(.is-active) {
@@ -822,7 +1125,7 @@
     }
 
     .responsibleNote a {
-      color: #f5c76b;
+      color: #22d3ee;
       font-weight: 800;
     }
 
@@ -952,9 +1255,9 @@
     }
 
     .legend__swatch--neutral {
-      background: #0f766e;
-      border-color: rgba(204, 251, 241, 0.92);
-      box-shadow: 0 0 0 1px rgba(20, 184, 166, 0.28), 0 0 14px rgba(20, 184, 166, 0.26);
+      background: #2563eb;
+      border-color: rgba(191, 219, 254, 0.92);
+      box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.28), 0 0 14px rgba(37, 99, 235, 0.24);
     }
 
     .legend__swatch--unknown {
@@ -964,36 +1267,57 @@
     }
 
     .legend__swatch--needs {
-      background: #64748b;
+      background: #475569;
       border-color: rgba(248, 250, 252, 0.92);
       opacity: 0.58;
       box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.26), inset 0 0 0 3px rgba(15, 23, 42, 0.32);
     }
 
     .legend__swatch--green {
-      background: #15803d;
+      background: #22d3ee;
+      border-color: rgba(21, 94, 117, 0.92);
     }
 
     .legend__swatch--teal {
-      background: #0f766e;
+      background: #22d3ee;
+    }
+
+    .legend__swatch--cyan {
+      background: #22d3ee;
+      border-color: rgba(21, 94, 117, 0.92);
     }
 
     .legend__swatch--amber {
-      background: #d97706;
+      background: #a3e635;
+      border-color: rgba(77, 124, 15, 0.92);
     }
 
     .legend__swatch--orange {
-      background: #ea580c;
+      background: #f5c542;
+      border-color: rgba(146, 64, 14, 0.92);
     }
 
     .legend__swatch--red {
-      background: #b91c1c;
+      background: #d946ef;
+      border-color: rgba(112, 26, 117, 0.92);
     }
 
     .legend__swatch--selected {
       background: #334155;
-      border-color: #f5c76b;
-      box-shadow: 0 0 0 3px rgba(245, 199, 107, 0.2), 0 0 18px rgba(245, 199, 107, 0.35);
+      border-color: #f5c542;
+      box-shadow: 0 0 0 3px rgba(245, 197, 66, 0.2), 0 0 18px rgba(245, 197, 66, 0.35);
+    }
+
+    .legend__swatch--plus {
+      background: #22d3ee;
+      border-color: rgba(139, 92, 246, 0.92);
+      box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.28), 0 0 16px rgba(34, 211, 238, 0.28);
+    }
+
+    .legend__swatch--pro {
+      background: #f5c542;
+      border-color: rgba(217, 70, 239, 0.92);
+      box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.38), 0 0 20px rgba(245, 197, 66, 0.34);
     }
 
     .legend__itemTitle {
@@ -1042,11 +1366,11 @@
       z-index: 8;
       display: flex;
       flex-direction: column;
-      border: 1px solid rgba(244, 214, 150, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 28px;
       background:
-        radial-gradient(circle at 12% 0%, rgba(245, 199, 107, 0.16), transparent 36%),
-        radial-gradient(circle at 92% 12%, rgba(56, 189, 248, 0.13), transparent 30%),
+        radial-gradient(circle at 12% 0%, rgba(34, 211, 238, 0.14), transparent 36%),
+        radial-gradient(circle at 92% 12%, rgba(139, 92, 246, 0.13), transparent 30%),
         linear-gradient(150deg, rgba(13, 21, 36, 0.96), rgba(4, 8, 18, 0.97));
       color: #e2e8f0;
       backdrop-filter: blur(26px);
@@ -1060,12 +1384,12 @@
       justify-content: space-between;
       gap: 12px;
       padding: 14px 16px;
-      border-bottom: 1px solid rgba(244, 214, 150, 0.12);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
       background: rgba(2, 6, 23, 0.3);
     }
 
     .venueDetailOverlay__eyebrow {
-      color: #f5c76b;
+      color: #22d3ee;
       font-size: 11px;
       font-weight: 950;
       letter-spacing: 0.12em;
@@ -1087,12 +1411,12 @@
       flex: 0 0 auto;
       width: 46px;
       height: 46px;
-      border: 1px solid rgba(245, 199, 107, 0.36);
+      border: 1px solid rgba(34, 211, 238, 0.36);
       border-radius: 999px;
       background:
-        radial-gradient(circle at 30% 15%, rgba(245, 199, 107, 0.22), transparent 44%),
+        radial-gradient(circle at 30% 15%, rgba(34, 211, 238, 0.2), transparent 44%),
         rgba(5, 9, 20, 0.92);
-      color: #fff7ed;
+      color: #f8fafc;
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32);
       cursor: pointer;
       font-size: 28px;
@@ -1103,8 +1427,8 @@
 
     .venueDetailOverlay__close:hover {
       transform: translateY(-1px);
-      border-color: rgba(245, 199, 107, 0.68);
-      background: rgba(245, 199, 107, 0.14);
+      border-color: rgba(34, 211, 238, 0.68);
+      background: rgba(34, 211, 238, 0.14);
     }
 
     .venueDetailOverlay__body {
@@ -1228,9 +1552,9 @@
     }
 
     .venueRail__sortChip.is-active {
-      background: linear-gradient(135deg, #f59e0b 0%, #fb7185 100%);
+      background: var(--chip-active-bg);
       border-color: transparent;
-      color: #0f172a;
+      color: var(--chip-active-text);
     }
 
     .venueRail__sortChip:disabled {
@@ -1268,6 +1592,23 @@
       transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
     }
 
+    .venueRail__card--plus {
+      border-color: rgba(34, 211, 238, 0.35);
+      background:
+        radial-gradient(circle at 8% 0%, rgba(34, 211, 238, 0.11), transparent 38%),
+        rgba(15, 23, 42, 0.86);
+      box-shadow: 0 0 18px rgba(34, 211, 238, 0.12);
+    }
+
+    .venueRail__card--pro {
+      border-color: rgba(245, 197, 66, 0.45);
+      background:
+        radial-gradient(circle at 8% 0%, rgba(245, 197, 66, 0.14), transparent 40%),
+        radial-gradient(circle at 92% 8%, rgba(217, 70, 239, 0.12), transparent 38%),
+        rgba(15, 23, 42, 0.9);
+      box-shadow: 0 0 28px rgba(245, 197, 66, 0.16), 0 0 36px rgba(139, 92, 246, 0.08);
+    }
+
     .venueRail__card:hover {
       transform: translateY(-1px);
       border-color: rgba(56, 189, 248, 0.4);
@@ -1292,6 +1633,11 @@
       font-weight: 700;
       color: #ffffff;
       line-height: 1.3;
+    }
+
+    .venueRail__name--premium {
+      color: #fff7d6;
+      text-shadow: 0 0 18px rgba(245, 197, 66, 0.18);
     }
 
     .venueRail__suburb {
@@ -1327,6 +1673,32 @@
       color: #cbd5e1;
       font-size: 11px;
       font-weight: 700;
+    }
+
+    .venueRail__tier {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      background: rgba(148, 163, 184, 0.1);
+      color: #e2e8f0;
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .venueRail__tier--plus {
+      border-color: rgba(34, 211, 238, 0.35);
+      background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(139, 92, 246, 0.14));
+      color: #cffafe;
+    }
+
+    .venueRail__tier--pro {
+      border-color: rgba(245, 197, 66, 0.44);
+      background: linear-gradient(135deg, rgba(245, 197, 66, 0.2), rgba(217, 70, 239, 0.16), rgba(56, 189, 248, 0.12));
+      color: #fff3c4;
     }
 
     .venueRail__metaCopy {
@@ -1597,16 +1969,16 @@
 
     /* Premium polish layer: keeps the existing map/product structure, upgrades the finish. */
     :root {
-      --page-bg: #050914;
-      --panel-bg: rgba(8, 13, 26, 0.78);
-      --panel-border: rgba(244, 214, 150, 0.18);
-      --panel-muted: #a8b0bf;
-      --panel-text: #fbf7ef;
-      --chip-bg: rgba(255, 255, 255, 0.055);
-      --chip-active-bg: linear-gradient(135deg, #f5c76b 0%, #ff7b68 100%);
-      --chip-active-text: #17120a;
-      --accent: #f5c76b;
-      --accent-soft: rgba(245, 199, 107, 0.12);
+      --page-bg: #070a12;
+      --panel-bg: rgba(13, 18, 32, 0.82);
+      --panel-border: rgba(255, 255, 255, 0.12);
+      --panel-muted: #94a3b8;
+      --panel-text: #f8fafc;
+      --chip-bg: rgba(21, 31, 52, 0.66);
+      --chip-active-bg: linear-gradient(135deg, #38bdf8 0%, #22d3ee 45%, #8b5cf6 100%);
+      --chip-active-text: #06101f;
+      --accent: #22d3ee;
+      --accent-soft: rgba(34, 211, 238, 0.12);
       --shadow-lg: 0 30px 90px rgba(0, 0, 0, 0.48);
       --display-font: "Fraunces", "Iowan Old Style", "New York", Georgia, serif;
       --body-font: "Avenir Next", "SF Pro Text", "Segoe UI Variable", sans-serif;
@@ -1615,10 +1987,10 @@
     html,
     body {
       background:
-        radial-gradient(circle at 12% 8%, rgba(245, 199, 107, 0.18), transparent 26%),
-        radial-gradient(circle at 84% 4%, rgba(119, 217, 255, 0.14), transparent 24%),
-        radial-gradient(circle at 54% 90%, rgba(255, 123, 104, 0.12), transparent 28%),
-        linear-gradient(145deg, #030712 0%, #08111f 46%, #111827 100%);
+        radial-gradient(circle at 12% 8%, rgba(34, 211, 238, 0.16), transparent 26%),
+        radial-gradient(circle at 84% 4%, rgba(139, 92, 246, 0.16), transparent 24%),
+        radial-gradient(circle at 54% 90%, rgba(245, 197, 66, 0.1), transparent 28%),
+        linear-gradient(145deg, #070a12 0%, #08111f 46%, #0d1220 100%);
       color: var(--panel-text);
       font-family: var(--body-font);
     }
@@ -1650,8 +2022,9 @@
       border: 1px solid var(--panel-border);
       border-radius: 30px 30px 22px 22px;
       background:
-        radial-gradient(circle at 8% 10%, rgba(245, 199, 107, 0.16), transparent 34%),
-        radial-gradient(circle at 92% 0%, rgba(119, 217, 255, 0.12), transparent 32%),
+        radial-gradient(circle at 8% 10%, rgba(34, 211, 238, 0.16), transparent 34%),
+        radial-gradient(circle at 92% 0%, rgba(139, 92, 246, 0.14), transparent 32%),
+        radial-gradient(circle at 54% 120%, rgba(245, 197, 66, 0.09), transparent 30%),
         linear-gradient(145deg, rgba(13, 20, 36, 0.94), rgba(5, 9, 20, 0.84));
       box-shadow: var(--shadow-lg);
       overflow: visible;
@@ -1673,9 +2046,9 @@
     }
 
     .topbar__eyebrow {
-      border: 1px solid rgba(245, 199, 107, 0.3);
-      background: rgba(245, 199, 107, 0.11);
-      color: #ffe4a8;
+      border: 1px solid rgba(34, 211, 238, 0.3);
+      background: rgba(34, 211, 238, 0.11);
+      color: #cffafe;
       font-weight: 950;
       letter-spacing: 0.16em;
     }
@@ -1684,7 +2057,7 @@
       font-family: var(--display-font);
       font-size: clamp(36px, 4.4vw, 62px);
       letter-spacing: -0.065em;
-      color: #fff8eb;
+      color: #f8fafc;
       text-shadow: 0 16px 42px rgba(0, 0, 0, 0.4);
     }
 
@@ -1701,8 +2074,10 @@
     .togglePill,
     .venueRail__sortChip,
     .overlayTab {
-      border-color: rgba(244, 214, 150, 0.16);
-      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.12);
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.026)),
+        rgba(21, 31, 52, 0.62);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
       transition: transform 150ms ease, border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
     }
@@ -1715,9 +2090,11 @@
     .overlayTab:hover,
     .venueRail__sortChip:hover {
       transform: translateY(-1px);
-      border-color: rgba(245, 199, 107, 0.45);
-      background: rgba(255, 255, 255, 0.1);
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+      border-color: rgba(34, 211, 238, 0.42);
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
+        rgba(26, 39, 64, 0.74);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22), 0 0 18px rgba(34, 211, 238, 0.09);
     }
 
     .topbar__businessLinks a.primary,
@@ -1727,13 +2104,13 @@
     .venueRail__sortChip.is-active {
       background: var(--chip-active-bg);
       color: var(--chip-active-text);
-      box-shadow: 0 16px 34px rgba(242, 169, 59, 0.22);
+      box-shadow: 0 16px 34px rgba(34, 211, 238, 0.18);
     }
 
     .topbar__businessLinks a[aria-current="page"] {
-      background: rgba(245, 199, 107, 0.12);
-      color: #ffe4a8;
-      border-color: rgba(245, 199, 107, 0.32);
+      background: rgba(34, 211, 238, 0.12);
+      color: #cffafe;
+      border-color: rgba(34, 211, 238, 0.32);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
     }
 
@@ -1745,20 +2122,20 @@
 
     .controlInput {
       min-height: 50px;
-      border-color: rgba(244, 214, 150, 0.17);
+      border-color: rgba(255, 255, 255, 0.13);
       background: rgba(3, 7, 18, 0.52);
       border-radius: 18px;
-      color: #fbf7ef;
+      color: #f8fafc;
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
     }
 
     .controlInput:focus {
-      border-color: rgba(245, 199, 107, 0.55);
-      box-shadow: 0 0 0 4px rgba(245, 199, 107, 0.12);
+      border-color: rgba(34, 211, 238, 0.58);
+      box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.12);
     }
 
     .controlDeck {
-      border-color: rgba(244, 214, 150, 0.14);
+      border-color: rgba(255, 255, 255, 0.1);
       background:
         linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
         rgba(2, 6, 23, 0.26);
@@ -1766,15 +2143,15 @@
     }
 
     .businessBanner {
-      border-color: rgba(245, 199, 107, 0.28);
+      border-color: rgba(34, 211, 238, 0.28);
       background:
-        linear-gradient(135deg, rgba(245, 199, 107, 0.16), rgba(255, 123, 104, 0.08)),
+        linear-gradient(135deg, rgba(34, 211, 238, 0.14), rgba(139, 92, 246, 0.1)),
         rgba(3, 7, 18, 0.38);
-      color: #ffe4a8;
+      color: #cffafe;
     }
 
     .businessBanner strong {
-      color: #fff7ed;
+      color: #f8fafc;
     }
 
     .highlightPanel,
@@ -1782,7 +2159,7 @@
     #mapOverlayTabs,
     #venueRail,
     #mapLegend {
-      border-color: rgba(244, 214, 150, 0.18);
+      border-color: rgba(255, 255, 255, 0.12);
       background:
         linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.026)),
         rgba(7, 12, 24, 0.86);
@@ -1796,26 +2173,27 @@
     .highlightPanel__title,
     .legend__eyebrow,
     .venueRail__eyebrow {
-      color: #f5c76b;
+      color: #22d3ee;
     }
 
     .highlightCard,
     .venueRail__card {
-      border-color: rgba(244, 214, 150, 0.13);
+      border-color: rgba(255, 255, 255, 0.1);
       background: rgba(255, 255, 255, 0.055);
     }
 
     .highlightCard:hover,
     .venueRail__card:hover {
-      border-color: rgba(245, 199, 107, 0.38);
+      border-color: rgba(34, 211, 238, 0.34);
       background: rgba(255, 255, 255, 0.095);
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22), 0 0 18px rgba(34, 211, 238, 0.08);
     }
 
     #mapShell {
       flex: 1 0 auto;
       z-index: 1;
       margin: 18px 12px 12px;
-      border: 1px solid rgba(244, 214, 150, 0.16);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 30px;
       overflow: hidden;
       box-shadow: 0 24px 90px rgba(0, 0, 0, 0.5);
@@ -1847,13 +2225,13 @@
     .legend__stat,
     .venueRail__count,
     .venueRail__metaPill {
-      border-color: rgba(244, 214, 150, 0.15);
-      background: rgba(245, 199, 107, 0.09);
-      color: #ffe4a8;
+      border-color: rgba(34, 211, 238, 0.18);
+      background: rgba(34, 211, 238, 0.08);
+      color: #cffafe;
     }
 
     .overlayPanel__close {
-      border-color: rgba(244, 214, 150, 0.18);
+      border-color: rgba(255, 255, 255, 0.12);
       background: rgba(255, 255, 255, 0.06);
     }
 
@@ -1869,9 +2247,9 @@
     }
 
     .beerPopup__featured {
-      border: 1px solid rgba(245, 199, 107, 0.2);
+      border: 1px solid rgba(34, 211, 238, 0.18);
       background:
-        radial-gradient(circle at 8% 0%, rgba(245, 199, 107, 0.16), transparent 45%),
+        radial-gradient(circle at 8% 0%, rgba(34, 211, 238, 0.14), transparent 45%),
         linear-gradient(145deg, #101827 0%, #050914 100%);
       box-shadow: 0 18px 38px rgba(15, 23, 42, 0.18);
     }
@@ -1905,10 +2283,10 @@
       justify-content: center !important;
       width: 40px !important;
       height: 40px !important;
-      border: 1px solid rgba(245, 199, 107, 0.42) !important;
+      border: 1px solid rgba(34, 211, 238, 0.42) !important;
       border-radius: 999px !important;
       background:
-        radial-gradient(circle at 30% 15%, rgba(245, 199, 107, 0.22), transparent 44%),
+        radial-gradient(circle at 30% 15%, rgba(34, 211, 238, 0.2), transparent 44%),
         rgba(5, 9, 20, 0.94) !important;
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34) !important;
       opacity: 1;
@@ -1928,11 +2306,26 @@
       padding: 20px;
       color: #f8fafc;
       background:
-        radial-gradient(circle at 15% 0%, rgba(245, 199, 107, 0.18), transparent 36%),
+        radial-gradient(circle at 15% 0%, rgba(34, 211, 238, 0.14), transparent 36%),
+        radial-gradient(circle at 86% 8%, rgba(139, 92, 246, 0.1), transparent 34%),
         linear-gradient(150deg, rgba(19, 29, 47, 0.98), rgba(5, 9, 20, 0.98));
-      border: 1px solid rgba(244, 214, 150, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 26px;
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .beerPopup--tier-plus {
+      border-color: rgba(34, 211, 238, 0.35);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 18px rgba(34, 211, 238, 0.14);
+    }
+
+    .beerPopup--tier-pro {
+      border-color: rgba(245, 197, 66, 0.45);
+      background:
+        radial-gradient(circle at 15% 0%, rgba(245, 197, 66, 0.16), transparent 36%),
+        radial-gradient(circle at 86% 8%, rgba(217, 70, 239, 0.12), transparent 34%),
+        linear-gradient(150deg, rgba(19, 29, 47, 0.98), rgba(5, 9, 20, 0.98));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 28px rgba(245, 197, 66, 0.18), 0 0 44px rgba(139, 92, 246, 0.1);
     }
 
     .beerPopup__head {
@@ -1947,10 +2340,10 @@
       width: fit-content;
       margin-bottom: 8px;
       padding: 5px 9px;
-      border: 1px solid rgba(245, 199, 107, 0.22);
+      border: 1px solid rgba(34, 211, 238, 0.26);
       border-radius: 999px;
-      background: rgba(245, 199, 107, 0.1);
-      color: #f5c76b;
+      background: rgba(34, 211, 238, 0.1);
+      color: #22d3ee;
       font-size: 10px;
       font-weight: 950;
       letter-spacing: 0.12em;
@@ -1990,6 +2383,27 @@
       font-weight: 800;
     }
 
+    .beerPopup__metaBadge--tier {
+      border-color: rgba(148, 163, 184, 0.22);
+      background: rgba(148, 163, 184, 0.1);
+      color: #e2e8f0;
+      font-weight: 950;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .beerPopup__metaBadge--plus {
+      border-color: rgba(34, 211, 238, 0.35);
+      background: linear-gradient(135deg, rgba(34, 211, 238, 0.16), rgba(139, 92, 246, 0.13));
+      color: #cffafe;
+    }
+
+    .beerPopup__metaBadge--pro {
+      border-color: rgba(245, 197, 66, 0.42);
+      background: linear-gradient(135deg, rgba(245, 197, 66, 0.18), rgba(217, 70, 239, 0.14), rgba(56, 189, 248, 0.1));
+      color: #fff3c4;
+    }
+
     .beerPopup__summaryGrid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2000,7 +2414,7 @@
     .beerPopup__summaryCard {
       min-height: 86px;
       padding: 12px;
-      border: 1px solid rgba(244, 214, 150, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 18px;
       background:
         linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025)),
@@ -2010,7 +2424,7 @@
 
     .beerPopup__summaryLabel {
       margin-bottom: 7px;
-      color: #f5c76b;
+      color: #22d3ee;
       font-size: 10px;
       font-weight: 950;
       letter-spacing: 0.1em;
@@ -2035,7 +2449,7 @@
     .beerPopup__section,
     .beerPopup__happy,
     .beerPopup__notice {
-      border-color: rgba(244, 214, 150, 0.16);
+      border-color: rgba(255, 255, 255, 0.1);
       background:
         linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025)),
         rgba(8, 13, 26, 0.84);
@@ -2046,7 +2460,7 @@
     .beerPopup__featuredLabel,
     .beerPopup__sectionHeader,
     .beerPopup__happyEyebrow {
-      color: #f5c76b;
+      color: #22d3ee;
     }
 
     .beerPopup__featuredPrice {
@@ -2096,7 +2510,7 @@
       justify-content: space-between;
       gap: 12px;
       background: rgba(2, 6, 23, 0.38);
-      border-color: rgba(244, 214, 150, 0.12);
+      border-color: rgba(255, 255, 255, 0.1);
     }
 
     .beerPopup__sectionCount {
@@ -2112,13 +2526,13 @@
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
-      border-color: rgba(244, 214, 150, 0.1);
+      border-color: rgba(255, 255, 255, 0.1);
       padding: 13px 14px;
       transition: background 140ms ease, border-color 140ms ease;
     }
 
     .beerPopup__beerRow--known {
-      background: rgba(21, 128, 61, 0.08);
+      background: rgba(34, 211, 238, 0.08);
     }
 
     .beerPopup__beerRow--locked {
@@ -2131,11 +2545,11 @@
     }
 
     .beerPopup__beerRow--package {
-      background: rgba(234, 88, 12, 0.1);
+      background: rgba(139, 92, 246, 0.1);
     }
 
     .beerPopup__beerName {
-      color: #fff7ed;
+      color: #f8fafc;
       font-size: 14px;
     }
 
@@ -2184,7 +2598,7 @@
     }
 
     .beerPopup__link {
-      color: #f5c76b;
+      color: #22d3ee;
       text-underline-offset: 3px;
     }
 
@@ -2214,16 +2628,16 @@
     }
 
     .beerPopup__happyLabel {
-      color: #f5c76b;
+      color: #22d3ee;
     }
 
     .beerPopup__happyCaptured {
-      color: #111827;
-      background: linear-gradient(135deg, #f5c76b, #ffb199);
+      color: #06101f;
+      background: linear-gradient(135deg, #22d3ee, #38bdf8);
     }
 
     .beerPopup__footer {
-      border-color: rgba(244, 214, 150, 0.12);
+      border-color: rgba(255, 255, 255, 0.1);
     }
 
     .beerPopup__actions {
@@ -2234,32 +2648,52 @@
     }
 
     .beerPopup__button {
+      appearance: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       min-height: 38px;
       padding: 9px 13px;
-      border: 1px solid rgba(245, 199, 107, 0.24);
+      border: 1px solid rgba(255, 255, 255, 0.14);
       border-radius: 999px;
-      color: #fff7ed;
+      color: #f8fafc;
       background: rgba(255, 255, 255, 0.06);
       font-size: 12px;
       font-weight: 900;
       text-decoration: none;
+      cursor: pointer;
       transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
     }
 
     .beerPopup__button:hover {
       transform: translateY(-1px);
-      border-color: rgba(245, 199, 107, 0.5);
-      background: rgba(245, 199, 107, 0.12);
+      border-color: rgba(34, 211, 238, 0.46);
+      background: rgba(34, 211, 238, 0.12);
     }
 
     .beerPopup__button--primary {
-      color: #111827;
+      color: #06101f;
       border-color: transparent;
-      background: linear-gradient(135deg, #f5c76b, #ff906f);
-      box-shadow: 0 16px 28px rgba(245, 199, 107, 0.12);
+      background: linear-gradient(135deg, #38bdf8, #22d3ee, #8b5cf6);
+      box-shadow: 0 16px 28px rgba(34, 211, 238, 0.12);
+    }
+
+    .beerPopup__button[aria-pressed="true"] {
+      border-color: rgba(245, 197, 66, 0.48);
+      color: #fde68a;
+      background: rgba(245, 197, 66, 0.1);
+      box-shadow: 0 0 18px rgba(245, 197, 66, 0.12);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 1ms !important;
+      }
     }
 
     @media (min-width: 901px) {
@@ -2323,6 +2757,10 @@
       .highlightPanel {
         padding: 10px;
         border-radius: 18px;
+      }
+
+      .mapPersonalPanels {
+        grid-template-columns: 1fr;
       }
 
       .highlightPanel__title {
@@ -2788,6 +3226,20 @@
         grid-template-columns: 1fr;
       }
 
+      .activeFilterSummary {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .activeFilterSummary__actions {
+        justify-content: flex-start;
+      }
+
+      .searchAreaButton {
+        top: 10px;
+        max-width: calc(100% - 24px);
+      }
+
       .responsibleNote {
         margin: 0 10px max(8px, env(safe-area-inset-bottom));
         font-size: 10.5px;
@@ -2921,7 +3373,10 @@
 
       <div id="activeFilterSummary" class="activeFilterSummary" hidden>
         <span id="activeFilterCopy"><strong>Filters:</strong> All venues</span>
-        <button id="clearFilters" class="utilityButton" type="button" hidden>Clear all</button>
+        <div class="activeFilterSummary__actions">
+          <button id="shareSearchButton" class="utilityButton" type="button" hidden>Share search</button>
+          <button id="clearFilters" class="utilityButton" type="button" hidden>Clear all</button>
+        </div>
       </div>
 
       <div id="advancedFiltersPanel" class="advancedFiltersPanel" hidden>
@@ -3012,6 +3467,11 @@
   <main id="mainContent" role="main">
     <div id="mapShell">
       <div id="map"></div>
+      <div id="mapOverlayTabs" aria-label="Map panels" hidden>
+        <button class="overlayTab" type="button" data-overlay-panel="list" aria-pressed="false">Visible now</button>
+        <button class="overlayTab" type="button" data-overlay-panel="legend" aria-pressed="false">Legend</button>
+      </div>
+      <button id="searchThisAreaButton" class="searchAreaButton" type="button" hidden>Refresh this area</button>
       <aside id="venueRail" class="overlayPanel is-hidden-panel" aria-live="polite" aria-hidden="true">
         <div class="venueRail__header">
           <div class="venueRail__headerTop">
@@ -3062,6 +3522,30 @@
     <div class="belowMapInsights">
       <div id="retentionHighlights" class="retentionHighlights" aria-live="polite"></div>
 
+      <div id="mapPersonalPanels" class="mapPersonalPanels">
+        <section id="recentlyViewedPanel" class="mapPersonalPanel" aria-labelledby="recentlyViewedTitle" hidden>
+          <div class="mapPersonalPanel__header">
+            <div>
+              <div class="mapPersonalPanel__eyebrow">Pick up where you left off</div>
+              <h2 id="recentlyViewedTitle">Recently viewed</h2>
+            </div>
+            <button id="clearRecentlyViewed" class="mapPersonalPanel__link" type="button">Clear</button>
+          </div>
+          <div id="recentlyViewedList" class="mapPersonalPanel__list"></div>
+        </section>
+
+        <section id="nightPlanPanel" class="mapPersonalPanel mapPersonalPanel--plan" aria-labelledby="nightPlanTitle" hidden>
+          <div class="mapPersonalPanel__header">
+            <div>
+              <div class="mapPersonalPanel__eyebrow">Tonight</div>
+              <h2 id="nightPlanTitle">Night plan</h2>
+            </div>
+            <button id="clearNightPlan" class="mapPersonalPanel__link" type="button">Clear</button>
+          </div>
+          <div id="nightPlanList" class="mapPersonalPanel__list"></div>
+        </section>
+      </div>
+
       <div id="statusBar">
         <div id="resultsSummary" class="statusPill">Loading venues…</div>
         <div id="viewSummary" class="statusPill">All venues</div>
@@ -3073,6 +3557,7 @@
       Prices may change. Check with the venue before ordering. Drink responsibly. <a href="/privacy.html">Privacy</a>
     </div>
   </main>
+  <div id="mapToast" class="mapToast" role="status" aria-live="polite" hidden></div>
   <script>
     const viewerConfig =
       window.MELB_BEER_BOT_VIEWER_CONFIG &&
@@ -3082,6 +3567,14 @@
     const params = new URLSearchParams(window.location.search);
     const DEFAULT_GOOGLE_MAPS_KEY = viewerConfig.googleMapsApiKey || "";
     const GOOGLE_MAPS_MAP_ID = viewerConfig.googleMapsMapId || "";
+    const GOOGLE_MAPS_DEMO_MAP_ID = "DEMO_MAP_ID";
+    const isLocalMapHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+    const EFFECTIVE_GOOGLE_MAPS_MAP_ID =
+      params.get("googleMapsMapId") ||
+      params.get("mapId") ||
+      (isLocalMapHost && params.get("useConfiguredMapId") !== "1"
+        ? GOOGLE_MAPS_DEMO_MAP_ID
+        : GOOGLE_MAPS_MAP_ID || GOOGLE_MAPS_DEMO_MAP_ID);
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers)
       ? viewerConfig.trackedBeers
           .filter((beer) => beer && typeof beer === "object")
@@ -3107,6 +3600,12 @@
     const PRICE_REVEAL_DAY_KEY = new Date().toISOString().slice(0, 10);
     const PRICE_REVEAL_STORAGE_KEY = `melbBeerRevealedVenues:${PRICE_REVEAL_DAY_KEY}`;
     const LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference";
+    const LOCAL_SAVED_VENUES_STORAGE_KEY = "pintPathLocalSavedVenues";
+    const RECENTLY_VIEWED_STORAGE_KEY = "pintPathRecentlyViewedVenues";
+    const NIGHT_PLAN_STORAGE_KEY = "pintPathNightPlanVenues";
+    const NIGHT_PLAN_ACCOUNT_ITEM_ID = "current-night-plan";
+    const MAX_RECENT_VENUES = 6;
+    const MAX_NIGHT_PLAN_STOPS = 8;
     const FREE_PREVIEW_BEER_CHIPS = Object.freeze([
       { label: "Guinness", query: "Guinness" },
       { label: "Carlton Draft", query: "Carlton Draft" },
@@ -3133,6 +3632,7 @@
     const beerChipHostEl = document.getElementById("beerChipHost");
     const onTapOnlyEl = document.getElementById("onTapOnly");
     const clearFiltersEl = document.getElementById("clearFilters");
+    const shareSearchButtonEl = document.getElementById("shareSearchButton");
     const advancedFiltersToggleEl = document.getElementById("advancedFiltersToggle");
     const advancedFiltersPanelEl = document.getElementById("advancedFiltersPanel");
     const advancedFiltersApplyEl = document.getElementById("advancedFiltersApply");
@@ -3170,6 +3670,14 @@
     const scopeChipEls = Array.from(document.querySelectorAll("[data-scope]"));
     const highValueChipEls = Array.from(document.querySelectorAll("[data-filter-chip]"));
     const retentionHighlightsEl = document.getElementById("retentionHighlights");
+    const searchThisAreaButtonEl = document.getElementById("searchThisAreaButton");
+    const recentlyViewedPanelEl = document.getElementById("recentlyViewedPanel");
+    const recentlyViewedListEl = document.getElementById("recentlyViewedList");
+    const clearRecentlyViewedEl = document.getElementById("clearRecentlyViewed");
+    const nightPlanPanelEl = document.getElementById("nightPlanPanel");
+    const nightPlanListEl = document.getElementById("nightPlanList");
+    const clearNightPlanEl = document.getElementById("clearNightPlan");
+    const mapToastEl = document.getElementById("mapToast");
     let beerChipEls = [];
     let googleMapsAuthFailed = false;
     let activeScope = "all";
@@ -3183,8 +3691,16 @@
       "my_saved_suburbs",
     ]);
     let savedSuburbFilters = [];
+    let savedVenueIds = new Set();
+    let savedVenueRecords = [];
+    let recentlyViewedVenues = [];
+    let nightPlanVenues = [];
+    let activeVenueRecord = null;
+    let initialSharedVenueId = params.get("venueId") || "";
+    let initialSharedVenueOpened = false;
     let venueRailSortMode = "smart";
     let analyticsVenueRows = [];
+    let googleMapInstance = null;
     const userLocationState = {
       status: "idle",
       coords: null,
@@ -3230,6 +3746,61 @@
       } catch {
         return [];
       }
+    }
+
+    function readJsonObjectArray(storageKey) {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
+        return Array.isArray(parsed)
+          ? parsed.filter((value) => value && typeof value === "object" && !Array.isArray(value))
+          : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function writeJsonObjectArray(storageKey, values) {
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(values));
+      } catch {
+        // Local retention features are convenience-only; storage failures should not block the map.
+      }
+    }
+
+    function showToast(message) {
+      if (!mapToastEl) {
+        return;
+      }
+
+      window.clearTimeout(showToast.timeoutId);
+      mapToastEl.textContent = message;
+      mapToastEl.hidden = false;
+      showToast.timeoutId = window.setTimeout(() => {
+        mapToastEl.hidden = true;
+      }, 3200);
+    }
+
+    async function copyTextToClipboard(value) {
+      const text = String(value || "");
+      if (!text) {
+        return false;
+      }
+
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+
+      const input = document.createElement("textarea");
+      input.value = text;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.left = "-9999px";
+      document.body.appendChild(input);
+      input.select();
+      const copied = document.execCommand("copy");
+      input.remove();
+      return copied;
     }
 
     function persistRevealedVenueIds() {
@@ -3816,6 +4387,7 @@
       venueDetailOverlayEl.classList.add("is-hidden-panel");
       venueDetailOverlayEl.setAttribute("aria-hidden", "true");
       venueDetailBodyEl.removeAttribute("aria-busy");
+      activeVenueRecord = null;
     }
 
     function showVenueDetailLoading() {
@@ -3838,6 +4410,7 @@
         return;
       }
 
+      activeVenueRecord = record;
       showVenueDetailLoading();
       try {
         await maybeRevealVenuePrices(record.row, record.id);
@@ -3849,6 +4422,7 @@
       venueDetailOverlayEl.classList.remove("is-hidden-panel");
       venueDetailOverlayEl.setAttribute("aria-hidden", "false");
       closeVenueDetailEl.focus({ preventScroll: true });
+      rememberViewedVenue(record);
       trackVenueAnalytics("venue_detail_opened", record, source);
       if (getDisplayBeerItems(record.row, getViewState()).length > 0) {
         trackVenueAnalytics("beer_list_viewed", record, source);
@@ -3895,7 +4469,7 @@
 
     const savedOverlayState = MAP_OVERLAYS_ENABLED ? readOverlayState() : null;
     let overlayPanelState = MAP_OVERLAYS_ENABLED && savedOverlayState ? savedOverlayState : {
-      list: false,
+      list: !mobileOverlayQuery.matches,
       legend: false,
     };
 
@@ -3977,7 +4551,81 @@
     });
 
     document.addEventListener("click", async (event) => {
-      const reportButton = event.target.closest("[data-report-price]");
+      const clickTarget = event.target instanceof Element ? event.target : null;
+      if (!clickTarget) {
+        return;
+      }
+
+      const venueActionButton = clickTarget.closest("[data-venue-action]");
+      if (venueActionButton) {
+        const action = venueActionButton.dataset.venueAction;
+
+        if (action !== "directions") {
+          event.preventDefault();
+        }
+
+        if (!activeVenueRecord) {
+          showToast("Choose a venue first.");
+          return;
+        }
+
+        if (action === "save") {
+          await toggleSavedVenue(activeVenueRecord);
+          return;
+        }
+
+        if (action === "share") {
+          const copied = await copyTextToClipboard(getVenueShareUrl(activeVenueRecord)).catch(() => false);
+          showToast(copied ? "Venue link copied." : "Could not copy the link. Use your browser share menu.");
+          trackVenueAnalytics("venue_shared", activeVenueRecord, "venue_detail", {
+            interactionType: "share_button",
+          });
+          void trackBusinessEvent("share_link_copied", getVenueAnalyticsMetadata(activeVenueRecord, "venue_detail", {
+            shareType: "venue",
+          }));
+          return;
+        }
+
+        if (action === "plan") {
+          addVenueToNightPlan(activeVenueRecord);
+          trackVenueAnalytics("venue_lookup", activeVenueRecord, "venue_detail", {
+            interactionType: "night_plan_add",
+          });
+          return;
+        }
+
+        if (action === "directions") {
+          trackVenueAnalytics("directions_clicked", activeVenueRecord, "venue_detail", {
+            interactionType: "directions_click",
+          });
+          return;
+        }
+      }
+
+      const storedVenueButton = clickTarget.closest("[data-open-stored-venue]");
+      if (storedVenueButton) {
+        event.preventDefault();
+        if (typeof window.__openStoredVenue === "function") {
+          await window.__openStoredVenue(storedVenueButton.dataset.openStoredVenue, storedVenueButton.dataset.source);
+        }
+        return;
+      }
+
+      const recentRemoveButton = clickTarget.closest("[data-remove-recently_viewed]");
+      if (recentRemoveButton) {
+        event.preventDefault();
+        removeRecentlyViewedVenue(recentRemoveButton.getAttribute("data-remove-recently_viewed"));
+        return;
+      }
+
+      const planRemoveButton = clickTarget.closest("[data-remove-night_plan]");
+      if (planRemoveButton) {
+        event.preventDefault();
+        removeVenueFromNightPlan(planRemoveButton.getAttribute("data-remove-night_plan"));
+        return;
+      }
+
+      const reportButton = clickTarget.closest("[data-report-price]");
       if (!reportButton) {
         return;
       }
@@ -3998,10 +4646,35 @@
             sourcePhotoUrl: null,
           }),
         });
-        window.alert("Thanks. That price has been sent for review.");
+        showToast("Thanks. That price has been sent for review.");
       } catch (error) {
-        window.alert(error instanceof Error ? error.message : "Could not report that price.");
+        showToast(error instanceof Error ? error.message : "Could not report that price.");
       }
+    });
+
+    shareSearchButtonEl.addEventListener("click", async () => {
+      const copied = await copyTextToClipboard(getSearchShareUrl()).catch(() => false);
+      showToast(copied ? "Search link copied." : "Could not copy the search link.");
+      void trackBusinessEvent("search_shared", getAnalyticsContext({
+        source: "share_search_button",
+      }));
+      void trackBusinessEvent("share_link_copied", getAnalyticsContext({
+        shareType: "search",
+        source: "share_search_button",
+      }));
+    });
+
+    clearRecentlyViewedEl.addEventListener("click", () => {
+      recentlyViewedVenues = [];
+      renderRecentlyViewedPanel();
+      showToast("Recently viewed cleared.");
+    });
+
+    clearNightPlanEl.addEventListener("click", () => {
+      nightPlanVenues = [];
+      renderNightPlanPanel();
+      void persistAccountNightPlan();
+      showToast("Night plan cleared.");
     });
 
     if (typeof mobileOverlayQuery.addEventListener === "function") {
@@ -4068,6 +4741,48 @@
           ? "Unlock advanced filters with Premium or by submitting verified venue data."
           : "";
       });
+    }
+
+    function applySharedSearchParams() {
+      const sharedVenueName = params.get("venueName") || "";
+      const sharedQuery = params.get("q") || sharedVenueName;
+      const sharedBeer = params.get("beer") || "";
+      const sharedScope = params.get("scope") || "";
+      const sharedRadiusKm = Number(params.get("radiusKm"));
+      const validFilters = new Set(highValueChipEls.map((chipEl) => chipEl.dataset.filterChip).filter(Boolean));
+
+      if (sharedQuery) {
+        venueSearchEl.value = sharedQuery;
+      }
+
+      if (sharedBeer) {
+        beerSearchEl.value = sharedBeer;
+        if (!sharedQuery) {
+          venueSearchEl.value = sharedBeer;
+        }
+      }
+
+      if (["all", "needs_data"].includes(sharedScope)) {
+        activeScope = sharedScope;
+      }
+
+      onTapOnlyEl.checked = params.get("onTap") === "true" || params.get("onTapOnly") === "true";
+      activeFilterChips.clear();
+      String(params.get("filters") || "")
+        .split(",")
+        .map((filter) => filter.trim())
+        .filter((filter) => validFilters.has(filter))
+        .filter((filter) => !isAdvancedFilterLocked(filter))
+        .forEach((filter) => activeFilterChips.add(filter));
+
+      if (Number.isFinite(sharedRadiusKm)) {
+        const validRadiusValues = Array.from(nearMeRadiusSelectEl.options).map((option) => option.value);
+        const radiusValue = String(sharedRadiusKm);
+        if (validRadiusValues.includes(radiusValue)) {
+          userLocationState.radiusKm = sharedRadiusKm;
+          nearMeRadiusSelectEl.value = radiusValue;
+        }
+      }
     }
 
     function showAdvancedFilterUnlockPrompt() {
@@ -5158,11 +5873,106 @@
       return hasCapturedBeerData(row) || Boolean(getHappyHourDetails(row)?.exists) || hasPintPathSpecial(row);
     }
 
+    function getVenueTier(rowOrVenue) {
+      const venue = getVenueRecord(rowOrVenue?.venues) || rowOrVenue || {};
+      const tierValue = String(
+        venue.membershipTier ||
+        venue.membership_tier ||
+        rowOrVenue?.membershipTier ||
+        rowOrVenue?.cleaned?.venue_membership_tier ||
+        "",
+      ).toLowerCase();
+
+      if (tierValue === "pro" || tierValue === "super_premium") {
+        return "pro";
+      }
+
+      if (tierValue === "plus") {
+        return "plus";
+      }
+
+      return "free";
+    }
+
+    function getVenueTierLabel(rowOrVenue) {
+      const tier = getVenueTier(rowOrVenue);
+      const venue = getVenueRecord(rowOrVenue?.venues) || rowOrVenue || {};
+
+      if (typeof venue.premiumBadge === "string" && venue.premiumBadge.trim()) {
+        return venue.premiumBadge.trim();
+      }
+
+      if (tier === "pro") {
+        return "Pro";
+      }
+
+      if (tier === "plus") {
+        return "Plus";
+      }
+
+      return "Free";
+    }
+
+    function getVenueTierMeta(rowOrVenue) {
+      const tier = getVenueTier(rowOrVenue);
+
+      if (tier === "pro") {
+        return {
+          tier,
+          label: getVenueTierLabel(rowOrVenue),
+          copy: "Premium discovery",
+        };
+      }
+
+      if (tier === "plus") {
+        return {
+          tier,
+          label: getVenueTierLabel(rowOrVenue),
+          copy: "Upgraded listing",
+        };
+      }
+
+      return {
+        tier,
+        label: "Free",
+        copy: "Standard listing",
+      };
+    }
+
+    function applyVenueTierToMarkerVisual(visual, rowOrVenue) {
+      if (!visual) {
+        return visual;
+      }
+
+      const tier = getVenueTier(rowOrVenue);
+
+      if (tier === "pro") {
+        return {
+          ...visual,
+          strokeColor: "#f5c542",
+          strokeWeight: Math.max(visual.strokeWeight + 1.2, 4),
+          scale: visual.scale + 1.8,
+          fillOpacity: Math.min(visual.fillOpacity + 0.05, 1),
+        };
+      }
+
+      if (tier === "plus") {
+        return {
+          ...visual,
+          strokeColor: "#22d3ee",
+          strokeWeight: Math.max(visual.strokeWeight + 0.8, 3.4),
+          scale: visual.scale + 0.9,
+        };
+      }
+
+      return visual;
+    }
+
     function getNeutralMarkerVisual(row, viewState) {
-      return window.MelbBeerMapLogic.getMarkerVisual(null, {
+      return applyVenueTierToMarkerVisual(window.MelbBeerMapLogic.getMarkerVisual(null, {
         mappedOnly: viewState.scope !== "needs_data" && hasUsefulVenueSignal(row),
         needsData: viewState.scope === "needs_data" || !hasUsefulVenueSignal(row),
-      });
+      }), row);
     }
 
     function getMarkerVisual(viewState, beer, markerId) {
@@ -5400,6 +6210,7 @@
 
       activeFilterSummaryEl.hidden = count === 0;
       clearFiltersEl.hidden = count === 0;
+      shareSearchButtonEl.hidden = count === 0;
       activeFilterCopyEl.innerHTML = `<strong>Filters:</strong> ${escapeHtml(count ? labels.join(" · ") : "All venues")}`;
       advancedFiltersToggleEl.textContent = count
         ? `Advanced filters · ${count} active`
@@ -5531,9 +6342,9 @@
             hasUserLocation() ? `Within ${userLocationState.radiusKm} km` : "Location off",
           ],
           items: [
-            ["green", "Lower price", "Verified lower-band price."],
+            ["cyan", "Lower price", "Verified lower-band price."],
             ["amber", "Mid price", "Verified mid-range price."],
-            ["red", "Higher price", "Verified higher-band price."],
+            ["orange", "Upper range", "Verified higher-band price."],
             ["selected", "Selected venue", "Gold ring shows the active venue."],
           ],
           hint: "Recently verified near me excludes unknown prices from price-based rankings."
@@ -5554,10 +6365,10 @@
             `${resultCounts.unknown} price unknown`,
           ],
           items: [
-            ["green", "Lower price", "Verified lower-band price for this beer."],
+            ["cyan", "Lower price", "Verified lower-band price for this beer."],
             ["amber", "Mid price", "Verified price in the middle of the range."],
-            ["orange", "Upper range", "Verified higher-band price, or package-only/no-pint availability."],
-            ["red", "Unavailable", "The venue told us this beer is not available or not on tap."],
+            ["orange", "Upper range", "Verified higher-band price."],
+            ["red", "Unavailable or locked", "Magenta/red markers flag unavailable, package-only, or access-limited pricing states."],
             ["unknown", "Price unknown", "Listed or possible match, but no verified price yet."],
             ["selected", "Selected venue", "Gold ring means the marker is open in the venue card."],
           ],
@@ -5583,17 +6394,19 @@
 
       return {
         title: "All venues",
-        subtitle: "This is the full venue footprint. Teal markers have data; muted grey markers still need venue details.",
+        subtitle: "This is the full venue footprint. Blue markers have venue data; muted grey markers still need details.",
         stats: [
           `${filteredRows.length} mapped venues`,
           `${missingCount} still need data`,
         ],
         items: [
-          ["neutral", "Has venue data", "Teal markers have captured beer prices, happy-hour info, or venue-supplied details."],
+          ["neutral", "Has venue data", "Blue markers have captured beer prices, happy-hour info, or venue-supplied details."],
+          ["plus", "Plus venue", "Cyan/violet ring means the venue has upgraded visibility."],
+          ["pro", "Pro venue", "Gold/violet ring means the venue has premium discovery treatment."],
           ["needs", "Needs data", "Muted grey markers are mapped venues that still need beer prices or happy-hour details."],
           ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
         ],
-        hint: "Switch to a beer search when you want price-led green, amber, and red markers."
+        hint: "Switch to a beer search when you want price-led cyan, lime, gold, and magenta markers."
       };
     }
 
@@ -5806,15 +6619,128 @@
       };
     }
 
+    function getMarkerPosition(marker) {
+      if (!marker) {
+        return null;
+      }
+
+      if (typeof marker.getPosition === "function") {
+        return marker.getPosition();
+      }
+
+      return marker.position || null;
+    }
+
+    function setMarkerMap(marker, mapInstance) {
+      if (!marker) {
+        return;
+      }
+
+      if ("map" in marker) {
+        marker.map = mapInstance;
+        return;
+      }
+
+      if (typeof marker.setMap === "function") {
+        marker.setMap(mapInstance);
+      }
+    }
+
+    function setMarkerPosition(marker, position) {
+      if (!marker) {
+        return;
+      }
+
+      if ("position" in marker) {
+        marker.position = position;
+        return;
+      }
+
+      if (typeof marker.setPosition === "function") {
+        marker.setPosition(position);
+      }
+    }
+
+    function setMarkerZIndex(marker, zIndex) {
+      if (!marker) {
+        return;
+      }
+
+      if ("zIndex" in marker) {
+        marker.zIndex = zIndex;
+        return;
+      }
+
+      if (typeof marker.setZIndex === "function") {
+        marker.setZIndex(zIndex);
+      }
+    }
+
+    function createAdvancedMarkerPin(visual, options = {}) {
+      const pinEl = document.createElement("span");
+      const glyphEl = document.createElement("span");
+      const markerScale = Number(visual?.scale || 12);
+      const size = options.size || Math.max(24, Math.min(46, Math.round(markerScale * 2.25)));
+      const glyph = String(options.glyphText ?? visual?.labelText ?? "");
+
+      pinEl.className = [
+        "advancedMapPin",
+        options.className,
+        options.tier === "plus" ? "advancedMapPin--plus" : "",
+        options.tier === "pro" ? "advancedMapPin--pro" : "",
+        options.variant === "cluster" ? "advancedMapPin--cluster" : "",
+        options.variant === "user" ? "advancedMapPin--user" : "",
+        options.selected ? "is-selected" : "",
+      ].filter(Boolean).join(" ");
+      pinEl.style.setProperty("--pin-bg", visual?.fillColor || "#2563eb");
+      pinEl.style.setProperty("--pin-border", options.selected ? "#f5c542" : visual?.strokeColor || "#bfdbfe");
+      pinEl.style.setProperty("--pin-color", visual?.labelColor || "#ffffff");
+      pinEl.style.setProperty("--pin-size", `${size}px`);
+      pinEl.setAttribute("aria-hidden", "true");
+
+      glyphEl.className = "advancedMapPin__glyph";
+      glyphEl.textContent = glyph;
+      pinEl.appendChild(glyphEl);
+
+      return pinEl;
+    }
+
+    function setAdvancedMarkerVisual(marker, visual, options = {}) {
+      if (!marker) {
+        return;
+      }
+
+      const markerOptions = {
+        ...(marker.__markerVisualOptions || {}),
+        ...options,
+      };
+      const markerVisual = visual || marker.__baseVisual || {};
+      const pinEl = createAdvancedMarkerPin(markerVisual, markerOptions);
+
+      if (typeof marker.replaceChildren === "function") {
+        marker.replaceChildren(pinEl);
+      } else {
+        marker.content = pinEl;
+      }
+
+      marker.__currentVisual = markerVisual;
+      marker.__markerVisualOptions = markerOptions;
+    }
+
     function renderVenueRail(markerRecords, viewState) {
-      const visibleBounds = map && typeof map.getBounds === "function" ? map.getBounds() : null;
+      const mapForRail = googleMapInstance;
+      const visibleBounds = mapForRail && typeof mapForRail.getBounds === "function" ? mapForRail.getBounds() : null;
       const visibleRecords = (visibleBounds
-        ? markerRecords.filter((record) => visibleBounds.contains(record.marker.getPosition()))
+        ? markerRecords.filter((record) => {
+            const markerPosition = getMarkerPosition(record.marker);
+            return markerPosition ? visibleBounds.contains(markerPosition) : false;
+          })
         : markerRecords
       )
         .map((record) => ({
           ...record,
           summary: getVenueRailSummary(record, viewState),
+          tierMeta: getVenueTierMeta(record.row),
         }))
         .sort((left, right) => {
           const shouldSortByDistance =
@@ -5917,10 +6843,10 @@
       }
 
       venueRailBodyEl.innerHTML = visibleRecords.slice(0, 8).map((record) => `
-        <button class="venueRail__card" type="button" data-marker-id="${escapeHtml(record.id)}">
+        <button class="venueRail__card venueRail__card--${escapeHtml(record.tierMeta.tier)}" type="button" data-marker-id="${escapeHtml(record.id)}">
           <div class="venueRail__cardTop">
             <div>
-              <div class="venueRail__name">${escapeHtml(record.venue.name || record.row.venue_name || "Unknown venue")}</div>
+              <div class="venueRail__name ${record.tierMeta.tier === "pro" ? "venueRail__name--premium" : ""}">${escapeHtml(record.venue.name || record.row.venue_name || "Unknown venue")}</div>
               <div class="venueRail__suburb">${escapeHtml(record.summary.suburb)}</div>
             </div>
             <div class="venueRail__badge" style="${record.summary.badgeStyle}">
@@ -5928,6 +6854,7 @@
             </div>
           </div>
           <div class="venueRail__meta">
+            <span class="venueRail__tier venueRail__tier--${escapeHtml(record.tierMeta.tier)}">${escapeHtml(record.tierMeta.label)}</span>
             <span class="venueRail__metaPill">${escapeHtml(record.summary.metaPill)}</span>
           </div>
           <div class="venueRail__metaCopy">${escapeHtml(record.summary.copy)}</div>
@@ -5945,14 +6872,6 @@
           venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
             cardEl.classList.toggle("is-active", cardEl === buttonEl);
           });
-          setActiveMarker(record.marker);
-          map.panTo(record.marker.getPosition());
-          const shouldZoomIn = typeof map.getZoom === "function" && map.getZoom() < 15;
-
-          if (typeof map.setZoom === "function" && shouldZoomIn) {
-            map.setZoom(15);
-          }
-
           const openVenueDetail = async () => {
             trackVenueAnalytics("venue_card_viewed", record, "visible_venues", {
               interactionType: "visible_venue_list",
@@ -5960,12 +6879,21 @@
             await openVenueDetailOverlay(record, "visible_venues");
           };
 
-          if (shouldZoomIn && google.maps && google.maps.event && typeof google.maps.event.addListenerOnce === "function") {
-            google.maps.event.addListenerOnce(map, "idle", () => {
-              void openVenueDetail();
-            });
-          } else {
-            void openVenueDetail();
+          void openVenueDetail();
+
+          setActiveMarker(record.marker);
+          try {
+            const markerPosition = getMarkerPosition(record.marker);
+            if (markerPosition && mapForRail && typeof mapForRail.panTo === "function") {
+              mapForRail.panTo(markerPosition);
+            }
+            const shouldZoomIn = mapForRail && typeof mapForRail.getZoom === "function" && mapForRail.getZoom() < 15;
+
+            if (mapForRail && typeof mapForRail.setZoom === "function" && shouldZoomIn) {
+              mapForRail.setZoom(15);
+            }
+          } catch (error) {
+            console.warn("Could not focus map on selected venue", error);
           }
         });
       });
@@ -5989,6 +6917,362 @@
         .replaceAll("'", "&#39;");
     }
 
+    function normalizeStoredVenue(value) {
+      if (!value || typeof value !== "object") {
+        return null;
+      }
+
+      const id = String(value.id || "").trim();
+      const name = String(value.name || "").trim();
+
+      if (!id || !name) {
+        return null;
+      }
+
+      return {
+        id,
+        markerId: String(value.markerId || id).trim(),
+        name,
+        suburb: String(value.suburb || "Melbourne").trim(),
+        address: String(value.address || "").trim(),
+        latitude: Number.isFinite(Number(value.latitude)) ? Number(value.latitude) : null,
+        longitude: Number.isFinite(Number(value.longitude)) ? Number(value.longitude) : null,
+        tier: ["free", "plus", "pro"].includes(String(value.tier || "")) ? String(value.tier) : "free",
+        updatedAt: String(value.updatedAt || new Date().toISOString()),
+      };
+    }
+
+    function readStoredVenues(storageKey, maxItems) {
+      const venues = readJsonObjectArray(storageKey)
+        .map(normalizeStoredVenue)
+        .filter(Boolean);
+      return venues.slice(0, maxItems);
+    }
+
+    function writeStoredVenues(storageKey, venues, maxItems) {
+      const normalized = venues
+        .map(normalizeStoredVenue)
+        .filter(Boolean)
+        .slice(0, maxItems);
+      writeJsonObjectArray(storageKey, normalized);
+      return normalized;
+    }
+
+    function getStringArray(value) {
+      return Array.isArray(value)
+        ? value.map((entry) => String(entry || "").trim()).filter(Boolean)
+        : [];
+    }
+
+    function getNightPlanFromSavedItem(savedItem) {
+      const metadata = savedItem?.metadata || {};
+      const venueIds = getStringArray(metadata.venueIds);
+      const venueNames = getStringArray(metadata.venueNames);
+      const suburbs = getStringArray(metadata.suburbs);
+      const tiers = getStringArray(metadata.tiers);
+
+      return venueIds
+        .map((id, index) => normalizeStoredVenue({
+          id,
+          markerId: id,
+          name: venueNames[index] || `Stop ${index + 1}`,
+          suburb: suburbs[index] || "Melbourne",
+          tier: tiers[index] || "free",
+          updatedAt: savedItem?.createdAt,
+        }))
+        .filter(Boolean)
+        .slice(0, MAX_NIGHT_PLAN_STOPS);
+    }
+
+    function getNightPlanSavedItemPayload() {
+      const stops = nightPlanVenues.slice(0, MAX_NIGHT_PLAN_STOPS);
+      return {
+        itemType: "night_plan",
+        itemId: NIGHT_PLAN_ACCOUNT_ITEM_ID,
+        label: stops.length
+          ? `${stops.length} stop${stops.length === 1 ? "" : "s"} night plan`
+          : "My night plan",
+        suburb: stops[0]?.suburb || null,
+        metadata: {
+          stopCount: stops.length,
+          venueIds: stops.map((venue) => venue.id),
+          venueNames: stops.map((venue) => venue.name),
+          suburbs: stops.map((venue) => venue.suburb),
+          tiers: stops.map((venue) => venue.tier),
+        },
+      };
+    }
+
+    function getRecordVenueId(record) {
+      const venue = record?.venue || getVenueRecord(record?.row?.venues) || {};
+      return String(record?.row?.venue_id || venue.id || record?.id || "").trim();
+    }
+
+    function getVenueSnapshot(record) {
+      const venue = record?.venue || getVenueRecord(record?.row?.venues) || {};
+      const id = getRecordVenueId(record);
+      const name = venue.name || record?.row?.venue_name || "Unknown venue";
+      const address = formatAddress(venue);
+      return normalizeStoredVenue({
+        id,
+        markerId: record?.id || id,
+        name,
+        suburb: venue.suburb || record?.row?.suburb || "Melbourne",
+        address,
+        latitude: venue.latitude,
+        longitude: venue.longitude,
+        tier: getVenueTier(record?.row || venue),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    function getVenueDirectionsUrl(recordOrSnapshot) {
+      const venue = recordOrSnapshot?.venue || getVenueRecord(recordOrSnapshot?.row?.venues) || recordOrSnapshot || {};
+      const lat = Number(venue.latitude);
+      const lng = Number(venue.longitude);
+      const name = venue.name || recordOrSnapshot?.name || recordOrSnapshot?.row?.venue_name || "Pint Path venue";
+      const address = formatAddress(venue) || recordOrSnapshot?.address || "";
+      const destination = Number.isFinite(lat) && Number.isFinite(lng)
+        ? `${lat},${lng}`
+        : [name, address].filter(Boolean).join(", ");
+      return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
+    }
+
+    function getVenueShareUrl(record) {
+      const snapshot = getVenueSnapshot(record);
+      if (!snapshot?.id) {
+        return window.location.origin + window.location.pathname;
+      }
+      const url = new URL(`/venues/${encodeURIComponent(snapshot.id)}`, window.location.origin);
+      return url.toString();
+    }
+
+    function getSearchShareUrl() {
+      const viewState = getViewState();
+      const url = new URL(window.location.origin + window.location.pathname);
+      if (viewState.venueQuery) {
+        url.searchParams.set("q", viewState.venueQuery);
+      }
+      if (viewState.beerQuery) {
+        url.searchParams.set("beer", viewState.beerQuery);
+      }
+      if (viewState.scope !== "all") {
+        url.searchParams.set("scope", viewState.scope);
+      }
+      if (viewState.onTapOnly) {
+        url.searchParams.set("onTap", "true");
+      }
+      if (viewState.filters.length) {
+        url.searchParams.set("filters", viewState.filters.join(","));
+      }
+      if (hasUserLocation() && hasNearMeFilter(viewState)) {
+        url.searchParams.set("radiusKm", String(userLocationState.radiusKm));
+      }
+      return url.toString();
+    }
+
+    function syncSavedVenueIds() {
+      savedVenueIds = new Set(savedVenueRecords.map((venue) => venue.id));
+    }
+
+    function renderStoredVenueList(targetEl, venues, actionName, includeRemove = true) {
+      targetEl.innerHTML = venues.map((venue, index) => `
+        <div class="mapPersonalItem">
+          <button class="mapPersonalItem__button" type="button" data-open-stored-venue="${escapeHtml(venue.id)}" data-source="${escapeHtml(actionName)}">
+            <strong>${escapeHtml(actionName === "night_plan" ? `${index + 1}. ${venue.name}` : venue.name)}</strong>
+            <span>${escapeHtml([venue.suburb, venue.tier === "pro" ? "Pro" : venue.tier === "plus" ? "Plus" : null].filter(Boolean).join(" · "))}</span>
+          </button>
+          ${includeRemove ? `<button class="mapPersonalItem__remove" type="button" data-remove-${escapeHtml(actionName)}="${escapeHtml(venue.id)}" aria-label="Remove ${escapeHtml(venue.name)}">×</button>` : ""}
+        </div>
+      `).join("");
+    }
+
+    function renderRecentlyViewedPanel() {
+      recentlyViewedVenues = writeStoredVenues(RECENTLY_VIEWED_STORAGE_KEY, recentlyViewedVenues, MAX_RECENT_VENUES);
+      recentlyViewedPanelEl.hidden = recentlyViewedVenues.length === 0;
+      if (recentlyViewedVenues.length) {
+        renderStoredVenueList(recentlyViewedListEl, recentlyViewedVenues, "recently_viewed", true);
+      } else {
+        recentlyViewedListEl.innerHTML = "";
+      }
+    }
+
+    function renderNightPlanPanel() {
+      nightPlanVenues = writeStoredVenues(NIGHT_PLAN_STORAGE_KEY, nightPlanVenues, MAX_NIGHT_PLAN_STOPS);
+      nightPlanPanelEl.hidden = nightPlanVenues.length === 0;
+      if (nightPlanVenues.length) {
+        renderStoredVenueList(nightPlanListEl, nightPlanVenues, "night_plan", true);
+      } else {
+        nightPlanListEl.innerHTML = "";
+      }
+    }
+
+    function rememberViewedVenue(record) {
+      const snapshot = getVenueSnapshot(record);
+      if (!snapshot) {
+        return;
+      }
+
+      recentlyViewedVenues = [
+        snapshot,
+        ...recentlyViewedVenues.filter((venue) => venue.id !== snapshot.id),
+      ].slice(0, MAX_RECENT_VENUES);
+      renderRecentlyViewedPanel();
+    }
+
+    function addVenueToNightPlan(record) {
+      const snapshot = getVenueSnapshot(record);
+      if (!snapshot) {
+        showToast("Could not add this venue to your night plan.");
+        return;
+      }
+
+      const alreadyPlanned = nightPlanVenues.some((venue) => venue.id === snapshot.id);
+      nightPlanVenues = alreadyPlanned
+        ? nightPlanVenues
+        : [...nightPlanVenues, snapshot].slice(0, MAX_NIGHT_PLAN_STOPS);
+      renderNightPlanPanel();
+      showToast(alreadyPlanned ? "Already in your night plan." : "Added to your night plan.");
+      if (!alreadyPlanned) {
+        void persistAccountNightPlan();
+      }
+      if (activeVenueRecord) {
+        venueDetailBodyEl.innerHTML = getVenueDetailContent(activeVenueRecord);
+      }
+    }
+
+    function removeVenueFromNightPlan(venueId) {
+      nightPlanVenues = nightPlanVenues.filter((venue) => venue.id !== venueId);
+      renderNightPlanPanel();
+      void persistAccountNightPlan();
+      showToast("Removed from your night plan.");
+      if (activeVenueRecord) {
+        venueDetailBodyEl.innerHTML = getVenueDetailContent(activeVenueRecord);
+      }
+    }
+
+    function removeRecentlyViewedVenue(venueId) {
+      recentlyViewedVenues = recentlyViewedVenues.filter((venue) => venue.id !== venueId);
+      renderRecentlyViewedPanel();
+      showToast("Removed from recently viewed.");
+    }
+
+    function persistLocalSavedVenues() {
+      savedVenueRecords = writeStoredVenues(LOCAL_SAVED_VENUES_STORAGE_KEY, savedVenueRecords, 100);
+      syncSavedVenueIds();
+    }
+
+    async function persistAccountNightPlan() {
+      if (!window.MelbBeerBusiness?.getAuthToken?.()) {
+        return;
+      }
+
+      try {
+        if (nightPlanVenues.length === 0) {
+          await window.MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
+            method: "DELETE",
+            body: JSON.stringify({
+              itemType: "night_plan",
+              itemId: NIGHT_PLAN_ACCOUNT_ITEM_ID,
+            }),
+          });
+          return;
+        }
+
+        await window.MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
+          method: "POST",
+          body: JSON.stringify(getNightPlanSavedItemPayload()),
+        });
+      } catch (error) {
+        console.warn("Could not persist night plan to account", error);
+      }
+    }
+
+    async function loadSavedVenueState() {
+      savedVenueRecords = readStoredVenues(LOCAL_SAVED_VENUES_STORAGE_KEY, 100);
+
+      if (window.MelbBeerBusiness?.getAuthToken?.()) {
+        try {
+          const account = await window.MelbBeerBusiness.apiFetch("/api/business/account");
+          const savedItems = account?.savedItems || [];
+          const accountSavedVenues = (account?.savedItems || [])
+            .filter((item) => item.itemType === "venue")
+            .map((item) => normalizeStoredVenue({
+              id: item.itemId,
+              markerId: item.itemId,
+              name: item.label,
+              suburb: item.suburb,
+              address: item.metadata?.address,
+              latitude: item.metadata?.latitude,
+              longitude: item.metadata?.longitude,
+              tier: item.metadata?.tier,
+              updatedAt: item.createdAt,
+            }))
+            .filter(Boolean);
+          const accountNightPlan = savedItems.find((item) => item.itemType === "night_plan" && item.itemId === NIGHT_PLAN_ACCOUNT_ITEM_ID);
+          savedVenueRecords = accountSavedVenues.length ? accountSavedVenues : savedVenueRecords;
+          if (accountNightPlan) {
+            nightPlanVenues = getNightPlanFromSavedItem(accountNightPlan);
+            writeStoredVenues(NIGHT_PLAN_STORAGE_KEY, nightPlanVenues, MAX_NIGHT_PLAN_STOPS);
+          }
+          persistLocalSavedVenues();
+        } catch (error) {
+          console.warn("Could not load saved venue state", error);
+          syncSavedVenueIds();
+        }
+      } else {
+        syncSavedVenueIds();
+      }
+    }
+
+    async function toggleSavedVenue(record) {
+      const snapshot = getVenueSnapshot(record);
+      if (!snapshot) {
+        showToast("Could not save this venue.");
+        return;
+      }
+
+      const wasSaved = savedVenueIds.has(snapshot.id);
+      const hasAccountToken = Boolean(window.MelbBeerBusiness?.getAuthToken?.());
+
+      try {
+        if (hasAccountToken) {
+          await window.MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
+            method: wasSaved ? "DELETE" : "POST",
+            body: JSON.stringify(wasSaved
+              ? { itemType: "venue", itemId: snapshot.id }
+              : {
+                  itemType: "venue",
+                  itemId: snapshot.id,
+                  label: snapshot.name,
+                  suburb: snapshot.suburb,
+                  metadata: {
+                    address: snapshot.address,
+                    latitude: snapshot.latitude,
+                    longitude: snapshot.longitude,
+                    tier: snapshot.tier,
+                    source: "map_detail",
+                  },
+                }),
+          });
+        }
+
+        savedVenueRecords = wasSaved
+          ? savedVenueRecords.filter((venue) => venue.id !== snapshot.id)
+          : [snapshot, ...savedVenueRecords.filter((venue) => venue.id !== snapshot.id)];
+        persistLocalSavedVenues();
+        showToast(wasSaved ? "Removed from saved venues." : hasAccountToken ? "Saved to your account." : "Saved locally on this device.");
+        if (!hasAccountToken) {
+          void trackBusinessEvent(wasSaved ? "saved_venue_removed" : "saved_venue_added", getVenueAnalyticsMetadata(record, "venue_detail", {
+            savedPersistence: "local",
+          }));
+        }
+        venueDetailBodyEl.innerHTML = getVenueDetailContent(record);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Could not update saved venue.");
+      }
+    }
+
 
     window.gm_authFailure = function gmAuthFailure() {
       googleMapsAuthFailed = true;
@@ -6003,7 +7287,8 @@
       if (
         window.google &&
         window.google.maps &&
-        typeof window.google.maps.Map === "function"
+        typeof window.google.maps.Map === "function" &&
+        typeof window.google.maps.marker?.AdvancedMarkerElement === "function"
       ) {
         return;
       }
@@ -6023,10 +7308,11 @@
           callback: callbackName,
           v: "weekly",
           libraries: "marker,places",
+          loading: "async",
         });
 
-        if (GOOGLE_MAPS_MAP_ID) {
-          params.set("map_ids", GOOGLE_MAPS_MAP_ID);
+        if (EFFECTIVE_GOOGLE_MAPS_MAP_ID) {
+          params.set("map_ids", EFFECTIVE_GOOGLE_MAPS_MAP_ID);
         }
 
         window[callbackName] = function onGoogleMapsReady() {
@@ -6062,6 +7348,11 @@
       try {
         syncAuthenticatedNavLinks();
         await refreshBusinessAccess();
+        recentlyViewedVenues = readStoredVenues(RECENTLY_VIEWED_STORAGE_KEY, MAX_RECENT_VENUES);
+        nightPlanVenues = readStoredVenues(NIGHT_PLAN_STORAGE_KEY, MAX_NIGHT_PLAN_STOPS);
+        await loadSavedVenueState();
+        renderRecentlyViewedPanel();
+        renderNightPlanPanel();
         await loadGoogleMapsScript();
         if (googleMapsAuthFailed) {
           throw new Error("Google Maps authentication failed");
@@ -6074,14 +7365,27 @@
         ) {
           throw new Error("Google Maps library did not expose Map or LatLngBounds constructors");
         }
+        const markerLibrary = window.google.maps.marker?.AdvancedMarkerElement
+          ? window.google.maps.marker
+          : typeof window.google.maps.importLibrary === "function"
+            ? await window.google.maps.importLibrary("marker")
+            : null;
+        const AdvancedMarkerElement = markerLibrary?.AdvancedMarkerElement;
+        if (typeof AdvancedMarkerElement !== "function") {
+          throw new Error("Google Maps marker library did not expose AdvancedMarkerElement");
+        }
         const map = new google.maps.Map(document.getElementById("map"), {
           center: { lat: -37.8136, lng: 144.9631 },
           zoom: 13,
+          gestureHandling: "greedy",
+          scrollwheel: true,
+          zoomControl: true,
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: true,
-          ...(GOOGLE_MAPS_MAP_ID ? { mapId: GOOGLE_MAPS_MAP_ID } : {}),
+          mapId: EFFECTIVE_GOOGLE_MAPS_MAP_ID,
         });
+        googleMapInstance = map;
 
         let rows = [];
         let allVenues = [];
@@ -6165,6 +7469,7 @@
           });
         const venueRows = allVenueRows.filter((item) => hasCapturedBeerData(item) || hasHappyHourData(item));
         analyticsVenueRows = allVenueRows;
+        applySharedSearchParams();
         void trackBusinessEvent("map_viewed", getAnalyticsContext({
           source: "map_page",
           totalVenueCount: allVenueRows.length,
@@ -6177,11 +7482,56 @@
         let activeMarker = null;
         let userLocationMarker = null;
         let userRadiusCircle = null;
+        let areaRefreshPromptSuppressedUntil = 0;
+
+        function suppressAreaRefreshPrompt(durationMs = 900) {
+          areaRefreshPromptSuppressedUntil = Date.now() + durationMs;
+          searchThisAreaButtonEl.hidden = true;
+        }
+
+        function showAreaRefreshPrompt() {
+          if (Date.now() <= areaRefreshPromptSuppressedUntil || markerRecords.length === 0) {
+            return;
+          }
+
+          searchThisAreaButtonEl.hidden = false;
+        }
+
+        function createAdvancedMapMarker({
+          position,
+          markerMap = map,
+          title,
+          visual,
+          zIndex = 0,
+          tier = "free",
+          variant = "venue",
+          clickable = true,
+          size,
+        }) {
+          const marker = new AdvancedMarkerElement({
+            map: markerMap,
+            position,
+            title,
+            zIndex,
+            gmpClickable: clickable,
+          });
+
+          marker.__baseVisual = visual;
+          marker.__baseZIndex = zIndex;
+          marker.__markerVisualOptions = {
+            tier,
+            variant,
+            size,
+          };
+          setAdvancedMarkerVisual(marker, visual, marker.__markerVisualOptions);
+
+          return marker;
+        }
 
         function syncUserLocationOverlay(showRadius = false) {
           if (!userLocationState.coords) {
             if (userLocationMarker) {
-              userLocationMarker.setMap(null);
+              setMarkerMap(userLocationMarker, null);
             }
             if (userRadiusCircle) {
               userRadiusCircle.setMap(null);
@@ -6190,29 +7540,26 @@
           }
 
           if (!userLocationMarker) {
-            userLocationMarker = new google.maps.Marker({
+            userLocationMarker = createAdvancedMapMarker({
               position: userLocationState.coords,
-              map,
               title: "You are here",
-              icon: {
-                path: google.maps.SymbolPath.CIRCLE,
+              visual: {
                 fillColor: "#38bdf8",
                 fillOpacity: 0.98,
                 strokeColor: "#eff6ff",
                 strokeWeight: 3,
                 scale: 9,
+                labelText: "YOU",
+                labelColor: "#082f49",
               },
-              label: {
-                text: "YOU",
-                color: "#082f49",
-                fontSize: "9px",
-                fontWeight: "900",
-              },
-              zIndex: Number(google.maps.Marker.MAX_ZINDEX || 1000000) + 500,
+              zIndex: 1_000_500,
+              variant: "user",
+              clickable: false,
+              size: 30,
             });
           } else {
-            userLocationMarker.setPosition(userLocationState.coords);
-            userLocationMarker.setMap(map);
+            setMarkerPosition(userLocationMarker, userLocationState.coords);
+            setMarkerMap(userLocationMarker, map);
           }
 
           if (!userRadiusCircle) {
@@ -6256,46 +7603,63 @@
             markerCluster.clearMarkers();
           }
           markerCluster = null;
-          liveMarkers.forEach((marker) => marker.setMap(null));
+          liveMarkers.forEach((marker) => setMarkerMap(marker, null));
           liveMarkers = [];
           markerRecords = [];
           activeMarker = null;
         }
 
         function setActiveMarker(marker) {
-          if (activeMarker && activeMarker.__baseIcon) {
-            activeMarker.setIcon(activeMarker.__baseIcon);
-          }
-          if (activeMarker && activeMarker.__baseLabel !== undefined) {
-            activeMarker.setLabel(activeMarker.__baseLabel);
-          }
-          if (activeMarker && typeof activeMarker.setZIndex === "function") {
+          if (activeMarker && activeMarker.__baseVisual) {
+            setAdvancedMarkerVisual(activeMarker, activeMarker.__baseVisual, {
+              ...(activeMarker.__markerVisualOptions || {}),
+              selected: false,
+            });
             const baseZIndex = Number(activeMarker.__baseZIndex);
-            activeMarker.setZIndex(Number.isFinite(baseZIndex) ? baseZIndex : undefined);
+            setMarkerZIndex(activeMarker, Number.isFinite(baseZIndex) ? baseZIndex : 0);
           }
 
           activeMarker = marker;
 
-          if (marker && marker.__baseIcon) {
-            marker.setIcon({
-              ...marker.__baseIcon,
-              strokeColor: "#f5c76b",
-              strokeWeight: Math.max(Number(marker.__baseIcon.strokeWeight || 2) + 1.5, 3.5),
-              scale: Number(marker.__baseIcon.scale || 12) + 2,
+          if (marker && marker.__baseVisual) {
+            const selectedVisual = {
+              ...marker.__baseVisual,
+              strokeColor: "#f5c542",
+              strokeWeight: Math.max(Number(marker.__baseVisual.strokeWeight || 2) + 1.5, 3.5),
+              scale: Number(marker.__baseVisual.scale || 12) + 2,
+            };
+            setAdvancedMarkerVisual(marker, selectedVisual, {
+              ...(marker.__markerVisualOptions || {}),
+              selected: true,
             });
-            if (marker.__baseLabel && typeof marker.setLabel === "function") {
-              marker.setLabel({
-                ...marker.__baseLabel,
-                fontWeight: "900",
-              });
-            }
-            if (typeof marker.setZIndex === "function") {
-              marker.setZIndex(Number(google.maps.Marker.MAX_ZINDEX || 1000000) + 100);
-            }
+            setMarkerZIndex(marker, 1_000_100 + Number(marker.__baseZIndex || 0));
           }
         }
 
+        window.__openStoredVenue = async (venueId, source = "stored_panel") => {
+          const record = markerRecords.find((item) => getRecordVenueId(item) === venueId || item.id === venueId);
+
+          if (!record) {
+            showToast("That venue is not visible with the current filters. Clear filters or search for it.");
+            return;
+          }
+
+          venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
+            cardEl.classList.toggle("is-active", cardEl.dataset.markerId === record.id);
+          });
+          setActiveMarker(record.marker);
+          const markerPosition = getMarkerPosition(record.marker);
+          if (markerPosition) {
+            map.panTo(markerPosition);
+          }
+          await openVenueDetailOverlay(record, source || "stored_panel");
+          trackVenueAnalytics("venue_card_viewed", record, source || "stored_panel", {
+            interactionType: "personal_panel",
+          });
+        };
+
         function renderMarkers() {
+          suppressAreaRefreshPrompt();
           clearMarkers();
 
           const bounds = new google.maps.LatLngBounds();
@@ -6312,57 +7676,19 @@
             const lng = Number(venue.longitude);
             const featuredBeer = getFeaturedBeer(item, viewState);
             const markerId = getVenueMarkerId(item, venue, lat, lng);
-            const markerVisual = getMarkerVisual(viewState, featuredBeer, markerId);
+            const markerVisual = applyVenueTierToMarkerVisual(getMarkerVisual(viewState, featuredBeer, markerId), item);
             const markerDistanceCopy = hasUserLocation() ? ` · ${formatVenueDistance(item)}` : "";
-
-            const markerOptions = {
+            const markerTitle = `${venue.name || item.venue_name || "Unknown venue"}${
+              featuredBeer ? ` - ${featuredBeer.label}: ${getDisplayBeerPriceText(featuredBeer, markerId)}` : ""
+            }${markerDistanceCopy}`;
+            const resolvedMarkerVisual = markerVisual || getNeutralMarkerVisual(item, viewState);
+            const marker = createAdvancedMapMarker({
               position: { lat, lng },
-              map,
-              title: `${venue.name || item.venue_name || "Unknown venue"}${
-                featuredBeer ? ` - ${featuredBeer.label}: ${getDisplayBeerPriceText(featuredBeer, markerId)}` : ""
-              }${markerDistanceCopy}`,
-            };
-
-            if (markerVisual) {
-              markerOptions.icon = {
-                path: google.maps.SymbolPath.CIRCLE,
-                fillColor: markerVisual.fillColor,
-                fillOpacity: markerVisual.fillOpacity,
-                strokeColor: markerVisual.strokeColor,
-                strokeWeight: markerVisual.strokeWeight,
-                scale: markerVisual.scale,
-              };
-              markerOptions.label = {
-                text: markerVisual.labelText,
-                color: markerVisual.labelColor || "#ffffff",
-                fontSize: "11px",
-                fontWeight: "900",
-              };
-            } else {
-              const neutralMarkerVisual = getNeutralMarkerVisual(item, viewState);
-
-              markerOptions.icon = {
-                path: google.maps.SymbolPath.CIRCLE,
-                fillColor: neutralMarkerVisual.fillColor,
-                fillOpacity: neutralMarkerVisual.fillOpacity,
-                strokeColor: neutralMarkerVisual.strokeColor,
-                strokeWeight: neutralMarkerVisual.strokeWeight,
-                scale: neutralMarkerVisual.scale,
-              };
-              markerOptions.label = neutralMarkerVisual.labelText
-                ? {
-                    text: neutralMarkerVisual.labelText,
-                    color: neutralMarkerVisual.labelColor || "#ffffff",
-                    fontSize: "11px",
-                    fontWeight: "900",
-                  }
-                : undefined;
-            }
-
-            const marker = new google.maps.Marker(markerOptions);
-            marker.__baseIcon = markerOptions.icon || null;
-            marker.__baseLabel = markerOptions.label || null;
-            marker.__baseZIndex = markerOptions.zIndex || null;
+              title: markerTitle,
+              visual: resolvedMarkerVisual,
+              zIndex: markerCount + 1,
+              tier: getVenueTier(item),
+            });
 
             const address = formatAddress(venue);
             const createdAt = item.saved_at || item.created_at
@@ -6387,6 +7713,7 @@
               const venueSuburb = venue.suburb || item.suburb || "Melbourne";
               const submitVenueId = cleaned.business_record_venue_id || item.venue_id || venue.id || "";
               const submitUrl = `/submit.html?venueId=${encodeURIComponent(submitVenueId)}&venueName=${encodeURIComponent(rawVenueName)}${venueSuburb ? `&suburb=${encodeURIComponent(venueSuburb)}` : ""}`;
+              const portalUrl = `/venue-portal?venueId=${encodeURIComponent(submitVenueId)}&venueName=${encodeURIComponent(rawVenueName)}${venueSuburb ? `&suburb=${encodeURIComponent(venueSuburb)}` : ""}`;
               const knownPriceCount = liveBeerItems.filter(hasNumericPrice).length;
               const onTapCount = liveBeerItems.filter((beer) => beer.availabilityLabel === "On tap").length;
               const newestVerifiedLabel = getNewestVerifiedDateLabel(liveBeerItems, item.saved_at || item.created_at);
@@ -6415,6 +7742,19 @@
               const footerCopy = hasVenueManagedData
                 ? "Venue supplied · Prices may change. Check with the venue before ordering."
                 : `Last verified ${safeCreatedAt} · Confidence: community captured`;
+              const tierMeta = getVenueTierMeta(item);
+              const tierBadgeMarkup = `
+                <span class="beerPopup__metaBadge beerPopup__metaBadge--tier beerPopup__metaBadge--${escapeHtml(tierMeta.tier)}">
+                  ${escapeHtml(tierMeta.label)} · ${escapeHtml(tierMeta.copy)}
+                </span>
+              `;
+              const listingEyebrow = tierMeta.tier === "pro"
+                ? "Pro venue listing"
+                : tierMeta.tier === "plus"
+                  ? "Plus venue listing"
+                  : hasVenueManagedData
+                    ? "Venue-supplied listing"
+                    : "Melbourne venue";
               const metaBadges = [
                 venueSuburb,
                 distanceCopy,
@@ -6510,16 +7850,24 @@
                 </div>
               `;
               const specialMarkup = renderSpecialPopupMarkup(liveSpecials);
+              const detailRecord = { id: markerId, row: item, venue };
+              const detailVenueId = getRecordVenueId(detailRecord);
+              const isSavedVenue = savedVenueIds.has(detailVenueId);
+              const isPlannedVenue = nightPlanVenues.some((savedVenue) => savedVenue.id === detailVenueId);
+              const directionsUrl = getVenueDirectionsUrl(detailRecord);
+              const upgradeActionMarkup = businessAccess.hasFullAccess
+                ? ""
+                : `<a class="beerPopup__button" href="/pricing.html">Unlock full map</a>`;
 
               return `
-                <div class="beerPopup">
+                <div class="beerPopup beerPopup--tier-${escapeHtml(tierMeta.tier)}">
                   <div class="beerPopup__head">
-                    <div class="beerPopup__eyebrow">${escapeHtml(hasVenueManagedData ? "Venue-supplied listing" : "Melbourne venue")}</div>
+                    <div class="beerPopup__eyebrow">${escapeHtml(listingEyebrow)}</div>
                     <div class="beerPopup__title">
                       ${venueName}
                     </div>
                     <div class="beerPopup__address">${safeAddress}</div>
-                    ${metaBadges ? `<div class="beerPopup__metaStrip">${metaBadges}</div>` : ""}
+                    <div class="beerPopup__metaStrip">${tierBadgeMarkup}${metaBadges}</div>
                   </div>
                   ${summaryMarkup}
                   ${featuredBeerMarkup}
@@ -6534,8 +7882,13 @@
                   ${happyHourMarkup}
                   ${specialMarkup}
                   <div class="beerPopup__actions">
-                    <a class="beerPopup__button beerPopup__button--primary" href="${escapeHtml(submitUrl)}">Update this venue</a>
-                    <a class="beerPopup__button" href="/pricing.html">Unlock full map</a>
+                    <button class="beerPopup__button beerPopup__button--primary" type="button" data-venue-action="save" aria-pressed="${isSavedVenue ? "true" : "false"}">${escapeHtml(isSavedVenue ? "Saved" : "Save venue")}</button>
+                    <button class="beerPopup__button" type="button" data-venue-action="share">Share</button>
+                    <button class="beerPopup__button" type="button" data-venue-action="plan" aria-pressed="${isPlannedVenue ? "true" : "false"}">${escapeHtml(isPlannedVenue ? "In night plan" : "Add to night plan")}</button>
+                    <a class="beerPopup__button" href="${escapeHtml(directionsUrl)}" target="_blank" rel="noopener" data-venue-action="directions">Directions</a>
+                    <a class="beerPopup__button" href="${escapeHtml(submitUrl)}">Update this venue</a>
+                    <a class="beerPopup__button" href="${escapeHtml(portalUrl)}">Manage this venue</a>
+                    ${upgradeActionMarkup}
                   </div>
                   <div class="beerPopup__footer">
                     ${escapeHtml(footerCopy)}
@@ -6593,24 +7946,22 @@
               render({ count, position }) {
                 const clusterVisual = window.MelbBeerMapLogic.getClusterVisual(count);
 
-                return new google.maps.Marker({
+                return createAdvancedMapMarker({
                   position,
+                  markerMap: null,
                   title: `${count} venues in this area`,
-                  icon: {
-                    path: google.maps.SymbolPath.CIRCLE,
+                  visual: {
                     fillColor: clusterVisual.fillColor,
                     fillOpacity: clusterVisual.fillOpacity,
                     strokeColor: clusterVisual.strokeColor,
                     strokeWeight: clusterVisual.strokeWeight,
                     scale: clusterVisual.scale,
+                    labelText: String(count),
+                    labelColor: clusterVisual.labelColor,
                   },
-                  label: {
-                    text: String(count),
-                    color: clusterVisual.labelColor,
-                    fontSize: clusterVisual.fontSize,
-                    fontWeight: "900",
-                  },
-                  zIndex: Number(google.maps.Marker.MAX_ZINDEX || 1000000) + Number(count || 0),
+                  zIndex: 1_000_000 + Number(count || 0),
+                  variant: "cluster",
+                  size: Math.max(34, Math.min(52, Number(clusterVisual.scale || 16) * 2.2)),
                 });
               },
             };
@@ -6622,12 +7973,22 @@
             });
           }
 
+          window.__pintPathMapMarkerDebug = {
+            markerType: "advanced",
+            venueMarkerCount: liveMarkers.length,
+            clustered: Boolean(markerCluster),
+            usesAdvancedMarkerElement: typeof AdvancedMarkerElement === "function",
+          };
+
           syncStatusPills(filteredRows, viewState);
           renderLegend(filteredRows, viewState);
           renderVenueRail(markerRecords, viewState);
           renderRetentionHighlights(filteredRows, markerRecords, async (record, source) => {
             setActiveMarker(record.marker);
-            map.panTo(record.marker.getPosition());
+            const markerPosition = getMarkerPosition(record.marker);
+            if (markerPosition) {
+              map.panTo(markerPosition);
+            }
             await openVenueDetailOverlay(record, source || "highlight");
             venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
               cardEl.classList.toggle("is-active", cardEl.dataset.markerId === record.id);
@@ -6636,6 +7997,17 @@
               interactionType: "highlight_panel",
             });
           });
+
+          if (initialSharedVenueId && !initialSharedVenueOpened) {
+            const sharedRecord = markerRecords.find((record) => getRecordVenueId(record) === initialSharedVenueId || record.id === initialSharedVenueId);
+            if (sharedRecord) {
+              initialSharedVenueOpened = true;
+              void window.__openStoredVenue(initialSharedVenueId, "shared_link");
+            } else if (params.get("venueName")) {
+              initialSharedVenueOpened = true;
+              showToast("Shared venue is not visible with the current filters.");
+            }
+          }
         }
 
         window.__melbBeerMapRefreshVisibleRail = () => {
@@ -6649,6 +8021,19 @@
 
         map.addListener("idle", () => {
           renderVenueRail(markerRecords, getViewState());
+        });
+
+        map.addListener("dragstart", showAreaRefreshPrompt);
+        map.addListener("zoom_changed", showAreaRefreshPrompt);
+
+        searchThisAreaButtonEl.addEventListener("click", () => {
+          searchThisAreaButtonEl.hidden = true;
+          renderVenueRail(markerRecords, getViewState());
+          showToast("Visible venue list refreshed for this area.");
+          void trackBusinessEvent("map_filter_used", getAnalyticsContext({
+            filter: "search_this_area",
+            source: "map_move_prompt",
+          }));
         });
 
         useLocationButtonEl.addEventListener("click", async () => {

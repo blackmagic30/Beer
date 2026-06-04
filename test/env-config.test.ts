@@ -5,6 +5,7 @@ const productionRequiredEnv = {
   PUBLIC_BASE_URL: "https://pintpath.au",
   ADMIN_EMAILS: "admin@example.com",
   GOOGLE_MAPS_API_KEY: "test-browser-maps-key",
+  GOOGLE_MAPS_MAP_ID: "test-vector-map-id",
   SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
   REDIS_URL: "redis://localhost:6379",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",

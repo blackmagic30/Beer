@@ -3,7 +3,7 @@
 // https://pintpath.au/*
 window.MELB_BEER_BOT_VIEWER_CONFIG = {
   googleMapsApiKey: "your_google_maps_browser_key",
-  googleMapsMapId: "optional_google_maps_map_id",
+  googleMapsMapId: "your_google_vector_map_id",
   trackedBeers: [],
   publicBaseUrl: "https://pintpath.au",
   business: {

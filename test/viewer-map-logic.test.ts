@@ -88,8 +88,8 @@ describe("viewer map price logic", () => {
 
     expect(logic.hasNumericPrice(unknownBeer)).toBe(false);
     expect(logic.getPriceTier(unknownBeer)).toBe("unknown");
-    expect(logic.getMarkerColor(unknownBeer)).not.toBe("#15803d");
-    expect(logic.getMarkerColor(unknownBeer)).toBe("#475569");
+    expect(logic.getMarkerColor(unknownBeer)).not.toBe("#22d3ee");
+    expect(logic.getMarkerColor(unknownBeer)).toBe("#64748b");
     expect(logic.getMarkerLabel(unknownBeer)).toBe("?");
   });
 
@@ -100,18 +100,18 @@ describe("viewer map price logic", () => {
     const unknown = { priceNumeric: null, availabilityLabel: "On tap" };
 
     expect(logic.getMarkerState(cheap)).toBe("cheap");
-    expect(logic.getMarkerVisual(cheap).fillColor).toBe("#15803d");
+    expect(logic.getMarkerVisual(cheap).fillColor).toBe("#22d3ee");
     expect(logic.getMarkerState(mid)).toBe("mid");
-    expect(logic.getMarkerVisual(mid).fillColor).toBe("#d97706");
+    expect(logic.getMarkerVisual(mid).fillColor).toBe("#a3e635");
     expect(logic.getMarkerState(expensive)).toBe("expensive");
-    expect(logic.getMarkerVisual(expensive).fillColor).toBe("#b91c1c");
+    expect(logic.getMarkerVisual(expensive).fillColor).toBe("#d946ef");
     expect(logic.getMarkerState(unknown)).toBe("unknown");
-    expect(logic.getMarkerVisual(unknown).fillColor).toBe("#475569");
+    expect(logic.getMarkerVisual(unknown).fillColor).toBe("#64748b");
     expect(logic.getMarkerVisual(null, { mappedOnly: true }).state).toBe("mapped");
-    expect(logic.getMarkerVisual(null, { mappedOnly: true }).fillColor).toBe("#0f766e");
+    expect(logic.getMarkerVisual(null, { mappedOnly: true }).fillColor).toBe("#2563eb");
     expect(logic.getMarkerVisual(null, { mappedOnly: true }).labelText).toBe("✓");
     expect(logic.getMarkerVisual(null, { needsData: true }).state).toBe("needs_data");
-    expect(logic.getMarkerVisual(null, { needsData: true }).fillColor).toBe("#64748b");
+    expect(logic.getMarkerVisual(null, { needsData: true }).fillColor).toBe("#475569");
     expect(logic.getMarkerVisual(null, { needsData: true }).labelText).toBe("?");
   });
 
@@ -122,8 +122,8 @@ describe("viewer map price logic", () => {
 
     expect(selected.selected).toBe(true);
     expect(selected.fillColor).toBe(base.fillColor);
-    expect(selected.fillColor).not.toBe("#15803d");
-    expect(selected.strokeColor).toBe("#f5c76b");
+    expect(selected.fillColor).not.toBe("#22d3ee");
+    expect(selected.strokeColor).toBe("#f5c542");
     expect(selected.scale).toBeGreaterThan(base.scale);
   });
 
@@ -132,10 +132,10 @@ describe("viewer map price logic", () => {
     const locked = logic.getMarkerVisual(redacted, { locked: true });
 
     expect(locked.state).toBe("locked");
-    expect(locked.fillColor).toBe("#7c3aed");
+    expect(locked.fillColor).toBe("#8b5cf6");
     expect(locked.labelText).toBe("$");
-    expect(locked.fillColor).not.toBe("#15803d");
-    expect(locked.fillColor).not.toBe("#475569");
+    expect(locked.fillColor).not.toBe("#22d3ee");
+    expect(locked.fillColor).not.toBe("#64748b");
   });
 
   it("keeps unavailable beer distinct from expensive verified pricing", () => {
@@ -147,10 +147,10 @@ describe("viewer map price logic", () => {
   });
 
   it("styles clusters with deliberate count tiers", () => {
-    expect(logic.getClusterVisual(5).fillColor).toBe("#334155");
-    expect(logic.getClusterVisual(12).fillColor).toBe("#1d4ed8");
-    expect(logic.getClusterVisual(40).fillColor).toBe("#b45309");
-    expect(logic.getClusterVisual(120).fillColor).toBe("#9f1239");
+    expect(logic.getClusterVisual(5).fillColor).toBe("#172554");
+    expect(logic.getClusterVisual(12).fillColor).toBe("#2563eb");
+    expect(logic.getClusterVisual(40).fillColor).toBe("#22d3ee");
+    expect(logic.getClusterVisual(120).fillColor).toBe("#f5c542");
   });
 
   it("calculates and formats approximate venue distance", () => {
@@ -172,14 +172,21 @@ describe("viewer map UI wiring", () => {
   const html = fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
   const venuePortalHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/venue-portal.html"), "utf8");
 
-  it("renders the polished marker legend and cluster renderer", () => {
-    expect(html).toContain("legend__swatch--selected");
-    expect(html).toContain("Unknown prices are shown separately");
+  it("renders advanced markers without visible map legend/list overlays", () => {
     expect(html).toContain("renderer: clusterRenderer");
     expect(html).toContain("getClusterVisual(count)");
     expect(html).toContain("const currentViewState = getViewState();");
-    expect(html).toContain("Teal markers have data");
-    expect(html).toContain("Muted grey markers are mapped venues");
+    expect(html).toContain("AdvancedMarkerElement");
+    expect(html).toContain("createAdvancedMapMarker");
+    expect(html).toContain("advancedMapPin");
+    expect(html).toContain("__pintPathMapMarkerDebug");
+    expect(html).toContain('libraries: "marker,places"');
+    expect(html).toContain('loading: "async"');
+    expect(html).toContain("EFFECTIVE_GOOGLE_MAPS_MAP_ID");
+    expect(html).toContain('gestureHandling: "greedy"');
+    expect(html).toContain("const MAP_OVERLAYS_ENABLED = false");
+    expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
+    expect(html).not.toContain("new google.maps.Marker");
     expect(html).not.toContain("Blue markers have no captured beer prices yet.");
     expect(html).not.toContain("buildCurrentViewState");
   });
@@ -199,6 +206,33 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('liveHappyHourDetails?.sourceType === "venue_manager_portal"');
     expect(html).toContain("const canShowHappyHourDetails");
     expect(html).not.toContain(">$0<");
+  });
+
+  it("renders launch-ready retention, sharing, and map refresh affordances", () => {
+    expect(html).toContain('id="shareSearchButton"');
+    expect(html).toContain('id="searchThisAreaButton"');
+    expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
+    expect(html).toContain("MAP_OVERLAYS_ENABLED = false");
+    expect(html).toContain('id="recentlyViewedPanel"');
+    expect(html).toContain('id="nightPlanPanel"');
+    expect(html).toContain('LOCAL_SAVED_VENUES_STORAGE_KEY = "pintPathLocalSavedVenues"');
+    expect(html).toContain('RECENTLY_VIEWED_STORAGE_KEY = "pintPathRecentlyViewedVenues"');
+    expect(html).toContain('NIGHT_PLAN_STORAGE_KEY = "pintPathNightPlanVenues"');
+    expect(html).toContain('NIGHT_PLAN_ACCOUNT_ITEM_ID = "current-night-plan"');
+    expect(html).toContain('itemType: "night_plan"');
+    expect(html).toContain("getNightPlanSavedItemPayload");
+    expect(html).toContain("persistAccountNightPlan");
+    expect(html).toContain('data-venue-action="save"');
+    expect(html).toContain('data-venue-action="share"');
+    expect(html).toContain('data-venue-action="plan"');
+    expect(html).toContain('data-venue-action="directions"');
+    expect(html).toContain("Manage this venue");
+    expect(html).toContain("applySharedSearchParams");
+    expect(html).toContain("window.__openStoredVenue");
+    expect(html).toContain('new URL(`/venues/${encodeURIComponent(snapshot.id)}`, window.location.origin)');
+    expect(html).toContain("search_this_area");
+    expect(html).toContain("venue_shared");
+    expect(html).toContain("search_shared");
   });
 
   it("renders the simplified public header, primary controls, and contributor-only advanced filters", () => {

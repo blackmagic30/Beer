@@ -2,6 +2,8 @@
 
 Use this before merging a beta/hardening branch into `main` or deploying a Railway production beta.
 
+Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users/zac/Desktop/Beer/docs/provider-configuration-runbook.md).
+
 ## 1. Confirm The Target
 
 - Production branch: `main`.
@@ -19,6 +21,7 @@ Use this before merging a beta/hardening branch into `main` or deploying a Railw
 - Run `git diff --check`.
 - Run `npm run build`.
 - Run `npm test`.
+- Run `npm run readiness:providers`.
 - Run `npm run check`.
 - Run `npm run test:release:pintpath`.
 - Run `npm run security:scan`.
@@ -26,8 +29,10 @@ Use this before merging a beta/hardening branch into `main` or deploying a Railw
 - Confirm no `.env` file, API keys, Stripe secrets, Supabase service-role keys, OpenAI keys, private Google Places keys, or source-evidence secrets are committed.
 - Confirm public map source does not contain legacy admin/debug UI strings.
 - Confirm Google Maps browser keys are HTTP-referrer restricted to localhost and the live beta domain.
+- Confirm a JavaScript/vector Google Maps Map ID exists in Google Maps Platform and is set as `GOOGLE_MAPS_MAP_ID`.
 - Confirm the server Google Places/geocoding key is not exposed in `/config.js` and has Places API plus Geocoding API enabled for venue imports and mission area lookup.
 - Confirm Supabase OAuth providers and redirect URLs are configured if quick login is enabled: `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`.
+- Confirm Supabase Auth leaked-password protection is enabled before public signup.
 - Confirm Supabase Row Level Security policies from `supabase/migrations/20260512000000_auth_profiles_activity.sql` are reviewed before any direct browser writes are enabled.
 
 ## 3. Required Production Beta Env
@@ -47,6 +52,9 @@ CONTRIBUTOR_UNLOCK_DAYS=30
 # Leave blank to keep admin routes disabled while public browsing stays online.
 ADMIN_EMAILS=
 GOOGLE_MAPS_API_KEY=browser_key_restricted_to_live_domain
+GOOGLE_MAPS_MAP_ID=javascript_vector_map_id
+REPORT_TIMEZONE=Australia/Melbourne
+REPORT_EMAIL_MODE=disabled
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
 REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
@@ -126,6 +134,8 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Assign a venue manager in admin, log in as that user, and confirm `/venue-portal` only shows the assigned venue.
 - Confirm the venue portal can save profile details, beer/on-tap rows, happy hours, and deals/specials for the assigned venue only.
 - Confirm a Basic venue tier sees analytics/monthly report upgrade prompts, and Plus/Pro tiers can see aggregate-only suburb analytics once the privacy threshold is met.
+- Run `npm run reports:generate -- --month=YYYY-MM --dry-run` and confirm only active Plus/Pro venue reports are generated.
+- Export a Plus/Pro venue report from `/api/business/venue-portal/:venueId/reports/:month/export?format=json` as the assigned venue manager and confirm another manager gets `403`.
 - Confirm authenticated non-admin users cannot submit public claim requests and only see the invite-only venue portal message.
 - Submit a venue-manager update and confirm it remains pending review.
 - Check the main pages on a phone-width screen.

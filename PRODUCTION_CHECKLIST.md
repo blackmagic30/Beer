@@ -2,6 +2,8 @@
 
 Use this for a full production release. For smaller private beta releases, also use `FIELD_TEST_CHECKLIST.md` and `DEPLOYMENT_CHECKLIST.md`.
 
+Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users/zac/Desktop/Beer/docs/provider-configuration-runbook.md).
+
 ## Pre-Deploy Checklist
 
 - Confirm branch and release scope with `git status --short --branch`.
@@ -12,6 +14,7 @@ Use this for a full production release. For smaller private beta releases, also 
   - `npm run build`
   - `npm test`
   - `npm run check`
+  - `npm run readiness:providers`
   - `npm run security:scan`
   - `npm run security:audit`
   - `git diff --check`
@@ -34,6 +37,9 @@ Use this for a full production release. For smaller private beta releases, also 
 - `ADMIN_MFA_MAX_AGE_MINUTES=720` or a stricter value.
 - `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
 - `GOOGLE_MAPS_API_KEY` is set and HTTP-referrer restricted to the live domain.
+- `GOOGLE_MAPS_MAP_ID` is set to a JavaScript/vector Map ID from Google Maps Platform.
+- `REPORT_TIMEZONE=Australia/Melbourne`.
+- `REPORT_EMAIL_MODE=disabled` until a real email provider is integrated and tested; `mock` is staging/test-only.
 - `REDIS_URL` is set to Railway Redis/Upstash/managed Redis. Do not use `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` except for a time-boxed emergency beta.
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false` for normal production. If it is ever set to `true`, record the incident reason, owner, expiry time, and rollback plan.
 - `SOURCE_EVIDENCE_SIGNING_SECRET` is a unique 32+ character random secret.
@@ -43,6 +49,7 @@ Use this for a full production release. For smaller private beta releases, also 
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, `STRIPE_PLUS_PRICE_ID`, and `STRIPE_PRO_PRICE_ID` are set before enabling paid checkout.
 - `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set if OAuth quick login is enabled.
 - `SUPABASE_SERVICE_ROLE_KEY` stays server-side only and is never exposed in public config.
+- Supabase Auth leaked-password protection is enabled.
 - `ANALYTICS_MIN_BUCKET_SIZE` is at least `5`; use a higher value for paid venue analytics if needed.
 
 ## Database And Migration Checklist
@@ -89,6 +96,8 @@ Use this for a full production release. For smaller private beta releases, also 
 - Confirm another venue manager cannot view or approve the pending change.
 - Confirm Basic venue tier sees analytics upgrade prompts.
 - Confirm Plus/Pro venue tier sees only privacy-safe aggregate analytics above bucket threshold.
+- Confirm `npm run reports:generate -- --month=YYYY-MM --dry-run` creates only Plus/Pro aggregate reports.
+- Confirm assigned Plus/Pro venue managers can export their own report and cannot export another venue's report.
 - Confirm Stripe signed test webhook updates a subscription and replayed event does not double-process.
 - Confirm invalid/missing Stripe webhook signatures are rejected.
 - Confirm stale Stripe webhook signatures outside the configured five-minute tolerance are rejected.
@@ -133,6 +142,7 @@ Go only if:
 - All required checks pass.
 - No P0 blocker in `PROD_FOLLOWUPS.md` remains unresolved or unaccepted.
 - Production secrets are configured provider-side and not committed.
+- `NODE_ENV=production npm run readiness:providers` passes before public traffic.
 - Backups and rollback path are verified.
 - Stripe/Supabase provider-level tests pass in staging or production preview.
 

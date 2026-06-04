@@ -15,6 +15,7 @@ import {
   type BusinessAccount,
   type BarMembershipTier,
   type BarProfile,
+  type MonthlyBarReport,
   type BusinessMission,
   type MissionVenueCandidate,
   type BusinessSubmission,
@@ -30,6 +31,7 @@ import { SUPPORTED_BEERS, VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, nor
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { redactSecrets } from "../../lib/redact.js";
+import { DEFAULT_REPORT_TIMEZONE, getPreviousZonedMonthKey, getZonedMonthKey, getZonedMonthRangeIso } from "../../lib/time.js";
 
 import type {
   AccountPreferencesInput,
@@ -53,6 +55,9 @@ import type {
   FeedbackInput,
   LegalAcceptanceInput,
   LeaderboardQuery,
+  MonthlyReportDeliveryInput,
+  MonthlyReportExportQuery,
+  MonthlyReportGenerateInput,
   PriceRecordsQuery,
   RemoveSavedItemInput,
   ReviewSubmissionInput,
@@ -78,6 +83,11 @@ interface VenueRow {
   postcode: string | null;
   latitude: number | null;
   longitude: number | null;
+  membershipTier?: BarMembershipTier;
+  highlightedName?: boolean;
+  premiumBadge?: string | null;
+  promoted?: boolean;
+  featuredSpecialEligible?: boolean;
 }
 
 interface MissionAreaLookup {
@@ -708,7 +718,7 @@ function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
     premiumDisplay: tier === "pro",
     upgradeCopy: analytics
       ? null
-      : "Upgrade to Plus to add Pint Path specials, see privacy-safe suburb analytics, and preview monthly reports.",
+      : "Upgrade to Plus to add Pint Path specials, see privacy-safe suburb analytics, and export generated monthly reports.",
   };
 }
 
@@ -745,6 +755,72 @@ function sanitizeEventMetadata(metadata: Record<string, unknown>): Record<string
   return sanitized;
 }
 
+const SENSITIVE_REPORT_KEY_PATTERN =
+  /(^|[_-])(user_?id|account_?id|email|phone|anonymous_?session_?id|session_?id|token|secret|authorization|source_?photo|image|dataurl|latitude|longitude|lat|lng|coordinates?|gps|clickstream|raw)([_-]|$)|^(userId|accountId|email|phone|anonymousSessionId|sessionId|sourcePhotoUrl|sourcePhotoDataUrl|latitude|longitude|lat|lng)$/i;
+
+function sanitizeMonthlyReportValue(value: unknown, depth = 0): unknown {
+  if (depth > 6) {
+    return "[redacted]";
+  }
+
+  if (value == null || typeof value === "boolean" || typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return redactSecrets(value.slice(0, 500)).replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted]");
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 100).map((item) => sanitizeMonthlyReportValue(item, depth + 1));
+  }
+
+  if (typeof value === "object") {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (SENSITIVE_REPORT_KEY_PATTERN.test(key)) {
+        continue;
+      }
+      sanitized[key] = sanitizeMonthlyReportValue(nested, depth + 1);
+    }
+    return sanitized;
+  }
+
+  return null;
+}
+
+function sanitizeMonthlyReport(report: MonthlyBarReport | null): MonthlyBarReport | null {
+  if (!report) {
+    return null;
+  }
+
+  return {
+    ...report,
+    data: sanitizeMonthlyReportValue(report.data) as Record<string, unknown>,
+  };
+}
+
+function csvEscape(value: unknown): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  return `"${String(text).replaceAll('"', '""')}"`;
+}
+
+function monthlyReportToCsv(report: MonthlyBarReport): string {
+  const summary = objectFromUnknown(report.data.summary);
+  const rows = [
+    ["metric", "value"],
+    ["venue_id", report.barId],
+    ["month", report.month],
+    ...Object.entries(summary).map(([key, value]) => [key, value]),
+  ];
+  return `${rows.map((row) => row.map(csvEscape).join(",")).join("\n")}\n`;
+}
+
+function getMonthlyReportFilename(input: { venueId: string; month: string; format: "json" | "csv" }): string {
+  const safeVenue = input.venueId.replace(/[^a-z0-9-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "venue";
+  return `pint-path-${safeVenue}-${input.month}-monthly-report.${input.format}`;
+}
+
 export class BusinessService {
   private readonly supabase?: SupabaseClient;
 
@@ -764,6 +840,8 @@ export class BusinessService {
       | "ADMIN_MFA_MAX_AGE_MINUTES"
       | "REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION"
       | "ANALYTICS_MIN_BUCKET_SIZE"
+      | "REPORT_TIMEZONE"
+      | "REPORT_EMAIL_MODE"
       | "ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION"
       | "SOURCE_EVIDENCE_SIGNING_SECRET"
       | "SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS"
@@ -2427,6 +2505,7 @@ export class BusinessService {
       venue: "saved_venue_added",
       beer: "saved_beer_added",
       suburb: "saved_suburb_added",
+      night_plan: "saved_night_plan_added",
     };
 
     this.trackEvent(account, {
@@ -2451,6 +2530,7 @@ export class BusinessService {
       venue: "saved_venue_removed",
       beer: "saved_beer_removed",
       suburb: "saved_suburb_removed",
+      night_plan: "saved_night_plan_removed",
     };
 
     if (removed) {
@@ -2913,6 +2993,7 @@ export class BusinessService {
           postcode: null,
           latitude: null,
           longitude: null,
+          ...this.getPublicVenueTierMetadata(mission.venueId),
         }));
     }
 
@@ -2954,7 +3035,98 @@ export class BusinessService {
       });
     });
 
-    return venues;
+    return venues.map((venue) => ({
+      ...venue,
+      ...this.getPublicVenueTierMetadata(venue.id),
+    }));
+  }
+
+  async getPublicVenueById(venueId: string): Promise<VenueRow | null> {
+    const normalizedVenueId = venueId.trim();
+    if (!normalizedVenueId) {
+      return null;
+    }
+
+    if (!this.supabase) {
+      const profile = this.repository.getBarProfile(normalizedVenueId);
+      const location = this.repository.getVenueLocationCache(normalizedVenueId);
+      if (!profile && !location) {
+        return null;
+      }
+
+      return {
+        id: normalizedVenueId,
+        name: profile?.name || location?.venueName || normalizedVenueId,
+        address: profile?.address || null,
+        suburb: profile?.suburb || location?.suburb || null,
+        state: "VIC",
+        postcode: null,
+        latitude: location?.latitude || null,
+        longitude: location?.longitude || null,
+        ...this.getPublicVenueTierMetadata(normalizedVenueId),
+      };
+    }
+
+    const { data, error } = await this.supabase
+      .from("venues")
+      .select("id, name, address, suburb, state, postcode, latitude, longitude")
+      .eq("id", normalizedVenueId)
+      .maybeSingle();
+
+    if (error) {
+      throw new ExternalServiceError("Failed to fetch venue", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      });
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    const venue = data as VenueRow;
+    const now = nowIso();
+    this.repository.upsertVenueLocationCache({
+      venueId: venue.id,
+      venueName: venue.name,
+      suburb: venue.suburb,
+      latitude: venue.latitude,
+      longitude: venue.longitude,
+      now,
+    });
+
+    return {
+      ...venue,
+      ...this.getPublicVenueTierMetadata(venue.id),
+    };
+  }
+
+  private getPublicVenueTierMetadata(venueId: string): Pick<
+    VenueRow,
+    "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible"
+  > {
+    const profile = this.repository.getBarProfile(venueId);
+
+    if (!profile?.active) {
+      return {
+        membershipTier: "basic",
+        highlightedName: false,
+        premiumBadge: null,
+        promoted: false,
+        featuredSpecialEligible: false,
+      };
+    }
+
+    const flags = tierFlags(profile.membershipTier);
+    return {
+      membershipTier: profile.membershipTier,
+      highlightedName: flags.highlightedName && profile.highlightedName,
+      premiumBadge: profile.premiumBadge || flags.premiumBadge,
+      promoted: flags.promoted && profile.promoted,
+      featuredSpecialEligible: flags.featuredSpecialEligible && profile.featuredSpecialEligible,
+    };
   }
 
   seedDemoMissions() {
@@ -3541,6 +3713,347 @@ export class BusinessService {
     };
   }
 
+  private getReportTimezone(): string {
+    return this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
+  }
+
+  private getDefaultReportMonth(): string {
+    return getPreviousZonedMonthKey(new Date(), this.getReportTimezone());
+  }
+
+  private buildVenueMonthlyReportData(profile: BarProfile, month: string) {
+    const timezone = this.getReportTimezone();
+    const privacyThreshold = Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE);
+    const range = getZonedMonthRangeIso(month, timezone);
+    const analytics = this.repository.getVenueAreaAnalytics({
+      venueId: profile.barId,
+      area: profile.area ?? profile.suburb,
+      month,
+      timezone,
+      privacyThreshold,
+    });
+    const insights = this.sanitizeVenueManagerInsights(
+      this.repository.getVenueManagerInsights({
+        venueId: profile.barId,
+        suburb: profile.suburb,
+        staleBefore: range.startIso,
+      }),
+      { includeAggregate: true, privacyThreshold },
+    );
+    const suggestedActions = analytics.privacyFloorMet
+      ? [
+          analytics.directionsClicks > 0
+            ? "Keep your address, opening hours, and happy-hour conditions current because users are requesting directions."
+            : "Improve your listing call-to-action by keeping beer rows and happy-hour details fresh.",
+          analytics.areaBeerSearches.length > 0
+            ? "Match your tap-list updates to the top privacy-safe beer searches in your area."
+            : "Add clearer beer styles and specials so nearby search demand has more useful matches.",
+        ]
+      : ["Not enough suburb data yet. Your report will become more useful as more users search nearby."];
+
+    return sanitizeMonthlyReportValue({
+      generated: true,
+      generatedAt: nowIso(),
+      reportingPeriod: {
+        month,
+        timezone,
+        startIso: range.startIso,
+        endIso: range.endIso,
+      },
+      venue: {
+        id: profile.barId,
+        name: profile.name,
+        suburb: profile.suburb,
+        tier: profile.membershipTier,
+      },
+      summary: {
+        totalBarLookups: analytics.barLookups,
+        totalProfileViews: analytics.profileViews,
+        totalBeerListViews: analytics.beerListViews,
+        totalSpecialsDealsViews: analytics.specialsViews,
+        mapMarkerClicks: analytics.markerClicks,
+        directionsClicks: analytics.directionsClicks,
+        priceReveals: analytics.priceReveals,
+        savesAndNightPlanAdds: analytics.saves,
+        shares: analytics.shares,
+        areaSearches: analytics.areaSearches,
+        mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
+        mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
+        listingQualityScore: insights.listingQuality.score,
+        openWrongPriceReports: insights.wrongPriceReports.filter((report) => report.status === "open").length,
+        openVenueRequests: insights.requests.filter((request) => request.status === "open").length,
+        suggestedActions,
+      },
+      privacy: {
+        aggregateOnly: true,
+        suppressedBelowCount: privacyThreshold,
+        excludesUserEmails: true,
+        excludesSessionIds: true,
+        excludesExactLocation: true,
+        excludesRawClickstream: true,
+      },
+    }) as Record<string, unknown>;
+  }
+
+  private generateVenueMonthlyReportsInternal(input: MonthlyReportGenerateInput) {
+    const month = input.month ?? this.getDefaultReportMonth();
+    const venues = this.repository.listReportableBarProfiles({
+      venueId: input.venueId,
+      limit: input.venueId ? 1 : 1000,
+    });
+
+    const reports = venues.map((profile) => {
+      const data = this.buildVenueMonthlyReportData(profile, month);
+      if (input.dryRun) {
+        return {
+          id: null,
+          barId: profile.barId,
+          month,
+          data,
+          createdAt: null,
+        };
+      }
+
+      return this.repository.upsertVenueMonthlyReport({
+        id: crypto.randomUUID(),
+        venueId: profile.barId,
+        month,
+        data,
+        createdAt: nowIso(),
+      });
+    });
+
+    return {
+      month,
+      timezone: this.getReportTimezone(),
+      requestedVenueId: input.venueId,
+      dryRun: input.dryRun,
+      generatedCount: reports.length,
+      skippedReason: reports.length === 0
+        ? input.venueId
+          ? "No active Plus/Pro venue matched that venue ID."
+          : "No active Plus/Pro venues are reportable yet."
+        : null,
+      reports: reports.map((report) => sanitizeMonthlyReport(report as MonthlyBarReport) ?? report),
+    };
+  }
+
+  generateVenueMonthlyReports(admin: BusinessAccount, input: MonthlyReportGenerateInput) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    const result = this.generateVenueMonthlyReportsInternal(input);
+    this.auditSecurity({
+      actor: admin,
+      action: "venue_monthly_reports_generated",
+      targetType: input.venueId ? "venue" : "venue_monthly_reports",
+      targetId: input.venueId,
+      metadata: {
+        month: result.month,
+        generatedCount: result.generatedCount,
+        dryRun: input.dryRun,
+      },
+    });
+    return result;
+  }
+
+  generateScheduledVenueMonthlyReports(input: MonthlyReportGenerateInput) {
+    const result = this.generateVenueMonthlyReportsInternal(input);
+    this.auditSecurity({
+      actor: null,
+      action: "venue_monthly_reports_generated",
+      targetType: input.venueId ? "venue" : "venue_monthly_reports",
+      targetId: input.venueId,
+      metadata: {
+        month: result.month,
+        generatedCount: result.generatedCount,
+        dryRun: input.dryRun,
+        source: "scheduled_script",
+      },
+    });
+    return result;
+  }
+
+  private getVenueReportRecipients(venueId: string) {
+    return this.repository
+      .listVenueManagerAssignments({ venueId, activeOnly: true, limit: 50 })
+      .map((assignment) => this.repository.getAccountById(assignment.userId))
+      .filter((account): account is BusinessAccount => Boolean(account && account.status === "active" && account.email));
+  }
+
+  deliverVenueMonthlyReports(admin: BusinessAccount, input: MonthlyReportDeliveryInput) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    const generated = this.generateVenueMonthlyReports(admin, input);
+    const deliveries = generated.reports.flatMap((report) => {
+      const monthlyReport = report as MonthlyBarReport;
+      const recipients = this.getVenueReportRecipients(monthlyReport.barId);
+      if (recipients.length === 0) {
+        return [{
+          venueId: monthlyReport.barId,
+          month: monthlyReport.month,
+          status: "skipped_no_recipients",
+          recipients: [],
+          subject: `Pint Path monthly venue report - ${monthlyReport.month}`,
+          attachmentName: getMonthlyReportFilename({
+            venueId: monthlyReport.barId,
+            month: monthlyReport.month,
+            format: "json",
+          }),
+        }];
+      }
+
+      return recipients.map((recipient) => {
+        const status = input.dryRun || !input.deliver
+          ? "dry_run"
+          : this.config.REPORT_EMAIL_MODE === "mock"
+            ? "mocked"
+            : "skipped_email_disabled";
+        const delivery = {
+          venueId: monthlyReport.barId,
+          month: monthlyReport.month,
+          status,
+          recipients: [recipient.email],
+          subject: `Pint Path monthly venue report - ${monthlyReport.month}`,
+          attachmentName: getMonthlyReportFilename({
+            venueId: monthlyReport.barId,
+            month: monthlyReport.month,
+            format: "json",
+          }),
+        };
+
+        if (status === "mocked") {
+          this.auditSecurity({
+            actor: admin,
+            action: "venue_monthly_report_delivery_mocked",
+            targetType: "venue",
+            targetId: monthlyReport.barId,
+            metadata: {
+              month: monthlyReport.month,
+              recipientCount: 1,
+              recipientDomain: recipient.email.split("@")[1] ?? "unknown",
+            },
+          });
+        }
+
+        return delivery;
+      });
+    });
+
+    return {
+      ...generated,
+      emailMode: this.config.REPORT_EMAIL_MODE,
+      deliveries,
+    };
+  }
+
+  deliverScheduledVenueMonthlyReports(input: MonthlyReportDeliveryInput) {
+    const generated = this.generateScheduledVenueMonthlyReports(input);
+    const deliveries = generated.reports.flatMap((report) => {
+      const monthlyReport = report as MonthlyBarReport;
+      const recipients = this.getVenueReportRecipients(monthlyReport.barId);
+      if (recipients.length === 0) {
+        return [{
+          venueId: monthlyReport.barId,
+          month: monthlyReport.month,
+          status: "skipped_no_recipients",
+          recipientCount: 0,
+        }];
+      }
+
+      return recipients.map((recipient) => {
+        const status = input.dryRun || !input.deliver
+          ? "dry_run"
+          : this.config.REPORT_EMAIL_MODE === "mock"
+            ? "mocked"
+            : "skipped_email_disabled";
+
+        if (status === "mocked") {
+          this.auditSecurity({
+            actor: null,
+            action: "venue_monthly_report_delivery_mocked",
+            targetType: "venue",
+            targetId: monthlyReport.barId,
+            metadata: {
+              month: monthlyReport.month,
+              recipientCount: 1,
+              recipientDomain: recipient.email.split("@")[1] ?? "unknown",
+              source: "scheduled_script",
+            },
+          });
+        }
+
+        return {
+          venueId: monthlyReport.barId,
+          month: monthlyReport.month,
+          status,
+          recipientCount: 1,
+          subject: `Pint Path monthly venue report - ${monthlyReport.month}`,
+          attachmentName: getMonthlyReportFilename({
+            venueId: monthlyReport.barId,
+            month: monthlyReport.month,
+            format: "json",
+          }),
+        };
+      });
+    });
+
+    return {
+      ...generated,
+      emailMode: this.config.REPORT_EMAIL_MODE,
+      deliveries,
+    };
+  }
+
+  exportVenueMonthlyReport(account: BusinessAccount, venueId: string, month: string, query: MonthlyReportExportQuery) {
+    this.requireVerifiedBarAccount(account);
+    this.requireAssignedVenue(account, venueId);
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new AppError("Report month must use YYYY-MM format.", 400);
+    }
+
+    const profile = this.repository.getBarProfile(venueId);
+    const capabilities = getBarTierCapabilities(profile?.membershipTier ?? "basic", this.isAdmin(account));
+    if (!capabilities.monthlyReports) {
+      throw new AppError("Plus or Pro venue tier required to export monthly reports.", 403);
+    }
+
+    const report = sanitizeMonthlyReport(
+      this.repository.getVenueMonthlyReport({ venueId, month }) ??
+        this.repository.upsertVenueMonthlyReport({
+          id: crypto.randomUUID(),
+          venueId,
+          month,
+          data: this.buildVenueMonthlyReportData(
+            profile ?? this.getOrBuildBarProfile({ barId: venueId, name: venueId, suburb: null }),
+            month,
+          ),
+          createdAt: nowIso(),
+        }),
+    );
+
+    if (!report) {
+      throw new AppError("Monthly report not found.", 404);
+    }
+
+    if (query.format === "csv") {
+      return {
+        filename: getMonthlyReportFilename({ venueId, month, format: "csv" }),
+        mimeType: "text/csv; charset=utf-8",
+        body: monthlyReportToCsv(report),
+      };
+    }
+
+    return {
+      filename: getMonthlyReportFilename({ venueId, month, format: "json" }),
+      mimeType: "application/json; charset=utf-8",
+      body: `${JSON.stringify(report, null, 2)}\n`,
+    };
+  }
+
   getVenuePortal(account: BusinessAccount, query: VenuePortalQuery) {
     this.requireVerifiedBarAccount(account);
     const isAdmin = this.isAdmin(account);
@@ -3596,22 +4109,24 @@ export class BusinessService {
     const profile = this.getOrBuildBarProfile({ barId: selectedVenueId, name: venueName, suburb });
     const capabilities = getBarTierCapabilities(profile.membershipTier, isAdmin);
     const venueInsightPrivacyThreshold = Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE);
+    const reportMonth = getZonedMonthKey(new Date(), this.getReportTimezone());
     const analytics = capabilities.analytics
       ? this.repository.getVenueAreaAnalytics({
           venueId: selectedVenueId,
           area: profile.area ?? profile.suburb ?? suburb,
-          month: monthKeyFromIso(nowIso()),
+          month: reportMonth,
+          timezone: this.getReportTimezone(),
           privacyThreshold: venueInsightPrivacyThreshold,
         })
       : null;
     const savedMonthlyReport = capabilities.monthlyReports
-      ? this.repository.getVenueMonthlyReport({ venueId: selectedVenueId, month: monthKeyFromIso(nowIso()) })
+      ? sanitizeMonthlyReport(this.repository.getVenueMonthlyReport({ venueId: selectedVenueId, month: reportMonth }))
       : null;
     const monthlyReport = capabilities.monthlyReports
       ? savedMonthlyReport ?? {
           id: null,
           barId: selectedVenueId,
-          month: monthKeyFromIso(nowIso()),
+          month: reportMonth,
           data: {
             generated: false,
             summary: analytics

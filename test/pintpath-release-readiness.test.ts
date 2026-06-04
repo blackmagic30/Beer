@@ -59,6 +59,8 @@ function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessS
     ADMIN_MFA_MAX_AGE_MINUTES: 720,
     REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
     ANALYTICS_MIN_BUCKET_SIZE: 5,
+    REPORT_TIMEZONE: "Australia/Melbourne",
+    REPORT_EMAIL_MODE: "disabled",
     ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
     SOURCE_EVIDENCE_SIGNING_SECRET: "release-readiness-source-evidence-secret",
     SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: 300,
@@ -533,6 +535,248 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     expect(atFloorPortal.analytics?.privacyFloorMet).toBe(true);
     expect(atFloorPortal.monthlyReport?.data).toBeTruthy();
     expect(atFloorPortal.analytics?.areaStyleSearches).toEqual([{ key: "lager", count: 11 }]);
+  });
+
+  it("keeps monthly reports scoped to the exact month, assigned owner, and privacy-safe fields", () => {
+    const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
+    const admin = signup(harness, "admin@pintpath.test").account;
+    const owner = signup(harness, "report-owner@pintpath.test").account;
+    const otherOwner = signup(harness, "report-other-owner@pintpath.test").account;
+
+    harness.service.assignVenueManager(admin, {
+      userId: owner.id,
+      venueId: "venue-monthly",
+      venueName: "Monthly Venue",
+      suburb: "Richmond",
+    });
+    harness.service.assignVenueManager(admin, {
+      userId: otherOwner.id,
+      venueId: "venue-other",
+      venueName: "Other Venue",
+      suburb: "Carlton",
+    });
+    harness.service.upsertBarProfile(admin, "venue-monthly", venueProfileInput({
+      name: "Monthly Venue",
+      suburb: "Richmond",
+      area: "Richmond",
+      membershipTier: "plus",
+    }));
+    const ownerAccount = harness.repository.getAccountById(owner.id)!;
+    const otherOwnerAccount = harness.repository.getAccountById(otherOwner.id)!;
+
+    for (let index = 0; index < 3; index += 1) {
+      harness.repository.recordEvent({
+        id: `may-click:${index}`,
+        userId: null,
+        anonymousSessionId: `anon-may-click:${index}`,
+        eventType: "map_pin_click",
+        venueId: "venue-monthly",
+        beerId: null,
+        suburb: "Richmond",
+        metadata: { synthetic: true },
+        createdAt: `2026-05-${String(index + 2).padStart(2, "0")}T10:00:00.000Z`,
+      });
+    }
+    for (let index = 0; index < 4; index += 1) {
+      harness.repository.recordEvent({
+        id: `june-click:${index}`,
+        userId: null,
+        anonymousSessionId: `anon-june-click:${index}`,
+        eventType: "map_pin_click",
+        venueId: "venue-monthly",
+        beerId: null,
+        suburb: "Richmond",
+        metadata: { synthetic: true },
+        createdAt: `2026-06-${String(index + 2).padStart(2, "0")}T10:00:00.000Z`,
+      });
+    }
+    for (let index = 0; index < 10; index += 1) {
+      harness.repository.recordEvent({
+        id: `may-search:${index}`,
+        userId: null,
+        anonymousSessionId: `anon-may-search:${index}`,
+        eventType: "beer_search_performed",
+        venueId: null,
+        beerId: "stout",
+        suburb: "Richmond",
+        metadata: { query: "stout" },
+        createdAt: `2026-05-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
+      });
+      harness.repository.recordVenueAnalyticsEvent({
+        id: `may-style:${index}`,
+        venueId: null,
+        area: "Richmond",
+        suburb: "Richmond",
+        eventType: "beer_style_search",
+        queryText: "stout",
+        beerName: null,
+        beerStyle: "stout",
+        createdAt: `2026-05-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
+      });
+      harness.repository.recordEvent({
+        id: `june-search:${index}`,
+        userId: null,
+        anonymousSessionId: `anon-june-search:${index}`,
+        eventType: "beer_search_performed",
+        venueId: null,
+        beerId: "lager",
+        suburb: "Richmond",
+        metadata: { query: "lager" },
+        createdAt: `2026-06-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
+      });
+      harness.repository.recordVenueAnalyticsEvent({
+        id: `june-style:${index}`,
+        venueId: null,
+        area: "Richmond",
+        suburb: "Richmond",
+        eventType: "beer_style_search",
+        queryText: "lager",
+        beerName: null,
+        beerStyle: "lager",
+        createdAt: `2026-06-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
+      });
+    }
+    harness.repository.upsertVenueMonthlyReport({
+      id: "monthly-report-sensitive",
+      venueId: "venue-monthly",
+      month: "2026-05",
+      createdAt: NOW,
+      data: {
+        summary: {
+          totalBarLookups: 999,
+          userId: "should-not-leak",
+          topTerms: ["stout", "person@example.com"],
+          nested: { anonymousSessionId: "anon-secret", safeAggregate: 12 },
+        },
+      },
+    });
+
+    const directMayAnalytics = harness.repository.getVenueAreaAnalytics({
+      venueId: "venue-monthly",
+      area: "Richmond",
+      month: "2026-05",
+      privacyThreshold: 10,
+    });
+    expect(directMayAnalytics.barLookups).toBe(3);
+    expect(directMayAnalytics.areaBeerSearches).toEqual([{ key: "stout", count: 10 }]);
+    expect(directMayAnalytics.areaStyleSearches).toEqual([{ key: "stout", count: 10 }]);
+    expect(JSON.stringify(directMayAnalytics)).not.toContain("lager");
+
+    const ownerPortal = harness.service.getVenuePortal(ownerAccount, { venueId: "venue-monthly" });
+    expect(ownerPortal.monthlyReport?.month).toBe("2026-05");
+    const serializedReport = JSON.stringify(ownerPortal.monthlyReport);
+    expect(serializedReport).not.toContain("should-not-leak");
+    expect(serializedReport).not.toContain("anon-secret");
+    expect(serializedReport).not.toContain("person@example.com");
+    expect(serializedReport).toContain("safeAggregate");
+
+    expect(() => harness.service.getVenuePortal(otherOwnerAccount, { venueId: "venue-monthly" }))
+      .toThrow("assigned venues");
+  });
+
+  it("generates, mock-delivers, and exports monthly reports only to authorised venue owners", async () => {
+    const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5, REPORT_EMAIL_MODE: "mock" });
+    const admin = signup(harness, "admin@pintpath.test");
+    const owner = signup(harness, "http-report-owner@pintpath.test");
+    const otherOwner = signup(harness, "http-report-other-owner@pintpath.test");
+
+    harness.service.assignVenueManager(admin.account, {
+      userId: owner.account.id,
+      venueId: "venue-http-report",
+      venueName: "HTTP Report Venue",
+      suburb: "Richmond",
+    });
+    harness.service.assignVenueManager(admin.account, {
+      userId: otherOwner.account.id,
+      venueId: "venue-http-other",
+      venueName: "Other HTTP Report Venue",
+      suburb: "Carlton",
+    });
+    harness.service.upsertBarProfile(admin.account, "venue-http-report", venueProfileInput({
+      name: "HTTP Report Venue",
+      suburb: "Richmond",
+      area: "Richmond",
+      membershipTier: "pro",
+    }));
+    harness.service.upsertBarProfile(admin.account, "venue-http-basic", venueProfileInput({
+      name: "HTTP Basic Venue",
+      suburb: "Richmond",
+      area: "Richmond",
+      membershipTier: "basic",
+    }));
+
+    for (let index = 0; index < 12; index += 1) {
+      harness.repository.recordEvent({
+        id: `http-report-search:${index}`,
+        userId: null,
+        anonymousSessionId: `http-report-anon:${index}`,
+        eventType: "beer_search_performed",
+        venueId: null,
+        beerId: "guinness",
+        suburb: "Richmond",
+        metadata: { query: "guinness" },
+        createdAt: `2026-05-${String(index + 1).padStart(2, "0")}T10:00:00.000Z`,
+      });
+      harness.repository.recordEvent({
+        id: `http-report-direction:${index}`,
+        userId: null,
+        anonymousSessionId: `http-report-direction-anon:${index}`,
+        eventType: "directions_clicked",
+        venueId: "venue-http-report",
+        beerId: null,
+        suburb: "Richmond",
+        metadata: { source: "test" },
+        createdAt: `2026-05-${String(index + 1).padStart(2, "0")}T11:00:00.000Z`,
+      });
+    }
+
+    await withHttpServer(harness.app, async (baseUrl) => {
+      const generated = await requestJson(baseUrl, "/api/business/admin/reports/monthly/generate", {
+        method: "POST",
+        token: admin.token,
+        body: { month: "2026-05" },
+      });
+      expect(generated.response.status).toBe(200);
+      expect((generated.json?.data as { generatedCount: number }).generatedCount).toBe(1);
+
+      const delivered = await requestJson(baseUrl, "/api/business/admin/reports/monthly/deliver", {
+        method: "POST",
+        token: admin.token,
+        body: { month: "2026-05", deliver: true },
+      });
+      expect(delivered.response.status).toBe(200);
+      const deliveries = (delivered.json?.data as { deliveries: Array<{ status: string; recipients: string[]; venueId: string }> }).deliveries;
+      expect(deliveries).toEqual([
+        expect.objectContaining({
+          venueId: "venue-http-report",
+          status: "mocked",
+          recipients: [owner.account.email],
+        }),
+      ]);
+      expect(JSON.stringify(deliveries)).not.toContain(otherOwner.account.email);
+
+      const ownerExport = await fetch(`${baseUrl}/api/business/venue-portal/venue-http-report/reports/2026-05/export?format=json`, {
+        headers: { authorization: `Bearer ${owner.token}` },
+      });
+      expect(ownerExport.status).toBe(200);
+      expect(ownerExport.headers.get("cache-control")).toContain("private");
+      const report = await ownerExport.json() as { data: { summary: { directionsClicks: number } } };
+      expect(report.data.summary.directionsClicks).toBe(12);
+      expect(JSON.stringify(report)).not.toContain("http-report-anon");
+
+      const csvExport = await fetch(`${baseUrl}/api/business/venue-portal/venue-http-report/reports/2026-05/export?format=csv`, {
+        headers: { authorization: `Bearer ${owner.token}` },
+      });
+      expect(csvExport.status).toBe(200);
+      const csv = await csvExport.text();
+      expect(csv).toContain('"directionsClicks","12"');
+      expect(csv).not.toContain("http-report-anon");
+
+      const crossOwnerExport = await fetch(`${baseUrl}/api/business/venue-portal/venue-http-report/reports/2026-05/export?format=json`, {
+        headers: { authorization: `Bearer ${otherOwner.token}` },
+      });
+      expect(crossOwnerExport.status).toBe(403);
+    });
   });
 });
 

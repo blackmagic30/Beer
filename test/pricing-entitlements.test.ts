@@ -10,7 +10,7 @@ function readRepoFile(filePath: string) {
 }
 
 describe("premium pricing and entitlements", () => {
-  it("keeps consumer prices out of public pricing while showing venue plans", () => {
+  it("shows user pricing by default while preserving venue plans for bar accounts", () => {
     const appSource = readRepoFile("src/app.ts");
     const pricingHtml = readRepoFile("viewer/pricing.html");
     const readme = readRepoFile("README.md");
@@ -25,6 +25,18 @@ describe("premium pricing and entitlements", () => {
 
     expect(appSource).toContain("monthly: PREMIUM_PRICING.monthlyLabel");
     expect(appSource).toContain("yearly: PREMIUM_PRICING.yearlyLabel");
+    expect(pricingHtml).toContain("User pricing");
+    expect(pricingHtml).toContain("For drinkers");
+    expect(pricingHtml).toContain("Unlock the full Pint Path map.");
+    expect(pricingHtml).toContain("Freemium");
+    expect(pricingHtml).toContain("15 points");
+    expect(pricingHtml).toContain("same map access as a paid user");
+    expect(pricingHtml).toContain('href="/submit.html"');
+    expect(pricingHtml).toContain('href="/missions.html"');
+    expect(pricingHtml).toContain("A$4.99");
+    expect(pricingHtml).toContain("A$50");
+    expect(pricingHtml).toContain('href="/account.html?checkoutPlan=monthly"');
+    expect(pricingHtml).toContain('href="/account.html?checkoutPlan=yearly"');
     expect(pricingHtml).toContain("Venue pricing");
     expect(pricingHtml).toContain("For venues");
     expect(pricingHtml).toContain("Venue tools use the same secure Pint Path login.");
@@ -42,11 +54,10 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Premium venue badge");
     expect(pricingHtml).toContain('href="/venue-portal.html"');
     expect(pricingHtml).toContain('id="venuePricingSection"');
+    expect(pricingHtml).toContain('id="venuePricingSection" class="venuePricingSection" aria-labelledby="venuePricingTitle" hidden');
     expect(pricingHtml).toContain('class="venuePricingSection"');
-    expect(pricingHtml).not.toContain("Freemium");
-    expect(pricingHtml).not.toContain("15 pts");
-    expect(pricingHtml).not.toContain("A$4.99");
-    expect(pricingHtml).not.toContain("A$50");
+    expect(pricingHtml).toContain('role === "venue_manager" || role === "admin"');
+    expect(pricingHtml).toContain('pricingContext = showVenuePricing ? "venue" : "consumer"');
     expect(pricingHtml).not.toContain('type="button" data-plan="monthly"');
     expect(pricingHtml).not.toContain('type="button" data-plan="yearly"');
     expect(readme).toContain("A$4.99/month");
@@ -75,7 +86,7 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).not.toContain("source evidence");
   });
 
-  it("does not expose consumer checkout on the venue pricing page", () => {
+  it("starts consumer checkout through the account page instead of inline pricing scripts", () => {
     const pricingHtml = readRepoFile("viewer/pricing.html");
     const businessCss = readRepoFile("viewer/business.css");
 
@@ -84,7 +95,7 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).not.toContain('MelbBeerBusiness.apiFetch("/api/business/billing/checkout"');
     expect(pricingHtml).not.toContain("Opening secure Stripe checkout");
     expect(pricingHtml).not.toContain("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
-    expect(pricingHtml).toContain('MelbBeerBusiness.trackEvent("pricing_page_viewed", { pricingContext: "venue" })');
+    expect(pricingHtml).toContain('MelbBeerBusiness.trackEvent("pricing_page_viewed", { pricingContext })');
     expect(businessCss).toContain(".venuePricingGrid");
     expect(businessCss).toContain(".button:disabled");
   });

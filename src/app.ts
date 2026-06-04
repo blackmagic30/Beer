@@ -14,10 +14,12 @@ import { redactSecrets } from "./lib/redact.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFoundHandler } from "./middleware/not-found.js";
 import { captureRawBody } from "./middleware/raw-body.js";
+import type { BusinessService } from "./modules/business/business.service.js";
 
 type LazyRouters = {
   adminRouter: RequestHandler;
   businessRouter: RequestHandler;
+  businessService: BusinessService;
 };
 
 let lazyRoutersPromise: Promise<LazyRouters> | undefined;
@@ -61,7 +63,109 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   return {
     adminRouter: createAdminRouter(adminService, businessService),
     businessRouter: createBusinessRouter(businessService),
+    businessService,
   };
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function absoluteUrl(pathname: string): string {
+  return new URL(pathname, env.PUBLIC_BASE_URL).toString();
+}
+
+function safeJsonForHtml(value: unknown): string {
+  return JSON.stringify(value).replaceAll("<", "\\u003c");
+}
+
+function renderPublicVenuePage(venue: Awaited<ReturnType<BusinessService["getPublicVenueById"]>>): string {
+  if (!venue) {
+    throw new AppError("Venue not found.", 404);
+  }
+
+  const title = `${venue.name} on Pint Path`;
+  const locationParts = [venue.address, venue.suburb, venue.state, venue.postcode].filter(Boolean);
+  const location = locationParts.join(", ");
+  const description = `${venue.name}${venue.suburb ? ` in ${venue.suburb}` : ""} on Pint Path. View mapped beer data, happy-hour details, directions, and venue updates.`;
+  const canonicalUrl = absoluteUrl(`/venues/${encodeURIComponent(venue.id)}`);
+  const mapUrl = absoluteUrl(`/?venueId=${encodeURIComponent(venue.id)}&venueName=${encodeURIComponent(venue.name)}`);
+  const portalUrl = absoluteUrl(`/venue-portal?venueId=${encodeURIComponent(venue.id)}`);
+  const tier = venue.membershipTier === "pro" ? "Pro" : venue.membershipTier === "plus" ? "Plus" : "Free";
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@type": "BarOrPub",
+    name: venue.name,
+    address: location || undefined,
+    url: canonicalUrl,
+    geo: venue.latitude && venue.longitude
+      ? {
+          "@type": "GeoCoordinates",
+          latitude: venue.latitude,
+          longitude: venue.longitude,
+        }
+      : undefined,
+  };
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(title)}</title>
+  <meta name="description" content="${escapeHtml(description)}" />
+  <link rel="canonical" href="${escapeHtml(canonicalUrl)}" />
+  <meta property="og:type" content="place" />
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(description)}" />
+  <meta property="og:url" content="${escapeHtml(canonicalUrl)}" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="${escapeHtml(title)}" />
+  <meta name="twitter:description" content="${escapeHtml(description)}" />
+  <script type="application/ld+json">${safeJsonForHtml(structuredData)}</script>
+  <style>
+    :root { color-scheme: dark; --bg:#070a12; --panel:#121a2c; --text:#f8fafc; --muted:#cbd5e1; --cyan:#22d3ee; --gold:#f5c542; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 18% 0%, rgba(34,211,238,.14), transparent 30%), radial-gradient(circle at 90% 10%, rgba(139,92,246,.16), transparent 28%), var(--bg); color: var(--text); font-family: "Avenir Next", "Segoe UI", sans-serif; }
+    main { width: min(920px, 100%); display: grid; gap: 18px; }
+    .panel { border: 1px solid rgba(255,255,255,.12); border-radius: 26px; background: linear-gradient(145deg, rgba(255,255,255,.08), rgba(255,255,255,.025)), rgba(18,26,44,.88); box-shadow: 0 28px 76px rgba(0,0,0,.42); padding: clamp(22px, 4vw, 42px); }
+    .eyebrow { color: var(--cyan); font-size: 12px; font-weight: 950; letter-spacing: .13em; text-transform: uppercase; }
+    h1 { margin: 10px 0 12px; font-size: clamp(36px, 7vw, 72px); line-height: 1; letter-spacing: -.04em; }
+    p { color: var(--muted); font-size: 17px; line-height: 1.6; margin: 0; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    .pill { border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(255,255,255,.07); padding: 8px 12px; color: #e2e8f0; font-size: 13px; font-weight: 850; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+    a { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 12px 16px; color: var(--text); text-decoration: none; font-weight: 950; }
+    .primary { color: #06101f; background: linear-gradient(135deg, #38bdf8, #22d3ee, #8b5cf6); }
+    .secondary { border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); }
+    .note { font-size: 13px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <div class="eyebrow">Pint Path venue</div>
+      <h1>${escapeHtml(venue.name)}</h1>
+      <p>${escapeHtml(location || "Mapped Melbourne venue")}</p>
+      <div class="meta">
+        <span class="pill">${escapeHtml(tier)} listing</span>
+        ${venue.suburb ? `<span class="pill">${escapeHtml(venue.suburb)}</span>` : ""}
+        <span class="pill">Beer data and happy-hour map</span>
+      </div>
+      <div class="actions">
+        <a class="primary" href="${escapeHtml(mapUrl)}">Open on map</a>
+        <a class="secondary" href="${escapeHtml(portalUrl)}">Manage this venue</a>
+      </div>
+    </section>
+    <p class="note">Venue data may change. Check directly with the venue before ordering, travelling, or relying on special availability.</p>
+  </main>
+</body>
+</html>`;
 }
 
 async function getLazyRouters(): Promise<LazyRouters> {
@@ -313,6 +417,18 @@ export function createApp() {
   });
   app.get("/for-bars.html", (_req, res) => {
     res.redirect(302, "/venue-portal");
+  });
+  app.get("/venues/:venueId", async (req, res, next) => {
+    try {
+      const { businessService } = await getLazyRouters();
+      const venue = await businessService.getPublicVenueById(req.params.venueId);
+      res
+        .type("html")
+        .setHeader("Cache-Control", env.NODE_ENV === "production" ? "public, max-age=300" : "no-store")
+        .send(renderPublicVenuePage(venue));
+    } catch (error) {
+      next(error);
+    }
   });
   app.get("/auth/callback", (_req, res) => {
     res.sendFile(path.join(viewerDirectory, "auth", "callback.html"));

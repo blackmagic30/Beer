@@ -58,8 +58,9 @@
             <div class="actionRow authActions">
               <button class="button button--primary" type="submit">Sign in</button>
               <button id="passwordResetButton" class="button" type="button">Reset password</button>
+              <button id="resendConfirmationButton" class="button" type="button">Resend confirmation</button>
             </div>
-            <p class="helperCopy authResetCopy">Forgot your password? Enter your email and we’ll send a secure reset link.</p>
+            <p class="helperCopy authResetCopy">Forgot your password or missing a Supabase signup email? Enter your email first, then choose the matching action.</p>
             <div id="oauthStack" class="oauthStack" aria-label="Quick login options">
               <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
               <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
@@ -89,12 +90,12 @@
                   <button class="passwordToggle" type="button" data-password-toggle>Show</button>
                 </span>
               </label>
-              <label class="field consentField">
-                <span class="consentLine"><input name="ageConfirmed" type="checkbox" required /> <span>I confirm I am 18 years or older.</span></span>
-                <span class="consentLine"><input name="termsAccepted" type="checkbox" required /> <span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms and Conditions</a>.</span></span>
-                <span class="consentLine"><input name="privacyAccepted" type="checkbox" required /> <span>I agree to the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></span>
+              <div class="field consentField" role="group" aria-label="Account consent">
+                <label class="consentLine"><input name="ageConfirmed" type="checkbox" required /> <span>I confirm I am 18 years or older.</span></label>
+                <label class="consentLine"><input name="termsAccepted" type="checkbox" required /> <span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms and Conditions</a>.</span></label>
+                <label class="consentLine"><input name="privacyAccepted" type="checkbox" required /> <span>I agree to the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
                 <span class="fieldHint">Pint Path does not store ID documents. Accounts that exploit, scrape, spam, fake submissions, or bypass access controls may be restricted or banned.</span>
-              </label>
+              </div>
             </div>
             <button class="button button--primary" type="submit">Create account</button>
           </div>
@@ -527,6 +528,7 @@
         venue: items.filter((item) => item.itemType === "venue"),
         beer: items.filter((item) => item.itemType === "beer"),
         suburb: items.filter((item) => item.itemType === "suburb"),
+        nightPlan: items.filter((item) => item.itemType === "night_plan"),
       };
       const section = (title, rows) => `
         <div class="listItem">
@@ -538,6 +540,7 @@
         section("Saved venues", groups.venue),
         section("Saved beers", groups.beer),
         section("Saved suburbs", groups.suburb),
+        section("Saved night plans", groups.nightPlan),
         `<div class="listItem"><strong>Recent searches</strong><div class="muted">${recentSearches.length ? recentSearches.map((item) => escapeHtml(item.label)).join(" · ") : "No recent searches yet"}</div></div>`,
       ].join("");
     }
@@ -610,24 +613,50 @@
       const trustScore = Number(stats.trustScore ?? account.trustScore ?? 0);
       const savings = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
       const accountId = result.leaderboard?.accountId || account.publicAccountId || "—";
+      const progressPercent = Math.min(100, Math.round((points / threshold) * 100));
+      const unlockReached = pointsNeeded <= 0;
+      const unlockCopy = unlockReached
+        ? "Contributor access is unlocked for this month. You get the same premium map access as a paid user."
+        : `${formatPoints(pointsNeeded)} more approved points unlock the same premium map access as a paid user until month end.`;
       const metrics = [
-        ["Total uploads", totalUploads, "All beer price, venue, happy-hour, and source uploads linked to your account."],
-        ["Pending review", pendingCount, "Submissions waiting for reviewer checks before they can affect the public map."],
-        ["Verified", verifiedCount, "Approved contributions that can count toward contributor unlocks."],
-        ["Rejected", rejectedCount, "Rejected uploads stay private and can be used to improve future submissions."],
-        ["Points this month", formatPoints(points), `${formatPoints(pointsNeeded)} more points until contributor access.`],
-        ["Trust score", `${trustScore}%`, "A working signal for future contributor reliability and moderation priority."],
-        ["Total saved", savings, "Estimated from Pint Path discount redemptions logged by venues."],
-        ["Account ID", accountId, "Your public contributor ID for leaderboard ranking and discount lookup."],
+        { label: "Total uploads", value: totalUploads, helper: "Beer price, venue, happy-hour, and source uploads linked to your account.", tone: "neutral" },
+        { label: "Pending review", value: pendingCount, helper: "Waiting for reviewer checks before they can affect the public map.", tone: "pending" },
+        { label: "Verified", value: verifiedCount, helper: "Approved contributions that can count toward contributor unlocks.", tone: "success" },
+        { label: "Rejected", value: rejectedCount, helper: "Rejected uploads stay private and can guide better future submissions.", tone: "warning" },
+        { label: "Trust score", value: `${trustScore}%`, helper: "A working reliability signal for future contributor moderation.", tone: "info" },
+        { label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" },
+        { label: "Account ID", value: accountId, helper: "Your public contributor ID for leaderboard ranking and discount lookup.", tone: "id" },
       ];
 
-      grid.innerHTML = metrics.map(([label, value, helper]) => `
-        <article class="metricCard">
-          <div class="metricValue metricValue--small">${escapeHtml(value)}</div>
-          <div class="metricLabel">${escapeHtml(label)}</div>
-          <p class="helperCopy">${escapeHtml(helper)}</p>
+      grid.innerHTML = `
+        <article class="metricCard accountStatsProgressCard">
+          <div class="accountStatsCardHeader">
+            <div>
+              <div class="metricLabel">Contributor unlock</div>
+              <h3>Earn premium access</h3>
+            </div>
+            <span class="tierBadge ${unlockReached ? "tierBadge--pro" : "tierBadge--plus"}">${unlockReached ? "Unlocked" : "Freemium"}</span>
+          </div>
+          <div class="accountStatsProgressValue">
+            <strong>${escapeHtml(formatPoints(points))}</strong>
+            <span>/ ${escapeHtml(formatPoints(threshold))} points this month</span>
+          </div>
+          <div class="progressTrack accountStatsProgressTrack" aria-hidden="true">
+            <div class="progressBar" style="width:${progressPercent}%;"></div>
+          </div>
+          <p class="helperCopy">${escapeHtml(unlockCopy)}</p>
         </article>
-      `).join("");
+        ${metrics.map(({ label, value, helper, tone }) => `
+          <article class="metricCard accountStatCard accountStatCard--${escapeHtml(tone)}">
+            <div class="accountStatsCardHeader">
+              <div class="metricLabel">${escapeHtml(label)}</div>
+              <span class="accountStatDot" aria-hidden="true"></span>
+            </div>
+            <div class="metricValue metricValue--small">${escapeHtml(value)}</div>
+            <p class="helperCopy">${escapeHtml(helper)}</p>
+          </article>
+        `).join("")}
+      `;
     }
 
     function renderDashboard(result) {
@@ -807,7 +836,12 @@
         delete body.confirmPassword;
 
         setLoading(submitButton, true, isSignup ? "Creating..." : "Signing in...");
-        const supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient());
+        const authParams = new URLSearchParams(window.location.search);
+        const useLocalEmailAuth =
+          ((window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") &&
+            authParams.get("supabaseAuth") !== "1") ||
+          authParams.get("localAuth") === "1";
+        const supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient()) && !useLocalEmailAuth;
         if (isSignup) {
           MelbBeerBusiness.trackEvent("signup_started", { source: "account_page" }).catch(() => null);
         }
@@ -840,6 +874,12 @@
 
         form.reset();
         const dashboard = await refreshAccount();
+        if (isSignup && useLocalEmailAuth) {
+          MelbBeerBusiness.setStatus(
+            $("dashboardStatus"),
+            "Local development account created. No Supabase confirmation email was sent. To test email confirmation, log out and use Resend confirmation or open /account.html?supabaseAuth=1 before creating a Supabase-backed account.",
+          );
+        }
         if (pendingCheckoutPlan()) {
           return;
         }
@@ -937,6 +977,22 @@
           MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
         } finally {
           setLoading(resetButton, false);
+        }
+      });
+      $("resendConfirmationButton").addEventListener("click", async () => {
+        const resendButton = $("resendConfirmationButton");
+        try {
+          const email = $("loginForm").email.value || $("signupForm").email.value;
+          if (!email) {
+            throw new Error("Enter your email first, then choose Resend confirmation.");
+          }
+          setLoading(resendButton, true, "Sending confirmation...");
+          const result = await MelbBeerBusiness.resendSignupConfirmation(email);
+          MelbBeerBusiness.setStatus($("authStatus"), result.message || "If a Supabase signup exists for that email, a confirmation email has been sent.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
+        } finally {
+          setLoading(resendButton, false);
         }
       });
       $("logoutButton").addEventListener("click", async () => {

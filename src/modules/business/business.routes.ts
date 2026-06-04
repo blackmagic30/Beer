@@ -32,6 +32,9 @@ import {
   leaderboardQuerySchema,
   legalAcceptanceSchema,
   missionsQuerySchema,
+  monthlyReportDeliverySchema,
+  monthlyReportExportQuerySchema,
+  monthlyReportGenerateSchema,
   priceRecordsQuerySchema,
   removeSavedItemSchema,
   retentionQuerySchema,
@@ -389,6 +392,19 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getVenuePortal(account, query)));
   });
 
+  router.get("/venue-portal/:venueId/reports/:month/export", (req, res) => {
+    const account = requireAccount(req, businessService);
+    const query = parseWithSchema(monthlyReportExportQuerySchema, req.query, "Invalid monthly report export query");
+    const venueId = String(req.params.venueId ?? "");
+    const month = String(req.params.month ?? "");
+    const result = businessService.exportVenueMonthlyReport(account, venueId, month, query);
+    res
+      .type(result.mimeType)
+      .setHeader("Cache-Control", "private, no-store")
+      .setHeader("Content-Disposition", `attachment; filename="${result.filename}"`)
+      .send(result.body);
+  });
+
   router.post("/venue-claim-requests", writeLimiter, (req, res) => {
     const account = requireAdmin(req, businessService);
     const body = parseWithSchema(venueClaimRequestSchema, req.body, "Invalid venue claim request payload");
@@ -474,6 +490,18 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const admin = requireAdmin(req, businessService);
     const query = parseWithSchema(adminDashboardQuerySchema, req.query, "Invalid KPI dashboard query");
     res.json(success(businessService.getAdminKpis(admin, query)));
+  });
+
+  router.post("/admin/reports/monthly/generate", (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(monthlyReportGenerateSchema, req.body, "Invalid monthly report generation payload");
+    res.json(success(businessService.generateVenueMonthlyReports(admin, body)));
+  });
+
+  router.post("/admin/reports/monthly/deliver", (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(monthlyReportDeliverySchema, req.body, "Invalid monthly report delivery payload");
+    res.json(success(businessService.deliverVenueMonthlyReports(admin, body)));
   });
 
   router.get("/admin/retention", (req, res) => {

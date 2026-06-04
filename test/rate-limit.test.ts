@@ -71,6 +71,7 @@ function stubProductionEnv(overrides: Record<string, string> = {}) {
     NODE_ENV: "production",
     PUBLIC_BASE_URL: "https://pintpath.au",
     GOOGLE_MAPS_API_KEY: "test-browser-maps-key",
+    GOOGLE_MAPS_MAP_ID: "test-vector-map-id",
     SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
     DEMO_BILLING_MODE: "false",
     REDIS_URL: "redis://default:password@redis.railway.internal:6379",

@@ -9,6 +9,7 @@ Run before any release candidate:
 ```bash
 npm run build
 npm test
+npm run readiness:providers
 npm run test:release:pintpath
 git diff --check
 ```
@@ -42,6 +43,9 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 - Admin analytics buckets below `ANALYTICS_MIN_BUCKET_SIZE` are suppressed.
 - Venue analytics hide suburb trends until the privacy floor is met.
 - Analytics metadata redacts email, tokens, and precise location keys.
+- Monthly venue reports generate from aggregate events using the Melbourne reporting timezone.
+- Monthly report exports are restricted to verified assigned Plus/Pro venue managers or admins.
+- Report delivery can be mocked for tests without sending real email.
 - Supabase migrations keep source-evidence storage private and do not introduce `public.bars`.
 - Public HTML smoke checks cover key pages and retired Twilio/ElevenLabs leakage.
 
@@ -50,9 +54,12 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 These are launch-critical but require provider/staging verification:
 
 - **Supabase OAuth:** Google and Apple provider credentials, callback URLs, and email-confirmation behavior must be verified in Supabase for `https://pintpath.au/auth/callback`.
+- **Supabase Auth security:** Enable leaked-password protection before public launch.
 - **Supabase RLS live audit:** Apply migrations, then test anonymous/authenticated access in the Supabase dashboard or staging client. Local SQL parsing is not a substitute for live policy verification.
 - **Storage bucket live audit:** Verify `beermap-source-evidence` is private, has the intended file-size limit, and owner-only policies work in Supabase Storage.
+- **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
 - **Stripe:** Do not enable live payments until Stripe CLI or dashboard test webhooks prove signed webhook verification, duplicate-event idempotency, subscription updates, cancellations, and failed invoices.
+- **Report email:** Current delivery is disabled/mock-only. Do not announce real monthly report email delivery until an email provider is integrated and recipient tests pass in staging.
 - **Redis rate limiting:** Full-scale production should use `REDIS_URL`; in-memory fallback is acceptable only for controlled beta/preview.
 - **DAST/mobile E2E:** Do not run dynamic scanners against production. Run any ZAP/Lighthouse/Playwright mobile pass only against local, preview, or staging.
 - **Backups/restore:** Run and document a provider-level restore drill before full-scale launch.

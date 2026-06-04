@@ -468,6 +468,29 @@ async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, pri
   };
 }
 
+async function resendSignupConfirmation(email) {
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error("Supabase confirmation email is not configured for this environment.");
+  }
+
+  const { error } = await client.auth.resend({
+    type: "signup",
+    email,
+    options: {
+      emailRedirectTo: getAuthCallbackUrl("/account.html"),
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return {
+    message: "If a Supabase signup exists for that email, a confirmation email has been sent. Check spam and Google Workspace quarantine if it does not arrive.",
+  };
+}
+
 async function requestPasswordReset(email) {
   const client = getSupabaseClient();
   if (!client) {
@@ -651,6 +674,7 @@ window.MelbBeerBusiness = {
   signInWithOAuth,
   signInWithEmail,
   signUpWithEmail,
+  resendSignupConfirmation,
   requestPasswordReset,
   renderNav,
   installFieldTestChrome,

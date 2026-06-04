@@ -4,35 +4,35 @@
   const PACKAGE_LABELS = new Set(["Cans only", "Bottles only"]);
   const MARKER_STATE_STYLES = Object.freeze({
     cheap: {
-      fillColor: "#15803d",
-      strokeColor: "#052e16",
-      labelColor: "#ffffff",
+      fillColor: "#22d3ee",
+      strokeColor: "#155e75",
+      labelColor: "#06101f",
       labelText: null,
       scale: 17,
       fillOpacity: 0.96,
       strokeWeight: 2.2,
     },
     mid: {
-      fillColor: "#d97706",
-      strokeColor: "#451a03",
-      labelColor: "#111827",
+      fillColor: "#a3e635",
+      strokeColor: "#4d7c0f",
+      labelColor: "#08110a",
       labelText: null,
       scale: 17,
       fillOpacity: 0.95,
       strokeWeight: 2.2,
     },
     high: {
-      fillColor: "#ea580c",
-      strokeColor: "#431407",
-      labelColor: "#ffffff",
+      fillColor: "#f5c542",
+      strokeColor: "#92400e",
+      labelColor: "#111827",
       labelText: null,
       scale: 17,
       fillOpacity: 0.95,
       strokeWeight: 2.2,
     },
     expensive: {
-      fillColor: "#b91c1c",
-      strokeColor: "#450a0a",
+      fillColor: "#d946ef",
+      strokeColor: "#701a75",
       labelColor: "#ffffff",
       labelText: null,
       scale: 17,
@@ -40,8 +40,8 @@
       strokeWeight: 2.2,
     },
     unknown: {
-      fillColor: "#475569",
-      strokeColor: "#e2e8f0",
+      fillColor: "#64748b",
+      strokeColor: "#cbd5e1",
       labelColor: "#ffffff",
       labelText: "?",
       scale: 14,
@@ -49,7 +49,7 @@
       strokeWeight: 2.8,
     },
     needs_data: {
-      fillColor: "#64748b",
+      fillColor: "#475569",
       strokeColor: "#f8fafc",
       labelColor: "#ffffff",
       labelText: "?",
@@ -58,8 +58,8 @@
       strokeWeight: 2.7,
     },
     mapped: {
-      fillColor: "#0f766e",
-      strokeColor: "#ccfbf1",
+      fillColor: "#2563eb",
+      strokeColor: "#bfdbfe",
       labelColor: "#ffffff",
       labelText: "✓",
       scale: 13,
@@ -67,8 +67,8 @@
       strokeWeight: 2.4,
     },
     package_only: {
-      fillColor: "#c2410c",
-      strokeColor: "#431407",
+      fillColor: "#8b5cf6",
+      strokeColor: "#ddd6fe",
       labelColor: "#ffffff",
       labelText: null,
       scale: 15,
@@ -76,7 +76,7 @@
       strokeWeight: 2.6,
     },
     unavailable: {
-      fillColor: "#7f1d1d",
+      fillColor: "#ef4444",
       strokeColor: "#fecaca",
       labelColor: "#ffffff",
       labelText: "NO",
@@ -85,7 +85,7 @@
       strokeWeight: 2.7,
     },
     locked: {
-      fillColor: "#7c3aed",
+      fillColor: "#8b5cf6",
       strokeColor: "#ddd6fe",
       labelColor: "#ffffff",
       labelText: "$",
@@ -271,7 +271,7 @@
     return {
       ...visual,
       state: `${state}_selected`,
-      strokeColor: "#f5c76b",
+      strokeColor: "#f5c542",
       strokeWeight: Math.max(visual.strokeWeight + 1.7, 4),
       scale: visual.scale + 2.4,
       fillOpacity: Math.min(visual.fillOpacity + 0.06, 1),
@@ -388,9 +388,9 @@
 
     if (safeCount >= 100) {
       return {
-        fillColor: "#9f1239",
-        strokeColor: "#fecdd3",
-        labelColor: "#ffffff",
+        fillColor: "#f5c542",
+        strokeColor: "#fef3c7",
+        labelColor: "#111827",
         scale: 28,
         fillOpacity: 0.9,
         strokeWeight: 4,
@@ -400,9 +400,9 @@
 
     if (safeCount >= 25) {
       return {
-        fillColor: "#b45309",
-        strokeColor: "#fde68a",
-        labelColor: "#111827",
+        fillColor: "#22d3ee",
+        strokeColor: "#a5f3fc",
+        labelColor: "#06101f",
         scale: 24,
         fillOpacity: 0.9,
         strokeWeight: 4,
@@ -412,7 +412,7 @@
 
     if (safeCount >= 10) {
       return {
-        fillColor: "#1d4ed8",
+        fillColor: "#2563eb",
         strokeColor: "#bfdbfe",
         labelColor: "#ffffff",
         scale: 21,
@@ -423,8 +423,8 @@
     }
 
     return {
-      fillColor: "#334155",
-      strokeColor: "#e2e8f0",
+      fillColor: "#172554",
+      strokeColor: "#38bdf8",
       labelColor: "#ffffff",
       scale: 18,
       fillOpacity: 0.86,

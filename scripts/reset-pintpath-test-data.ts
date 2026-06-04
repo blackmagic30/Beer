@@ -28,8 +28,13 @@ database.transaction(() => {
   const prefixLike = `${TEST_PREFIX}:%`;
   const testEmailLike = "%@pintpath.test";
 
-  database.prepare("DELETE FROM events WHERE id LIKE ? OR anonymous_session_id LIKE ?").run(prefixLike, prefixLike);
+  database.prepare("DELETE FROM events WHERE id LIKE ? OR anonymous_session_id LIKE ? OR user_id LIKE ?").run(prefixLike, prefixLike, prefixLike);
   database.prepare("DELETE FROM venue_analytics_events WHERE id LIKE ?").run(prefixLike);
+  database.prepare("DELETE FROM saved_items WHERE id LIKE ? OR user_id LIKE ?").run(prefixLike, prefixLike);
+  database.prepare("DELETE FROM feedback WHERE id LIKE ? OR user_id LIKE ? OR anonymous_session_id LIKE ?").run(prefixLike, prefixLike, prefixLike);
+  database.prepare("DELETE FROM wrong_price_reports WHERE id LIKE ? OR user_id LIKE ? OR anonymous_session_id LIKE ? OR venue_id LIKE ?").run(prefixLike, prefixLike, prefixLike, prefixLike);
+  database.prepare("DELETE FROM venue_requests WHERE id LIKE ? OR user_id LIKE ? OR anonymous_session_id LIKE ? OR venue_id LIKE ?").run(prefixLike, prefixLike, prefixLike, prefixLike);
+  database.prepare("DELETE FROM venue_interest_requests WHERE id LIKE ? OR user_id LIKE ? OR venue_id LIKE ?").run(prefixLike, prefixLike, prefixLike);
   database.prepare("DELETE FROM venue_pending_changes WHERE id LIKE ? OR venue_id LIKE ?").run(prefixLike, prefixLike);
   database.prepare("DELETE FROM venue_specials WHERE id LIKE ? OR venue_id LIKE ?").run(prefixLike, prefixLike);
   database.prepare("DELETE FROM venue_happy_hours WHERE id LIKE ? OR venue_id LIKE ?").run(prefixLike, prefixLike);
@@ -44,6 +49,7 @@ database.transaction(() => {
   database.prepare("DELETE FROM user_activity_events WHERE id LIKE ? OR user_id LIKE ?").run(prefixLike, prefixLike);
   database.prepare("DELETE FROM source_evidence_objects WHERE id LIKE ? OR owner_user_id LIKE ?").run(prefixLike, prefixLike);
   database.prepare("DELETE FROM auth_sessions WHERE user_id LIKE ?").run(prefixLike);
+  database.prepare("DELETE FROM account_privacy_settings WHERE user_id LIKE ?").run(prefixLike);
   database.prepare("DELETE FROM profiles WHERE id LIKE ? OR email LIKE ?").run(prefixLike, testEmailLike);
   database.prepare("DELETE FROM accounts WHERE id LIKE ? OR email LIKE ?").run(prefixLike, testEmailLike);
 })();
