@@ -184,6 +184,10 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('loading: "async"');
     expect(html).toContain("EFFECTIVE_GOOGLE_MAPS_MAP_ID");
     expect(html).toContain('gestureHandling: "greedy"');
+    expect(html).toContain('id="mapZoomControls"');
+    expect(html).toContain("installMapZoomControls(map)");
+    expect(html).toContain("installMacTrackpadZoomAssist(map, mapElement)");
+    expect(html).toContain('mapElement.addEventListener("wheel"');
     expect(html).toContain("const MAP_OVERLAYS_ENABLED = false");
     expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
     expect(html).not.toContain("new google.maps.Marker");

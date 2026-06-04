@@ -917,6 +917,62 @@
       min-height: 420px;
     }
 
+    .mapZoomControls {
+      position: absolute;
+      right: 14px;
+      top: 72px;
+      z-index: 6;
+      display: grid;
+      gap: 8px;
+      padding: 7px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 18px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
+        rgba(7, 12, 24, 0.88);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+      backdrop-filter: blur(18px);
+    }
+
+    .mapZoomButton {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      border: 1px solid rgba(34, 211, 238, 0.28);
+      border-radius: 14px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)),
+        rgba(15, 23, 42, 0.78);
+      color: #f8fafc;
+      cursor: pointer;
+      font: inherit;
+      font-size: 24px;
+      font-weight: 950;
+      line-height: 1;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+    }
+
+    .mapZoomButton:hover {
+      transform: translateY(-1px);
+      border-color: rgba(34, 211, 238, 0.55);
+      background:
+        linear-gradient(145deg, rgba(56, 189, 248, 0.18), rgba(139, 92, 246, 0.08)),
+        rgba(15, 23, 42, 0.88);
+      box-shadow: 0 0 20px rgba(34, 211, 238, 0.15);
+    }
+
+    .mapZoomButton:active {
+      transform: scale(0.96);
+    }
+
+    .mapZoomButton:focus-visible {
+      outline: 2px solid rgba(34, 211, 238, 0.86);
+      outline-offset: 3px;
+    }
+
     .searchAreaButton {
       position: absolute;
       top: 18px;
@@ -3467,6 +3523,10 @@
   <main id="mainContent" role="main">
     <div id="mapShell">
       <div id="map"></div>
+      <div id="mapZoomControls" class="mapZoomControls" aria-label="Map zoom controls">
+        <button id="mapZoomInButton" class="mapZoomButton" type="button" aria-label="Zoom map in">+</button>
+        <button id="mapZoomOutButton" class="mapZoomButton" type="button" aria-label="Zoom map out">-</button>
+      </div>
       <div id="mapOverlayTabs" aria-label="Map panels" hidden>
         <button class="overlayTab" type="button" data-overlay-panel="list" aria-pressed="false">Visible now</button>
         <button class="overlayTab" type="button" data-overlay-panel="legend" aria-pressed="false">Legend</button>
@@ -7344,6 +7404,85 @@
       return window.__melbBeerBotGoogleMapsPromise;
     }
 
+    const MAP_MIN_ZOOM = 5;
+    const MAP_MAX_ZOOM = 19;
+    const MAP_DEFAULT_ZOOM = 13;
+
+    function clampMapZoom(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        return MAP_DEFAULT_ZOOM;
+      }
+      return Math.min(MAP_MAX_ZOOM, Math.max(MAP_MIN_ZOOM, Math.round(numeric)));
+    }
+
+    function setMapZoomStep(map, step) {
+      if (!map || typeof map.getZoom !== "function" || typeof map.setZoom !== "function") {
+        return;
+      }
+
+      const currentZoom = clampMapZoom(map.getZoom());
+      map.setZoom(clampMapZoom(currentZoom + step));
+    }
+
+    function installMapZoomControls(map) {
+      const zoomInButton = document.getElementById("mapZoomInButton");
+      const zoomOutButton = document.getElementById("mapZoomOutButton");
+      if (!zoomInButton || !zoomOutButton) {
+        return;
+      }
+
+      zoomInButton.addEventListener("click", () => setMapZoomStep(map, 1));
+      zoomOutButton.addEventListener("click", () => setMapZoomStep(map, -1));
+    }
+
+    function installMacTrackpadZoomAssist(map, mapElement) {
+      if (!map || !mapElement || mapElement.dataset.trackpadZoomAssist === "installed") {
+        return;
+      }
+
+      mapElement.dataset.trackpadZoomAssist = "installed";
+      let wheelDelta = 0;
+      let lastWheelAt = 0;
+      let lastZoomAt = 0;
+
+      mapElement.addEventListener("wheel", (event) => {
+        if (event.defaultPrevented) {
+          return;
+        }
+
+        const now = window.performance?.now?.() || Date.now();
+        const rawDelta = event.deltaMode === 1
+          ? event.deltaY * 16
+          : event.deltaMode === 2
+            ? event.deltaY * 120
+            : event.deltaY;
+
+        if (!Number.isFinite(rawDelta) || Math.abs(rawDelta) < 1) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (now - lastWheelAt > 260) {
+          wheelDelta = 0;
+        }
+
+        lastWheelAt = now;
+        wheelDelta += rawDelta;
+
+        const threshold = Math.abs(rawDelta) >= 80 ? 70 : 42;
+        if (Math.abs(wheelDelta) < threshold || now - lastZoomAt < 95) {
+          return;
+        }
+
+        setMapZoomStep(map, wheelDelta > 0 ? -1 : 1);
+        lastZoomAt = now;
+        wheelDelta = 0;
+      }, { passive: false, capture: true });
+    }
+
     async function init() {
       try {
         syncAuthenticatedNavLinks();
@@ -7374,9 +7513,10 @@
         if (typeof AdvancedMarkerElement !== "function") {
           throw new Error("Google Maps marker library did not expose AdvancedMarkerElement");
         }
-        const map = new google.maps.Map(document.getElementById("map"), {
+        const mapElement = document.getElementById("map");
+        const map = new google.maps.Map(mapElement, {
           center: { lat: -37.8136, lng: 144.9631 },
-          zoom: 13,
+          zoom: MAP_DEFAULT_ZOOM,
           gestureHandling: "greedy",
           scrollwheel: true,
           zoomControl: true,
@@ -7386,6 +7526,8 @@
           mapId: EFFECTIVE_GOOGLE_MAPS_MAP_ID,
         });
         googleMapInstance = map;
+        installMapZoomControls(map);
+        installMacTrackpadZoomAssist(map, mapElement);
 
         let rows = [];
         let allVenues = [];
