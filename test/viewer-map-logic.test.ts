@@ -183,11 +183,13 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('libraries: "marker,places"');
     expect(html).toContain('loading: "async"');
     expect(html).toContain("EFFECTIVE_GOOGLE_MAPS_MAP_ID");
-    expect(html).toContain('gestureHandling: "greedy"');
-    expect(html).toContain('id="mapZoomControls"');
-    expect(html).toContain("installMapZoomControls(map)");
-    expect(html).toContain("installMacTrackpadZoomAssist(map, mapElement)");
+    expect(html).toContain("useConfiguredGoogleMapsMapId");
+    expect(html).toContain('gestureHandling: "cooperative"');
+    expect(html).toContain("zoomControl: false");
+    expect(html).toContain("installCommandScrollZoomAssist(map, mapElement)");
     expect(html).toContain('mapElement.addEventListener("wheel"');
+    expect(html).toContain("if (!event.metaKey && !event.ctrlKey)");
+    expect(html).not.toContain('id="mapZoomControls"');
     expect(html).toContain("const MAP_OVERLAYS_ENABLED = false");
     expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
     expect(html).not.toContain("new google.maps.Marker");
