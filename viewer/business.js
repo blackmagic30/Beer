@@ -536,21 +536,22 @@ async function updatePassword(password) {
 }
 
 function renderNav(active = "") {
+  const activeKey = active === "trust" ? "faq" : active;
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
-  const feedbackLink = isFieldTestMode() ? `<a ${active === "feedback" ? 'class="pill"' : ""} href="/feedback.html">Feedback</a>` : "";
   const venueManagerNav = active === "venue-portal" || isVenueManagerContext();
-  const authenticatedLinks = hasAuthenticatedSessionHint() && !venueManagerNav
-    ? `
-        <a ${active === "missions" ? 'class="pill"' : ""} href="/missions.html">Missions</a>
-        <a ${active === "submit" ? 'class="pill"' : ""} href="/submit.html">Submit data</a>
-      `
-    : "";
-  const dashboardLink = venueManagerNav
-    ? `<a ${active === "venue-portal" ? 'class="pill"' : ""} href="/venue-portal.html">Dashboard</a>`
-    : "";
-  const trustLink = venueManagerNav
-    ? ""
-    : `<a ${active === "trust" ? 'class="pill"' : ""} href="/trust.html">Trust</a>`;
+  const navItems = [
+    { key: "map", href: "/", label: "Map" },
+    { key: "missions", href: "/missions.html", label: "Missions" },
+    { key: "submit", href: "/submit.html", label: "Submit" },
+    ...(venueManagerNav ? [{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }] : []),
+    { key: "pricing", href: "/pricing.html", label: "Pricing" },
+    { key: "faq", href: "/trust.html", label: "FAQ" },
+    { key: "account", href: "/account.html", label: "Account" },
+    ...(isFieldTestMode() ? [{ key: "feedback", href: "/feedback.html", label: "Feedback" }] : []),
+  ];
+  const navLinks = navItems
+    .map((item) => `<a ${activeKey === item.key ? 'class="pill"' : ""} href="${item.href}">${item.label}</a>`)
+    .join("");
   return `
     <nav class="topNav" aria-label="Primary">
       <a class="brand" href="/">
@@ -559,13 +560,7 @@ function renderNav(active = "") {
       </a>
       ${betaPill}
       <div class="navLinks">
-        <a ${active === "map" ? 'class="pill"' : ""} href="/">Map</a>
-        ${dashboardLink}
-        ${authenticatedLinks}
-        ${trustLink}
-        <a ${active === "pricing" ? 'class="pill"' : ""} href="/pricing.html">Pricing</a>
-        <a ${active === "account" ? 'class="pill"' : ""} href="/account.html">Account</a>
-        ${feedbackLink}
+        ${navLinks}
       </div>
     </nav>
   `;

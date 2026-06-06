@@ -18,7 +18,7 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="loginRequiredPanel"');
     expect(html).toContain('id="submissionPanel" class="panel is-hidden"');
     expect(html).toContain("Sign in before submitting data");
-    expect(html).toContain("every upload is linked to an account");
+    expect(html).toContain("uploads accountable");
     expect(html).toContain("False or abusive data can receive fraud strikes");
     expect(html).toContain("await MelbBeerBusiness.apiFetch(\"/api/business/account\")");
     expect(html).toContain("window.location.assign(loginUrl)");
@@ -38,10 +38,17 @@ describe("submit page auth gate", () => {
     expect(html).toContain("Chosen venue");
     expect(html).not.toContain("Choose venue");
     expect(html).toContain('id="venueSelect" class="readonlySelect" required disabled');
-    expect(html).toContain("Search above and click the matching venue suggestion before submitting.");
+    expect(html).toContain('id="venueSuggestionList" class="venueSuggestionList" role="listbox"');
+    expect(html).toContain("Type 2 or more characters, then tap a venue.");
+    expect(html).toContain("Search above and tap the matching venue before submitting.");
     expect(html).toContain("function clearSelectedVenue");
+    expect(html).toContain("VENUE_SEARCH_DEBOUNCE_MS");
+    expect(html).toContain("venueSearchCache");
+    expect(html).toContain("venueSearchRequestId");
+    expect(html).toContain('venueSuggestionList.addEventListener("click"');
     expect(html).toContain("Search and choose a venue first, or tick that the venue is not on Pint Path yet.");
     expect(html).not.toContain('venueSelect.addEventListener("change"');
+    expect(html).not.toContain('list="venueSuggestions"');
   });
 
   it("lets contributors request a missing venue with beer data before admin approval", () => {

@@ -13,8 +13,8 @@
     <div id="nav"></div>
     <section class="hero">
       <div class="eyebrow">Submit venue data</div>
-      <h1>Help keep Melbourne beer prices accurate.</h1>
-      <p class="lead">Log in to submit manual beer-price rows or attach a menu/tap-list/photo source. Public data stays pending until reviewed or sufficiently verified.</p>
+      <h1>Add what you saw.</h1>
+      <p class="lead">Pick a venue, add the beer or happy-hour info, then submit. We review it before it reaches the public map.</p>
     </section>
 
     <section id="loginRequiredPanel" class="panel">
@@ -23,16 +23,16 @@
           <div class="eyebrow">Login required</div>
           <h2>Sign in before submitting data</h2>
         </div>
-        <p class="muted">This keeps Pint Path useful: every upload is linked to an account so false or abusive submissions can be reviewed, rejected, fraud-struck, or rate-limited.</p>
+        <p class="muted">This keeps uploads accountable and makes points, drafts, and review follow-up work properly.</p>
       </div>
       <div class="grid grid--two">
         <article class="card">
           <h3>Why we ask for login</h3>
-          <p class="muted">Logged-in submissions help reviewers contact the right contributor, track repeat issues, and protect the map from spam or bot uploads.</p>
+          <p class="muted">Logged-in submissions help reviewers protect the map from spam or bad data.</p>
         </article>
         <article class="card">
           <h3>What stays private</h3>
-          <p class="muted">Your raw menu photos, receipts, and source evidence stay private for review. Only approved, normalized venue data can appear on the public map.</p>
+          <p class="muted">Photos, receipts, and review evidence stay private. Approved venue data can appear publicly.</p>
         </article>
       </div>
       <div class="actionRow" style="margin-top:16px;">
@@ -58,13 +58,14 @@
       <form id="submissionForm" class="form">
         <div class="grid grid--two">
           <label class="field">Search venue
-            <input id="venueSearchInput" type="search" list="venueSuggestions" placeholder="Try partial names: rooftop, sandrin, union…" autocomplete="off" />
+            <input id="venueSearchInput" type="search" placeholder="Venue, suburb, or street" autocomplete="off" autocapitalize="words" spellcheck="false" />
             <datalist id="venueSuggestions"></datalist>
-            <span id="venueSearchHelp" class="fieldHint">Start typing a venue name, suburb, or street. Suggestions update as you type.</span>
+            <div id="venueSuggestionList" class="venueSuggestionList" role="listbox" aria-label="Venue suggestions" hidden></div>
+            <span id="venueSearchHelp" class="fieldHint">Type 2 or more characters, then tap a venue.</span>
           </label>
           <label class="field">Chosen venue
             <select id="venueSelect" class="readonlySelect" required disabled aria-disabled="true" tabindex="-1"></select>
-            <span id="venueChoiceHelp" class="fieldHint">Search above and click the matching venue suggestion before submitting.</span>
+            <span id="venueChoiceHelp" class="fieldHint">Search above and tap the matching venue before submitting.</span>
           </label>
         </div>
         <div class="notice">
@@ -185,6 +186,8 @@
   <script>
     let venues = [];
     let venueSearchTimer = null;
+    let venueSearchRequestId = 0;
+    let lastVenueQuery = "";
     let draftSaveTimer = null;
     let uploadLocation = null;
     let isNewVenueMode = false;
@@ -192,6 +195,10 @@
     const FIELD_DRAFT_STORAGE_KEY = "pintPathSubmitDraft";
     const UPLOAD_LOCATION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
     const FIELD_DRAFT_MAX_AGE_MS = 18 * 60 * 60 * 1000;
+    const VENUE_SEARCH_LIMIT = 12;
+    const VENUE_QUERY_MIN_LENGTH = 2;
+    const VENUE_SEARCH_DEBOUNCE_MS = 320;
+    const venueSearchCache = new Map();
     const QUICK_BEERS = [
       "Guinness",
       "Carlton Draft",
@@ -507,13 +514,56 @@
       return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
     }
 
+    function conciseVenueLabel(venue) {
+      return [venue?.name, venue?.suburb].filter(Boolean).join(", ") || venueLabel(venue);
+    }
+
     function findVenueFromSearchValue(value) {
       const normalized = normalizeVenueText(value);
       if (!normalized) {
         return null;
       }
 
-      return venues.find((venue) => normalizeVenueText(venueLabel(venue)) === normalized) || null;
+      return venues.find((venue) =>
+        normalizeVenueText(venueLabel(venue)) === normalized ||
+        normalizeVenueText(conciseVenueLabel(venue)) === normalized,
+      ) || null;
+    }
+
+    function renderVenueSuggestions(nextVenues = venues) {
+      const query = normalizeVenueText(venueSearchInput.value);
+      const suggestions = Array.isArray(nextVenues) ? nextVenues.slice(0, VENUE_SEARCH_LIMIT) : [];
+      if (!query || query.length < VENUE_QUERY_MIN_LENGTH || !suggestions.length || isNewVenueMode) {
+        venueSuggestionList.innerHTML = "";
+        venueSuggestionList.hidden = true;
+        return;
+      }
+
+      venueSuggestionList.hidden = false;
+      venueSuggestionList.innerHTML = suggestions.map((venue) => {
+        const selected = venue.id === venueSelect.value;
+        const meta = [venue.suburb, venue.address].filter(Boolean).join(" · ");
+        return `
+          <button class="venueSuggestionButton" type="button" role="option" aria-selected="${selected ? "true" : "false"}" data-venue-id="${escapeHtml(venue.id)}">
+            <span>${escapeHtml(venue.name)}</span>
+            ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
+          </button>
+        `;
+      }).join("");
+    }
+
+    function setVenueResults(nextVenues, currentVenueId = venueSelect.value) {
+      venues = Array.isArray(nextVenues) ? nextVenues.slice(0, VENUE_SEARCH_LIMIT) : [];
+      venueSuggestions.innerHTML = venues
+        .map((venue) => `<option value="${escapeHtml(conciseVenueLabel(venue))}"></option>`)
+        .join("");
+      venueSelect.innerHTML = venues.length
+        ? `<option value="">No venue chosen yet</option>${venues.map((venue) => `<option value="${escapeHtml(venue.id)}">${escapeHtml(conciseVenueLabel(venue))}</option>`).join("")}`
+        : '<option value="">No matching venues found</option>';
+      if (currentVenueId && venues.some((venue) => venue.id === currentVenueId)) {
+        venueSelect.value = currentVenueId;
+      }
+      renderVenueSuggestions(venues);
     }
 
     function selectVenue(venue) {
@@ -525,12 +575,18 @@
         newVenueToggle.checked = false;
         setNewVenueMode(false);
       }
+      if (!Array.from(venueSelect.options).some((option) => option.value === venue.id)) {
+        venueSelect.innerHTML = `<option value="${escapeHtml(venue.id)}">${escapeHtml(conciseVenueLabel(venue))}</option>`;
+      }
       venueSelect.value = venue.id;
+      venueSearchInput.value = conciseVenueLabel(venue);
       venueSearchHelp.textContent = `Selected ${venueLabel(venue)}.`;
       venueChoiceHelp.textContent = "Chosen venue locked. Continue with the submission type and details below.";
+      venueSuggestionList.innerHTML = "";
+      venueSuggestionList.hidden = true;
     }
 
-    function clearSelectedVenue(message = "No venue chosen yet. Search above and click a venue suggestion.") {
+    function clearSelectedVenue(message = "No venue chosen yet. Search above and tap a venue suggestion.") {
       venueSelect.value = "";
       venueChoiceHelp.textContent = message;
     }
@@ -548,6 +604,8 @@
       if (enabled) {
         clearSelectedVenue("New venue mode enabled. Add venue details below before submitting.");
         venueSearchHelp.textContent = "Existing venue search is paused while you add a new venue.";
+        venueSuggestionList.innerHTML = "";
+        venueSuggestionList.hidden = true;
         if (!newVenueName.value.trim() && venueSearchInput.value.trim()) {
           newVenueName.value = venueSearchInput.value.trim().split("·")[0].split(",")[0].trim();
         }
@@ -556,8 +614,8 @@
       } else {
         venueSearchInput.disabled = false;
         newVenueName.required = false;
-        clearSelectedVenue("Search above and click the matching venue suggestion before submitting.");
-        venueSearchHelp.textContent = "Start typing a venue name, suburb, or street. Suggestions update as you type.";
+        clearSelectedVenue("Search above and tap the matching venue before submitting.");
+        venueSearchHelp.textContent = "Type 2 or more characters, then tap a venue.";
       }
     }
 
@@ -1015,22 +1073,33 @@
     }
 
     async function loadVenues(query = "") {
+      const normalizedQuery = String(query || "").trim();
+      const cacheKey = normalizeVenueText(normalizedQuery);
       const currentVenueId = venueSelect.value;
-      const data = await MelbBeerBusiness.apiFetch(`/api/business/venues?q=${encodeURIComponent(query)}&limit=50`);
-      venues = data.venues;
-      venueSuggestions.innerHTML = venues.map((venue) => `<option value="${escapeHtml(venueLabel(venue))}"></option>`).join("");
-      venueSelect.innerHTML = venues.length
-        ? `<option value="">No venue chosen yet</option>${venues.map((venue) => `<option value="${escapeHtml(venue.id)}">${escapeHtml(venueLabel(venue))}</option>`).join("")}`
-        : '<option value="">No matching venues found</option>';
-      if (currentVenueId && venues.some((venue) => venue.id === currentVenueId)) {
-        venueSelect.value = currentVenueId;
+      if (cacheKey && venueSearchCache.has(cacheKey)) {
+        setVenueResults(venueSearchCache.get(cacheKey), currentVenueId);
+        venueChoiceHelp.textContent = venues.length
+          ? "Tap a result to choose the venue."
+          : "No match yet. Try a shorter venue name, suburb, or street.";
         return;
       }
+
+      const requestId = ++venueSearchRequestId;
+      const data = await MelbBeerBusiness.apiFetch(`/api/business/venues?q=${encodeURIComponent(normalizedQuery)}&limit=${VENUE_SEARCH_LIMIT}`);
+      if (requestId !== venueSearchRequestId) {
+        return;
+      }
+
+      const nextVenues = Array.isArray(data.venues) ? data.venues.slice(0, VENUE_SEARCH_LIMIT) : [];
+      if (cacheKey) {
+        venueSearchCache.set(cacheKey, nextVenues);
+      }
+      setVenueResults(nextVenues, currentVenueId);
       clearSelectedVenue(venues.length
-        ? "Search above and click the matching venue suggestion before submitting."
+        ? "Tap a result to choose the venue."
         : "No match yet. Try a shorter venue name, suburb, or street.");
       venueChoiceHelp.textContent = venues.length
-        ? "Search above and click the matching venue suggestion before submitting."
+        ? "Tap a result to choose the venue."
         : "No match yet. Try a shorter venue name, suburb, or street.";
     }
 
@@ -1132,11 +1201,23 @@
       });
       submissionTypeSelect.addEventListener("change", applySubmissionType);
       newVenueToggle.addEventListener("change", () => setNewVenueMode(newVenueToggle.checked));
+      venueSuggestionList.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-venue-id]");
+        if (!button) {
+          return;
+        }
+        const selectedVenue = venues.find((venue) => venue.id === button.dataset.venueId);
+        if (selectedVenue) {
+          selectVenue(selectedVenue);
+          scheduleDraftAutosave();
+        }
+      });
       venueSearchInput.addEventListener("input", () => {
         if (isNewVenueMode) {
           return;
         }
         window.clearTimeout(venueSearchTimer);
+        const query = venueSearchInput.value.trim();
         const selectedSuggestion = findVenueFromSearchValue(venueSearchInput.value);
         if (selectedSuggestion) {
           selectVenue(selectedSuggestion);
@@ -1144,16 +1225,28 @@
         }
 
         clearSelectedVenue();
-        venueSearchHelp.textContent = venueSearchInput.value.trim()
-          ? "Searching venues. Pick a suggestion from the venue search field."
-          : "Start typing a venue name, suburb, or street. Suggestions update as you type.";
+        if (query.length < VENUE_QUERY_MIN_LENGTH) {
+          lastVenueQuery = "";
+          venueSearchRequestId += 1;
+          setVenueResults([]);
+          venueSearchHelp.textContent = "Type 2 or more characters, then tap a venue.";
+          return;
+        }
+
+        venueSearchHelp.textContent = "Searching venues...";
         venueSearchTimer = window.setTimeout(async () => {
-          await loadVenues(venueSearchInput.value);
+          const nextQuery = venueSearchInput.value.trim();
+          if (nextQuery === lastVenueQuery && venueSuggestionList.innerHTML) {
+            renderVenueSuggestions();
+            return;
+          }
+          lastVenueQuery = nextQuery;
+          await loadVenues(nextQuery);
           const matched = findVenueFromSearchValue(venueSearchInput.value);
           if (matched) {
             selectVenue(matched);
           }
-        }, 180);
+        }, VENUE_SEARCH_DEBOUNCE_MS);
       });
       venueSearchInput.value = initialVenueName;
       await loadVenues(initialVenueName);

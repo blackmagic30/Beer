@@ -67,6 +67,7 @@ function createBusinessService(
     ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
     SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
     SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: 300,
+    POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
     NODE_ENV: "test",
     STRIPE_SECRET_KEY: undefined,
     STRIPE_WEBHOOK_SECRET: undefined,
@@ -2314,6 +2315,164 @@ describe("business demo contribution model", () => {
       "personal_preferences",
       "savings_tracker",
     ]));
+  });
+
+  it("supports Pro venue POS discount webhooks with scoped tokens and privacy-safe venue stats", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "pos-discount-admin", "admin");
+    const manager = createAccount(repository, "pos-discount-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "pos-discount-venue",
+      venueName: "POS Discount Venue",
+      suburb: "CBD",
+    });
+    service.upsertBarProfile(admin, "pos-discount-venue", {
+      name: "POS Discount Venue",
+      address: "1 Collins St",
+      suburb: "CBD",
+      area: "CBD",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "A Pro venue testing POS redemptions.",
+      openingHours: {},
+      venueTags: ["sports bar"],
+      membershipTier: "pro",
+      active: true,
+    });
+    service.upsertBarProfile(admin, "pos-basic-venue", {
+      name: "POS Basic Venue",
+      address: "2 Collins St",
+      suburb: "CBD",
+      area: "CBD",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "A basic venue should not use POS automation.",
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      active: true,
+    });
+
+    const assignedManager = repository.getAccountById(manager.id)!;
+    const integration = service.getVenuePosIntegration(assignedManager, "pos-discount-venue");
+    expect(integration.enabled).toBe(true);
+    expect(integration.token).toMatch(/^[a-f0-9]{64}$/);
+    expect(integration.payloadExample).toEqual(expect.objectContaining({
+      venueId: "pos-discount-venue",
+      discountAmountCents: 200,
+    }));
+
+    const premiumUser = updateSubscription(
+      repository,
+      createAccount(repository, "pos-discount-premium-user").id,
+      "premium_monthly",
+      PREMIUM_UNTIL,
+    );
+    const pass = await service.getDiscountPass(
+      premiumUser,
+      createSession(repository, premiumUser.id, "pos-discount-user-session-token"),
+    );
+
+    const redemption = service.redeemDiscountPassFromPos({
+      venueId: "pos-discount-venue",
+      code: pass.code,
+      specialId: null,
+      itemName: "Pint Path $2 house pint",
+      quantity: 1,
+      discountAmountCents: 200,
+      posReference: "receipt-4242",
+      terminalId: "front-bar-1",
+      redeemedAt: "2026-05-04T08:02:00.000Z",
+      metadata: {
+        cashierEmail: "should-not-store@example.com",
+        note: "safe note",
+      },
+    }, integration.token ?? "");
+
+    expect(redemption.accountId).toBe(premiumUser.publicAccountId);
+    expect(redemption.estimatedSavingsDollars).toBe(2);
+    expect(redemption.redemption.redeemedByUserId).toBeNull();
+    expect(redemption.redemption.metadata).toEqual(expect.objectContaining({
+      source: "pos_webhook",
+      redeemedByRole: "pos_webhook",
+      posReference: "receipt-4242",
+      terminalId: "front-bar-1",
+      note: "safe note",
+    }));
+    expect(JSON.stringify(redemption.redemption.metadata)).not.toContain("should-not-store@example.com");
+
+    expect(() =>
+      service.redeemDiscountPassFromPos({
+        venueId: "pos-discount-venue",
+        code: pass.code,
+        itemName: "Replay",
+        quantity: 1,
+        discountAmountCents: 200,
+      }, integration.token ?? ""),
+    ).toThrow("Discount code expired or not found.");
+
+    expect(() =>
+      service.redeemDiscountPassFromPos({
+        venueId: "pos-basic-venue",
+        code: pass.code,
+        itemName: "Wrong venue",
+        quantity: 1,
+        discountAmountCents: 200,
+      }, integration.token ?? ""),
+    ).toThrow("Invalid POS webhook token.");
+
+    const basicIntegration = service.getVenuePosIntegration(admin, "pos-basic-venue");
+    expect(basicIntegration).toEqual(expect.objectContaining({
+      enabled: false,
+      proRequired: true,
+      token: null,
+    }));
+    const basicVenueToken = crypto
+      .createHmac("sha256", "test-pos-webhook-signing-secret-32-bytes")
+      .update("pint-path-pos-redemption:pos-basic-venue")
+      .digest("hex");
+    const secondPass = await service.getDiscountPass(
+      premiumUser,
+      createSession(repository, premiumUser.id, "pos-discount-second-user-session-token"),
+    );
+    expect(() =>
+      service.redeemDiscountPassFromPos({
+        venueId: "pos-basic-venue",
+        code: secondPass.code,
+        itemName: "Basic venue POS attempt",
+        quantity: 1,
+        discountAmountCents: 100,
+      }, basicVenueToken),
+    ).toThrow("Pro venue tier required for POS webhook redemptions.");
+
+    const portal = service.getVenuePortal(assignedManager, { venueId: "pos-discount-venue" });
+    expect(portal.posIntegration).toEqual(expect.objectContaining({
+      enabled: true,
+      venueId: "pos-discount-venue",
+      authHeader: "X-Pint-Path-POS-Token",
+    }));
+    expect(portal.discounts).toEqual(expect.objectContaining({
+      totalRedemptions: 1,
+      estimatedSavingsCents: 200,
+      estimatedSavingsDollars: 2,
+      uniqueAccounts: 1,
+      totalQuantity: 1,
+    }));
+    expect(portal.discounts.topItems[0]).toEqual(expect.objectContaining({
+      itemName: "Pint Path $2 house pint",
+      redemptions: 1,
+    }));
+    expect(portal.discounts.recentRedemptions[0]).toEqual(expect.objectContaining({
+      accountId: premiumUser.publicAccountId,
+      itemName: "Pint Path $2 house pint",
+      source: "pos_webhook",
+      posReference: "receipt-4242",
+    }));
   });
 
   it("publishes approved submission items as photo-verified public price records", () => {

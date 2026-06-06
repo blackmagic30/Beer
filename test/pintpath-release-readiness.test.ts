@@ -64,6 +64,7 @@ function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessS
     ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
     SOURCE_EVIDENCE_SIGNING_SECRET: "release-readiness-source-evidence-secret",
     SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: 300,
+    POS_WEBHOOK_SIGNING_SECRET: "release-readiness-pos-webhook-secret",
     NODE_ENV: "test",
     STRIPE_SECRET_KEY: undefined,
     STRIPE_WEBHOOK_SECRET: undefined,

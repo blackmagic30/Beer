@@ -132,6 +132,7 @@ const envSchema = z.object({
   ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: booleanFromEnv.default(false),
   SOURCE_EVIDENCE_SIGNING_SECRET: optionalStringFromEnv,
   SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(300),
+  POS_WEBHOOK_SIGNING_SECRET: optionalStringFromEnv,
   FIELD_TEST_MODE: booleanFromEnv.default(false),
   STRIPE_SECRET_KEY: optionalStringFromEnv,
   STRIPE_WEBHOOK_SECRET: optionalStringFromEnv,

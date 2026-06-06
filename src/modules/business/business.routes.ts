@@ -35,6 +35,7 @@ import {
   monthlyReportDeliverySchema,
   monthlyReportExportQuerySchema,
   monthlyReportGenerateSchema,
+  posDiscountRedemptionSchema,
   priceRecordsQuerySchema,
   removeSavedItemSchema,
   retentionQuerySchema,
@@ -405,6 +406,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       .send(result.body);
   });
 
+  router.post("/pos/discount-redemptions", writeLimiter, (req, res) => {
+    const body = parseWithSchema(posDiscountRedemptionSchema, req.body, "Invalid POS discount redemption payload");
+    const bearerToken = getAuthorization(req)?.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
+    const token = req.header("x-pint-path-pos-token") ?? bearerToken;
+    res.status(201).json(success(businessService.redeemDiscountPassFromPos(body, token, getRequestContext(req))));
+  });
+
   router.post("/venue-claim-requests", writeLimiter, (req, res) => {
     const account = requireAdmin(req, businessService);
     const body = parseWithSchema(venueClaimRequestSchema, req.body, "Invalid venue claim request payload");
@@ -465,6 +473,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const body = parseWithSchema(discountRedemptionSchema, req.body, "Invalid discount redemption payload");
     const venueId = String(req.params.venueId ?? "");
     res.status(201).json(success(businessService.redeemDiscountPass(account, venueId, body)));
+  });
+
+  router.get("/venue-portal/:venueId/pos-integration", (req, res) => {
+    const account = requireAccount(req, businessService);
+    const venueId = String(req.params.venueId ?? "");
+    res.json(success(businessService.getVenuePosIntegration(account, venueId)));
   });
 
   router.delete("/venue-portal/:venueId/specials/:specialId", writeLimiter, (req, res) => {

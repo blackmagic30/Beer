@@ -263,6 +263,10 @@ describe("viewer map UI wiring", () => {
   });
 
   it("renders the simplified public header, primary controls, and contributor-only advanced filters", () => {
+    expect(html).toContain('class="mapNavCard" aria-label="Primary"');
+    expect(html).toContain('class="mapBrand" href="/"');
+    expect(html).toContain('class="mapHeroCard" aria-label="Map overview"');
+    expect(html).toContain("Melbourne beer map");
     expect(html).toContain('id="topbarBusinessLinks"');
     expect(html).toContain('id="accessPill"');
     expect(html).toContain('class="controlDeck"');

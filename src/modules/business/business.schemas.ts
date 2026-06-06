@@ -666,6 +666,22 @@ export const discountRedemptionSchema = z.object({
   notes: nullableTrimmedStringSchema.default(null),
 });
 
+export const posDiscountRedemptionSchema = z.object({
+  venueId: z.string().trim().min(1).max(180),
+  code: z.string().trim()
+    .regex(/^[A-Za-z0-9]{6}$/, "Use the current 6-character Pint Path discount code.")
+    .transform((value) => value.toUpperCase()),
+  specialId: nullableTrimmedStringSchema.default(null),
+  itemName: z.string().trim().min(1).max(180),
+  quantity: z.coerce.number().int().min(1).max(20).default(1),
+  discountAmountCents: z.coerce.number().int().min(0).max(100_000).default(0),
+  estimatedSavingsCents: z.coerce.number().int().min(0).max(100_000).optional(),
+  posReference: nullableTrimmedStringSchema.default(null),
+  terminalId: nullableTrimmedStringSchema.default(null),
+  redeemedAt: z.string().datetime({ offset: true }).optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
 export const barTierCheckoutSchema = z.object({
   tier: z.enum(["plus", "pro"]),
 });
@@ -723,5 +739,6 @@ export type CheckoutInput = z.infer<typeof checkoutSchema>;
 export type CheckoutSessionInput = z.infer<typeof checkoutSessionSchema>;
 export type LeaderboardQuery = z.infer<typeof leaderboardQuerySchema>;
 export type DiscountRedemptionInput = z.infer<typeof discountRedemptionSchema>;
+export type PosDiscountRedemptionInput = z.infer<typeof posDiscountRedemptionSchema>;
 export type BarTierCheckoutInput = z.infer<typeof barTierCheckoutSchema>;
 export type PriceRecordsQuery = z.infer<typeof priceRecordsQuerySchema>;

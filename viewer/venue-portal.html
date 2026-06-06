@@ -106,6 +106,23 @@
                 <span class="pill">Explicit redemption only</span>
               </div>
               <form id="discountRedemptionForm" class="form">
+                <div class="discountQuickPanel">
+                  <div>
+                    <span class="eyebrow">Common app discount</span>
+                    <div class="actionRow actionRow--compact">
+                      <button class="button button--small" type="button" data-savings-dollars="1">$1 off</button>
+                      <button class="button button--small button--primary" type="button" data-savings-dollars="2">$2 off</button>
+                    </div>
+                  </div>
+                  <div>
+                    <span class="eyebrow">Fast drink labels</span>
+                    <div class="actionRow actionRow--compact">
+                      <button class="button button--small" type="button" data-discount-item="House pint">House pint</button>
+                      <button class="button button--small" type="button" data-discount-item="Tap beer">Tap beer</button>
+                      <button class="button button--small" type="button" data-discount-item="Pint Path special">Pint Path special</button>
+                    </div>
+                  </div>
+                </div>
                 <div class="grid grid--two">
                   <label class="field">User code
                     <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="ABC123" required />
@@ -128,6 +145,7 @@
                 <button class="button button--primary" type="submit">Redeem discount</button>
               </form>
               <div id="discountRedemptionStatus" class="notice" role="status">Enter a current code to redeem.</div>
+              <div id="discountOpsPanel" class="discountOpsPanel" style="margin-top:16px;"></div>
             </article>
           </section>
 
@@ -731,6 +749,7 @@
       renderOverviewData(data);
       renderTierGuide(data);
       renderBusinessToolkit(data);
+      renderDiscountOps(data);
       renderPendingChanges(data.pendingChanges || []);
       renderAnalytics(data);
       renderMonthlyReport(data);
@@ -917,6 +936,83 @@
             <button class="button button--premium" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
           </div>
         `}
+      `;
+    }
+
+    function renderDiscountOps(data) {
+      const panel = document.getElementById("discountOpsPanel");
+      if (!panel) return;
+
+      const discounts = data.discounts || {};
+      const pos = data.posIntegration || {};
+      const topItems = discounts.topItems || [];
+      const recent = discounts.recentRedemptions || [];
+      const totalRedemptions = Number(discounts.totalRedemptions || 0);
+      const totalSavings = formatCurrency(discounts.estimatedSavingsDollars || 0);
+
+      panel.innerHTML = `
+        <div class="posSetupCard">
+          <div class="sectionHeader" style="margin-bottom:10px;">
+            <div>
+              <div class="eyebrow">Discount proof</div>
+              <h3>${formatCount(totalRedemptions)} redemptions</h3>
+            </div>
+            <span class="pill">${escapeHtml(totalSavings)} saved</span>
+          </div>
+          <p class="muted">${escapeHtml(discounts.copy || "Redemptions are logged only when a user shows their rotating Pint Path code.")}</p>
+          <div class="grid grid--two">
+            <div class="metricCard">
+              <div class="metricValue">${formatCount(discounts.totalQuantity || 0)}</div>
+              <div class="metricLabel">drinks discounted</div>
+            </div>
+            <div class="metricCard">
+              <div class="metricValue">${formatCount(discounts.uniqueAccounts || 0)}</div>
+              <div class="metricLabel">unique app users</div>
+            </div>
+          </div>
+          <div class="discountRedemptionList" style="margin-top:12px;">
+            ${topItems.length ? topItems.slice(0, 3).map((item) => `
+              <div class="listItem dataRow">
+                <div>
+                  <strong>${escapeHtml(item.itemName)}</strong>
+                  <div class="muted">${formatCount(item.quantity)} item${Number(item.quantity) === 1 ? "" : "s"} · ${formatCurrency(item.estimatedSavingsDollars || 0)} saved</div>
+                </div>
+                <span class="pill">${formatCount(item.redemptions)}x</span>
+              </div>
+            `).join("") : '<div class="listItem muted">No discount redemptions logged yet.</div>'}
+          </div>
+        </div>
+        <div class="posSetupCard">
+          <div class="sectionHeader" style="margin-bottom:10px;">
+            <div>
+              <div class="eyebrow">POS webhook</div>
+              <h3>${pos.enabled ? "Pro automation ready" : "Manual redemption mode"}</h3>
+            </div>
+            <span class="pill ${pos.enabled ? "pill--premium" : ""}">${pos.enabled ? "Pro" : "Setup"}</span>
+          </div>
+          <p class="muted">${escapeHtml(pos.copy || "Use manual code redemption until POS automation is configured.")}</p>
+          <div class="posTokenBox">
+            <span class="muted">Endpoint</span>
+            <code>${escapeHtml(pos.endpoint || "/api/business/pos/discount-redemptions")}</code>
+            <span class="muted">Token preview</span>
+            <code>${escapeHtml(pos.tokenPreview || "Not enabled")}</code>
+          </div>
+          <div class="actionRow actionRow--compact" style="margin-top:12px;">
+            <button class="button button--small" type="button" data-copy-pos-endpoint="true" ${pos.endpoint ? "" : "disabled"}>Copy endpoint</button>
+            <button class="button button--small button--primary" type="button" data-copy-pos-token="true" ${pos.token ? "" : "disabled"}>Copy token</button>
+          </div>
+          <div class="discountRedemptionList" style="margin-top:12px;">
+            ${recent.length ? recent.slice(0, 4).map((item) => `
+              <div class="listItem dataRow">
+                <div>
+                  <strong>${escapeHtml(item.itemName || "Discount redemption")}</strong>
+                  <div class="muted">${escapeHtml(item.accountId || "Pint Path user")} · ${MelbBeerBusiness.formatDate(item.redeemedAt)}${item.posReference ? ` · ${escapeHtml(item.posReference)}` : ""}</div>
+                </div>
+                <span class="pill">${formatCurrency(item.estimatedSavingsDollars || 0)}</span>
+              </div>
+            `).join("") : '<div class="listItem muted">Recent redemptions will appear here for staff reconciliation.</div>'}
+          </div>
+        </div>
       `;
     }
 
@@ -1323,7 +1419,8 @@
       if (discountRedemptionFormElement) {
         discountRedemptionFormElement.addEventListener("submit", async (event) => {
           event.preventDefault();
-          if (!selectedVenueId()) return;
+          const venueId = selectedVenueId();
+          if (!venueId) return;
           const savingsDollars = Number(field(discountRedemptionFormElement, "estimatedSavingsDollars").value || 0);
           const body = {
             code: field(discountRedemptionFormElement, "code").value,
@@ -1333,7 +1430,7 @@
             notes: field(discountRedemptionFormElement, "notes").value || null,
           };
           try {
-            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/discount-redemptions`, {
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/discount-redemptions`, {
               method: "POST",
               body: JSON.stringify(body),
             });
@@ -1342,6 +1439,7 @@
               `Redeemed for account ${result.accountId}. Estimated savings ${formatCurrency(result.estimatedSavingsDollars)}.`,
             );
             discountRedemptionFormElement.reset();
+            await loadPortal(venueId);
           } catch (error) {
             MelbBeerBusiness.setStatus(discountRedemptionStatus, error.message || "Could not redeem discount.", true);
           }
@@ -1385,6 +1483,42 @@
             MelbBeerBusiness.setStatus(portalAccess, "Venue update link copied.");
           } catch {
             MelbBeerBusiness.setStatus(portalAccess, absoluteLink);
+          }
+          return;
+        }
+
+        if (target.dataset.savingsDollars && discountRedemptionFormElement) {
+          field(discountRedemptionFormElement, "estimatedSavingsDollars").value = target.dataset.savingsDollars;
+          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${formatCurrency(target.dataset.savingsDollars)} discount selected. Enter the user's code to redeem.`);
+          return;
+        }
+
+        if (target.dataset.discountItem && discountRedemptionFormElement) {
+          field(discountRedemptionFormElement, "itemName").value = target.dataset.discountItem;
+          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem} selected. Enter the user's code to redeem.`);
+          return;
+        }
+
+        if (target.dataset.copyPosEndpoint) {
+          const endpoint = currentPortal?.posIntegration?.endpoint || "";
+          if (!endpoint) return;
+          try {
+            await navigator.clipboard.writeText(endpoint);
+            MelbBeerBusiness.setStatus(discountRedemptionStatus, "POS endpoint copied.");
+          } catch {
+            MelbBeerBusiness.setStatus(discountRedemptionStatus, endpoint);
+          }
+          return;
+        }
+
+        if (target.dataset.copyPosToken) {
+          const token = currentPortal?.posIntegration?.token || "";
+          if (!token) return;
+          try {
+            await navigator.clipboard.writeText(token);
+            MelbBeerBusiness.setStatus(discountRedemptionStatus, "POS token copied. Keep it private and only add it to the venue POS integration.");
+          } catch {
+            MelbBeerBusiness.setStatus(discountRedemptionStatus, "Could not copy POS token automatically. Try again from the venue portal.");
           }
           return;
         }

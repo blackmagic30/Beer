@@ -146,7 +146,7 @@ describe("account page shell", () => {
     expect(feedback).toContain('MelbBeerBusiness.renderNav("feedback")');
     expect(feedback).toContain('MelbBeerBusiness.apiFetch("/api/business/feedback"');
     expect(feedback.indexOf("Privacy note")).toBeLessThan(feedback.indexOf('id="feedbackForm"'));
-    expect(script).toContain('href="/feedback.html"');
+    expect(script).toContain('{ key: "feedback", href: "/feedback.html", label: "Feedback" }');
     expect(script).not.toContain('href="/account.html#feedbackForm"');
   });
 
@@ -283,7 +283,7 @@ describe("account page shell", () => {
     expect(reset).toContain("Password updated. You can continue to your Pint Path account.");
   });
 
-  it("keeps contributor navigation behind auth hints and gives venue managers a dashboard link", () => {
+  it("keeps the primary nav consistent and gives venue managers a dashboard link", () => {
     const html = mapHtml();
     const script = businessJs();
 
@@ -291,13 +291,19 @@ describe("account page shell", () => {
     expect(script).toContain("function hasCachedSupabaseSession");
     expect(script).toContain("function isVenueManagerContext");
     expect(script).toContain('const venueManagerNav = active === "venue-portal" || isVenueManagerContext()');
-    expect(script).toContain("const authenticatedLinks = hasAuthenticatedSessionHint() && !venueManagerNav");
-    expect(script).toContain('href="/venue-portal.html">Dashboard');
-    expect(script).toContain('href="/missions.html">Missions');
-    expect(script).toContain('href="/submit.html">Submit data');
+    expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
+    expect(script).toContain('{ key: "missions", href: "/missions.html", label: "Missions" }');
+    expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
+    expect(script).toContain('{ key: "pricing", href: "/pricing.html", label: "Pricing" }');
+    expect(script).toContain('{ key: "faq", href: "/trust.html", label: "FAQ" }');
+    expect(script).toContain('{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }');
+    expect(script).not.toContain("const authenticatedLinks");
     expect(html).toContain('id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard');
-    expect(html).toContain('href="/missions.html" data-auth-required');
-    expect(html).toContain('href="/submit.html" data-auth-required');
+    expect(html).toContain('href="/missions.html">Missions');
+    expect(html).toContain('href="/submit.html">Submit');
+    expect(html).toContain('href="/trust.html">FAQ');
+    expect(html).not.toContain('href="/missions.html" data-auth-required');
+    expect(html).not.toContain('href="/submit.html" data-auth-required');
     expect(html).not.toContain('href="/submit.html" class="primary" data-auth-required');
     expect(html).toContain("function syncAuthenticatedNavLinks");
     expect(html).toContain("window.MelbBeerBusiness?.isVenueManagerContext?.()");
@@ -382,7 +388,7 @@ describe("account page shell", () => {
     expect(privacy).toContain("one-time upload-location proof");
   });
 
-  it("adds a trust centre with community, security, privacy, and support paths", () => {
+  it("adds a FAQ with trust, community, security, privacy, and support paths", () => {
     const trust = trustHtml();
     const community = communityHtml();
     const security = securityHtml();
@@ -391,15 +397,16 @@ describe("account page shell", () => {
     const nav = businessJs();
     const css = businessCss();
 
-    expect(nav).toContain('href="/trust.html"');
-    expect(trust).toContain("Trust Centre");
+    expect(nav).toContain('{ key: "faq", href: "/trust.html", label: "FAQ" }');
+    expect(trust).toContain("FAQ | Pint Path");
+    expect(trust).toContain("Where did the Trust Centre go?");
     expect(trust).toContain("Raw photos, reviewer notes, account details, and individual analytics stay private.");
-    expect(trust).toContain("trustFeatureGrid");
-    expect(trust).toContain("trustActionCard");
-    expect(css).toContain("margin-bottom: 14px");
-    expect(css).toContain(".trustActionCard .eyebrow");
-    expect(css).toContain(".trustActionCard__actions");
-    expect(trust).toContain("Read Community Standards");
+    expect(trust).toContain("How do I add a missing venue?");
+    expect(trust).toContain("faqList");
+    expect(trust).toContain("faqActionPanel");
+    expect(css).toContain(".faqItem summary");
+    expect(css).toContain(".faqActionPanel");
+    expect(trust).toContain("/security.html");
     expect(community).toContain("Submit what you actually saw at the venue.");
     expect(community).toContain("Spoofing location");
     expect(security).toContain("Security & privacy");

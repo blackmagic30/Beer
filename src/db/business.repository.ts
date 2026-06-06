@@ -2551,6 +2551,114 @@ export class BusinessRepository {
     };
   }
 
+  listDiscountRedemptionsForVenue(venueId: string, limit: number): DiscountRedemption[] {
+    const rows = this.database
+      .prepare("SELECT * FROM discount_redemptions WHERE venue_id = ? ORDER BY redeemed_at DESC LIMIT ?")
+      .all(venueId, limit) as DiscountRedemptionRow[];
+    return rows.map(toDiscountRedemption);
+  }
+
+  getDiscountRedemptionStatsForVenue(input: {
+    venueId: string;
+    startIso?: string | null | undefined;
+    endIso?: string | null | undefined;
+  }): {
+    totalRedemptions: number;
+    estimatedSavingsCents: number;
+    uniqueAccounts: number;
+    totalQuantity: number;
+  } {
+    const clauses = ["venue_id = ?"];
+    const values: unknown[] = [input.venueId];
+
+    if (input.startIso) {
+      clauses.push("redeemed_at >= ?");
+      values.push(input.startIso);
+    }
+
+    if (input.endIso) {
+      clauses.push("redeemed_at < ?");
+      values.push(input.endIso);
+    }
+
+    const row = this.database
+      .prepare(
+        `SELECT
+           count(*) AS total_redemptions,
+           COALESCE(sum(estimated_savings_cents), 0) AS estimated_savings_cents,
+           count(DISTINCT public_account_id) AS unique_accounts,
+           COALESCE(sum(quantity), 0) AS total_quantity
+         FROM discount_redemptions
+         WHERE ${clauses.join(" AND ")}`,
+      )
+      .get(...values) as {
+        total_redemptions: number;
+        estimated_savings_cents: number;
+        unique_accounts: number;
+        total_quantity: number;
+      } | undefined;
+
+    return {
+      totalRedemptions: Number(row?.total_redemptions ?? 0),
+      estimatedSavingsCents: Number(row?.estimated_savings_cents ?? 0),
+      uniqueAccounts: Number(row?.unique_accounts ?? 0),
+      totalQuantity: Number(row?.total_quantity ?? 0),
+    };
+  }
+
+  listDiscountItemStatsForVenue(input: {
+    venueId: string;
+    startIso?: string | null | undefined;
+    endIso?: string | null | undefined;
+    limit: number;
+  }): Array<{
+    itemName: string;
+    redemptions: number;
+    quantity: number;
+    estimatedSavingsCents: number;
+  }> {
+    const clauses = ["venue_id = ?"];
+    const values: unknown[] = [input.venueId];
+
+    if (input.startIso) {
+      clauses.push("redeemed_at >= ?");
+      values.push(input.startIso);
+    }
+
+    if (input.endIso) {
+      clauses.push("redeemed_at < ?");
+      values.push(input.endIso);
+    }
+
+    values.push(input.limit);
+    const rows = this.database
+      .prepare(
+        `SELECT
+           COALESCE(NULLIF(trim(item_name), ''), 'Unspecified item') AS item_name,
+           count(*) AS redemptions,
+           COALESCE(sum(quantity), 0) AS quantity,
+           COALESCE(sum(estimated_savings_cents), 0) AS estimated_savings_cents
+         FROM discount_redemptions
+         WHERE ${clauses.join(" AND ")}
+         GROUP BY COALESCE(NULLIF(trim(item_name), ''), 'Unspecified item')
+         ORDER BY redemptions DESC, estimated_savings_cents DESC
+         LIMIT ?`,
+      )
+      .all(...values) as Array<{
+        item_name: string;
+        redemptions: number;
+        quantity: number;
+        estimated_savings_cents: number;
+      }>;
+
+    return rows.map((row) => ({
+      itemName: row.item_name,
+      redemptions: Number(row.redemptions),
+      quantity: Number(row.quantity),
+      estimatedSavingsCents: Number(row.estimated_savings_cents),
+    }));
+  }
+
   getSubmissionById(id: string): { submission: BusinessSubmission; items: BusinessSubmissionItem[] } | null {
     const submissionRow = this.database.prepare("SELECT * FROM submissions WHERE id = ?").get(id) as
       | SubmissionRow

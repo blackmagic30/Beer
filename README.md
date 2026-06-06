@@ -56,6 +56,9 @@
 - `POST /api/business/venue-interest`
 - `GET /api/business/venue-portal`
 - `POST /api/business/venue-portal/:venueId/submissions`
+- `POST /api/business/venue-portal/:venueId/discount-redemptions`
+- `GET /api/business/venue-portal/:venueId/pos-integration`
+- `POST /api/business/pos/discount-redemptions`
 - `GET /api/business/venue-portal/:venueId/reports/:month/export`
 - `GET /api/business/admin/kpis`
 - `GET /api/business/admin/retention`
@@ -84,6 +87,7 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 - Free users can view the map, venue pins, suburbs, data freshness, missions, happy hours, and pint prices for Guinness, Carlton Draft, and Stone & Wood.
 - Premium users can unlock full map utility, every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, savings tracking, and venue special-discount details at A$4.99/month or A$50/year.
 - Contributors can earn temporary premium access for the rest of the current month after 15 approved monthly contribution points.
+- Discount redemptions are explicit only: a paid/contributor user generates a rotating code, venue staff redeem it manually, or Pro venues can wire a POS webhook with a per-venue HMAC token. The app records the discounted item, quantity, savings and server redemption time for user savings history and aggregate venue proof-of-value.
 - Public submissions are queued as `pending` and do not become trusted map data until reviewed.
 - Approved submissions publish `venue_price_records`, which the map merges into existing venue data for existing venues.
 - Mission points are weighted by usefulness, not by number of bars visited: venues updated in the last 24 hours are worth 0.1 points, week-old data is worth 0.5 points, stale data is worth 1 point, and venues with no trusted data are worth 5 points. Repeated same-venue submissions in the same month are capped.
@@ -223,6 +227,7 @@ ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
+POS_WEBHOOK_SIGNING_SECRET=replace_with_32_plus_random_characters
 STRIPE_SECRET_KEY=sk_test_or_live_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_499_aud
@@ -301,6 +306,7 @@ ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
+POS_WEBHOOK_SIGNING_SECRET=replace_with_32_plus_random_characters
 FIELD_TEST_MODE=true
 STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
@@ -344,6 +350,7 @@ What each one does:
 - `SOURCE_EVIDENCE_SIGNING_SECRET`: private 32+ character server-side secret used to sign short-lived source-evidence review/download URLs. Generate it with `openssl rand -base64 32`; never commit it or expose it through `/config.js`.
 - `SOURCE_EVIDENCE_SIGNING_SECRET`: 32+ character random secret used to sign short-lived source evidence URLs. Public pages can boot without it, but source-evidence review/download links fail closed in production until configured.
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`: signed evidence URL lifetime. Defaults to `300`.
+- `POS_WEBHOOK_SIGNING_SECRET`: private 32+ character server-side secret used to derive per-venue POS webhook tokens for Pro venue discount redemptions. Generate it with `openssl rand -base64 32`; rotate it if a POS token is exposed.
 - `FIELD_TEST_MODE`: shows beta feedback affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
 - `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.
 - `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.

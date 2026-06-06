@@ -73,24 +73,57 @@
 
     #topbar {
       box-sizing: border-box;
-      padding: 18px 20px 16px;
-      background: var(--panel-bg);
       color: var(--panel-text);
-      border-bottom: 1px solid var(--panel-border);
-      backdrop-filter: blur(18px);
       display: grid;
       gap: 14px;
-      box-shadow: var(--shadow-lg);
       position: relative;
       z-index: 2;
     }
 
-    .topbar__header {
+    .mapNavCard,
+    .mapHeroCard {
+      border: 1px solid var(--panel-border);
+      background: var(--panel-bg);
+      box-shadow: var(--shadow-lg);
+      backdrop-filter: blur(18px);
+    }
+
+    .mapNavCard {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-radius: 999px;
+      padding: 12px 14px 12px 18px;
+    }
+
+    .mapBrand {
+      display: grid;
+      gap: 2px;
+      color: var(--text-primary);
+      text-decoration: none;
+    }
+
+    .mapBrand strong {
+      font-family: var(--display-font);
+      font-size: 20px;
+      letter-spacing: -0.03em;
+    }
+
+    .mapBrand span {
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .mapHeroCard {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
       gap: 18px;
       flex-wrap: wrap;
+      border-radius: 26px;
+      padding: 18px 20px;
     }
 
     .topbar__eyebrow {
@@ -142,6 +175,7 @@
       display: flex;
       gap: 10px;
       flex-wrap: wrap;
+      min-width: 0;
     }
 
     .topbar__businessLinks {
@@ -2053,32 +2087,40 @@
     #topbar {
       flex: 0 0 auto;
       z-index: 3;
-      margin: 12px 12px 0;
-      padding: clamp(18px, 2.6vw, 28px);
-      border: 1px solid var(--panel-border);
-      border-radius: 30px 30px 22px 22px;
-      background:
-        radial-gradient(circle at 8% 10%, rgba(34, 211, 238, 0.16), transparent 34%),
-        radial-gradient(circle at 92% 0%, rgba(139, 92, 246, 0.14), transparent 32%),
-        radial-gradient(circle at 54% 120%, rgba(245, 197, 66, 0.09), transparent 30%),
-        linear-gradient(145deg, rgba(13, 20, 36, 0.94), rgba(5, 9, 20, 0.84));
-      box-shadow: var(--shadow-lg);
+      width: min(1160px, calc(100% - 32px));
+      margin: 18px auto 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
       overflow: visible;
     }
 
     #topbar::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      border-radius: inherit;
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.13), transparent 35%);
-      opacity: 0.55;
+      content: none;
     }
 
     #topbar > * {
       position: relative;
       z-index: 1;
+    }
+
+    .mapNavCard,
+    .mapHeroCard {
+      background:
+        radial-gradient(circle at 8% 10%, rgba(34, 211, 238, 0.12), transparent 34%),
+        radial-gradient(circle at 92% 0%, rgba(139, 92, 246, 0.12), transparent 32%),
+        linear-gradient(145deg, rgba(13, 20, 36, 0.94), rgba(5, 9, 20, 0.86));
+      box-shadow: var(--shadow-lg);
+    }
+
+    .mapNavCard {
+      border-radius: 999px;
+    }
+
+    .mapHeroCard {
+      border-radius: 24px;
     }
 
     .topbar__eyebrow {
@@ -2734,13 +2776,14 @@
 
     @media (min-width: 901px) {
       #topbar {
-        gap: 9px;
-        padding: clamp(13px, 1.4vw, 18px);
-        padding-bottom: clamp(16px, 1.6vw, 22px);
+        gap: 12px;
+        padding: 0;
+        padding-bottom: 0;
       }
 
-      .topbar__header {
+      .mapHeroCard {
         align-items: center;
+        padding: clamp(16px, 1.8vw, 22px);
       }
 
       #topbar h1 {
@@ -2830,26 +2873,54 @@
       }
 
       body::before {
-        background-size: 44px 44px;
-        opacity: 0.62;
+        display: none;
       }
 
       #topbar {
-        margin: 6px 6px 0;
-        padding: 10px;
-        border-radius: 20px 20px 16px 16px;
-        gap: 8px;
-        overflow: hidden;
+        width: min(100% - 20px, 720px);
+        margin: 10px auto 0;
+        padding: 0;
+        border-radius: 0;
+        gap: 10px;
+        overflow: visible;
       }
 
       #topbar::after {
-        opacity: 0.38;
+        content: none;
       }
 
-      .topbar__header {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 8px;
+      .mapNavCard {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 10px;
+        border-radius: 22px;
+        padding: 10px;
+        background: rgba(13, 18, 32, 0.96);
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+        backdrop-filter: none;
+      }
+
+      .mapBrand {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .mapBrand strong {
+        font-size: 18px;
+      }
+
+      .mapBrand span {
+        display: none;
+      }
+
+      .mapHeroCard {
+        border-radius: 20px;
+        padding: 14px;
+        background: rgba(18, 26, 44, 0.94);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+        backdrop-filter: none;
       }
 
       .topbar__eyebrow {
@@ -2885,16 +2956,18 @@
 
       .topbar__actions {
         min-width: 0;
+        width: 100%;
       }
 
       .topbar__businessLinks {
-        flex-wrap: nowrap;
-        max-width: 100%;
-        overflow-x: auto;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        width: 100%;
+        max-width: none;
+        overflow: visible;
         gap: 6px;
-        padding: 1px 0 3px;
+        padding: 0;
         scrollbar-width: none;
-        -webkit-overflow-scrolling: touch;
       }
 
       .topbar__businessLinks::-webkit-scrollbar,
@@ -2905,27 +2978,24 @@
 
       .topbar__businessLinks a,
       .accessPill {
-        flex: 0 0 auto;
-        min-height: 40px;
-        padding: 8px 11px;
-        font-size: 12px;
+        min-height: 38px;
+        justify-content: center;
+        padding: 8px 6px;
+        font-size: 11.5px;
         white-space: nowrap;
       }
 
       .accessPill {
-        max-width: 132px;
+        grid-column: auto;
+        align-self: flex-start;
+        max-width: none;
+        min-height: 32px;
         overflow: hidden;
         text-overflow: ellipsis;
       }
 
       .businessBanner {
-        align-items: flex-start;
-        flex-direction: column;
-        gap: 5px;
-        padding: 8px 9px;
-        border-radius: 14px;
-        font-size: 11px;
-        line-height: 1.32;
+        display: none;
       }
 
       .businessBanner span:last-child {
@@ -3089,12 +3159,7 @@
       }
 
       #statusBar {
-        grid-template-columns: repeat(3, minmax(128px, 1fr));
-        gap: 6px;
-        overflow-x: auto;
-        padding-bottom: 2px;
-        scrollbar-width: none;
-        -webkit-overflow-scrolling: touch;
+        display: none;
       }
 
       .statusPill {
@@ -3341,24 +3406,32 @@
 </head>
 <body>
   <div id="topbar">
-    <div class="topbar__header">
-      <div>
-        <div class="topbar__eyebrow">Live beer map <span class="fieldTestBadge">Beta</span></div>
-        <h1>Pint Path</h1>
-        <p class="topbar__subtitle">Find verified beer prices and happy hours across Melbourne. Search by beer, venue, or suburb, then tap a marker for the detail.</p>
-      </div>
+    <nav class="mapNavCard" aria-label="Primary">
+      <a class="mapBrand" href="/">
+        <strong>Pint Path</strong>
+        <span>Verified local price index</span>
+      </a>
       <div class="topbar__actions">
         <div id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation">
           <a href="/" aria-current="page">Map</a>
           <a id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard</a>
-          <a href="/missions.html" data-auth-required>Missions</a>
-          <a href="/submit.html" data-auth-required>Submit data</a>
+          <a href="/missions.html">Missions</a>
+          <a href="/submit.html">Submit</a>
           <a href="/pricing.html">Pricing</a>
+          <a href="/trust.html">FAQ</a>
           <a href="/account.html">Account</a>
-          <span id="accessPill" class="accessPill">Free preview</span>
         </div>
       </div>
-    </div>
+    </nav>
+
+    <section class="mapHeroCard" aria-label="Map overview">
+      <div>
+        <div class="topbar__eyebrow">Live beer map <span class="fieldTestBadge">Beta</span></div>
+        <h1>Melbourne beer map</h1>
+        <p class="topbar__subtitle">Find verified beer prices and happy hours across Melbourne. Search by beer, venue, or suburb, then tap a marker for the detail.</p>
+      </div>
+      <span id="accessPill" class="accessPill">Free preview</span>
+    </section>
 
     <div id="businessBanner" class="businessBanner">
       <span id="businessBannerCopy"><strong>Free preview:</strong> venue pins, happy hours, and pint prices for Guinness, Carlton Draft, and Stone & Wood stay visible. Prices may change.</span>

@@ -61,6 +61,7 @@ import type {
   MonthlyReportDeliveryInput,
   MonthlyReportExportQuery,
   MonthlyReportGenerateInput,
+  PosDiscountRedemptionInput,
   PriceRecordsQuery,
   RemoveSavedItemInput,
   ReviewSubmissionInput,
@@ -255,6 +256,19 @@ function generateDiscountCode(): string {
 
 function hashDiscountCode(code: string): string {
   return crypto.createHash("sha256").update(code.trim().toUpperCase()).digest("hex");
+}
+
+function createPosWebhookToken(secret: string, venueId: string): string {
+  return crypto
+    .createHmac("sha256", secret)
+    .update(`pint-path-pos-redemption:${venueId.trim()}`)
+    .digest("hex");
+}
+
+function timingSafeStringEqual(expected: string, actual: string): boolean {
+  const expectedBuffer = Buffer.from(expected);
+  const actualBuffer = Buffer.from(actual);
+  return expectedBuffer.length === actualBuffer.length && crypto.timingSafeEqual(expectedBuffer, actualBuffer);
 }
 
 function hashRequestFingerprint(value: string | null | undefined): string | null {
@@ -834,6 +848,7 @@ function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
     monthlyReports: analytics,
     premiumDisplay: pro,
     featuredSpecials: pro,
+    posWebhookIntegration: admin || pro,
     priorityReview: pro,
     advancedRecommendations: pro,
     discoveryBoost: pro,
@@ -1103,6 +1118,7 @@ export class BusinessService {
       | "ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION"
       | "SOURCE_EVIDENCE_SIGNING_SECRET"
       | "SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS"
+      | "POS_WEBHOOK_SIGNING_SECRET"
       | "NODE_ENV"
       | "STRIPE_SECRET_KEY"
       | "STRIPE_WEBHOOK_SECRET"
@@ -2136,8 +2152,46 @@ export class BusinessService {
     };
   }
 
-  redeemDiscountPass(account: BusinessAccount, venueId: string, input: DiscountRedemptionInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
+  private getDiscountVenueIdentity(
+    venueId: string,
+    assignment?: { venueName?: string | null; suburb?: string | null } | null,
+    requireKnownVenue = false,
+  ) {
+    const profile = this.repository.getBarProfile(venueId);
+    const location = this.repository.getVenueLocationCache(venueId);
+    const activeAssignment = assignment
+      ? null
+      : this.repository.listVenueManagerAssignments({ venueId, activeOnly: true, limit: 1 })[0] ?? null;
+
+    if (requireKnownVenue && !profile && !location && !assignment && !activeAssignment) {
+      throw new AppError("Venue is not configured for Pint Path POS redemptions.", 404);
+    }
+
+    return {
+      venueName: assignment?.venueName ?? profile?.name ?? location?.venueName ?? activeAssignment?.venueName ?? venueId,
+      suburb: assignment?.suburb ?? profile?.suburb ?? location?.suburb ?? activeAssignment?.suburb ?? null,
+    };
+  }
+
+  private redeemDiscountPassForVenue(input: {
+    actor: BusinessAccount | null;
+    venueId: string;
+    venueName: string;
+    suburb: string | null;
+    code: string;
+    specialId: string | null;
+    itemName: string | null;
+    quantity: number;
+    estimatedSavingsCents: number;
+    notes?: string | null | undefined;
+    source: "venue_portal" | "pos_webhook";
+    redeemedByRole: string;
+    posReference?: string | null | undefined;
+    terminalId?: string | null | undefined;
+    posRedeemedAt?: string | null | undefined;
+    metadata?: Record<string, unknown> | undefined;
+    context?: SessionRequestContext | undefined;
+  }) {
     const now = nowIso();
     const pass = this.repository.getActiveDiscountPassByCodeHash({
       codeHash: hashDiscountCode(input.code),
@@ -2153,26 +2207,29 @@ export class BusinessService {
       throw new AppError("This account does not currently have discount access.", 403);
     }
 
-    const venueName = assignment?.venueName ?? venueId;
-    const suburb = assignment?.suburb ?? null;
     const redemption = this.repository.createDiscountRedemption({
       id: crypto.randomUUID(),
       userId: user.id,
       publicAccountId: user.publicAccountId,
-      venueId,
-      venueName,
-      suburb,
+      venueId: input.venueId,
+      venueName: input.venueName,
+      suburb: input.suburb,
       specialId: input.specialId,
       itemName: input.itemName,
       quantity: input.quantity,
       estimatedSavingsCents: input.estimatedSavingsCents,
       discountPassId: pass.id,
-      redeemedByUserId: account.id,
+      redeemedByUserId: input.actor?.id ?? null,
       redeemedAt: now,
-      metadata: {
+      metadata: sanitizeEventMetadata(redactSecrets({
+        ...input.metadata,
         notes: input.notes,
-        redeemedByRole: account.role,
-      },
+        source: input.source,
+        redeemedByRole: input.redeemedByRole,
+        posReference: input.posReference,
+        terminalId: input.terminalId,
+        posRedeemedAt: input.posRedeemedAt,
+      })),
     });
 
     this.repository.markDiscountPassUsed({ id: pass.id, lastUsedAt: now });
@@ -2180,36 +2237,193 @@ export class BusinessService {
       account: user,
       eventType: "discount_redeemed",
       relatedEntityType: "venue",
-      relatedEntityId: venueId,
+      relatedEntityId: input.venueId,
       metadata: {
-        venueName,
-        suburb,
+        venueName: input.venueName,
+        suburb: input.suburb,
         itemName: input.itemName,
         quantity: input.quantity,
         estimatedSavingsCents: input.estimatedSavingsCents,
+        source: input.source,
       },
     });
     this.auditSecurity({
-      actor: account,
+      actor: input.actor,
       action: "discount_redeemed",
       targetType: "venue",
-      targetId: venueId,
+      targetId: input.venueId,
       metadata: {
         publicAccountId: user.publicAccountId,
         itemName: input.itemName,
         quantity: input.quantity,
         estimatedSavingsCents: input.estimatedSavingsCents,
+        source: input.source,
+        posReference: input.posReference,
       },
+      context: input.context,
     });
 
     return {
       redemption,
       accountId: user.publicAccountId,
-      venueId,
-      venueName,
-      suburb,
+      venueId: input.venueId,
+      venueName: input.venueName,
+      suburb: input.suburb,
       estimatedSavingsDollars: Number((redemption.estimatedSavingsCents / 100).toFixed(2)),
       copy: "Discount redemption logged. Pint Path uses these explicit redemptions to show users their savings and provide aggregate venue insights.",
+    };
+  }
+
+  redeemDiscountPass(account: BusinessAccount, venueId: string, input: DiscountRedemptionInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const venue = this.getDiscountVenueIdentity(venueId, assignment);
+    return this.redeemDiscountPassForVenue({
+      actor: account,
+      venueId,
+      venueName: venue.venueName,
+      suburb: venue.suburb,
+      code: input.code,
+      specialId: input.specialId,
+      itemName: input.itemName,
+      quantity: input.quantity,
+      estimatedSavingsCents: input.estimatedSavingsCents,
+      notes: input.notes,
+      source: "venue_portal",
+      redeemedByRole: account.role,
+    });
+  }
+
+  getVenuePosIntegration(account: BusinessAccount, venueId: string) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const venue = this.getDiscountVenueIdentity(venueId, assignment);
+    const endpoint = new URL("/api/business/pos/discount-redemptions", this.config.PUBLIC_BASE_URL).toString();
+    const membershipTier = this.repository.getBarProfile(venueId)?.membershipTier ?? "basic";
+    const tierCapabilities = getBarTierCapabilities(membershipTier);
+    const token = this.config.POS_WEBHOOK_SIGNING_SECRET && tierCapabilities.posWebhookIntegration
+      ? createPosWebhookToken(this.config.POS_WEBHOOK_SIGNING_SECRET, venueId)
+      : null;
+
+    return {
+      enabled: Boolean(token),
+      tier: membershipTier,
+      proRequired: !tierCapabilities.posWebhookIntegration,
+      venueId,
+      venueName: venue.venueName,
+      suburb: venue.suburb,
+      endpoint,
+      method: "POST",
+      authHeader: "X-Pint-Path-POS-Token",
+      token,
+      tokenPreview: token ? `${token.slice(0, 8)}...${token.slice(-8)}` : null,
+      payloadExample: {
+        venueId,
+        code: "ABC123",
+        itemName: "House pint",
+        quantity: 1,
+        discountAmountCents: 200,
+        posReference: "receipt-12345",
+        terminalId: "front-bar-1",
+      },
+      copy: tierCapabilities.posWebhookIntegration
+        ? token
+          ? "Give this endpoint and token only to the venue POS integration. It can redeem one user code at this venue and records item, quantity, savings and server time."
+          : "POS webhooks are disabled until POS_WEBHOOK_SIGNING_SECRET is configured on the server. Manual staff redemption still works."
+        : "POS webhook automation is a Pro venue feature. Staff can still redeem codes manually from the portal.",
+    };
+  }
+
+  redeemDiscountPassFromPos(
+    input: PosDiscountRedemptionInput,
+    token: string | undefined,
+    context?: SessionRequestContext | undefined,
+  ) {
+    const secret = this.config.POS_WEBHOOK_SIGNING_SECRET;
+    if (!secret) {
+      throw new AppError("Pint Path POS webhooks are not configured yet.", 503);
+    }
+
+    const suppliedToken = token?.trim() ?? "";
+    const expectedToken = createPosWebhookToken(secret, input.venueId);
+    if (!suppliedToken || !timingSafeStringEqual(expectedToken, suppliedToken)) {
+      this.auditSecurity({
+        actor: null,
+        action: "pos_discount_redeem_blocked",
+        targetType: "venue",
+        targetId: input.venueId,
+        metadata: { reason: "invalid_pos_token" },
+        context,
+      });
+      throw new AppError("Invalid POS webhook token.", 401);
+    }
+
+    const venue = this.getDiscountVenueIdentity(input.venueId, null, true);
+    const membershipTier = this.repository.getBarProfile(input.venueId)?.membershipTier ?? "basic";
+    const capabilities = getBarTierCapabilities(membershipTier);
+    if (!capabilities.posWebhookIntegration) {
+      throw new AppError("Pro venue tier required for POS webhook redemptions.", 403);
+    }
+
+    return this.redeemDiscountPassForVenue({
+      actor: null,
+      venueId: input.venueId,
+      venueName: venue.venueName,
+      suburb: venue.suburb,
+      code: input.code,
+      specialId: input.specialId,
+      itemName: input.itemName,
+      quantity: input.quantity,
+      estimatedSavingsCents: input.estimatedSavingsCents ?? input.discountAmountCents,
+      source: "pos_webhook",
+      redeemedByRole: "pos_webhook",
+      posReference: input.posReference,
+      terminalId: input.terminalId,
+      posRedeemedAt: input.redeemedAt ?? null,
+      metadata: input.metadata,
+      context,
+    });
+  }
+
+  private getVenueDiscountSummary(input: {
+    venueId: string;
+    startIso?: string | null | undefined;
+    endIso?: string | null | undefined;
+    includeRecent?: boolean | undefined;
+    recentLimit?: number | undefined;
+  }) {
+    const stats = this.repository.getDiscountRedemptionStatsForVenue({
+      venueId: input.venueId,
+      startIso: input.startIso,
+      endIso: input.endIso,
+    });
+    const topItems = this.repository.listDiscountItemStatsForVenue({
+      venueId: input.venueId,
+      startIso: input.startIso,
+      endIso: input.endIso,
+      limit: 8,
+    });
+    const recentRedemptions = input.includeRecent
+      ? this.repository.listDiscountRedemptionsForVenue(input.venueId, input.recentLimit ?? 10).map((redemption) => ({
+          id: redemption.id,
+          accountId: redemption.publicAccountId,
+          itemName: redemption.itemName,
+          quantity: redemption.quantity,
+          estimatedSavingsCents: redemption.estimatedSavingsCents,
+          estimatedSavingsDollars: Number((redemption.estimatedSavingsCents / 100).toFixed(2)),
+          redeemedAt: redemption.redeemedAt,
+          source: typeof redemption.metadata.source === "string" ? redemption.metadata.source : "venue_portal",
+          posReference: typeof redemption.metadata.posReference === "string" ? redemption.metadata.posReference : null,
+        }))
+      : [];
+
+    return {
+      ...stats,
+      estimatedSavingsDollars: Number((stats.estimatedSavingsCents / 100).toFixed(2)),
+      topItems: topItems.map((item) => ({
+        ...item,
+        estimatedSavingsDollars: Number((item.estimatedSavingsCents / 100).toFixed(2)),
+      })),
+      recentRedemptions,
+      copy: "Discount data is created only when a user shows a rotating Pint Path code or QR. Venue reporting uses aggregate redemption counts, items and savings.",
     };
   }
 
@@ -4115,6 +4329,11 @@ export class BusinessService {
     const proGrowthPlan = capabilities.advancedRecommendations
       ? buildProVenueGrowthPlan({ analytics, insights })
       : null;
+    const discountSummary = this.getVenueDiscountSummary({
+      venueId: profile.barId,
+      startIso: range.startIso,
+      endIso: range.endIso,
+    });
 
     return sanitizeMonthlyReportValue({
       generated: true,
@@ -4142,6 +4361,11 @@ export class BusinessService {
         savesAndNightPlanAdds: analytics.saves,
         shares: analytics.shares,
         areaSearches: analytics.areaSearches,
+        discountRedemptions: discountSummary.totalRedemptions,
+        discountItemsRedeemed: discountSummary.totalQuantity,
+        uniqueDiscountRedeemers: discountSummary.uniqueAccounts,
+        estimatedDiscountSavingsCents: discountSummary.estimatedSavingsCents,
+        topDiscountItems: discountSummary.topItems,
         mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
         mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
         listingQualityScore: insights.listingQuality.score,
@@ -4510,6 +4734,12 @@ export class BusinessService {
     const proGrowthPlan = analytics && capabilities.advancedRecommendations
       ? buildProVenueGrowthPlan({ analytics, insights })
       : null;
+    const discountSummary = this.getVenueDiscountSummary({
+      venueId: selectedVenueId,
+      includeRecent: true,
+      recentLimit: 10,
+    });
+    const posIntegration = this.getVenuePosIntegration(account, selectedVenueId);
     const monthlyReport = capabilities.monthlyReports
       ? savedMonthlyReport ?? {
           id: null,
@@ -4523,6 +4753,11 @@ export class BusinessService {
                   totalProfileViews: analytics.profileViews,
                   totalBeerListViews: analytics.beerListViews,
                   totalSpecialsDealsViews: analytics.specialsViews,
+                  discountRedemptions: discountSummary.totalRedemptions,
+                  discountItemsRedeemed: discountSummary.totalQuantity,
+                  uniqueDiscountRedeemers: discountSummary.uniqueAccounts,
+                  estimatedDiscountSavingsCents: discountSummary.estimatedSavingsCents,
+                  topDiscountItems: discountSummary.topItems,
                   mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
                   mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
                   plusDemandSnapshot,
@@ -4589,6 +4824,8 @@ export class BusinessService {
       pendingChanges: this.repository.listBarPendingChanges({ barId: selectedVenueId, status: "pending", limit: 100 }),
       insights,
       analytics,
+      discounts: discountSummary,
+      posIntegration,
       monthlyReport,
       businessToolkit: {
         plusDemandSnapshot,
