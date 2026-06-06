@@ -2,6 +2,12 @@
   const UNKNOWN_PRICE_TEXT = "Price unknown";
   const UNAVAILABLE_LABELS = new Set(["Unavailable", "Not on tap", "No pints"]);
   const PACKAGE_LABELS = new Set(["Cans only", "Bottles only"]);
+  const PRICE_RING_COLORS = Object.freeze({
+    cheap: "#16a34a",
+    mid: "#facc15",
+    high: "#ea580c",
+    expensive: "#7f1d1d",
+  });
   const MARKER_STATE_STYLES = Object.freeze({
     cheap: {
       fillColor: "#22d3ee",
@@ -225,6 +231,14 @@
     return "expensive";
   }
 
+  function getPriceRingColor(beer) {
+    if (!hasNumericPrice(beer)) {
+      return null;
+    }
+
+    return PRICE_RING_COLORS[getPriceTier(beer)] || null;
+  }
+
   function getMarkerState(beer, options = {}) {
     if (options.needsData) {
       return "needs_data";
@@ -262,6 +276,7 @@
       scale: baseStyle.scale,
       labelColor: baseStyle.labelColor,
       labelText,
+      priceRingColor: PRICE_RING_COLORS[state] || null,
     };
 
     if (!options.selected) {
@@ -436,6 +451,7 @@
   root.MelbBeerMapLogic = Object.freeze({
     UNKNOWN_PRICE_TEXT,
     MARKER_STATE_STYLES,
+    PRICE_RING_COLORS,
     normalizeBeerPriceNumeric,
     getAvailabilityLabel,
     getBeerPriceText,
@@ -443,6 +459,7 @@
     hasNumericPrice,
     getLowestKnownPrice,
     getPriceTier,
+    getPriceRingColor,
     getMarkerState,
     getMarkerVisual,
     getMarkerColor,

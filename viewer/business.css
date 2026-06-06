@@ -741,6 +741,19 @@ h3 {
   accent-color: var(--accent-neon-cyan);
 }
 
+.dayChip--wide {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.dayChip.is-disabled {
+  border-color: rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.48);
+  color: var(--text-disabled);
+}
+
 .is-hidden {
   display: none !important;
 }
@@ -969,12 +982,37 @@ h3 {
   padding: 8px 0 2px;
 }
 
-.missionToolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  margin-top: 14px;
+.missionControlPanel {
+  display: grid;
+  gap: 14px;
+}
+
+.missionControlGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.75fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.missionSearchField,
+.missionSortField {
+  min-width: 0;
+}
+
+.missionSearchField input,
+.missionSortField select {
+  min-height: 56px;
+}
+
+.missionActionBar {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.35fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.missionToolbar,
+.missionSearchActions {
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 22px;
   background: rgba(3, 7, 18, 0.22);
@@ -985,11 +1023,19 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 2px;
+  align-items: center;
 }
 
-.missionSearchActions .button {
-  min-height: 40px;
+.missionToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.missionSearchActions .button,
+.missionToolbar .button {
+  min-height: 46px;
   padding: 10px 14px;
   font-size: 13px;
 }
@@ -1008,6 +1054,16 @@ h3 {
   width: auto;
   min-width: 96px;
   padding: 10px 12px;
+}
+
+.missionToolbar .helperCopy {
+  flex: 1 1 260px;
+  margin: 0;
+  min-width: 220px;
+}
+
+.missionHelp {
+  margin-top: 14px;
 }
 
 .featureList,
@@ -1083,6 +1139,88 @@ h3 {
   display: grid;
   gap: 16px;
   min-width: 0;
+}
+
+.businessToolkit {
+  display: grid;
+  gap: 16px;
+  border-color: rgba(34, 211, 238, 0.2);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.12), transparent 34%),
+    radial-gradient(circle at 100% 4%, rgba(245, 197, 66, 0.11), transparent 36%),
+    var(--panel);
+}
+
+.growthSummaryGrid {
+  display: grid;
+  grid-template-columns: 0.9fr 1fr 1fr;
+  gap: 12px;
+}
+
+.metricCard--hero {
+  border-color: rgba(245, 197, 66, 0.34);
+  background:
+    linear-gradient(145deg, rgba(245, 197, 66, 0.12), rgba(34, 211, 238, 0.05)),
+    rgba(15, 23, 42, 0.74);
+}
+
+.updateLinkCard,
+.upgradeNudge {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 20px;
+  padding: 14px;
+  background: rgba(7, 10, 18, 0.34);
+}
+
+.updateLinkCard code {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #bae6fd;
+  font-size: 12px;
+}
+
+.growthFunnel {
+  display: grid;
+  gap: 10px;
+}
+
+.growthFunnel__item {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 2px 12px;
+  align-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(15, 23, 42, 0.62);
+}
+
+.growthFunnel__item strong {
+  grid-row: span 2;
+  color: var(--text-primary);
+  font-size: 22px;
+}
+
+.growthFunnel__item span {
+  font-weight: 900;
+}
+
+.growthFunnel__item small {
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.reportToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: flex-end;
 }
 
 .venueSummaryCard {
@@ -1266,6 +1404,16 @@ h3 {
   font-weight: 950;
   letter-spacing: 0.11em;
   text-transform: uppercase;
+}
+
+.reportProPlan {
+  margin-top: 12px;
+  border-color: rgba(245, 197, 66, 0.28);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(245, 197, 66, 0.12), transparent 42%),
+    radial-gradient(circle at 96% 12%, rgba(217, 70, 239, 0.1), transparent 38%),
+    rgba(15, 23, 42, 0.7);
+  box-shadow: 0 0 24px rgba(245, 197, 66, 0.08);
 }
 
 .discountPassPanel {
@@ -2594,8 +2742,21 @@ h3 {
   .pricingTierGrid,
   .venuePricingGrid,
   .tierGuide,
-  .tierGuide__lists {
+  .tierGuide__lists,
+  .growthSummaryGrid {
     grid-template-columns: 1fr;
+  }
+
+  .updateLinkCard,
+  .upgradeNudge,
+  .reportToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .reportToolbar .field,
+  .reportToolbar .button {
+    width: 100%;
   }
 
   .discountPassResult {
@@ -2696,6 +2857,30 @@ h3 {
   .card {
     padding: 18px;
     border-radius: 24px;
+  }
+
+  .missionControlGrid,
+  .missionActionBar {
+    grid-template-columns: 1fr;
+  }
+
+  .missionSearchActions,
+  .missionToolbar {
+    align-items: stretch;
+  }
+
+  .missionSearchActions .button,
+  .missionToolbar .button,
+  .missionRadiusField {
+    width: 100%;
+  }
+
+  .missionRadiusField {
+    justify-content: space-between;
+  }
+
+  .missionRadiusField select {
+    flex: 1;
   }
 
   .adminBeerRow {

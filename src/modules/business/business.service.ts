@@ -708,6 +708,7 @@ function tierFlags(tier: BarMembershipTier) {
 function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
   const analytics = admin || tier === "plus" || tier === "pro";
   const canManageSpecials = admin || tier === "plus" || tier === "pro";
+  const pro = tier === "pro";
   return {
     tier,
     canManageProfile: true,
@@ -716,10 +717,151 @@ function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
     canManageSpecials,
     analytics,
     monthlyReports: analytics,
-    premiumDisplay: tier === "pro",
+    premiumDisplay: pro,
+    featuredSpecials: pro,
+    priorityReview: pro,
+    advancedRecommendations: pro,
+    discoveryBoost: pro,
     upgradeCopy: analytics
       ? null
       : "Upgrade to Plus to add Pint Path specials, see privacy-safe suburb analytics, and export generated monthly reports.",
+  };
+}
+
+function getTotalVenueActionIntent(analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>): number {
+  return analytics.directionsClicks + analytics.saves + analytics.shares;
+}
+
+interface CommercialVenueInsights {
+  aggregateInsights: {
+    missingBeerSearches: Array<{ key: string; count: number }>;
+  } | null;
+  listingQuality: {
+    score: number;
+  };
+  wrongPriceReports: Array<{
+    status: string;
+  }>;
+}
+
+function buildPlusVenueDemandSnapshot(input: {
+  analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
+  insights: CommercialVenueInsights;
+}) {
+  const { analytics, insights } = input;
+  const actionIntent = getTotalVenueActionIntent(analytics);
+  const interactionTotal = analytics.barLookups + analytics.profileViews + analytics.beerListViews + analytics.specialsViews;
+  const topBeer = analytics.privacyFloorMet ? analytics.areaBeerSearches[0] ?? null : null;
+  const topStyle = analytics.privacyFloorMet ? analytics.areaStyleSearches[0] ?? null : null;
+  const missingBeer = insights.aggregateInsights?.missingBeerSearches?.[0] ?? null;
+  const listingQualityScore = insights.listingQuality.score;
+  const opportunityScore = Math.max(
+    1,
+    Math.min(
+      100,
+      Math.round(
+        listingQualityScore * 0.45 +
+        Math.min(interactionTotal, 80) * 0.35 +
+        Math.min(actionIntent * 4, 20),
+      ),
+    ),
+  );
+  const demandHighlights = [
+    topBeer
+      ? `${topBeer.key} is the strongest privacy-safe beer search near this venue.`
+      : `Area search volume has not reached the ${analytics.privacyThreshold}-event privacy floor yet.`,
+    topStyle
+      ? `${topStyle.key} style searches are showing enough demand to guide tap-list wording.`
+      : "Beer-style demand will appear once enough users search nearby.",
+    missingBeer
+      ? `${missingBeer.key} is searched nearby but is not covered by this venue's current verified rows.`
+      : "No high-confidence missing beer opportunity is available yet.",
+  ];
+
+  return {
+    title: analytics.privacyFloorMet ? "Suburb demand snapshot" : "Demand snapshot building",
+    privacyFloorMet: analytics.privacyFloorMet,
+    privacyThreshold: analytics.privacyThreshold,
+    opportunityScore,
+    funnel: [
+      { label: "Discovery interest", value: analytics.barLookups, helper: "Map pins, cards, detail opens and lookups." },
+      { label: "Beer-price intent", value: analytics.beerListViews + analytics.priceReveals, helper: "Beer-list views and price reveals." },
+      { label: "Specials intent", value: analytics.specialsViews, helper: "Specials, deal and happy-hour interest." },
+      { label: "Action intent", value: actionIntent, helper: "Directions, saves, night-plan adds and shares." },
+    ],
+    demandHighlights,
+    recommendedNextActions: [
+      topBeer
+        ? `Keep ${topBeer.key} pricing fresh and visible before peak weekend search windows.`
+        : "Keep the three highest-volume tap-list rows current while nearby demand grows.",
+      analytics.specialsViews > 0
+        ? "Refresh one clear weekly special so demand from deal/happy-hour views lands on a current offer."
+        : "Add one simple reviewed special to create a stronger reason to choose this venue.",
+      listingQualityScore < 80
+        ? "Improve listing quality before paid campaigns; missing profile details reduce conversion."
+        : "Use the monthly report export in staff or owner meetings to track demand shifts.",
+    ],
+  };
+}
+
+function getProVenueRecommendations(input: {
+  analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
+  insights: { listingQuality: { score: number } };
+}): string[] {
+  const searchedBeer = input.analytics.privacyFloorMet ? input.analytics.areaBeerSearches[0]?.key : null;
+  const searchedStyle = input.analytics.privacyFloorMet ? input.analytics.areaStyleSearches[0]?.key : null;
+  const qualityScore = input.insights.listingQuality.score;
+
+  return [
+    searchedBeer
+      ? `Feature one high-margin special around nearby "${searchedBeer}" demand, then keep the offer current through the weekend.`
+      : "Run one tightly scoped featured Pint Path exclusive each week so Pro placement points to a real current offer.",
+    searchedStyle
+      ? `Refresh your tap-list rows for ${searchedStyle} before Thursday afternoon so discovery placement has fresh matching data.`
+      : "Add beer styles and serve sizes to every current row so Pro discovery can match more search intent.",
+    qualityScore < 80
+      ? "Lift the listing quality score before pushing featured offers; missing profile details weaken Pro visibility."
+      : "Use Pro priority review for specials and profile edits that support Friday-Saturday trading.",
+  ];
+}
+
+function buildProVenueGrowthPlan(input: {
+  analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
+  insights: CommercialVenueInsights;
+}) {
+  const { analytics, insights } = input;
+  const recommendations = getProVenueRecommendations({ analytics, insights });
+  const listingQualityScore = insights.listingQuality.score;
+  const openDisputes = insights.wrongPriceReports.filter((report) => report.status === "open").length;
+
+  return {
+    title: "Pro growth studio",
+    premiumPlacement: {
+      mapHalo: true,
+      listingBadge: true,
+      bestMatchBoost: true,
+      priorityReview: true,
+      featuredExclusiveEligible: true,
+    },
+    spotlightReadiness: [
+      { label: "Premium map/listing halo active", complete: true },
+      { label: "Featured Pint Path exclusive eligible", complete: true },
+      { label: "Priority review active for venue edits", complete: true },
+      { label: "Listing quality at 80% or better", complete: listingQualityScore >= 80 },
+      { label: "No open wrong-price disputes", complete: openDisputes === 0 },
+    ],
+    priorityMoves: recommendations,
+    weekendPlaybook: [
+      analytics.privacyFloorMet && analytics.areaBeerSearches[0]
+        ? `Build the next featured exclusive around ${analytics.areaBeerSearches[0].key} demand.`
+        : "Use a broad, easy-to-understand featured exclusive until nearby search demand matures.",
+      analytics.specialsViews > 0
+        ? "Put the active special in the first line of the venue description before Friday afternoon."
+        : "Submit a clean featured exclusive and use priority review so it is ready for weekend traffic.",
+      getTotalVenueActionIntent(analytics) > 0
+        ? "Keep address, opening hours and happy-hour conditions exact because users are showing action intent."
+        : "Add a stronger call-to-action in the profile copy so premium attention has a clear next step.",
+    ],
   };
 }
 
@@ -1131,6 +1273,13 @@ export class BusinessService {
     }
   }
 
+  private requireFeaturedSpecialsTier(account: BusinessAccount, venueId: string): void {
+    const membershipTier = this.repository.getBarProfile(venueId)?.membershipTier ?? "basic";
+    if (!getBarTierCapabilities(membershipTier).featuredSpecials) {
+      throw new AppError("Pro venue tier required to feature Pint Path exclusive specials.", 403);
+    }
+  }
+
   private buildDefaultBarProfile(input: { barId: string; name: string; suburb: string | null }): BarProfile {
     const now = nowIso();
     return {
@@ -1396,7 +1545,8 @@ export class BusinessService {
       const payload = change.payload;
       const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
       const membershipTier = this.repository.getBarProfile(change.barId)?.membershipTier ?? "basic";
-      if (!getBarTierCapabilities(membershipTier).canManageSpecials) {
+      const capabilities = getBarTierCapabilities(membershipTier);
+      if (!capabilities.canManageSpecials) {
         throw new AppError("Plus or Pro venue tier required to publish Pint Path specials.", 403);
       }
       this.ensureBarProfile({
@@ -1414,7 +1564,7 @@ export class BusinessService {
         startsAt: stringOrNull(payload.startsAt),
         endsAt: stringOrNull(payload.endsAt),
         scheduleNote: stringOrNull(payload.scheduleNote),
-        exclusive: booleanFromUnknown(payload.exclusive, false),
+        exclusive: capabilities.featuredSpecials && booleanFromUnknown(payload.exclusive, false),
         active: booleanFromUnknown(payload.active, true),
         now,
       });
@@ -3833,6 +3983,16 @@ export class BusinessService {
             : "Add clearer beer styles and specials so nearby search demand has more useful matches.",
         ]
       : ["Not enough suburb data yet. Your report will become more useful as more users search nearby."];
+    const capabilities = getBarTierCapabilities(profile.membershipTier);
+    const plusDemandSnapshot = capabilities.analytics
+      ? buildPlusVenueDemandSnapshot({ analytics, insights })
+      : null;
+    const proRecommendations = capabilities.advancedRecommendations
+      ? getProVenueRecommendations({ analytics, insights })
+      : [];
+    const proGrowthPlan = capabilities.advancedRecommendations
+      ? buildProVenueGrowthPlan({ analytics, insights })
+      : null;
 
     return sanitizeMonthlyReportValue({
       generated: true,
@@ -3866,6 +4026,17 @@ export class BusinessService {
         openWrongPriceReports: insights.wrongPriceReports.filter((report) => report.status === "open").length,
         openVenueRequests: insights.requests.filter((request) => request.status === "open").length,
         suggestedActions,
+        plusDemandSnapshot,
+        proRecommendations,
+        proGrowthPlan,
+        discoveryPlacement: capabilities.discoveryBoost
+          ? {
+              premiumDisplay: true,
+              discoveryBoost: true,
+              featuredSpecials: true,
+              priorityReview: true,
+            }
+          : null,
       },
       privacy: {
         aggregateOnly: true,
@@ -4156,6 +4327,7 @@ export class BusinessService {
         insights: null,
         analytics: null,
         monthlyReport: null,
+        businessToolkit: null,
         updateLink: null,
         claimRequests: [],
         message: "Venue management is invite-only during beta. Ask the Pint Path admin to assign your account to a venue.",
@@ -4171,6 +4343,7 @@ export class BusinessService {
         pendingChanges: [],
         insights: null,
         updateLink: null,
+        businessToolkit: null,
         privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
       };
     }
@@ -4202,8 +4375,18 @@ export class BusinessService {
           privacyThreshold: venueInsightPrivacyThreshold,
         })
       : null;
+    const insights = this.sanitizeVenueManagerInsights(rawInsights, {
+      includeAggregate: capabilities.analytics,
+      privacyThreshold: venueInsightPrivacyThreshold,
+    });
     const savedMonthlyReport = capabilities.monthlyReports
       ? sanitizeMonthlyReport(this.repository.getVenueMonthlyReport({ venueId: selectedVenueId, month: reportMonth }))
+      : null;
+    const plusDemandSnapshot = analytics && capabilities.analytics
+      ? buildPlusVenueDemandSnapshot({ analytics, insights })
+      : null;
+    const proGrowthPlan = analytics && capabilities.advancedRecommendations
+      ? buildProVenueGrowthPlan({ analytics, insights })
       : null;
     const monthlyReport = capabilities.monthlyReports
       ? savedMonthlyReport ?? {
@@ -4220,22 +4403,31 @@ export class BusinessService {
                   totalSpecialsDealsViews: analytics.specialsViews,
                   mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
                   mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
+                  plusDemandSnapshot,
                   suggestedActions: analytics.privacyFloorMet
                     ? [
                         "Keep your tap list current so nearby search demand has an accurate listing to land on.",
                         "Add happy-hour details if they are missing; users often filter by active specials.",
                       ]
                     : ["Not enough suburb data yet. Your report will become more useful as more users search nearby."],
+                  proRecommendations: capabilities.advancedRecommendations
+                    ? getProVenueRecommendations({ analytics, insights })
+                    : [],
+                  proGrowthPlan,
+                  discoveryPlacement: capabilities.discoveryBoost
+                    ? {
+                        premiumDisplay: true,
+                        discoveryBoost: true,
+                        featuredSpecials: true,
+                        priorityReview: true,
+                      }
+                    : null,
                 }
               : null,
           },
           createdAt: null,
         }
       : null;
-    const insights = this.sanitizeVenueManagerInsights(rawInsights, {
-      includeAggregate: capabilities.analytics,
-      privacyThreshold: venueInsightPrivacyThreshold,
-    });
     const updateLink = `/submit.html?venueId=${encodeURIComponent(selectedVenueId)}&venueName=${encodeURIComponent(venueName)}${suburb ? `&suburb=${encodeURIComponent(suburb)}` : ""}`;
 
     this.trackEvent(account, {
@@ -4276,6 +4468,12 @@ export class BusinessService {
       insights,
       analytics,
       monthlyReport,
+      businessToolkit: {
+        plusDemandSnapshot,
+        proGrowthPlan,
+        updateLink,
+        qrCopy: "Copy this update link or turn it into a QR code for your venue/tap-list area.",
+      },
       updateLink,
       qrCopy: "Copy this update link or turn it into a QR code for your venue/tap-list area.",
       privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
@@ -4596,6 +4794,9 @@ export class BusinessService {
   upsertBarSpecial(account: BusinessAccount, venueId: string, input: BarSpecialInput) {
     const assignment = this.requireAssignedVenue(account, venueId);
     this.requireBarSpecialsTier(account, venueId);
+    if (input.exclusive) {
+      this.requireFeaturedSpecialsTier(account, venueId);
+    }
     const existing = input.id ? this.repository.getBarSpecialById(input.id) : null;
     if (existing && existing.barId !== venueId) {
       throw new AppError("Special belongs to another venue.", 403);

@@ -4322,7 +4322,20 @@ export class BusinessRepository {
 
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.database
-      .prepare(`SELECT * FROM venue_pending_changes ${where} ORDER BY submitted_at DESC LIMIT ?`)
+      .prepare(
+        `SELECT * FROM venue_pending_changes
+         ${where}
+         ORDER BY
+           CASE
+             WHEN COALESCE(
+               (SELECT membership_tier FROM venue_profiles WHERE venue_id = venue_pending_changes.venue_id),
+               'basic'
+             ) = 'pro' THEN 0
+             ELSE 1
+           END,
+           submitted_at DESC
+         LIMIT ?`,
+      )
       .all(...values, input.limit) as BarPendingChangeRow[];
     return rows.map(toBarPendingChange);
   }

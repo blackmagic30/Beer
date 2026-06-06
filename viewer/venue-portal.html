@@ -15,7 +15,7 @@
     <section class="hero hero--compact">
       <div class="eyebrow">Venue portal</div>
       <h1>Manage your venue’s beer data and happy hours.</h1>
-      <p class="lead">Assigned and verified venue accounts can keep beer stock and happy hours up to date. Plus and Pro tiers add reviewed Pint Path specials and privacy-safe analytics.</p>
+      <p class="lead">Assigned and verified venue accounts can keep beer stock and happy hours up to date. Plus adds reviewed specials and analytics; Pro adds featured exclusives, priority review, and premium discovery treatment.</p>
     </section>
 
     <section id="portalAccess" class="notice">Log in with an assigned venue-manager account to view this dashboard.</section>
@@ -76,6 +76,7 @@
             </div>
 
             <article id="tierGuide" class="panel tierGuide" style="margin-top:16px;"></article>
+            <article id="businessToolkit" class="panel businessToolkit is-hidden" style="margin-top:16px;"></article>
 
             <div class="grid grid--two" style="margin-top:16px;">
               <article class="panel">
@@ -327,14 +328,14 @@
                   <input name="scheduleNote" placeholder="e.g. Fridays 4pm-7pm only" />
                 </label>
                 <div class="dayChecklist">
-                  <label class="dayChip"><input name="exclusive" type="checkbox" /> Pint Path exclusive</label>
+                  <label id="featuredSpecialChip" class="dayChip dayChip--wide"><input name="exclusive" type="checkbox" /> Featured exclusive (Pro)</label>
                   <label class="dayChip"><input name="active" type="checkbox" checked /> Active</label>
                 </div>
                 <div class="actionRow">
                   <button class="button button--primary" type="submit">Save special</button>
                   <button id="resetSpecialForm" class="button" type="button">Clear form</button>
                 </div>
-                <div id="specialStatus" class="notice">Use this for current deals, weekly specials, or a Pint Path exclusive that can appear in the public map filter after review.</div>
+                <div id="specialStatus" class="notice">Plus venues can submit current deals and weekly specials. Pro venues can mark one as a featured Pint Path exclusive after review.</div>
               </form>
               <article class="panel">
                 <h2>Current deals and specials</h2>
@@ -372,13 +373,18 @@
               <div class="sectionHeader">
                 <div>
                   <h2>Monthly report preview</h2>
-                  <p class="muted">This preview uses current beta analytics where available. Real automated reports can be generated later.</p>
+                  <p class="muted">This preview uses current beta analytics where available. Exportable reports stay scoped to this venue.</p>
                 </div>
-                <label class="field compactField">Month
-                  <input id="reportMonth" type="month" />
-                </label>
+                <div class="reportToolbar">
+                  <label class="field compactField">Month
+                    <input id="reportMonth" type="month" />
+                  </label>
+                  <button id="exportReportCsv" class="button button--small" type="button">Export CSV</button>
+                  <button id="exportReportJson" class="button button--small" type="button">Export JSON</button>
+                </div>
               </div>
               <div id="monthlyReport" class="list"></div>
+              <div id="reportExportStatus" class="notice is-hidden" role="status"></div>
             </article>
           </section>
         </div>
@@ -439,12 +445,20 @@
       return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(Number(value || 0));
     }
 
+    function formatCount(value) {
+      return new Intl.NumberFormat("en-AU").format(Number(value || 0));
+    }
+
     function prettyTier(value) {
       return value === "pro" ? "Pro" : value === "plus" ? "Plus" : "Free";
     }
 
     function portalCanManageSpecials(data = currentPortal) {
       return Boolean(data?.tier?.canManageSpecials);
+    }
+
+    function portalCanFeatureSpecials(data = currentPortal) {
+      return Boolean(data?.tier?.featuredSpecials);
     }
 
     function nullableNumber(value) {
@@ -606,6 +620,7 @@
 
     function syncTierControls(data) {
       const canSpecials = portalCanManageSpecials(data);
+      const canFeatureSpecials = portalCanFeatureSpecials(data);
       document.querySelectorAll("[data-specials-only]").forEach((element) => {
         element.hidden = !canSpecials;
         if ("disabled" in element) {
@@ -619,6 +634,24 @@
       const visiblePanel = document.querySelector(".tabPanel:not(.is-hidden)");
       if (!canSpecials && visiblePanel?.dataset.panel === "specials") {
         showTab("beers");
+      }
+      const featuredInput = field(specialForm, "exclusive");
+      if (featuredInput) {
+        featuredInput.disabled = !canFeatureSpecials;
+        if (!canFeatureSpecials) {
+          featuredInput.checked = false;
+        }
+      }
+      if (window.featuredSpecialChip) {
+        featuredSpecialChip.classList.toggle("is-disabled", !canFeatureSpecials);
+        featuredSpecialChip.title = canFeatureSpecials
+          ? "Pro venues can feature Pint Path exclusive specials after review."
+          : "Featured Pint Path exclusive specials require the Pro venue tier.";
+      }
+      if (window.specialStatus) {
+        specialStatus.textContent = canFeatureSpecials
+          ? "Pro is active. Mark a special as featured when it is a genuine Pint Path exclusive and ready for review."
+          : "Plus venues can submit reviewed deals and specials. Featured Pint Path exclusives require Pro.";
       }
     }
 
@@ -697,6 +730,7 @@
       renderSpecials(specials);
       renderOverviewData(data);
       renderTierGuide(data);
+      renderBusinessToolkit(data);
       renderPendingChanges(data.pendingChanges || []);
       renderAnalytics(data);
       renderMonthlyReport(data);
@@ -749,14 +783,25 @@
       const locked = [];
       if (!tier.canManageSpecials) locked.push("Pint Path specials");
       if (tier.analyticsLocked) locked.push("Analytics and monthly reports");
-      if (tier.tier !== "pro") locked.push("Premium venue display");
+      if (tier.canManageSpecials) included.push("Reviewed Pint Path specials");
+      if (!tier.analyticsLocked) included.push("Privacy-safe analytics and monthly reports");
+      if (tier.premiumDisplay) included.push("Premium map, card, and venue-name treatment");
+      if (tier.featuredSpecials) included.push("Featured Pint Path exclusive specials");
+      if (tier.priorityReview) included.push("Priority admin review queue");
+      if (tier.advancedRecommendations) included.push("Pro growth recommendations in reports");
+      if (!tier.premiumDisplay) locked.push("Premium venue display");
+      if (!tier.featuredSpecials) locked.push("Featured exclusive specials");
+      if (!tier.priorityReview) locked.push("Priority admin review");
+      if (!tier.advancedRecommendations) locked.push("Pro report recommendations");
 
       tierGuide.innerHTML = `
         <div>
           <div class="eyebrow">Current plan</div>
           <h2>${escapeHtml(tierName)} venue access</h2>
           <p class="muted">${tier.canManageSpecials
-            ? "This venue can submit reviewed specials and see privacy-safe demand signals when enough local data exists."
+            ? tier.featuredSpecials
+              ? "This Pro venue gets premium discovery treatment, featured-exclusive special eligibility, priority review, and privacy-safe demand signals."
+              : "This Plus venue can submit reviewed specials and see privacy-safe demand signals when enough local data exists."
             : "Free venues can keep beer data and happy-hour data current without exposing analytics or specials tools."}</p>
         </div>
         <div class="tierGuide__lists">
@@ -766,7 +811,7 @@
           </div>
           <div>
             <strong>${locked.length ? "Locked" : "Unlocked"}</strong>
-            <ul class="cleanList tierList">${(locked.length ? locked : ["Pint Path specials", "Analytics and monthly reports", "Premium venue display"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            <ul class="cleanList tierList">${(locked.length ? locked : ["Every Pro venue feature is active"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
           </div>
         </div>
         ${tier.analyticsLocked || !tier.canManageSpecials ? `
@@ -775,6 +820,103 @@
             <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
           </div>
         ` : ""}
+      `;
+    }
+
+    function renderBusinessToolkit(data) {
+      const toolkit = data.businessToolkit || {};
+      const snapshot = toolkit.plusDemandSnapshot || data.monthlyReport?.data?.summary?.plusDemandSnapshot || null;
+      const proPlan = toolkit.proGrowthPlan || data.monthlyReport?.data?.summary?.proGrowthPlan || null;
+      const updateLink = toolkit.updateLink || data.updateLink || "";
+
+      if (!snapshot && !proPlan) {
+        businessToolkit.classList.add("is-hidden");
+        businessToolkit.innerHTML = "";
+        return;
+      }
+
+      businessToolkit.classList.remove("is-hidden");
+      const funnel = snapshot?.funnel || [];
+      const highlights = snapshot?.demandHighlights || [];
+      const actions = snapshot?.recommendedNextActions || [];
+      const proReady = proPlan?.spotlightReadiness || [];
+      const proMoves = proPlan?.priorityMoves || [];
+      const proWeekend = proPlan?.weekendPlaybook || [];
+      const isPro = Boolean(proPlan);
+
+      businessToolkit.innerHTML = `
+        <div class="sectionHeader">
+          <div>
+            <div class="eyebrow">Commercial toolkit</div>
+            <h2>${isPro ? "Pro growth studio" : "Plus demand snapshot"}</h2>
+          </div>
+          <span class="tierBadge ${isPro ? "tierBadge--pro" : "tierBadge--plus"}">${isPro ? "Pro active" : "Plus active"}</span>
+        </div>
+        <div class="growthSummaryGrid">
+          <div class="metricCard metricCard--hero">
+            <div class="metricValue">${formatCount(snapshot?.opportunityScore || 0)}</div>
+            <div class="metricLabel">Opportunity score</div>
+          </div>
+          <div class="metricCard">
+            <div class="metricValue">${snapshot?.privacyFloorMet ? "Ready" : "Building"}</div>
+            <div class="metricLabel">Privacy-safe area signal</div>
+          </div>
+          <div class="metricCard">
+            <div class="metricValue">${updateLink ? "Live" : "Not set"}</div>
+            <div class="metricLabel">Staff/customer update link</div>
+          </div>
+        </div>
+        ${updateLink ? `
+          <div class="updateLinkCard">
+            <div>
+              <strong>Venue update link</strong>
+              <p class="helperCopy">${escapeHtml(toolkit.qrCopy || "Use this link for staff, tap-list QR codes, and venue data updates.")}</p>
+              <code>${escapeHtml(updateLink)}</code>
+            </div>
+            <button class="button button--small" type="button" data-copy-update-link="true">Copy link</button>
+          </div>
+        ` : ""}
+        <div class="grid grid--two" style="margin-top:16px;">
+          <div>
+            <h3>Demand funnel</h3>
+            <div class="growthFunnel">
+              ${funnel.map((item) => `
+                <div class="growthFunnel__item">
+                  <strong>${formatCount(item.value)}</strong>
+                  <span>${escapeHtml(item.label)}</span>
+                  <small>${escapeHtml(item.helper)}</small>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+          <div>
+            <h3>Recommended next actions</h3>
+            <ul class="featureList">${actions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          </div>
+        </div>
+        <div class="listItem" style="margin-top:12px;">
+          <strong>Demand highlights</strong>
+          <ul class="featureList">${highlights.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+        </div>
+        ${isPro ? `
+          <div class="listItem reportProPlan" style="margin-top:12px;">
+            <div>
+              <span class="tierBadge tierBadge--pro">Pro playbook</span>
+              <strong>Premium placement checklist</strong>
+              <ul class="featureList">${proReady.map((item) => `<li>${item.complete ? "Active" : "Needs work"} · ${escapeHtml(item.label)}</li>`).join("")}</ul>
+              <strong>Priority moves</strong>
+              <ul class="featureList">${proMoves.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+              <strong>Weekend playbook</strong>
+              <ul class="featureList">${proWeekend.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+          </div>
+        ` : `
+          <div class="upgradeNudge" style="margin-top:12px;">
+            <strong>Pro adds paid discovery placement</strong>
+            <p class="helperCopy">Upgrade when you want premium map/listing treatment, featured exclusive specials, priority review, and a sharper monthly growth playbook.</p>
+            <button class="button button--premium" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+          </div>
+        `}
       `;
     }
 
@@ -851,7 +993,7 @@
           <div class="listItem dataRow">
             <div>
               <strong>${escapeHtml(item.title)}</strong>
-              <div class="muted">${item.active ? "Active" : "Inactive"}${item.exclusive ? " · Pint Path exclusive" : ""}${item.price != null ? ` · ${money(item.price)}` : ""}</div>
+              <div class="muted">${item.active ? "Active" : "Inactive"}${item.exclusive ? " · Featured Pint Path exclusive" : ""}${item.price != null ? ` · ${money(item.price)}` : ""}</div>
               <p class="helperCopy">${escapeHtml(item.description)}</p>
             </div>
             <div class="rowActions">
@@ -918,6 +1060,8 @@
       const report = data.monthlyReport?.data?.summary || {};
       reportMonth.value = data.monthlyReport?.month || new Date().toISOString().slice(0, 7);
       const suggestedActions = report.suggestedActions || ["Keep your tap list current and add happy-hour conditions clearly."];
+      const proRecommendations = report.proRecommendations || [];
+      const discoveryPlacement = report.discoveryPlacement || null;
       monthlyReport.innerHTML = `
         <div class="grid grid--four">
           ${[
@@ -931,7 +1075,60 @@
           <strong>Suggested actions</strong>
           <ul class="featureList">${suggestedActions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
         </div>
+        ${report.plusDemandSnapshot ? `
+          <div class="listItem" style="margin-top:12px;">
+            <strong>Plus demand snapshot</strong>
+            <ul class="featureList">${(report.plusDemandSnapshot.recommendedNextActions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          </div>
+        ` : ""}
+        ${proRecommendations.length ? `
+          <div class="listItem reportProPlan">
+            <div>
+              <span class="tierBadge tierBadge--pro">Pro growth plan</span>
+              <strong>Priority moves for this month</strong>
+              <ul class="featureList">${proRecommendations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            </div>
+            ${discoveryPlacement ? `
+              <div class="miniStatRow">
+                <span>Premium display active</span>
+                <span>Featured specials eligible</span>
+                <span>Priority review active</span>
+              </div>
+            ` : ""}
+          </div>
+        ` : ""}
       `;
+    }
+
+    function reportFilenameFromHeader(header, fallback) {
+      const match = String(header || "").match(/filename="([^"]+)"/i);
+      return match?.[1] || fallback;
+    }
+
+    async function downloadMonthlyReport(format) {
+      if (!selectedVenueId()) return;
+      const month = reportMonth.value || currentPortal?.monthlyReport?.month || new Date().toISOString().slice(0, 7);
+      const token = MelbBeerBusiness.getAuthToken();
+      const response = await fetch(
+        `/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/reports/${encodeURIComponent(month)}/export?format=${encodeURIComponent(format)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error?.message || `Report export failed (${response.status}).`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = reportFilenameFromHeader(
+        response.headers.get("content-disposition"),
+        `pint-path-${selectedVenueId()}-${month}-monthly-report.${format}`,
+      );
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
     }
 
     async function loadPortal(venueId = null) {
@@ -1111,7 +1308,7 @@
           startsAt: field(specialForm, "startsAt").value || null,
           endsAt: field(specialForm, "endsAt").value || null,
           scheduleNote: field(specialForm, "scheduleNote").value || null,
-          exclusive: field(specialForm, "exclusive").checked,
+          exclusive: portalCanFeatureSpecials() && field(specialForm, "exclusive").checked,
           active: field(specialForm, "active").checked,
         };
         try {
@@ -1159,10 +1356,38 @@
       });
       resetHappyHourForm.addEventListener("click", () => { resetForm(happyHourForm); field(happyHourForm, "active").checked = true; renderChecklist(happyHourDays, dayOptions); });
       resetSpecialForm.addEventListener("click", () => { resetForm(specialForm); field(specialForm, "active").checked = true; });
+      [
+        ["csv", exportReportCsv],
+        ["json", exportReportJson],
+      ].forEach(([format, button]) => {
+        button.addEventListener("click", async () => {
+          try {
+            reportExportStatus.classList.remove("is-hidden");
+            MelbBeerBusiness.setStatus(reportExportStatus, `Preparing ${String(format).toUpperCase()} export...`);
+            await downloadMonthlyReport(format);
+            MelbBeerBusiness.setStatus(reportExportStatus, `Downloaded ${String(format).toUpperCase()} monthly report.`);
+          } catch (error) {
+            MelbBeerBusiness.setStatus(reportExportStatus, error.message || "Could not export monthly report.", true);
+          }
+        });
+      });
 
       document.addEventListener("click", async (event) => {
         const target = event.target;
         if (!(target instanceof HTMLElement) || !selectedVenueId()) return;
+
+        if (target.dataset.copyUpdateLink) {
+          const updateLink = currentPortal?.businessToolkit?.updateLink || currentPortal?.updateLink || "";
+          if (!updateLink) return;
+          const absoluteLink = new URL(updateLink, window.location.origin).toString();
+          try {
+            await navigator.clipboard.writeText(absoluteLink);
+            MelbBeerBusiness.setStatus(portalAccess, "Venue update link copied.");
+          } catch {
+            MelbBeerBusiness.setStatus(portalAccess, absoluteLink);
+          }
+          return;
+        }
 
         const beerId = target.dataset.editBeer;
         if (beerId) {
@@ -1234,7 +1459,7 @@
           field(specialForm, "startsAt").value = item.startsAt || "";
           field(specialForm, "endsAt").value = item.endsAt || "";
           field(specialForm, "scheduleNote").value = item.scheduleNote || "";
-          field(specialForm, "exclusive").checked = Boolean(item.exclusive);
+          field(specialForm, "exclusive").checked = portalCanFeatureSpecials() && Boolean(item.exclusive);
           field(specialForm, "active").checked = Boolean(item.active);
           showTab("specials");
           return;

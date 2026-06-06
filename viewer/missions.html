@@ -18,16 +18,13 @@
     </section>
 
     <section class="panel">
-      <div class="grid grid--two">
-        <label class="field">Search street, suburb, venue, or reason
+      <div class="missionControlPanel">
+        <div class="missionControlGrid">
+          <label class="field missionSearchField">Search street, suburb, venue, or reason
           <input id="suburbFilter" placeholder="Try Brunswick, Chapel St, Rooftop Bar, happy hour…" autocomplete="off" />
           <span class="fieldHint">Search an area when location is off, or use your current location for nearby missions.</span>
-          <span class="missionSearchActions">
-            <button id="resolveMissionAreaButton" class="button button--secondary" type="button">Find missions near this area</button>
-            <button id="clearMissionAreaButton" class="button button--secondary" type="button" hidden>Clear area</button>
-          </span>
-        </label>
-        <label class="field">Sort
+          </label>
+          <label class="field missionSortField">Sort
           <select id="missionSort">
             <option value="points">Highest points</option>
             <option value="nearby">Nearest missions</option>
@@ -38,21 +35,28 @@
             <option value="most_requested">Most requested</option>
             <option value="high_demand">High demand</option>
           </select>
-        </label>
+          </label>
+        </div>
+        <div class="missionActionBar">
+          <div class="missionSearchActions">
+            <button id="resolveMissionAreaButton" class="button button--secondary" type="button">Find missions near this area</button>
+            <button id="clearMissionAreaButton" class="button button--secondary" type="button" hidden>Clear area</button>
+          </div>
+          <div class="missionToolbar" aria-label="Mission location controls">
+            <button id="useMissionLocationButton" class="button button--primary" type="button">Use my location</button>
+            <label class="field missionRadiusField">Within
+              <select id="missionRadiusSelect">
+                <option value="1">1 km</option>
+                <option value="2" selected>2 km</option>
+                <option value="5">5 km</option>
+                <option value="10">10 km</option>
+              </select>
+            </label>
+            <span id="missionLocationStatus" class="helperCopy">Location off. Search a suburb, street, or venue instead.</span>
+          </div>
+        </div>
       </div>
-      <div class="missionToolbar" aria-label="Mission location controls">
-        <button id="useMissionLocationButton" class="button button--primary" type="button">Use my location</button>
-        <label class="field missionRadiusField">Within
-          <select id="missionRadiusSelect">
-            <option value="1">1 km</option>
-            <option value="2" selected>2 km</option>
-            <option value="5">5 km</option>
-            <option value="10">10 km</option>
-          </select>
-        </label>
-        <span id="missionLocationStatus" class="helperCopy">Location off. Search a suburb, street, or venue instead.</span>
-      </div>
-      <p id="missionsHelp" class="helperCopy" style="margin-top:14px;">Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.</p>
+      <p id="missionsHelp" class="helperCopy missionHelp">Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.</p>
       <div id="missionsList" class="list missionList"></div>
     </section>
 

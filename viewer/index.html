@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pint Path</title>
   <script src="https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer/dist/index.min.js"></script>
-  <script src="./map-logic.js"></script>
+  <script src="./map-logic.js?v=20260606-price-rings"></script>
   <script src="./config.js"></script>
   <script src="./business.js"></script>
   <style>
@@ -946,6 +946,7 @@
       --pin-border: #bfdbfe;
       --pin-color: #ffffff;
       --pin-size: 26px;
+      --pin-price-ring: transparent;
       position: relative;
       display: inline-flex;
       align-items: center;
@@ -967,6 +968,17 @@
       transform: translateY(-2px);
       transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
       user-select: none;
+    }
+
+    .advancedMapPin--priced::before {
+      content: "";
+      position: absolute;
+      inset: -7px;
+      border: 3px solid var(--pin-price-ring);
+      border-radius: 999px;
+      opacity: 0.92;
+      box-shadow: 0 0 14px var(--pin-price-ring);
+      pointer-events: none;
     }
 
     .advancedMapPin::after {
@@ -1032,6 +1044,11 @@
         0 0 0 4px rgba(245, 197, 66, 0.18),
         0 0 28px rgba(245, 197, 66, 0.36),
         0 18px 42px rgba(0, 0, 0, 0.42);
+    }
+
+    .advancedMapPin.is-selected.advancedMapPin--priced::before {
+      inset: -9px;
+      opacity: 1;
     }
 
     .belowMapInsights {
@@ -1274,8 +1291,8 @@
     }
 
     .legend__swatch--green {
-      background: #22d3ee;
-      border-color: rgba(21, 94, 117, 0.92);
+      background: #16a34a;
+      border-color: rgba(21, 128, 61, 0.92);
     }
 
     .legend__swatch--teal {
@@ -1283,23 +1300,23 @@
     }
 
     .legend__swatch--cyan {
-      background: #22d3ee;
-      border-color: rgba(21, 94, 117, 0.92);
+      background: #16a34a;
+      border-color: rgba(21, 128, 61, 0.92);
     }
 
     .legend__swatch--amber {
-      background: #a3e635;
-      border-color: rgba(77, 124, 15, 0.92);
+      background: #facc15;
+      border-color: rgba(161, 98, 7, 0.92);
     }
 
     .legend__swatch--orange {
-      background: #f5c542;
-      border-color: rgba(146, 64, 14, 0.92);
+      background: #ea580c;
+      border-color: rgba(154, 52, 18, 0.92);
     }
 
     .legend__swatch--red {
-      background: #d946ef;
-      border-color: rgba(112, 26, 117, 0.92);
+      background: #7f1d1d;
+      border-color: rgba(69, 10, 10, 0.92);
     }
 
     .legend__swatch--selected {
@@ -1581,6 +1598,7 @@
 
     .venueRail__card {
       appearance: none;
+      position: relative;
       width: 100%;
       text-align: left;
       padding: 14px;
@@ -1591,6 +1609,24 @@
       cursor: pointer;
       transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
     }
+
+    .venueRail__card--price-cheap::after,
+    .venueRail__card--price-mid::after,
+    .venueRail__card--price-high::after,
+    .venueRail__card--price-expensive::after {
+      content: "";
+      position: absolute;
+      inset: 3px;
+      border: 2px solid var(--venue-price-ring, transparent);
+      border-radius: 15px;
+      pointer-events: none;
+      opacity: 0.9;
+    }
+
+    .venueRail__card--price-cheap { --venue-price-ring: #16a34a; }
+    .venueRail__card--price-mid { --venue-price-ring: #facc15; }
+    .venueRail__card--price-high { --venue-price-ring: #ea580c; }
+    .venueRail__card--price-expensive { --venue-price-ring: #7f1d1d; }
 
     .venueRail__card--plus {
       border-color: rgba(34, 211, 238, 0.35);
@@ -5444,6 +5480,15 @@
       return markerState;
     }
 
+    function getVisibleBeerPriceTier(beer, markerId) {
+      if (hasRedactedPrice(beer) || !hasNumericPrice(beer) || !canShowBeerPrice(beer, markerId)) {
+        return null;
+      }
+
+      const tier = window.MelbBeerMapLogic.getPriceTier(beer);
+      return ["cheap", "mid", "high", "expensive"].includes(tier) ? tier : null;
+    }
+
     function getBeerRowClass(beer, markerId) {
       return `beerPopup__beerRow--${getBeerDisplayState(beer, markerId)}`;
     }
@@ -5939,6 +5984,13 @@
       };
     }
 
+    function getVenueDiscoverySortBoost(rowOrVenue) {
+      const tier = getVenueTier(rowOrVenue);
+      if (tier === "pro") return -0.35;
+      if (tier === "plus") return -0.12;
+      return 0;
+    }
+
     function applyVenueTierToMarkerVisual(visual, rowOrVenue) {
       if (!visual) {
         return visual;
@@ -6306,8 +6358,8 @@
             hasUserLocation() ? `Within ${userLocationState.radiusKm} km` : "Area or map view",
           ],
           items: [
-            ["green", "Verified value", "Known lower-band price. Unknown prices are never treated as cheap."],
-            ["amber", "Verified mid-range", "Known price with current verification metadata."],
+            ["green", "Green price ring", "Known lower-band price. Unknown prices are never treated as cheap."],
+            ["amber", "Yellow price ring", "Known mid-range price with current verification metadata."],
             ["needs", "Happy-hour or needs data", "Useful venue signal, but check the card for exact details."],
             ["unknown", "Price unknown", "No verified exact price yet."],
             ["selected", "Selected venue", "Gold ring shows the active venue."],
@@ -6342,9 +6394,9 @@
             hasUserLocation() ? `Within ${userLocationState.radiusKm} km` : "Location off",
           ],
           items: [
-            ["cyan", "Lower price", "Verified lower-band price."],
-            ["amber", "Mid price", "Verified mid-range price."],
-            ["orange", "Upper range", "Verified higher-band price."],
+            ["green", "Green price ring", "Verified lower-band price."],
+            ["amber", "Yellow price ring", "Verified mid-range price."],
+            ["orange", "Orange/red price ring", "Verified higher-band price."],
             ["selected", "Selected venue", "Gold ring shows the active venue."],
           ],
           hint: "Recently verified near me excludes unknown prices from price-based rankings."
@@ -6365,10 +6417,10 @@
             `${resultCounts.unknown} price unknown`,
           ],
           items: [
-            ["cyan", "Lower price", "Verified lower-band price for this beer."],
-            ["amber", "Mid price", "Verified price in the middle of the range."],
-            ["orange", "Upper range", "Verified higher-band price."],
-            ["red", "Unavailable or locked", "Magenta/red markers flag unavailable, package-only, or access-limited pricing states."],
+            ["green", "Green price ring", "Verified lower-band price for this beer."],
+            ["amber", "Yellow price ring", "Verified price in the middle of the range."],
+            ["orange", "Orange/red price ring", "Verified higher-band price."],
+            ["red", "Dark red price ring", "Verified top-band price; unavailable, package-only, and locked states stay separate."],
             ["unknown", "Price unknown", "Listed or possible match, but no verified price yet."],
             ["selected", "Selected venue", "Gold ring means the marker is open in the venue card."],
           ],
@@ -6384,10 +6436,10 @@
             `${filteredRows.length} venues still to fill`,
             `${capturedCount} already captured are hidden`,
           ],
-        items: [
-          ["needs", "Needs data", "Muted grey markers still need beer prices, happy-hour details, or source evidence."],
-          ["selected", "Selected venue", "Gold ring shows the active venue."],
-        ],
+          items: [
+            ["needs", "Needs data", "Muted grey markers still need beer prices, happy-hour details, or source evidence."],
+            ["selected", "Selected venue", "Gold ring shows the active venue."],
+          ],
           hint: "Use Submit data to send a venue update, or let the call and OCR workflows fill these in over time."
         };
       }
@@ -6406,8 +6458,8 @@
           ["needs", "Needs data", "Muted grey markers are mapped venues that still need beer prices or happy-hour details."],
           ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
         ],
-        hint: "Switch to a beer search when you want price-led cyan, lime, gold, and magenta markers."
-      };
+            hint: "Switch to a beer search when you want green, yellow, orange, and dark-red price rings."
+          };
     }
 
     function renderLegend(filteredRows, viewState) {
@@ -6549,6 +6601,7 @@
       const distanceKm = getVenueDistanceKm(record.row);
       const distanceLabel = distanceKm === null ? null : `${window.MelbBeerMapLogic.formatDistance(distanceKm)} away`;
       const withDistance = (parts) => [distanceLabel, ...parts].filter(Boolean).join(" · ");
+      const discoveryBoost = getVenueDiscoverySortBoost(record.row);
 
       if (!hasCapturedBeerData(record.row)) {
         return {
@@ -6558,8 +6611,9 @@
             : "background:#1e293b; color:#e2e8f0;",
           metaPill: happyHourDetails ? "Happy hour checked" : "Venue mapped",
           copy: withDistance([happyHourBrief || "No beer prices captured yet. Good candidate for a call, OCR source, or manual entry."]),
-          sortWeight: 0,
+          sortWeight: discoveryBoost,
           numericPrice: null,
+          priceTier: null,
           distanceKm,
           distanceLabel,
           suburb,
@@ -6577,8 +6631,9 @@
             `${featuredBeer.label} · ${featuredBeer.availabilityLabel}`,
             happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
           ]),
-          sortWeight: canSortByPrice ? -featuredBeer.priceNumeric : 0,
+          sortWeight: (canSortByPrice ? -featuredBeer.priceNumeric : 0) + discoveryBoost,
           numericPrice: canSortByPrice ? featuredBeer.priceNumeric : null,
+          priceTier: getVisibleBeerPriceTier(featuredBeer, record.id),
           distanceKm,
           distanceLabel,
           suburb,
@@ -6596,8 +6651,9 @@
             `${featuredBeer.availabilityLabel} · ${displayPrice}`,
             happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
           ]),
-          sortWeight: canSortByPrice ? -featuredBeer.priceNumeric : 0,
+          sortWeight: (canSortByPrice ? -featuredBeer.priceNumeric : 0) + discoveryBoost,
           numericPrice: canSortByPrice ? featuredBeer.priceNumeric : null,
+          priceTier: getVisibleBeerPriceTier(featuredBeer, record.id),
           distanceKm,
           distanceLabel,
           suburb,
@@ -6611,8 +6667,9 @@
           : "background:#1e293b; color:#e2e8f0;",
         metaPill: happyHourDetails ? "Happy hour checked" : "Venue mapped",
         copy: withDistance([happyHourBrief || "Venue is on the map and ready for beer data."]),
-        sortWeight: 0,
+        sortWeight: discoveryBoost,
         numericPrice: null,
+        priceTier: null,
         distanceKm,
         distanceLabel,
         suburb,
@@ -6688,6 +6745,7 @@
         options.className,
         options.tier === "plus" ? "advancedMapPin--plus" : "",
         options.tier === "pro" ? "advancedMapPin--pro" : "",
+        visual?.priceRingColor ? "advancedMapPin--priced" : "",
         options.variant === "cluster" ? "advancedMapPin--cluster" : "",
         options.variant === "user" ? "advancedMapPin--user" : "",
         options.selected ? "is-selected" : "",
@@ -6695,6 +6753,7 @@
       pinEl.style.setProperty("--pin-bg", visual?.fillColor || "#2563eb");
       pinEl.style.setProperty("--pin-border", options.selected ? "#f5c542" : visual?.strokeColor || "#bfdbfe");
       pinEl.style.setProperty("--pin-color", visual?.labelColor || "#ffffff");
+      pinEl.style.setProperty("--pin-price-ring", visual?.priceRingColor || "transparent");
       pinEl.style.setProperty("--pin-size", `${size}px`);
       pinEl.setAttribute("aria-hidden", "true");
 
@@ -6843,7 +6902,7 @@
       }
 
       venueRailBodyEl.innerHTML = visibleRecords.slice(0, 8).map((record) => `
-        <button class="venueRail__card venueRail__card--${escapeHtml(record.tierMeta.tier)}" type="button" data-marker-id="${escapeHtml(record.id)}">
+        <button class="venueRail__card venueRail__card--${escapeHtml(record.tierMeta.tier)} ${record.summary.priceTier ? `venueRail__card--price-${escapeHtml(record.summary.priceTier)}` : ""}" type="button" data-marker-id="${escapeHtml(record.id)}">
           <div class="venueRail__cardTop">
             <div>
               <div class="venueRail__name ${record.tierMeta.tier === "pro" ? "venueRail__name--premium" : ""}">${escapeHtml(record.venue.name || record.row.venue_name || "Unknown venue")}</div>

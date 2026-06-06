@@ -3137,6 +3137,19 @@ describe("business demo contribution model", () => {
     });
     expect(repository.getBarProfile("bar-1")?.membershipTier).toBe("plus");
 
+    expect(() => service.upsertBarSpecial(managerAccount, "bar-1", {
+      id: null,
+      title: "Featured Plus attempt",
+      description: "Plus can add specials, but featured exclusives require Pro.",
+      price: 25,
+      discount: null,
+      startsAt: null,
+      endsAt: null,
+      scheduleNote: "Thursdays from 5pm",
+      exclusive: true,
+      active: true,
+    })).toThrow("Pro venue tier required");
+
     const beer = service.upsertBarBeer(managerAccount, "bar-1", {
       id: null,
       beerName: "Carlton Draught",
@@ -3167,7 +3180,7 @@ describe("business demo contribution model", () => {
       startsAt: null,
       endsAt: null,
       scheduleNote: "Thursdays from 5pm",
-      exclusive: true,
+      exclusive: false,
       active: true,
     });
 
@@ -3237,13 +3250,13 @@ describe("business demo contribution model", () => {
       }),
       expect.objectContaining({
         displayKind: "special",
-        beerName: "Pint Path exclusive",
+        beerName: "Venue special",
         price: null,
         priceRedacted: true,
-        specialExclusive: true,
+        specialExclusive: false,
         specialDescription: null,
         specialDiscount: null,
-        sourceType: "venue_manager_portal:pint_path_exclusive",
+        sourceType: "venue_manager_portal:special",
       }),
     ]));
 
@@ -3271,7 +3284,7 @@ describe("business demo contribution model", () => {
     expect(revealed.records).toEqual(expect.arrayContaining([
       expect.objectContaining({
         displayKind: "special",
-        beerName: "Pint Path exclusive",
+        beerName: "Venue special",
         priceRedacted: true,
         specialDescription: null,
       }),
@@ -3286,12 +3299,12 @@ describe("business demo contribution model", () => {
     expect(adminRecords.records).toEqual(expect.arrayContaining([
       expect.objectContaining({
         displayKind: "special",
-        beerName: "Pint Path exclusive",
+        beerName: "Thursday burger and pint",
         price: 25,
         specialTitle: "Thursday burger and pint",
         specialDescription: "Burger and selected pint special.",
         specialScheduleNote: "Thursdays from 5pm",
-        specialExclusive: true,
+        specialExclusive: false,
       }),
     ]));
 
@@ -3764,10 +3777,25 @@ describe("business demo contribution model", () => {
 
     const plusPortal = service.getVenuePortal(managerAccount, { venueId: "bar-tier-1" });
     expect(plusPortal.tier.analyticsLocked).toBe(false);
+    expect(plusPortal.tier.canManageSpecials).toBe(true);
+    expect(plusPortal.tier.featuredSpecials).toBe(false);
+    expect(plusPortal.tier.priorityReview).toBe(false);
+    expect(plusPortal.tier.advancedRecommendations).toBe(false);
     expect(plusPortal.analytics?.barLookups).toBe(1);
     expect(plusPortal.analytics?.privacyFloorMet).toBe(true);
     expect(plusPortal.analytics?.areaBeerSearches.length).toBeGreaterThan(0);
     expect(plusPortal.monthlyReport?.data).toBeTruthy();
+    expect(plusPortal.businessToolkit?.plusDemandSnapshot).toEqual(expect.objectContaining({
+      title: "Suburb demand snapshot",
+      privacyFloorMet: true,
+      recommendedNextActions: expect.arrayContaining([expect.any(String)]),
+    }));
+    expect(plusPortal.businessToolkit?.proGrowthPlan).toBeNull();
+    expect(plusPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
+      plusDemandSnapshot: expect.objectContaining({
+        opportunityScore: expect.any(Number),
+      }),
+    }));
 
     const proProfile = service.upsertBarProfile(admin, "bar-tier-1", {
       name: "Railway Hotel",
@@ -3787,6 +3815,124 @@ describe("business demo contribution model", () => {
     expect(proProfile.profile.premiumBadge).toBe("Pro");
     expect(proProfile.profile.promoted).toBe(true);
     expect(proProfile.profile.featuredSpecialEligible).toBe(true);
+
+    const proPortal = service.getVenuePortal(managerAccount, { venueId: "bar-tier-1" });
+    expect(proPortal.tier.featuredSpecials).toBe(true);
+    expect(proPortal.tier.priorityReview).toBe(true);
+    expect(proPortal.tier.advancedRecommendations).toBe(true);
+    expect(proPortal.businessToolkit?.proGrowthPlan).toEqual(expect.objectContaining({
+      title: "Pro growth studio",
+      premiumPlacement: expect.objectContaining({
+        mapHalo: true,
+        priorityReview: true,
+        featuredExclusiveEligible: true,
+      }),
+      weekendPlaybook: expect.arrayContaining([expect.any(String)]),
+    }));
+    expect(proPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
+      proRecommendations: expect.arrayContaining([
+        expect.any(String),
+      ]),
+      proGrowthPlan: expect.objectContaining({
+        title: "Pro growth studio",
+      }),
+      discoveryPlacement: expect.objectContaining({
+        premiumDisplay: true,
+        discoveryBoost: true,
+        featuredSpecials: true,
+        priorityReview: true,
+      }),
+    }));
+
+    const proSpecial = service.upsertBarSpecial(managerAccount, "bar-tier-1", {
+      id: null,
+      title: "Friday Pint Path exclusive",
+      description: "A genuine Pro-only offer ready for review.",
+      price: 18,
+      discount: null,
+      startsAt: null,
+      endsAt: null,
+      scheduleNote: "Friday 5pm-7pm",
+      exclusive: true,
+      active: true,
+    });
+    expect(pendingBarChangeFrom(proSpecial).payload.exclusive).toBe(true);
+  });
+
+  it("prioritises Pro venue changes in the admin review queue", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "priority-review-admin", "admin");
+    const proManager = createAccount(repository, "priority-pro-manager");
+    const plusManager = createAccount(repository, "priority-plus-manager");
+
+    service.assignVenueManager(admin, {
+      userId: proManager.id,
+      venueId: "priority-pro-bar",
+      venueName: "Priority Pro Bar",
+      suburb: "Fitzroy",
+    });
+    service.assignVenueManager(admin, {
+      userId: plusManager.id,
+      venueId: "priority-plus-bar",
+      venueName: "Priority Plus Bar",
+      suburb: "Richmond",
+    });
+    service.upsertBarProfile(admin, "priority-pro-bar", {
+      name: "Priority Pro Bar",
+      address: null,
+      suburb: "Fitzroy",
+      area: "Fitzroy",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "Pro review queue smoke venue.",
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "pro",
+      active: true,
+    });
+    service.upsertBarProfile(admin, "priority-plus-bar", {
+      name: "Priority Plus Bar",
+      address: null,
+      suburb: "Richmond",
+      area: "Richmond",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "Plus review queue smoke venue.",
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "plus",
+      active: true,
+    });
+
+    service.upsertBarBeer(repository.getAccountById(proManager.id)!, "priority-pro-bar", {
+      id: null,
+      beerName: "Pro Lager",
+      brewery: null,
+      style: "Lager",
+      abv: null,
+      serveSize: "pint",
+      price: 14,
+      onTap: true,
+      inStock: true,
+      notes: null,
+    });
+    service.upsertBarBeer(repository.getAccountById(plusManager.id)!, "priority-plus-bar", {
+      id: null,
+      beerName: "Plus Lager",
+      brewery: null,
+      style: "Lager",
+      abv: null,
+      serveSize: "pint",
+      price: 13,
+      onTap: true,
+      inStock: true,
+      notes: null,
+    });
+
+    expect(service.getVenuePartnerAdmin(admin).pendingChanges[0]?.barId).toBe("priority-pro-bar");
   });
 
   it("exposes only public tier metadata on venue discovery rows", async () => {

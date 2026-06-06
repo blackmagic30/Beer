@@ -132,8 +132,8 @@ Venue partner demo layer:
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
 - Free/Basic venue accounts can add beer data and happy-hour data only; Pint Path specials, venue analytics, and monthly reports stay locked.
-- Plus A$149 and Pro A$299 venue tiers unlock reviewed Pint Path specials, privacy-safe suburb-level analytics, and protected monthly report generation/export. Venue-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` and `STRIPE_PRO_PRICE_ID` are configured with Stripe `price_...` IDs.
-- Pro stores public display metadata only: highlighted name, `Pro` badge, promoted flag, and featured-special eligibility. It does not implement spammy ranking behaviour.
+- Plus A$149 unlocks normal reviewed Pint Path specials, privacy-safe suburb-level analytics, Plus demand snapshots with beer/style opportunities, a staff/customer venue update link for QR prompts, and protected monthly report generation/export in CSV or JSON. Venue-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` is configured with a Stripe `price_...` ID.
+- Pro A$299 adds visible premium placement: gold/violet map and listing treatment, featured Pint Path exclusive specials after review, priority admin review ordering for venue updates, a Pro growth studio with premium-placement readiness and weekend playbooks, Pro-only monthly growth recommendations, and a transparent Best Match discovery boost that does not fake popularity or override cheapest/nearest sorting. Configure `STRIPE_PRO_PRICE_ID` with the Pro Stripe `price_...` ID.
 - Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
 - Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, private source evidence, or another venue’s private data.
 - The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.

@@ -30,10 +30,12 @@ describe("viewer map price logic", () => {
       state: string;
       fillColor: string;
       strokeColor: string;
+      priceRingColor: string | null;
       labelText: string;
       scale: number;
       selected?: boolean;
     };
+    getPriceRingColor: (beer: Record<string, unknown>) => string | null;
     getClusterVisual: (count: number) => {
       fillColor: string;
       strokeColor: string;
@@ -101,12 +103,16 @@ describe("viewer map price logic", () => {
 
     expect(logic.getMarkerState(cheap)).toBe("cheap");
     expect(logic.getMarkerVisual(cheap).fillColor).toBe("#22d3ee");
+    expect(logic.getMarkerVisual(cheap).priceRingColor).toBe("#16a34a");
     expect(logic.getMarkerState(mid)).toBe("mid");
     expect(logic.getMarkerVisual(mid).fillColor).toBe("#a3e635");
+    expect(logic.getMarkerVisual(mid).priceRingColor).toBe("#facc15");
     expect(logic.getMarkerState(expensive)).toBe("expensive");
     expect(logic.getMarkerVisual(expensive).fillColor).toBe("#d946ef");
+    expect(logic.getMarkerVisual(expensive).priceRingColor).toBe("#7f1d1d");
     expect(logic.getMarkerState(unknown)).toBe("unknown");
     expect(logic.getMarkerVisual(unknown).fillColor).toBe("#64748b");
+    expect(logic.getMarkerVisual(unknown).priceRingColor).toBeNull();
     expect(logic.getMarkerVisual(null, { mappedOnly: true }).state).toBe("mapped");
     expect(logic.getMarkerVisual(null, { mappedOnly: true }).fillColor).toBe("#2563eb");
     expect(logic.getMarkerVisual(null, { mappedOnly: true }).labelText).toBe("✓");
@@ -124,7 +130,17 @@ describe("viewer map price logic", () => {
     expect(selected.fillColor).toBe(base.fillColor);
     expect(selected.fillColor).not.toBe("#22d3ee");
     expect(selected.strokeColor).toBe("#f5c542");
+    expect(selected.priceRingColor).toBe(base.priceRingColor);
     expect(selected.scale).toBeGreaterThan(base.scale);
+  });
+
+  it("uses a green to dark-red price ring scale only for visible numeric prices", () => {
+    expect(logic.getPriceRingColor({ priceNumeric: 10 })).toBe("#16a34a");
+    expect(logic.getPriceRingColor({ priceNumeric: 14 })).toBe("#facc15");
+    expect(logic.getPriceRingColor({ priceNumeric: 16 })).toBe("#ea580c");
+    expect(logic.getPriceRingColor({ priceNumeric: 20 })).toBe("#7f1d1d");
+    expect(logic.getPriceRingColor({ priceNumeric: null })).toBeNull();
+    expect(logic.getMarkerVisual({ priceNumeric: null, availabilityLabel: "On tap" }, { locked: true }).priceRingColor).toBeNull();
   });
 
   it("keeps locked prices distinct from unknown and cheap marker states", () => {
@@ -179,6 +195,11 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("AdvancedMarkerElement");
     expect(html).toContain("createAdvancedMapMarker");
     expect(html).toContain("advancedMapPin");
+    expect(html).toContain("advancedMapPin--priced");
+    expect(html).toContain("--pin-price-ring");
+    expect(html).toContain("getVisibleBeerPriceTier");
+    expect(html).toContain("venueRail__card--price-");
+    expect(html).toContain("green, yellow, orange, and dark-red price rings");
     expect(html).toContain("__pintPathMapMarkerDebug");
     expect(html).toContain('libraries: "marker,places"');
     expect(html).toContain('loading: "async"');

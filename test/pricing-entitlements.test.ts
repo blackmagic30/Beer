@@ -50,8 +50,15 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
     expect(pricingHtml).toContain("No analytics or monthly reports.");
     expect(pricingHtml).toContain("Suburb-level search and interaction trends.");
+    expect(pricingHtml).toContain("Plus demand snapshot with beer/style opportunities and next actions.");
+    expect(pricingHtml).toContain("Staff/customer update link for QR tap-list prompts and fresh venue data.");
     expect(pricingHtml).toContain("Monthly venue reports");
-    expect(pricingHtml).toContain("Premium venue badge");
+    expect(pricingHtml).toContain("CSV and JSON report exports");
+    expect(pricingHtml).toContain("Premium map pin, listing card, badge, and highlighted venue name.");
+    expect(pricingHtml).toContain("Featured Pint Path exclusive specials after review.");
+    expect(pricingHtml).toContain("Priority admin review queue");
+    expect(pricingHtml).toContain("Pro growth studio with premium-placement checklist and weekend playbook.");
+    expect(pricingHtml).toContain("Transparent discovery boost");
     expect(pricingHtml).toContain('href="/venue-portal.html"');
     expect(pricingHtml).toContain('id="venuePricingSection"');
     expect(pricingHtml).toContain('id="venuePricingSection" class="venuePricingSection" aria-labelledby="venuePricingTitle" hidden');
@@ -62,6 +69,8 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).not.toContain('type="button" data-plan="yearly"');
     expect(readme).toContain("A$4.99/month");
     expect(readme).toContain("A$50/year");
+    expect(readme).toContain("Plus demand snapshots");
+    expect(readme).toContain("Pro growth studio");
     expect(envExample).toContain("STRIPE_PRICE_MONTHLY=price_monthly_499_aud");
     expect(envExample).toContain("STRIPE_PRICE_YEARLY=price_yearly_50_aud");
 
@@ -78,7 +87,8 @@ describe("premium pricing and entitlements", () => {
     const readme = readRepoFile("README.md");
 
     expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
-    expect(pricingHtml).toContain("Add reviewed Pint Path specials.");
+    expect(pricingHtml).toContain("Add normal reviewed Pint Path specials.");
+    expect(pricingHtml).toContain("Featured Pint Path exclusive specials after review.");
     expect(mapHtml).toContain("Unlock full access to view times, specials, and discount details.");
     expect(mapHtml).toContain("Unlock full access to view the days, times, specials, and discount details.");
     expect(readme).toContain("venue special-discount details");
@@ -97,6 +107,8 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).not.toContain("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
     expect(pricingHtml).toContain('MelbBeerBusiness.trackEvent("pricing_page_viewed", { pricingContext })');
     expect(businessCss).toContain(".venuePricingGrid");
+    expect(businessCss).toContain(".businessToolkit");
+    expect(businessCss).toContain(".reportToolbar");
     expect(businessCss).toContain(".button:disabled");
   });
 });
