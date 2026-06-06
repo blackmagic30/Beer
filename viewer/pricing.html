@@ -36,7 +36,8 @@
             <ul class="cleanList tierList">
               <li>15 approved points unlock premium map access until month end.</li>
               <li>Approved submissions count after reviewer checks.</li>
-              <li>Find higher-value venues from missions and stale-data prompts.</li>
+              <li>Earn exact prices, value rings, premium filters, and the member toolkit without paying.</li>
+              <li>Find higher-value venues from missions, stale-data prompts, and missing-venue requests.</li>
               <li>No card required when you earn the contributor unlock.</li>
             </ul>
           </div>
@@ -53,9 +54,11 @@
             <div class="price">A$4.99</div>
             <p class="muted">Best when you want full Pint Path access for this month.</p>
             <ul class="cleanList tierList">
-              <li>Every verified beer price.</li>
-              <li>Full map search and premium filters.</li>
-              <li>Venue special-discount details where available.</li>
+              <li>Every verified beer price with no daily reveal limit.</li>
+              <li>Value rings on map pins for cheaper-to-expensive beer comparisons.</li>
+              <li>Cheapest-night filters: beer search, cheapest sort, verified only, under A$10, and saved suburbs.</li>
+              <li>Rotating discount pass for venue specials where available.</li>
+              <li>Saved night shortcuts, personal defaults, and savings tracking in Account.</li>
               <li>Cancel through Stripe billing once customer portal is enabled.</li>
             </ul>
           </div>
@@ -73,7 +76,8 @@
             <ul class="cleanList tierList">
               <li>Everything in Monthly.</li>
               <li>Lower effective monthly cost.</li>
-              <li>Priority access to new premium discovery tools.</li>
+              <li>Best for regular nights out, suburb-hopping, and tracking long-term savings.</li>
+              <li>Priority access to new premium discovery tools such as smarter night planning and member-only deal experiments.</li>
               <li>Still privacy-safe and 18+ only.</li>
             </ul>
           </div>
@@ -86,6 +90,42 @@
       <p class="notice pricingNotice">
         Own or manage a bar? Sign in with your assigned venue-manager account to see Free, Plus, and Pro venue plans.
       </p>
+
+      <section class="panel consumerPremiumToolkit" aria-label="Premium user toolkit included">
+        <div class="sectionHeader">
+          <div>
+            <div class="eyebrow">Included for paid users</div>
+            <h2>More than a price unlock.</h2>
+          </div>
+          <p>Premium is designed to make each search faster, clearer, and more useful without exposing private user behaviour.</p>
+        </div>
+        <div class="premiumMemberPerkGrid consumerPremiumPerkGrid">
+          <article class="premiumPerkCard is-unlocked">
+            <div class="premiumPerkCard__top"><h3>Exact-price value mode</h3><span>Map</span></div>
+            <p>Compare venues with exact verified prices and the green/yellow/red value ring around price-aware map pins.</p>
+          </article>
+          <article class="premiumPerkCard is-unlocked">
+            <div class="premiumPerkCard__top"><h3>Cheapest-night filters</h3><span>Search</span></div>
+            <p>Use beer search, cheapest sort, verified-only, under-A$10, nearby, and saved-suburb filters together.</p>
+          </article>
+          <article class="premiumPerkCard is-unlocked">
+            <div class="premiumPerkCard__top"><h3>Rotating specials pass</h3><span>Deals</span></div>
+            <p>Generate a private session QR/code for Pint Path specials and track venue-confirmed estimated savings.</p>
+          </article>
+          <article class="premiumPerkCard is-unlocked">
+            <div class="premiumPerkCard__top"><h3>Saved night shortcuts</h3><span>Account</span></div>
+            <p>Save venues, beers, suburbs, and night-plan ideas so repeat searches start closer to your real plans.</p>
+          </article>
+          <article class="premiumPerkCard is-unlocked">
+            <div class="premiumPerkCard__top"><h3>Personal defaults</h3><span>Profile</span></div>
+            <p>Store favourite beers, suburbs, and use cases so missions and future discovery tools feel local to you.</p>
+          </article>
+          <article class="premiumPerkCard is-unlocked">
+            <div class="premiumPerkCard__top"><h3>Savings tracker</h3><span>Stats</span></div>
+            <p>See contribution progress, access status, discount redemptions, and estimated savings in your dashboard.</p>
+          </article>
+        </div>
+      </section>
     </section>
 
     <section id="venuePricingSection" class="venuePricingSection" aria-labelledby="venuePricingTitle" hidden>
@@ -185,8 +225,9 @@
       const account = MelbBeerBusiness.getAccountContext?.();
       const role = account?.role || "";
       const params = new URLSearchParams(window.location.search);
+      const forceUserPricing = params.get("audience") === "users";
       const forceVenuePricing = params.get("audience") === "venues";
-      const showVenuePricing = forceVenuePricing || role === "venue_manager" || role === "admin";
+      const showVenuePricing = !forceUserPricing && (forceVenuePricing || role === "venue_manager" || role === "admin");
       const pricingContext = showVenuePricing ? "venue" : "consumer";
 
       document.getElementById("userPricingSection").hidden = showVenuePricing;
@@ -197,7 +238,7 @@
         : "Unlock the full Pint Path map.";
       document.getElementById("pricingLead").textContent = showVenuePricing
         ? "Verified bars use the venue dashboard to publish fresh beer data and happy-hour data. Paid venue tiers add reviewed specials, privacy-safe analytics, and premium display tools."
-        : "Signed-out users and normal accounts can unlock every verified beer price, premium filters, and venue special-discount details by paying or earning 15 approved contribution points.";
+        : "Signed-out users and normal accounts can unlock exact prices, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details by paying or earning 15 approved contribution points.";
 
       void MelbBeerBusiness.trackEvent("pricing_page_viewed", { pricingContext });
     });

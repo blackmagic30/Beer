@@ -31,10 +31,19 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Freemium");
     expect(pricingHtml).toContain("15 points");
     expect(pricingHtml).toContain("same map access as a paid user");
+    expect(pricingHtml).toContain("exact prices, value rings, premium filters, and the member toolkit");
     expect(pricingHtml).toContain('href="/submit.html"');
     expect(pricingHtml).toContain('href="/missions.html"');
     expect(pricingHtml).toContain("A$4.99");
     expect(pricingHtml).toContain("A$50");
+    expect(pricingHtml).toContain("Every verified beer price with no daily reveal limit.");
+    expect(pricingHtml).toContain("Value rings on map pins");
+    expect(pricingHtml).toContain("Cheapest-night filters");
+    expect(pricingHtml).toContain("Rotating discount pass for venue specials");
+    expect(pricingHtml).toContain("Saved night shortcuts, personal defaults, and savings tracking");
+    expect(pricingHtml).toContain("Premium is designed to make each search faster");
+    expect(pricingHtml).toContain("Exact-price value mode");
+    expect(pricingHtml).toContain("Personal defaults");
     expect(pricingHtml).toContain('href="/account.html?checkoutPlan=monthly"');
     expect(pricingHtml).toContain('href="/account.html?checkoutPlan=yearly"');
     expect(pricingHtml).toContain("Venue pricing");
@@ -63,12 +72,17 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain('id="venuePricingSection"');
     expect(pricingHtml).toContain('id="venuePricingSection" class="venuePricingSection" aria-labelledby="venuePricingTitle" hidden');
     expect(pricingHtml).toContain('class="venuePricingSection"');
+    expect(pricingHtml).toContain('params.get("audience") === "users"');
     expect(pricingHtml).toContain('role === "venue_manager" || role === "admin"');
+    expect(pricingHtml).toContain('!forceUserPricing && (forceVenuePricing || role === "venue_manager" || role === "admin")');
     expect(pricingHtml).toContain('pricingContext = showVenuePricing ? "venue" : "consumer"');
     expect(pricingHtml).not.toContain('type="button" data-plan="monthly"');
     expect(pricingHtml).not.toContain('type="button" data-plan="yearly"');
     expect(readme).toContain("A$4.99/month");
     expect(readme).toContain("A$50/year");
+    expect(readme).toContain("value rings");
+    expect(readme).toContain("saved night shortcuts");
+    expect(readme).toContain("discount-pass access");
     expect(readme).toContain("Plus demand snapshots");
     expect(readme).toContain("Pro growth studio");
     expect(envExample).toContain("STRIPE_PRICE_MONTHLY=price_monthly_499_aud");
@@ -98,6 +112,7 @@ describe("premium pricing and entitlements", () => {
 
   it("starts consumer checkout through the account page instead of inline pricing scripts", () => {
     const pricingHtml = readRepoFile("viewer/pricing.html");
+    const accountHtml = readRepoFile("viewer/account.html");
     const businessCss = readRepoFile("viewer/business.css");
 
     expect(pricingHtml).not.toContain('data-plan="monthly"');
@@ -106,8 +121,15 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).not.toContain("Opening secure Stripe checkout");
     expect(pricingHtml).not.toContain("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2");
     expect(pricingHtml).toContain('MelbBeerBusiness.trackEvent("pricing_page_viewed", { pricingContext })');
+    expect(accountHtml).toContain('id="premiumMemberHub"');
+    expect(accountHtml).toContain("renderPremiumMemberHub");
+    expect(accountHtml).toContain("premiumMemberToolkit");
+    expect(accountHtml).toContain("requestedSettingsPanel");
+    expect(accountHtml).toContain("/account.html?settings=watchlist");
     expect(businessCss).toContain(".venuePricingGrid");
     expect(businessCss).toContain(".businessToolkit");
+    expect(businessCss).toContain(".premiumMemberHub");
+    expect(businessCss).toContain(".premiumPerkCard");
     expect(businessCss).toContain(".reportToolbar");
     expect(businessCss).toContain(".button:disabled");
   });

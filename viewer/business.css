@@ -1435,7 +1435,7 @@ h3 {
   order: 2;
 }
 
-.accountDashboard #accountSettingsHub {
+.accountDashboard #premiumMemberHub {
   order: 3;
 }
 
@@ -1447,8 +1447,12 @@ h3 {
   order: 5;
 }
 
-.accountDashboard #recentSubmissionsSection {
+.accountDashboard #accountSettingsHub {
   order: 6;
+}
+
+.accountDashboard #recentSubmissionsSection {
+  order: 7;
 }
 
 .accountHighlightsGrid .metricCard,
@@ -1491,6 +1495,139 @@ h3 {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.premiumMemberHub {
+  display: grid;
+  gap: 18px;
+  border-color: rgba(34, 211, 238, 0.22);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.15), transparent 34%),
+    radial-gradient(circle at 96% 5%, rgba(245, 197, 66, 0.12), transparent 32%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.078), rgba(255, 255, 255, 0.028)),
+    rgba(13, 18, 32, 0.9);
+}
+
+.premiumMemberHub--active {
+  border-color: rgba(245, 197, 66, 0.34);
+  box-shadow: var(--shadow-premium), var(--soft-shadow);
+}
+
+.premiumMemberHub--locked {
+  border-color: rgba(34, 211, 238, 0.18);
+}
+
+.premiumMemberHub__header {
+  margin-bottom: 0;
+}
+
+.premiumMemberMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.premiumMemberMetric {
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.28);
+  padding: 13px;
+}
+
+.premiumMemberMetric strong {
+  display: block;
+  color: var(--text-primary);
+  font-family: var(--display-font);
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1;
+}
+
+.premiumMemberMetric span {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.premiumMemberPerkGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.premiumPerkCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 218px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 20px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+    rgba(7, 10, 18, 0.34);
+  padding: 15px;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.premiumPerkCard:hover {
+  transform: translateY(-1px);
+  border-color: rgba(34, 211, 238, 0.26);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.026)),
+    rgba(15, 23, 42, 0.52);
+}
+
+.premiumPerkCard.is-unlocked {
+  border-color: rgba(245, 197, 66, 0.22);
+  box-shadow: 0 0 22px rgba(245, 197, 66, 0.08);
+}
+
+.premiumPerkCard.is-locked {
+  opacity: 0.9;
+}
+
+.premiumPerkCard__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.premiumPerkCard h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.premiumPerkCard__top span {
+  flex: 0 0 auto;
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.1);
+  color: #dffbff;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.premiumPerkCard p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.48;
+}
+
+.premiumPerkCard .button {
+  align-self: flex-start;
+  margin-top: auto;
+}
+
+.premiumMemberActionRow {
+  align-items: center;
 }
 
 .accountDiscountFeature .sectionHeader h2,
@@ -2101,6 +2238,19 @@ h3 {
     radial-gradient(circle at 82% 8%, rgba(34, 211, 238, 0.1), transparent 40%),
     linear-gradient(145deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.028)),
     rgba(21, 31, 52, 0.88);
+}
+
+.consumerPremiumToolkit {
+  margin-top: 18px;
+  border-color: rgba(245, 197, 66, 0.18);
+  background:
+    radial-gradient(circle at 4% 0%, rgba(245, 197, 66, 0.1), transparent 30%),
+    radial-gradient(circle at 90% 8%, rgba(34, 211, 238, 0.12), transparent 34%),
+    rgba(13, 18, 32, 0.84);
+}
+
+.consumerPremiumPerkGrid {
+  margin-top: 4px;
 }
 
 .venuePricingCard--free {
@@ -2772,7 +2922,9 @@ h3 {
   .accountHighlightsGrid,
   .accountMetricGrid,
   .accountActionsGrid,
-  .accountStatsGrid {
+  .accountStatsGrid,
+  .premiumMemberMetricGrid,
+  .premiumMemberPerkGrid {
     grid-template-columns: 1fr;
   }
 
@@ -2901,6 +3053,10 @@ h3 {
     padding: 20px;
   }
 
+  .premiumPerkCard {
+    min-height: auto;
+  }
+
   .accountDiscountFeature .sectionHeader {
     gap: 14px;
   }
@@ -2961,6 +3117,11 @@ h3 {
   }
 
   .accountHighlightsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .premiumMemberMetricGrid,
+  .premiumMemberPerkGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

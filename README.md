@@ -82,7 +82,7 @@ For the intended beta role boundaries, private-data rules, and approval gates, s
 The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 
 - Free users can view the map, venue pins, suburbs, data freshness, missions, happy hours, and pint prices for Guinness, Carlton Draft, and Stone & Wood.
-- Premium users can unlock full map utility, every verified beer price, premium filters, and venue special-discount details at A$4.99/month or A$50/year.
+- Premium users can unlock full map utility, every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, savings tracking, and venue special-discount details at A$4.99/month or A$50/year.
 - Contributors can earn temporary premium access for the rest of the current month after 15 approved monthly contribution points.
 - Public submissions are queued as `pending` and do not become trusted map data until reviewed.
 - Approved submissions publish `venue_price_records`, which the map merges into existing venue data for existing venues.

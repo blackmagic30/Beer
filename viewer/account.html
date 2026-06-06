@@ -122,6 +122,20 @@
 
       <div id="dashboardStatus" class="notice" role="status">Loading your account...</div>
 
+      <section id="premiumMemberHub" class="panel premiumMemberHub" aria-labelledby="premiumMemberHubTitle">
+        <div class="sectionHeader premiumMemberHub__header">
+          <div>
+            <div class="eyebrow">Paid member tools</div>
+            <h2 id="premiumMemberHubTitle">Premium member toolkit</h2>
+            <p id="premiumMemberHubSummary" class="muted">Loading paid-user benefits...</p>
+          </div>
+          <span id="premiumMemberHubBadge" class="tierBadge tierBadge--plus">Checking</span>
+        </div>
+        <div id="premiumMemberMetricGrid" class="premiumMemberMetricGrid" aria-label="Premium member metrics"></div>
+        <div id="premiumMemberPerkGrid" class="premiumMemberPerkGrid" aria-label="Premium member benefits"></div>
+        <div id="premiumMemberActionRow" class="actionRow premiumMemberActionRow"></div>
+      </section>
+
       <section class="accountHighlightsGrid" aria-label="Account highlights">
         <article class="metricCard">
           <div id="savingsMetric" class="metricValue">A$0</div>
@@ -436,6 +450,13 @@
       return sessionId && sessionId.length >= 8 ? sessionId : null;
     }
 
+    function requestedSettingsPanel() {
+      const panel = new URLSearchParams(window.location.search).get("settings") || window.location.hash.replace("#", "");
+      return ["submissions", "stats", "preferences", "watchlist", "privacy", "support", "security"].includes(panel)
+        ? panel
+        : null;
+    }
+
     function localDatetimeIso(date = new Date()) {
       return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     }
@@ -659,6 +680,58 @@
       `;
     }
 
+    function renderPremiumMemberHub(result) {
+      const hub = $("premiumMemberHub");
+      if (!hub) {
+        return;
+      }
+
+      const toolkit = result.premiumMemberToolkit || result.access?.premiumToolkit || {};
+      const unlocked = Boolean(toolkit.enabled);
+      const counts = toolkit.counts || {};
+      hub.classList.toggle("premiumMemberHub--active", unlocked);
+      hub.classList.toggle("premiumMemberHub--locked", !unlocked);
+      $("premiumMemberHubTitle").textContent = toolkit.title || "Premium member toolkit";
+      $("premiumMemberHubSummary").textContent = toolkit.summary || "Paid users unlock exact prices, premium filters, saved shortcuts, discount-pass access, and savings tracking.";
+      $("premiumMemberHubBadge").className = `tierBadge ${unlocked ? "tierBadge--pro" : "tierBadge--plus"}`;
+      $("premiumMemberHubBadge").textContent = unlocked ? "Active" : "Locked";
+
+      const metricRows = [
+        { label: "Saved shortcuts", value: Number(counts.savedVenues || 0) + Number(counts.savedBeers || 0) + Number(counts.savedSuburbs || 0) + Number(counts.savedNightPlans || 0) },
+        { label: "Preference defaults", value: counts.preferredShortcuts || 0 },
+        { label: "Specials redeemed", value: counts.totalRedemptions || 0 },
+        { label: "Tracked savings", value: formatMoney((counts.estimatedSavingsCents || 0) / 100) },
+      ];
+      $("premiumMemberMetricGrid").innerHTML = metricRows.map((metric) => `
+        <article class="premiumMemberMetric">
+          <strong>${escapeHtml(metric.value)}</strong>
+          <span>${escapeHtml(metric.label)}</span>
+        </article>
+      `).join("");
+
+      const perks = Array.isArray(toolkit.perks) ? toolkit.perks : [];
+      $("premiumMemberPerkGrid").innerHTML = perks.map((perk) => `
+        <article class="premiumPerkCard ${perk.unlocked ? "is-unlocked" : "is-locked"}">
+          <div class="premiumPerkCard__top">
+            <h3>${escapeHtml(perk.title)}</h3>
+            <span>${escapeHtml(perk.badge || (perk.unlocked ? "Active" : "Paid"))}</span>
+          </div>
+          <p>${escapeHtml(perk.copy)}</p>
+          <a class="button" href="${escapeHtml(perk.href || "/pricing.html")}">${escapeHtml(perk.ctaLabel || "Open")}</a>
+        </article>
+      `).join("");
+
+      const primary = toolkit.primaryAction || { label: unlocked ? "Open value map" : "Upgrade monthly", href: unlocked ? "/index.html" : "/account.html?checkoutPlan=monthly" };
+      const secondary = toolkit.secondaryAction || { label: unlocked ? "Manage watchlist" : "Earn with missions", href: unlocked ? "/account.html?settings=watchlist" : "/missions.html" };
+      $("premiumMemberActionRow").innerHTML = [
+        `<a class="button ${unlocked ? "button--premium" : "button--primary"}" href="${escapeHtml(primary.href)}">${escapeHtml(primary.label)}</a>`,
+        `<a class="button" href="${escapeHtml(secondary.href)}">${escapeHtml(secondary.label)}</a>`,
+        unlocked
+          ? '<a class="button" href="/account.html?settings=stats">View savings</a>'
+          : '<a class="button button--premium" href="/account.html?checkoutPlan=yearly">Upgrade yearly</a>',
+      ].join("");
+    }
+
     function renderDashboard(result) {
       state.accountData = result;
       MelbBeerBusiness.setAccountContext(result.account);
@@ -716,6 +789,7 @@
       MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings);
       renderSavedItems(result.savedItems || [], result.recentSearches || []);
       renderRecentSubmissions(result.recentSubmissions || []);
+      renderPremiumMemberHub(result);
       renderAccountStatsPanel(result);
     }
 
@@ -975,7 +1049,7 @@
       document.querySelectorAll("[data-settings-target]").forEach((button) => {
         button.addEventListener("click", () => showAccountSettingsPanel(button.dataset.settingsTarget));
       });
-      showAccountSettingsPanel(null);
+      showAccountSettingsPanel(requestedSettingsPanel());
       $("signupForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
       $("loginForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
       $("logoutButton").addEventListener("click", async () => {

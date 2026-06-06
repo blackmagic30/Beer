@@ -976,13 +976,25 @@ describe("production hardening", () => {
       hasFullAccess: false,
       canViewSpecialDiscounts: false,
       freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.",
-      premiumScope: "Every verified beer price, premium filters, and venue special-discount details.",
+      premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
+      premiumToolkit: expect.objectContaining({
+        enabled: false,
+        status: "locked",
+        lockedCopy: expect.stringContaining("A$4.99/month"),
+      }),
     });
     expect(service.getAccessState(premiumUser, null)).toMatchObject({
       hasFullAccess: true,
       canViewSpecialDiscounts: true,
-      premiumScope: "Every verified beer price, premium filters, and venue special-discount details.",
+      canUseDiscountPass: true,
+      premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
+      premiumToolkit: expect.objectContaining({
+        enabled: true,
+        status: "active",
+        summary: expect.stringContaining("value rings"),
+      }),
     });
+    expect(service.getAccessState(premiumUser, null).premiumToolkit.perks.map((perk) => perk.id)).toContain("savings_tracker");
   });
 
   it("keeps exact price reads behind the business API in the public viewer", () => {
@@ -2283,6 +2295,25 @@ describe("business demo contribution model", () => {
       itemName: "House pint",
       estimatedSavingsCents: 600,
     }));
+    expect(dashboard.premiumMemberToolkit).toEqual(expect.objectContaining({
+      enabled: true,
+      status: "active",
+      title: "Premium member toolkit",
+      counts: expect.objectContaining({
+        totalRedemptions: 1,
+        uniqueDiscountVenues: 1,
+        estimatedSavingsCents: 600,
+        estimatedSavingsDollars: 6,
+      }),
+    }));
+    expect(dashboard.premiumMemberToolkit.perks.map((perk) => perk.id)).toEqual(expect.arrayContaining([
+      "exact_price_mode",
+      "premium_filters",
+      "discount_pass",
+      "night_shortlist",
+      "personal_preferences",
+      "savings_tracker",
+    ]));
   });
 
   it("publishes approved submission items as photo-verified public price records", () => {

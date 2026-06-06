@@ -218,13 +218,16 @@ describe("account page shell", () => {
     expect(html).toContain("function showAccountSettingsPanel");
     expect(html).toContain('document.querySelectorAll("[data-settings-target]")');
     expect(html).toContain("showAccountSettingsPanel(button.dataset.settingsTarget)");
-    expect(html).toContain("showAccountSettingsPanel(null)");
+    expect(html).toContain("function requestedSettingsPanel");
+    expect(html).toContain("showAccountSettingsPanel(requestedSettingsPanel())");
     expect(html).not.toContain('id="privacyControlsSection"');
     expect(css).toContain(".settingsNavButton");
     expect(css).toContain(".settingsPanel");
     expect(css).toContain(".settingsEmptyPanel");
+    expect(css).toContain(".accountDashboard #premiumMemberHub");
     expect(css).toContain(".accountDashboard #accountSettingsHub");
     expect(css).toContain("order: 3;");
+    expect(css).toContain("order: 6;");
   });
 
   it("uses Supabase OAuth and email auth before falling back to local demo auth", () => {

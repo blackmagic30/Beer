@@ -9,6 +9,7 @@ import type { Env } from "../../config/env.js";
 import {
   BusinessRepository,
   type AgeVerification,
+  type AccountPreferences,
   type BarPendingChange,
   type BarPendingChangeAction,
   type BarPendingChangeType,
@@ -24,6 +25,7 @@ import {
   type FeedbackPriority,
   type PendingVenueDetails,
   type PublicVenuePriceRecord,
+  type SavedItem,
   type ServingSize,
   type SourceEvidenceObject,
   type SubscriptionStatus,
@@ -557,6 +559,119 @@ function isFullAccess(account: BusinessAccount | null): boolean {
   }
 
   return false;
+}
+
+function buildConsumerPremiumToolkit(input: {
+  account: BusinessAccount | null;
+  savedItems?: SavedItem[];
+  preferences?: AccountPreferences | null;
+  discountStats?: { totalRedemptions: number; estimatedSavingsCents: number; uniqueVenues: number } | null;
+}) {
+  const hasFullAccess = isFullAccess(input.account);
+  const savedItems = input.savedItems ?? [];
+  const savedCounts = savedItems.reduce(
+    (counts, item) => {
+      if (item.itemType === "venue") {
+        counts.venues += 1;
+      } else if (item.itemType === "beer") {
+        counts.beers += 1;
+      } else if (item.itemType === "suburb") {
+        counts.suburbs += 1;
+      } else if (item.itemType === "night_plan") {
+        counts.nightPlans += 1;
+      }
+      return counts;
+    },
+    { venues: 0, beers: 0, suburbs: 0, nightPlans: 0 },
+  );
+  const preferredShortcuts =
+    (input.preferences?.preferredSuburbs.length ?? 0) +
+    (input.preferences?.preferredBeers.length ?? 0) +
+    (input.preferences?.preferredUseCases.length ?? 0);
+  const upgradeCopy = "Upgrade for A$4.99/month, A$50/year, or earn 15 approved points this month.";
+
+  return {
+    enabled: hasFullAccess,
+    status: hasFullAccess ? "active" : "locked",
+    title: hasFullAccess ? "Premium member toolkit" : "Unlock the premium member toolkit",
+    summary: hasFullAccess
+      ? "Your paid/contributor tools are active: exact prices, value rings, premium filters, discount-pass access, saved night shortcuts, and savings tracking."
+      : `Paid users get exact prices, value rings, premium filters, discount-pass access, saved night shortcuts, and savings tracking. ${upgradeCopy}`,
+    lockedCopy: hasFullAccess ? null : upgradeCopy,
+    primaryAction: hasFullAccess
+      ? { label: "Open value map", href: "/index.html" }
+      : { label: "Upgrade monthly", href: "/account.html?checkoutPlan=monthly" },
+    secondaryAction: hasFullAccess
+      ? { label: "Manage watchlist", href: "/account.html?settings=watchlist" }
+      : { label: "Earn with missions", href: "/missions.html" },
+    counts: {
+      savedVenues: savedCounts.venues,
+      savedBeers: savedCounts.beers,
+      savedSuburbs: savedCounts.suburbs,
+      savedNightPlans: savedCounts.nightPlans,
+      preferredShortcuts,
+      totalRedemptions: input.discountStats?.totalRedemptions ?? 0,
+      uniqueDiscountVenues: input.discountStats?.uniqueVenues ?? 0,
+      estimatedSavingsCents: input.discountStats?.estimatedSavingsCents ?? 0,
+      estimatedSavingsDollars: Number(((input.discountStats?.estimatedSavingsCents ?? 0) / 100).toFixed(2)),
+    },
+    perks: [
+      {
+        id: "exact_price_mode",
+        title: "Exact price and value rings",
+        unlocked: hasFullAccess,
+        badge: hasFullAccess ? "Active" : "Paid",
+        copy: "See every verified beer price and the green-to-red value ring around venue pins when comparing the same beer.",
+        href: "/index.html",
+        ctaLabel: "Open map",
+      },
+      {
+        id: "premium_filters",
+        title: "Cheapest-night filters",
+        unlocked: hasFullAccess,
+        badge: hasFullAccess ? "Active" : "Paid",
+        copy: "Use beer search, cheapest sort, verified-only, under-A$10, nearby, and saved-suburb filters without daily reveal limits.",
+        href: "/index.html",
+        ctaLabel: "Find value",
+      },
+      {
+        id: "discount_pass",
+        title: "Rotating special pass",
+        unlocked: hasFullAccess,
+        badge: hasFullAccess ? "Ready" : "Paid",
+        copy: "Generate a session-based QR/code for Pint Path specials, then track venue-confirmed savings in your account.",
+        href: "/account.html",
+        ctaLabel: "Open pass",
+      },
+      {
+        id: "night_shortlist",
+        title: "Saved night shortcuts",
+        unlocked: hasFullAccess,
+        badge: `${savedCounts.venues + savedCounts.beers + savedCounts.suburbs + savedCounts.nightPlans} saved`,
+        copy: "Keep favourite venues, beers, suburbs, and night-plan ideas synced to your account for faster repeat searches.",
+        href: "/account.html?settings=watchlist",
+        ctaLabel: "Manage list",
+      },
+      {
+        id: "personal_preferences",
+        title: "Personal discovery defaults",
+        unlocked: hasFullAccess,
+        badge: `${preferredShortcuts} set`,
+        copy: "Save preferred suburbs, beers, and use cases so missions and discovery tools start closer to how you go out.",
+        href: "/account.html?settings=preferences",
+        ctaLabel: "Tune profile",
+      },
+      {
+        id: "savings_tracker",
+        title: "Savings and access tracker",
+        unlocked: hasFullAccess,
+        badge: hasFullAccess ? "Dashboard" : "Preview",
+        copy: "See estimated savings from redeemed specials, contribution progress, trust score, and current access status together.",
+        href: "/account.html?settings=stats",
+        ctaLabel: "View stats",
+      },
+    ],
+  };
 }
 
 function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceRecord & { priceRedacted: true } {
@@ -1920,7 +2035,8 @@ export class BusinessService {
       canViewSpecialDiscounts: hasFullAccess,
       canUseDiscountPass: hasFullAccess,
       freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.",
-      premiumScope: "Every verified beer price, premium filters, and venue special-discount details.",
+      premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
+      premiumToolkit: buildConsumerPremiumToolkit({ account }),
       premiumUntil: account?.premiumUntil ?? null,
     };
   }
@@ -2185,6 +2301,12 @@ export class BusinessService {
       savedItems,
       recentSearches: this.repository.listRecentSearches(account.id, 10),
       suggestedMissions,
+      premiumMemberToolkit: buildConsumerPremiumToolkit({
+        account,
+        savedItems,
+        preferences,
+        discountStats,
+      }),
       contributorProgress: {
         pointsThisMonth: roundPoints(account.contributionPointsCurrentMonth),
         unlockThreshold: this.config.CONTRIBUTOR_UNLOCK_POINTS,
