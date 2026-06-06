@@ -1,4 +1,5 @@
 import type { BeerAvailabilityStatus, BeerUnavailableReason } from "../../db/models.js";
+import { findTrackedBeerByName } from "../../constants/beers.js";
 import { formatBeerAvailabilityLabel } from "../../lib/beer-availability.js";
 
 const RESERVED_CLEANED_KEYS = new Set([
@@ -101,7 +102,13 @@ function formatPriceText(input: {
 }
 
 export function toBeerKey(beerName: string): string {
-  return sanitizeBeerName(beerName)
+  const sanitized = sanitizeBeerName(beerName);
+  const trackedBeer = findTrackedBeerByName(sanitized);
+  if (trackedBeer) {
+    return trackedBeer.key;
+  }
+
+  return sanitized
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");

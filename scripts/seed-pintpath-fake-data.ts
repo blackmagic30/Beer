@@ -172,7 +172,7 @@ const categories = ["Pub", "Cocktail bar", "Rooftop bar", "Wine bar", "Sports ba
 const vibes = ["happy hour", "craft beer", "date night", "late night", "sports", "rooftop", "live music", "after work", "quiet pint", "group friendly"];
 const beers = [
   { name: "Guinness", brewery: "Guinness", style: "Stout", price: 13 },
-  { name: "Carlton Draft", brewery: "Carlton & United Breweries", style: "Lager", price: 11 },
+  { name: "Carlton Draught", brewery: "Carlton & United Breweries", style: "Lager", price: 11 },
   { name: "Stone & Wood Pacific Ale", brewery: "Stone & Wood", style: "Pacific Ale", price: 12 },
   { name: "Balter XPA", brewery: "Balter", style: "XPA", price: 13 },
   { name: "Mountain Goat Steam Ale", brewery: "Mountain Goat", style: "Ale", price: 12 },

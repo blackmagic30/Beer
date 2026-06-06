@@ -9,8 +9,9 @@ import {
 
 describe("manual capture helpers", () => {
   it("normalizes beer keys safely", () => {
-    expect(toBeerKey("Stone & Wood")).toBe("stone_wood");
+    expect(toBeerKey("Stone & Wood")).toBe("stone_and_wood_pacific_ale");
     expect(toBeerKey("Carlton   Draft")).toBe("carlton_draft");
+    expect(toBeerKey("Carlton Draught")).toBe("carlton_draft");
   });
 
   it("extracts nested cleaned beer entries", () => {
@@ -70,7 +71,7 @@ describe("manual capture helpers", () => {
       },
       beers: [
         {
-          name: "Carlton Draft",
+          name: "Carlton Draught",
           servingSize: "pint",
           priceNumeric: 12,
           priceText: "$12",
@@ -95,7 +96,7 @@ describe("manual capture helpers", () => {
               label: "Guinness",
             }),
             carlton_draft: expect.objectContaining({
-              label: "Carlton Draft",
+              label: "Carlton Draught",
               serving_size: "pint",
               price_numeric: 12,
               price_text: "$12 pint",
@@ -112,7 +113,7 @@ describe("manual capture helpers", () => {
 
   it("formats no-pints entries as a distinct unavailable outcome", () => {
     const entry = buildManualBeerEntry({
-      name: "Carlton Draft",
+      name: "Carlton Draught",
       servingSize: "pint",
       priceNumeric: null,
       priceText: null,

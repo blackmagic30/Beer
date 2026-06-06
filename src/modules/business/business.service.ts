@@ -30,7 +30,7 @@ import {
   type SourceEvidenceObject,
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
-import { SUPPORTED_BEERS, VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, normalizeBeerSearchKey } from "../../constants/beers.js";
+import { SUPPORTED_BEERS, VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, findTrackedBeerByName, normalizeBeerSearchKey } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { redactSecrets } from "../../lib/redact.js";
@@ -240,6 +240,10 @@ function normalizeBeerId(value: string): string {
     .replaceAll("&", " and ")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
+}
+
+function normalizeTrackedBeerId(value: string): string {
+  return findTrackedBeerByName(value)?.key ?? normalizeBeerId(value);
 }
 
 function hashToken(token: string): string {
@@ -722,6 +726,7 @@ function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceReco
 const FREE_PREVIEW_BEER_KEYS = new Set([
   "guinness",
   "carlton_draft",
+  "carlton_draught",
   "stone_and_wood",
   "stone_and_wood_pacific_ale",
 ]);
@@ -735,7 +740,7 @@ function isPintServing(record: PublicVenuePriceRecord): boolean {
 }
 
 function isFreePreviewBeerRecord(record: PublicVenuePriceRecord): boolean {
-  const canonicalBeerKey = normalizeBeerSearchKey(canonicalizeTrackedBeerName(record.beerName));
+  const canonicalBeerKey = findTrackedBeerByName(record.beerName)?.key ?? normalizeBeerSearchKey(canonicalizeTrackedBeerName(record.beerName));
   return isPintServing(record) && FREE_PREVIEW_BEER_KEYS.has(canonicalBeerKey);
 }
 
@@ -1555,7 +1560,7 @@ export class BusinessService {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId: input.venueId,
-      beerId: input.changeType === "beer" ? normalizeBeerId(String(input.payload.beerName ?? input.targetId ?? "")) : null,
+      beerId: input.changeType === "beer" ? normalizeTrackedBeerId(String(input.payload.beerName ?? input.targetId ?? "")) : null,
       suburb: input.suburb ?? null,
       metadata: {
         section: input.changeType,
@@ -2050,7 +2055,7 @@ export class BusinessService {
       canUseVerifiedOnly: hasFullAccess,
       canViewSpecialDiscounts: hasFullAccess,
       canUseDiscountPass: hasFullAccess,
-      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.",
+      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood.",
       premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
       premiumToolkit: buildConsumerPremiumToolkit({ account }),
       premiumUntil: account?.premiumUntil ?? null,
@@ -2760,7 +2765,7 @@ export class BusinessService {
         return {
           id: crypto.randomUUID(),
           beerName,
-          normalizedBeerId: normalizeBeerId(beerName),
+          normalizedBeerId: normalizeTrackedBeerId(beerName),
           servingSize: item.servingSize,
           price: item.price,
           isHappyHourPrice: item.isHappyHourPrice,
@@ -2776,7 +2781,7 @@ export class BusinessService {
       anonymousSessionId: null,
       eventType: "submission_completed",
       venueId: submission.venueId,
-      beerId: firstItemBeerName ? normalizeBeerId(firstItemBeerName) : null,
+      beerId: firstItemBeerName ? normalizeTrackedBeerId(firstItemBeerName) : null,
       suburb: submission.suburb,
       metadata: {
         submissionId: submission.id,
@@ -3040,7 +3045,7 @@ export class BusinessService {
       anonymousSessionId: null,
       eventType: eventTypeByItem[input.itemType],
       venueId: input.itemType === "venue" ? input.itemId : null,
-      beerId: input.itemType === "beer" ? normalizeBeerId(input.label) : null,
+      beerId: input.itemType === "beer" ? normalizeTrackedBeerId(input.label) : null,
       suburb: input.itemType === "suburb" ? input.label : input.suburb,
       metadata: { itemId: input.itemId, label: input.label },
     });
@@ -3066,7 +3071,7 @@ export class BusinessService {
         anonymousSessionId: null,
         eventType: eventTypeByItem[input.itemType],
         venueId: input.itemType === "venue" ? input.itemId : null,
-        beerId: input.itemType === "beer" ? normalizeBeerId(input.itemId) : null,
+        beerId: input.itemType === "beer" ? normalizeTrackedBeerId(input.itemId) : null,
         suburb: input.itemType === "suburb" ? input.itemId : null,
         metadata: { itemId: input.itemId },
       });
@@ -3204,7 +3209,7 @@ export class BusinessService {
       anonymousSessionId: input.anonymousSessionId,
       eventType: "wrong_price_reported",
       venueId: input.venueId,
-      beerId: input.beerName ? normalizeBeerId(input.beerName) : null,
+      beerId: input.beerName ? normalizeTrackedBeerId(input.beerName) : null,
       suburb: null,
       metadata: {
         reportId: result.report.id,
@@ -3242,7 +3247,7 @@ export class BusinessService {
       anonymousSessionId: input.anonymousSessionId,
       eventType: isBeerRequest ? "beer_requested" : "venue_requested",
       venueId: input.venueId,
-      beerId: input.beerName ? normalizeBeerId(input.beerName) : null,
+      beerId: input.beerName ? normalizeTrackedBeerId(input.beerName) : null,
       suburb: input.suburb,
       metadata: {
         requestId: request.id,
@@ -4903,7 +4908,7 @@ export class BusinessService {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId,
-      beerId: input.items[0]?.beerName ? normalizeBeerId(input.items[0].beerName) : null,
+      beerId: input.items[0]?.beerName ? normalizeTrackedBeerId(input.items[0].beerName) : null,
       suburb: assignment?.suburb ?? input.suburb,
       metadata: {
         submissionId: result.submission.id,
@@ -5021,7 +5026,7 @@ export class BusinessService {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId,
-      beerId: normalizeBeerId(beer.beerName),
+      beerId: normalizeTrackedBeerId(beer.beerName),
       suburb: profile.suburb,
       metadata: { section: "beer_inventory", onTap: beer.onTap, inStock: beer.inStock, hasPrice: beer.price != null },
     });
@@ -5565,7 +5570,7 @@ export class BusinessService {
       anonymousSessionId: null,
       eventType: "mission_created_from_request",
       venueId: mission.venueId,
-      beerId: request.beerName ? normalizeBeerId(request.beerName) : null,
+      beerId: request.beerName ? normalizeTrackedBeerId(request.beerName) : null,
       suburb: request.suburb,
       metadata: { requestId: request.id, missionId: mission.id },
     });

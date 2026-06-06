@@ -201,7 +201,7 @@
     const venueSearchCache = new Map();
     const QUICK_BEERS = [
       "Guinness",
-      "Carlton Draft",
+      "Carlton Draught",
       "Stone & Wood",
       "Great Northern",
       "Balter XPA",
@@ -212,7 +212,7 @@
       ? viewerConfig.trackedBeers
       : [
         { key: "guinness", name: "Guinness", aliases: ["guinness"] },
-        { key: "carlton_draft", name: "Carlton Draft", aliases: ["carlton draft", "carlton draught"] },
+        { key: "carlton_draft", name: "Carlton Draught", aliases: ["carlton draft", "carlton draught"] },
         { key: "stone_and_wood", name: "Stone & Wood", aliases: ["stone and wood", "stone & wood"] },
       ];
     const trackedBeerLookup = new Map();
@@ -258,8 +258,9 @@
     function populateTrackedBeerSuggestions() {
       const labels = new Set();
       TRACKED_BEERS.forEach((beer) => {
-        labels.add(beer.name);
-        (beer.aliases || []).forEach((alias) => labels.add(alias));
+        if (beer.name) {
+          labels.add(beer.name);
+        }
       });
       trackedBeerSuggestions.innerHTML = Array.from(labels)
         .sort((left, right) => left.localeCompare(right))
@@ -725,7 +726,7 @@
       wrapper.innerHTML = `
         <div class="grid grid--two">
           <label class="field">Beer name
-            <input data-field="beerName" list="trackedBeerSuggestions" placeholder="Start typing Guinness, Carlton Draft..." />
+            <input data-field="beerName" list="trackedBeerSuggestions" placeholder="Start typing Guinness, Carlton Draught..." />
             <span data-role="beerHint" class="fieldHint">Choose a tracked beer from suggestions, or tick Add new beer below.</span>
           </label>
           <label class="field">Serving size

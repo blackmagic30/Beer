@@ -306,7 +306,7 @@ describe("viewer map UI wiring", () => {
 
   it("limits public beer shortcut chips to the free preview beers", () => {
     expect(html).toContain('label: "Guinness", query: "Guinness"');
-    expect(html).toContain('label: "Carlton Draft", query: "Carlton Draft"');
+    expect(html).toContain('label: "Carlton Draught", query: "Carlton Draught"');
     expect(html).toContain('label: "Stone & Wood", query: "Stone & Wood"');
     expect(html).toContain("FREE_PREVIEW_BEER_CHIPS");
     expect(html).toContain("FREE_PREVIEW_BEER_KEYS");

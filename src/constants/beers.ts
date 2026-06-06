@@ -13,7 +13,7 @@ export const SUPPORTED_BEERS = {
   },
   carlton_draft: {
     key: "carlton_draft",
-    name: "Carlton Draft",
+    name: "Carlton Draught",
     aliases: ["carlton draft", "carlton draught"],
     kind: "beer",
   },

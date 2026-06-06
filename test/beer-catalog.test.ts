@@ -8,11 +8,21 @@ describe("Pint Path beer catalogue", () => {
     expect(VIEWER_TRACKED_BEERS.map((beer) => beer.name)).toContain("Balter XPA");
     expect(VIEWER_TRACKED_BEERS.map((beer) => beer.name)).toContain("Coopers Pale Ale");
     expect(VIEWER_TRACKED_BEERS.map((beer) => beer.name)).toContain("Asahi Super Dry");
+    expect(VIEWER_TRACKED_BEERS.map((beer) => beer.name)).toContain("Carlton Draught");
+    expect(VIEWER_TRACKED_BEERS.map((beer) => beer.name)).toContain("Resch's Draught");
+    expect(VIEWER_TRACKED_BEERS.map((beer) => beer.name)).not.toContain("Carlton Draft");
+    expect(VIEWER_TRACKED_BEERS.map((beer) => beer.name)).not.toContain("Reschs Draught");
   });
 
   it("canonicalises common aliases so venue rows do not fork misspelled beer names", () => {
-    expect(canonicalizeTrackedBeerName("Carlton Draught")).toBe("Carlton Draft");
+    expect(canonicalizeTrackedBeerName("Carlton Draft")).toBe("Carlton Draught");
+    expect(canonicalizeTrackedBeerName("Carlton Draught")).toBe("Carlton Draught");
+    expect(findTrackedBeerByName("Carlton Draft")).toEqual(expect.objectContaining({
+      key: "carlton_draft",
+      name: "Carlton Draught",
+    }));
     expect(canonicalizeTrackedBeerName("stone and wood")).toBe("Stone & Wood Pacific Ale");
+    expect(canonicalizeTrackedBeerName("reschs")).toBe("Resch's Draught");
 
     const beer = findTrackedBeerByName("balter xpa");
     expect(beer).toEqual(expect.objectContaining({
@@ -20,5 +30,10 @@ describe("Pint Path beer catalogue", () => {
       brewery: "Balter",
       style: "XPA",
     }));
+  });
+
+  it("does not publish duplicate visible names in the tracked catalogue", () => {
+    const names = VIEWER_TRACKED_BEERS.map((beer) => beer.name.trim().toLowerCase());
+    expect(new Set(names).size).toBe(names.length);
   });
 });

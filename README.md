@@ -84,7 +84,7 @@ For the intended beta role boundaries, private-data rules, and approval gates, s
 
 The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 
-- Free users can view the map, venue pins, suburbs, data freshness, missions, happy hours, and pint prices for Guinness, Carlton Draft, and Stone & Wood.
+- Free users can view the map, venue pins, suburbs, data freshness, missions, happy hours, and pint prices for Guinness, Carlton Draught, and Stone & Wood.
 - Premium users can unlock full map utility, every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, savings tracking, and venue special-discount details at A$4.99/month or A$50/year.
 - Contributors can earn temporary premium access for the rest of the current month after 15 approved monthly contribution points.
 - Discount redemptions are explicit only: a paid/contributor user generates a rotating code, venue staff redeem it manually, or Pro venues can wire a POS webhook with a per-venue HMAC token. The app records the discounted item, quantity, savings and server redemption time for user savings history and aggregate venue proof-of-value.
@@ -94,7 +94,7 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 - Admin review lives at `/admin.html` and is protected by account role checks via `ADMIN_EMAILS`.
 - Retired call/result APIs are no longer mounted in the active app.
 - The public map no longer exposes legacy admin controls or direct browser reads of exact price records.
-- Exact price records are redacted by default unless they are part of the free preview: happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.
+- Exact price records are redacted by default unless they are part of the free preview: happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood.
 - Analytics are captured as aggregate events only. Search, filter, happy-hour interest, map pin clicks, venue opens, beer-list views, and price reveal events feed admin and paid venue-tier reports without exporting individual clickstreams.
 - The admin KPI dashboard tracks early validation metrics, retention cohorts, data coverage, and potential partner leads from aggregated demand.
 - Users can save venues, beers, and suburbs, submit feedback, report wrong prices, and request missing venues or beers.
@@ -170,7 +170,7 @@ Location/privacy guardrails:
 
 For the Melbourne beta, exact prices must flow through the Express API, not direct browser database reads.
 
-- `/api/business/price-records` returns exact records only for admin, premium, contributor access, or the free preview scope: happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.
+- `/api/business/price-records` returns exact records only for admin, premium, contributor access, or the free preview scope: happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood.
 - Free users cannot reveal every price by repeatedly opening venues; premium/contributor/admin access is required for the full price catalogue.
 - The map gets venue pins and preview metadata by default, then requests venue detail records when a user opens a venue panel. The server still decides which exact prices are visible.
 - Admin tools live on `/admin.html` and `/api/business/admin/*`; public map HTML should not include admin unlock forms or secret-entry UI.
@@ -254,7 +254,7 @@ stripe listen --forward-to localhost:3000/api/business/billing/webhook
 
 Local MVP flow checks:
 
-- Free map: open `http://localhost:3000`, confirm pins appear, happy hours are visible, and only Guinness/Carlton Draft/Stone & Wood pint prices are exact.
+- Free map: open `http://localhost:3000`, confirm pins appear, happy hours are visible, and only Guinness/Carlton Draught/Stone & Wood pint prices are exact.
 - Signup/age gate: create an account, confirm 18+, then submit venue data at `/submit.html`.
 - Admin approval: sign up with an email in `ADMIN_EMAILS`, open `/admin.html`, approve the pending submission, and confirm points are awarded.
 - Contributor unlock: approve enough unique-venue points to reach `CONTRIBUTOR_UNLOCK_POINTS`, then confirm full access and map price visibility.
@@ -640,7 +640,7 @@ The hosted `viewer/index.html` now reads venue pins and approved price previews 
 - `GET /api/business/venues`
 - `GET /api/business/price-records`
 
-`/api/business/price-records` returns redacted records by default, except for the free preview scope: happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood. The viewer requests `reveal=true&venueId=...` only when a user opens a venue detail, and the server decides whether any additional exact prices can be returned.
+`/api/business/price-records` returns redacted records by default, except for the free preview scope: happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood. The viewer requests `reveal=true&venueId=...` only when a user opens a venue detail, and the server decides whether any additional exact prices can be returned.
 
 Reviewed admin/menu captures can sync into Supabase `venue_menu_captures` for internal review history, but the public browser should not read that table directly. Public map data should come from approved `venue_price_records`.
 

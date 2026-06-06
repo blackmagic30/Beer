@@ -132,7 +132,7 @@ function createSubmission(
     items: [
       {
         id: `${input.id}:item-1`,
-        beerName: input.beerName ?? "Carlton Draft",
+        beerName: input.beerName ?? "Carlton Draught",
         normalizedBeerId: null,
         servingSize: input.servingSize ?? "pint",
         price: input.price ?? 14,
@@ -644,7 +644,7 @@ describe("Supabase account and verification foundation", () => {
       userId: submitter.id,
       venueId: "venue-dashboard-2",
       venueName: "Approved Bar",
-      beerName: "Carlton Draft",
+      beerName: "Carlton Draught",
       price: 13,
       sourcePhotoUrl: "private:evidence:evidence-2",
     });
@@ -872,7 +872,7 @@ describe("production hardening", () => {
     });
     expect(preview.records).toHaveLength(3);
     expect(preview.records).toEqual(expect.arrayContaining([
-      expect.objectContaining({ beerName: "Carlton Draft", servingSize: "pint", price: 14, freePreviewIncluded: true }),
+      expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 14, freePreviewIncluded: true }),
       expect.objectContaining({ beerName: "Asahi Super Dry", price: null, priceRedacted: true }),
       expect.objectContaining({ beerName: "Guinness", servingSize: "schooner", price: null, priceRedacted: true }),
     ]));
@@ -976,7 +976,7 @@ describe("production hardening", () => {
     expect(service.getAccessState(freeUser, null)).toMatchObject({
       hasFullAccess: false,
       canViewSpecialDiscounts: false,
-      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draft, and Stone & Wood.",
+      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood.",
       premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
       premiumToolkit: expect.objectContaining({
         enabled: false,
@@ -1415,7 +1415,7 @@ describe("production hardening", () => {
       notes: "User added a missing venue with menu board prices.",
       items: [
         { beerName: "Guinness", servingSize: "pint", price: 13, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
-        { beerName: "Carlton Draft", servingSize: "pint", price: 12, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
+        { beerName: "Carlton Draught", servingSize: "pint", price: 12, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
         { beerName: "Stone & Wood", servingSize: "pint", price: 14, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
       ],
     });
@@ -1446,7 +1446,7 @@ describe("production hardening", () => {
 
     const records = repository.listVenueManagerPriceRecords(20, venueId);
     expect(records.map((record) => record.beerName).sort()).toEqual([
-      "Carlton Draft",
+      "Carlton Draught",
       "Guinness",
       "Stone & Wood Pacific Ale",
     ]);
@@ -1526,7 +1526,7 @@ describe("production hardening", () => {
       uploadLocation: baseLocation,
       notes: null,
       items: [{
-        beerName: "Carlton Draft",
+        beerName: "Carlton Draught",
         servingSize: "pint",
         price: 12,
         isHappyHourPrice: false,
@@ -2608,7 +2608,7 @@ describe("business demo contribution model", () => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'yes', 'photo_verified', 'test_fixture', ?, ?, ?)`,
     );
     insertPriceRecord.run("record-fresh", "venue-fresh", "Fresh Arms", "Fitzroy", "Guinness", "pint", 12, freshAt, freshAt, freshAt);
-    insertPriceRecord.run("record-stale", "venue-stale", "Stale Hotel", "Fitzroy", "Carlton Draft", "pint", 11, staleAt, staleAt, staleAt);
+    insertPriceRecord.run("record-stale", "venue-stale", "Stale Hotel", "Fitzroy", "Carlton Draught", "pint", 11, staleAt, staleAt, staleAt);
 
     repository.upsertVenueLocationCache({
       venueId: "venue-fresh",
@@ -2727,7 +2727,7 @@ describe("business demo contribution model", () => {
       "auto-stale",
       "Stale Mission Bar",
       "Brunswick",
-      "Carlton Draft",
+      "Carlton Draught",
       "carlton_draft",
       "pint",
       12,
@@ -2749,7 +2749,7 @@ describe("business demo contribution model", () => {
     }));
     expect(byId.get("auto:venue:auto-fresh:beer:carlton_draft")).toEqual(expect.objectContaining({
       points: 5,
-      reason: "Missing Carlton Draft price - add this drink",
+      reason: "Missing Carlton Draught price - add this drink",
     }));
     expect(byId.get("auto:venue:auto-stale:menu-freshness")).toEqual(expect.objectContaining({
       points: 1,
@@ -2768,7 +2768,7 @@ describe("business demo contribution model", () => {
       venueId: null,
       beerId: "carlton_draft",
       suburb: "Richmond",
-      metadata: { query: "Carlton Draft" },
+      metadata: { query: "Carlton Draught" },
       createdAt: NOW,
     });
     repository.recordEvent({

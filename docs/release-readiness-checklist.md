@@ -67,7 +67,7 @@ These are launch-critical but require provider/staging verification:
 ## Manual Staging Smoke
 
 - Open the public map logged out and confirm no admin/debug/provider legacy content is visible.
-- Confirm free users only see happy hours plus pint previews for Guinness, Carlton Draft, and Stone & Wood.
+- Confirm free users only see happy hours plus pint previews for Guinness, Carlton Draught, and Stone & Wood.
 - Log in, submit a beer price and source photo, and confirm it is pending.
 - Confirm another user cannot see that raw submission/evidence.
 - Approve the submission as admin and confirm the normalized price appears on the map.

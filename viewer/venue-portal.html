@@ -210,7 +210,7 @@
                 <input name="id" type="hidden" />
                 <div class="beerCatalogueField">
                   <label class="field">Beer name
-                    <input name="beerName" list="portalBeerSuggestions" placeholder="Start typing Carlton Draft, Balter XPA, Guinness..." autocomplete="off" required />
+                    <input name="beerName" list="portalBeerSuggestions" placeholder="Start typing Carlton Draught, Balter XPA, Guinness..." autocomplete="off" required />
                     <datalist id="portalBeerSuggestions"></datalist>
                     <span id="beerCatalogueHint" class="fieldHint">Choose from the Pint Path catalogue to keep spelling consistent across venues.</span>
                   </label>
@@ -429,7 +429,7 @@
           .filter((beer) => beer.name)
       : [
         { key: "guinness", name: "Guinness", aliases: ["guinness"], brewery: "Guinness", style: "Stout", abv: 4.2 },
-        { key: "carlton_draft", name: "Carlton Draft", aliases: ["carlton draft", "carlton draught"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.6 },
+        { key: "carlton_draft", name: "Carlton Draught", aliases: ["carlton draft", "carlton draught"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.6 },
         { key: "stone_and_wood_pacific_ale", name: "Stone & Wood Pacific Ale", aliases: ["stone and wood", "stone & wood"], brewery: "Stone & Wood", style: "Pacific ale", abv: 4.4 },
       ];
     const trackedBeerLookup = new Map();

@@ -9,11 +9,11 @@ export interface BeerCatalogItem {
 
 export const BEER_CATALOG: readonly BeerCatalogItem[] = [
   { key: "guinness", name: "Guinness", aliases: ["guinness", "guinness draught"], brewery: "Guinness", style: "Stout", abv: 4.2 },
-  { key: "carlton_draft", name: "Carlton Draft", aliases: ["carlton draft", "carlton draught"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.6 },
+  { key: "carlton_draft", name: "Carlton Draught", aliases: ["carlton draft", "carlton draught"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.6 },
   { key: "stone_and_wood_pacific_ale", name: "Stone & Wood Pacific Ale", aliases: ["stone and wood", "stone & wood", "stone wood", "pacific ale"], brewery: "Stone & Wood", style: "Pacific ale", abv: 4.4 },
   { key: "victoria_bitter", name: "Victoria Bitter", aliases: ["vb", "victoria bitter"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.9 },
   { key: "melbourne_bitter", name: "Melbourne Bitter", aliases: ["melbourne bitter"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.6 },
-  { key: "reschs_draught", name: "Reschs Draught", aliases: ["reschs", "reschs draught"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.5 },
+  { key: "reschs_draught", name: "Resch's Draught", aliases: ["reschs", "resch's", "reschs draught", "resch's draught"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.5 },
   { key: "great_northern_original", name: "Great Northern Original", aliases: ["great northern", "great northern original"], brewery: "Great Northern", style: "Lager", abv: 4.2 },
   { key: "great_northern_super_crisp", name: "Great Northern Super Crisp", aliases: ["super crisp", "great northern super crisp"], brewery: "Great Northern", style: "Lager", abv: 3.5 },
   { key: "pure_blonde", name: "Pure Blonde", aliases: ["pure blonde"], brewery: "Carlton & United Breweries", style: "Lager", abv: 4.2 },

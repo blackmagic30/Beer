@@ -148,6 +148,8 @@ describe("submit page auth gate", () => {
     expect(html).toContain("QUICK_BEERS");
     expect(html).toContain('id="quickBeerButtons"');
     expect(html).toContain("function fillQuickBeer");
+    expect(html).toContain("labels.add(beer.name)");
+    expect(html).not.toContain("(beer.aliases || []).forEach((alias) => labels.add(alias))");
     expect(html).toContain('const statusEl = document.getElementById("status")');
     expect(html).toContain("MelbBeerBusiness.setStatus(statusEl");
     expect(html).toContain("Photo attached for this submit. Drafts save fields only, not image files.");
