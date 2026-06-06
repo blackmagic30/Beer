@@ -327,6 +327,35 @@ describe("submission payload validation", () => {
 
     expect(result.success).toBe(true);
   });
+
+  it("accepts new venue details without coercing blank coordinates to zero", () => {
+    const parsed = createSubmissionSchema.parse({
+      ...baseSubmission,
+      venueId: "venue-new",
+      venueName: "Moonlit Taproom",
+      suburb: "Fitzroy",
+      newVenue: {
+        name: "Moonlit Taproom",
+        address: "10 Test Lane",
+        suburb: "Fitzroy",
+        state: "VIC",
+        postcode: "",
+        phone: "",
+        website: "",
+        latitude: "",
+        longitude: "",
+      },
+      submissionType: "full_venue_update",
+      items: [
+        { beerName: "Guinness", servingSize: "pint", price: 13, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
+        { beerName: "Carlton Draught", servingSize: "pint", price: 12, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
+        { beerName: "Stone & Wood", servingSize: "pint", price: 14, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
+      ],
+    });
+
+    expect(parsed.newVenue?.latitude).toBeNull();
+    expect(parsed.newVenue?.longitude).toBeNull();
+  });
 });
 
 describe("bar happy-hour time validation", () => {
@@ -1337,6 +1366,77 @@ describe("production hardening", () => {
       actorUserId: admin.id,
       targetId: submission.id,
     }));
+  });
+
+  it("publishes a user-requested new venue and its beer rows only after admin approval", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const uploader = createAccount(repository, "new-venue-uploader");
+    const admin = createAccount(repository, "new-venue-admin", "admin");
+    const venueId = "venue-user-requested";
+    const payload = createSubmissionSchema.parse({
+      venueId,
+      venueName: "Moonlit Taproom",
+      suburb: "Fitzroy",
+      newVenue: {
+        name: "Moonlit Taproom",
+        address: "10 Test Lane",
+        suburb: "Fitzroy",
+        state: "VIC",
+        postcode: null,
+        phone: "0399990000",
+        website: "https://moonlit.example.com",
+        latitude: -37.798,
+        longitude: 144.979,
+      },
+      submissionType: "full_venue_update",
+      observedAt: NOW,
+      sourcePhotoDataUrl: null,
+      sourcePhotoUrl: null,
+      uploadLocation: {
+        latitude: -37.7981,
+        longitude: 144.9791,
+        accuracyMeters: 20,
+        capturedAt: NOW,
+      },
+      notes: "User added a missing venue with menu board prices.",
+      items: [
+        { beerName: "Guinness", servingSize: "pint", price: 13, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
+        { beerName: "Carlton Draft", servingSize: "pint", price: 12, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
+        { beerName: "Stone & Wood", servingSize: "pint", price: 14, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
+      ],
+    });
+
+    const submission = service.createSubmission(uploader, payload);
+
+    expect(submission.submission.pendingVenue?.name).toBe("Moonlit Taproom");
+    expect(submission.statusCopy).toContain("only after approval");
+    expect(await service.listVenues("Moonlit", 10)).toEqual([]);
+    expect(repository.listVenueManagerPriceRecords(20, venueId)).toEqual([]);
+
+    service.reviewSubmission(admin, submission.submission.id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      confidence: "photo_verified",
+    });
+
+    const venues = await service.listVenues("Moonlit", 10);
+    const publishedVenue = venues.find((venue) => venue.id === venueId);
+    expect(publishedVenue).toEqual(expect.objectContaining({
+      id: venueId,
+      name: "Moonlit Taproom",
+      address: "10 Test Lane",
+      suburb: "Fitzroy",
+      membershipTier: "basic",
+    }));
+
+    const records = repository.listVenueManagerPriceRecords(20, venueId);
+    expect(records.map((record) => record.beerName).sort()).toEqual([
+      "Carlton Draft",
+      "Guinness",
+      "Stone & Wood Pacific Ale",
+    ]);
   });
 
   it("stores upload location proof and awards dynamic points only inside the 200m venue radius", () => {

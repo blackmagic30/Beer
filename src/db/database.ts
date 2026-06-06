@@ -63,6 +63,7 @@ const submissionColumns = [
   { name: "distance_to_venue_meters", definition: "REAL" },
   { name: "points_eligible_by_location", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "points_eligibility_reason", definition: "TEXT" },
+  { name: "pending_venue_json", definition: "TEXT" },
 ] as const;
 
 const feedbackColumns = [

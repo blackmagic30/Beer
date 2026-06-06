@@ -23,6 +23,14 @@ function callbackHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/auth/callback.html"), "utf8");
 }
 
+function resetPasswordHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/reset-password.html"), "utf8");
+}
+
+function resendConfirmationHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/resend-confirmation.html"), "utf8");
+}
+
 function feedbackHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/feedback.html"), "utf8");
 }
@@ -230,14 +238,10 @@ describe("account page shell", () => {
     expect(html.indexOf("Reset password")).toBeLessThan(html.indexOf("Continue with Google"));
     expect(html).toContain("MelbBeerBusiness.signUpWithEmail");
     expect(html).toContain("MelbBeerBusiness.signInWithEmail");
-    expect(html).toContain('id="passwordResetButton"');
-    expect(html).toContain("Reset password");
-    expect(html).toContain('id="resendConfirmationButton"');
-    expect(html).toContain("Resend confirmation");
-    expect(html).toContain("Sending reset link...");
-    expect(html).toContain("Sending confirmation...");
-    expect(html).toContain("If an account exists for that email, a secure reset link has been sent.");
-    expect(html).toContain("If a Supabase signup exists for that email, a confirmation email has been sent.");
+    expect(html).toContain('id="passwordResetLink" class="button" href="/reset-password.html"');
+    expect(html).toContain('id="resendConfirmationLink" class="button" href="/resend-confirmation.html"');
+    expect(html).toContain('authUtilityLink("/reset-password.html")');
+    expect(html).toContain('authUtilityLink("/resend-confirmation.html")');
     expect(html).toContain("No Supabase confirmation email was sent.");
     expect(html).not.toContain('id="oauthTermsAccepted"');
     expect(html).not.toContain('id="oauthPrivacyAccepted"');
@@ -251,9 +255,29 @@ describe("account page shell", () => {
     expect(script).toContain("auth.resend({");
     expect(script).toContain('type: "signup"');
     expect(script).toContain("/auth/callback");
+    expect(script).toContain('/reset-password.html?mode=update');
+    expect(script).toContain("updateUser({ password })");
     expect(script).toContain("terms_accepted");
     expect(script).toContain("privacy_accepted");
     expect(script).toContain("applyPendingLegalAcceptance");
+  });
+
+  it("provides dedicated confirmation resend and password reset pages", () => {
+    const reset = resetPasswordHtml();
+    const resend = resendConfirmationHtml();
+
+    expect(resend).toContain("Resend your confirmation email");
+    expect(resend).toContain('id="resendConfirmationForm"');
+    expect(resend).toContain('id="confirmationEmail"');
+    expect(resend).toContain("MelbBeerBusiness.resendSignupConfirmation");
+    expect(resend).toContain("If a Supabase signup exists for that email, a confirmation email has been sent.");
+    expect(reset).toContain("Reset your Pint Path password");
+    expect(reset).toContain('id="requestResetForm"');
+    expect(reset).toContain('id="updatePasswordForm"');
+    expect(reset).toContain("MelbBeerBusiness.requestPasswordReset");
+    expect(reset).toContain("MelbBeerBusiness.updatePassword");
+    expect(reset).toContain('params.get("mode") === "update"');
+    expect(reset).toContain("Password updated. You can continue to your Pint Path account.");
   });
 
   it("keeps contributor navigation behind auth hints and gives venue managers a dashboard link", () => {
@@ -336,7 +360,8 @@ describe("account page shell", () => {
     expect(html).toContain("MelbBeerBusiness.syncSupabaseSession");
     expect(html).toContain("MelbBeerBusiness.applyPendingLegalAcceptance");
     expect(html).toContain("MelbBeerBusiness.getSafeReturnPath");
-    expect(html).toContain('result.account?.role === "venue_manager" ? "/venue-portal.html" : safeReturnPath()');
+    expect(html).toContain('returnPath.startsWith("/reset-password.html")');
+    expect(html).toContain('result.account?.role === "venue_manager" ? "/venue-portal.html" : returnPath');
     expect(html).not.toContain("service_role");
   });
 

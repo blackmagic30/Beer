@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resend Confirmation | Pint Path</title>
+  <link rel="stylesheet" href="./business.css" />
+  <script src="./config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./business.js" defer></script>
+</head>
+<body>
+  <main class="pageShell accountPage">
+    <div id="nav"></div>
+
+    <section class="authShell">
+      <div class="authIntro panel">
+        <div class="eyebrow">Email confirmation</div>
+        <h1>Resend your confirmation email</h1>
+        <p class="lead">Enter the email you used to create your Pint Path account and we will send a fresh confirmation link if the signup is still waiting.</p>
+        <div class="authTrustGrid">
+          <div>
+            <strong>Use the signup email</strong>
+            <span>Confirmation links are only sent for pending Supabase signups.</span>
+          </div>
+          <div>
+            <strong>Check spam</strong>
+            <span>Google Workspace, Gmail, and Resend can delay or filter new domain mail.</span>
+          </div>
+          <div>
+            <strong>Then sign in</strong>
+            <span>After confirming, return to Account and sign in normally.</span>
+          </div>
+        </div>
+      </div>
+
+      <section class="authCard panel" aria-label="Resend confirmation email">
+        <form id="resendConfirmationForm" class="form authForm">
+          <div class="authPanelStack">
+            <h2>Send confirmation link</h2>
+            <p class="muted">Use this if you created an account but never received or lost the original confirmation email.</p>
+            <label class="field">Email
+              <input id="confirmationEmail" name="email" type="email" autocomplete="email" required />
+            </label>
+            <div class="actionRow authActions">
+              <button id="resendSubmitButton" class="button button--primary" type="submit">Resend confirmation</button>
+              <a class="button" href="/account.html">Back to account</a>
+            </div>
+          </div>
+        </form>
+        <div id="resendStatus" class="notice" role="status">Enter your email to send a fresh confirmation link.</div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function setLoading(button, isLoading, label = "Working...") {
+      if (!button) {
+        return;
+      }
+      if (isLoading) {
+        button.dataset.originalText = button.textContent;
+        button.textContent = label;
+        button.disabled = true;
+      } else {
+        button.textContent = button.dataset.originalText || button.textContent;
+        button.disabled = false;
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
+      const params = new URLSearchParams(window.location.search);
+      const email = params.get("email");
+      if (email) {
+        $("confirmationEmail").value = email;
+      }
+
+      $("resendConfirmationForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = $("resendSubmitButton");
+        const emailValue = $("confirmationEmail").value.trim();
+        try {
+          if (!emailValue) {
+            throw new Error("Enter your email first.");
+          }
+          setLoading(button, true, "Sending...");
+          const result = await MelbBeerBusiness.resendSignupConfirmation(emailValue);
+          MelbBeerBusiness.setStatus(
+            $("resendStatus"),
+            result.message || "If a Supabase signup exists for that email, a confirmation email has been sent.",
+          );
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("resendStatus"), error.message || "Confirmation email could not be sent.", true);
+        } finally {
+          setLoading(button, false);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

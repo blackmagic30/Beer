@@ -57,10 +57,10 @@
             </div>
             <div class="actionRow authActions">
               <button class="button button--primary" type="submit">Sign in</button>
-              <button id="passwordResetButton" class="button" type="button">Reset password</button>
-              <button id="resendConfirmationButton" class="button" type="button">Resend confirmation</button>
+              <a id="passwordResetLink" class="button" href="/reset-password.html">Reset password</a>
+              <a id="resendConfirmationLink" class="button" href="/resend-confirmation.html">Resend confirmation</a>
             </div>
-            <p class="helperCopy authResetCopy">Forgot your password or missing a Supabase signup email? Enter your email first, then choose the matching action.</p>
+            <p class="helperCopy authResetCopy">Forgot your password or missing a signup email? Use the dedicated recovery pages to resend the right email.</p>
             <div id="oauthStack" class="oauthStack" aria-label="Quick login options">
               <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
               <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
@@ -957,44 +957,27 @@
       });
       $("showLoginButton").addEventListener("click", () => showAuthTab("login"));
       $("showSignupButton").addEventListener("click", () => showAuthTab("signup"));
+      function authUtilityLink(pathname) {
+        const email = $("loginForm").email.value || $("signupForm").email.value;
+        if (!email) {
+          return pathname;
+        }
+        const url = new URL(pathname, window.location.origin);
+        url.searchParams.set("email", email);
+        return `${url.pathname}${url.search}`;
+      }
+      $("passwordResetLink").addEventListener("click", (event) => {
+        event.currentTarget.href = authUtilityLink("/reset-password.html");
+      });
+      $("resendConfirmationLink").addEventListener("click", (event) => {
+        event.currentTarget.href = authUtilityLink("/resend-confirmation.html");
+      });
       document.querySelectorAll("[data-settings-target]").forEach((button) => {
         button.addEventListener("click", () => showAccountSettingsPanel(button.dataset.settingsTarget));
       });
       showAccountSettingsPanel(null);
       $("signupForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
       $("loginForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
-      $("passwordResetButton").addEventListener("click", async () => {
-        const resetButton = $("passwordResetButton");
-        try {
-          const email = $("loginForm").email.value || $("signupForm").email.value;
-          if (!email) {
-            throw new Error("Enter your email first, then choose Reset password.");
-          }
-          setLoading(resetButton, true, "Sending reset link...");
-          await MelbBeerBusiness.requestPasswordReset(email);
-          MelbBeerBusiness.setStatus($("authStatus"), "If an account exists for that email, a secure reset link has been sent.");
-        } catch (error) {
-          MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
-        } finally {
-          setLoading(resetButton, false);
-        }
-      });
-      $("resendConfirmationButton").addEventListener("click", async () => {
-        const resendButton = $("resendConfirmationButton");
-        try {
-          const email = $("loginForm").email.value || $("signupForm").email.value;
-          if (!email) {
-            throw new Error("Enter your email first, then choose Resend confirmation.");
-          }
-          setLoading(resendButton, true, "Sending confirmation...");
-          const result = await MelbBeerBusiness.resendSignupConfirmation(email);
-          MelbBeerBusiness.setStatus($("authStatus"), result.message || "If a Supabase signup exists for that email, a confirmation email has been sent.");
-        } catch (error) {
-          MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
-        } finally {
-          setLoading(resendButton, false);
-        }
-      });
       $("logoutButton").addEventListener("click", async () => {
         const hadApiToken = Boolean(MelbBeerBusiness.getAuthToken());
         let hadSupabaseSession = false;

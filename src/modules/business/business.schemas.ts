@@ -173,10 +173,29 @@ export const submissionItemSchema = z.object({
   }
 });
 
+export const pendingSubmissionVenueSchema = z.object({
+  name: z.string().trim().min(1).max(180),
+  address: nullableTrimmedStringSchema.default(null),
+  suburb: nullableTrimmedStringSchema.default(null),
+  state: nullableTrimmedStringSchema.default("VIC"),
+  postcode: nullableTrimmedStringSchema.default(null),
+  phone: nullableTrimmedStringSchema.default(null),
+  website: nullableUrlSchema.default(null),
+  latitude: z.preprocess(
+    (value) => value === "" || value === undefined ? null : value,
+    z.coerce.number().min(-90).max(90).nullable(),
+  ).default(null),
+  longitude: z.preprocess(
+    (value) => value === "" || value === undefined ? null : value,
+    z.coerce.number().min(-180).max(180).nullable(),
+  ).default(null),
+}).nullable().default(null);
+
 export const createSubmissionSchema = z.object({
   venueId: z.string().min(1),
   venueName: z.string().trim().min(1).max(180),
   suburb: nullableTrimmedStringSchema.default(null),
+  newVenue: pendingSubmissionVenueSchema,
   submissionType: z.enum(["single_beer_price", "full_venue_update", "happy_hour_update", "photo_upload"]),
   observedAt: z.string().datetime({ offset: true }),
   sourcePhotoDataUrl: dataImageUrlSchema.nullable().default(null),
@@ -186,6 +205,27 @@ export const createSubmissionSchema = z.object({
   items: z.array(submissionItemSchema).max(20).default([]),
 }).superRefine((value, ctx) => {
   const hasPhoto = Boolean(value.sourcePhotoDataUrl || value.sourcePhotoUrl);
+
+  if (value.newVenue) {
+    if (!value.newVenue.address && (value.newVenue.latitude == null || value.newVenue.longitude == null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "New venues need an address or saved venue coordinates before admin review.",
+        path: ["newVenue", "address"],
+      });
+    }
+
+    if (
+      (value.newVenue.latitude == null && value.newVenue.longitude != null) ||
+      (value.newVenue.latitude != null && value.newVenue.longitude == null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Add both latitude and longitude, or leave both blank.",
+        path: ["newVenue", "latitude"],
+      });
+    }
+  }
 
   if (value.submissionType === "single_beer_price" && value.items.length < 1) {
     ctx.addIssue({

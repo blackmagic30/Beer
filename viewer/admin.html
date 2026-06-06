@@ -1096,10 +1096,15 @@
           <article class="listItem">
             <strong>${submission.venueName}</strong>
             <span class="pill">${submission.submissionType}</span>
+            ${submission.pendingVenue ? '<span class="pill">New venue</span>' : ""}
             <div class="muted">${submission.suburb || "Melbourne"} · observed ${MelbBeerBusiness.formatDate(submission.observedAt)}</div>
+            ${submission.pendingVenue ? `
+              <div class="muted">Venue request: ${escapeHtml(submission.pendingVenue.address || "Address not supplied")}${submission.pendingVenue.latitude != null && submission.pendingVenue.longitude != null ? ` · ${Number(submission.pendingVenue.latitude).toFixed(5)}, ${Number(submission.pendingVenue.longitude).toFixed(5)}` : ""}</div>
+              <div class="muted">${escapeHtml([submission.pendingVenue.phone, submission.pendingVenue.website].filter(Boolean).join(" · ") || "No phone or website supplied")}</div>
+            ` : ""}
             <div class="muted">Points location: ${submission.pointsEligibleByLocation ? "within 200m" : "not eligible"}${submission.distanceToVenueMeters != null ? ` · ${Math.round(Number(submission.distanceToVenueMeters))}m from venue` : ""}${submission.pointsEligibilityReason ? ` · ${escapeHtml(submission.pointsEligibilityReason)}` : ""}</div>
-            <div class="muted">${submission.notes || "No notes"}</div>
-            <button class="button button--primary" data-approve="${submission.id}">Approve</button>
+            <div class="muted">${escapeHtml(submission.notes || "No notes")}</div>
+            <button class="button button--primary" data-approve="${submission.id}">${submission.pendingVenue ? "Approve + publish venue" : "Approve"}</button>
             <button class="button" data-evidence="${submission.id}">Needs evidence</button>
             <button class="button button--danger" data-reject="${submission.id}">Reject</button>
             <button class="button button--danger" data-fraud="${submission.id}">Flag fraud</button>

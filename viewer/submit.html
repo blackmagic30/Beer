@@ -55,6 +55,51 @@
             <span id="venueChoiceHelp" class="fieldHint">Search above and click the matching venue suggestion before submitting.</span>
           </label>
         </div>
+        <div class="notice">
+          <label class="field" style="margin:0;">
+            <span><input id="newVenueToggle" type="checkbox" /> This venue is not on Pint Path yet</span>
+            <span class="fieldHint">Add the venue details below, then add beer data. It only appears on the global map after admin approval.</span>
+          </label>
+        </div>
+        <div id="newVenuePanel" class="notice is-hidden" style="padding:16px;">
+          <div class="submitSectionHeader">
+            <h3>New venue details</h3>
+            <p class="muted">Use the venue’s public business details. Coordinates are optional when you provide an address.</p>
+          </div>
+          <div class="grid grid--two">
+            <label class="field">Venue name
+              <input id="newVenueName" type="text" maxlength="180" placeholder="Example: Moonlit Taproom" />
+            </label>
+            <label class="field">Suburb
+              <input id="newVenueSuburb" type="text" placeholder="Fitzroy" />
+            </label>
+          </div>
+          <label class="field">Address
+            <input id="newVenueAddress" type="text" placeholder="Street address or venue address from the menu" />
+            <span class="fieldHint">Address or venue coordinates are required before admin review.</span>
+          </label>
+          <div class="grid grid--two">
+            <label class="field">Phone
+              <input id="newVenuePhone" type="tel" placeholder="Optional" />
+            </label>
+            <label class="field">Website
+              <input id="newVenueWebsite" type="url" placeholder="https://example.com" />
+            </label>
+          </div>
+          <div class="grid grid--two">
+            <label class="field">Latitude
+              <input id="newVenueLatitude" type="number" min="-90" max="90" step="0.000001" placeholder="-37.8136" />
+            </label>
+            <label class="field">Longitude
+              <input id="newVenueLongitude" type="number" min="-180" max="180" step="0.000001" placeholder="144.9631" />
+            </label>
+          </div>
+          <div class="actionRow">
+            <button id="copyUploadLocationButton" class="button" type="button">Use saved location as venue coordinates</button>
+            <button id="geocodeNewVenueButton" class="button" type="button">Find coordinates from address</button>
+          </div>
+          <span id="newVenueHelp" class="fieldHint">Tip: stand at the venue, tap “Use my location for points”, then copy it into venue coordinates.</span>
+        </div>
         <label class="field">Submission type
           <select id="submissionTypeSelect" name="submissionType">
             <option value="full_venue_update">Full venue update</option>
@@ -126,6 +171,7 @@
     let venues = [];
     let venueSearchTimer = null;
     let uploadLocation = null;
+    let isNewVenueMode = false;
     const UPLOAD_LOCATION_STORAGE_KEY = "pintPathUploadLocationProof";
     const UPLOAD_LOCATION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
@@ -205,6 +251,10 @@
         return;
       }
 
+      if (newVenueToggle.checked) {
+        newVenueToggle.checked = false;
+        setNewVenueMode(false);
+      }
       venueSelect.value = venue.id;
       venueSearchHelp.textContent = `Selected ${venueLabel(venue)}.`;
       venueChoiceHelp.textContent = "Chosen venue locked. Continue with the submission type and details below.";
@@ -213,6 +263,132 @@
     function clearSelectedVenue(message = "No venue chosen yet. Search above and click a venue suggestion.") {
       venueSelect.value = "";
       venueChoiceHelp.textContent = message;
+    }
+
+    function setNewVenueMode(enabled) {
+      isNewVenueMode = enabled;
+      newVenuePanel.classList.toggle("is-hidden", !enabled);
+      venueSearchInput.disabled = enabled;
+      venueSelect.disabled = true;
+      venueSelect.setAttribute("aria-disabled", "true");
+      newVenuePanel.querySelectorAll("input, button").forEach((element) => {
+        element.disabled = !enabled;
+      });
+      newVenueName.required = enabled;
+      if (enabled) {
+        clearSelectedVenue("New venue mode enabled. Add venue details below before submitting.");
+        venueSearchHelp.textContent = "Existing venue search is paused while you add a new venue.";
+        if (!newVenueName.value.trim() && venueSearchInput.value.trim()) {
+          newVenueName.value = venueSearchInput.value.trim().split("·")[0].split(",")[0].trim();
+        }
+        submissionTypeSelect.value = "full_venue_update";
+        applySubmissionType();
+      } else {
+        venueSearchInput.disabled = false;
+        newVenueName.required = false;
+        clearSelectedVenue("Search above and click the matching venue suggestion before submitting.");
+        venueSearchHelp.textContent = "Start typing a venue name, suburb, or street. Suggestions update as you type.";
+      }
+    }
+
+    function blankToNull(value) {
+      const trimmed = String(value || "").trim();
+      return trimmed ? trimmed : null;
+    }
+
+    function numberOrNull(value) {
+      const trimmed = String(value || "").trim();
+      if (!trimmed) {
+        return null;
+      }
+      const numeric = Number(trimmed);
+      return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    function createPendingVenueId() {
+      if (window.crypto?.randomUUID) {
+        return `venue-${window.crypto.randomUUID()}`;
+      }
+      return `venue-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function collectNewVenue() {
+      if (!isNewVenueMode) {
+        return null;
+      }
+
+      return {
+        name: newVenueName.value.trim(),
+        address: blankToNull(newVenueAddress.value),
+        suburb: blankToNull(newVenueSuburb.value),
+        state: "VIC",
+        postcode: null,
+        phone: blankToNull(newVenuePhone.value),
+        website: blankToNull(newVenueWebsite.value),
+        latitude: numberOrNull(newVenueLatitude.value),
+        longitude: numberOrNull(newVenueLongitude.value),
+      };
+    }
+
+    function validateNewVenue(newVenue) {
+      if (!newVenue) {
+        return null;
+      }
+
+      if (!newVenue.name) {
+        return "Add the new venue name.";
+      }
+
+      if (!newVenue.address && (newVenue.latitude == null || newVenue.longitude == null)) {
+        return "Add the new venue address, or copy saved location into venue coordinates.";
+      }
+
+      if ((newVenue.latitude == null && newVenue.longitude != null) || (newVenue.latitude != null && newVenue.longitude == null)) {
+        return "Add both latitude and longitude, or leave both blank.";
+      }
+
+      return null;
+    }
+
+    function copyUploadLocationToVenue() {
+      if (!uploadLocation) {
+        MelbBeerBusiness.setStatus(status, "Save your location first, then copy it into the venue coordinates.", true);
+        return;
+      }
+
+      newVenueLatitude.value = Number(uploadLocation.latitude).toFixed(6);
+      newVenueLongitude.value = Number(uploadLocation.longitude).toFixed(6);
+      newVenueHelp.textContent = `Venue coordinates copied from saved upload location (${formatAccuracy(uploadLocation.accuracyMeters)}).`;
+      MelbBeerBusiness.setStatus(status, "Venue coordinates copied. Add the venue name and beer rows, then submit.");
+    }
+
+    async function geocodeNewVenueAddress() {
+      const query = [newVenueName.value.trim(), newVenueAddress.value.trim(), newVenueSuburb.value.trim()]
+        .filter(Boolean)
+        .join(", ");
+      if (query.length < 2) {
+        MelbBeerBusiness.setStatus(status, "Add a venue name, address, or suburb before finding coordinates.", true);
+        return;
+      }
+
+      geocodeNewVenueButton.disabled = true;
+      geocodeNewVenueButton.textContent = "Finding...";
+      newVenueHelp.textContent = "Looking up public venue coordinates.";
+      try {
+        const data = await MelbBeerBusiness.apiFetch(`/api/business/geocode?q=${encodeURIComponent(query)}`);
+        if (!data.location) {
+          newVenueHelp.textContent = data.message || "No coordinates found. You can still submit with the address.";
+          return;
+        }
+        newVenueLatitude.value = Number(data.location.latitude).toFixed(6);
+        newVenueLongitude.value = Number(data.location.longitude).toFixed(6);
+        newVenueHelp.textContent = `Coordinates found for ${data.location.label || newVenueName.value.trim()} (${data.location.confidence || "approximate"}).`;
+      } catch (error) {
+        newVenueHelp.textContent = "Coordinate lookup failed. You can still submit with the address.";
+      } finally {
+        geocodeNewVenueButton.disabled = false;
+        geocodeNewVenueButton.textContent = "Find coordinates from address";
+      }
     }
 
     function rowTemplate() {
@@ -644,10 +820,17 @@
         `;
       }
       restoreUploadLocation();
+      setNewVenueMode(false);
       addBeerRowButton.addEventListener("click", appendBeerRow);
       captureLocationButton.addEventListener("click", captureUploadLocation);
+      copyUploadLocationButton.addEventListener("click", copyUploadLocationToVenue);
+      geocodeNewVenueButton.addEventListener("click", geocodeNewVenueAddress);
       submissionTypeSelect.addEventListener("change", applySubmissionType);
+      newVenueToggle.addEventListener("change", () => setNewVenueMode(newVenueToggle.checked));
       venueSearchInput.addEventListener("input", () => {
+        if (isNewVenueMode) {
+          return;
+        }
         window.clearTimeout(venueSearchTimer);
         const selectedSuggestion = findVenueFromSearchValue(venueSearchInput.value);
         if (selectedSuggestion) {
@@ -687,11 +870,6 @@
           submissionPanel.classList.add("is-hidden");
           return;
         }
-        const selected = venues.find((venue) => venue.id === venueSelect.value);
-        if (!selected) {
-          MelbBeerBusiness.setStatus(status, "Search and choose a venue first.", true);
-          return;
-        }
 
         try {
           const formData = new FormData(submissionForm);
@@ -700,6 +878,17 @@
             ? await readPhotoDataUrl(sourcePhoto.files[0])
             : null;
           const items = collectItems();
+          const newVenue = collectNewVenue();
+          const newVenueError = validateNewVenue(newVenue);
+          if (newVenueError) {
+            MelbBeerBusiness.setStatus(status, newVenueError, true);
+            return;
+          }
+          const selected = newVenue ? null : venues.find((venue) => venue.id === venueSelect.value);
+          if (!selected && !newVenue) {
+            MelbBeerBusiness.setStatus(status, "Search and choose a venue first, or tick that the venue is not on Pint Path yet.", true);
+            return;
+          }
           const validationError = validateSubmission(items, Boolean(sourcePhotoDataUrl));
           if (validationError) {
             MelbBeerBusiness.setStatus(status, validationError, true);
@@ -713,9 +902,10 @@
           const result = await MelbBeerBusiness.apiFetch("/api/business/submissions", {
             method: "POST",
             body: JSON.stringify({
-              venueId: selected.id,
-              venueName: selected.name,
-              suburb: selected.suburb || null,
+              venueId: newVenue ? createPendingVenueId() : selected.id,
+              venueName: newVenue ? newVenue.name : selected.name,
+              suburb: newVenue ? newVenue.suburb : selected.suburb || null,
+              newVenue,
               submissionType: formData.get("submissionType"),
               observedAt,
               sourcePhotoDataUrl,
@@ -730,6 +920,8 @@
           persistUploadLocation(null);
           uploadLocationStatus.textContent = "Location not saved yet.";
           clearSelectedVenue();
+          newVenueToggle.checked = false;
+          setNewVenueMode(false);
           beerRows.innerHTML = "";
           appendBeerRow();
           applySubmissionType();

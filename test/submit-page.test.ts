@@ -40,8 +40,24 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="venueSelect" class="readonlySelect" required disabled');
     expect(html).toContain("Search above and click the matching venue suggestion before submitting.");
     expect(html).toContain("function clearSelectedVenue");
-    expect(html).toContain("Search and choose a venue first.");
+    expect(html).toContain("Search and choose a venue first, or tick that the venue is not on Pint Path yet.");
     expect(html).not.toContain('venueSelect.addEventListener("change"');
+  });
+
+  it("lets contributors request a missing venue with beer data before admin approval", () => {
+    const html = submitHtml();
+
+    expect(html).toContain('id="newVenueToggle"');
+    expect(html).toContain("This venue is not on Pint Path yet");
+    expect(html).toContain('id="newVenuePanel"');
+    expect(html).toContain('id="newVenueName"');
+    expect(html).toContain('id="newVenueAddress"');
+    expect(html).toContain("function collectNewVenue()");
+    expect(html).toContain("function createPendingVenueId()");
+    expect(html).toContain("newVenue,");
+    expect(html).toContain("Use saved location as venue coordinates");
+    expect(html).toContain("Find coordinates from address");
+    expect(html).toContain("It only appears on the global map after admin approval.");
   });
 
   it("keeps submit-time, notes, and evidence fields constrained by submission type", () => {

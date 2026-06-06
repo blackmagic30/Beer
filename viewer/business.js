@@ -498,12 +498,41 @@ async function requestPasswordReset(email) {
   }
 
   const { error } = await client.auth.resetPasswordForEmail(email, {
-    redirectTo: getAuthCallbackUrl("/account.html"),
+    redirectTo: getAuthCallbackUrl("/reset-password.html?mode=update"),
   });
 
   if (error) {
     throw new Error(error.message);
   }
+
+  return {
+    message: "If an account exists for that email, a secure reset link has been sent.",
+  };
+}
+
+async function updatePassword(password) {
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error("Password reset is available when Supabase Auth is configured.");
+  }
+
+  const { data: sessionData, error: sessionError } = await client.auth.getSession();
+  if (sessionError) {
+    throw new Error(sessionError.message);
+  }
+  if (!sessionData.session?.access_token) {
+    throw new Error("Open the latest password reset email before setting a new password.");
+  }
+
+  const { error } = await client.auth.updateUser({ password });
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  await syncSupabaseSession().catch(() => null);
+  return {
+    message: "Password updated. You can continue to your Pint Path account.",
+  };
 }
 
 function renderNav(active = "") {
@@ -676,6 +705,7 @@ window.MelbBeerBusiness = {
   signUpWithEmail,
   resendSignupConfirmation,
   requestPasswordReset,
+  updatePassword,
   renderNav,
   installFieldTestChrome,
   installAccessibilityChrome,

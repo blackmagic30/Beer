@@ -129,6 +129,7 @@ export interface BusinessSubmission {
   distanceToVenueMeters: number | null;
   pointsEligibleByLocation: boolean;
   pointsEligibilityReason: string | null;
+  pendingVenue: PendingVenueDetails | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
   rejectionReason: string | null;
@@ -187,6 +188,29 @@ export interface VenueLocationCache {
   latitude: number | null;
   longitude: number | null;
   updatedAt: string;
+}
+
+export interface PendingVenueDetails {
+  name: string;
+  address: string | null;
+  suburb: string | null;
+  state: string | null;
+  postcode: string | null;
+  phone: string | null;
+  website: string | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export interface LocalVenueLookup {
+  id: string;
+  name: string;
+  address: string | null;
+  suburb: string | null;
+  state: string | null;
+  postcode: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 export interface PublicVenuePriceRecord {
@@ -671,6 +695,7 @@ interface SubmissionRow {
   distance_to_venue_meters: number | null;
   points_eligible_by_location: number;
   points_eligibility_reason: string | null;
+  pending_venue_json: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
   rejection_reason: string | null;
@@ -1120,6 +1145,7 @@ function toSubmission(row: SubmissionRow): BusinessSubmission {
     distanceToVenueMeters: row.distance_to_venue_meters,
     pointsEligibleByLocation: Boolean(row.points_eligible_by_location),
     pointsEligibilityReason: row.points_eligibility_reason,
+    pendingVenue: parsePendingVenueDetails(row.pending_venue_json),
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at,
     rejectionReason: row.rejection_reason,
@@ -1211,6 +1237,43 @@ function parseJsonObject(value: string): Record<string, unknown> {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
   } catch {
     return {};
+  }
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function parsePendingVenueDetails(value: string | null | undefined): PendingVenueDetails | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const name = stringOrNull(parsed.name);
+    if (!name) {
+      return null;
+    }
+
+    return {
+      name,
+      address: stringOrNull(parsed.address),
+      suburb: stringOrNull(parsed.suburb),
+      state: stringOrNull(parsed.state),
+      postcode: stringOrNull(parsed.postcode),
+      phone: stringOrNull(parsed.phone),
+      website: stringOrNull(parsed.website),
+      latitude: numberOrNull(parsed.latitude),
+      longitude: numberOrNull(parsed.longitude),
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -2088,6 +2151,7 @@ export class BusinessRepository {
     distanceToVenueMeters?: number | null;
     pointsEligibleByLocation?: boolean;
     pointsEligibilityReason?: string | null;
+    pendingVenue?: PendingVenueDetails | null;
     items: Array<{
       id: string;
       beerName: string;
@@ -2105,11 +2169,11 @@ export class BusinessRepository {
       this.database
         .prepare(
           `INSERT INTO submissions (
-            id, user_id, venue_id, venue_name, suburb, status, submission_type, observed_at,
-            source_photo_url, notes, upload_latitude, upload_longitude, upload_accuracy_meters,
-            upload_location_captured_at, distance_to_venue_meters, points_eligible_by_location,
-            points_eligibility_reason, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, user_id, venue_id, venue_name, suburb, status, submission_type, observed_at,
+          source_photo_url, notes, upload_latitude, upload_longitude, upload_accuracy_meters,
+          upload_location_captured_at, distance_to_venue_meters, points_eligible_by_location,
+          points_eligibility_reason, pending_venue_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
@@ -2128,6 +2192,7 @@ export class BusinessRepository {
           input.distanceToVenueMeters ?? null,
           input.pointsEligibleByLocation ? 1 : 0,
           input.pointsEligibilityReason ?? null,
+          input.pendingVenue ? JSON.stringify(input.pendingVenue) : null,
           input.now,
           input.now,
         );
@@ -2543,6 +2608,7 @@ export class BusinessRepository {
     monthKey: string;
     premiumUntil: string;
     contributorUnlockPoints: number;
+    allowOwnReview?: boolean | undefined;
   }): { submission: BusinessSubmission; pointsAwarded: number; account: BusinessAccount } {
     const review = this.database.transaction(() => {
       const current = this.getSubmissionById(input.submissionId);
@@ -2550,7 +2616,7 @@ export class BusinessRepository {
         throw new Error("Submission not found");
       }
 
-      if (current.submission.userId === input.reviewerId) {
+      if (current.submission.userId === input.reviewerId && !input.allowOwnReview) {
         throw new Error("Users cannot review their own submissions");
       }
 
@@ -2576,6 +2642,7 @@ export class BusinessRepository {
           now: input.now,
         });
 
+        this.publishPendingVenueIfNeeded(current, input.now);
         this.publishSubmissionPriceRecords(current, input.confidence, input.now);
         this.database
           .prepare(
@@ -2668,6 +2735,20 @@ export class BusinessRepository {
         source_type, source_submission_id, last_verified_at, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    const insertVenueBeer = this.database.prepare(
+      `INSERT INTO venue_beers (
+        id, venue_id, beer_name, brewery, style, abv, serve_size, price, currency,
+        on_tap, in_stock, notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        beer_name = excluded.beer_name,
+        serve_size = excluded.serve_size,
+        price = excluded.price,
+        on_tap = excluded.on_tap,
+        in_stock = excluded.in_stock,
+        notes = excluded.notes,
+        updated_at = excluded.updated_at`,
+    );
 
     for (const item of current.items) {
       insert.run(
@@ -2689,7 +2770,66 @@ export class BusinessRepository {
         now,
         now,
       );
+
+      if (current.submission.pendingVenue && !item.isHappyHourPrice) {
+        insertVenueBeer.run(
+          `${current.submission.id}:venue-beer:${item.id}`,
+          current.submission.venueId,
+          item.beerName,
+          null,
+          null,
+          null,
+          item.servingSize,
+          item.price,
+          "AUD",
+          item.isOnTap === "yes" ? 1 : 0,
+          item.isOnTap === "no" ? 0 : 1,
+          "Approved user-submitted venue launch row.",
+          now,
+          now,
+        );
+      }
     }
+  }
+
+  private publishPendingVenueIfNeeded(
+    current: { submission: BusinessSubmission; items: BusinessSubmissionItem[] },
+    now: string,
+  ): void {
+    const pendingVenue = current.submission.pendingVenue;
+    if (!pendingVenue) {
+      return;
+    }
+
+    this.upsertBarProfile({
+      barId: current.submission.venueId,
+      name: pendingVenue.name || current.submission.venueName,
+      address: pendingVenue.address,
+      suburb: pendingVenue.suburb ?? current.submission.suburb,
+      area: pendingVenue.suburb ?? current.submission.suburb,
+      phone: pendingVenue.phone,
+      website: pendingVenue.website,
+      instagram: null,
+      description: "User-submitted venue. Published after Pint Path admin review.",
+      openingHours: {},
+      venueTags: ["user submitted"],
+      membershipTier: "basic",
+      highlightedName: false,
+      premiumBadge: null,
+      promoted: false,
+      featuredSpecialEligible: false,
+      active: true,
+      now,
+    });
+
+    this.upsertVenueLocationCache({
+      venueId: current.submission.venueId,
+      venueName: pendingVenue.name || current.submission.venueName,
+      suburb: pendingVenue.suburb ?? current.submission.suburb,
+      latitude: pendingVenue.latitude,
+      longitude: pendingVenue.longitude,
+      now,
+    });
   }
 
   private insertContributionLedger(input: {
@@ -3026,6 +3166,56 @@ export class BusinessRepository {
       .prepare("SELECT * FROM venue_location_cache WHERE venue_id = ?")
       .get(venueId) as VenueLocationCacheRow | undefined;
     return row ? toVenueLocationCache(row) : null;
+  }
+
+  listLocalVenues(input: { query?: string | undefined; limit: number }): LocalVenueLookup[] {
+    const query = input.query?.trim().toLowerCase() ?? "";
+    const rows = this.database
+      .prepare(
+        `SELECT
+           profile.venue_id AS id,
+           profile.name AS name,
+           profile.address AS address,
+           profile.suburb AS suburb,
+           location.latitude AS latitude,
+           location.longitude AS longitude
+         FROM venue_profiles profile
+         LEFT JOIN venue_location_cache location ON location.venue_id = profile.venue_id
+         WHERE profile.active = 1
+         ORDER BY profile.name COLLATE NOCASE ASC
+         LIMIT ?`,
+      )
+      .all(Math.max(input.limit * 4, input.limit)) as Array<{
+        id: string;
+        name: string;
+        address: string | null;
+        suburb: string | null;
+        latitude: number | null;
+        longitude: number | null;
+      }>;
+
+    return rows
+      .filter((row) => {
+        if (!query) {
+          return true;
+        }
+        return [row.name, row.suburb, row.address]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      })
+      .slice(0, input.limit)
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        address: row.address,
+        suburb: row.suburb,
+        state: "VIC",
+        postcode: null,
+        latitude: row.latitude,
+        longitude: row.longitude,
+      }));
   }
 
   listVenueManagerPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {

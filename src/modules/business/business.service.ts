@@ -22,6 +22,7 @@ import {
   type BusinessSubmissionItem,
   type ConfidenceLabel,
   type FeedbackPriority,
+  type PendingVenueDetails,
   type PublicVenuePriceRecord,
   type ServingSize,
   type SourceEvidenceObject,
@@ -2168,7 +2169,13 @@ export class BusinessService {
       };
     }
 
-    const venueLocation = this.repository.getVenueLocationCache(input.venueId);
+    const pendingVenue = this.normalizePendingVenue(input);
+    const venueLocation = pendingVenue?.latitude != null && pendingVenue.longitude != null
+      ? {
+          latitude: pendingVenue.latitude,
+          longitude: pendingVenue.longitude,
+        }
+      : this.repository.getVenueLocationCache(input.venueId);
     const uploadLatitude = input.uploadLocation.latitude;
     const uploadLongitude = input.uploadLocation.longitude;
 
@@ -2205,6 +2212,35 @@ export class BusinessService {
     };
   }
 
+  private normalizePendingVenue(input: CreateSubmissionInput): PendingVenueDetails | null {
+    if (!input.newVenue) {
+      return null;
+    }
+
+    return {
+      name: input.newVenue.name.trim(),
+      address: input.newVenue.address,
+      suburb: input.newVenue.suburb ?? input.suburb,
+      state: input.newVenue.state ?? "VIC",
+      postcode: input.newVenue.postcode,
+      phone: input.newVenue.phone,
+      website: input.newVenue.website,
+      latitude: input.newVenue.latitude,
+      longitude: input.newVenue.longitude,
+    };
+  }
+
+  private mergeVenueRows(primary: VenueRow[], secondary: VenueRow[], limit: number): VenueRow[] {
+    const merged = new Map<string, VenueRow>();
+    [...primary, ...secondary].forEach((venue) => {
+      merged.set(venue.id, {
+        ...venue,
+        ...this.getPublicVenueTierMetadata(venue.id),
+      });
+    });
+    return Array.from(merged.values()).slice(0, limit);
+  }
+
   createSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
     if (account.status === "suspended") {
       throw new AppError("Suspended accounts cannot submit reward-eligible data.", 403);
@@ -2218,19 +2254,21 @@ export class BusinessService {
 
     const sourcePhotoUrl = this.resolveSourcePhoto(account, input);
     const now = nowIso();
+    const pendingVenue = this.normalizePendingVenue(input);
     const locationEligibility = this.getSubmissionLocationEligibility(input);
     const submission = this.repository.createSubmission({
       id: crypto.randomUUID(),
       userId: account.id,
       venueId: input.venueId,
-      venueName: input.venueName,
-      suburb: input.suburb,
+      venueName: pendingVenue?.name ?? input.venueName,
+      suburb: pendingVenue?.suburb ?? input.suburb,
       submissionType: input.submissionType,
       observedAt: input.observedAt,
       sourcePhotoUrl,
       notes: input.notes,
       now,
       ...locationEligibility,
+      pendingVenue,
       items: input.items.map((item) => {
         const beerName = canonicalizeTrackedBeerName(item.beerName);
         return {
@@ -2260,6 +2298,7 @@ export class BusinessService {
         itemCount: input.items.length,
         hasSourcePhoto: Boolean(sourcePhotoUrl),
         pointsEligibleByLocation: submission.pointsEligibleByLocation,
+        newVenue: Boolean(pendingVenue),
       },
     });
     this.recordUserActivity({
@@ -2272,12 +2311,15 @@ export class BusinessService {
         venueId: submission.venueId,
         itemCount: input.items.length,
         pointsEligibleByLocation: submission.pointsEligibleByLocation,
+        newVenue: Boolean(pendingVenue),
       },
     });
 
     return {
       submission,
-      statusCopy: submission.pointsEligibleByLocation
+      statusCopy: pendingVenue
+        ? "New venue and beer data submitted for admin review. It will appear on the global map only after approval."
+        : submission.pointsEligibleByLocation
         ? "Submitted for review. If approved, this can earn points toward this month's contributor unlock."
         : "Submitted for review. Points need a saved upload location within 200m of the venue.",
       ocrStatus: sourcePhotoUrl ? "queued_for_review" : "not_requested",
@@ -2856,7 +2898,12 @@ export class BusinessService {
       throw new AppError("Submission not found.", 404);
     }
 
-    if (submission.submission.userId === admin.id) {
+    const allowOwnPendingVenueReview =
+      submission.submission.userId === admin.id &&
+      Boolean(submission.submission.pendingVenue) &&
+      this.canAdminReviewOwnPendingVenue(admin);
+
+    if (submission.submission.userId === admin.id && !allowOwnPendingVenueReview) {
       throw new AppError("Admins cannot review their own submissions.", 403);
     }
 
@@ -2882,6 +2929,7 @@ export class BusinessService {
       monthKey: monthKeyFromIso(submission.submission.observedAt),
       premiumUntil: endOfMonthIso(reviewedAt),
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
+      allowOwnReview: allowOwnPendingVenueReview,
     });
     this.auditSecurity({
       actor: admin,
@@ -2936,6 +2984,19 @@ export class BusinessService {
     };
   }
 
+  private canAdminReviewOwnPendingVenue(admin: BusinessAccount): boolean {
+    if (!this.isAdmin(admin)) {
+      return false;
+    }
+
+    if (this.config.NODE_ENV !== "production") {
+      return true;
+    }
+
+    const adminEmails = this.getAdminEmailAllowlist();
+    return adminEmails.size > 0 && adminEmails.has(normalizeEmail(admin.email));
+  }
+
   calculatePoints(submission: BusinessSubmission, items: BusinessSubmissionItem[]): number {
     const freshnessPoints = this.calculateFreshnessPoints(this.repository.getLatestVenueDataTimestamp(submission.venueId));
     const includesNewDrink = items.some((item) => !this.repository.venueHasPublishedBeerRecord({
@@ -2967,11 +3028,16 @@ export class BusinessService {
   }
 
   async listVenues(query: string | undefined, limit: number): Promise<VenueRow[]> {
+    const localVenues = this.repository.listLocalVenues({ query, limit }).map((venue) => ({
+      ...venue,
+      ...this.getPublicVenueTierMetadata(venue.id),
+    }));
+
     if (!this.supabase) {
       const rawQuery = query?.trim();
       const labelStem = rawQuery?.split("·")[0] ?? "";
       const normalizedQuery = (labelStem.split(",")[0] ?? "").trim().toLowerCase();
-      return this.repository
+      const missionVenues = this.repository
         .listMissions({ activeOnly: true, limit, suburb: undefined })
         .filter((mission) => {
           if (!normalizedQuery) {
@@ -2995,6 +3061,7 @@ export class BusinessService {
           longitude: null,
           ...this.getPublicVenueTierMetadata(mission.venueId),
         }));
+      return this.mergeVenueRows(localVenues, missionVenues, limit);
     }
 
     let request = this.supabase
@@ -3035,10 +3102,10 @@ export class BusinessService {
       });
     });
 
-    return venues.map((venue) => ({
+    return this.mergeVenueRows(venues.map((venue) => ({
       ...venue,
       ...this.getPublicVenueTierMetadata(venue.id),
-    }));
+    })), localVenues, limit);
   }
 
   async getPublicVenueById(venueId: string): Promise<VenueRow | null> {
@@ -3083,7 +3150,23 @@ export class BusinessService {
     }
 
     if (!data) {
-      return null;
+      const profile = this.repository.getBarProfile(normalizedVenueId);
+      const location = this.repository.getVenueLocationCache(normalizedVenueId);
+      if (!profile && !location) {
+        return null;
+      }
+
+      return {
+        id: normalizedVenueId,
+        name: profile?.name || location?.venueName || normalizedVenueId,
+        address: profile?.address || null,
+        suburb: profile?.suburb || location?.suburb || null,
+        state: "VIC",
+        postcode: null,
+        latitude: location?.latitude || null,
+        longitude: location?.longitude || null,
+        ...this.getPublicVenueTierMetadata(normalizedVenueId),
+      };
     }
 
     const venue = data as VenueRow;

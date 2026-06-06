@@ -202,6 +202,7 @@ CREATE TABLE IF NOT EXISTS submissions (
   distance_to_venue_meters REAL,
   points_eligible_by_location INTEGER NOT NULL DEFAULT 0,
   points_eligibility_reason TEXT,
+  pending_venue_json TEXT,
   reviewed_by TEXT,
   reviewed_at TEXT,
   rejection_reason TEXT,
