@@ -678,6 +678,103 @@ h3 {
   margin: 0;
 }
 
+.fieldTestConsole {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.13), transparent 38%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+    rgba(3, 7, 18, 0.3);
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.fieldTestConsole__status,
+.fieldTestConsole__actions,
+.fieldQuickBar,
+.quickBeerButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.fieldTestConsole__actions {
+  justify-content: flex-end;
+}
+
+.fieldTestConsole__actions .button,
+.fieldQuickBar .button,
+.quickBeerChip {
+  min-height: 42px;
+  padding: 9px 12px;
+  font-size: 13px;
+}
+
+.fieldStatusPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: var(--radius-pill);
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text-secondary);
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.fieldStatusPill--success {
+  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.12);
+  color: #c9f9d8;
+}
+
+.fieldStatusPill--warning {
+  border-color: rgba(250, 204, 21, 0.3);
+  background: rgba(250, 204, 21, 0.12);
+  color: #fff0a8;
+}
+
+.fieldStatusPill--info {
+  border-color: rgba(34, 211, 238, 0.3);
+  background: rgba(34, 211, 238, 0.12);
+  color: #dffbff;
+}
+
+.fieldQuickBar {
+  justify-content: space-between;
+}
+
+.quickBeerButtons {
+  flex: 1 1 340px;
+  justify-content: flex-end;
+}
+
+.quickBeerChip {
+  appearance: none;
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: var(--radius-pill);
+  background: rgba(34, 211, 238, 0.1);
+  color: #dffbff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 850;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.quickBeerChip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(34, 211, 238, 0.42);
+  background: rgba(34, 211, 238, 0.16);
+}
+
 .locationProofPanel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2958,15 +3055,30 @@ h3 {
 
   .sectionHeader,
   .dataRow,
+  .fieldTestConsole,
   .locationProofPanel,
   .accountSecurityPanel {
     flex-direction: column;
   }
 
+  .fieldTestConsole,
   .locationProofPanel,
   .accountSecurityPanel {
     display: flex;
     align-items: stretch;
+  }
+
+  .fieldTestConsole__actions,
+  .fieldQuickBar,
+  .quickBeerButtons {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .fieldTestConsole__actions .button,
+  .fieldQuickBar .button,
+  .quickBeerChip {
+    width: 100%;
   }
 
   .trustSteps li,

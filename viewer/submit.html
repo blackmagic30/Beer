@@ -43,6 +43,18 @@
     </section>
 
     <section id="submissionPanel" class="panel is-hidden">
+      <section class="fieldTestConsole" aria-label="Field test readiness">
+        <div class="fieldTestConsole__status">
+          <span id="networkStatusPill" class="fieldStatusPill">Signal checking</span>
+          <span id="draftStatusPill" class="fieldStatusPill">Draft empty</span>
+          <span id="locationStatusPill" class="fieldStatusPill">Location not saved</span>
+        </div>
+        <div class="fieldTestConsole__actions">
+          <button id="saveDraftButton" class="button" type="button">Save draft</button>
+          <button id="restoreDraftButton" class="button" type="button">Restore draft</button>
+          <button id="clearDraftButton" class="button button--danger" type="button">Clear draft</button>
+        </div>
+      </section>
       <form id="submissionForm" class="form">
         <div class="grid grid--two">
           <label class="field">Search venue
@@ -157,7 +169,10 @@
           </div>
           <div id="beerRows" class="list"></div>
           <datalist id="trackedBeerSuggestions"></datalist>
-          <button id="addBeerRowButton" class="button" type="button">Add beer row</button>
+          <div class="fieldQuickBar" aria-label="Quick beer rows">
+            <button id="addBeerRowButton" class="button" type="button">Add beer row</button>
+            <div id="quickBeerButtons" class="quickBeerButtons"></div>
+          </div>
         </div>
         <button class="button button--primary" type="submit">Submit for review</button>
       </form>
@@ -170,10 +185,21 @@
   <script>
     let venues = [];
     let venueSearchTimer = null;
+    let draftSaveTimer = null;
     let uploadLocation = null;
     let isNewVenueMode = false;
     const UPLOAD_LOCATION_STORAGE_KEY = "pintPathUploadLocationProof";
+    const FIELD_DRAFT_STORAGE_KEY = "pintPathSubmitDraft";
     const UPLOAD_LOCATION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+    const FIELD_DRAFT_MAX_AGE_MS = 18 * 60 * 60 * 1000;
+    const QUICK_BEERS = [
+      "Guinness",
+      "Carlton Draft",
+      "Stone & Wood",
+      "Great Northern",
+      "Balter XPA",
+      "Asahi Super Dry",
+    ];
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
@@ -183,6 +209,7 @@
         { key: "stone_and_wood", name: "Stone & Wood", aliases: ["stone and wood", "stone & wood"] },
       ];
     const trackedBeerLookup = new Map();
+    const statusEl = document.getElementById("status");
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -231,6 +258,249 @@
         .sort((left, right) => left.localeCompare(right))
         .map((label) => `<option value="${escapeHtml(label)}"></option>`)
         .join("");
+    }
+
+    function setFieldStatusPill(element, text, tone = "neutral") {
+      element.textContent = text;
+      element.className = `fieldStatusPill fieldStatusPill--${tone}`;
+    }
+
+    function updateNetworkStatus() {
+      if (!("onLine" in navigator)) {
+        setFieldStatusPill(networkStatusPill, "Signal unknown", "neutral");
+        return;
+      }
+
+      setFieldStatusPill(
+        networkStatusPill,
+        navigator.onLine ? "Online" : "Offline - draft safe",
+        navigator.onLine ? "success" : "warning",
+      );
+    }
+
+    function updateLocationStatus() {
+      if (!uploadLocation) {
+        setFieldStatusPill(locationStatusPill, "Location not saved", "neutral");
+        return;
+      }
+
+      setFieldStatusPill(locationStatusPill, `Location ${formatAccuracy(uploadLocation.accuracyMeters)}`, "success");
+    }
+
+    function readStoredDraft() {
+      try {
+        const raw = localStorage.getItem(FIELD_DRAFT_STORAGE_KEY);
+        if (!raw) {
+          return null;
+        }
+        const draft = JSON.parse(raw);
+        const savedAt = Date.parse(draft?.savedAt || "");
+        if (!Number.isFinite(savedAt) || Date.now() - savedAt > FIELD_DRAFT_MAX_AGE_MS) {
+          localStorage.removeItem(FIELD_DRAFT_STORAGE_KEY);
+          return null;
+        }
+        return draft;
+      } catch {
+        localStorage.removeItem(FIELD_DRAFT_STORAGE_KEY);
+        return null;
+      }
+    }
+
+    function updateDraftStatus() {
+      const draft = readStoredDraft();
+      if (!draft) {
+        setFieldStatusPill(draftStatusPill, "Draft empty", "neutral");
+        restoreDraftButton.disabled = true;
+        clearDraftButton.disabled = true;
+        return;
+      }
+
+      const savedAt = Date.parse(draft.savedAt);
+      const minutes = Math.max(0, Math.round((Date.now() - savedAt) / 60000));
+      setFieldStatusPill(draftStatusPill, minutes < 1 ? "Draft saved now" : `Draft ${minutes}m old`, "info");
+      restoreDraftButton.disabled = false;
+      clearDraftButton.disabled = false;
+    }
+
+    function buildQuickBeerButtons() {
+      quickBeerButtons.innerHTML = QUICK_BEERS.map((beer) =>
+        `<button class="quickBeerChip" type="button" data-quick-beer="${escapeHtml(beer)}">${escapeHtml(beer)}</button>`,
+      ).join("");
+    }
+
+    function fillQuickBeer(beerName) {
+      const rows = Array.from(beerRows.querySelectorAll(".listItem"));
+      let target = rows.find((row) => !row.querySelector('[data-field="beerName"]').value.trim());
+      if (!target) {
+        appendBeerRow();
+        const currentRows = Array.from(beerRows.querySelectorAll(".listItem"));
+        target = currentRows[currentRows.length - 1];
+      }
+      if (!target) {
+        return;
+      }
+
+      target.querySelector('[data-field="beerName"]').value = beerName;
+      target.querySelector('[data-field="servingSize"]').value = "pint";
+      target.querySelector('[data-field="isOnTap"]').value = "yes";
+      scheduleDraftAutosave();
+      MelbBeerBusiness.setStatus(statusEl, `${beerName} row ready. Add the observed price before submitting.`);
+    }
+
+    function collectBeerRowsForDraft() {
+      return Array.from(beerRows.querySelectorAll(".listItem")).map((row) => {
+        const get = (field) => row.querySelector(`[data-field="${field}"]`);
+        return {
+          beerName: get("beerName").value,
+          servingSize: get("servingSize").value,
+          price: get("price").value,
+          isOnTap: get("isOnTap").value,
+          isNewBeer: get("isNewBeer").checked,
+          isHappyHourPrice: get("isHappyHourPrice").checked,
+          happyHourDetails: get("happyHourDetails").value,
+        };
+      });
+    }
+
+    function applyBeerRowsFromDraft(rows) {
+      beerRows.innerHTML = "";
+      const draftRows = Array.isArray(rows) && rows.length ? rows : [{}];
+      draftRows.forEach((row) => {
+        appendBeerRow();
+        const currentRows = Array.from(beerRows.querySelectorAll(".listItem"));
+        const wrapper = currentRows[currentRows.length - 1];
+        if (!wrapper) {
+          return;
+        }
+        const set = (field, value) => {
+          const input = wrapper.querySelector(`[data-field="${field}"]`);
+          if (!input) {
+            return;
+          }
+          if (input.type === "checkbox") {
+            input.checked = Boolean(value);
+          } else {
+            input.value = value ?? "";
+          }
+        };
+        set("beerName", row.beerName);
+        set("servingSize", row.servingSize || "pint");
+        set("price", row.price);
+        set("isOnTap", row.isOnTap || "unknown");
+        set("isNewBeer", row.isNewBeer);
+        set("isHappyHourPrice", row.isHappyHourPrice);
+        set("happyHourDetails", row.happyHourDetails);
+      });
+      updateRowControls();
+    }
+
+    function collectFieldDraft() {
+      return {
+        savedAt: new Date().toISOString(),
+        venueSearch: venueSearchInput.value,
+        venueId: venueSelect.value,
+        isNewVenueMode,
+        newVenue: {
+          name: newVenueName.value,
+          suburb: newVenueSuburb.value,
+          address: newVenueAddress.value,
+          phone: newVenuePhone.value,
+          website: newVenueWebsite.value,
+          latitude: newVenueLatitude.value,
+          longitude: newVenueLongitude.value,
+        },
+        submissionType: submissionTypeSelect.value,
+        happyHour: {
+          days: getHappyHourDays(),
+          startTime: happyHourStartTime.value,
+          endTime: happyHourEndTime.value,
+          specials: happyHourSpecialsInput.value,
+        },
+        beerRows: collectBeerRowsForDraft(),
+        uploadLocation,
+      };
+    }
+
+    function saveFieldDraft(silent = false) {
+      try {
+        localStorage.setItem(FIELD_DRAFT_STORAGE_KEY, JSON.stringify(collectFieldDraft()));
+        updateDraftStatus();
+        if (!silent) {
+          MelbBeerBusiness.setStatus(statusEl, "Draft saved on this device.");
+        }
+      } catch {
+        if (!silent) {
+          MelbBeerBusiness.setStatus(statusEl, "Draft could not be saved in this browser.", true);
+        }
+      }
+    }
+
+    function scheduleDraftAutosave() {
+      window.clearTimeout(draftSaveTimer);
+      draftSaveTimer = window.setTimeout(() => saveFieldDraft(true), 600);
+    }
+
+    function clearFieldDraft(silent = false) {
+      try {
+        localStorage.removeItem(FIELD_DRAFT_STORAGE_KEY);
+      } catch {
+        // Local storage can fail in private browsing.
+      }
+      updateDraftStatus();
+      if (!silent) {
+        MelbBeerBusiness.setStatus(statusEl, "Draft cleared from this device.");
+      }
+    }
+
+    async function restoreFieldDraft() {
+      const draft = readStoredDraft();
+      if (!draft) {
+        updateDraftStatus();
+        MelbBeerBusiness.setStatus(statusEl, "No saved draft is available on this device.", true);
+        return;
+      }
+
+      venueSearchInput.value = draft.venueSearch || "";
+      newVenueToggle.checked = Boolean(draft.isNewVenueMode);
+      setNewVenueMode(Boolean(draft.isNewVenueMode));
+      if (!draft.isNewVenueMode) {
+        await loadVenues(draft.venueSearch || "");
+        if (draft.venueId && Array.from(venueSelect.options).some((option) => option.value === draft.venueId)) {
+          venueSelect.value = draft.venueId;
+          selectVenue(venues.find((venue) => venue.id === draft.venueId));
+        }
+      }
+      const newVenue = draft.newVenue || {};
+      newVenueName.value = newVenue.name || "";
+      newVenueSuburb.value = newVenue.suburb || "";
+      newVenueAddress.value = newVenue.address || "";
+      newVenuePhone.value = newVenue.phone || "";
+      newVenueWebsite.value = newVenue.website || "";
+      newVenueLatitude.value = newVenue.latitude || "";
+      newVenueLongitude.value = newVenue.longitude || "";
+
+      if (["full_venue_update", "single_beer_price", "happy_hour_update", "photo_upload"].includes(draft.submissionType)) {
+        submissionTypeSelect.value = draft.submissionType;
+      }
+      applySubmissionType();
+
+      const happyHour = draft.happyHour || {};
+      happyHourDays.querySelectorAll("input").forEach((input) => {
+        input.checked = (happyHour.days || []).includes(input.value);
+      });
+      happyHourStartTime.value = happyHour.startTime || "";
+      happyHourEndTime.value = happyHour.endTime || "";
+      happyHourSpecialsInput.value = happyHour.specials || "";
+
+      applyBeerRowsFromDraft(draft.beerRows);
+      if (draft.uploadLocation) {
+        uploadLocation = draft.uploadLocation;
+        persistUploadLocation(uploadLocation);
+        uploadLocationStatus.textContent = `Location proof restored from draft (${formatAccuracy(uploadLocation.accuracyMeters)}).`;
+      }
+      updateLocationStatus();
+      updateDraftStatus();
+      MelbBeerBusiness.setStatus(statusEl, "Draft restored. Check the venue and prices before submitting.");
     }
 
     function normalizeVenueText(value) {
@@ -352,14 +622,14 @@
 
     function copyUploadLocationToVenue() {
       if (!uploadLocation) {
-        MelbBeerBusiness.setStatus(status, "Save your location first, then copy it into the venue coordinates.", true);
+        MelbBeerBusiness.setStatus(statusEl, "Save your location first, then copy it into the venue coordinates.", true);
         return;
       }
 
       newVenueLatitude.value = Number(uploadLocation.latitude).toFixed(6);
       newVenueLongitude.value = Number(uploadLocation.longitude).toFixed(6);
       newVenueHelp.textContent = `Venue coordinates copied from saved upload location (${formatAccuracy(uploadLocation.accuracyMeters)}).`;
-      MelbBeerBusiness.setStatus(status, "Venue coordinates copied. Add the venue name and beer rows, then submit.");
+      MelbBeerBusiness.setStatus(statusEl, "Venue coordinates copied. Add the venue name and beer rows, then submit.");
     }
 
     async function geocodeNewVenueAddress() {
@@ -367,7 +637,7 @@
         .filter(Boolean)
         .join(", ");
       if (query.length < 2) {
-        MelbBeerBusiness.setStatus(status, "Add a venue name, address, or suburb before finding coordinates.", true);
+        MelbBeerBusiness.setStatus(statusEl, "Add a venue name, address, or suburb before finding coordinates.", true);
         return;
       }
 
@@ -681,9 +951,11 @@
       try {
         if (!location) {
           localStorage.removeItem(UPLOAD_LOCATION_STORAGE_KEY);
+          updateLocationStatus();
           return;
         }
         localStorage.setItem(UPLOAD_LOCATION_STORAGE_KEY, JSON.stringify(location));
+        updateLocationStatus();
       } catch {
         // Local storage may be unavailable in private browsing. The in-memory proof still works.
       }
@@ -703,6 +975,7 @@
         }
         uploadLocation = saved;
         uploadLocationStatus.textContent = `Saved location proof restored for this upload (${formatAccuracy(saved.accuracyMeters)}).`;
+        updateLocationStatus();
       } catch {
         persistUploadLocation(null);
       }
@@ -712,7 +985,7 @@
       if (!navigator.geolocation) {
         uploadLocation = null;
         persistUploadLocation(null);
-        MelbBeerBusiness.setStatus(status, "Location is unavailable on this browser. You can still submit, but it will not earn points.", true);
+        MelbBeerBusiness.setStatus(statusEl, "Location is unavailable on this browser. You can still submit, but it will not earn points.", true);
         uploadLocationStatus.textContent = "Location unavailable on this device.";
         return;
       }
@@ -728,13 +1001,14 @@
           };
           persistUploadLocation(uploadLocation);
           uploadLocationStatus.textContent = `Location saved for this upload (${formatAccuracy(position.coords.accuracy)}). It stays on this device until submitted.`;
-          MelbBeerBusiness.setStatus(status, "Location saved. If it is within 200m of the chosen venue, approved data can earn points.");
+          saveFieldDraft(true);
+          MelbBeerBusiness.setStatus(statusEl, "Location saved. If it is within 200m of the chosen venue, approved data can earn points.");
         },
         () => {
           uploadLocation = null;
           persistUploadLocation(null);
           uploadLocationStatus.textContent = "Location permission denied or unavailable.";
-          MelbBeerBusiness.setStatus(status, "You can still submit, but points require saved location within 200m of the venue.", true);
+          MelbBeerBusiness.setStatus(statusEl, "You can still submit, but points require saved location within 200m of the venue.", true);
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
       );
@@ -806,6 +1080,10 @@
       const initialSubmissionType = params.get("type");
       seedTrackedBeerLookup();
       populateTrackedBeerSuggestions();
+      buildQuickBeerButtons();
+      updateNetworkStatus();
+      updateDraftStatus();
+      updateLocationStatus();
       appendBeerRow();
       if (["full_venue_update", "single_beer_price", "happy_hour_update", "photo_upload"].includes(initialSubmissionType)) {
         submissionTypeSelect.value = initialSubmissionType;
@@ -820,11 +1098,38 @@
         `;
       }
       restoreUploadLocation();
+      updateLocationStatus();
       setNewVenueMode(false);
-      addBeerRowButton.addEventListener("click", appendBeerRow);
+      window.addEventListener("online", updateNetworkStatus);
+      window.addEventListener("offline", updateNetworkStatus);
+      addBeerRowButton.addEventListener("click", () => {
+        appendBeerRow();
+        scheduleDraftAutosave();
+      });
+      quickBeerButtons.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-quick-beer]");
+        if (!button) {
+          return;
+        }
+        fillQuickBeer(button.dataset.quickBeer);
+      });
+      submissionForm.addEventListener("input", scheduleDraftAutosave);
+      submissionForm.addEventListener("change", scheduleDraftAutosave);
+      saveDraftButton.addEventListener("click", () => saveFieldDraft(false));
+      restoreDraftButton.addEventListener("click", () => {
+        restoreFieldDraft().catch((error) => MelbBeerBusiness.setStatus(statusEl, error.message || "Could not restore draft.", true));
+      });
+      clearDraftButton.addEventListener("click", clearFieldDraft);
       captureLocationButton.addEventListener("click", captureUploadLocation);
       copyUploadLocationButton.addEventListener("click", copyUploadLocationToVenue);
       geocodeNewVenueButton.addEventListener("click", geocodeNewVenueAddress);
+      sourcePhoto.addEventListener("change", () => {
+        if (sourcePhoto.files[0]) {
+          sourcePhotoHint.textContent = "Photo attached for this submit. Drafts save fields only, not image files.";
+        } else {
+          sourcePhotoHint.textContent = "Required for photo/source submissions. Beer rows are not needed here.";
+        }
+      });
       submissionTypeSelect.addEventListener("change", applySubmissionType);
       newVenueToggle.addEventListener("change", () => setNewVenueMode(newVenueToggle.checked));
       venueSearchInput.addEventListener("input", () => {
@@ -865,7 +1170,7 @@
       submissionForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (!MelbBeerBusiness.getAuthToken()) {
-          MelbBeerBusiness.setStatus(status, "Log in before submitting venue data.", true);
+          MelbBeerBusiness.setStatus(statusEl, "Log in before submitting venue data.", true);
           loginRequiredPanel.classList.remove("is-hidden");
           submissionPanel.classList.add("is-hidden");
           return;
@@ -881,17 +1186,17 @@
           const newVenue = collectNewVenue();
           const newVenueError = validateNewVenue(newVenue);
           if (newVenueError) {
-            MelbBeerBusiness.setStatus(status, newVenueError, true);
+            MelbBeerBusiness.setStatus(statusEl, newVenueError, true);
             return;
           }
           const selected = newVenue ? null : venues.find((venue) => venue.id === venueSelect.value);
           if (!selected && !newVenue) {
-            MelbBeerBusiness.setStatus(status, "Search and choose a venue first, or tick that the venue is not on Pint Path yet.", true);
+            MelbBeerBusiness.setStatus(statusEl, "Search and choose a venue first, or tick that the venue is not on Pint Path yet.", true);
             return;
           }
           const validationError = validateSubmission(items, Boolean(sourcePhotoDataUrl));
           if (validationError) {
-            MelbBeerBusiness.setStatus(status, validationError, true);
+            MelbBeerBusiness.setStatus(statusEl, validationError, true);
             return;
           }
           const missionNote = missionId
@@ -914,10 +1219,11 @@
               items,
             }),
           });
-          MelbBeerBusiness.setStatus(status, result.statusCopy || `${result.submission.venueName} submitted and pending review.`);
+          MelbBeerBusiness.setStatus(statusEl, result.statusCopy || `${result.submission.venueName} submitted and pending review.`);
           submissionForm.reset();
           uploadLocation = null;
           persistUploadLocation(null);
+          clearFieldDraft(true);
           uploadLocationStatus.textContent = "Location not saved yet.";
           clearSelectedVenue();
           newVenueToggle.checked = false;
@@ -932,7 +1238,7 @@
             MelbBeerBusiness.setStatus(authGateStatus, error.message || "Log in before submitting venue data.", true);
             return;
           }
-          MelbBeerBusiness.setStatus(status, error.message, true);
+          MelbBeerBusiness.setStatus(statusEl, error.message, true);
         }
       });
     });

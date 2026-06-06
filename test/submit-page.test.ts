@@ -119,4 +119,33 @@ describe("submit page auth gate", () => {
     expect(html).toContain("localStorage.removeItem");
     expect(html).not.toContain("window.addEventListener(\"DOMContentLoaded\", captureUploadLocation");
   });
+
+  it("adds field-test controls for signal status, draft recovery, and quick common-beer rows", () => {
+    const html = submitHtml();
+    const css = businessCss();
+
+    expect(html).toContain('class="fieldTestConsole"');
+    expect(html).toContain('id="networkStatusPill"');
+    expect(html).toContain('id="draftStatusPill"');
+    expect(html).toContain('id="locationStatusPill"');
+    expect(html).toContain('id="saveDraftButton"');
+    expect(html).toContain('id="restoreDraftButton"');
+    expect(html).toContain('id="clearDraftButton"');
+    expect(html).toContain("FIELD_DRAFT_STORAGE_KEY");
+    expect(html).toContain("function collectFieldDraft()");
+    expect(html).toContain("function restoreFieldDraft()");
+    expect(html).toContain("localStorage.setItem(FIELD_DRAFT_STORAGE_KEY");
+    expect(html).toContain('submissionForm.addEventListener("input", scheduleDraftAutosave)');
+    expect(html).toContain('window.addEventListener("online", updateNetworkStatus)');
+    expect(html).toContain('window.addEventListener("offline", updateNetworkStatus)');
+    expect(html).toContain("QUICK_BEERS");
+    expect(html).toContain('id="quickBeerButtons"');
+    expect(html).toContain("function fillQuickBeer");
+    expect(html).toContain('const statusEl = document.getElementById("status")');
+    expect(html).toContain("MelbBeerBusiness.setStatus(statusEl");
+    expect(html).toContain("Photo attached for this submit. Drafts save fields only, not image files.");
+    expect(css).toContain(".fieldTestConsole");
+    expect(css).toContain(".fieldStatusPill--success");
+    expect(css).toContain(".quickBeerChip");
+  });
 });
