@@ -350,7 +350,7 @@ describe("submission payload validation", () => {
       items: [
         { beerName: "Guinness", servingSize: "pint", price: 13, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
         { beerName: "Carlton Draught", servingSize: "pint", price: 12, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
-        { beerName: "Stone & Wood", servingSize: "pint", price: 14, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
+        { beerName: "Stone & Wood Pacific Ale", servingSize: "pint", price: 14, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
       ],
     });
 
@@ -976,7 +976,7 @@ describe("production hardening", () => {
     expect(service.getAccessState(freeUser, null)).toMatchObject({
       hasFullAccess: false,
       canViewSpecialDiscounts: false,
-      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood.",
+      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
       premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
       premiumToolkit: expect.objectContaining({
         enabled: false,
@@ -1416,7 +1416,7 @@ describe("production hardening", () => {
       items: [
         { beerName: "Guinness", servingSize: "pint", price: 13, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
         { beerName: "Carlton Draught", servingSize: "pint", price: 12, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
-        { beerName: "Stone & Wood", servingSize: "pint", price: 14, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
+        { beerName: "Stone & Wood Pacific Ale", servingSize: "pint", price: 14, isHappyHourPrice: false, happyHourDetails: null, isOnTap: "yes" },
       ],
     });
 
@@ -1703,7 +1703,7 @@ describe("production hardening", () => {
         uploadLocation,
         notes: null,
         items: [{
-          beerName: "Stone & Wood",
+          beerName: "Stone & Wood Pacific Ale",
           servingSize: "pint",
           price: 13,
           isHappyHourPrice: false,
@@ -2483,7 +2483,7 @@ describe("business demo contribution model", () => {
       id: "submission-1",
       userId: user.id,
       venueId: "venue-1",
-      beerName: "Stone & Wood",
+      beerName: "Stone & Wood Pacific Ale",
       price: 15.5,
     });
 
@@ -2492,7 +2492,7 @@ describe("business demo contribution model", () => {
     expect(repository.listLatestPriceRecords(10)).toEqual([
       expect.objectContaining({
         venueId: "venue-1",
-        beerName: "Stone & Wood",
+        beerName: "Stone & Wood Pacific Ale",
         servingSize: "pint",
         price: 15.5,
         confidence: "photo_verified",
@@ -2829,7 +2829,7 @@ describe("business demo contribution model", () => {
     });
 
     const preview = service.getAnalyticsPreview(admin);
-    expect(preview.topSearchedBeers).toEqual([{ key: "carlton_draught", count: 2 }]);
+    expect(preview.topSearchedBeers).toEqual([{ key: "carlton_draft", count: 2 }]);
     expect(preview.suppressedBelowCount).toBe(2);
   });
 
@@ -2936,11 +2936,11 @@ describe("business demo contribution model", () => {
       .get() as { metadata_json: string } | undefined;
     const metadata = JSON.parse(stored?.metadata_json ?? "{}") as Record<string, unknown>;
 
-    expect(dashboard.topSearchedBeers).toEqual([{ key: "stone_and_wood", count: 1 }]);
+    expect(dashboard.topSearchedBeers).toEqual([{ key: "stone_and_wood_pacific_ale", count: 1 }]);
     expect(dashboard.topClickedVenues).toEqual([{ key: "analytics-venue-1", count: 1 }]);
     expect(venueAnalytics.markerClicks).toBe(1);
     expect(venueAnalytics.barLookups).toBe(1);
-    expect(venueAnalytics.areaBeerSearches).toEqual([{ key: "stone_and_wood", count: 1 }]);
+    expect(venueAnalytics.areaBeerSearches).toEqual([{ key: "stone_and_wood_pacific_ale", count: 1 }]);
     expect(metadata.approximateSuburb).toBe("Richmond");
     expect(metadata.distanceBucket).toBe("under_500m");
     expect(metadata.latitude).toBeUndefined();

@@ -175,7 +175,7 @@ const beers = [
   { name: "Carlton Draught", brewery: "Carlton & United Breweries", style: "Lager", price: 11 },
   { name: "Stone & Wood Pacific Ale", brewery: "Stone & Wood", style: "Pacific Ale", price: 12 },
   { name: "Balter XPA", brewery: "Balter", style: "XPA", price: 13 },
-  { name: "Mountain Goat Steam Ale", brewery: "Mountain Goat", style: "Ale", price: 12 },
+  { name: "Mountain Goat Lager", brewery: "Mountain Goat", style: "Lager", price: 12 },
   { name: "Young Henrys Newtowner", brewery: "Young Henrys", style: "Ale", price: 12 },
 ];
 const searchTerms = ["guinness", "lager", "stout", "xpa", "happy hour", "rooftop", "live music", "cheap pint", "craft beer"];

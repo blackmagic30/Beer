@@ -76,7 +76,7 @@ describe("viewer map price logic", () => {
     const beers = [
       { label: "Guinness", priceNumeric: null, availabilityLabel: "On tap" },
       { label: "Carlton Draught", priceNumeric: 11, availabilityLabel: "On tap" },
-      { label: "Stone & Wood", priceNumeric: undefined, availabilityLabel: "Unknown" },
+      { label: "Stone & Wood Pacific Ale", priceNumeric: undefined, availabilityLabel: "Unknown" },
     ];
 
     expect(logic.getLowestKnownPrice(beers)).toBe(11);
@@ -307,7 +307,7 @@ describe("viewer map UI wiring", () => {
   it("limits public beer shortcut chips to the free preview beers", () => {
     expect(html).toContain('label: "Guinness", query: "Guinness"');
     expect(html).toContain('label: "Carlton Draught", query: "Carlton Draught"');
-    expect(html).toContain('label: "Stone & Wood", query: "Stone & Wood"');
+    expect(html).toContain('label: "Stone & Wood Pacific Ale", query: "Stone & Wood Pacific Ale"');
     expect(html).toContain("FREE_PREVIEW_BEER_CHIPS");
     expect(html).toContain("FREE_PREVIEW_BEER_KEYS");
     expect(html).not.toContain("Search for more beers");

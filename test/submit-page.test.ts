@@ -148,6 +148,10 @@ describe("submit page auth gate", () => {
     expect(html).toContain("QUICK_BEERS");
     expect(html).toContain('id="quickBeerButtons"');
     expect(html).toContain("function fillQuickBeer");
+    expect(html).toContain('"Stone & Wood Pacific Ale"');
+    expect(html).toContain('"Great Northern Original"');
+    expect(html).toContain('"Great Northern Super Crisp"');
+    expect(html).not.toContain('"Great Northern",');
     expect(html).toContain("labels.add(beer.name)");
     expect(html).not.toContain("(beer.aliases || []).forEach((alias) => labels.add(alias))");
     expect(html).toContain('const statusEl = document.getElementById("status")');

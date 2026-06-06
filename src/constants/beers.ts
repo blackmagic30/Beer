@@ -19,8 +19,8 @@ export const SUPPORTED_BEERS = {
   },
   stone_and_wood: {
     key: "stone_and_wood",
-    name: "Stone & Wood",
-    aliases: ["stone and wood", "stone & wood"],
+    name: "Stone & Wood Pacific Ale",
+    aliases: ["stone and wood", "stone & wood", "stone wood", "pacific ale"],
     kind: "beer",
   },
   happy_hour: {

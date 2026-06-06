@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 import type BetterSqlite3 from "better-sqlite3";
 
+import { findTrackedBeerByName } from "../constants/beers.js";
 import { redactSecrets } from "../lib/redact.js";
 import { DEFAULT_REPORT_TIMEZONE, getZonedMonthRangeIso } from "../lib/time.js";
 
@@ -1238,6 +1239,14 @@ function parseJsonObject(value: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function normalizeAnalyticsBeerId(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return findTrackedBeerByName(value)?.key ?? value;
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -4750,7 +4759,7 @@ export class BusinessRepository {
         input.anonymousSessionId,
         input.eventType,
         input.venueId,
-        input.beerId,
+        normalizeAnalyticsBeerId(input.beerId),
         input.suburb,
         JSON.stringify(input.metadata),
         input.createdAt,

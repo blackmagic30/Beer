@@ -3434,7 +3434,7 @@
     </section>
 
     <div id="businessBanner" class="businessBanner">
-      <span id="businessBannerCopy"><strong>Free preview:</strong> venue pins, happy hours, and pint prices for Guinness, Carlton Draught, and Stone & Wood stay visible. Prices may change.</span>
+      <span id="businessBannerCopy"><strong>Free preview:</strong> venue pins, happy hours, and pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale stay visible. Prices may change.</span>
       <span><a href="/pricing.html">Unlock</a> · <a href="/missions.html">Earn access</a> · <a href="/privacy.html">Privacy</a></span>
     </div>
 
@@ -3718,14 +3718,16 @@
     const FREE_PREVIEW_BEER_CHIPS = Object.freeze([
       { label: "Guinness", query: "Guinness" },
       { label: "Carlton Draught", query: "Carlton Draught" },
-      { label: "Stone & Wood", query: "Stone & Wood" },
+      { label: "Stone & Wood Pacific Ale", query: "Stone & Wood Pacific Ale" },
     ]);
     const FREE_PREVIEW_BEER_KEYS = new Set([
       "guinness",
       "carlton draft",
       "carlton draught",
+      "stone_and_wood",
       "stone wood",
       "stone wood pacific ale",
+      "stone and wood pacific ale",
     ].map(toSearchKey));
     const DEFAULT_BEER_SEARCH_PLACEHOLDER = TRACKED_BEERS.length >= 3
       ? `Search ${TRACKED_BEERS.slice(0, 3).map((beer) => beer.name).join(", ")}…`
@@ -3975,7 +3977,7 @@
       accessPillEl.textContent = accessLabel;
       accessPillEl.classList.toggle("accessPill--full", fullAccess);
       accessPillEl.classList.toggle("accessPill--admin", Boolean(businessAccess.isAdmin));
-      businessBannerCopyEl.innerHTML = `<strong>Free preview:</strong> venue pins, happy hours, and pint prices for Guinness, Carlton Draught, and Stone & Wood stay visible. Unlock full access or submit verified venue data to see every beer price. Prices may change.`;
+      businessBannerCopyEl.innerHTML = `<strong>Free preview:</strong> venue pins, happy hours, and pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale stay visible. Unlock full access or submit verified venue data to see every beer price. Prices may change.`;
       if (fullAccess && advancedFiltersNoticeEl) {
         advancedFiltersNoticeEl.hidden = true;
       }
@@ -6370,7 +6372,7 @@
           : `${Math.max(0, missingCount)} need data`;
       const accessCopy = businessAccess.hasFullAccess
         ? "Unlimited exact prices and full filters"
-        : "Free preview: happy hours + Guinness, Carlton Draught, and Stone & Wood pints";
+        : "Free preview: happy hours + Guinness, Carlton Draught, and Stone & Wood Pacific Ale pints";
 
       resultsSummaryEl.innerHTML = `
         <span class="statusPill__label">In this view</span>
