@@ -71,6 +71,8 @@ describe("account page shell", () => {
     expect(html).toContain("Manage your Pint Path account");
     expect(html).toContain('id="accountSettingsHub"');
     expect(html).toContain("Recent submissions");
+    expect(html).toContain("New venue pending admin approval");
+    expect(html).toContain("submissionPendingNotice");
     expect(html).not.toContain("How verification works");
     expect(html).toContain("Pint Path discount pass");
     expect(html).not.toContain('href="/stats.html"');

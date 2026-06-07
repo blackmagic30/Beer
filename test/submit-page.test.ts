@@ -11,6 +11,10 @@ function businessCss() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/business.css"), "utf8");
 }
 
+function faqHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/trust.html"), "utf8");
+}
+
 describe("submit page auth gate", () => {
   it("requires login before showing the submission form", () => {
     const html = submitHtml();
@@ -81,7 +85,7 @@ describe("submit page auth gate", () => {
     expect(html).toContain("const observedAt = new Date().toISOString();");
     expect(html).toContain('submissionTypeSelect.value === "photo_upload"');
     expect(html).toContain("const notes = missionNote || null;");
-    expect(html).toContain("A full venue update needs at least 3 beer rows.");
+    expect(html).toContain("A multiple beer submission needs at least 3 beer rows.");
     expect(html).not.toContain("A full venue update needs either a source photo");
     expect(html).not.toContain("Happy-hour updates need a source photo");
   });
@@ -112,12 +116,16 @@ describe("submit page auth gate", () => {
     expect(css).toContain(".missionContext");
   });
 
-  it("captures intentional upload-location proof for contributor points without auto-requesting on load", () => {
+  it("requires private upload-location proof at submit time without showing a location button", () => {
     const html = submitHtml();
 
-    expect(html).toContain("Points need location proof");
-    expect(html).toContain("Use my location for points");
+    expect(html).not.toContain("Points need location proof");
+    expect(html).not.toContain("Use my location for points");
+    expect(html).not.toContain('id="captureLocationButton"');
     expect(html).toContain("function captureUploadLocation()");
+    expect(html).toContain("async function ensureUploadLocationForSubmit()");
+    expect(html).toContain("const hasLocationProof = await ensureUploadLocationForSubmit()");
+    expect(html).toContain("Location permission is needed to submit data");
     expect(html).toContain("uploadLocation,");
     expect(html).toContain("getCurrentPosition");
     expect(html).toContain("UPLOAD_LOCATION_STORAGE_KEY");
@@ -127,7 +135,7 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain("window.addEventListener(\"DOMContentLoaded\", captureUploadLocation");
   });
 
-  it("adds field-test controls for signal status, draft recovery, and quick common-beer rows", () => {
+  it("adds field-test controls for signal status, draft recovery, and offline queued submissions", () => {
     const html = submitHtml();
     const css = businessCss();
 
@@ -135,6 +143,10 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="networkStatusPill"');
     expect(html).toContain('id="draftStatusPill"');
     expect(html).toContain('id="locationStatusPill"');
+    expect(html).toContain('id="submissionQueuePanel"');
+    expect(html).toContain('id="submissionQueueList"');
+    expect(html).toContain('id="retryQueuedSubmissionsButton"');
+    expect(html).toContain('id="clearQueuedSubmissionsButton"');
     expect(html).toContain('id="saveDraftButton"');
     expect(html).toContain('id="restoreDraftButton"');
     expect(html).toContain('id="clearDraftButton"');
@@ -143,22 +155,76 @@ describe("submit page auth gate", () => {
     expect(html).toContain("function restoreFieldDraft()");
     expect(html).toContain("localStorage.setItem(FIELD_DRAFT_STORAGE_KEY");
     expect(html).toContain('submissionForm.addEventListener("input", scheduleDraftAutosave)');
-    expect(html).toContain('window.addEventListener("online", updateNetworkStatus)');
+    expect(html).toContain('window.addEventListener("online", () => {');
     expect(html).toContain('window.addEventListener("offline", updateNetworkStatus)');
-    expect(html).toContain("QUICK_BEERS");
-    expect(html).toContain('id="quickBeerButtons"');
-    expect(html).toContain("function fillQuickBeer");
-    expect(html).toContain('"Stone & Wood Pacific Ale"');
-    expect(html).toContain('"Great Northern Original"');
-    expect(html).toContain('"Great Northern Super Crisp"');
-    expect(html).not.toContain('"Great Northern",');
+    expect(html).toContain("SUBMISSION_QUEUE_STORAGE_KEY");
+    expect(html).toContain("SUBMISSION_QUEUE_DB_NAME");
+    expect(html).toContain("SUBMISSION_QUEUE_STORE_NAME");
+    expect(html).toContain("indexedDB.open(SUBMISSION_QUEUE_DB_NAME");
+    expect(html).toContain("async function migrateLegacySubmissionQueueToDb");
+    expect(html).toContain("async function queueSubmissionPayload");
+    expect(html).toContain("payload.clientSubmissionId = clientSubmissionId");
+    expect(html).toContain("await queueSubmissionPayload(submissionPayload)");
+    expect(html).toContain("function renderSubmissionQueue");
+    expect(html).toContain("async function removeQueuedSubmission");
+    expect(html).toContain("async function clearSubmissionQueue");
+    expect(html).toContain("async function requestPersistentSubmissionStorage");
+    expect(html).toContain("navigator.storage?.persist");
+    expect(html).toContain('window.addEventListener("beforeunload"');
+    expect(html).toContain("async function flushQueuedSubmissions");
+    expect(html).toContain("Sending queued submission ${sent + 1} of ${sent + queue.length}");
+    expect(html).toContain("No reception. Submission saved locally and will send when this device is online.");
+    expect(html).not.toContain("QUICK_BEERS");
+    expect(html).not.toContain('id="quickBeerButtons"');
+    expect(html).not.toContain("function fillQuickBeer");
     expect(html).toContain("labels.add(beer.name)");
     expect(html).not.toContain("(beer.aliases || []).forEach((alias) => labels.add(alias))");
     expect(html).toContain('const statusEl = document.getElementById("status")');
     expect(html).toContain("MelbBeerBusiness.setStatus(statusEl");
-    expect(html).toContain("Photo attached for this submit. Drafts save fields only, not image files.");
+    expect(html).toContain("Photo attached. Pint Path compresses it and strips metadata before saving or sending.");
     expect(css).toContain(".fieldTestConsole");
+    expect(css).toContain(".queuedSubmissionsPanel");
+    expect(css).toContain(".queuedSubmissionItem.is-sending");
     expect(css).toContain(".fieldStatusPill--success");
-    expect(css).toContain(".quickBeerChip");
+    expect(css).not.toContain(".quickBeerChip");
+  });
+
+  it("compresses source photos through canvas so queued uploads do not preserve EXIF metadata", () => {
+    const html = submitHtml();
+
+    expect(html).toContain("SOURCE_PHOTO_MAX_EDGE");
+    expect(html).toContain("SOURCE_PHOTO_OUTPUT_TYPE");
+    expect(html).toContain("SOURCE_PHOTO_OUTPUT_QUALITY");
+    expect(html).toContain("function loadImageFromFile");
+    expect(html).toContain("function canvasToBlob");
+    expect(html).toContain("function blobToDataUrl");
+    expect(html).toContain("async function readPhotoDataUrl");
+    expect(html).toContain('document.createElement("canvas")');
+    expect(html).toContain("context.drawImage(image, 0, 0, width, height)");
+    expect(html).toContain("canvasToBlob(canvas, SOURCE_PHOTO_OUTPUT_TYPE, SOURCE_PHOTO_OUTPUT_QUALITY)");
+    expect(html).toContain("Attach a real photo or screenshot image");
+    expect(html).toContain("clientSubmissionId: createQueuedSubmissionId()");
+  });
+
+  it("keeps the submission type selector compact and ordered for field entry", () => {
+    const html = submitHtml();
+
+    expect(html).toContain('<option value="single_beer_price">Single beer price</option>');
+    expect(html).toContain('<option value="happy_hour_update">Happy-hour</option>');
+    expect(html).toContain('<option value="full_venue_update">Multiple beer submission</option>');
+    expect(html).toContain('<option value="photo_upload">Photo/upload source</option>');
+    expect(html.indexOf('value="single_beer_price"')).toBeLessThan(html.indexOf('value="happy_hour_update"'));
+    expect(html.indexOf('value="happy_hour_update"')).toBeLessThan(html.indexOf('value="full_venue_update"'));
+    expect(html.indexOf('value="full_venue_update"')).toBeLessThan(html.indexOf('value="photo_upload"'));
+    expect(html).not.toContain('id="typeGuidance"');
+  });
+
+  it("explains submission location proof and offline queueing in the FAQ", () => {
+    const html = faqHtml();
+
+    expect(html).toContain("Why does Submit need location services?");
+    expect(html).toContain("Location proof helps reviewers confirm that data was uploaded from the venue area.");
+    expect(html).toContain("What happens if I lose reception while submitting?");
+    expect(html).toContain("saves the finished submission in your browser’s local database and retries when the browser comes back online");
   });
 });

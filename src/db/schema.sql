@@ -185,6 +185,7 @@ CREATE INDEX IF NOT EXISTS idx_source_evidence_owner
 
 CREATE TABLE IF NOT EXISTS submissions (
   id TEXT PRIMARY KEY,
+  client_submission_id TEXT,
   user_id TEXT NOT NULL,
   venue_id TEXT NOT NULL,
   venue_name TEXT NOT NULL,

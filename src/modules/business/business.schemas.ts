@@ -192,6 +192,14 @@ export const pendingSubmissionVenueSchema = z.object({
 }).nullable().default(null);
 
 export const createSubmissionSchema = z.object({
+  clientSubmissionId: z
+    .string()
+    .trim()
+    .min(8)
+    .max(100)
+    .regex(/^[a-zA-Z0-9._:-]+$/, "clientSubmissionId contains unsupported characters")
+    .nullable()
+    .default(null),
   venueId: z.string().min(1),
   venueName: z.string().trim().min(1).max(180),
   suburb: nullableTrimmedStringSchema.default(null),

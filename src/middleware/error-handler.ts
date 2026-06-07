@@ -9,15 +9,22 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
   const fallbackError = new AppError("Internal server error", 500, undefined, false);
   const appError = isAppError(error) ? error : fallbackError;
   const isProduction = process.env.NODE_ENV === "production";
+  const isServerError = appError.statusCode >= 500;
 
-  logger.error("Request failed", {
+  const logMeta = {
     method: req.method,
     path: req.originalUrl,
     statusCode: appError.statusCode,
     error: error instanceof Error ? redactSecrets(error.message) : "Unknown error",
     details: redactSecrets(appError.details),
-    ...(isProduction ? {} : { stack: error instanceof Error ? redactSecrets(error.stack) : undefined }),
-  });
+    ...(!isProduction && isServerError ? { stack: error instanceof Error ? redactSecrets(error.stack) : undefined } : {}),
+  };
+
+  if (isServerError) {
+    logger.error("Request failed", logMeta);
+  } else {
+    logger.warn("Request rejected", logMeta);
+  }
 
   res.status(appError.statusCode).json(
     failure(

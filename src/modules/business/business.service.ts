@@ -2460,6 +2460,7 @@ export class BusinessService {
         rejectionReason: submission.rejectionReason,
         pointsAwarded: submission.pointsAwarded,
         fraudFlagged: submission.fraudFlagged,
+        isNewVenue: Boolean(submission.pendingVenue),
         hasEvidence: Boolean(submission.sourcePhotoUrl),
         verificationResult: submission.status === "approved"
           ? "verified"
@@ -2721,6 +2722,26 @@ export class BusinessService {
     };
   }
 
+  private assertPendingVenueIsNotKnownDuplicate(pendingVenue: PendingVenueDetails | null): void {
+    if (!pendingVenue) {
+      return;
+    }
+
+    const duplicate = this.repository.findLikelyVenueDuplicate({
+      name: pendingVenue.name,
+      suburb: pendingVenue.suburb,
+    });
+    if (!duplicate) {
+      return;
+    }
+
+    const suburbCopy = duplicate.suburb ? ` in ${duplicate.suburb}` : "";
+    throw new AppError(
+      `${duplicate.venueName}${suburbCopy} already appears to be on Pint Path. Search and choose the existing venue, then submit the beer or happy-hour data there.`,
+      409,
+    );
+  }
+
   private mergeVenueRows(primary: VenueRow[], secondary: VenueRow[], limit: number): VenueRow[] {
     const merged = new Map<string, VenueRow>();
     [...primary, ...secondary].forEach((venue) => {
@@ -2743,12 +2764,26 @@ export class BusinessService {
       throw new AppError("Please confirm you are 18+ before submitting venue data.", 403);
     }
 
-    const sourcePhotoUrl = this.resolveSourcePhoto(account, input);
+    if (input.clientSubmissionId) {
+      const existingSubmission = this.repository.getSubmissionByClientSubmissionId(account.id, input.clientSubmissionId);
+      if (existingSubmission) {
+        return {
+          submission: existingSubmission.submission,
+          statusCopy: `${existingSubmission.submission.venueName} is already saved for review from this device.`,
+          ocrStatus: existingSubmission.submission.sourcePhotoUrl ? "queued_for_review" : "not_requested",
+          idempotentReplay: true,
+        };
+      }
+    }
+
     const now = nowIso();
     const pendingVenue = this.normalizePendingVenue(input);
+    this.assertPendingVenueIsNotKnownDuplicate(pendingVenue);
+    const sourcePhotoUrl = this.resolveSourcePhoto(account, input);
     const locationEligibility = this.getSubmissionLocationEligibility(input);
     const submission = this.repository.createSubmission({
       id: crypto.randomUUID(),
+      clientSubmissionId: input.clientSubmissionId,
       userId: account.id,
       venueId: input.venueId,
       venueName: pendingVenue?.name ?? input.venueName,

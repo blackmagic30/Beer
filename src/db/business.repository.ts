@@ -111,8 +111,16 @@ export interface SourceEvidenceObject {
   createdAt: string;
 }
 
+export interface VenueDuplicateCandidate {
+  venueId: string;
+  venueName: string;
+  suburb: string | null;
+  source: string;
+}
+
 export interface BusinessSubmission {
   id: string;
+  clientSubmissionId: string | null;
   userId: string;
   venueId: string;
   venueName: string;
@@ -679,6 +687,7 @@ interface AgeVerificationRow {
 
 interface SubmissionRow {
   id: string;
+  client_submission_id: string | null;
   user_id: string;
   venue_id: string;
   venue_name: string;
@@ -1129,6 +1138,7 @@ function toDiscountRedemption(row: DiscountRedemptionRow): DiscountRedemption {
 function toSubmission(row: SubmissionRow): BusinessSubmission {
   return {
     id: row.id,
+    clientSubmissionId: row.client_submission_id,
     userId: row.user_id,
     venueId: row.venue_id,
     venueName: row.venue_name,
@@ -2145,6 +2155,7 @@ export class BusinessRepository {
 
   createSubmission(input: {
     id: string;
+    clientSubmissionId: string | null;
     userId: string;
     venueId: string;
     venueName: string;
@@ -2178,14 +2189,15 @@ export class BusinessRepository {
       this.database
         .prepare(
           `INSERT INTO submissions (
-          id, user_id, venue_id, venue_name, suburb, status, submission_type, observed_at,
+          id, client_submission_id, user_id, venue_id, venue_name, suburb, status, submission_type, observed_at,
           source_photo_url, notes, upload_latitude, upload_longitude, upload_accuracy_meters,
           upload_location_captured_at, distance_to_venue_meters, points_eligible_by_location,
           points_eligibility_reason, pending_venue_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
+          input.clientSubmissionId,
           input.userId,
           input.venueId,
           input.venueName,
@@ -2680,6 +2692,28 @@ export class BusinessRepository {
     const itemRows = this.database
       .prepare("SELECT * FROM submission_items WHERE submission_id = ? ORDER BY created_at ASC")
       .all(id) as SubmissionItemRow[];
+
+    return {
+      submission: toSubmission(submissionRow),
+      items: itemRows.map(toSubmissionItem),
+    };
+  }
+
+  getSubmissionByClientSubmissionId(
+    userId: string,
+    clientSubmissionId: string,
+  ): { submission: BusinessSubmission; items: BusinessSubmissionItem[] } | null {
+    const submissionRow = this.database
+      .prepare("SELECT * FROM submissions WHERE user_id = ? AND client_submission_id = ? LIMIT 1")
+      .get(userId, clientSubmissionId) as SubmissionRow | undefined;
+
+    if (!submissionRow) {
+      return null;
+    }
+
+    const itemRows = this.database
+      .prepare("SELECT * FROM submission_items WHERE submission_id = ? ORDER BY created_at ASC")
+      .all(submissionRow.id) as SubmissionItemRow[];
 
     return {
       submission: toSubmission(submissionRow),
@@ -3283,6 +3317,55 @@ export class BusinessRepository {
       .prepare("SELECT * FROM venue_location_cache WHERE venue_id = ?")
       .get(venueId) as VenueLocationCacheRow | undefined;
     return row ? toVenueLocationCache(row) : null;
+  }
+
+  findLikelyVenueDuplicate(input: { name: string; suburb?: string | null | undefined }): VenueDuplicateCandidate | null {
+    const name = input.name.trim().toLowerCase();
+    const suburb = input.suburb?.trim().toLowerCase() || null;
+    if (!name) {
+      return null;
+    }
+
+    const rows = this.database
+      .prepare(
+        `WITH candidates AS (
+           SELECT venue_id, name AS venue_name, suburb, 'venue_profile' AS source
+             FROM venue_profiles
+            WHERE active = 1
+           UNION ALL
+           SELECT venue_id, venue_name, suburb, 'location_cache' AS source
+             FROM venue_location_cache
+           UNION ALL
+           SELECT venue_id, venue_name, suburb, 'price_record' AS source
+             FROM venue_price_records
+         )
+         SELECT venue_id, venue_name, suburb, source
+           FROM candidates
+          WHERE lower(trim(venue_name)) = ?
+          ORDER BY
+            CASE
+              WHEN ? IS NOT NULL AND lower(trim(COALESCE(suburb, ''))) = ? THEN 0
+              ELSE 1
+            END,
+            source ASC
+          LIMIT 5`,
+      )
+      .all(name, suburb, suburb) as Array<{
+        venue_id: string;
+        venue_name: string;
+        suburb: string | null;
+        source: string;
+      }>;
+
+    const best = rows.find((row) => !suburb || (row.suburb || "").trim().toLowerCase() === suburb) ?? rows[0];
+    return best
+      ? {
+        venueId: best.venue_id,
+        venueName: best.venue_name,
+        suburb: best.suburb,
+        source: best.source,
+      }
+      : null;
   }
 
   listLocalVenues(input: { query?: string | undefined; limit: number }): LocalVenueLookup[] {

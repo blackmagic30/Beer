@@ -591,6 +591,9 @@
           ? `${escapeHtml(firstItem.beerName)} · ${escapeHtml(firstItem.servingSize)}${extraCount ? ` · +${extraCount} more` : ""}`
           : "Menu/photo evidence for reviewer queue";
         const evidenceCopy = submission.hasEvidence ? "Private evidence attached" : "No photo evidence";
+        const newVenueCopy = submission.isNewVenue && submission.status === "pending"
+          ? '<div class="notice submissionPendingNotice">New venue pending admin approval. It will appear on the public map after approval.</div>'
+          : "";
         return `
           <article class="submissionCard">
             <div>
@@ -600,6 +603,7 @@
               </div>
               <p>${itemCopy}</p>
               <div class="muted">${escapeHtml(submission.suburb || "Melbourne")} · ${evidenceCopy} · submitted ${MelbBeerBusiness.formatDate(submission.createdAt)}</div>
+              ${newVenueCopy}
               ${submission.rejectionReason ? `<div class="notice notice--warning">${escapeHtml(submission.rejectionReason)}</div>` : ""}
             </div>
             <div class="submissionCard__price">

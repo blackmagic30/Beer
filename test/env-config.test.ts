@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const productionRequiredEnv = {
@@ -75,5 +78,14 @@ describe("environment safety defaults", () => {
     await expect(loadEnv()).rejects.toThrow(
       "PUBLIC_BASE_URL must be https://pintpath.au in production",
     );
+  });
+
+  it("checks all paid-plan and POS launch variables in provider readiness", () => {
+    const readinessScript = fs.readFileSync(path.resolve(process.cwd(), "scripts/provider-readiness-check.ts"), "utf8");
+
+    expect(readinessScript).toContain('checkRequired("STRIPE_PRICE_MONTHLY"');
+    expect(readinessScript).toContain('checkRequired("STRIPE_PRICE_YEARLY"');
+    expect(readinessScript).toContain('checkRequired("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"');
+    expect(readinessScript).toContain('checkRequired("POS_WEBHOOK_SIGNING_SECRET"');
   });
 });

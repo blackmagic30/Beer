@@ -403,25 +403,6 @@
       transform: none;
     }
 
-    .businessBanner {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: center;
-      padding: 12px 14px;
-      border: 1px solid rgba(34, 211, 238, 0.28);
-      border-radius: 18px;
-      background: rgba(34, 211, 238, 0.1);
-      color: #cffafe;
-      font-size: 13px;
-      line-height: 1.45;
-    }
-
-    .businessBanner a {
-      color: #e0f2fe;
-      font-weight: 900;
-    }
-
     .toolbar__right {
       display: flex;
       gap: 10px;
@@ -2220,18 +2201,6 @@
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
     }
 
-    .businessBanner {
-      border-color: rgba(34, 211, 238, 0.28);
-      background:
-        linear-gradient(135deg, rgba(34, 211, 238, 0.14), rgba(139, 92, 246, 0.1)),
-        rgba(3, 7, 18, 0.38);
-      color: #cffafe;
-    }
-
-    .businessBanner strong {
-      color: #f8fafc;
-    }
-
     .highlightPanel,
     .statusPill,
     #mapOverlayTabs,
@@ -2805,11 +2774,6 @@
         font-size: 13px;
       }
 
-      .businessBanner {
-        padding: 8px 12px;
-        border-radius: 16px;
-      }
-
       #toolbar {
         gap: 10px;
       }
@@ -2992,16 +2956,6 @@
         min-height: 32px;
         overflow: hidden;
         text-overflow: ellipsis;
-      }
-
-      .businessBanner {
-        display: none;
-      }
-
-      .businessBanner span:last-child {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 5px;
       }
 
       .controlDeck {
@@ -3386,10 +3340,6 @@
         -webkit-line-clamp: 1;
       }
 
-      .businessBanner {
-        font-size: 10.5px;
-      }
-
       .statusPill__copy {
         display: none;
       }
@@ -3433,11 +3383,6 @@
       <span id="accessPill" class="accessPill">Free preview</span>
     </section>
 
-    <div id="businessBanner" class="businessBanner">
-      <span id="businessBannerCopy"><strong>Free preview:</strong> venue pins, happy hours, and pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale stay visible. Prices may change.</span>
-      <span><a href="/pricing.html">Unlock</a> · <a href="/missions.html">Earn access</a> · <a href="/privacy.html">Privacy</a></span>
-    </div>
-
     <div class="controlDeck">
       <div class="controlDeck__header">
         <span class="controlDeck__title">Find a venue fast</span>
@@ -3453,13 +3398,8 @@
         <input id="beerSearch" class="hiddenSearchState" type="search" aria-hidden="true" tabindex="-1" />
         <datalist id="beerSuggestions"></datalist>
 
-        <label class="togglePill" for="onTapOnly">
-          <input id="onTapOnly" type="checkbox" />
-          <span>On tap only</span>
-        </label>
-
         <div class="toolbar__right">
-          <button id="advancedFiltersToggle" class="utilityButton" type="button" aria-expanded="false" aria-controls="advancedFiltersPanel" hidden>Advanced filters</button>
+          <button id="advancedFiltersToggle" class="utilityButton" type="button" aria-expanded="false" aria-controls="advancedFiltersPanel">Advanced filters</button>
         </div>
       </div>
 
@@ -3541,6 +3481,16 @@
             <span class="advancedFilterSection__title">Now</span>
             <div class="filterGroup">
               <button class="filterChip" type="button" data-filter-chip="best_options">Best options right now</button>
+            </div>
+          </section>
+
+          <section class="advancedFilterSection" aria-label="Beer availability filters">
+            <span class="advancedFilterSection__title">Availability</span>
+            <div class="filterGroup">
+              <label class="togglePill" for="onTapOnly">
+                <input id="onTapOnly" type="checkbox" />
+                <span>On tap only</span>
+              </label>
             </div>
           </section>
 
@@ -3732,8 +3682,6 @@
     const DEFAULT_BEER_SEARCH_PLACEHOLDER = TRACKED_BEERS.length >= 3
       ? `Search ${TRACKED_BEERS.slice(0, 3).map((beer) => beer.name).join(", ")}…`
       : "Search a beer";
-    const businessBannerEl = document.getElementById("businessBanner");
-    const businessBannerCopyEl = document.getElementById("businessBannerCopy");
     const topbarBusinessLinksEl = document.getElementById("topbarBusinessLinks");
     const venueDashboardLinkEl = document.getElementById("venueDashboardLink");
     const accessPillEl = document.getElementById("accessPill");
@@ -3972,12 +3920,10 @@
 
     function syncBusinessAccessUi() {
       const fullAccess = Boolean(businessAccess.hasFullAccess);
-      businessBannerEl.style.display = fullAccess ? "none" : "flex";
       const accessLabel = getAccessLabel();
       accessPillEl.textContent = accessLabel;
       accessPillEl.classList.toggle("accessPill--full", fullAccess);
       accessPillEl.classList.toggle("accessPill--admin", Boolean(businessAccess.isAdmin));
-      businessBannerCopyEl.innerHTML = `<strong>Free preview:</strong> venue pins, happy hours, and pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale stay visible. Unlock full access or submit verified venue data to see every beer price. Prices may change.`;
       if (fullAccess && advancedFiltersNoticeEl) {
         advancedFiltersNoticeEl.hidden = true;
       }
@@ -3995,14 +3941,8 @@
     }
 
     function syncAdvancedFiltersAvailability() {
-      const canUseAdvancedFilters = Boolean(businessAccess.hasFullAccess);
-      advancedFiltersToggleEl.hidden = !canUseAdvancedFilters;
-      advancedFiltersToggleEl.disabled = !canUseAdvancedFilters;
-
-      if (!canUseAdvancedFilters) {
-        advancedFiltersPanelEl.hidden = true;
-        advancedFiltersToggleEl.setAttribute("aria-expanded", "false");
-      }
+      advancedFiltersToggleEl.hidden = false;
+      advancedFiltersToggleEl.disabled = false;
     }
 
     function getAccessLabel() {
@@ -4898,11 +4838,12 @@
 
     function showAdvancedFilterUnlockPrompt() {
       if (advancedFiltersNoticeEl) {
+        advancedFiltersNoticeEl.textContent = "Premium or approved contributor access unlocks deeper sorting and trust filters.";
         advancedFiltersNoticeEl.hidden = false;
       }
 
-      businessBannerEl.style.display = "flex";
-      businessBannerCopyEl.innerHTML = "<strong>Unlock advanced filters:</strong> Premium or approved contributor access unlocks deeper sorting and trust filters.";
+      advancedFiltersPanelEl.hidden = false;
+      advancedFiltersToggleEl.setAttribute("aria-expanded", "true");
     }
 
     function renderTrackedBeerChips() {
@@ -8329,7 +8270,7 @@
           void trackBusinessEvent("map_filter_used", getAnalyticsContext({
             filter: "on_tap_only",
             enabled: onTapOnlyEl.checked,
-            source: "top_filter_bar",
+            source: "advanced_filters",
           }));
           renderMarkers();
         });

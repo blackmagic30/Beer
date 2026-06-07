@@ -262,7 +262,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("search_shared");
   });
 
-  it("renders the simplified public header, primary controls, and contributor-only advanced filters", () => {
+  it("renders the simplified public header, primary controls, and shared advanced filters", () => {
     expect(html).toContain('class="mapNavCard" aria-label="Primary"');
     expect(html).toContain('class="mapBrand" href="/"');
     expect(html).toContain('class="mapHeroCard" aria-label="Map overview"');
@@ -273,8 +273,11 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("Find a venue fast");
     expect(html).toContain('placeholder="Search beer, venue or suburb"');
     expect(html).toContain('id="advancedFiltersToggle"');
-    expect(html).toContain('aria-controls="advancedFiltersPanel" hidden');
+    expect(html).toContain('aria-controls="advancedFiltersPanel">Advanced filters</button>');
     expect(html).toContain('id="advancedFiltersPanel" class="advancedFiltersPanel" hidden');
+    expect(html).toContain('aria-label="Beer availability filters"');
+    expect(html).not.toContain('id="businessBanner"');
+    expect(html).not.toContain('id="businessBannerCopy"');
     expect(html).toContain('id="activeFilterSummary"');
     expect(html).toContain('data-area-chip="Fitzroy"');
     expect(html).toContain('data-filter-chip="best_options"');
@@ -283,7 +286,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('<span class="filterGroup__label">Specials</span>');
     expect(html).toContain('data-premium-filter="true"');
     expect(html).toContain("syncAdvancedFiltersAvailability");
-    expect(html).toContain("advancedFiltersToggleEl.hidden = !canUseAdvancedFilters");
+    expect(html).toContain("advancedFiltersToggleEl.hidden = false");
     expect(html).toContain('class="belowMapInsights"');
     expect(html).toContain('id="accessSummary"');
     expect(html).toContain("Drink responsibly");

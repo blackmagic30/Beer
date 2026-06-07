@@ -748,8 +748,7 @@ h3 {
 
 .fieldTestConsole__status,
 .fieldTestConsole__actions,
-.fieldQuickBar,
-.quickBeerButtons {
+.fieldQuickBar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -761,8 +760,7 @@ h3 {
 }
 
 .fieldTestConsole__actions .button,
-.fieldQuickBar .button,
-.quickBeerChip {
+.fieldQuickBar .button {
   min-height: 42px;
   padding: 9px 12px;
   font-size: 13px;
@@ -801,46 +799,92 @@ h3 {
   color: #dffbff;
 }
 
-.fieldQuickBar {
-  justify-content: space-between;
+.queuedSubmissionsPanel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(245, 197, 66, 0.22);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(245, 197, 66, 0.12), transparent 34%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.052), rgba(255, 255, 255, 0.018)),
+    rgba(18, 26, 44, 0.7);
+  padding: 14px;
+  margin: -4px 0 16px;
 }
 
-.quickBeerButtons {
-  flex: 1 1 340px;
-  justify-content: flex-end;
-}
-
-.quickBeerChip {
-  appearance: none;
-  border: 1px solid rgba(34, 211, 238, 0.22);
-  border-radius: var(--radius-pill);
-  background: rgba(34, 211, 238, 0.1);
-  color: #dffbff;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 850;
-  transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
-}
-
-.quickBeerChip:hover {
-  transform: translateY(-1px);
-  border-color: rgba(34, 211, 238, 0.42);
-  background: rgba(34, 211, 238, 0.16);
-}
-
-.locationProofPanel {
+.queuedSubmissionsPanel__header,
+.queuedSubmissionItem {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
+  gap: 12px;
   align-items: center;
 }
 
-.locationProofPanel p {
-  margin: 6px 0 0;
+.queuedSubmissionsPanel h3,
+.queuedSubmissionsPanel p {
+  margin: 0;
 }
 
-.locationProofPanel .fieldHint {
-  grid-column: 1 / -1;
+.queuedSubmissionsPanel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.queuedSubmissionsList {
+  display: grid;
+  gap: 8px;
+}
+
+.queuedSubmissionItem {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(7, 10, 18, 0.36);
+  padding: 10px;
+}
+
+.queuedSubmissionItem.is-sending {
+  border-color: rgba(34, 211, 238, 0.38);
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.1);
+}
+
+.queuedSubmissionItem__copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.queuedSubmissionItem__copy strong,
+.queuedSubmissionItem__copy span,
+.queuedSubmissionItem__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queuedSubmissionItem__copy span {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.queuedSubmissionItem__copy small {
+  color: #fed7aa;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.submissionPendingNotice {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-color: rgba(34, 211, 238, 0.22);
+  background: rgba(34, 211, 238, 0.08);
+  color: var(--text-secondary);
+}
+
+.fieldQuickBar {
+  justify-content: space-between;
 }
 
 .missionContext {
@@ -3263,28 +3307,38 @@ h3 {
   .sectionHeader,
   .dataRow,
   .fieldTestConsole,
-  .locationProofPanel,
   .accountSecurityPanel {
     flex-direction: column;
   }
 
   .fieldTestConsole,
-  .locationProofPanel,
   .accountSecurityPanel {
     display: flex;
     align-items: stretch;
   }
 
+  .queuedSubmissionsPanel__header,
+  .queuedSubmissionItem {
+    grid-template-columns: 1fr;
+  }
+
+  .queuedSubmissionsPanel__actions {
+    justify-content: stretch;
+  }
+
+  .queuedSubmissionsPanel__actions .button,
+  .queuedSubmissionItem .button {
+    width: 100%;
+  }
+
   .fieldTestConsole__actions,
-  .fieldQuickBar,
-  .quickBeerButtons {
+  .fieldQuickBar {
     align-items: stretch;
     flex-direction: column;
   }
 
   .fieldTestConsole__actions .button,
-  .fieldQuickBar .button,
-  .quickBeerChip {
+  .fieldQuickBar .button {
     width: 100%;
   }
 

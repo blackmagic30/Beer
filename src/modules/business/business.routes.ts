@@ -126,6 +126,13 @@ const billingLimiter = createRateLimiter({
   keyGenerator: rateLimitIdentity,
 });
 
+const adminWriteLimiter = createRateLimiter({
+  keyPrefix: "business:admin-writes",
+  windowMs: 10 * 60_000,
+  max: 30,
+  keyGenerator: rateLimitIdentity,
+});
+
 const eventLimiter = createRateLimiter({
   keyPrefix: "business:events",
   windowMs: 10 * 60_000,
@@ -262,7 +269,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid submission payload");
     const result = businessService.createSubmission(account, body);
-    res.status(201).json(success(result));
+    res.status(result.idempotentReplay ? 200 : 201).json(success(result));
   });
 
   router.post("/feedback", writeLimiter, (req, res) => {
@@ -506,13 +513,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getAdminKpis(admin, query)));
   });
 
-  router.post("/admin/reports/monthly/generate", (req, res) => {
+  router.post("/admin/reports/monthly/generate", adminWriteLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(monthlyReportGenerateSchema, req.body, "Invalid monthly report generation payload");
     res.json(success(businessService.generateVenueMonthlyReports(admin, body)));
   });
 
-  router.post("/admin/reports/monthly/deliver", (req, res) => {
+  router.post("/admin/reports/monthly/deliver", adminWriteLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(monthlyReportDeliverySchema, req.body, "Invalid monthly report delivery payload");
     res.json(success(businessService.deliverVenueMonthlyReports(admin, body)));
@@ -544,39 +551,39 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getVenuePartnerAdmin(admin)));
   });
 
-  router.post("/admin/venue-pending-changes/:id/review", (req, res) => {
+  router.post("/admin/venue-pending-changes/:id/review", adminWriteLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(venuePendingChangeReviewSchema, req.body, "Invalid pending venue change review payload");
     const changeId = String(req.params.id ?? "");
     res.json(success(businessService.reviewVenuePendingChange(admin, changeId, body)));
   });
 
-  router.post("/admin/venue-managers", (req, res) => {
+  router.post("/admin/venue-managers", adminWriteLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(venueManagerAssignmentSchema, req.body, "Invalid venue manager assignment payload");
     res.status(201).json(success(businessService.assignVenueManager(admin, body)));
   });
 
-  router.post("/admin/venue-managers/revoke", (req, res) => {
+  router.post("/admin/venue-managers/revoke", adminWriteLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(venueManagerRevokeSchema, req.body, "Invalid venue manager revoke payload");
     res.json(success(businessService.revokeVenueManager(admin, body)));
   });
 
-  router.post("/admin/venue-interest/:id/status", (req, res) => {
+  router.post("/admin/venue-interest/:id/status", adminWriteLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(venueInterestStatusSchema, req.body, "Invalid venue interest status payload");
     const interestId = String(req.params.id ?? "");
     res.json(success(businessService.updateVenueInterestStatus(admin, interestId, body)));
   });
 
-  router.post("/admin/venue-outreach", (req, res) => {
+  router.post("/admin/venue-outreach", adminWriteLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(venueOutreachSchema, req.body, "Invalid venue outreach payload");
     res.json(success(businessService.upsertVenueOutreach(admin, body)));
   });
 
-  router.post("/admin/requests/:id/mission", (req, res) => {
+  router.post("/admin/requests/:id/mission", adminWriteLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const requestId = String(req.params.id ?? "");
     res.status(201).json(success(businessService.createMissionFromRequest(admin, requestId)));
@@ -616,13 +623,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(result));
   });
 
-  router.post("/admin/users/:id/status", (req, res) => {
+  router.post("/admin/users/:id/status", adminWriteLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(adminUserStatusSchema, req.body, "Invalid user status payload");
-    res.json(success(businessService.adminOverrideUser(admin, req.params.id, body)));
+    res.json(success(businessService.adminOverrideUser(admin, String(req.params.id ?? ""), body)));
   });
 
-  router.post("/demo/seed", (req, res) => {
+  router.post("/demo/seed", adminWriteLimiter, (req, res) => {
     requireAdmin(req, businessService);
     res.json(success(businessService.seedDemoMissions()));
   });

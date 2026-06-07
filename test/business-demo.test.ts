@@ -259,11 +259,24 @@ describe("submission payload validation", () => {
   it("allows photo/source uploads without manual beer rows", () => {
     const parsed = createSubmissionSchema.parse({
       ...baseSubmission,
+      clientSubmissionId: "queued-test-001",
       submissionType: "photo_upload",
       items: [],
     });
 
     expect(parsed.items).toEqual([]);
+    expect(parsed.clientSubmissionId).toBe("queued-test-001");
+  });
+
+  it("rejects unsafe client submission IDs", () => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      clientSubmissionId: "queued bad/id",
+      submissionType: "photo_upload",
+      items: [],
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it("still requires a beer row for single beer price submissions", () => {
@@ -622,6 +635,98 @@ describe("Supabase account and verification foundation", () => {
       result: "confirmed",
       notes: null,
     })).toThrow("Only pending submissions");
+  });
+
+  it("deduplicates retried queued submissions by client submission ID", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const uploader = createAccount(repository, "queued-uploader");
+    const payload = createSubmissionSchema.parse({
+      clientSubmissionId: "queued-submit-123",
+      venueId: "venue-queued",
+      venueName: "Queued Bar",
+      suburb: "Carlton",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: null,
+      sourcePhotoUrl: null,
+      notes: null,
+      uploadLocation: {
+        latitude: -37.801,
+        longitude: 144.967,
+        accuracyMeters: 25,
+        capturedAt: NOW,
+      },
+      items: [{
+        beerName: "Carlton Draught",
+        servingSize: "pint",
+        price: 13,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    });
+
+    const first = service.createSubmission(uploader, payload);
+    const replay = service.createSubmission(uploader, payload);
+
+    expect(replay.submission.id).toBe(first.submission.id);
+    expect(replay.submission.clientSubmissionId).toBe("queued-submit-123");
+    expect(replay).toMatchObject({ idempotentReplay: true });
+    expect(repository.listSubmissions({ userId: uploader.id, limit: 10 })).toHaveLength(1);
+  });
+
+  it("blocks new venue submissions that duplicate a known venue", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const uploader = createAccount(repository, "duplicate-venue-uploader");
+    repository.upsertVenueLocationCache({
+      venueId: "venue-known-half-moon",
+      venueName: "Half Moon",
+      suburb: "Brighton",
+      latitude: -37.913,
+      longitude: 144.991,
+      now: NOW,
+    });
+
+    expect(() => service.createSubmission(uploader, createSubmissionSchema.parse({
+      clientSubmissionId: "queued-new-venue-duplicate",
+      venueId: "pending-half-moon",
+      venueName: "Half Moon",
+      suburb: "Brighton",
+      newVenue: {
+        name: "Half Moon",
+        address: "120 Church Street",
+        suburb: "Brighton",
+        state: "VIC",
+        postcode: "3186",
+        phone: null,
+        website: null,
+        latitude: null,
+        longitude: null,
+      },
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: null,
+      sourcePhotoUrl: null,
+      notes: null,
+      uploadLocation: {
+        latitude: -37.913,
+        longitude: 144.991,
+        accuracyMeters: 20,
+        capturedAt: NOW,
+      },
+      items: [{
+        beerName: "Guinness",
+        servingSize: "pint",
+        price: 14,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    }))).toThrow("already appears to be on Pint Path");
+
+    expect(repository.listSubmissions({ userId: uploader.id, limit: 10 })).toHaveLength(0);
   });
 
   it("returns contributor dashboard stats and redacts raw evidence references", () => {

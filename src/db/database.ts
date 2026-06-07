@@ -56,6 +56,7 @@ const profilesColumns = [
 ] as const;
 
 const submissionColumns = [
+  { name: "client_submission_id", definition: "TEXT" },
   { name: "upload_latitude", definition: "REAL" },
   { name: "upload_longitude", definition: "REAL" },
   { name: "upload_accuracy_meters", definition: "REAL" },
@@ -135,6 +136,10 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_source_evidence_owner
       ON source_evidence_objects (owner_user_id, created_at DESC);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_submissions_user_client_submission
+      ON submissions (user_id, client_submission_id)
+      WHERE client_submission_id IS NOT NULL;
 
     CREATE INDEX IF NOT EXISTS idx_venue_location_cache_suburb
       ON venue_location_cache (suburb, updated_at DESC);
