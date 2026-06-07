@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import { isIP } from "node:net";
+import path from "node:path";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import * as QRCode from "qrcode";
@@ -418,6 +420,7 @@ function getSourcePhotoMimeType(dataUrl: string): string | null {
 
 const BLOCKED_SOURCE_URL_EXTENSIONS = /\.(?:svg|html?|xhtml|xml|js|mjs|css)(?:[?#].*)?$/i;
 const PRIVATE_EVIDENCE_PREFIX = "private:evidence:";
+const FILESYSTEM_EVIDENCE_PROVIDER = "filesystem_private";
 const BLOCKED_SOURCE_URL_HOSTNAMES = new Set([
   "localhost",
   "localhost.localdomain",
@@ -525,6 +528,35 @@ function privateEvidenceRef(id: string): string {
 
 function getPrivateEvidenceId(value: string | null): string | null {
   return value?.startsWith(PRIVATE_EVIDENCE_PREFIX) ? value.slice(PRIVATE_EVIDENCE_PREFIX.length) : null;
+}
+
+function sourceEvidenceExtensionForMimeType(mimeType: string): string {
+  switch (mimeType) {
+    case "image/jpeg":
+      return "jpg";
+    case "image/png":
+      return "png";
+    case "image/webp":
+      return "webp";
+    case "image/heic":
+      return "heic";
+    case "image/heif":
+      return "heif";
+    default:
+      return "bin";
+  }
+}
+
+function safeRelativeEvidencePath(objectPath: string): string | null {
+  const normalized = objectPath.replace(/\\/g, "/");
+  if (
+    !normalized ||
+    path.isAbsolute(normalized) ||
+    normalized.split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    return null;
+  }
+  return normalized;
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -1121,6 +1153,7 @@ export class BusinessService {
       | "REPORT_TIMEZONE"
       | "REPORT_EMAIL_MODE"
       | "ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION"
+      | "SOURCE_EVIDENCE_STORAGE_DIR"
       | "SOURCE_EVIDENCE_SIGNING_SECRET"
       | "SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS"
       | "POS_WEBHOOK_SIGNING_SECRET"
@@ -2857,10 +2890,6 @@ export class BusinessService {
     input: Pick<CreateSubmissionInput, "sourcePhotoDataUrl" | "sourcePhotoUrl">,
   ): string | null {
     if (input.sourcePhotoDataUrl) {
-      if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
-        throw new AppError("Inline image evidence storage is disabled in production.", 503);
-      }
-
       const mimeType = getSourcePhotoMimeType(input.sourcePhotoDataUrl);
       if (!mimeType || !SUBMISSION_LIMITS.allowedImageMimeTypes.includes(mimeType as never)) {
         throw new AppError("Upload must be a JPEG, PNG, WebP, HEIC, or HEIF image.", 400);
@@ -2878,6 +2907,11 @@ export class BusinessService {
       const detectedMimeType = detectImageMimeType(bytes);
       if (!detectedMimeType || detectedMimeType !== mimeType) {
         throw new AppError("Upload image content does not match the declared file type.", 400);
+      }
+
+      if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
+        const evidence = this.createFilesystemSourceEvidence(account, bytes, mimeType);
+        return privateEvidenceRef(evidence.id);
       }
 
       const evidence = this.repository.createSourceEvidenceObject({
@@ -2929,6 +2963,97 @@ export class BusinessService {
       createdAt: nowIso(),
     });
     return privateEvidenceRef(evidence.id);
+  }
+
+  private getSourceEvidenceStorageRoot(): string {
+    return this.config.SOURCE_EVIDENCE_STORAGE_DIR;
+  }
+
+  private getSourceEvidenceFilePath(objectPath: string): string {
+    const safePath = safeRelativeEvidencePath(objectPath);
+    if (!safePath) {
+      throw new AppError("Source evidence not found.", 404);
+    }
+
+    const root = path.resolve(this.getSourceEvidenceStorageRoot());
+    const filePath = path.resolve(root, safePath);
+    if (filePath !== root && !filePath.startsWith(`${root}${path.sep}`)) {
+      throw new AppError("Source evidence not found.", 404);
+    }
+    return filePath;
+  }
+
+  private createFilesystemSourceEvidence(
+    account: Pick<BusinessAccount, "id"> | null,
+    bytes: Buffer,
+    mimeType: string,
+  ): SourceEvidenceObject {
+    const id = crypto.randomUUID();
+    const monthKey = getZonedMonthKey(new Date(nowIso()), this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
+    const objectPath = `evidence/${monthKey}/${id}.${sourceEvidenceExtensionForMimeType(mimeType)}`;
+    const filePath = this.getSourceEvidenceFilePath(objectPath);
+
+    try {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(filePath, bytes, { flag: "wx", mode: 0o600 });
+    } catch (error) {
+      logger.error("Failed to store private source evidence file", {
+        provider: FILESYSTEM_EVIDENCE_PROVIDER,
+        objectPath,
+        error,
+      });
+      throw new AppError("Source evidence storage is unavailable. Keep the upload queued and retry shortly.", 503);
+    }
+
+    return this.repository.createSourceEvidenceObject({
+      id,
+      ownerUserId: account?.id ?? null,
+      storageProvider: FILESYSTEM_EVIDENCE_PROVIDER,
+      objectPath,
+      mimeType,
+      byteSize: bytes.length,
+      dataBase64: null,
+      externalUrl: null,
+      createdAt: nowIso(),
+    });
+  }
+
+  getSourceEvidenceDelivery(evidence: SourceEvidenceObject):
+    | { kind: "redirect"; url: string }
+    | { kind: "bytes"; mimeType: string; bytes: Buffer }
+    | null {
+    if (evidence.externalUrl) {
+      return { kind: "redirect", url: evidence.externalUrl };
+    }
+
+    if (evidence.dataBase64 && evidence.mimeType) {
+      return {
+        kind: "bytes",
+        mimeType: evidence.mimeType,
+        bytes: Buffer.from(evidence.dataBase64, "base64"),
+      };
+    }
+
+    if (evidence.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER && evidence.mimeType) {
+      const filePath = this.getSourceEvidenceFilePath(evidence.objectPath);
+      try {
+        return {
+          kind: "bytes",
+          mimeType: evidence.mimeType,
+          bytes: fs.readFileSync(filePath),
+        };
+      } catch (error) {
+        logger.warn("Private source evidence file missing or unreadable", {
+          evidenceId: evidence.id,
+          provider: evidence.storageProvider,
+          objectPath: evidence.objectPath,
+          error,
+        });
+        throw new AppError("Source evidence not found.", 404);
+      }
+    }
+
+    return null;
   }
 
   private getEvidenceSigningSecret(): string {

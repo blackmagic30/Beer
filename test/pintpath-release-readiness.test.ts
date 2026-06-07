@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 
@@ -27,6 +28,7 @@ type Harness = {
 };
 
 const openDatabases: BetterSqlite3.Database[] = [];
+const evidenceStorageDirs: string[] = [];
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -38,12 +40,17 @@ afterEach(() => {
   while (openDatabases.length > 0) {
     openDatabases.pop()?.close();
   }
+  while (evidenceStorageDirs.length > 0) {
+    fs.rmSync(evidenceStorageDirs.pop()!, { recursive: true, force: true });
+  }
 });
 
 function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessService>[1]> = {}): Harness {
   const database = new BetterSqlite3(":memory:");
   initializeDatabaseSchema(database);
   openDatabases.push(database);
+  const evidenceStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-release-evidence-"));
+  evidenceStorageDirs.push(evidenceStorageDir);
 
   const repository = new BusinessRepository(database);
   const service = new BusinessService(repository, {
@@ -62,6 +69,7 @@ function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessS
     REPORT_TIMEZONE: "Australia/Melbourne",
     REPORT_EMAIL_MODE: "disabled",
     ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
+    SOURCE_EVIDENCE_STORAGE_DIR: evidenceStorageDir,
     SOURCE_EVIDENCE_SIGNING_SECRET: "release-readiness-source-evidence-secret",
     SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: 300,
     POS_WEBHOOK_SIGNING_SECRET: "release-readiness-pos-webhook-secret",

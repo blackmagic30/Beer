@@ -116,7 +116,7 @@ describe("submit page auth gate", () => {
     expect(css).toContain(".missionContext");
   });
 
-  it("requires private upload-location proof at submit time without showing a location button", () => {
+  it("allows field-test submissions without private upload-location proof", () => {
     const html = submitHtml();
 
     expect(html).not.toContain("Points need location proof");
@@ -124,8 +124,9 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain('id="captureLocationButton"');
     expect(html).toContain("function captureUploadLocation()");
     expect(html).toContain("async function ensureUploadLocationForSubmit()");
-    expect(html).toContain("const hasLocationProof = await ensureUploadLocationForSubmit()");
-    expect(html).toContain("Location permission is needed to submit data");
+    expect(html).toContain("await ensureUploadLocationForSubmit()");
+    expect(html).toContain("Location proof is optional for now");
+    expect(html).toContain("Submitting without location proof is allowed for field testing");
     expect(html).toContain("uploadLocation,");
     expect(html).toContain("getCurrentPosition");
     expect(html).toContain("UPLOAD_LOCATION_STORAGE_KEY");
@@ -222,8 +223,9 @@ describe("submit page auth gate", () => {
   it("explains submission location proof and offline queueing in the FAQ", () => {
     const html = faqHtml();
 
-    expect(html).toContain("Why does Submit need location services?");
+    expect(html).toContain("Why does Submit ask for location services?");
     expect(html).toContain("Location proof helps reviewers confirm that data was uploaded from the venue area.");
+    expect(html).toContain("It is optional during field testing");
     expect(html).toContain("What happens if I lose reception while submitting?");
     expect(html).toContain("saves the finished submission in your browser’s local database and retries when the browser comes back online");
   });

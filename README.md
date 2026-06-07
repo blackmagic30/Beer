@@ -174,7 +174,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Free users cannot reveal every price by repeatedly opening venues; premium/contributor/admin access is required for the full price catalogue.
 - The map gets venue pins and preview metadata by default, then requests venue detail records when a user opens a venue panel. The server still decides which exact prices are visible.
 - Admin tools live on `/admin.html` and `/api/business/admin/*`; public map HTML should not include admin unlock forms or secret-entry UI.
-- Photo/source uploads are validated for image MIME type and 6MB max size, then stored behind private source-evidence references. Review/download access is issued through short-lived signed server URLs after an uploader/admin authorization check.
+- Photo/source uploads are validated for image MIME type and 6MB max size, then stored behind private source-evidence references. In production, decoded image bytes are written to the private `SOURCE_EVIDENCE_STORAGE_DIR` filesystem/volume path instead of inline SQLite blobs. Review/download access is issued through short-lived signed server URLs after an uploader/admin authorization check.
 - `DEMO_BILLING_MODE=true` is for local/demo only. Production blocks demo billing unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` is explicitly set.
 - State-changing business APIs check trusted origins and use hashed-key rate limits for auth, submissions, feedback, requests, price reveals, and billing routes. Production fails closed when Redis is missing unless `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` is explicitly set for a short emergency beta window. Full-scale production should set `REDIS_URL` and keep `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false`.
 - Security headers are enabled with a Google Maps-compatible CSP, `nosniff`, same-origin frame protection, strict referrer policy, and limited browser permissions.
@@ -184,7 +184,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Retired call automation routes stay unavailable in the active app. Keep any future provider automation in a separate security-reviewed feature branch.
 - Production admin routes require verified email and a fresh MFA/AAL2 claim when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
 - Upload and verification actions require a verified account in production when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
-- Inline demo image evidence is never exposed publicly; use the private `beermap-source-evidence` Supabase Storage bucket and signed review links before accepting sensitive source photos at scale.
+- Inline demo image evidence is never exposed publicly. Production field uploads use private filesystem/volume evidence storage plus signed review links; keep the `beermap-source-evidence` Supabase Storage bucket private if/when evidence storage is migrated there at larger scale.
 - `FIELD_TEST_MODE=true` adds an unobtrusive beta label, feedback entry point, and admin field-test summary without exposing debug details to public users.
 - Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
 - Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
@@ -346,7 +346,8 @@ What each one does:
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: emergency fallback for a single-instance controlled beta only. Defaults to `false`; leave it false for full-scale production so protected routes fail closed if Redis is missing or unavailable.
 - `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe. Keep this `false` for production beta.
 - `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.
-- `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: legacy emergency override for demo image evidence. Leave `false`; evidence should use private references and signed URLs.
+- `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION`: legacy emergency override for inline demo image evidence. Leave `false`; production uploads should use private filesystem/volume evidence storage.
+- `SOURCE_EVIDENCE_STORAGE_DIR`: private server-side directory for source evidence files. On Railway, keep this under the mounted `/app/data` volume, for example `./data/source-evidence`.
 - `SOURCE_EVIDENCE_SIGNING_SECRET`: private 32+ character server-side secret used to sign short-lived source-evidence review/download URLs. Generate it with `openssl rand -base64 32`; never commit it or expose it through `/config.js`.
 - `SOURCE_EVIDENCE_SIGNING_SECRET`: 32+ character random secret used to sign short-lived source evidence URLs. Public pages can boot without it, but source-evidence review/download links fail closed in production until configured.
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`: signed evidence URL lifetime. Defaults to `300`.
@@ -706,7 +707,9 @@ npm run check
 ### Uploads or source evidence fail
 
 - Confirm users are logged in and email-verified where production requires it.
-- Confirm the private Supabase Storage bucket `beermap-source-evidence` exists and is not public.
+- Confirm `SOURCE_EVIDENCE_STORAGE_DIR` resolves to a writable private directory on the Railway volume.
+- Confirm `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`; production should not store field photos as inline SQLite demo evidence.
+- If using Supabase Storage later, confirm the private bucket `beermap-source-evidence` exists and is not public.
 - Confirm file size and MIME type fit the bucket policy.
 - Confirm `SOURCE_EVIDENCE_SIGNING_SECRET` is set for server-side evidence review links.
 

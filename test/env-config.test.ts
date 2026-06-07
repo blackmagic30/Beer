@@ -87,5 +87,6 @@ describe("environment safety defaults", () => {
     expect(readinessScript).toContain('checkRequired("STRIPE_PRICE_YEARLY"');
     expect(readinessScript).toContain('checkRequired("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"');
     expect(readinessScript).toContain('checkRequired("POS_WEBHOOK_SIGNING_SECRET"');
+    expect(readinessScript).toContain("ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION");
   });
 });

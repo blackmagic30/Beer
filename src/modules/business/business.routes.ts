@@ -315,18 +315,19 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       signature: typeof req.query.signature === "string" ? req.query.signature : undefined,
     });
 
-    res.setHeader("Cache-Control", "private, no-store");
-    if (evidence.externalUrl) {
-      res.redirect(evidence.externalUrl);
-      return;
-    }
-
-    if (!evidence.dataBase64 || !evidence.mimeType) {
+    const delivery = businessService.getSourceEvidenceDelivery(evidence);
+    if (!delivery) {
       res.sendStatus(404);
       return;
     }
 
-    res.type(evidence.mimeType).send(Buffer.from(evidence.dataBase64, "base64"));
+    res.setHeader("Cache-Control", "private, no-store");
+    if (delivery.kind === "redirect") {
+      res.redirect(delivery.url);
+      return;
+    }
+
+    res.type(delivery.mimeType).send(delivery.bytes);
   });
 
   router.post("/submissions/:id/review", (req, res) => {

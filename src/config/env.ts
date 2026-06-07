@@ -130,6 +130,7 @@ const envSchema = z.object({
   DEMO_BILLING_MODE: demoBillingModeFromEnv,
   ALLOW_DEMO_BILLING_IN_PRODUCTION: booleanFromEnv.default(false),
   ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: booleanFromEnv.default(false),
+  SOURCE_EVIDENCE_STORAGE_DIR: z.preprocess(sanitizeEnvString, z.string()).default("./data/source-evidence"),
   SOURCE_EVIDENCE_SIGNING_SECRET: optionalStringFromEnv,
   SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(300),
   POS_WEBHOOK_SIGNING_SECRET: optionalStringFromEnv,
@@ -186,6 +187,9 @@ export const env = {
   DATABASE_PATH: path.isAbsolute(parsedEnv.data.DATABASE_PATH)
     ? parsedEnv.data.DATABASE_PATH
     : path.resolve(process.cwd(), parsedEnv.data.DATABASE_PATH),
+  SOURCE_EVIDENCE_STORAGE_DIR: path.isAbsolute(parsedEnv.data.SOURCE_EVIDENCE_STORAGE_DIR)
+    ? parsedEnv.data.SOURCE_EVIDENCE_STORAGE_DIR
+    : path.resolve(process.cwd(), parsedEnv.data.SOURCE_EVIDENCE_STORAGE_DIR),
 };
 
 export type Env = typeof env;

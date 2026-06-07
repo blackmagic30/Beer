@@ -47,7 +47,7 @@
         <div class="fieldTestConsole__status">
           <span id="networkStatusPill" class="fieldStatusPill">Signal checking</span>
           <span id="draftStatusPill" class="fieldStatusPill">Draft empty</span>
-          <span id="locationStatusPill" class="fieldStatusPill">Location needed</span>
+          <span id="locationStatusPill" class="fieldStatusPill">Location optional</span>
         </div>
         <div class="fieldTestConsole__actions">
           <button id="saveDraftButton" class="button" type="button">Save draft</button>
@@ -533,7 +533,7 @@
 
     function updateLocationStatus() {
       if (!uploadLocation) {
-        setFieldStatusPill(locationStatusPill, "Location needed", "neutral");
+        setFieldStatusPill(locationStatusPill, "Location optional", "info");
         return;
       }
 
@@ -1317,7 +1317,7 @@
         if (!navigator.geolocation) {
           uploadLocation = null;
           persistUploadLocation(null);
-          MelbBeerBusiness.setStatus(statusEl, "Location services are needed before Pint Path can accept a submission.", true);
+          MelbBeerBusiness.setStatus(statusEl, "Location is unavailable. You can still submit for review, but it will not earn location-based points.");
           resolve(false);
           return;
         }
@@ -1338,7 +1338,7 @@
           () => {
             uploadLocation = null;
             persistUploadLocation(null);
-            MelbBeerBusiness.setStatus(statusEl, "Location permission is needed to submit data. This keeps venue updates legitimate and private for review.", true);
+            MelbBeerBusiness.setStatus(statusEl, "Submitting without location proof is allowed for field testing. This upload will not earn location-based points.");
             resolve(false);
           },
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
@@ -1353,8 +1353,9 @@
         return true;
       }
 
-      MelbBeerBusiness.setStatus(statusEl, "Checking location proof before saving this submission...");
-      return captureUploadLocation();
+      updateLocationStatus();
+      MelbBeerBusiness.setStatus(statusEl, "Location proof is optional for now. Submitting without it means no location-based points.");
+      return true;
     }
 
     function isNetworkSubmissionError(error) {
@@ -1702,10 +1703,7 @@
             ? `Mission ${missionId}: ${missionReason || "Pint Path mission"}`
             : "";
           const notes = missionNote || null;
-          const hasLocationProof = await ensureUploadLocationForSubmit();
-          if (!hasLocationProof) {
-            return;
-          }
+          await ensureUploadLocationForSubmit();
 
           submissionPayload = {
             clientSubmissionId: createQueuedSubmissionId(),

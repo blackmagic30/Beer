@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import http from "node:http";
@@ -27,6 +28,7 @@ const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
 const WEBP_DATA_URL = `data:image/webp;base64,${Buffer.from("RIFF0000WEBPVP8 ", "ascii").toString("base64")}`;
 
 let openDatabases: BetterSqlite3.Database[] = [];
+let evidenceStorageDirs: string[] = [];
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -49,6 +51,9 @@ function createBusinessService(
   repository: BusinessRepository,
   overrides: Partial<ConstructorParameters<typeof BusinessService>[1]> = {},
 ) {
+  const evidenceStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-evidence-"));
+  evidenceStorageDirs.push(evidenceStorageDir);
+
   return new BusinessService(repository, {
     PUBLIC_BASE_URL: "http://127.0.0.1:3000",
     FREE_PRICE_REVEALS_PER_DAY: 5,
@@ -65,6 +70,7 @@ function createBusinessService(
     REPORT_TIMEZONE: "Australia/Melbourne",
     REPORT_EMAIL_MODE: "disabled",
     ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
+    SOURCE_EVIDENCE_STORAGE_DIR: evidenceStorageDir,
     SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
     SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: 300,
     POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
@@ -243,6 +249,8 @@ afterEach(() => {
   vi.useRealTimers();
   openDatabases.forEach((database) => database.close());
   openDatabases = [];
+  evidenceStorageDirs.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
+  evidenceStorageDirs = [];
 });
 
 describe("submission payload validation", () => {
@@ -1395,19 +1403,28 @@ describe("production hardening", () => {
       emailVerifiedAt: NOW,
       now: NOW,
     });
-    const productionBlockedService = createBusinessService(repository, {
+    const productionFileService = createBusinessService(repository, {
       NODE_ENV: "production",
       ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
       SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
     });
-    expect(() => productionBlockedService.createSubmission(
+    const productionStored = productionFileService.createSubmission(
       verifiedProductionUser,
       createSubmissionSchema.parse({
         ...baseSubmission,
-        venueId: "venue-photo-prod-blocked",
+        venueId: "venue-photo-prod-file",
         sourcePhotoDataUrl: PNG_DATA_URL,
       }),
-    )).toThrow("Inline image evidence storage is disabled in production");
+    ).submission;
+    expect(productionStored.sourcePhotoUrl).toMatch(/^private:evidence:/);
+    const productionEvidenceId = productionStored.sourcePhotoUrl!.replace("private:evidence:", "");
+    const productionEvidence = repository.getSourceEvidenceObject(productionEvidenceId)!;
+    expect(productionEvidence.storageProvider).toBe("filesystem_private");
+    expect(productionEvidence.dataBase64).toBeNull();
+    expect(productionFileService.getSourceEvidenceDelivery(productionEvidence)).toMatchObject({
+      kind: "bytes",
+      mimeType: "image/png",
+    });
 
     const productionOverrideService = createBusinessService(repository, {
       NODE_ENV: "production",

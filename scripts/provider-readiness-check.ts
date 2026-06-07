@@ -99,6 +99,14 @@ const checks: ProviderCheck[] = [
       ? "Set DEMO_BILLING_MODE=false for real paid checkout, or explicitly time-box ALLOW_DEMO_BILLING_IN_PRODUCTION=true for a private beta."
       : null,
   },
+  {
+    id: "ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION",
+    label: "Inline demo image storage disabled for production",
+    status: isProduction() && process.env.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION === "true" ? "fail" : "pass",
+    action: isProduction() && process.env.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION === "true"
+      ? "Set ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false and use SOURCE_EVIDENCE_STORAGE_DIR for private field-upload evidence."
+      : null,
+  },
 ];
 
 const failed = checks.filter((check) => check.status === "fail");
