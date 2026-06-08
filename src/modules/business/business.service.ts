@@ -58,6 +58,7 @@ import type {
   DiscountRedemptionInput,
   EventTrackInput,
   FeedbackInput,
+  AdminAccountSearchInput,
   LegalAcceptanceInput,
   LeaderboardQuery,
   MonthlyReportDeliveryInput,
@@ -5544,15 +5545,38 @@ export class BusinessService {
       throw new AppError("Admin access required.", 403);
     }
 
+    const assignments = this.repository.listVenueManagerAssignments({ limit: 100 }).map((assignment) => {
+      const manager = this.repository.getAccountById(assignment.userId);
+      return {
+        ...assignment,
+        managerEmail: manager?.email ?? null,
+        managerDisplayName: manager?.displayName ?? null,
+        managerPublicAccountId: manager?.publicAccountId ?? null,
+      };
+    });
+
     return {
       interests: this.repository.listVenueInterestRequests(100),
       claimRequests: this.repository.listBarClaimRequests({ limit: 100 }),
-      assignments: this.repository.listVenueManagerAssignments({ limit: 100 }),
+      assignments,
       pendingChanges: this.repository.listBarPendingChanges({ status: "pending", limit: 100 }),
       outreach: this.repository.listVenuePartnerOutreach(100),
       leads: this.repository.getPotentialPartnerLeads({
         staleBefore: daysAgoIso(90),
         limit: 25,
+      }),
+    };
+  }
+
+  searchAccountsForAdmin(admin: BusinessAccount, query: AdminAccountSearchInput) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    return {
+      accounts: this.repository.searchAccountsForAdmin({
+        query: query.q,
+        limit: query.limit,
       }),
     };
   }

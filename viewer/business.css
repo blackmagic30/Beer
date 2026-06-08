@@ -1213,6 +1213,22 @@ h3 {
   padding: 15px;
 }
 
+.listItem--button {
+  appearance: none;
+  width: 100%;
+  display: block;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.listItem--button:hover,
+.listItem--button:focus-visible {
+  border-color: rgba(56, 189, 248, 0.38);
+  transform: translateY(-1px);
+}
+
 .emptyState {
   color: var(--muted);
   line-height: 1.6;

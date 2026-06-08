@@ -12,6 +12,7 @@ describe("business route hardening", () => {
     const source = routesSource();
 
     expect(source).toContain('const adminWriteLimiter = createRateLimiter({');
+    expect(source).toContain('router.get("/admin/accounts"');
     [
       'router.post("/admin/reports/monthly/generate", adminWriteLimiter',
       'router.post("/admin/reports/monthly/deliver", adminWriteLimiter',

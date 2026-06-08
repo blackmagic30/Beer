@@ -84,6 +84,18 @@ export interface BusinessAccount {
   updatedAt: string;
 }
 
+export interface AdminAccountSearchResult {
+  id: string;
+  publicAccountId: string;
+  email: string;
+  displayName: string | null;
+  role: AccountRole;
+  status: AccountStatus;
+  emailVerifiedAt: string | null;
+  ageConfirmedAt: string | null;
+  createdAt: string;
+}
+
 export interface PublicProfile {
   id: string;
   publicAccountId: string | null;
@@ -1808,6 +1820,56 @@ export class BusinessRepository {
       .prepare("SELECT * FROM accounts WHERE supabase_user_id = ? OR id = ? LIMIT 1")
       .get(supabaseUserId, supabaseUserId) as AccountRow | undefined;
     return row ? toAccount(row) : null;
+  }
+
+  searchAccountsForAdmin(input: { query: string; limit: number }): AdminAccountSearchResult[] {
+    const query = input.query.trim();
+    if (query.length < 2) {
+      return [];
+    }
+
+    const like = `%${query.toLowerCase()}%`;
+    const rows = this.database
+      .prepare(
+        `SELECT id, public_account_id, email, display_name, role, status, email_verified_at, age_confirmed_at, created_at
+           FROM accounts
+          WHERE lower(email) LIKE ?
+             OR lower(COALESCE(display_name, '')) LIKE ?
+             OR lower(COALESCE(public_account_id, '')) LIKE ?
+             OR lower(id) LIKE ?
+          ORDER BY
+            CASE
+              WHEN lower(email) = lower(?) THEN 0
+              WHEN lower(email) LIKE lower(?) THEN 1
+              WHEN lower(COALESCE(display_name, '')) LIKE lower(?) THEN 2
+              ELSE 3
+            END,
+            created_at DESC
+          LIMIT ?`,
+      )
+      .all(like, like, like, like, query, `${query}%`, `${query}%`, input.limit) as Array<{
+        id: string;
+        public_account_id: string;
+        email: string;
+        display_name: string | null;
+        role: AccountRole;
+        status: AccountStatus;
+        email_verified_at: string | null;
+        age_confirmed_at: string | null;
+        created_at: string;
+      }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      publicAccountId: row.public_account_id,
+      email: row.email,
+      displayName: row.display_name,
+      role: row.role,
+      status: row.status,
+      emailVerifiedAt: row.email_verified_at,
+      ageConfirmedAt: row.age_confirmed_at,
+      createdAt: row.created_at,
+    }));
   }
 
   linkSupabaseAccount(input: {

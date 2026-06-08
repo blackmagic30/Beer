@@ -220,18 +220,21 @@
     <section class="grid grid--two" style="margin-bottom:16px;">
       <form id="managerAssignForm" class="panel form">
         <h2>Assign venue manager</h2>
-        <label class="field">User ID
-          <input name="userId" required placeholder="account id for manager" />
+        <label class="field">Staff account
+          <input id="managerUserSearch" type="search" placeholder="Search email, name, or public account ID" autocomplete="off" />
         </label>
-        <label class="field">Venue ID
-          <input name="venueId" required placeholder="venue id" />
+        <input id="managerUserId" name="userId" type="hidden" />
+        <div id="managerUserResults" class="list compactList">
+          <div class="listItem muted">Search for the staff member's Pint Path account.</div>
+        </div>
+        <label class="field">Venue
+          <input id="managerVenueSearch" type="search" placeholder="Search venue name or suburb" autocomplete="off" />
         </label>
-        <label class="field">Venue name
-          <input name="venueName" required placeholder="Rooftop Bar" />
-        </label>
-        <label class="field">Suburb
-          <input name="suburb" placeholder="Melbourne" />
-        </label>
+        <select id="managerVenueSelect"></select>
+        <input id="managerVenueId" name="venueId" type="hidden" />
+        <input id="managerVenueName" name="venueName" type="hidden" />
+        <input id="managerVenueSuburb" name="suburb" type="hidden" />
+        <div id="managerAssignPreview" class="notice">Pick a staff account and a venue. Pint Path fills the IDs automatically.</div>
         <button class="button button--primary" type="submit">Assign manager</button>
       </form>
       <form id="outreachForm" class="panel form">
@@ -339,6 +342,11 @@
     let selectedAdminVenueId = null;
     let adminCaptureSource = "manual_entry";
     let adminGoogleVenueSearchTimer = null;
+    let managerUserSearchTimer = null;
+    let managerAccountCandidates = [];
+    let selectedManagerAccount = null;
+    let selectedManagerVenueId = null;
+    let managerAccountSearchMessage = "Search for the staff member's Pint Path account.";
 
     function renderKpis(data) {
       const metrics = data.metrics;
@@ -828,6 +836,139 @@
       renderSelectedAdminVenue();
     }
 
+    function describeAdminAccount(account) {
+      if (!account) return "No staff account selected";
+      return [
+        account.displayName || account.email,
+        account.email && account.displayName ? account.email : null,
+        account.role,
+        account.emailVerifiedAt ? "email verified" : "email not verified",
+        account.ageConfirmedAt ? "18+ confirmed" : "18+ not confirmed",
+      ].filter(Boolean).join(" · ");
+    }
+
+    function describeManagerVenue(venue) {
+      if (!venue) return "No venue selected";
+      return `${venue.name}${venue.suburb ? ` · ${venue.suburb}` : ""}${venue.address ? ` · ${venue.address}` : ""}`;
+    }
+
+    function syncManagerAssignPreview() {
+      const venue = adminVenues.find((item) => item.id === selectedManagerVenueId) || null;
+      managerUserId.value = selectedManagerAccount?.id || "";
+      managerVenueId.value = venue?.id || "";
+      managerVenueName.value = venue?.name || "";
+      managerVenueSuburb.value = venue?.suburb || "";
+      const ready = Boolean(selectedManagerAccount && venue);
+      setLocalNotice(
+        managerAssignPreview,
+        ready
+          ? `Ready: ${describeAdminAccount(selectedManagerAccount)} will manage ${describeManagerVenue(venue)}.`
+          : "Pick a staff account and a venue. Pint Path fills the IDs automatically.",
+        !ready,
+      );
+    }
+
+    function renderManagerUserResults() {
+      if (selectedManagerAccount) {
+        managerUserResults.innerHTML = `
+          <div class="listItem">
+            <strong>${escapeHtml(selectedManagerAccount.displayName || selectedManagerAccount.email)}</strong>
+            <div class="muted">${escapeHtml(describeAdminAccount(selectedManagerAccount))}</div>
+            <button class="button button--small" type="button" data-clear-manager-account>Change staff account</button>
+          </div>
+        `;
+        managerUserResults.querySelector("[data-clear-manager-account]")?.addEventListener("click", () => {
+          selectedManagerAccount = null;
+          managerUserSearch.value = "";
+          managerAccountCandidates = [];
+          managerAccountSearchMessage = "Search for the staff member's Pint Path account.";
+          renderManagerUserResults();
+          syncManagerAssignPreview();
+        });
+        syncManagerAssignPreview();
+        return;
+      }
+
+      managerUserResults.innerHTML = managerAccountCandidates.length
+        ? managerAccountCandidates.map((account) => `
+          <button class="listItem listItem--button" type="button" data-manager-account="${escapeHtml(account.id)}">
+            <strong>${escapeHtml(account.displayName || account.email)}</strong>
+            <div class="muted">${escapeHtml(describeAdminAccount(account))}</div>
+          </button>
+        `).join("")
+        : `<div class="listItem muted">${escapeHtml(managerAccountSearchMessage)}</div>`;
+      managerUserResults.querySelectorAll("[data-manager-account]").forEach((button) => {
+        button.addEventListener("click", () => {
+          selectedManagerAccount = managerAccountCandidates.find((account) => account.id === button.dataset.managerAccount) || null;
+          if (selectedManagerAccount) {
+            managerUserSearch.value = selectedManagerAccount.email;
+          }
+          renderManagerUserResults();
+          syncManagerAssignPreview();
+        });
+      });
+      syncManagerAssignPreview();
+    }
+
+    async function searchManagerAccounts() {
+      const query = managerUserSearch.value.trim();
+      selectedManagerAccount = null;
+      if (query.length < 2) {
+        managerAccountCandidates = [];
+        managerAccountSearchMessage = "Type at least 2 characters to search accounts.";
+        renderManagerUserResults();
+        return;
+      }
+
+      managerUserResults.innerHTML = '<div class="listItem muted">Searching accounts...</div>';
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/admin/accounts?q=${encodeURIComponent(query)}&limit=8`);
+        managerAccountCandidates = result.accounts || [];
+        managerAccountSearchMessage = managerAccountCandidates.length
+          ? ""
+          : "No matching account found. Ask the staff member to sign up first.";
+      } catch (error) {
+        managerAccountCandidates = [];
+        managerAccountSearchMessage = error.message || "Account search failed.";
+      }
+      renderManagerUserResults();
+    }
+
+    function scheduleManagerAccountSearch() {
+      clearTimeout(managerUserSearchTimer);
+      managerUserSearchTimer = setTimeout(searchManagerAccounts, 250);
+    }
+
+    function renderManagerVenueOptions() {
+      if (!managerVenueSelect) return;
+      const searchValue = managerVenueSearch.value.trim().toLowerCase();
+      const filteredVenues = adminVenues
+        .filter((venue) => {
+          if (!searchValue) return true;
+          return [venue.name, venue.suburb, venue.address]
+            .filter(Boolean)
+            .some((value) => String(value).toLowerCase().includes(searchValue));
+        })
+        .slice(0, 100);
+
+      if (!filteredVenues.some((venue) => venue.id === selectedManagerVenueId)) {
+        selectedManagerVenueId = filteredVenues[0]?.id || null;
+      }
+
+      managerVenueSelect.innerHTML = filteredVenues.length
+        ? filteredVenues.map((venue) => `
+          <option value="${escapeHtml(venue.id)}" ${venue.id === selectedManagerVenueId ? "selected" : ""}>
+            ${escapeHtml(`${venue.name}${venue.suburb ? ` · ${venue.suburb}` : ""}`)}
+          </option>
+        `).join("")
+        : '<option value="">No venues found</option>';
+
+      if (selectedManagerVenueId) {
+        managerVenueSelect.value = selectedManagerVenueId;
+      }
+      syncManagerAssignPreview();
+    }
+
     function readFileAsDataUrl(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -869,6 +1010,7 @@
         lookupError = error;
       }
       renderAdminVenueOptions();
+      renderManagerVenueOptions();
       if (lookupError) {
         setLocalNotice(adminSelectedVenue, lookupError.message || "Venue lookup unavailable.", true);
       }
@@ -1163,14 +1305,21 @@
         : '<div class="listItem muted">No authenticated venue claims yet.</div>';
 
       venueManagerAssignments.innerHTML = data.assignments.length
-        ? data.assignments.map((assignment) => `
+        ? data.assignments.map((assignment) => {
+          const managerLabel = assignment.managerDisplayName || assignment.managerEmail || assignment.managerPublicAccountId || assignment.userId;
+          const managerMeta = [assignment.managerEmail && assignment.managerEmail !== managerLabel ? assignment.managerEmail : null, assignment.managerPublicAccountId, assignment.userId]
+            .filter(Boolean)
+            .join(" · ");
+          return `
           <article class="listItem">
             <strong>${escapeHtml(assignment.venueName)}</strong>
             <span class="pill">${escapeHtml(assignment.status)}</span>
-            <div class="muted">${escapeHtml(assignment.suburb || "Melbourne")} · manager ${escapeHtml(assignment.userId)}</div>
+            <div class="muted">${escapeHtml(assignment.suburb || "Melbourne")} · ${escapeHtml(managerLabel)}</div>
+            <div class="muted">${escapeHtml(managerMeta)}</div>
             <button class="button button--danger" type="button" data-revoke-user="${escapeHtml(assignment.userId)}" data-revoke-venue="${escapeHtml(assignment.venueId)}">Revoke</button>
           </article>
-        `).join("")
+        `;
+        }).join("")
         : '<div class="listItem muted">No venue managers assigned yet.</div>';
       venueManagerAssignments.querySelectorAll("[data-revoke-user]").forEach((button) => {
         button.addEventListener("click", () => revokeVenueManager(button.dataset.revokeUser, button.dataset.revokeVenue));
@@ -1270,11 +1419,23 @@
       const form = new FormData(formElement);
       const body = Object.fromEntries(form.entries());
       try {
+        if (!body.userId) {
+          throw new Error("Choose a staff account from the search results.");
+        }
+        if (!body.venueId || !body.venueName) {
+          throw new Error("Choose a venue from the venue list.");
+        }
         await MelbBeerBusiness.apiFetch("/api/business/admin/venue-managers", {
           method: "POST",
           body: JSON.stringify(body),
         });
         formElement.reset();
+        selectedManagerAccount = null;
+        managerAccountCandidates = [];
+        managerAccountSearchMessage = "Search for the staff member's Pint Path account.";
+        selectedManagerVenueId = null;
+        renderManagerUserResults();
+        renderManagerVenueOptions();
         MelbBeerBusiness.setStatus(statusEl, "Venue manager assigned.");
         await loadAdmin();
       } catch (error) {
@@ -1356,6 +1517,12 @@
       adminContentEl = document.getElementById("adminContent");
       rangeSelect.addEventListener("change", loadAdmin);
       managerAssignForm.addEventListener("submit", handleManagerAssign);
+      managerUserSearch.addEventListener("input", scheduleManagerAccountSearch);
+      managerVenueSearch.addEventListener("input", renderManagerVenueOptions);
+      managerVenueSelect.addEventListener("change", () => {
+        selectedManagerVenueId = managerVenueSelect.value || null;
+        syncManagerAssignPreview();
+      });
       outreachForm.addEventListener("submit", handleOutreach);
       refreshAdminDataTools.addEventListener("click", loadAdminDataTools);
       adminVenueSearch.addEventListener("input", renderAdminVenueOptions);

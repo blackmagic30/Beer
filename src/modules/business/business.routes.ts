@@ -10,6 +10,7 @@ import {
   accountPreferencesSchema,
   accountDeletionRequestSchema,
   accountPrivacySettingsSchema,
+  adminAccountSearchSchema,
   adminDashboardQuerySchema,
   adminUserStatusSchema,
   ageConfirmSchema,
@@ -550,6 +551,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/admin/venue-partners", (req, res) => {
     const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getVenuePartnerAdmin(admin)));
+  });
+
+  router.get("/admin/accounts", (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const query = parseWithSchema(adminAccountSearchSchema, req.query, "Invalid admin account search query");
+    res.json(success(businessService.searchAccountsForAdmin(admin, query)));
   });
 
   router.post("/admin/venue-pending-changes/:id/review", adminWriteLimiter, (req, res) => {

@@ -629,6 +629,11 @@ export const adminDashboardQuerySchema = z.object({
   range: z.enum(["today", "7d", "30d", "month", "all"]).default("7d"),
 });
 
+export const adminAccountSearchSchema = z.object({
+  q: z.string().trim().min(2).max(120),
+  limit: z.coerce.number().int().min(1).max(25).default(10),
+});
+
 const reportMonthSchema = z.string().trim().regex(/^\d{4}-\d{2}$/, "Use YYYY-MM, for example 2026-05.");
 
 export const monthlyReportGenerateSchema = z.object({
@@ -739,6 +744,7 @@ export type BarPendingChangeReviewInput = z.infer<typeof barPendingChangeReviewS
 export type VenueClaimRequestInput = z.infer<typeof venueClaimRequestSchema>;
 export type VenuePendingChangeReviewInput = z.infer<typeof venuePendingChangeReviewSchema>;
 export type AdminDashboardQuery = z.infer<typeof adminDashboardQuerySchema>;
+export type AdminAccountSearchInput = z.infer<typeof adminAccountSearchSchema>;
 export type MonthlyReportGenerateInput = z.infer<typeof monthlyReportGenerateSchema>;
 export type MonthlyReportDeliveryInput = z.infer<typeof monthlyReportDeliverySchema>;
 export type MonthlyReportExportQuery = z.infer<typeof monthlyReportExportQuerySchema>;

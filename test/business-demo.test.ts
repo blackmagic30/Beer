@@ -3352,6 +3352,14 @@ describe("business demo contribution model", () => {
 
     expect(assignment.assignment.status).toBe("active");
     expect(managerAccount.role).toBe("venue_manager");
+    expect(service.searchAccountsForAdmin(admin, { q: "venue-manager", limit: 10 }).accounts).toEqual([
+      expect.objectContaining({
+        id: manager.id,
+        email: "venue-manager@example.com",
+        role: "venue_manager",
+      }),
+    ]);
+    expect(() => service.searchAccountsForAdmin(normalUser, { q: "venue-manager", limit: 10 })).toThrow("Admin access required");
 
     const portal = service.getVenuePortal(managerAccount, { venueId: "venue-1" });
     expect(portal.selectedVenue).toEqual(expect.objectContaining({
