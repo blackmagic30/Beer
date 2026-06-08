@@ -110,7 +110,17 @@
 
       <form id="adminCreateVenueForm" class="panel form">
         <h2>Add new pub or bar</h2>
-        <p class="muted">Creates a Supabase venue row, then selects it for beer capture.</p>
+        <p class="muted">Search Google Maps first. Details auto-fill, then the venue is selected for beer capture.</p>
+        <label class="field">Find on Google Maps
+          <input id="adminGoogleVenueSearch" type="search" autocomplete="off" placeholder="Search venue name, suburb, or address" />
+        </label>
+        <div class="actionRow">
+          <button id="adminGoogleVenueButton" class="button" type="button">Search Google Maps</button>
+          <button id="adminClearGoogleVenueButton" class="button" type="button">Clear</button>
+        </div>
+        <div id="adminGoogleVenueResults" class="adminGoogleVenueResults"></div>
+        <div id="adminGoogleVenueStatus" class="fieldHint">Pick a Google result to fill name, address, phone, website, and coordinates.</div>
+        <input name="googlePlaceId" type="hidden" />
         <label class="field">Name
           <input name="name" required placeholder="The Duke of Wellington" />
         </label>
@@ -310,11 +320,13 @@
     let adminDataToolsStatus = {
       enabled: false,
       ocrEnabled: false,
+      googlePlacesEnabled: false,
       queueEnabled: false,
     };
     let adminVenues = [];
     let selectedAdminVenueId = null;
     let adminCaptureSource = "manual_entry";
+    let adminGoogleVenueSearchTimer = null;
 
     function renderKpis(data) {
       const metrics = data.metrics;
@@ -419,6 +431,7 @@
       adminCaptureMetrics.innerHTML = [
         renderMetric("Manual captures", adminDataToolsStatus.enabled ? "Ready" : "Off"),
         renderMetric("Menu OCR", adminDataToolsStatus.ocrEnabled ? "Ready" : "Off"),
+        renderMetric("Google venue add", adminDataToolsStatus.googlePlacesEnabled ? "Ready" : "Manual"),
         renderMetric("Source queue", adminDataToolsStatus.queueEnabled ? "Ready" : "Off"),
         renderMetric("Venues loaded", adminVenues.length),
       ].join("");
@@ -436,6 +449,153 @@
       adminSourceQueueForm.querySelectorAll("input, select, textarea, button").forEach((element) => {
         element.disabled = !queueEnabled;
       });
+    }
+
+    function getCreateVenueControl(name) {
+      return adminCreateVenueForm.elements[name];
+    }
+
+    function setCreateVenueValue(name, value) {
+      const control = getCreateVenueControl(name);
+      if (control) {
+        control.value = value ?? "";
+      }
+    }
+
+    function clearGoogleVenueSelection(clearSearch = false) {
+      delete adminCreateVenueForm.dataset.existingVenueId;
+      setCreateVenueValue("googlePlaceId", "");
+      adminGoogleVenueResults.innerHTML = "";
+      adminGoogleVenueStatus.textContent = "Pick a Google result to fill name, address, phone, website, and coordinates.";
+      if (clearSearch) {
+        adminGoogleVenueSearch.value = "";
+      }
+    }
+
+    function setGoogleVenueFormFromPlace(place) {
+      setCreateVenueValue("googlePlaceId", place.googlePlaceId);
+      setCreateVenueValue("name", place.name);
+      setCreateVenueValue("phone", place.phone);
+      setCreateVenueValue("address", place.address);
+      setCreateVenueValue("suburb", place.suburb);
+      setCreateVenueValue("state", place.state || "VIC");
+      setCreateVenueValue("postcode", place.postcode);
+      setCreateVenueValue("website", place.website);
+      setCreateVenueValue("latitude", place.latitude);
+      setCreateVenueValue("longitude", place.longitude);
+    }
+
+    function renderGoogleVenueResults(places) {
+      adminGoogleVenueResults.innerHTML = places.length
+        ? places.map((place) => {
+          const duplicate = place.alreadyExists && place.existingVenue;
+          const meta = [
+            place.suburb,
+            place.primaryType,
+            place.phone ? "phone" : "",
+            place.website ? "website" : "",
+            duplicate ? "already in Pint Path" : "",
+          ].filter(Boolean).join(" · ");
+          return `
+            <button class="adminGoogleVenueResult ${duplicate ? "adminGoogleVenueResult--duplicate" : ""}" type="button" data-place-id="${escapeHtml(place.googlePlaceId)}">
+              <strong>${escapeHtml(place.name)}</strong>
+              <span>${escapeHtml(place.address)}</span>
+              <small>${escapeHtml(meta || "Google Maps result")}</small>
+            </button>
+          `;
+        }).join("")
+        : '<div class="notice notice--warning">No Google venue matches yet. Try adding the suburb or use manual entry.</div>';
+
+      adminGoogleVenueResults.querySelectorAll("[data-place-id]").forEach((button) => {
+        button.addEventListener("click", () => loadGoogleVenueDetails(button.dataset.placeId));
+      });
+    }
+
+    async function searchGoogleVenues() {
+      const query = adminGoogleVenueSearch.value.trim();
+      if (query.length < 2) {
+        adminGoogleVenueResults.innerHTML = "";
+        adminGoogleVenueStatus.textContent = "Type at least 2 characters to search Google Maps.";
+        return;
+      }
+
+      try {
+        adminGoogleVenueButton.disabled = true;
+        adminGoogleVenueButton.classList.add("is-loading");
+        adminGoogleVenueButton.textContent = "Searching...";
+        adminGoogleVenueStatus.textContent = "Searching Google Maps...";
+        const params = new URLSearchParams({ q: query });
+        const result = await MelbBeerBusiness.apiFetch(`/api/admin/places/search?${params.toString()}`);
+        if (!result.configured) {
+          adminGoogleVenueResults.innerHTML = "";
+          adminGoogleVenueStatus.textContent = "Google Places is not configured on this deployment. Manual entry is still available.";
+          return;
+        }
+
+        renderGoogleVenueResults(result.places || []);
+        adminGoogleVenueStatus.textContent = (result.places || []).length
+          ? "Select the matching venue to fill the form."
+          : "No good Google matches found. Try the exact Google Maps name or use manual entry.";
+      } catch (error) {
+        adminGoogleVenueResults.innerHTML = "";
+        adminGoogleVenueStatus.textContent = error.message || "Google venue search failed.";
+      } finally {
+        adminGoogleVenueButton.textContent = "Search Google Maps";
+        adminGoogleVenueButton.classList.remove("is-loading");
+        syncAdminCaptureControls();
+      }
+    }
+
+    function scheduleGoogleVenueSearch() {
+      window.clearTimeout(adminGoogleVenueSearchTimer);
+      adminGoogleVenueSearchTimer = window.setTimeout(searchGoogleVenues, 420);
+    }
+
+    async function loadGoogleVenueDetails(placeId) {
+      if (!placeId) {
+        return;
+      }
+
+      try {
+        adminGoogleVenueStatus.textContent = "Loading Google venue details...";
+        const result = await MelbBeerBusiness.apiFetch(`/api/admin/places/${encodeURIComponent(placeId)}`);
+        if (!result.configured || !result.place) {
+          adminGoogleVenueStatus.textContent = "Google Places is not configured on this deployment. Manual entry is still available.";
+          return;
+        }
+
+        const { place } = result;
+        setGoogleVenueFormFromPlace(place);
+        adminGoogleVenueSearch.value = place.name;
+
+        if (place.alreadyExists && place.existingVenue?.id) {
+          adminCreateVenueForm.dataset.existingVenueId = place.existingVenue.id;
+          if (!adminVenues.some((venue) => venue.id === place.existingVenue.id)) {
+            adminVenues.unshift({
+              id: place.existingVenue.id,
+              name: place.existingVenue.name,
+              address: place.existingVenue.address,
+              suburb: place.existingVenue.suburb,
+              state: place.state || "VIC",
+              postcode: place.postcode,
+              latitude: place.latitude,
+              longitude: place.longitude,
+            });
+          }
+          selectedAdminVenueId = place.existingVenue.id;
+          adminVenueSearch.value = place.existingVenue.name;
+          renderAdminVenueOptions();
+          adminGoogleVenueStatus.textContent = `${place.name} is already in Pint Path and has been selected for beer capture.`;
+          return;
+        }
+
+        delete adminCreateVenueForm.dataset.existingVenueId;
+        adminGoogleVenueStatus.textContent = place.recommended
+          ? `${place.name} details loaded. Check the fields, then create the venue.`
+          : `${place.name} details loaded. Check this is really a bar/pub before creating it.`;
+      } catch (error) {
+        adminGoogleVenueStatus.textContent = error.message || "Could not load Google venue details.";
+      }
     }
 
     function buildAvailabilityFields(choice) {
@@ -692,7 +852,7 @@
       try {
         adminDataToolsStatus = await MelbBeerBusiness.apiFetch("/api/admin/status");
       } catch (error) {
-        adminDataToolsStatus = { enabled: false, ocrEnabled: false, queueEnabled: false };
+        adminDataToolsStatus = { enabled: false, ocrEnabled: false, googlePlacesEnabled: false, queueEnabled: false };
         setLocalNotice(adminCaptureStatus, error.message || "Admin capture tools unavailable.", true);
       }
       renderAdminCaptureMetrics();
@@ -832,6 +992,18 @@
 
     async function handleCreateVenue(event) {
       event.preventDefault();
+      const existingVenueId = event.currentTarget.dataset.existingVenueId;
+      if (existingVenueId) {
+        selectedAdminVenueId = existingVenueId;
+        const venue = adminVenues.find((item) => item.id === existingVenueId);
+        if (venue) {
+          adminVenueSearch.value = venue.name;
+        }
+        renderAdminVenueOptions();
+        setLocalNotice(adminCreateVenueStatus, `${venue?.name || "This venue"} is already in Pint Path and is selected for beer capture.`);
+        return;
+      }
+
       const form = new FormData(event.currentTarget);
       const body = Object.fromEntries(form.entries());
       try {
@@ -847,6 +1019,7 @@
         renderAdminVenueOptions();
         event.currentTarget.reset();
         event.currentTarget.elements.state.value = "VIC";
+        clearGoogleVenueSelection(true);
         setLocalNotice(adminCreateVenueStatus, `${venue.name} was created and selected.`);
       } catch (error) {
         setLocalNotice(adminCreateVenueStatus, error.message || "Failed to create venue.", true);
@@ -1151,6 +1324,13 @@
       adminVenueSelect.addEventListener("change", () => {
         selectedAdminVenueId = adminVenueSelect.value || null;
         renderSelectedAdminVenue();
+      });
+      adminGoogleVenueSearch.addEventListener("input", scheduleGoogleVenueSearch);
+      adminGoogleVenueButton.addEventListener("click", searchGoogleVenues);
+      adminClearGoogleVenueButton.addEventListener("click", () => {
+        clearGoogleVenueSelection(true);
+        adminCreateVenueForm.reset();
+        adminCreateVenueForm.elements.state.value = "VIC";
       });
       adminAddBeerRow.addEventListener("click", () => {
         adminCaptureSource = "manual_entry";

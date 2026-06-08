@@ -149,6 +149,7 @@ describe("manual capture helpers", () => {
     expect(service.getStatus()).toEqual({
       enabled: false,
       ocrEnabled: true,
+      googlePlacesEnabled: false,
       queueEnabled: false,
     });
   });

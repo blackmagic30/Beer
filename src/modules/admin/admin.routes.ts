@@ -52,6 +52,23 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     res.json(success(adminService.getStatus()));
   });
 
+  router.get("/places/search", async (req, res, next) => {
+    try {
+      const query = typeof req.query.q === "string" ? req.query.q : "";
+      res.json(success(await adminService.searchGoogleVenuePlaces(query)));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/places/:placeId", async (req, res, next) => {
+    try {
+      res.json(success(await adminService.getGoogleVenuePlace(req.params.placeId)));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/ingestions", async (req, res, next) => {
     try {
       const status = parseIngestionStatus(req.query.status);

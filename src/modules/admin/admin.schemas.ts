@@ -83,6 +83,7 @@ const optionalPostcodeSchema = z.preprocess((value) => {
 }, z.string().regex(/^\d{4}$/, "Postcode must be four digits").optional());
 
 export const adminVenueSchema = z.object({
+  googlePlaceId: optionalTrimmedStringSchema.nullable().default(null),
   name: z.string().trim().min(1).transform(collapseWhitespace),
   address: z.string().trim().min(1).transform(collapseWhitespace),
   suburb: z.preprocess((value) => {

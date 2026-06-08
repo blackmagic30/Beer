@@ -54,6 +54,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.SUPABASE_SERVICE_ROLE_KEY,
     env.SUPABASE_MENU_CAPTURE_TABLE,
     env.OPENAI_API_KEY,
+    env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
   );
   const businessService = new BusinessService(businessRepository, env);
   businessService.logStartupSummary();
