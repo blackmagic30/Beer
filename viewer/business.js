@@ -32,6 +32,7 @@ function setAccountContext(account) {
     role: account.role || null,
     status: account.status || null,
     email: account.email || null,
+    subscriptionStatus: account.subscriptionStatus || null,
   }));
 }
 
@@ -52,6 +53,11 @@ function getAccountContext() {
 
 function isVenueManagerContext() {
   return getAccountContext()?.role === "venue_manager";
+}
+
+function isAdminContext() {
+  const account = getAccountContext();
+  return account?.role === "admin" || account?.subscriptionStatus === "admin";
 }
 
 function hasCachedSupabaseSession() {
@@ -539,11 +545,13 @@ function renderNav(active = "") {
   const activeKey = active === "trust" ? "faq" : active;
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
   const venueManagerNav = active === "venue-portal" || isVenueManagerContext();
+  const adminNav = active === "admin" || isAdminContext();
   const navItems = [
     { key: "map", href: "/", label: "Map" },
     { key: "missions", href: "/missions.html", label: "Missions" },
     { key: "submit", href: "/submit.html", label: "Submit" },
     ...(venueManagerNav ? [{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }] : []),
+    ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
     { key: "pricing", href: "/pricing.html", label: "Pricing" },
     { key: "faq", href: "/trust.html", label: "FAQ" },
     { key: "account", href: "/account.html", label: "Account" },
@@ -675,6 +683,7 @@ window.MelbBeerBusiness = {
   setAccountContext,
   getAccountContext,
   isVenueManagerContext,
+  isAdminContext,
   hasAuthenticatedSessionHint,
   getAnonymousSessionId,
   getViewerConfig,

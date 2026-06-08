@@ -285,17 +285,21 @@ describe("account page shell", () => {
     expect(reset).toContain("Password updated. You can continue to your Pint Path account.");
   });
 
-  it("keeps the primary nav consistent and gives venue managers a dashboard link", () => {
+  it("keeps the primary nav consistent and gives privileged accounts dashboard/admin links", () => {
     const html = mapHtml();
     const script = businessJs();
 
     expect(script).toContain("function hasAuthenticatedSessionHint");
     expect(script).toContain("function hasCachedSupabaseSession");
     expect(script).toContain("function isVenueManagerContext");
+    expect(script).toContain("function isAdminContext");
+    expect(script).toContain("subscriptionStatus: account.subscriptionStatus || null");
     expect(script).toContain('const venueManagerNav = active === "venue-portal" || isVenueManagerContext()');
+    expect(script).toContain('const adminNav = active === "admin" || isAdminContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
     expect(script).toContain('{ key: "missions", href: "/missions.html", label: "Missions" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
+    expect(script).toContain('{ key: "admin", href: "/admin.html", label: "Admin" }');
     expect(script).toContain('{ key: "pricing", href: "/pricing.html", label: "Pricing" }');
     expect(script).toContain('{ key: "faq", href: "/trust.html", label: "FAQ" }');
     expect(script).toContain('{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }');
