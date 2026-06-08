@@ -1245,6 +1245,34 @@ describe("production hardening", () => {
     expect(service.requireAdmin(`Bearer ${adminSession.token}`).id).toBe(adminSession.account.id);
   });
 
+  it("allows verified allowlisted production admins without MFA when the field-test flag disables it", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      NODE_ENV: "production",
+      ADMIN_EMAILS: "field-admin@example.com",
+      REQUIRE_ADMIN_MFA_IN_PRODUCTION: false,
+      REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
+      SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
+    });
+    const adminSession = service.signup({
+      email: "field-admin@example.com",
+      password: "password123",
+      ageConfirmed: true,
+      termsAccepted: true,
+      privacyAccepted: true,
+    });
+
+    expect(() => service.requireAdmin(`Bearer ${adminSession.token}`)).toThrow("Admin email verification");
+
+    repository.updateAccountSecurityClaims({
+      userId: adminSession.account.id,
+      emailVerifiedAt: NOW,
+      now: NOW,
+    });
+
+    expect(service.requireAdmin(`Bearer ${adminSession.token}`).id).toBe(adminSession.account.id);
+  });
+
   it("keeps production admin routes locked until an admin email allowlist is configured", () => {
     const { repository } = createRepository();
     const serviceWithAllowlist = createBusinessService(repository, {

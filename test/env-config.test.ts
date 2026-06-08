@@ -72,6 +72,18 @@ describe("environment safety defaults", () => {
     );
   });
 
+  it("allows admin MFA to be temporarily disabled for owner-led production field testing", async () => {
+    stubProductionEnv({
+      DEMO_BILLING_MODE: "",
+      REQUIRE_ADMIN_MFA_IN_PRODUCTION: "false",
+    });
+
+    const { env } = await loadEnv();
+
+    expect(env.NODE_ENV).toBe("production");
+    expect(env.REQUIRE_ADMIN_MFA_IN_PRODUCTION).toBe(false);
+  });
+
   it("rejects Railway preview domains as the canonical production public URL", async () => {
     stubProductionEnv({ PUBLIC_BASE_URL: "https://beer-production-aad4.up.railway.app" });
 

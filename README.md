@@ -122,7 +122,7 @@ Supabase auth/account foundation:
 - Add OAuth redirect URLs for local and hosted callback pages, for example `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`.
 - New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
 - Supabase `user_metadata` is not trusted for age confirmation, legal acceptance, roles, venue access, or paid entitlements. Pint Path records those states through its own server-side account/legal/admin/Stripe flows.
-- Production admin access expects Supabase Auth MFA/Auth Assurance Level 2 (`aal2`). Enable MFA factors in Supabase, require confirmed email, and verify the OAuth/session JWT contains `aal2` before relying on admin routes.
+- Production admin access should use Supabase Auth MFA/Auth Assurance Level 2 (`aal2`) for normal operation. During owner-led field testing, `REQUIRE_ADMIN_MFA_IN_PRODUCTION=false` can temporarily skip MFA while still requiring the admin email allowlist and verified email.
 - Public browsing stays anonymous. Uploads and verification actions require a logged-in account, and submissions always use the authenticated session user rather than a client-provided user id.
 - Users cannot verify their own uploads. Verifications are recorded in `verifications`, and intentional product actions are recorded in `user_activity_events`.
 - Supabase/Postgres RLS-ready tables and policies live in `supabase/migrations/20260512000000_auth_profiles_activity.sql` for `public.profiles`, `beermap_uploads`, `beermap_verifications`, `user_activity_events`, `age_verifications`, and the private `beermap-source-evidence` Storage bucket. `supabase/migrations/20260516000000_user_price_submissions.sql` added an early direct-Supabase contributor scaffold, but the canonical production contribution path is now the Express `POST /api/business/submissions` flow so uploads consistently attach the authenticated user, private evidence, location eligibility, review workflow, and points ledger. `supabase/migrations/20260530000000_deprecate_direct_supabase_contributor_tables.sql` keeps those older direct tables for history while revoking browser writes. `supabase/migrations/20260523000000_submission_location_points.sql` adds private upload-location proof fields and point-award tracking for contributor submissions. `supabase/migrations/20260524010000_account_privacy_settings.sql` adds per-user optional analytics, venue-insight inclusion, product-research, and email-update preferences with owner-only RLS. `supabase/migrations/20260603000000_harden_private_helper_functions.sql` locks down private security-definer helpers with public execute revokes and narrow search paths.
@@ -182,7 +182,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Sensitive admin, payment, session, and venue-manager actions are written to `security_audit_log` with redacted metadata.
 - Aggregate analytics use `ANALYTICS_MIN_BUCKET_SIZE` to suppress low-count buckets before they are returned to dashboards or venue-owner views.
 - Retired call automation routes stay unavailable in the active app. Keep any future provider automation in a separate security-reviewed feature branch.
-- Production admin routes require verified email and a fresh MFA/AAL2 claim when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
+- Production admin routes require the configured admin email allowlist and verified email. They also require a fresh MFA/AAL2 claim when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`; this can be temporarily set to `false` for owner-led field testing.
 - Upload and verification actions require a verified account in production when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
 - Inline demo image evidence is never exposed publicly. Production field uploads use private filesystem/volume evidence storage plus signed review links; keep the `beermap-source-evidence` Supabase Storage bucket private if/when evidence storage is migrated there at larger scale.
 - `FIELD_TEST_MODE=true` adds an unobtrusive beta label, feedback entry point, and admin field-test summary without exposing debug details to public users.
@@ -333,7 +333,7 @@ What each one does:
 - `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup. In production this can be left blank while the official ABN/admin email is pending; the public site will still boot, but admin routes will return `403` until the allowlist is configured.
 - `SESSION_TTL_DAYS`: normal account bearer-session lifetime. Defaults to `60`.
 - `ADMIN_SESSION_TTL_DAYS`: shorter admin bearer-session lifetime. Defaults to `7`.
-- `REQUIRE_ADMIN_MFA_IN_PRODUCTION`: production guard for admin routes. Keep `true`; admins must have a fresh Supabase AAL2/MFA claim.
+- `REQUIRE_ADMIN_MFA_IN_PRODUCTION`: production guard for admin routes. Prefer `true` for normal production; set `false` only for short owner-led field testing while keeping `ADMIN_EMAILS` and email verification enforced.
 - `ADMIN_MFA_MAX_AGE_MINUTES`: maximum age for admin AAL2/step-up claims. Defaults to `720`.
 - `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION`: production guard for uploads, verifications, and venue dashboard access. Keep `true`.
 - `FREE_PRICE_REVEALS_PER_DAY`: configurable daily exact-price previews for free users.

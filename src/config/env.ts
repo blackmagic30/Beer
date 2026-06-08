@@ -176,10 +176,6 @@ if (parsedEnv.data.NODE_ENV === "production") {
     throw new Error("GOOGLE_MAPS_MAP_ID is required in production for Google AdvancedMarkerElement/vector map styling.");
   }
 
-  if (!parsedEnv.data.REQUIRE_ADMIN_MFA_IN_PRODUCTION) {
-    throw new Error("REQUIRE_ADMIN_MFA_IN_PRODUCTION must remain true in production.");
-  }
-
 }
 
 export const env = {
