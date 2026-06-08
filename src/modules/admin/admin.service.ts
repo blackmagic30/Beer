@@ -15,6 +15,7 @@ import {
   type GoogleAddressComponent,
   type GooglePlaceCandidate,
   hasStrongBarOrPubNameSignal,
+  isExcludedVenueName,
   shouldImportBarOrPubPlace,
 } from "../../lib/venue-directory.js";
 
@@ -68,6 +69,9 @@ interface GooglePlacesSearchResponse {
   places?: GooglePlaceCandidate[];
   error?: { message?: string; code?: number; status?: string };
 }
+
+const ADMIN_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
+const ADMIN_GOOGLE_VENUE_TYPE_SET = new Set<string>(ADMIN_GOOGLE_VENUE_TYPES);
 
 interface MenuPhotoOcrModelItem {
   name: string;
@@ -224,12 +228,38 @@ function cleanGoogleAddress(value: string | null | undefined): string {
     .trim();
 }
 
+function getGooglePlaceTypes(place: GooglePlaceCandidate): string[] {
+  return [
+    place.primaryType,
+    ...(place.types ?? []),
+  ]
+    .filter((type): type is string => Boolean(type))
+    .map((type) => type.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isAllowedAdminGoogleVenue(place: GooglePlaceCandidate): boolean {
+  const name = place.displayName?.text?.trim() ?? "";
+  const address = place.formattedAddress?.trim() ?? "";
+  const types = getGooglePlaceTypes(place);
+  const businessStatus = place.businessStatus ?? "OPERATIONAL";
+
+  if (!name || !address || businessStatus === "CLOSED_PERMANENTLY") {
+    return false;
+  }
+
+  if (isExcludedVenueName(name)) {
+    return false;
+  }
+
+  return types.some((type) => ADMIN_GOOGLE_VENUE_TYPE_SET.has(type));
+}
+
 function hasVenueAdminPlaceSignal(place: GooglePlaceCandidate): boolean {
   const name = place.displayName?.text?.trim() ?? "";
-  const types = (place.types ?? []).map((type) => type.trim().toLowerCase());
   return shouldImportBarOrPubPlace(place) ||
     hasStrongBarOrPubNameSignal(name) ||
-    ["bar", "pub", "brewery", "night_club"].some((type) => types.includes(type));
+    isAllowedAdminGoogleVenue(place);
 }
 
 export class AdminService {
@@ -261,10 +291,14 @@ export class AdminService {
   }
 
   getStatus() {
+    const ocrEnabled = Boolean(this.openai);
+    const googlePlacesEnabled = Boolean(this.googlePlacesApiKey);
     return {
       enabled: Boolean(this.supabase),
-      ocrEnabled: Boolean(this.openai),
-      googlePlacesEnabled: Boolean(this.googlePlacesApiKey),
+      ocrEnabled,
+      ocrReason: ocrEnabled ? null : "missing_openai_api_key",
+      googlePlacesEnabled,
+      googlePlacesReason: googlePlacesEnabled ? null : "missing_google_places_api_key",
       queueEnabled: Boolean(this.supabase && this.ingestionQueueRepository),
     };
   }
@@ -316,15 +350,16 @@ export class AdminService {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6500);
+    const { fieldMask, headers, ...requestInit } = init;
     try {
       const response = await fetch(url, {
-        ...init,
+        ...requestInit,
         signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           "X-Goog-Api-Key": this.googlePlacesApiKey,
-          "X-Goog-FieldMask": init.fieldMask,
-          ...(init.headers ?? {}),
+          "X-Goog-FieldMask": fieldMask,
+          ...(headers ?? {}),
         },
       });
 
@@ -453,40 +488,67 @@ export class AdminService {
     const textQuery = /(?:melbourne|victoria|\bvic\b|australia)/i.test(normalizedQuery)
       ? normalizedQuery
       : `${normalizedQuery}, Melbourne VIC, Australia`;
-    const body = {
-      textQuery,
-      pageSize: 8,
-      languageCode: "en-AU",
-      regionCode: "AU",
-      locationBias: {
-        rectangle: {
-          low: { latitude: -38.5, longitude: 144.3 },
-          high: { latitude: -37.4, longitude: 145.6 },
+    const searchByType = async (includedType: typeof ADMIN_GOOGLE_VENUE_TYPES[number]) => {
+      const body = {
+        textQuery,
+        pageSize: 5,
+        languageCode: "en-AU",
+        regionCode: "AU",
+        includedType,
+        strictTypeFiltering: true,
+        includePureServiceAreaBusinesses: false,
+        locationBias: {
+          rectangle: {
+            low: { latitude: -38.5, longitude: 144.3 },
+            high: { latitude: -37.4, longitude: 145.6 },
+          },
         },
-      },
-    };
-    const payload = await this.fetchGooglePlaces<GooglePlacesSearchResponse>(
-      "https://places.googleapis.com/v1/places:searchText",
-      {
-        method: "POST",
-        body: JSON.stringify(body),
-        fieldMask: [
-          "places.id",
-          "places.displayName",
-          "places.formattedAddress",
-          "places.addressComponents",
-          "places.location",
-          "places.businessStatus",
-          "places.primaryType",
-          "places.types",
-        ].join(","),
-      },
-    );
+      };
 
-    const candidates = (payload.places ?? [])
-      .filter((place) => place.id && place.displayName?.text && place.formattedAddress);
-    const recommended = candidates.filter(hasVenueAdminPlaceSignal);
-    const ranked = recommended.length ? recommended : candidates;
+      const payload = await this.fetchGooglePlaces<GooglePlacesSearchResponse>(
+        "https://places.googleapis.com/v1/places:searchText",
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+          fieldMask: [
+            "places.id",
+            "places.displayName",
+            "places.formattedAddress",
+            "places.addressComponents",
+            "places.location",
+            "places.businessStatus",
+            "places.primaryType",
+            "places.types",
+          ].join(","),
+        },
+      );
+
+      return payload.places ?? [];
+    };
+
+    const typedResults = await Promise.all(
+      ADMIN_GOOGLE_VENUE_TYPES.map((includedType) => searchByType(includedType)),
+    );
+    const candidatesById = new Map<string, GooglePlaceCandidate>();
+    for (const place of typedResults.flat()) {
+      if (!place.id || !isAllowedAdminGoogleVenue(place)) {
+        continue;
+      }
+
+      if (!candidatesById.has(place.id)) {
+        candidatesById.set(place.id, place);
+      }
+    }
+
+    const ranked = Array.from(candidatesById.values()).sort((left, right) => {
+      const leftRecommended = hasVenueAdminPlaceSignal(left) ? 1 : 0;
+      const rightRecommended = hasVenueAdminPlaceSignal(right) ? 1 : 0;
+      if (leftRecommended !== rightRecommended) {
+        return rightRecommended - leftRecommended;
+      }
+
+      return (left.displayName?.text ?? "").localeCompare(right.displayName?.text ?? "");
+    });
     const normalized = await Promise.all(ranked.slice(0, 8).map((place) => this.normalizeGoogleVenueLookup(place)));
 
     return {
@@ -530,7 +592,9 @@ export class AdminService {
 
     return {
       configured: true,
-      place: await this.normalizeGoogleVenueLookup(payload),
+      place: isAllowedAdminGoogleVenue(payload)
+        ? await this.normalizeGoogleVenueLookup(payload)
+        : null,
     };
   }
 

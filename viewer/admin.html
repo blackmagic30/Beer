@@ -320,7 +320,9 @@
     let adminDataToolsStatus = {
       enabled: false,
       ocrEnabled: false,
+      ocrReason: null,
       googlePlacesEnabled: false,
+      googlePlacesReason: null,
       queueEnabled: false,
     };
     let adminVenues = [];
@@ -428,10 +430,20 @@
     }
 
     function renderAdminCaptureMetrics() {
+      const ocrLabel = adminDataToolsStatus.ocrEnabled
+        ? "Ready"
+        : adminDataToolsStatus.ocrReason === "missing_openai_api_key"
+          ? "Key missing"
+          : "Off";
+      const googlePlacesLabel = adminDataToolsStatus.googlePlacesEnabled
+        ? "Ready"
+        : adminDataToolsStatus.googlePlacesReason === "missing_google_places_api_key"
+          ? "Key missing"
+          : "Manual";
       adminCaptureMetrics.innerHTML = [
         renderMetric("Manual captures", adminDataToolsStatus.enabled ? "Ready" : "Off"),
-        renderMetric("Menu OCR", adminDataToolsStatus.ocrEnabled ? "Ready" : "Off"),
-        renderMetric("Google venue add", adminDataToolsStatus.googlePlacesEnabled ? "Ready" : "Manual"),
+        renderMetric("Menu OCR", ocrLabel),
+        renderMetric("Google venue add", googlePlacesLabel),
         renderMetric("Source queue", adminDataToolsStatus.queueEnabled ? "Ready" : "Off"),
         renderMetric("Venues loaded", adminVenues.length),
       ].join("");
@@ -559,8 +571,13 @@
       try {
         adminGoogleVenueStatus.textContent = "Loading Google venue details...";
         const result = await MelbBeerBusiness.apiFetch(`/api/admin/places/${encodeURIComponent(placeId)}`);
-        if (!result.configured || !result.place) {
+        if (!result.configured) {
           adminGoogleVenueStatus.textContent = "Google Places is not configured on this deployment. Manual entry is still available.";
+          return;
+        }
+
+        if (!result.place) {
+          adminGoogleVenueStatus.textContent = "That Google result is not tagged as a bar, pub, restaurant, brewery, or club. Try a more specific venue result.";
           return;
         }
 
@@ -852,7 +869,14 @@
       try {
         adminDataToolsStatus = await MelbBeerBusiness.apiFetch("/api/admin/status");
       } catch (error) {
-        adminDataToolsStatus = { enabled: false, ocrEnabled: false, googlePlacesEnabled: false, queueEnabled: false };
+        adminDataToolsStatus = {
+          enabled: false,
+          ocrEnabled: false,
+          ocrReason: null,
+          googlePlacesEnabled: false,
+          googlePlacesReason: null,
+          queueEnabled: false,
+        };
         setLocalNotice(adminCaptureStatus, error.message || "Admin capture tools unavailable.", true);
       }
       renderAdminCaptureMetrics();

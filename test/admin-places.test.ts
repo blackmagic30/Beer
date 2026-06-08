@@ -20,9 +20,73 @@ describe("admin Google Places venue lookup", () => {
     expect(service.getStatus()).toEqual({
       enabled: false,
       ocrEnabled: false,
+      ocrReason: "missing_openai_api_key",
       googlePlacesEnabled: true,
+      googlePlacesReason: null,
       queueEnabled: false,
     });
+  });
+
+  it("uses strict venue type filters and drops non-venue Google results", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { includedType?: string };
+      const places = body.includedType === "bar"
+        ? [
+            {
+              id: "bar-place",
+              displayName: { text: "German Beer Hall" },
+              formattedAddress: "2 Example St, Melbourne VIC 3000, Australia",
+              addressComponents: [
+                { longText: "Melbourne", shortText: "Melbourne", types: ["locality", "political"] },
+              ],
+              location: { latitude: -37.81, longitude: 144.96 },
+              businessStatus: "OPERATIONAL",
+              primaryType: "bar",
+              types: ["bar", "point_of_interest"],
+            },
+            {
+              id: "shirt-shop",
+              displayName: { text: "German Tee Shirt Shop" },
+              formattedAddress: "3 Retail St, Melbourne VIC 3000, Australia",
+              businessStatus: "OPERATIONAL",
+              primaryType: "clothing_store",
+              types: ["clothing_store", "store", "point_of_interest"],
+            },
+          ]
+        : [];
+
+      return new Response(JSON.stringify({ places }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      undefined,
+      "test-google-places-key",
+    );
+
+    const result = await service.searchGoogleVenuePlaces("German bar");
+    const requestBodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body ?? "{}")));
+
+    expect(requestBodies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ includedType: "bar", strictTypeFiltering: true }),
+        expect.objectContaining({ includedType: "pub", strictTypeFiltering: true }),
+        expect.objectContaining({ includedType: "restaurant", strictTypeFiltering: true }),
+      ]),
+    );
+    expect(result.places).toHaveLength(1);
+    expect(result.places[0]).toEqual(expect.objectContaining({
+      googlePlaceId: "bar-place",
+      name: "German Beer Hall",
+      primaryType: "bar",
+    }));
   });
 
   it("normalizes selected Google place details for the admin venue form", async () => {
