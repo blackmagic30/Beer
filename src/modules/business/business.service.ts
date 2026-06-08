@@ -3549,12 +3549,11 @@ export class BusinessService {
       throw new AppError("Submission not found.", 404);
     }
 
-    const allowOwnPendingVenueReview =
+    const allowOwnReview =
       submission.submission.userId === admin.id &&
-      Boolean(submission.submission.pendingVenue) &&
-      this.canAdminReviewOwnPendingVenue(admin);
+      this.canAdminReviewOwnSubmission(admin);
 
-    if (submission.submission.userId === admin.id && !allowOwnPendingVenueReview) {
+    if (submission.submission.userId === admin.id && !allowOwnReview) {
       throw new AppError("Admins cannot review their own submissions.", 403);
     }
 
@@ -3580,7 +3579,7 @@ export class BusinessService {
       monthKey: monthKeyFromIso(submission.submission.observedAt),
       premiumUntil: endOfMonthIso(reviewedAt),
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
-      allowOwnReview: allowOwnPendingVenueReview,
+      allowOwnReview,
     });
     this.auditSecurity({
       actor: admin,
@@ -3592,6 +3591,7 @@ export class BusinessService {
         fraudFlagged: input.fraudFlagged,
         pointsAwarded: input.status === "approved" ? result.pointsAwarded : 0,
         suggestedPoints,
+        selfReview: submission.submission.userId === admin.id,
         pointsEligibilityReason: submission.submission.pointsEligibilityReason,
         venueId: result.submission.venueId,
       },
@@ -3635,7 +3635,7 @@ export class BusinessService {
     };
   }
 
-  private canAdminReviewOwnPendingVenue(admin: BusinessAccount): boolean {
+  private canAdminReviewOwnSubmission(admin: BusinessAccount): boolean {
     if (!this.isAdmin(admin)) {
       return false;
     }

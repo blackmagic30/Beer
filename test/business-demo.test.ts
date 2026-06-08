@@ -1502,7 +1502,7 @@ describe("production hardening", () => {
     })).submission.sourcePhotoUrl).toMatch(/^private:evidence:/);
   });
 
-  it("returns clean access errors for self-review and already-reviewed submissions", () => {
+  it("lets admins review their own submissions and returns clean errors for already-reviewed submissions", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const admin = createAccount(repository, "admin", "admin");
@@ -1524,14 +1524,23 @@ describe("production hardening", () => {
       confidence: "photo_verified" as const,
     };
 
-    expect(() => service.reviewSubmission(admin, ownSubmission.id, approvePayload)).toThrow("Admins cannot review their own submissions");
+    const ownReview = service.reviewSubmission(admin, ownSubmission.id, approvePayload);
+    expect(ownReview.submission.status).toBe("approved");
+    expect(ownReview.submission.reviewedBy).toBe(admin.id);
+
     service.reviewSubmission(admin, submission.id, approvePayload);
     expect(() => service.reviewSubmission(otherAdmin, submission.id, approvePayload)).toThrow("Submission has already been reviewed");
-    expect(repository.listSecurityAuditLogs(10)[0]).toEqual(expect.objectContaining({
-      action: "admin_submission_review",
-      actorUserId: admin.id,
-      targetId: submission.id,
-    }));
+    const auditLogs = repository.listSecurityAuditLogs(10);
+    expect(auditLogs.some((log) =>
+      log.action === "admin_submission_review" &&
+      log.actorUserId === admin.id &&
+      log.targetId === submission.id,
+    )).toBe(true);
+    expect(auditLogs.some((log) =>
+      log.action === "admin_submission_review" &&
+      log.actorUserId === admin.id &&
+      log.targetId === ownSubmission.id,
+    )).toBe(true);
   });
 
   it("publishes a user-requested new venue and its beer rows only after admin approval", async () => {
