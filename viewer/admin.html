@@ -1016,7 +1016,8 @@
 
     async function handleCreateVenue(event) {
       event.preventDefault();
-      const existingVenueId = event.currentTarget.dataset.existingVenueId;
+      const formElement = event.currentTarget;
+      const existingVenueId = formElement.dataset.existingVenueId;
       if (existingVenueId) {
         selectedAdminVenueId = existingVenueId;
         const venue = adminVenues.find((item) => item.id === existingVenueId);
@@ -1028,7 +1029,7 @@
         return;
       }
 
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formElement);
       const body = Object.fromEntries(form.entries());
       try {
         setLocalNotice(adminCreateVenueStatus, "Creating venue...");
@@ -1041,8 +1042,8 @@
         selectedAdminVenueId = venue.id;
         adminVenueSearch.value = venue.name;
         renderAdminVenueOptions();
-        event.currentTarget.reset();
-        event.currentTarget.elements.state.value = "VIC";
+        formElement.reset();
+        formElement.elements.state.value = "VIC";
         clearGoogleVenueSelection(true);
         setLocalNotice(adminCreateVenueStatus, `${venue.name} was created and selected.`);
       } catch (error) {
@@ -1052,8 +1053,9 @@
 
     async function handleQueueSource(event) {
       event.preventDefault();
+      const formElement = event.currentTarget;
       const venue = getSelectedAdminVenue();
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formElement);
       try {
         if (!venue) {
           throw new Error("Choose a venue before queueing a source.");
@@ -1076,7 +1078,7 @@
             note: String(form.get("note") || "").trim() || null,
           }),
         });
-        event.currentTarget.reset();
+        formElement.reset();
         setLocalNotice(adminSourceQueueStatus, `Queued ${result.queueItem.extractedBeers.length} extracted beer item${result.queueItem.extractedBeers.length === 1 ? "" : "s"} for review.`);
         adminIngestionStatus.value = "pending_review";
         await loadAdminIngestionQueue();
@@ -1254,14 +1256,15 @@
 
     async function handleManagerAssign(event) {
       event.preventDefault();
-      const form = new FormData(event.currentTarget);
+      const formElement = event.currentTarget;
+      const form = new FormData(formElement);
       const body = Object.fromEntries(form.entries());
       try {
         await MelbBeerBusiness.apiFetch("/api/business/admin/venue-managers", {
           method: "POST",
           body: JSON.stringify(body),
         });
-        event.currentTarget.reset();
+        formElement.reset();
         MelbBeerBusiness.setStatus(statusEl, "Venue manager assigned.");
         await loadAdmin();
       } catch (error) {
@@ -1271,14 +1274,15 @@
 
     async function handleOutreach(event) {
       event.preventDefault();
-      const form = new FormData(event.currentTarget);
+      const formElement = event.currentTarget;
+      const form = new FormData(formElement);
       const body = Object.fromEntries(form.entries());
       try {
         await MelbBeerBusiness.apiFetch("/api/business/admin/venue-outreach", {
           method: "POST",
           body: JSON.stringify(body),
         });
-        event.currentTarget.reset();
+        formElement.reset();
         MelbBeerBusiness.setStatus(statusEl, "Partner outreach saved.");
         await loadAdmin();
       } catch (error) {

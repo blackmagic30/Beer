@@ -1137,6 +1137,9 @@ describe("production hardening", () => {
     expect(adminHtml).toContain("/api/admin/captures/manual");
     expect(adminHtml).toContain("/api/admin/ingestions/queue");
     expect(adminHtml).toContain("id=\"adminBeerRows\"");
+    expect(adminHtml).toContain("const formElement = event.currentTarget");
+    expect(adminHtml).toContain("new FormData(formElement)");
+    expect(adminHtml).not.toContain("event.currentTarget.reset()");
     expect(adminHtml).not.toContain("Admin secret");
     expect(adminHtml).not.toContain("Unlock admin actions");
     expect(adminHtml).not.toContain("x-admin-secret");
