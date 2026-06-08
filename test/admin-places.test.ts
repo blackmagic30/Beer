@@ -150,4 +150,34 @@ describe("admin Google Places venue lookup", () => {
       }),
     });
   });
+
+  it("returns a clear admin-safe error when the menu OCR provider fails", async () => {
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      "test-openai-key",
+      undefined,
+    );
+    (service as unknown as {
+      openai: { responses: { create: ReturnType<typeof vi.fn> } };
+    }).openai = {
+      responses: {
+        create: vi.fn(async () => {
+          const error = new Error("model_not_found sk-test-secret");
+          Object.assign(error, { status: 404, code: "model_not_found", type: "invalid_request_error" });
+          throw error;
+        }),
+      },
+    };
+
+    await expect(service.ocrMenuPhoto({
+      venueNameHint: "Test Venue",
+      imageDataUrl: "data:image/jpeg;base64,AAAA",
+    })).rejects.toMatchObject({
+      statusCode: 502,
+      message: "Menu OCR provider failed. Try a clearer or smaller photo, or enter the beer rows manually.",
+    });
+  });
 });

@@ -313,8 +313,18 @@
 
     function renderRows(rows, empty = "No data yet") {
       return rows.length
-        ? rows.map((row) => `<div class="listItem"><strong>${row.key || row.label}</strong><div class="muted">${row.count ?? row.value ?? ""}</div></div>`).join("")
+        ? rows.map((row) => `<div class="listItem"><strong>${escapeHtml(row.label || row.key)}</strong><div class="muted">${escapeHtml(row.count ?? row.value ?? "")}</div></div>`).join("")
         : `<div class="listItem muted">${empty}</div>`;
+    }
+
+    function formatBucketSummary(rows, empty = "No data yet") {
+      return rows.length
+        ? rows.map((row) => {
+          const label = row.label || row.key || "Unknown";
+          const title = row.key && row.key !== label ? ` title="Venue ID: ${escapeHtml(row.key)}"` : "";
+          return `<span${title}>${escapeHtml(label)}: ${escapeHtml(row.count ?? row.value ?? "")}</span>`;
+        }).join(" · ")
+        : escapeHtml(empty);
     }
 
     let adminDataToolsStatus = {
@@ -357,10 +367,10 @@
         </div>
       `).join("");
       demandSignals.innerHTML = [
-        `<div class="listItem"><strong>Top searched beers</strong><div class="muted">${data.topSearchedBeers.length ? data.topSearchedBeers.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No beer searches yet"}</div></div>`,
-        `<div class="listItem"><strong>Top searched suburbs</strong><div class="muted">${data.topSearchedSuburbs.length ? data.topSearchedSuburbs.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No suburb searches yet"}</div></div>`,
-        `<div class="listItem"><strong>Top clicked venues</strong><div class="muted">${data.topClickedVenues.length ? data.topClickedVenues.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No venue clicks yet"}</div></div>`,
-        `<div class="listItem"><strong>High-demand venues with stale/missing data</strong><div class="muted">${data.highDemandVenuesWithStaleOrMissingData.length ? data.highDemandVenuesWithStaleOrMissingData.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No stale demand yet"}</div></div>`,
+        `<div class="listItem"><strong>Top searched beers</strong><div class="muted">${formatBucketSummary(data.topSearchedBeers, "No beer searches yet")}</div></div>`,
+        `<div class="listItem"><strong>Top searched suburbs</strong><div class="muted">${formatBucketSummary(data.topSearchedSuburbs, "No suburb searches yet")}</div></div>`,
+        `<div class="listItem"><strong>Top clicked venues</strong><div class="muted">${formatBucketSummary(data.topClickedVenues, "No venue clicks yet")}</div></div>`,
+        `<div class="listItem"><strong>High-demand venues with stale/missing data</strong><div class="muted">${formatBucketSummary(data.highDemandVenuesWithStaleOrMissingData, "No stale demand yet")}</div></div>`,
       ].join("");
     }
 
@@ -379,8 +389,8 @@
         renderMetric("Feedback", queues.feedback.length),
       ].join("");
       fieldTestSignals.innerHTML = [
-        `<div class="listItem"><strong>Top clicked venues today</strong><div class="muted">${data.topClickedVenues.length ? data.topClickedVenues.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No venue clicks today"}</div></div>`,
-        `<div class="listItem"><strong>Top searched beers today</strong><div class="muted">${data.topSearchedBeers.length ? data.topSearchedBeers.map((row) => `${row.key}: ${row.count}`).join(" · ") : "No beer searches today"}</div></div>`,
+        `<div class="listItem"><strong>Top clicked venues today</strong><div class="muted">${formatBucketSummary(data.topClickedVenues, "No venue clicks today")}</div></div>`,
+        `<div class="listItem"><strong>Top searched beers today</strong><div class="muted">${formatBucketSummary(data.topSearchedBeers, "No beer searches today")}</div></div>`,
       ].join("");
       fieldTestPanel.hidden = !MelbBeerBusiness.isFieldTestMode();
     }

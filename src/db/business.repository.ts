@@ -416,6 +416,12 @@ export interface BarProfile {
   updatedAt: string;
 }
 
+export interface AnalyticsBucket {
+  key: string;
+  count: number;
+  label?: string | null;
+}
+
 export interface BarBeer {
   id: string;
   barId: string;
@@ -4651,7 +4657,7 @@ export class BusinessRepository {
       return Number(row?.count ?? 0);
     };
     const grouped = (sql: string, values: unknown[] = []) =>
-      this.database.prepare(sql).all(...values) as Array<{ key: string; count: number }>;
+      this.database.prepare(sql).all(...values) as AnalyticsBucket[];
     const rangeClause = monthRange ? "AND created_at >= ? AND created_at < ?" : "";
     const rangeValues = monthRange ? [monthRange.startIso, monthRange.endIso] : [];
     const eventAreaClause = input.area ? "AND lower(COALESCE(suburb, '')) = lower(?)" : "";
@@ -4964,10 +4970,22 @@ export class BusinessRepository {
     return Number(row?.count ?? 0);
   }
 
+  private venueLabelExpression(keyExpression: string, metadataExpression = "NULL"): string {
+    return `COALESCE(
+      NULLIF(${metadataExpression}, ''),
+      (SELECT name FROM venue_profiles profile WHERE profile.venue_id = ${keyExpression} LIMIT 1),
+      (SELECT venue_name FROM venue_location_cache location WHERE location.venue_id = ${keyExpression} LIMIT 1),
+      (SELECT venue_name FROM venue_price_records record WHERE record.venue_id = ${keyExpression} ORDER BY last_verified_at DESC LIMIT 1),
+      (SELECT venue_name FROM venue_requests request WHERE request.venue_id = ${keyExpression} ORDER BY created_at DESC LIMIT 1),
+      (SELECT venue_name FROM missions mission WHERE mission.venue_id = ${keyExpression} ORDER BY updated_at DESC LIMIT 1),
+      ${keyExpression}
+    )`;
+  }
+
   getAnalyticsPreview(): {
-    topSearchedBeers: Array<{ key: string; count: number }>;
-    topClickedVenues: Array<{ key: string; count: number }>;
-    topSuburbs: Array<{ key: string; count: number }>;
+    topSearchedBeers: AnalyticsBucket[];
+    topClickedVenues: AnalyticsBucket[];
+    topSuburbs: AnalyticsBucket[];
     missionConversionCount: number;
   } {
     const grouped = (eventTypes: string | string[], column: "beer_id" | "venue_id" | "suburb") => {
@@ -4983,7 +5001,33 @@ export class BusinessRepository {
            ORDER BY count DESC
            LIMIT 10`,
         )
-        .all(...types) as Array<{ key: string; count: number }>;
+        .all(...types) as AnalyticsBucket[];
+    };
+    const groupedVenues = (eventTypes: string | string[], limit = 10) => {
+      const types = Array.isArray(eventTypes) ? eventTypes : [eventTypes];
+      const placeholders = types.map(() => "?").join(", ");
+
+      return this.database
+        .prepare(
+          `WITH grouped AS (
+             SELECT venue_id AS key,
+                    count(*) AS count,
+                    max(json_extract(metadata_json, '$.venueName')) AS metadata_label
+               FROM events
+              WHERE event_type IN (${placeholders})
+                AND venue_id IS NOT NULL
+                AND venue_id != ''
+              GROUP BY venue_id
+              ORDER BY count DESC
+              LIMIT ?
+           )
+           SELECT key,
+                  count,
+                  ${this.venueLabelExpression("key", "metadata_label")} AS label
+             FROM grouped
+            ORDER BY count DESC`,
+        )
+        .all(...types, limit) as AnalyticsBucket[];
     };
 
     const missionRow = this.database
@@ -4992,7 +5036,7 @@ export class BusinessRepository {
 
     return {
       topSearchedBeers: grouped("beer_search_performed", "beer_id"),
-      topClickedVenues: grouped(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"], "venue_id"),
+      topClickedVenues: groupedVenues(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"]),
       topSuburbs: grouped(
         [
           "search_performed",
@@ -5050,6 +5094,30 @@ export class BusinessRepository {
         [...eventTypes, ...rangeValues, limit],
       );
     };
+    const topVenueEventGroup = (eventTypes: string[], limit = 8) => {
+      const placeholders = eventTypes.map(() => "?").join(", ");
+      return grouped(
+        `WITH grouped AS (
+           SELECT venue_id AS key,
+                  count(*) AS count,
+                  max(json_extract(metadata_json, '$.venueName')) AS metadata_label
+             FROM events
+            WHERE event_type IN (${placeholders})
+              AND venue_id IS NOT NULL
+              AND venue_id != ''
+              ${rangeFor("created_at")}
+            GROUP BY venue_id
+            ORDER BY count DESC
+            LIMIT ?
+         )
+         SELECT key,
+                count,
+                ${this.venueLabelExpression("key", "metadata_label")} AS label
+           FROM grouped
+          ORDER BY count DESC`,
+        [...eventTypes, ...rangeValues, limit],
+      );
+    };
 
     const totalUsers = count("SELECT count(*) AS count FROM accounts");
     const newUsers = count(`SELECT count(*) AS count FROM accounts WHERE 1=1 ${rangeClause}`, rangeValues);
@@ -5097,17 +5165,29 @@ export class BusinessRepository {
        LIMIT 8`,
     );
     const highDemandMissing = grouped(
-      `SELECT e.venue_id AS key, count(*) AS count
-       FROM events e
-       LEFT JOIN venue_price_records r ON r.venue_id = e.venue_id
-       WHERE e.event_type IN ('venue_card_viewed', 'venue_detail_opened', 'price_view_revealed')
-         AND e.venue_id IS NOT NULL
-         AND e.venue_id != ''
-         ${rangeFor("e.created_at")}
-       GROUP BY e.venue_id
-       HAVING max(r.last_verified_at) IS NULL OR max(r.last_verified_at) < ?
-       ORDER BY count DESC
-       LIMIT 8`,
+      `WITH grouped AS (
+         SELECT e.venue_id AS key,
+                count(*) AS count,
+                max(json_extract(e.metadata_json, '$.venueName')) AS metadata_label
+           FROM events e
+          WHERE e.event_type IN ('venue_card_viewed', 'venue_detail_opened', 'price_view_revealed')
+            AND e.venue_id IS NOT NULL
+            AND e.venue_id != ''
+            ${rangeFor("e.created_at")}
+          GROUP BY e.venue_id
+       ),
+       stale AS (
+         SELECT grouped.*,
+                (SELECT max(last_verified_at) FROM venue_price_records record WHERE record.venue_id = grouped.key) AS latest_verified_at
+           FROM grouped
+       )
+       SELECT key,
+              count,
+              ${this.venueLabelExpression("key", "metadata_label")} AS label
+         FROM stale
+        WHERE latest_verified_at IS NULL OR latest_verified_at < ?
+        ORDER BY count DESC
+        LIMIT 8`,
       [...rangeValues, input.staleBefore],
     );
 
@@ -5186,7 +5266,7 @@ export class BusinessRepository {
       })),
       topSearchedBeers: topEventGroup(["beer_search_performed"], "beer_id"),
       topSearchedSuburbs: topEventGroup(["search_performed", "suburb_search_performed", "beer_search_performed"], "suburb"),
-      topClickedVenues: topEventGroup(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"], "venue_id"),
+      topClickedVenues: topVenueEventGroup(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"]),
       topVenuesNeedingData,
       highDemandVenuesWithStaleOrMissingData: highDemandMissing,
     };

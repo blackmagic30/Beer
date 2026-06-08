@@ -2941,14 +2941,42 @@ describe("business demo contribution model", () => {
       venueId: "venue-1",
       beerId: null,
       suburb: "Richmond",
-      metadata: {},
+      metadata: { venueName: "Corner Hotel" },
       createdAt: NOW,
     });
 
     const preview = repository.getAnalyticsPreview();
     expect(preview.topSearchedBeers).toEqual([{ key: "carlton_draft", count: 1 }]);
-    expect(preview.topClickedVenues).toEqual([{ key: "venue-1", count: 1 }]);
+    expect(preview.topClickedVenues).toEqual([{ key: "venue-1", label: "Corner Hotel", count: 1 }]);
     expect(preview.topSuburbs).toEqual([{ key: "Richmond", count: 2 }]);
+  });
+
+  it("labels high-demand stale venue buckets for admin review", () => {
+    const { repository } = createRepository();
+
+    repository.recordEvent({
+      id: "event-stale-demand",
+      userId: null,
+      anonymousSessionId: "anon-stale-demand",
+      eventType: "venue_detail_opened",
+      venueId: "venue-stale-demand",
+      beerId: null,
+      suburb: "Carlton",
+      metadata: { venueName: "Lagoon Bar" },
+      createdAt: NOW,
+    });
+
+    const dashboard = repository.getAdminKpiDashboard({
+      since: null,
+      sevenDaysAgo: "2026-04-27T00:00:00.000Z",
+      thirtyDaysAgo: "2026-04-04T00:00:00.000Z",
+      staleBefore: "2026-02-04T00:00:00.000Z",
+      totalVenues: 1,
+    });
+
+    expect(dashboard.highDemandVenuesWithStaleOrMissingData).toEqual([
+      { key: "venue-stale-demand", label: "Lagoon Bar", count: 1 },
+    ]);
   });
 
   it("suppresses low-count analytics buckets through admin service views", () => {
@@ -3073,6 +3101,7 @@ describe("business demo contribution model", () => {
       beerId: null,
       suburb: "Richmond",
       metadata: {
+        venueName: "Analytics Venue",
         source: "marker",
         interactionType: "map_marker",
         listedBeerCount: 3,
@@ -3099,7 +3128,7 @@ describe("business demo contribution model", () => {
     const metadata = JSON.parse(stored?.metadata_json ?? "{}") as Record<string, unknown>;
 
     expect(dashboard.topSearchedBeers).toEqual([{ key: "stone_and_wood_pacific_ale", count: 1 }]);
-    expect(dashboard.topClickedVenues).toEqual([{ key: "analytics-venue-1", count: 1 }]);
+    expect(dashboard.topClickedVenues).toEqual([{ key: "analytics-venue-1", label: "Analytics Venue", count: 1 }]);
     expect(venueAnalytics.markerClicks).toBe(1);
     expect(venueAnalytics.barLookups).toBe(1);
     expect(venueAnalytics.areaBeerSearches).toEqual([{ key: "stone_and_wood_pacific_ale", count: 1 }]);

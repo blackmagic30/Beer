@@ -113,6 +113,22 @@ function parseJsonResponse(text: string): unknown {
   return JSON.parse(withoutFence);
 }
 
+function getOcrProviderErrorDetails(error: unknown): Record<string, unknown> {
+  const record = isRecord(error) ? error : {};
+  return {
+    message: error instanceof Error ? redactSecrets(error.message) : "Unknown OCR provider error",
+    status: typeof record.status === "number" ? record.status : undefined,
+    code: typeof record.code === "string" ? record.code : undefined,
+    type: typeof record.type === "string" ? record.type : undefined,
+    requestId:
+      typeof record.request_id === "string"
+        ? record.request_id
+        : typeof record.requestID === "string"
+          ? record.requestID
+          : undefined,
+  };
+}
+
 function normalizeConfidence(value: unknown, fallback: number | null = null): number | null {
   if (value == null || value === "") {
     return fallback;
@@ -736,31 +752,50 @@ export class AdminService {
       input.venueNameHint ? `Venue hint: ${input.venueNameHint}` : "Venue hint: none",
     ].join("\n");
 
-    const response = await this.openai.responses.create({
-      model: "gpt-4.1-mini",
-      input: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: prompt,
-            },
-            {
-              type: "input_image",
-              image_url: input.imageDataUrl,
-              detail: "auto",
-            },
-          ],
-        },
-      ],
-    });
+    let response: Awaited<ReturnType<OpenAI["responses"]["create"]>>;
+    try {
+      response = await this.openai.responses.create({
+        model: "gpt-4.1-mini",
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: prompt,
+              },
+              {
+                type: "input_image",
+                image_url: input.imageDataUrl,
+                detail: "auto",
+              },
+            ],
+          },
+        ],
+      });
+    } catch (error) {
+      const details = getOcrProviderErrorDetails(error);
+      logger.warn("Menu OCR provider request failed", details);
+      throw new ExternalServiceError(
+        "Menu OCR provider failed. Try a clearer or smaller photo, or enter the beer rows manually.",
+        details,
+      );
+    }
 
     if (!response.output_text || response.output_text.trim().length === 0) {
       throw new ExternalServiceError("Menu OCR returned an empty response");
     }
 
-    const parsed = normalizeOcrResponse(parseJsonResponse(response.output_text));
+    let parsedPayload: unknown;
+    try {
+      parsedPayload = parseJsonResponse(response.output_text);
+    } catch (error) {
+      throw new ExternalServiceError("Menu OCR returned unreadable output. Try again or enter the beer rows manually.", {
+        message: error instanceof Error ? redactSecrets(error.message) : "Invalid JSON response",
+      });
+    }
+
+    const parsed = normalizeOcrResponse(parsedPayload);
     const beers = parsed.beers.map((beer) => {
       const normalized = buildManualBeerEntry({
         name: beer.name,
