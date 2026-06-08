@@ -37,6 +37,13 @@ import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { redactSecrets } from "../../lib/redact.js";
 import { DEFAULT_REPORT_TIMEZONE, getPreviousZonedMonthKey, getZonedMonthKey, getZonedMonthRangeIso } from "../../lib/time.js";
+import {
+  type GoogleAddressComponent,
+  type GooglePlaceCandidate,
+  hasStrongBarOrPubNameSignal,
+  isExcludedVenueName,
+  shouldImportBarOrPubPlace,
+} from "../../lib/venue-directory.js";
 
 import type {
   AccountPreferencesInput,
@@ -120,6 +127,30 @@ interface GoogleGeocodeResponse {
   }>;
 }
 
+interface GooglePlacesSearchResponse {
+  places?: GooglePlaceCandidate[];
+  error?: { message?: string; code?: number; status?: string };
+}
+
+interface UserGoogleVenueLookup {
+  googlePlaceId: string;
+  name: string;
+  address: string;
+  suburb: string | null;
+  state: string | null;
+  postcode: string | null;
+  phone: string | null;
+  website: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  businessStatus: string | null;
+  primaryType: string | null;
+  types: string[];
+  recommended: boolean;
+  alreadyExists: boolean;
+  existingVenue: Pick<VenueRow, "id" | "name" | "address" | "suburb"> | null;
+}
+
 const AUTO_MISSION_VENUE_LIMIT = 2_000;
 const AUTO_MISSION_TARGET_BEERS = [
   SUPPORTED_BEERS.guinness,
@@ -127,6 +158,8 @@ const AUTO_MISSION_TARGET_BEERS = [
   SUPPORTED_BEERS.stone_and_wood,
 ] as const;
 const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
+const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
+const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
 
 interface StripeEvent {
   id: string;
@@ -176,6 +209,55 @@ function endOfMonthIso(baseIso: string): string {
 
 function monthKeyFromIso(value: string): string {
   return value.slice(0, 7);
+}
+
+function getGoogleVenueAddressComponent(
+  components: GoogleAddressComponent[] | undefined,
+  type: string,
+  value: "longText" | "shortText" = "longText",
+): string | null {
+  const component = components?.find((item) => item.types?.includes(type));
+  const text = component?.[value]?.trim() || component?.longText?.trim() || component?.shortText?.trim();
+  return text && text.length > 0 ? text : null;
+}
+
+function cleanGoogleVenueAddress(value: string | null | undefined): string {
+  return String(value ?? "")
+    .replace(/,\s*Australia$/i, "")
+    .trim();
+}
+
+function getGoogleVenueTypes(place: GooglePlaceCandidate): string[] {
+  return [
+    place.primaryType,
+    ...(place.types ?? []),
+  ]
+    .filter((type): type is string => Boolean(type))
+    .map((type) => type.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isAllowedUserGoogleVenue(place: GooglePlaceCandidate): boolean {
+  const name = place.displayName?.text?.trim() ?? "";
+  const address = place.formattedAddress?.trim() ?? "";
+  const businessStatus = place.businessStatus ?? "OPERATIONAL";
+
+  if (!name || !address || businessStatus === "CLOSED_PERMANENTLY") {
+    return false;
+  }
+
+  if (isExcludedVenueName(name)) {
+    return false;
+  }
+
+  return getGoogleVenueTypes(place).some((type) => USER_GOOGLE_VENUE_TYPE_SET.has(type));
+}
+
+function hasUserVenuePlaceSignal(place: GooglePlaceCandidate): boolean {
+  const name = place.displayName?.text?.trim() ?? "";
+  return shouldImportBarOrPubPlace(place) ||
+    hasStrongBarOrPubNameSignal(name) ||
+    isAllowedUserGoogleVenue(place);
 }
 
 function roundPoints(value: number): number {
@@ -2744,6 +2826,7 @@ export class BusinessService {
     }
 
     return {
+      googlePlaceId: input.newVenue.googlePlaceId,
       name: input.newVenue.name.trim(),
       address: input.newVenue.address,
       suburb: input.newVenue.suburb ?? input.suburb,
@@ -2787,7 +2870,7 @@ export class BusinessService {
     return Array.from(merged.values()).slice(0, limit);
   }
 
-  createSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
+  private assertAccountCanSubmit(account: BusinessAccount): void {
     if (account.status === "suspended") {
       throw new AppError("Suspended accounts cannot submit reward-eligible data.", 403);
     }
@@ -2797,6 +2880,72 @@ export class BusinessService {
     if (!account.ageConfirmedAt) {
       throw new AppError("Please confirm you are 18+ before submitting venue data.", 403);
     }
+  }
+
+  private createVerifiedGoogleVenueId(googlePlaceId: string): string {
+    const hash = crypto.createHash("sha256").update(googlePlaceId).digest("hex").slice(0, 24);
+    return `venue-google-${hash}`;
+  }
+
+  private async withVerifiedPendingGoogleVenue(
+    account: BusinessAccount,
+    input: CreateSubmissionInput,
+  ): Promise<CreateSubmissionInput> {
+    if (!input.newVenue) {
+      return input;
+    }
+
+    const googlePlaceId = input.newVenue.googlePlaceId?.trim();
+    if (!googlePlaceId) {
+      throw new AppError("Choose the new venue from Google Maps before submitting. Manual entry is only available after a Google venue is selected.", 400);
+    }
+
+    const result = await this.getVenuePlaceForSubmission(account, googlePlaceId);
+    if (!result.configured) {
+      throw new AppError("New venue submissions require Google Places lookup. Set GOOGLE_PLACES_API_KEY on the server.", 503);
+    }
+
+    const place = result.place;
+    if (!place) {
+      throw new AppError("That Google result is not eligible for Pint Path. Choose a bar, pub, restaurant, brewery, or night club.", 400);
+    }
+
+    if (place.alreadyExists && place.existingVenue) {
+      const suburbCopy = place.existingVenue.suburb ? ` in ${place.existingVenue.suburb}` : "";
+      throw new AppError(
+        `${place.existingVenue.name}${suburbCopy} is already on Pint Path. Search and choose the existing venue, then submit the beer or happy-hour data there.`,
+        409,
+      );
+    }
+
+    return {
+      ...input,
+      venueId: this.createVerifiedGoogleVenueId(place.googlePlaceId),
+      venueName: place.name,
+      suburb: place.suburb,
+      newVenue: {
+        googlePlaceId: place.googlePlaceId,
+        name: place.name,
+        address: place.address,
+        suburb: place.suburb,
+        state: place.state ?? "VIC",
+        postcode: place.postcode,
+        phone: place.phone,
+        website: place.website,
+        latitude: place.latitude,
+        longitude: place.longitude,
+      },
+    };
+  }
+
+  async createUserSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
+    this.assertAccountCanSubmit(account);
+    const verifiedInput = await this.withVerifiedPendingGoogleVenue(account, input);
+    return this.createSubmission(account, verifiedInput);
+  }
+
+  createSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
+    this.assertAccountCanSubmit(account);
 
     if (input.clientSubmissionId) {
       const existingSubmission = this.repository.getSubmissionByClientSubmissionId(account.id, input.clientSubmissionId);
@@ -3835,6 +3984,276 @@ export class BusinessService {
     return {
       ...venue,
       ...this.getPublicVenueTierMetadata(venue.id),
+    };
+  }
+
+  private async fetchGoogleVenuePlaces<T>(
+    url: string,
+    init: RequestInit & { fieldMask: string },
+  ): Promise<T> {
+    const apiKey = this.config.GOOGLE_PLACES_API_KEY;
+    if (!apiKey) {
+      throw new AppError("Google Places lookup is not configured. Set GOOGLE_PLACES_API_KEY on the server.", 503);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6500);
+    const { fieldMask, headers, ...requestInit } = init;
+    try {
+      const response = await fetch(url, {
+        ...requestInit,
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": fieldMask,
+          ...(headers ?? {}),
+        },
+      });
+
+      const payload = await response.json().catch(() => ({})) as T & GooglePlacesSearchResponse;
+      if (!response.ok) {
+        throw new ExternalServiceError("Google Places lookup failed", {
+          status: response.status,
+          message: payload.error?.message ? redactSecrets(payload.error.message) : response.statusText,
+        });
+      }
+
+      return payload as T;
+    } catch (error) {
+      if (error instanceof AppError || error instanceof ExternalServiceError) {
+        throw error;
+      }
+
+      logger.warn("Google Places submit lookup failed", {
+        error: error instanceof Error ? redactSecrets(error.message) : "unknown",
+      });
+      throw new ExternalServiceError("Google Places lookup failed. Try again or use manual entry.");
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async findExistingUserGoogleVenue(place: GooglePlaceCandidate): Promise<UserGoogleVenueLookup["existingVenue"]> {
+    const columns = "id, name, address, suburb";
+    if (this.supabase && place.id) {
+      const { data, error } = await this.supabase
+        .from("venues")
+        .select(columns)
+        .eq("google_place_id", place.id)
+        .maybeSingle();
+
+      if (error) {
+        logger.warn("Failed to check user venue duplicate by Google place ID", {
+          error: redactSecrets(error.message),
+        });
+      } else if (data) {
+        return data as UserGoogleVenueLookup["existingVenue"];
+      }
+    }
+
+    const name = place.displayName?.text?.trim();
+    const address = cleanGoogleVenueAddress(place.formattedAddress);
+    if (this.supabase && name && address) {
+      const { data, error } = await this.supabase
+        .from("venues")
+        .select(columns)
+        .eq("name", name)
+        .eq("address", address)
+        .maybeSingle();
+
+      if (error) {
+        logger.warn("Failed to check user venue duplicate by name and address", {
+          error: redactSecrets(error.message),
+        });
+      } else if (data) {
+        return data as UserGoogleVenueLookup["existingVenue"];
+      }
+    }
+
+    if (!name) {
+      return null;
+    }
+
+    const suburb =
+      getGoogleVenueAddressComponent(place.addressComponents, "locality") ??
+      getGoogleVenueAddressComponent(place.addressComponents, "postal_town") ??
+      getGoogleVenueAddressComponent(place.addressComponents, "sublocality") ??
+      getGoogleVenueAddressComponent(place.addressComponents, "sublocality_level_1") ??
+      getGoogleVenueAddressComponent(place.addressComponents, "neighborhood");
+    const duplicate = this.repository.findLikelyVenueDuplicate({ name, suburb });
+    return duplicate
+      ? {
+          id: duplicate.venueId,
+          name: duplicate.venueName,
+          address: null,
+          suburb: duplicate.suburb,
+        }
+      : null;
+  }
+
+  private async normalizeUserGoogleVenueLookup(place: GooglePlaceCandidate): Promise<UserGoogleVenueLookup | null> {
+    const googlePlaceId = place.id?.trim();
+    const name = place.displayName?.text?.trim();
+    const address = cleanGoogleVenueAddress(place.formattedAddress);
+    const latitude = place.location?.latitude;
+    const longitude = place.location?.longitude;
+
+    if (!googlePlaceId || !name || !address) {
+      return null;
+    }
+
+    const suburb =
+      getGoogleVenueAddressComponent(place.addressComponents, "locality") ??
+      getGoogleVenueAddressComponent(place.addressComponents, "postal_town") ??
+      getGoogleVenueAddressComponent(place.addressComponents, "sublocality") ??
+      getGoogleVenueAddressComponent(place.addressComponents, "sublocality_level_1") ??
+      getGoogleVenueAddressComponent(place.addressComponents, "neighborhood");
+    const state = getGoogleVenueAddressComponent(place.addressComponents, "administrative_area_level_1", "shortText");
+    const postcode = getGoogleVenueAddressComponent(place.addressComponents, "postal_code");
+    const existingVenue = await this.findExistingUserGoogleVenue(place);
+
+    return {
+      googlePlaceId,
+      name,
+      address,
+      suburb,
+      state,
+      postcode,
+      phone: place.internationalPhoneNumber?.trim() || place.nationalPhoneNumber?.trim() || null,
+      website: place.websiteUri?.trim() || null,
+      latitude: typeof latitude === "number" ? latitude : null,
+      longitude: typeof longitude === "number" ? longitude : null,
+      businessStatus: place.businessStatus ?? null,
+      primaryType: place.primaryType ?? null,
+      types: place.types ?? [],
+      recommended: hasUserVenuePlaceSignal(place),
+      alreadyExists: Boolean(existingVenue),
+      existingVenue,
+    };
+  }
+
+  async searchVenuePlacesForSubmission(_account: BusinessAccount, query: string): Promise<{
+    configured: boolean;
+    places: UserGoogleVenueLookup[];
+  }> {
+    const normalizedQuery = query.trim().replace(/\s+/g, " ");
+    if (normalizedQuery.length < 2) {
+      throw new AppError("Search a venue name, suburb, or address.", 400);
+    }
+
+    if (!this.config.GOOGLE_PLACES_API_KEY) {
+      return { configured: false, places: [] };
+    }
+
+    const textQuery = /(?:melbourne|victoria|\bvic\b|australia)/i.test(normalizedQuery)
+      ? normalizedQuery
+      : `${normalizedQuery}, Melbourne VIC, Australia`;
+    const searchByType = async (includedType: typeof USER_GOOGLE_VENUE_TYPES[number]) => {
+      const payload = await this.fetchGoogleVenuePlaces<GooglePlacesSearchResponse>(
+        "https://places.googleapis.com/v1/places:searchText",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            textQuery,
+            pageSize: 5,
+            languageCode: "en-AU",
+            regionCode: "AU",
+            includedType,
+            strictTypeFiltering: true,
+            includePureServiceAreaBusinesses: false,
+            locationBias: {
+              rectangle: {
+                low: { latitude: -38.5, longitude: 144.3 },
+                high: { latitude: -37.4, longitude: 145.6 },
+              },
+            },
+          }),
+          fieldMask: [
+            "places.id",
+            "places.displayName",
+            "places.formattedAddress",
+            "places.addressComponents",
+            "places.location",
+            "places.businessStatus",
+            "places.primaryType",
+            "places.types",
+          ].join(","),
+        },
+      );
+
+      return payload.places ?? [];
+    };
+
+    const typedResults = await Promise.all(
+      USER_GOOGLE_VENUE_TYPES.map((includedType) => searchByType(includedType)),
+    );
+    const candidatesById = new Map<string, GooglePlaceCandidate>();
+    for (const place of typedResults.flat()) {
+      if (!place.id || !isAllowedUserGoogleVenue(place)) {
+        continue;
+      }
+
+      if (!candidatesById.has(place.id)) {
+        candidatesById.set(place.id, place);
+      }
+    }
+
+    const ranked = Array.from(candidatesById.values()).sort((left, right) => {
+      const leftRecommended = hasUserVenuePlaceSignal(left) ? 1 : 0;
+      const rightRecommended = hasUserVenuePlaceSignal(right) ? 1 : 0;
+      if (leftRecommended !== rightRecommended) {
+        return rightRecommended - leftRecommended;
+      }
+
+      return (left.displayName?.text ?? "").localeCompare(right.displayName?.text ?? "");
+    });
+    const normalized = await Promise.all(ranked.slice(0, 8).map((place) => this.normalizeUserGoogleVenueLookup(place)));
+
+    return {
+      configured: true,
+      places: normalized.filter((place): place is UserGoogleVenueLookup => Boolean(place)),
+    };
+  }
+
+  async getVenuePlaceForSubmission(_account: BusinessAccount, placeId: string): Promise<{
+    configured: boolean;
+    place: UserGoogleVenueLookup | null;
+  }> {
+    const normalizedPlaceId = placeId.trim();
+    if (!normalizedPlaceId) {
+      throw new AppError("Choose a Google venue result first.", 400);
+    }
+
+    if (!this.config.GOOGLE_PLACES_API_KEY) {
+      return { configured: false, place: null };
+    }
+
+    const payload = await this.fetchGoogleVenuePlaces<GooglePlaceCandidate>(
+      `https://places.googleapis.com/v1/places/${encodeURIComponent(normalizedPlaceId)}`,
+      {
+        method: "GET",
+        fieldMask: [
+          "id",
+          "displayName",
+          "formattedAddress",
+          "addressComponents",
+          "location",
+          "nationalPhoneNumber",
+          "internationalPhoneNumber",
+          "websiteUri",
+          "businessStatus",
+          "primaryType",
+          "types",
+        ].join(","),
+      },
+    );
+
+    return {
+      configured: true,
+      place: isAllowedUserGoogleVenue(payload)
+        ? await this.normalizeUserGoogleVenueLookup(payload)
+        : null,
     };
   }
 

@@ -2683,6 +2683,189 @@ describe("business demo contribution model", () => {
     expect(updated?.contributionPointsCurrentMonth).toBe(0);
   });
 
+  it("filters and normalizes Google venue lookup results for user new-bar submissions", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      GOOGLE_PLACES_API_KEY: "test-google-places-key",
+    });
+    const user = createAccount(repository, "venue-lookup-user");
+    const googlePlace = {
+      id: "google-place-german-restaurant",
+      displayName: { text: "German Restaurant" },
+      formattedAddress: "650 Bridge Rd, Richmond VIC 3121, Australia",
+      addressComponents: [
+        { longText: "Richmond", shortText: "Richmond", types: ["locality"] },
+        { longText: "Victoria", shortText: "VIC", types: ["administrative_area_level_1"] },
+        { longText: "3121", shortText: "3121", types: ["postal_code"] },
+      ],
+      location: { latitude: -37.81931, longitude: 145.01123 },
+      businessStatus: "OPERATIONAL",
+      primaryType: "restaurant",
+      types: ["restaurant", "bar"],
+    };
+    const junkPlace = {
+      id: "google-place-shirt-shop",
+      displayName: { text: "Bridge Road T Shirt Shop" },
+      formattedAddress: "650 Bridge Rd, Richmond VIC 3121, Australia",
+      businessStatus: "OPERATIONAL",
+      primaryType: "clothing_store",
+      types: ["clothing_store", "store"],
+    };
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const urlText = String(url);
+      if (urlText.includes("places:searchText")) {
+        return new Response(JSON.stringify({ places: [googlePlace, junkPlace] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({
+        ...googlePlace,
+        nationalPhoneNumber: "(03) 9428 1234",
+        websiteUri: "https://example.com/german-restaurant",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const search = await service.searchVenuePlacesForSubmission(user, "German Restaurant 650 Bridge Rd");
+      expect(search.configured).toBe(true);
+      expect(search.places).toHaveLength(1);
+      expect(search.places[0]).toEqual(expect.objectContaining({
+        googlePlaceId: "google-place-german-restaurant",
+        name: "German Restaurant",
+        address: "650 Bridge Rd, Richmond VIC 3121",
+        suburb: "Richmond",
+        state: "VIC",
+        postcode: "3121",
+        latitude: -37.81931,
+        longitude: 145.01123,
+        alreadyExists: false,
+      }));
+
+      const detail = await service.getVenuePlaceForSubmission(user, "google-place-german-restaurant");
+      expect(detail.place).toEqual(expect.objectContaining({
+        phone: "(03) 9428 1234",
+        website: "https://example.com/german-restaurant",
+      }));
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://places.googleapis.com/v1/places:searchText",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "X-Goog-Api-Key": "test-google-places-key",
+          }),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("requires user new-venue submissions to verify a Google place server-side", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      GOOGLE_PLACES_API_KEY: "test-google-places-key",
+    });
+    const user = createAccount(repository, "locked-venue-submit-user");
+    const googlePlace = {
+      id: "google-place-locked-venue",
+      displayName: { text: "Locked Google Bar" },
+      formattedAddress: "12 Lock St, Fitzroy VIC 3065, Australia",
+      addressComponents: [
+        { longText: "Fitzroy", shortText: "Fitzroy", types: ["locality"] },
+        { longText: "Victoria", shortText: "VIC", types: ["administrative_area_level_1"] },
+        { longText: "3065", shortText: "3065", types: ["postal_code"] },
+      ],
+      location: { latitude: -37.798, longitude: 144.979 },
+      nationalPhoneNumber: "(03) 9000 1000",
+      websiteUri: "https://locked-google-bar.example.com",
+      businessStatus: "OPERATIONAL",
+      primaryType: "bar",
+      types: ["bar", "restaurant"],
+    };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(googlePlace), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const basePayload = {
+      venueId: "browser-tampered-id",
+      venueName: "T Shirt Shop Payload",
+      suburb: "Wrong",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: null,
+      sourcePhotoUrl: null,
+      notes: null,
+      uploadLocation: null,
+      items: [{
+        beerName: "Guinness",
+        servingSize: "pint",
+        price: 13,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    } as const;
+
+    try {
+      await expect(service.createUserSubmission(user, createSubmissionSchema.parse({
+        ...basePayload,
+        newVenue: {
+          googlePlaceId: null,
+          name: "Manual Only Venue",
+          address: "1 Manual St",
+          suburb: "Fitzroy",
+          state: "VIC",
+          postcode: "3065",
+          phone: null,
+          website: null,
+          latitude: -37.798,
+          longitude: 144.979,
+        },
+      }))).rejects.toThrow("Choose the new venue from Google Maps");
+
+      const result = await service.createUserSubmission(user, createSubmissionSchema.parse({
+        ...basePayload,
+        newVenue: {
+          googlePlaceId: "google-place-locked-venue",
+          name: "Tampered Browser Name",
+          address: "1 Wrong Road",
+          suburb: "Wrong",
+          state: "VIC",
+          postcode: "3000",
+          phone: null,
+          website: null,
+          latitude: null,
+          longitude: null,
+        },
+      }));
+
+      expect(result.submission.venueId).toMatch(/^venue-google-[a-f0-9]{24}$/);
+      expect(result.submission.venueName).toBe("Locked Google Bar");
+      expect(result.submission.suburb).toBe("Fitzroy");
+      expect(result.submission.pendingVenue).toEqual(expect.objectContaining({
+        googlePlaceId: "google-place-locked-venue",
+        name: "Locked Google Bar",
+        address: "12 Lock St, Fitzroy VIC 3065",
+        suburb: "Fitzroy",
+        postcode: "3065",
+        phone: "(03) 9000 1000",
+        website: "https://locked-google-bar.example.com",
+        latitude: -37.798,
+        longitude: 144.979,
+      }));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("sorts high-value missions by weighted points", () => {
     const { repository } = createRepository();
 

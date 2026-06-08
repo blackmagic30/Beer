@@ -212,6 +212,7 @@ export interface VenueLocationCache {
 }
 
 export interface PendingVenueDetails {
+  googlePlaceId: string | null;
   name: string;
   address: string | null;
   suburb: string | null;
@@ -1299,6 +1300,7 @@ function parsePendingVenueDetails(value: string | null | undefined): PendingVenu
     }
 
     return {
+      googlePlaceId: stringOrNull(parsed.googlePlaceId),
       name,
       address: stringOrNull(parsed.address),
       suburb: stringOrNull(parsed.suburb),

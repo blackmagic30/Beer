@@ -174,6 +174,7 @@ export const submissionItemSchema = z.object({
 });
 
 export const pendingSubmissionVenueSchema = z.object({
+  googlePlaceId: nullableTrimmedStringSchema.default(null),
   name: z.string().trim().min(1).max(180),
   address: nullableTrimmedStringSchema.default(null),
   suburb: nullableTrimmedStringSchema.default(null),
@@ -295,6 +296,10 @@ export const missionsQuerySchema = z.object({
 
 export const geocodeQuerySchema = z.object({
   q: z.string().trim().min(2).max(120),
+});
+
+export const venuePlaceSearchQuerySchema = z.object({
+  q: z.string().trim().min(2).max(160),
 });
 
 export const priceRecordsQuerySchema = z.object({

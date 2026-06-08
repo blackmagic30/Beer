@@ -46,13 +46,7 @@
       <section class="fieldTestConsole" aria-label="Field test readiness">
         <div class="fieldTestConsole__status">
           <span id="networkStatusPill" class="fieldStatusPill">Signal checking</span>
-          <span id="draftStatusPill" class="fieldStatusPill">Draft empty</span>
           <span id="locationStatusPill" class="fieldStatusPill">Location optional</span>
-        </div>
-        <div class="fieldTestConsole__actions">
-          <button id="saveDraftButton" class="button" type="button">Save draft</button>
-          <button id="restoreDraftButton" class="button" type="button">Restore draft</button>
-          <button id="clearDraftButton" class="button button--danger" type="button">Clear draft</button>
         </div>
       </section>
       <section id="submissionQueuePanel" class="queuedSubmissionsPanel is-hidden" aria-live="polite">
@@ -89,42 +83,52 @@
         </div>
         <div id="newVenuePanel" class="notice is-hidden" style="padding:16px;">
           <div class="submitSectionHeader">
-            <h3>New venue details</h3>
-            <p class="muted">Use the venue’s public business details. Coordinates are optional when you provide an address.</p>
+            <h3>Add a new venue</h3>
+            <p class="muted">Search Google Maps, choose the matching bar/pub/restaurant, then add the beer data you saw.</p>
           </div>
-          <div class="grid grid--two">
-            <label class="field">Venue name
-              <input id="newVenueName" type="text" maxlength="180" placeholder="Example: Moonlit Taproom" />
-            </label>
-            <label class="field">Suburb
-              <input id="newVenueSuburb" type="text" placeholder="Fitzroy" />
-            </label>
-          </div>
-          <label class="field">Address
-            <input id="newVenueAddress" type="text" placeholder="Street address or venue address from the menu" />
-            <span class="fieldHint">Address or venue coordinates are required before admin review.</span>
+          <label class="field">Find venue on Google Maps
+            <input id="newVenueGoogleSearch" type="search" maxlength="160" placeholder="Venue name, suburb, or street" autocomplete="off" autocapitalize="words" spellcheck="false" />
+            <span id="newVenueGoogleStatus" class="fieldHint">Results are filtered to venues that make sense for Pint Path.</span>
           </label>
-          <div class="grid grid--two">
-            <label class="field">Phone
-              <input id="newVenuePhone" type="tel" placeholder="Optional" />
-            </label>
-            <label class="field">Website
-              <input id="newVenueWebsite" type="url" placeholder="https://example.com" />
-            </label>
-          </div>
-          <div class="grid grid--two">
-            <label class="field">Latitude
-              <input id="newVenueLatitude" type="number" min="-90" max="90" step="0.000001" placeholder="-37.8136" />
-            </label>
-            <label class="field">Longitude
-              <input id="newVenueLongitude" type="number" min="-180" max="180" step="0.000001" placeholder="144.9631" />
-            </label>
-          </div>
           <div class="actionRow">
-            <button id="copyUploadLocationButton" class="button" type="button">Use saved location as venue coordinates</button>
-            <button id="geocodeNewVenueButton" class="button" type="button">Find coordinates from address</button>
+            <button id="newVenueGoogleButton" class="button" type="button">Search Google Maps</button>
+            <button id="clearNewVenueGoogleButton" class="button" type="button">Clear</button>
           </div>
-          <span id="newVenueHelp" class="fieldHint">Tip: stand at the venue. Pint Path captures location proof when you submit, and you can copy any saved proof into these coordinates.</span>
+          <div id="newVenueGoogleResults" class="adminGoogleVenueResults" aria-live="polite"></div>
+          <div id="newVenueSelectedSummary" class="notice notice--warning newVenueSelectedSummary">No new venue selected yet.</div>
+          <details id="newVenueManualDetails" class="newVenueManualDetails">
+            <summary>Review/edit selected details</summary>
+            <div class="grid grid--two">
+              <label class="field">Venue name
+                <input id="newVenueName" type="text" maxlength="180" placeholder="Example: Moonlit Taproom" />
+              </label>
+              <label class="field">Suburb
+                <input id="newVenueSuburb" type="text" placeholder="Fitzroy" />
+              </label>
+            </div>
+            <label class="field">Address
+              <input id="newVenueAddress" type="text" placeholder="Street address or venue address from the menu" />
+              <span class="fieldHint">Address or venue coordinates are required before admin review.</span>
+            </label>
+            <div class="grid grid--two">
+              <label class="field">Phone
+                <input id="newVenuePhone" type="tel" placeholder="Optional" />
+              </label>
+              <label class="field">Website
+                <input id="newVenueWebsite" type="url" placeholder="https://example.com" />
+              </label>
+            </div>
+            <input id="newVenuePostcode" type="hidden" />
+            <div class="grid grid--two">
+              <label class="field">Latitude
+                <input id="newVenueLatitude" type="number" min="-90" max="90" step="0.000001" placeholder="-37.8136" />
+              </label>
+              <label class="field">Longitude
+                <input id="newVenueLongitude" type="number" min="-180" max="180" step="0.000001" placeholder="144.9631" />
+              </label>
+            </div>
+          </details>
+          <span id="newVenueHelp" class="fieldHint">Pick the best Google result first. Manual edits are reviewed, but the venue type is verified from Google.</span>
         </div>
         <label class="field">Submission type
           <select id="submissionTypeSelect" name="submissionType">
@@ -189,10 +193,12 @@
     let venues = [];
     let venueSearchTimer = null;
     let venueSearchRequestId = 0;
+    let newVenueGoogleSearchTimer = null;
     let lastVenueQuery = "";
     let draftSaveTimer = null;
     let uploadLocation = null;
     let isNewVenueMode = false;
+    let selectedNewVenueGooglePlace = null;
     const UPLOAD_LOCATION_STORAGE_KEY = "pintPathUploadLocationProof";
     const FIELD_DRAFT_STORAGE_KEY = "pintPathSubmitDraft";
     const SUBMISSION_QUEUE_STORAGE_KEY = "pintPathQueuedSubmissions";
@@ -208,6 +214,7 @@
     const VENUE_SEARCH_LIMIT = 12;
     const VENUE_QUERY_MIN_LENGTH = 2;
     const VENUE_SEARCH_DEBOUNCE_MS = 320;
+    const NEW_VENUE_SEARCH_DEBOUNCE_MS = 360;
     const venueSearchCache = new Map();
     let isFlushingSubmissionQueue = false;
     let submissionQueueMigrationAttempted = false;
@@ -560,19 +567,34 @@
     }
 
     function updateDraftStatus() {
+      const draftStatusPill = document.getElementById("draftStatusPill");
+      const restoreDraftButton = document.getElementById("restoreDraftButton");
+      const clearDraftButton = document.getElementById("clearDraftButton");
+      if (!draftStatusPill) {
+        return;
+      }
+
       const draft = readStoredDraft();
       if (!draft) {
         setFieldStatusPill(draftStatusPill, "Draft empty", "neutral");
-        restoreDraftButton.disabled = true;
-        clearDraftButton.disabled = true;
+        if (restoreDraftButton) {
+          restoreDraftButton.disabled = true;
+        }
+        if (clearDraftButton) {
+          clearDraftButton.disabled = true;
+        }
         return;
       }
 
       const savedAt = Date.parse(draft.savedAt);
       const minutes = Math.max(0, Math.round((Date.now() - savedAt) / 60000));
       setFieldStatusPill(draftStatusPill, minutes < 1 ? "Draft saved now" : `Draft ${minutes}m old`, "info");
-      restoreDraftButton.disabled = false;
-      clearDraftButton.disabled = false;
+      if (restoreDraftButton) {
+        restoreDraftButton.disabled = false;
+      }
+      if (clearDraftButton) {
+        clearDraftButton.disabled = false;
+      }
     }
 
     function collectBeerRowsForDraft() {
@@ -634,8 +656,11 @@
           address: newVenueAddress.value,
           phone: newVenuePhone.value,
           website: newVenueWebsite.value,
+          postcode: newVenuePostcode.value,
           latitude: newVenueLatitude.value,
           longitude: newVenueLongitude.value,
+          googleSearch: newVenueGoogleSearch.value,
+          googlePlaceId: selectedNewVenueGooglePlace?.googlePlaceId || "",
         },
         submissionType: submissionTypeSelect.value,
         happyHour: {
@@ -704,8 +729,22 @@
       newVenueAddress.value = newVenue.address || "";
       newVenuePhone.value = newVenue.phone || "";
       newVenueWebsite.value = newVenue.website || "";
+      newVenuePostcode.value = newVenue.postcode || "";
       newVenueLatitude.value = newVenue.latitude || "";
       newVenueLongitude.value = newVenue.longitude || "";
+      if (newVenue.googleSearch) {
+        newVenueGoogleSearch.value = newVenue.googleSearch;
+      }
+      if (newVenue.googlePlaceId) {
+        selectedNewVenueGooglePlace = {
+          googlePlaceId: newVenue.googlePlaceId,
+          name: newVenue.name || "",
+          address: newVenue.address || "",
+          suburb: newVenue.suburb || "",
+          primaryType: null,
+        };
+        setNewVenueSelectedSummary(selectedNewVenueGooglePlace);
+      }
 
       if (["full_venue_update", "single_beer_price", "happy_hour_update", "photo_upload"].includes(draft.submissionType)) {
         submissionTypeSelect.value = draft.submissionType;
@@ -811,6 +850,169 @@
       venueChoiceHelp.textContent = message;
     }
 
+    function googleVenueMeta(place) {
+      return [
+        place?.suburb,
+        place?.address,
+        place?.primaryType ? place.primaryType.replace(/_/g, " ") : null,
+      ].filter(Boolean).join(" · ");
+    }
+
+    function setNewVenueSelectedSummary(place) {
+      if (!place) {
+        newVenueSelectedSummary.classList.add("notice--warning");
+        newVenueSelectedSummary.innerHTML = "No new venue selected yet.";
+        return;
+      }
+
+      const meta = googleVenueMeta(place);
+      newVenueSelectedSummary.classList.remove("notice--warning");
+      newVenueSelectedSummary.innerHTML = `
+        <strong>${escapeHtml(place.name)}</strong>
+        ${meta ? `<span class="fieldHint">${escapeHtml(meta)}</span>` : ""}
+      `;
+    }
+
+    function clearNewVenueGoogleSelection(options = {}) {
+      const { clearSearch = false, clearFields = true } = options;
+      selectedNewVenueGooglePlace = null;
+      newVenueGoogleResults.innerHTML = "";
+      newVenueGoogleStatus.textContent = "Results are filtered to venues that make sense for Pint Path.";
+      setNewVenueSelectedSummary(null);
+      if (clearSearch) {
+        newVenueGoogleSearch.value = "";
+      }
+      if (clearFields) {
+        newVenueName.value = "";
+        newVenueSuburb.value = "";
+        newVenueAddress.value = "";
+        newVenuePhone.value = "";
+        newVenueWebsite.value = "";
+        newVenuePostcode.value = "";
+        newVenueLatitude.value = "";
+        newVenueLongitude.value = "";
+      }
+    }
+
+    function fillNewVenueFieldsFromGoogle(place) {
+      selectedNewVenueGooglePlace = place;
+      newVenueName.value = place.name || "";
+      newVenueSuburb.value = place.suburb || "";
+      newVenueAddress.value = place.address || "";
+      newVenuePhone.value = place.phone || "";
+      newVenueWebsite.value = place.website || "";
+      newVenuePostcode.value = place.postcode || "";
+      newVenueLatitude.value = place.latitude == null ? "" : Number(place.latitude).toFixed(6);
+      newVenueLongitude.value = place.longitude == null ? "" : Number(place.longitude).toFixed(6);
+      newVenueGoogleSearch.value = place.name || newVenueGoogleSearch.value;
+      setNewVenueSelectedSummary(place);
+      newVenueGoogleStatus.textContent = `${place.name} selected. Add the beer or happy-hour data below.`;
+      newVenueHelp.textContent = "Venue details are ready for admin review. You can edit small details below, but the venue type stays locked to this Google result.";
+      newVenueManualDetails.open = false;
+    }
+
+    function renderNewVenueGoogleResults(places) {
+      const results = Array.isArray(places) ? places : [];
+      if (!results.length) {
+        newVenueGoogleResults.innerHTML = "";
+        newVenueGoogleStatus.textContent = "No matching bar/pub/restaurant result found. Try a venue name plus suburb.";
+        return;
+      }
+
+      newVenueGoogleResults.innerHTML = results.map((place) => {
+        const meta = googleVenueMeta(place);
+        const typeCopy = place.recommended ? "Recommended venue match" : "Venue candidate";
+        const duplicateCopy = place.alreadyExists ? "Already on Pint Path" : typeCopy;
+        return `
+          <button class="adminGoogleVenueResult${place.alreadyExists ? " adminGoogleVenueResult--duplicate" : ""}" type="button" data-new-venue-place-id="${escapeHtml(place.googlePlaceId)}">
+            <strong>${escapeHtml(place.name)}</strong>
+            ${meta ? `<span>${escapeHtml(meta)}</span>` : ""}
+            <small>${escapeHtml(duplicateCopy)}</small>
+          </button>
+        `;
+      }).join("");
+      newVenueGoogleStatus.textContent = "Tap the matching venue result.";
+    }
+
+    async function searchNewVenueGooglePlaces() {
+      const query = newVenueGoogleSearch.value.trim();
+      if (query.length < VENUE_QUERY_MIN_LENGTH) {
+        newVenueGoogleResults.innerHTML = "";
+        newVenueGoogleStatus.textContent = "Type at least 2 characters to search Google Maps.";
+        return;
+      }
+
+      newVenueGoogleButton.disabled = true;
+      newVenueGoogleButton.textContent = "Searching...";
+      newVenueGoogleStatus.textContent = "Searching public venue results...";
+      try {
+        const params = new URLSearchParams({ q: query });
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-places/search?${params.toString()}`);
+        if (!result.configured) {
+          newVenueGoogleStatus.textContent = "Google venue lookup is not configured yet. New venue submissions are temporarily unavailable.";
+          return;
+        }
+        renderNewVenueGoogleResults(result.places);
+      } catch (error) {
+        newVenueGoogleStatus.textContent = error.message || "Google venue search failed. Try again before submitting a new venue.";
+      } finally {
+        newVenueGoogleButton.disabled = false;
+        newVenueGoogleButton.textContent = "Search Google Maps";
+      }
+    }
+
+    function scheduleNewVenueGoogleSearch() {
+      window.clearTimeout(newVenueGoogleSearchTimer);
+      newVenueGoogleSearchTimer = window.setTimeout(() => {
+        searchNewVenueGooglePlaces().catch((error) => {
+          newVenueGoogleStatus.textContent = error.message || "Google venue search failed. Try again before submitting a new venue.";
+        });
+      }, NEW_VENUE_SEARCH_DEBOUNCE_MS);
+    }
+
+    async function loadNewVenueGoogleDetails(placeId) {
+      if (!placeId) {
+        return;
+      }
+
+      newVenueGoogleStatus.textContent = "Loading venue details...";
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-places/${encodeURIComponent(placeId)}`);
+        if (!result.configured) {
+          newVenueGoogleStatus.textContent = "Google venue lookup is not configured yet. New venue submissions are temporarily unavailable.";
+          return;
+        }
+
+        const place = result.place;
+        if (!place) {
+          newVenueGoogleStatus.textContent = "That result is not eligible for Pint Path. Try another venue.";
+          return;
+        }
+
+        if (place.alreadyExists && place.existingVenue?.id) {
+          const existingVenue = {
+            id: place.existingVenue.id,
+            name: place.existingVenue.name,
+            address: place.existingVenue.address || null,
+            suburb: place.existingVenue.suburb || null,
+            state: "VIC",
+            postcode: null,
+            latitude: null,
+            longitude: null,
+          };
+          setVenueResults([existingVenue, ...venues.filter((venue) => venue.id !== existingVenue.id)], existingVenue.id);
+          selectVenue(existingVenue);
+          MelbBeerBusiness.setStatus(statusEl, `${existingVenue.name} is already on Pint Path, so it has been selected for this submission.`);
+          return;
+        }
+
+        fillNewVenueFieldsFromGoogle(place);
+        scheduleDraftAutosave();
+      } catch (error) {
+        newVenueGoogleStatus.textContent = error.message || "Could not load that venue. Try another Google result.";
+      }
+    }
+
     function setNewVenueMode(enabled) {
       isNewVenueMode = enabled;
       newVenuePanel.classList.toggle("is-hidden", !enabled);
@@ -820,20 +1022,24 @@
       newVenuePanel.querySelectorAll("input, button").forEach((element) => {
         element.disabled = !enabled;
       });
-      newVenueName.required = enabled;
+      newVenueName.required = false;
       if (enabled) {
         clearSelectedVenue("New venue mode enabled. Add venue details below before submitting.");
         venueSearchHelp.textContent = "Existing venue search is paused while you add a new venue.";
         venueSuggestionList.innerHTML = "";
         venueSuggestionList.hidden = true;
-        if (!newVenueName.value.trim() && venueSearchInput.value.trim()) {
-          newVenueName.value = venueSearchInput.value.trim().split("·")[0].split(",")[0].trim();
+        if (!newVenueGoogleSearch.value.trim() && venueSearchInput.value.trim()) {
+          newVenueGoogleSearch.value = venueSearchInput.value.trim().split("·")[0].split(",")[0].trim();
+        }
+        if (newVenueGoogleSearch.value.trim().length >= VENUE_QUERY_MIN_LENGTH && !selectedNewVenueGooglePlace) {
+          scheduleNewVenueGoogleSearch();
         }
         submissionTypeSelect.value = "full_venue_update";
         applySubmissionType();
       } else {
         venueSearchInput.disabled = false;
         newVenueName.required = false;
+        clearNewVenueGoogleSelection({ clearSearch: false, clearFields: false });
         clearSelectedVenue("Search above and tap the matching venue before submitting.");
         venueSearchHelp.textContent = "Type 2 or more characters, then tap a venue.";
       }
@@ -866,11 +1072,12 @@
       }
 
       return {
+        googlePlaceId: selectedNewVenueGooglePlace?.googlePlaceId || null,
         name: newVenueName.value.trim(),
         address: blankToNull(newVenueAddress.value),
         suburb: blankToNull(newVenueSuburb.value),
         state: "VIC",
-        postcode: null,
+        postcode: blankToNull(newVenuePostcode.value),
         phone: blankToNull(newVenuePhone.value),
         website: blankToNull(newVenueWebsite.value),
         latitude: numberOrNull(newVenueLatitude.value),
@@ -887,8 +1094,12 @@
         return "Add the new venue name.";
       }
 
+      if (!newVenue.googlePlaceId) {
+        return "Choose the new venue from Google Maps before submitting. Manual edits are only available after a Google venue is selected.";
+      }
+
       if (!newVenue.address && (newVenue.latitude == null || newVenue.longitude == null)) {
-        return "Add the new venue address, find coordinates from the address, or copy saved location into venue coordinates.";
+        return "Choose the venue from Google Maps before submitting.";
       }
 
       if ((newVenue.latitude == null && newVenue.longitude != null) || (newVenue.latitude != null && newVenue.longitude == null)) {
@@ -896,47 +1107,6 @@
       }
 
       return null;
-    }
-
-    function copyUploadLocationToVenue() {
-      if (!uploadLocation) {
-        MelbBeerBusiness.setStatus(statusEl, "No saved location is available yet. Add the venue address or use coordinate lookup first.", true);
-        return;
-      }
-
-      newVenueLatitude.value = Number(uploadLocation.latitude).toFixed(6);
-      newVenueLongitude.value = Number(uploadLocation.longitude).toFixed(6);
-      newVenueHelp.textContent = `Venue coordinates copied from saved upload location (${formatAccuracy(uploadLocation.accuracyMeters)}).`;
-      MelbBeerBusiness.setStatus(statusEl, "Venue coordinates copied. Add the venue name and beer rows, then submit.");
-    }
-
-    async function geocodeNewVenueAddress() {
-      const query = [newVenueName.value.trim(), newVenueAddress.value.trim(), newVenueSuburb.value.trim()]
-        .filter(Boolean)
-        .join(", ");
-      if (query.length < 2) {
-        MelbBeerBusiness.setStatus(statusEl, "Add a venue name, address, or suburb before finding coordinates.", true);
-        return;
-      }
-
-      geocodeNewVenueButton.disabled = true;
-      geocodeNewVenueButton.textContent = "Finding...";
-      newVenueHelp.textContent = "Looking up public venue coordinates.";
-      try {
-        const data = await MelbBeerBusiness.apiFetch(`/api/business/geocode?q=${encodeURIComponent(query)}`);
-        if (!data.location) {
-          newVenueHelp.textContent = data.message || "No coordinates found. You can still submit with the address.";
-          return;
-        }
-        newVenueLatitude.value = Number(data.location.latitude).toFixed(6);
-        newVenueLongitude.value = Number(data.location.longitude).toFixed(6);
-        newVenueHelp.textContent = `Coordinates found for ${data.location.label || newVenueName.value.trim()} (${data.location.confidence || "approximate"}).`;
-      } catch (error) {
-        newVenueHelp.textContent = "Coordinate lookup failed. You can still submit with the address.";
-      } finally {
-        geocodeNewVenueButton.disabled = false;
-        geocodeNewVenueButton.textContent = "Find coordinates from address";
-      }
     }
 
     function rowTemplate() {
@@ -1560,11 +1730,6 @@
       });
       submissionForm.addEventListener("input", scheduleDraftAutosave);
       submissionForm.addEventListener("change", scheduleDraftAutosave);
-      saveDraftButton.addEventListener("click", () => saveFieldDraft(false));
-      restoreDraftButton.addEventListener("click", () => {
-        restoreFieldDraft().catch((error) => MelbBeerBusiness.setStatus(statusEl, error.message || "Could not restore draft.", true));
-      });
-      clearDraftButton.addEventListener("click", clearFieldDraft);
       retryQueuedSubmissionsButton.addEventListener("click", () => {
         MelbBeerBusiness.setStatus(statusEl, "Retrying queued uploads...");
         void flushQueuedSubmissions();
@@ -1593,8 +1758,29 @@
         event.preventDefault();
         event.returnValue = "";
       });
-      copyUploadLocationButton.addEventListener("click", copyUploadLocationToVenue);
-      geocodeNewVenueButton.addEventListener("click", geocodeNewVenueAddress);
+      newVenueGoogleSearch.addEventListener("input", () => {
+        selectedNewVenueGooglePlace = null;
+        setNewVenueSelectedSummary(null);
+        scheduleNewVenueGoogleSearch();
+      });
+      newVenueGoogleButton.addEventListener("click", () => {
+        searchNewVenueGooglePlaces().catch((error) => {
+          newVenueGoogleStatus.textContent = error.message || "Google venue search failed. Try again before submitting a new venue.";
+        });
+      });
+      clearNewVenueGoogleButton.addEventListener("click", () => {
+        clearNewVenueGoogleSelection({ clearSearch: true, clearFields: true });
+        scheduleDraftAutosave();
+      });
+      newVenueGoogleResults.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-new-venue-place-id]");
+        if (!button) {
+          return;
+        }
+        loadNewVenueGoogleDetails(button.dataset.newVenuePlaceId).catch((error) => {
+          newVenueGoogleStatus.textContent = error.message || "Could not load that venue. Try another Google result.";
+        });
+      });
       sourcePhoto.addEventListener("change", () => {
         if (sourcePhoto.files[0]) {
           sourcePhotoHint.textContent = "Photo attached. Pint Path compresses it and strips metadata before saving or sending.";

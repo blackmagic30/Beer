@@ -61,13 +61,25 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="newVenueToggle"');
     expect(html).toContain("This venue is not on Pint Path yet");
     expect(html).toContain('id="newVenuePanel"');
+    expect(html).toContain('id="newVenueGoogleSearch"');
+    expect(html).toContain('id="newVenueGoogleButton"');
+    expect(html).toContain('id="newVenueGoogleResults"');
+    expect(html).toContain('id="newVenueManualDetails"');
+    expect(html).toContain("Search Google Maps, choose the matching bar/pub/restaurant");
     expect(html).toContain('id="newVenueName"');
     expect(html).toContain('id="newVenueAddress"');
     expect(html).toContain("function collectNewVenue()");
     expect(html).toContain("function createPendingVenueId()");
+    expect(html).toContain("function searchNewVenueGooglePlaces()");
+    expect(html).toContain("function loadNewVenueGoogleDetails");
+    expect(html).toContain("/api/business/venue-places/search");
+    expect(html).toContain("/api/business/venue-places/");
+    expect(html).toContain("googlePlaceId: selectedNewVenueGooglePlace?.googlePlaceId || null");
+    expect(html).toContain("Choose the new venue from Google Maps before submitting");
     expect(html).toContain("newVenue,");
-    expect(html).toContain("Use saved location as venue coordinates");
-    expect(html).toContain("Find coordinates from address");
+    expect(html).not.toContain("Use saved location as venue coordinates");
+    expect(html).not.toContain("Find coordinates from address");
+    expect(html).not.toContain("Use manual fallback for now");
     expect(html).toContain("It only appears on the global map after admin approval.");
   });
 
@@ -136,24 +148,23 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain("window.addEventListener(\"DOMContentLoaded\", captureUploadLocation");
   });
 
-  it("adds field-test controls for signal status, draft recovery, and offline queued submissions", () => {
+  it("adds compact field-test status, silent draft autosave, and offline queued submissions", () => {
     const html = submitHtml();
     const css = businessCss();
 
     expect(html).toContain('class="fieldTestConsole"');
     expect(html).toContain('id="networkStatusPill"');
-    expect(html).toContain('id="draftStatusPill"');
     expect(html).toContain('id="locationStatusPill"');
     expect(html).toContain('id="submissionQueuePanel"');
     expect(html).toContain('id="submissionQueueList"');
     expect(html).toContain('id="retryQueuedSubmissionsButton"');
     expect(html).toContain('id="clearQueuedSubmissionsButton"');
-    expect(html).toContain('id="saveDraftButton"');
-    expect(html).toContain('id="restoreDraftButton"');
-    expect(html).toContain('id="clearDraftButton"');
+    expect(html).not.toContain('id="draftStatusPill"');
+    expect(html).not.toContain('id="saveDraftButton"');
+    expect(html).not.toContain('id="restoreDraftButton"');
+    expect(html).not.toContain('id="clearDraftButton"');
     expect(html).toContain("FIELD_DRAFT_STORAGE_KEY");
     expect(html).toContain("function collectFieldDraft()");
-    expect(html).toContain("function restoreFieldDraft()");
     expect(html).toContain("localStorage.setItem(FIELD_DRAFT_STORAGE_KEY");
     expect(html).toContain('submissionForm.addEventListener("input", scheduleDraftAutosave)');
     expect(html).toContain('window.addEventListener("online", () => {');

@@ -53,6 +53,7 @@ import {
   venueManagerRevokeSchema,
   venueOutreachSchema,
   venuePortalQuerySchema,
+  venuePlaceSearchQuerySchema,
   wrongPriceReportSchema,
 } from "./business.schemas.js";
 import type { BusinessService } from "./business.service.js";
@@ -266,11 +267,15 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.post("/submissions", writeLimiter, (req, res) => {
-    const account = requireAccount(req, businessService);
-    const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid submission payload");
-    const result = businessService.createSubmission(account, body);
-    res.status(result.idempotentReplay ? 200 : 201).json(success(result));
+  router.post("/submissions", writeLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid submission payload");
+      const result = await businessService.createUserSubmission(account, body);
+      res.status(result.idempotentReplay ? 200 : 201).json(success(result));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/feedback", writeLimiter, (req, res) => {
@@ -356,6 +361,28 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     try {
       const query = parseWithSchema(geocodeQuerySchema, req.query, "Invalid geocode query");
       const result = await businessService.resolveMissionArea(query.q);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/venue-places/search", lookupLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      const query = parseWithSchema(venuePlaceSearchQuerySchema, req.query, "Invalid venue lookup query");
+      const result = await businessService.searchVenuePlacesForSubmission(account, query.q);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/venue-places/:placeId", lookupLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      const placeId = String(req.params.placeId ?? "");
+      const result = await businessService.getVenuePlaceForSubmission(account, placeId);
       res.json(success(result));
     } catch (error) {
       next(error);

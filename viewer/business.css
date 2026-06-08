@@ -733,7 +733,7 @@ h3 {
 
 .fieldTestConsole {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   align-items: center;
   border: 1px solid rgba(34, 211, 238, 0.2);
@@ -1055,6 +1055,38 @@ h3 {
   background:
     linear-gradient(145deg, rgba(245, 197, 66, 0.13), rgba(34, 211, 238, 0.06)),
     rgba(7, 10, 18, 0.5);
+}
+
+.newVenueSelectedSummary {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.newVenueManualDetails {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(3, 7, 18, 0.28);
+  padding: 10px 12px;
+}
+
+.newVenueManualDetails summary {
+  min-height: 38px;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.newVenueManualDetails[open] {
+  padding-bottom: 14px;
+}
+
+.newVenueManualDetails[open] summary {
+  margin-bottom: 10px;
 }
 
 .adminBeerRows,
