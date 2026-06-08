@@ -207,7 +207,7 @@ export class AdminService {
   getStatus() {
     return {
       enabled: Boolean(this.supabase),
-      ocrEnabled: Boolean(this.supabase && this.openai),
+      ocrEnabled: Boolean(this.openai),
       queueEnabled: Boolean(this.supabase && this.ingestionQueueRepository),
     };
   }

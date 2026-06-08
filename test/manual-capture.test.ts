@@ -6,6 +6,7 @@ import {
   extractBeerEntriesFromCleaned,
   toBeerKey,
 } from "../src/modules/admin/manual-capture.js";
+import { AdminService } from "../src/modules/admin/admin.service.js";
 
 describe("manual capture helpers", () => {
   it("normalizes beer keys safely", () => {
@@ -134,5 +135,21 @@ describe("manual capture helpers", () => {
         }),
       }),
     );
+  });
+
+  it("reports standalone menu OCR as available when OpenAI is configured", () => {
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      "test-openai-key",
+    );
+
+    expect(service.getStatus()).toEqual({
+      enabled: false,
+      ocrEnabled: true,
+      queueEnabled: false,
+    });
   });
 });
