@@ -75,6 +75,16 @@
               </article>
             </div>
 
+            <div class="grid grid--two" style="margin-top:16px;">
+              <article id="weeklyActionCard" class="panel"></article>
+              <article id="staffModeCard" class="panel"></article>
+            </div>
+
+            <div class="grid grid--two" style="margin-top:16px;">
+              <article id="publicPreviewCard" class="panel"></article>
+              <article id="staffInviteCard" class="panel"></article>
+            </div>
+
             <article id="tierGuide" class="panel tierGuide" style="margin-top:16px;"></article>
             <article id="businessToolkit" class="panel businessToolkit is-hidden" style="margin-top:16px;"></article>
 
@@ -747,6 +757,7 @@
       renderHappyHours(happyHours);
       renderSpecials(specials);
       renderOverviewData(data);
+      renderVenuePortalLaunchCards(data);
       renderTierGuide(data);
       renderBusinessToolkit(data);
       renderDiscountOps(data);
@@ -789,6 +800,79 @@
           </div>
         `).join("")
         : '<div class="listItem muted">No verified price rows yet. Add beers, upload a tap-list source, or submit verified data for review.</div>';
+    }
+
+    function renderVenuePortalLaunchCards(data) {
+      const profile = data.profile || {};
+      const tier = data.tier || {};
+      const beers = data.inventory?.beers || [];
+      const happyHours = data.inventory?.happyHours || [];
+      const specials = data.inventory?.specials || [];
+      const records = data.insights?.priceRecords || [];
+      const weeklyActionCard = document.getElementById("weeklyActionCard");
+      const staffModeCard = document.getElementById("staffModeCard");
+      const publicPreviewCard = document.getElementById("publicPreviewCard");
+      const staffInviteCard = document.getElementById("staffInviteCard");
+      const profileReady = Boolean(profile.name && profile.suburb && profile.description);
+      const nextAction = !profileReady
+        ? { label: "Finish profile", tab: "profile", copy: "Add suburb, short description, and contact details so users trust the listing." }
+        : beers.length < 3
+          ? { label: "Add 3 beers", tab: "beers", copy: "Three current tap prices make the venue useful on the map and in beer search." }
+          : !happyHours.length
+            ? { label: "Add happy hour", tab: "happy-hours", copy: "Happy hours are one of the fastest ways to get users to choose a venue tonight." }
+            : tier.canManageSpecials && !specials.length
+              ? { label: "Add app special", tab: "specials", copy: "Plus and Pro venues can add reviewed Pint Path specials for extra conversion proof." }
+              : { label: "Keep prices fresh", tab: "beers", copy: "Update one price or tap status each week so users keep trusting the listing." };
+      const previewBeer = records[0] || beers[0] || null;
+      const mapQuery = encodeURIComponent([profile.name, profile.address, profile.suburb].filter(Boolean).join(", "));
+      const mailSubject = encodeURIComponent(`Pint Path staff invite for ${profile.name || "my venue"}`);
+      const mailBody = encodeURIComponent([
+        `Venue: ${profile.name || ""}`,
+        `Suburb: ${profile.suburb || ""}`,
+        "",
+        "Please invite this staff member to manage discount redemptions:",
+        "Staff email:",
+      ].join("\n"));
+
+      if (weeklyActionCard) {
+        weeklyActionCard.innerHTML = `
+          <div class="eyebrow">This week</div>
+          <h2>${escapeHtml(nextAction.label)}</h2>
+          <p class="muted">${escapeHtml(nextAction.copy)}</p>
+          <button class="button button--primary" type="button" data-jump-tab="${escapeHtml(nextAction.tab)}">${escapeHtml(nextAction.label)}</button>
+        `;
+      }
+
+      if (staffModeCard) {
+        staffModeCard.innerHTML = `
+          <div class="eyebrow">Staff mode</div>
+          <h2>Redeem a user discount fast</h2>
+          <p class="muted">For bar staff: choose $1 or $2 off, enter the user code, then redeem. No analytics or setup screens needed.</p>
+          <button class="button button--primary" type="button" data-scroll-discount="true">Open redemption</button>
+        `;
+      }
+
+      if (publicPreviewCard) {
+        publicPreviewCard.innerHTML = `
+          <div class="eyebrow">Public preview</div>
+          <h2>${escapeHtml(profile.name || "Your listing")}</h2>
+          <p class="muted">${escapeHtml([profile.suburb, prettyTier(profile.membershipTier)].filter(Boolean).join(" · ") || "Melbourne venue")}</p>
+          <div class="portalPreviewCard">
+            <strong>${escapeHtml(previewBeer?.beerName || previewBeer?.name || "No public beer price yet")}</strong>
+            <span>${escapeHtml(previewBeer?.price != null ? money(previewBeer.price) : previewBeer?.priceNumeric != null ? money(previewBeer.priceNumeric) : "Add a current pint price")}</span>
+          </div>
+          <a class="button" href="/?q=${mapQuery}" target="_blank" rel="noopener">View on map</a>
+        `;
+      }
+
+      if (staffInviteCard) {
+        staffInviteCard.innerHTML = `
+          <div class="eyebrow">Staff access</div>
+          <h2>Invite staff by email</h2>
+          <p class="muted">Ask staff to create a Pint Path account, then send the email to admin for assignment. This keeps venue controls private.</p>
+          <a class="button" href="mailto:admin@pintpath.au?subject=${mailSubject}&body=${mailBody}">Request staff invite</a>
+        `;
+      }
     }
 
     function renderTierGuide(data) {
@@ -1473,6 +1557,18 @@
       document.addEventListener("click", async (event) => {
         const target = event.target;
         if (!(target instanceof HTMLElement) || !selectedVenueId()) return;
+
+        if (target.dataset.jumpTab) {
+          showTab(target.dataset.jumpTab);
+          return;
+        }
+
+        if (target.dataset.scrollDiscount && discountRedemptionFormElement) {
+          discountRedemptionFormElement.scrollIntoView({ behavior: "smooth", block: "center" });
+          field(discountRedemptionFormElement, "code").focus({ preventScroll: true });
+          MelbBeerBusiness.setStatus(discountRedemptionStatus, "Staff mode ready. Enter the user's current Pint Path code.");
+          return;
+        }
 
         if (target.dataset.copyUpdateLink) {
           const updateLink = currentPortal?.businessToolkit?.updateLink || currentPortal?.updateLink || "";

@@ -605,6 +605,51 @@
       line-height: 1.4;
     }
 
+    .quickActionStrip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .quickActionButton {
+      appearance: none;
+      min-height: 46px;
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      border-radius: 999px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.026)),
+        rgba(15, 23, 42, 0.72);
+      color: #f8fafc;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 14px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 950;
+      line-height: 1.15;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+      transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+    }
+
+    .quickActionButton:hover {
+      transform: translateY(-1px);
+      border-color: rgba(34, 211, 238, 0.4);
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.22), 0 0 22px rgba(34, 211, 238, 0.1);
+    }
+
+    .quickActionButton--primary {
+      border-color: rgba(34, 211, 238, 0.3);
+      background: linear-gradient(135deg, #38bdf8, #22d3ee 42%, #8b5cf6);
+      color: #04111f;
+      box-shadow: 0 18px 36px rgba(34, 211, 238, 0.18);
+    }
+
     .areaQuickPick {
       display: flex;
       align-items: center;
@@ -2458,6 +2503,67 @@
       margin: 14px 0;
     }
 
+    .beerPopup__simpleSummary {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .beerPopup__simpleLine {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: 18px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025)),
+        rgba(8, 13, 26, 0.74);
+      padding: 12px 14px;
+    }
+
+    .beerPopup__simpleLine strong {
+      color: #fff7ed;
+      font-size: 18px;
+      font-weight: 950;
+      line-height: 1.15;
+    }
+
+    .beerPopup__simpleLine span {
+      color: #cbd5e1;
+      font-size: 13px;
+      font-weight: 850;
+      line-height: 1.3;
+    }
+
+    .beerPopup__details {
+      margin: 0 0 12px;
+    }
+
+    .beerPopup__details summary {
+      color: #cbd5e1;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 950;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .beerPopup__quickActions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .beerPopup__secondaryActions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
     .beerPopup__summaryCard {
       min-height: 86px;
       padding: 12px;
@@ -3079,6 +3185,25 @@
         font-size: 10.5px;
       }
 
+      .quickActionStrip {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .quickActionButton {
+        min-height: 48px;
+        border-radius: 14px;
+      }
+
+      .mapHeroCard .topbar__subtitle,
+      .controlDeck__copy,
+      .popularBeerRow,
+      .specialsFilterRow,
+      #statusBar {
+        display: none;
+      }
+
       .chipRow {
         flex-wrap: nowrap;
         overflow-x: auto;
@@ -3260,6 +3385,15 @@
         padding: 10px;
       }
 
+      .beerPopup__quickActions {
+        grid-template-columns: 1fr;
+      }
+
+      .beerPopup__secondaryActions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
       .beerPopup__featuredRow,
       .beerPopup__beerRow {
         grid-template-columns: minmax(0, 1fr);
@@ -3406,6 +3540,12 @@
       <div class="locationStrip" aria-live="polite">
         <button id="useLocationButton" class="locationButton" type="button">Use my location</button>
         <span id="locationStatus" class="locationStatus">Location off. Tap once to show approximate distances and nearby happy hours.</span>
+      </div>
+
+      <div class="quickActionStrip" aria-label="Fast map actions">
+        <button id="nearMeNowButton" class="quickActionButton quickActionButton--primary" type="button">Near me now</button>
+        <a id="quickSubmitButton" class="quickActionButton" href="/submit.html?type=single_beer_price">Submit price</a>
+        <a class="quickActionButton" href="/pricing.html">Unlock perks</a>
       </div>
 
       <div class="popularBeerRow" aria-label="Popular beer filters">
@@ -3699,6 +3839,8 @@
     const activeFilterSummaryEl = document.getElementById("activeFilterSummary");
     const activeFilterCopyEl = document.getElementById("activeFilterCopy");
     const useLocationButtonEl = document.getElementById("useLocationButton");
+    const nearMeNowButtonEl = document.getElementById("nearMeNowButton");
+    const quickSubmitButtonEl = document.getElementById("quickSubmitButton");
     const nearMeRadiusControlEl = document.getElementById("nearMeRadiusControl");
     const nearMeRadiusSelectEl = document.getElementById("nearMeRadiusSelect");
     const locationStatusEl = document.getElementById("locationStatus");
@@ -4439,6 +4581,7 @@
       venueDetailOverlayEl.setAttribute("aria-hidden", "true");
       venueDetailBodyEl.removeAttribute("aria-busy");
       activeVenueRecord = null;
+      syncQuickSubmitLink(null);
     }
 
     function showVenueDetailLoading() {
@@ -4472,6 +4615,7 @@
       venueDetailBodyEl.innerHTML = getVenueDetailContent(record);
       venueDetailOverlayEl.classList.remove("is-hidden-panel");
       venueDetailOverlayEl.setAttribute("aria-hidden", "false");
+      syncQuickSubmitLink(record);
       closeVenueDetailEl.focus({ preventScroll: true });
       rememberViewedVenue(record);
       trackVenueAnalytics("venue_detail_opened", record, source);
@@ -7122,6 +7266,38 @@
       return url.toString();
     }
 
+    function getVenueSubmitUrl(record, type = "single_beer_price") {
+      const snapshot = getVenueSnapshot(record);
+      const url = new URL("/submit.html", window.location.origin);
+      url.searchParams.set("type", type);
+      if (snapshot?.id) {
+        url.searchParams.set("venueId", snapshot.id);
+      }
+      if (snapshot?.name) {
+        url.searchParams.set("venueName", snapshot.name);
+      }
+      if (snapshot?.suburb) {
+        url.searchParams.set("suburb", snapshot.suburb);
+      }
+      return `${url.pathname}${url.search}`;
+    }
+
+    function syncQuickSubmitLink(record = activeVenueRecord) {
+      if (!quickSubmitButtonEl) {
+        return;
+      }
+
+      if (!record) {
+        quickSubmitButtonEl.href = "/submit.html?type=single_beer_price";
+        quickSubmitButtonEl.textContent = "Submit price";
+        return;
+      }
+
+      const snapshot = getVenueSnapshot(record);
+      quickSubmitButtonEl.href = getVenueSubmitUrl(record, "single_beer_price");
+      quickSubmitButtonEl.textContent = snapshot?.name ? "Submit here" : "Submit price";
+    }
+
     function getSearchShareUrl() {
       const viewState = getViewState();
       const url = new URL(window.location.origin + window.location.pathname);
@@ -7862,6 +8038,7 @@
               const venueSuburb = venue.suburb || item.suburb || "Melbourne";
               const submitVenueId = cleaned.business_record_venue_id || item.venue_id || venue.id || "";
               const submitUrl = `/submit.html?venueId=${encodeURIComponent(submitVenueId)}&venueName=${encodeURIComponent(rawVenueName)}${venueSuburb ? `&suburb=${encodeURIComponent(venueSuburb)}` : ""}`;
+              const submitBeerUrl = `${submitUrl}&type=single_beer_price`;
               const portalUrl = `/venue-portal?venueId=${encodeURIComponent(submitVenueId)}&venueName=${encodeURIComponent(rawVenueName)}${venueSuburb ? `&suburb=${encodeURIComponent(venueSuburb)}` : ""}`;
               const knownPriceCount = liveBeerItems.filter(hasNumericPrice).length;
               const onTapCount = liveBeerItems.filter((beer) => beer.availabilityLabel === "On tap").length;
@@ -7909,34 +8086,57 @@
                 distanceCopy,
                 trustValue,
               ].filter(Boolean).map((value) => `<span class="beerPopup__metaBadge">${escapeHtml(value)}</span>`).join("");
+              const quickValue = liveFeaturedBeer
+                ? getDisplayBeerPriceText(liveFeaturedBeer, markerId)
+                : liveHappyHourDetails?.exists
+                  ? "Happy hour listed"
+                  : "Needs price";
+              const quickCopy = liveFeaturedBeer
+                ? `${liveFeaturedBeer.label} · ${getBeerServingCopy(liveFeaturedBeer)} · ${liveFeaturedBeer.availabilityLabel}`
+                : liveHappyHourDetails?.exists
+                  ? happyHourBrief || "Tap more details for times and conditions."
+                  : "Submit a price or menu photo if you are here.";
               const summaryMarkup = `
-                <div class="beerPopup__summaryGrid">
-                  <div class="beerPopup__summaryCard">
-                    <div class="beerPopup__summaryLabel">Distance</div>
-                    <div class="beerPopup__summaryValue">${escapeHtml(distanceCopy || "Location off")}</div>
-                    <div class="beerPopup__summarySub">${escapeHtml(distanceCopy ? "Straight-line distance from you." : "Use location to show nearby venues.")}</div>
+                <div class="beerPopup__simpleSummary">
+                  <div class="beerPopup__simpleLine">
+                    <strong>${escapeHtml(quickValue)}</strong>
+                    <span>${escapeHtml(quickCopy)}</span>
                   </div>
-                  <div class="beerPopup__summaryCard">
-                    <div class="beerPopup__summaryLabel">Beer list</div>
-                    <div class="beerPopup__summaryValue">${escapeHtml(`${liveBeerItems.length} listed`)}</div>
-                    <div class="beerPopup__summarySub">${escapeHtml(`${onTapCount} on tap · ${knownPriceCount} priced`)}</div>
-                  </div>
-                  <div class="beerPopup__summaryCard">
-                    <div class="beerPopup__summaryLabel">Happy hour</div>
-                    <div class="beerPopup__summaryValue">${escapeHtml(happyHourValue)}</div>
-                    <div class="beerPopup__summarySub">${escapeHtml(happyHourSub)}</div>
-                  </div>
-                  <div class="beerPopup__summaryCard">
-                    <div class="beerPopup__summaryLabel">Specials</div>
-                    <div class="beerPopup__summaryValue">${escapeHtml(liveSpecials.some((special) => special.exclusive) ? "Pint Path" : liveSpecials.length ? "Listed" : "None listed")}</div>
-                    <div class="beerPopup__summarySub">${escapeHtml(liveSpecials.length ? `${liveSpecials.length} active venue special${liveSpecials.length === 1 ? "" : "s"}` : "No exclusive listed yet.")}</div>
-                  </div>
-                  <div class="beerPopup__summaryCard">
-                    <div class="beerPopup__summaryLabel">Trust</div>
-                    <div class="beerPopup__summaryValue">${escapeHtml(newestVerifiedLabel ? `Verified ${newestVerifiedLabel}` : trustValue)}</div>
-                    <div class="beerPopup__summarySub">${escapeHtml(hasVenueManagedData ? "Maintained by venue portal." : "Community-submitted and checked where possible.")}</div>
+                  <div class="beerPopup__simpleLine">
+                    <strong>${escapeHtml(distanceCopy || venueSuburb)}</strong>
+                    <span>${escapeHtml(newestVerifiedLabel ? `Verified ${newestVerifiedLabel}` : trustValue)}</span>
                   </div>
                 </div>
+                <details class="beerPopup__details">
+                  <summary>More details</summary>
+                  <div class="beerPopup__summaryGrid">
+                    <div class="beerPopup__summaryCard">
+                      <div class="beerPopup__summaryLabel">Distance</div>
+                      <div class="beerPopup__summaryValue">${escapeHtml(distanceCopy || "Location off")}</div>
+                      <div class="beerPopup__summarySub">${escapeHtml(distanceCopy ? "Straight-line distance from you." : "Use location to show nearby venues.")}</div>
+                    </div>
+                    <div class="beerPopup__summaryCard">
+                      <div class="beerPopup__summaryLabel">Beer list</div>
+                      <div class="beerPopup__summaryValue">${escapeHtml(`${liveBeerItems.length} listed`)}</div>
+                      <div class="beerPopup__summarySub">${escapeHtml(`${onTapCount} on tap · ${knownPriceCount} priced`)}</div>
+                    </div>
+                    <div class="beerPopup__summaryCard">
+                      <div class="beerPopup__summaryLabel">Happy hour</div>
+                      <div class="beerPopup__summaryValue">${escapeHtml(happyHourValue)}</div>
+                      <div class="beerPopup__summarySub">${escapeHtml(happyHourSub)}</div>
+                    </div>
+                    <div class="beerPopup__summaryCard">
+                      <div class="beerPopup__summaryLabel">Specials</div>
+                      <div class="beerPopup__summaryValue">${escapeHtml(liveSpecials.some((special) => special.exclusive) ? "Pint Path" : liveSpecials.length ? "Listed" : "None listed")}</div>
+                      <div class="beerPopup__summarySub">${escapeHtml(liveSpecials.length ? `${liveSpecials.length} active venue special${liveSpecials.length === 1 ? "" : "s"}` : "No exclusive listed yet.")}</div>
+                    </div>
+                    <div class="beerPopup__summaryCard">
+                      <div class="beerPopup__summaryLabel">Trust</div>
+                      <div class="beerPopup__summaryValue">${escapeHtml(newestVerifiedLabel ? `Verified ${newestVerifiedLabel}` : trustValue)}</div>
+                      <div class="beerPopup__summarySub">${escapeHtml(hasVenueManagedData ? "Maintained by venue portal." : "Community-submitted and checked where possible.")}</div>
+                    </div>
+                  </div>
+                </details>
               `;
               const featuredBeerMarkup = liveFeaturedBeer ? `
                 <div class="beerPopup__featured beerPopup__featured--${escapeHtml(featuredBeerState)}">
@@ -8030,12 +8230,15 @@
                   ${captureStatusMarkup}
                   ${happyHourMarkup}
                   ${specialMarkup}
-                  <div class="beerPopup__actions">
+                  <div class="beerPopup__quickActions">
                     <button class="beerPopup__button beerPopup__button--primary" type="button" data-venue-action="save" aria-pressed="${isSavedVenue ? "true" : "false"}">${escapeHtml(isSavedVenue ? "Saved" : "Save venue")}</button>
+                    <a class="beerPopup__button" href="${escapeHtml(directionsUrl)}" target="_blank" rel="noopener" data-venue-action="directions">Directions</a>
+                    <a class="beerPopup__button beerPopup__button--primary" href="${escapeHtml(submitBeerUrl)}">I’m here · submit price</a>
+                  </div>
+                  <div class="beerPopup__secondaryActions">
                     <button class="beerPopup__button" type="button" data-venue-action="share">Share</button>
                     <button class="beerPopup__button" type="button" data-venue-action="plan" aria-pressed="${isPlannedVenue ? "true" : "false"}">${escapeHtml(isPlannedVenue ? "In night plan" : "Add to night plan")}</button>
-                    <a class="beerPopup__button" href="${escapeHtml(directionsUrl)}" target="_blank" rel="noopener" data-venue-action="directions">Directions</a>
-                    <a class="beerPopup__button" href="${escapeHtml(submitUrl)}">Update this venue</a>
+                    <a class="beerPopup__button" href="${escapeHtml(submitUrl)}">More updates</a>
                     <a class="beerPopup__button" href="${escapeHtml(portalUrl)}">Manage this venue</a>
                     ${upgradeActionMarkup}
                   </div>
@@ -8196,6 +8399,23 @@
           if (granted) {
             focusMapAroundUser("use_location_button");
           }
+        });
+
+        nearMeNowButtonEl?.addEventListener("click", async () => {
+          if (!hasUserLocation()) {
+            const granted = await requestUserLocation("near_me_now");
+            if (!granted) {
+              return;
+            }
+          }
+
+          venueRailSortMode = "nearest";
+          renderMarkers();
+          focusMapAroundUser("near_me_now");
+          showToast("Showing venues nearest to you.");
+          void trackBusinessEvent("near_me_now_used", getAnalyticsContext({
+            source: "quick_action",
+          }));
         });
 
         nearMeRadiusSelectEl.addEventListener("change", () => {

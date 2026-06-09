@@ -226,7 +226,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("beerPopup__beerRow--locked");
     expect(html).toContain("beerPopup__summaryGrid");
     expect(html).toContain("Venue-supplied listing");
-    expect(html).toContain("Update this venue");
+    expect(html).toContain("I’m here · submit price");
+    expect(html).toContain("More updates");
     expect(html).toContain('id="venueDetailOverlay"');
     expect(html).toContain("openVenueDetailOverlay");
     expect(html).toContain("Close this panel to return to the map.");

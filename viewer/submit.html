@@ -75,6 +75,10 @@
             <span id="venueChoiceHelp" class="fieldHint">Search above and tap the matching venue before submitting.</span>
           </label>
         </div>
+        <div id="recentVenuePanel" class="recentVenuePanel is-hidden" aria-live="polite">
+          <span class="recentVenuePanel__label">Recent venues</span>
+          <div id="recentVenueList" class="recentVenuePanel__list"></div>
+        </div>
         <div class="notice">
           <label class="field" style="margin:0;">
             <span><input id="newVenueToggle" type="checkbox" /> This venue is not on Pint Path yet</span>
@@ -205,6 +209,8 @@
     const SUBMISSION_QUEUE_DB_NAME = "pintPathSubmissionQueue";
     const SUBMISSION_QUEUE_DB_VERSION = 1;
     const SUBMISSION_QUEUE_STORE_NAME = "queuedSubmissions";
+    const RECENT_VENUES_STORAGE_KEY = "pintPathRecentlyViewedVenues";
+    const MAX_RECENT_SUBMIT_VENUES = 5;
     const SOURCE_PHOTO_MAX_EDGE = 1600;
     const SOURCE_PHOTO_OUTPUT_TYPE = "image/jpeg";
     const SOURCE_PHOTO_OUTPUT_QUALITY = 0.76;
@@ -789,6 +795,84 @@
       ) || null;
     }
 
+    function normalizeRecentVenue(value) {
+      if (!value || typeof value !== "object") {
+        return null;
+      }
+
+      const id = String(value.id || value.venueId || "").trim();
+      const name = String(value.name || value.venueName || "").trim();
+      if (!id || !name) {
+        return null;
+      }
+
+      return {
+        id,
+        name,
+        suburb: String(value.suburb || "Melbourne").trim(),
+        address: String(value.address || "").trim(),
+        state: String(value.state || "VIC").trim(),
+        postcode: String(value.postcode || "").trim(),
+        latitude: Number.isFinite(Number(value.latitude)) ? Number(value.latitude) : null,
+        longitude: Number.isFinite(Number(value.longitude)) ? Number(value.longitude) : null,
+        updatedAt: String(value.updatedAt || new Date().toISOString()),
+      };
+    }
+
+    function readRecentVenues() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(RECENT_VENUES_STORAGE_KEY) || "[]");
+        return Array.isArray(parsed)
+          ? parsed.map(normalizeRecentVenue).filter(Boolean).slice(0, MAX_RECENT_SUBMIT_VENUES)
+          : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function writeRecentVenues(nextVenues) {
+      const normalized = nextVenues
+        .map(normalizeRecentVenue)
+        .filter(Boolean)
+        .slice(0, MAX_RECENT_SUBMIT_VENUES);
+      try {
+        localStorage.setItem(RECENT_VENUES_STORAGE_KEY, JSON.stringify(normalized));
+      } catch {
+        // Recent venue shortcuts are convenience-only.
+      }
+      return normalized;
+    }
+
+    function renderRecentVenues() {
+      const panel = document.getElementById("recentVenuePanel");
+      const list = document.getElementById("recentVenueList");
+      if (!panel || !list) {
+        return;
+      }
+
+      const recentVenues = readRecentVenues();
+      panel.classList.toggle("is-hidden", recentVenues.length === 0 || isNewVenueMode);
+      list.innerHTML = recentVenues.map((venue) => `
+        <button class="recentVenueButton" type="button" data-recent-venue-id="${escapeHtml(venue.id)}">
+          <strong>${escapeHtml(venue.name)}</strong>
+          <span>${escapeHtml(venue.suburb || "Melbourne")}</span>
+        </button>
+      `).join("");
+    }
+
+    function rememberRecentVenue(venue) {
+      const normalized = normalizeRecentVenue(venue);
+      if (!normalized) {
+        return;
+      }
+
+      writeRecentVenues([
+        normalized,
+        ...readRecentVenues().filter((item) => item.id !== normalized.id),
+      ]);
+      renderRecentVenues();
+    }
+
     function renderVenueSuggestions(nextVenues = venues) {
       const query = normalizeVenueText(venueSearchInput.value);
       const suggestions = Array.isArray(nextVenues) ? nextVenues.slice(0, VENUE_SEARCH_LIMIT) : [];
@@ -843,6 +927,7 @@
       venueChoiceHelp.textContent = "Chosen venue locked. Continue with the submission type and details below.";
       venueSuggestionList.innerHTML = "";
       venueSuggestionList.hidden = true;
+      rememberRecentVenue(venue);
     }
 
     function clearSelectedVenue(message = "No venue chosen yet. Search above and tap a venue suggestion.") {
@@ -1016,6 +1101,7 @@
     function setNewVenueMode(enabled) {
       isNewVenueMode = enabled;
       newVenuePanel.classList.toggle("is-hidden", !enabled);
+      renderRecentVenues();
       venueSearchInput.disabled = enabled;
       venueSelect.disabled = true;
       venueSelect.setAttribute("aria-disabled", "true");
@@ -1734,6 +1820,21 @@
         MelbBeerBusiness.setStatus(statusEl, "Retrying queued uploads...");
         void flushQueuedSubmissions();
       });
+      document.getElementById("recentVenueList")?.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-recent-venue-id]");
+        if (!button) {
+          return;
+        }
+
+        const recentVenue = readRecentVenues().find((venue) => venue.id === button.dataset.recentVenueId);
+        if (!recentVenue) {
+          return;
+        }
+
+        setVenueResults([recentVenue, ...venues.filter((venue) => venue.id !== recentVenue.id)], recentVenue.id);
+        selectVenue(recentVenue);
+        scheduleDraftAutosave();
+      });
       clearQueuedSubmissionsButton.addEventListener("click", () => {
         if (!window.confirm("Clear all queued uploads saved on this device? This cannot be undone.")) {
           return;
@@ -1843,6 +1944,7 @@
         venueSelect.value = initialVenueId;
         selectVenue(venues.find((venue) => venue.id === initialVenueId));
       }
+      renderRecentVenues();
       await MelbBeerBusiness.trackEvent("submission_started", {
         missionId: missionId || null,
         missionReason: missionReason || null,
