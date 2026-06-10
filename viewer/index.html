@@ -585,17 +585,69 @@
       display: none;
     }
 
-    .radiusControl select {
+    .radiusControl--slider {
+      min-width: min(100%, 320px);
+      border-color: rgba(34, 211, 238, 0.24);
+      background: linear-gradient(135deg, rgba(14, 116, 144, 0.28), rgba(15, 23, 42, 0.9));
+      box-shadow: 0 14px 34px rgba(34, 211, 238, 0.08);
+    }
+
+    .radiusControl__label,
+    .radiusControl__value {
+      flex: 0 0 auto;
+      color: #cffafe;
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .radiusControl__value {
+      min-width: 44px;
+      color: #ffffff;
+      text-align: right;
+    }
+
+    .radiusControl input[type="range"] {
       appearance: none;
-      border: none;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.08);
-      color: #fff7ed;
-      font: inherit;
-      font-size: 13px;
-      font-weight: 900;
-      padding: 4px 22px 4px 9px;
+      flex: 1 1 140px;
+      min-width: 120px;
+      height: 18px;
+      margin: 0;
+      background: transparent;
       cursor: pointer;
+    }
+
+    .radiusControl input[type="range"]::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #22d3ee, #38bdf8, #8b5cf6);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+    }
+
+    .radiusControl input[type="range"]::-moz-range-track {
+      height: 6px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #22d3ee, #38bdf8, #8b5cf6);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+    }
+
+    .radiusControl input[type="range"]::-webkit-slider-thumb {
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      margin-top: -6px;
+      border: 2px solid #07111f;
+      border-radius: 999px;
+      background: #f8fafc;
+      box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.16), 0 8px 20px rgba(0, 0, 0, 0.32);
+    }
+
+    .radiusControl input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border: 2px solid #07111f;
+      border-radius: 999px;
+      background: #f8fafc;
+      box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.16), 0 8px 20px rgba(0, 0, 0, 0.32);
     }
 
     .locationStatus {
@@ -603,49 +655,6 @@
       color: #a8b0bf;
       font-size: 12px;
       line-height: 1.4;
-    }
-
-    .areaQuickPick {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      min-width: 0;
-      overflow-x: auto;
-      padding: 2px 0;
-      scrollbar-width: none;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    .areaQuickPick::-webkit-scrollbar {
-      display: none;
-    }
-
-    .areaQuickPick__label {
-      flex: 0 0 auto;
-      color: #94a3b8;
-      font-size: 12px;
-      font-weight: 900;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    .areaQuickPick button {
-      appearance: none;
-      flex: 0 0 auto;
-      border: 1px solid rgba(148, 163, 184, 0.16);
-      border-radius: 999px;
-      background: rgba(15, 23, 42, 0.7);
-      color: #dbeafe;
-      padding: 7px 10px;
-      font: inherit;
-      font-size: 12px;
-      font-weight: 850;
-      cursor: pointer;
-    }
-
-    .areaQuickPick button:hover {
-      border-color: rgba(56, 189, 248, 0.4);
-      background: rgba(14, 116, 144, 0.2);
     }
 
     .togglePill {
@@ -701,6 +710,7 @@
     }
 
     .mapPersonalPanel--plan {
+      grid-column: 1 / -1;
       border-color: rgba(245, 197, 66, 0.24);
       background:
         radial-gradient(circle at 12% 0%, rgba(245, 197, 66, 0.1), transparent 38%),
@@ -2961,7 +2971,7 @@
 
       .locationStrip {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: minmax(0, 1fr);
         gap: 6px;
       }
 
@@ -2978,6 +2988,17 @@
 
       .radiusControl {
         justify-content: center;
+        width: 100%;
+        min-width: 0;
+      }
+
+      .radiusControl--slider {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .radiusControl input[type="range"] {
+        min-width: 0;
       }
 
       .locationStatus {
@@ -3293,6 +3314,11 @@
 
       <div class="locationStrip" aria-live="polite">
         <button id="useLocationButton" class="locationButton" type="button">Use my location</button>
+        <label id="nearMeRadiusControl" class="radiusControl radiusControl--slider" for="nearMeRadiusSelect" hidden>
+          <span class="radiusControl__label">Radius</span>
+          <input id="nearMeRadiusSelect" type="range" min="0.5" max="10" step="0.5" value="2" aria-describedby="locationStatus" />
+          <span id="nearMeRadiusValue" class="radiusControl__value">2 km</span>
+        </label>
         <span id="locationStatus" class="locationStatus">Location off. Tap once to show approximate distances and nearby happy hours.</span>
       </div>
 
@@ -3330,48 +3356,6 @@
         </p>
 
         <div class="advancedFiltersGrid">
-          <section class="advancedFilterSection advancedFilterSection--wide" aria-label="Choose a Melbourne area">
-            <span class="advancedFilterSection__title">Area</span>
-            <div class="areaQuickPick" aria-label="Choose a Melbourne area if location is off">
-              <span class="areaQuickPick__label">Choose area</span>
-              <button type="button" data-area-chip="CBD">CBD</button>
-              <button type="button" data-area-chip="Fitzroy">Fitzroy</button>
-              <button type="button" data-area-chip="Collingwood">Collingwood</button>
-              <button type="button" data-area-chip="Richmond">Richmond</button>
-              <button type="button" data-area-chip="Brunswick">Brunswick</button>
-              <button type="button" data-area-chip="Carlton">Carlton</button>
-              <button type="button" data-area-chip="South Yarra">South Yarra</button>
-              <button type="button" data-area-chip="Prahran">Prahran</button>
-              <button type="button" data-area-chip="St Kilda">St Kilda</button>
-              <button type="button" data-area-chip="Footscray">Footscray</button>
-            </div>
-            <label id="nearMeRadiusControl" class="radiusControl" for="nearMeRadiusSelect" hidden>
-              Within
-              <select id="nearMeRadiusSelect">
-                <option value="0.5">500 m</option>
-                <option value="1">1 km</option>
-                <option value="2" selected>2 km</option>
-                <option value="5">5 km</option>
-                <option value="10">10 km</option>
-              </select>
-            </label>
-          </section>
-
-          <section class="advancedFilterSection" aria-label="Venue scope">
-            <span class="advancedFilterSection__title">View</span>
-            <div class="filterGroup" id="scopeChips">
-              <button class="filterChip is-active" type="button" data-scope="all">All venues</button>
-              <button class="filterChip" type="button" data-scope="needs_data">Needs data</button>
-            </div>
-          </section>
-
-          <section class="advancedFilterSection" aria-label="Best options shortcuts">
-            <span class="advancedFilterSection__title">Now</span>
-            <div class="filterGroup">
-              <button class="filterChip" type="button" data-filter-chip="best_options">Best options right now</button>
-            </div>
-          </section>
-
           <section class="advancedFilterSection" aria-label="Beer availability filters">
             <span class="advancedFilterSection__title">Availability</span>
             <div class="filterGroup">
@@ -3468,17 +3452,6 @@
 
     <div id="belowMapInsights" class="belowMapInsights" hidden>
       <div id="mapPersonalPanels" class="mapPersonalPanels">
-        <section id="recentlyViewedPanel" class="mapPersonalPanel" aria-labelledby="recentlyViewedTitle" hidden>
-          <div class="mapPersonalPanel__header">
-            <div>
-              <div class="mapPersonalPanel__eyebrow">Pick up where you left off</div>
-              <h2 id="recentlyViewedTitle">Recently viewed</h2>
-            </div>
-            <button id="clearRecentlyViewed" class="mapPersonalPanel__link" type="button">Clear</button>
-          </div>
-          <div id="recentlyViewedList" class="mapPersonalPanel__list"></div>
-        </section>
-
         <section id="nightPlanPanel" class="mapPersonalPanel mapPersonalPanel--plan" aria-labelledby="nightPlanTitle" hidden>
           <div class="mapPersonalPanel__header">
             <div>
@@ -3582,6 +3555,7 @@
     const useLocationButtonEl = document.getElementById("useLocationButton");
     const nearMeRadiusControlEl = document.getElementById("nearMeRadiusControl");
     const nearMeRadiusSelectEl = document.getElementById("nearMeRadiusSelect");
+    const nearMeRadiusValueEl = document.getElementById("nearMeRadiusValue");
     const locationStatusEl = document.getElementById("locationStatus");
     const areaChipEls = Array.from(document.querySelectorAll("[data-area-chip]"));
     const legendTitleEl = document.getElementById("legendTitle");
@@ -4131,9 +4105,41 @@
       );
     }
 
+    function normalizeRadiusKm(value) {
+      const numericValue = Number(value);
+      const min = Number(nearMeRadiusSelectEl?.min) || 0.5;
+      const max = Number(nearMeRadiusSelectEl?.max) || 10;
+      const nextValue = Number.isFinite(numericValue) ? numericValue : NEAR_ME_DEFAULT_RADIUS_KM;
+      return Math.round(Math.min(max, Math.max(min, nextValue)) * 10) / 10;
+    }
+
+    function formatRadiusLabel(radiusKm) {
+      const normalizedRadius = normalizeRadiusKm(radiusKm);
+      if (normalizedRadius < 1) {
+        return `${Math.round(normalizedRadius * 1000)} m`;
+      }
+      return `${Number.isInteger(normalizedRadius) ? normalizedRadius : normalizedRadius.toFixed(1)} km`;
+    }
+
+    function setNearbyRadius(radiusKm) {
+      const normalizedRadius = normalizeRadiusKm(radiusKm);
+      userLocationState.radiusKm = normalizedRadius;
+
+      if (nearMeRadiusSelectEl) {
+        nearMeRadiusSelectEl.value = String(normalizedRadius);
+      }
+
+      if (nearMeRadiusValueEl) {
+        nearMeRadiusValueEl.textContent = formatRadiusLabel(normalizedRadius);
+      }
+
+      return normalizedRadius;
+    }
+
     function syncLocationUi() {
       const isEnabled = hasUserLocation();
       nearMeRadiusControlEl.hidden = !isEnabled && !Array.from(activeFilterChips).some(isNearMeFilter);
+      setNearbyRadius(userLocationState.radiusKm);
       locationStatusEl.textContent = userLocationState.message;
       useLocationButtonEl.textContent =
         userLocationState.status === "requesting"
@@ -4168,9 +4174,10 @@
     async function requestUserLocation(reason = "manual", options = {}) {
       const shouldRemember = options.remember !== false;
       if (hasUserLocation()) {
+        const radiusLabel = formatRadiusLabel(userLocationState.radiusKm);
         userLocationState.message = userLocationState.outsideMelbourne
-          ? `Location on · ${userLocationState.radiusKm} km radius. Melbourne venues are still shown because this app covers Victoria only.`
-          : `Location on · showing approximate distances within ${userLocationState.radiusKm} km.`;
+          ? `Location on · ${radiusLabel} radius. Melbourne venues are still shown because this app covers Victoria only.`
+          : `Location on · showing approximate distances within ${radiusLabel}.`;
         if (shouldRemember) {
           setSavedLocationPreference(true);
         }
@@ -4234,9 +4241,10 @@
       userLocationState.status = "granted";
       userLocationState.coords = coords;
       userLocationState.outsideMelbourne = distanceFromMelbourne !== null && distanceFromMelbourne > MELBOURNE_COVERAGE_RADIUS_KM;
+      const radiusLabel = formatRadiusLabel(userLocationState.radiusKm);
       userLocationState.message = userLocationState.outsideMelbourne
         ? `Location on · this app currently covers Melbourne venues. Distances are approximate.`
-        : `Location on · showing approximate distances within ${userLocationState.radiusKm} km.`;
+        : `Location on · showing approximate distances within ${radiusLabel}.`;
       if (shouldRemember) {
         setSavedLocationPreference(true);
       }
@@ -4592,11 +4600,13 @@
       }));
     });
 
-    clearRecentlyViewedEl.addEventListener("click", () => {
-      recentlyViewedVenues = [];
-      renderRecentlyViewedPanel();
-      showToast("Recently viewed cleared.");
-    });
+    if (clearRecentlyViewedEl) {
+      clearRecentlyViewedEl.addEventListener("click", () => {
+        recentlyViewedVenues = [];
+        renderRecentlyViewedPanel();
+        showToast("Recently viewed cleared.");
+      });
+    }
 
     clearNightPlanEl.addEventListener("click", () => {
       nightPlanVenues = [];
@@ -4704,12 +4714,7 @@
         .forEach((filter) => activeFilterChips.add(filter));
 
       if (Number.isFinite(sharedRadiusKm)) {
-        const validRadiusValues = Array.from(nearMeRadiusSelectEl.options).map((option) => option.value);
-        const radiusValue = String(sharedRadiusKm);
-        if (validRadiusValues.includes(radiusValue)) {
-          userLocationState.radiusKm = sharedRadiusKm;
-          nearMeRadiusSelectEl.value = radiusValue;
-        }
+        setNearbyRadius(sharedRadiusKm);
       }
     }
 
@@ -6142,7 +6147,7 @@
       });
 
       if (hasUserLocation() && hasNearMeFilter(viewState)) {
-        labels.push(`Within ${userLocationState.radiusKm} km`);
+        labels.push(`Within ${formatRadiusLabel(userLocationState.radiusKm)}`);
       }
 
       return labels;
@@ -6212,7 +6217,7 @@
           subtitle: "Prioritises active happy hours, verified prices, freshness, and distance when location is on.",
           stats: [
             `${filteredRows.length} trusted matches`,
-            hasUserLocation() ? `Within ${userLocationState.radiusKm} km` : "Area or map view",
+            hasUserLocation() ? `Within ${formatRadiusLabel(userLocationState.radiusKm)}` : "Area or map view",
           ],
           items: [
             ["green", "Green price ring", "Known lower-band price. Unknown prices are never treated as cheap."],
@@ -6226,12 +6231,13 @@
       }
 
       if (viewState.filters.includes("happy_hour_near_me")) {
+        const radiusLabel = formatRadiusLabel(userLocationState.radiusKm);
         return {
           title: "Happy hour near me",
-          subtitle: `Active happy-hour matches within ${userLocationState.radiusKm} km. Distances are approximate straight-line distances.`,
+          subtitle: `Active happy-hour matches within ${radiusLabel}. Distances are approximate straight-line distances.`,
           stats: [
             `${filteredRows.length} nearby active matches`,
-            hasUserLocation() ? `Within ${userLocationState.radiusKm} km` : "Location off",
+            hasUserLocation() ? `Within ${radiusLabel}` : "Location off",
           ],
           items: [
             ["neutral", "Happy-hour data", "Venue has active happy-hour details right now."],
@@ -6243,12 +6249,13 @@
       }
 
       if (viewState.filters.includes("recently_verified_near_me")) {
+        const radiusLabel = formatRadiusLabel(userLocationState.radiusKm);
         return {
           title: "Recently verified near me",
-          subtitle: `Verified prices within ${userLocationState.radiusKm} km, sorted with nearby fresh data first.`,
+          subtitle: `Verified prices within ${radiusLabel}, sorted with nearby fresh data first.`,
           stats: [
             `${filteredRows.length} nearby verified venues`,
-            hasUserLocation() ? `Within ${userLocationState.radiusKm} km` : "Location off",
+            hasUserLocation() ? `Within ${radiusLabel}` : "Location off",
           ],
           items: [
             ["green", "Green price ring", "Verified lower-band price."],
@@ -6602,9 +6609,9 @@
       venueRailTitleEl.textContent = viewState.filters.includes("best_options")
         ? "Best options right now"
         : viewState.filters.includes("happy_hour_near_me")
-          ? `Happy hours within ${userLocationState.radiusKm} km`
+          ? `Happy hours within ${formatRadiusLabel(userLocationState.radiusKm)}`
           : viewState.filters.includes("recently_verified_near_me")
-            ? `Recently verified within ${userLocationState.radiusKm} km`
+            ? `Recently verified within ${formatRadiusLabel(userLocationState.radiusKm)}`
             : viewState.beerQuery
               ? `${viewState.beerQuery} nearby`
               : viewState.scope === "needs_data"
@@ -6913,12 +6920,16 @@
 
     function renderRecentlyViewedPanel() {
       recentlyViewedVenues = writeStoredVenues(RECENTLY_VIEWED_STORAGE_KEY, recentlyViewedVenues, MAX_RECENT_VENUES);
-      recentlyViewedPanelEl.hidden = recentlyViewedVenues.length === 0;
-      if (recentlyViewedVenues.length) {
-        renderStoredVenueList(recentlyViewedListEl, recentlyViewedVenues, "recently_viewed", true);
-      } else {
-        recentlyViewedListEl.innerHTML = "";
+
+      if (recentlyViewedPanelEl && recentlyViewedListEl) {
+        recentlyViewedPanelEl.hidden = recentlyViewedVenues.length === 0;
+        if (recentlyViewedVenues.length) {
+          renderStoredVenueList(recentlyViewedListEl, recentlyViewedVenues, "recently_viewed", true);
+        } else {
+          recentlyViewedListEl.innerHTML = "";
+        }
       }
+
       syncBelowMapInsightsVisibility();
     }
 
@@ -6934,7 +6945,8 @@
     }
 
     function syncBelowMapInsightsVisibility() {
-      belowMapInsightsEl.hidden = recentlyViewedPanelEl.hidden && nightPlanPanelEl.hidden;
+      const hasRecentlyViewedPanel = Boolean(recentlyViewedPanelEl && !recentlyViewedPanelEl.hidden);
+      belowMapInsightsEl.hidden = !hasRecentlyViewedPanel && nightPlanPanelEl.hidden;
     }
 
     function rememberViewedVenue(record) {
@@ -7966,18 +7978,28 @@
           }
         });
 
-        nearMeRadiusSelectEl.addEventListener("change", () => {
-          userLocationState.radiusKm = Number(nearMeRadiusSelectEl.value) || NEAR_ME_DEFAULT_RADIUS_KM;
+        const updateNearbyRadiusFromSlider = (source, shouldTrack = false) => {
+          const radiusKm = setNearbyRadius(nearMeRadiusSelectEl.value);
           userLocationState.message = hasUserLocation()
-            ? `Location on · showing approximate distances within ${userLocationState.radiusKm} km.`
+            ? `Location on · showing approximate distances within ${formatRadiusLabel(radiusKm)}.`
             : "Choose a radius, then tap Use my location to show nearby venues.";
           syncLocationUi();
           syncUserLocationOverlay(hasUserLocation() && hasNearMeFilter(getViewState()));
-          void trackBusinessEvent("radius_filter_changed", getAnalyticsContext({
-            radiusKm: userLocationState.radiusKm,
-            source: "radius_select",
-          }));
+          if (shouldTrack) {
+            void trackBusinessEvent("radius_filter_changed", getAnalyticsContext({
+              radiusKm: userLocationState.radiusKm,
+              source,
+            }));
+          }
           renderMarkers();
+        };
+
+        nearMeRadiusSelectEl.addEventListener("input", () => {
+          updateNearbyRadiusFromSlider("radius_slider_input");
+        });
+
+        nearMeRadiusSelectEl.addEventListener("change", () => {
+          updateNearbyRadiusFromSlider("radius_slider", true);
         });
 
         advancedFiltersToggleEl.addEventListener("click", () => {

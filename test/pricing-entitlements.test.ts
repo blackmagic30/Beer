@@ -41,9 +41,13 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Cheapest-night filters");
     expect(pricingHtml).toContain("Rotating discount pass for venue specials");
     expect(pricingHtml).toContain("Saved night shortcuts, personal defaults, and savings tracking");
-    expect(pricingHtml).toContain("Premium is designed to make each search faster");
-    expect(pricingHtml).toContain("Exact-price value mode");
-    expect(pricingHtml).toContain("Personal defaults");
+    expect(pricingHtml).not.toContain("Pay monthly, pay yearly, or earn the same access");
+    expect(pricingHtml).not.toContain("Own or manage a bar?");
+    expect(pricingHtml).not.toContain("Included for paid users");
+    expect(pricingHtml).not.toContain("Premium is designed to make each search faster");
+    expect(pricingHtml).not.toContain("Exact-price value mode");
+    expect(pricingHtml).not.toContain("Personal defaults</h3>");
+    expect(pricingHtml).not.toContain("consumerPremiumToolkit");
     expect(pricingHtml).toContain('href="/account.html?checkoutPlan=monthly"');
     expect(pricingHtml).toContain('href="/account.html?checkoutPlan=yearly"');
     expect(pricingHtml).toContain("Venue pricing");

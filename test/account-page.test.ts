@@ -133,7 +133,7 @@ describe("account page shell", () => {
 
     expect(html).toContain("Private evidence");
     expect(html).toContain("Submitted data stays pending until verified or approved.");
-    expect(trust).toContain("Raw photos, reviewer notes, account details, and individual analytics stay private.");
+    expect(trust).toContain("Source photos, receipts, upload-location proof, OCR evidence, and reviewer notes are private review material.");
   });
 
   it("keeps feedback on a dedicated page instead of clustering the account dashboard", () => {
@@ -405,13 +405,20 @@ describe("account page shell", () => {
 
     expect(nav).toContain('{ key: "faq", href: "/trust.html", label: "FAQ" }');
     expect(trust).toContain("FAQ | Pint Path");
-    expect(trust).toContain("Where did the Trust Centre go?");
-    expect(trust).toContain("Raw photos, reviewer notes, account details, and individual analytics stay private.");
+    expect(trust).not.toContain("Where did the Trust Centre go?");
+    expect(trust).not.toContain("Tap a question when you need detail.");
+    expect(trust).toContain("What if a price is wrong?");
+    expect(trust).toContain("How does premium access work?");
+    expect(trust).toContain("Can bars edit the map directly?");
+    expect(trust).toContain("How do I report a security or privacy concern?");
     expect(trust).toContain("How do I add a missing venue?");
     expect(trust).toContain("faqList");
-    expect(trust).toContain("faqActionPanel");
+    expect(trust).not.toContain("faqActionPanel");
+    expect(trust).not.toContain("Need something else?");
     expect(css).toContain(".faqItem summary");
-    expect(css).toContain(".faqActionPanel");
+    expect(css).toContain(".faqItem[open]");
+    expect(css).toContain(".faqItem summary::after");
+    expect(css).not.toContain(".faqActionPanel");
     expect(trust).toContain("/security.html");
     expect(community).toContain("Submit what you actually saw at the venue.");
     expect(community).toContain("Spoofing location");

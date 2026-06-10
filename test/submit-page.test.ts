@@ -23,7 +23,9 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="submissionPanel" class="panel submitPanel is-hidden"');
     expect(html).toContain("Sign in before submitting data");
     expect(html).toContain("uploads accountable");
-    expect(html).toContain("Reviewed before publication");
+    expect(html).toContain('<div id="status" class="notice submitReviewNotice">Ready to submit.</div>');
+    expect(html).not.toContain("Reviewed before publication");
+    expect(html).not.toContain("Offline uploads save locally");
     expect(html).toContain("await MelbBeerBusiness.apiFetch(\"/api/business/account\")");
     expect(html).toContain("window.location.assign(loginUrl)");
   });
@@ -273,6 +275,9 @@ describe("submit page auth gate", () => {
   it("explains submission location proof and offline queueing in the FAQ", () => {
     const html = faqHtml();
 
+    expect(html).toContain("How do submits work?");
+    expect(html).toContain("New prices and venues are checked before publication.");
+    expect(html).toContain("saves the upload locally in your browser and retries when you are back online");
     expect(html).toContain("Why does Submit ask for location services?");
     expect(html).toContain("Location proof helps reviewers confirm that data was uploaded from the venue area.");
     expect(html).toContain("It is optional during field testing");

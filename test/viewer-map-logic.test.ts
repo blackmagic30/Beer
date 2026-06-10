@@ -241,7 +241,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('id="searchThisAreaButton"');
     expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
     expect(html).toContain("MAP_OVERLAYS_ENABLED = false");
-    expect(html).toContain('id="recentlyViewedPanel"');
+    expect(html).not.toContain('id="recentlyViewedPanel"');
+    expect(html).not.toContain('id="recentlyViewedTitle"');
     expect(html).toContain('id="nightPlanPanel"');
     expect(html).toContain('LOCAL_SAVED_VENUES_STORAGE_KEY = "pintPathLocalSavedVenues"');
     expect(html).toContain('RECENTLY_VIEWED_STORAGE_KEY = "pintPathRecentlyViewedVenues"');
@@ -280,8 +281,11 @@ describe("viewer map UI wiring", () => {
     expect(html).not.toContain('id="businessBanner"');
     expect(html).not.toContain('id="businessBannerCopy"');
     expect(html).toContain('id="activeFilterSummary"');
-    expect(html).toContain('data-area-chip="Fitzroy"');
-    expect(html).toContain('data-filter-chip="best_options"');
+    expect(html).not.toContain("Choose area");
+    expect(html).not.toContain('data-area-chip="Fitzroy"');
+    expect(html).not.toContain('<span class="advancedFilterSection__title">View</span>');
+    expect(html).not.toContain('<span class="advancedFilterSection__title">Now</span>');
+    expect(html).not.toContain('data-filter-chip="best_options"');
     expect(html).toContain('data-filter-chip="pint_path_specials"');
     expect(html).toContain('aria-label="Specials filters"');
     expect(html).toContain('<span class="filterGroup__label">Specials</span>');
@@ -304,6 +308,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('data-filter-chip="recently_verified_near_me"');
     expect(html).toContain('data-filter-chip="nearest"');
     expect(html).toContain('id="nearMeRadiusSelect"');
+    expect(html).toContain('type="range"');
+    expect(html).toContain('id="nearMeRadiusValue"');
+    expect(html).toContain('"radius_slider"');
     expect(html).toContain('LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference"');
     expect(html).toContain('requestUserLocation("saved_location_preference")');
     expect(html).toContain('disableUserLocation("use_location_button_off")');
