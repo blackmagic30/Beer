@@ -605,51 +605,6 @@
       line-height: 1.4;
     }
 
-    .quickActionStrip {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 14px;
-    }
-
-    .quickActionButton {
-      appearance: none;
-      min-height: 46px;
-      border: 1px solid rgba(255, 255, 255, 0.13);
-      border-radius: 999px;
-      background:
-        linear-gradient(145deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.026)),
-        rgba(15, 23, 42, 0.72);
-      color: #f8fafc;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 10px 14px;
-      font: inherit;
-      font-size: 14px;
-      font-weight: 950;
-      line-height: 1.15;
-      text-align: center;
-      text-decoration: none;
-      cursor: pointer;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
-      transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
-    }
-
-    .quickActionButton:hover {
-      transform: translateY(-1px);
-      border-color: rgba(34, 211, 238, 0.4);
-      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.22), 0 0 22px rgba(34, 211, 238, 0.1);
-    }
-
-    .quickActionButton--primary {
-      border-color: rgba(34, 211, 238, 0.3);
-      background: linear-gradient(135deg, #38bdf8, #22d3ee 42%, #8b5cf6);
-      color: #04111f;
-      box-shadow: 0 18px 36px rgba(34, 211, 238, 0.18);
-    }
-
     .areaQuickPick {
       display: flex;
       align-items: center;
@@ -717,19 +672,6 @@
       height: 16px;
       margin: 0;
       accent-color: #38bdf8;
-    }
-
-    #statusBar {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      align-items: stretch;
-    }
-
-    .retentionHighlights {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
     }
 
     .mapPersonalPanels {
@@ -861,114 +803,6 @@
       border: 1px solid rgba(148, 163, 184, 0.16);
       border-radius: 999px;
       color: #cbd5e1;
-    }
-
-    .highlightPanel {
-      border: 1px solid rgba(148, 163, 184, 0.14);
-      border-radius: 18px;
-      background: rgba(15, 23, 42, 0.62);
-      padding: 12px;
-      color: #e2e8f0;
-      min-width: 0;
-    }
-
-    .highlightPanel__title {
-      font-size: 12px;
-      font-weight: 900;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #bae6fd;
-      margin-bottom: 8px;
-    }
-
-    .highlightPanel__items {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .highlightEmpty {
-      width: 100%;
-      padding: 12px 13px;
-      border: 1px dashed rgba(244, 214, 150, 0.2);
-      border-radius: 15px;
-      background: rgba(2, 6, 23, 0.24);
-      color: #bac4d5;
-      font-size: 12px;
-      line-height: 1.45;
-    }
-
-    .highlightEmpty strong {
-      display: block;
-      color: #fbf7ef;
-      margin-bottom: 3px;
-    }
-
-    .highlightCard {
-      appearance: none;
-      border: 1px solid rgba(148, 163, 184, 0.14);
-      background: rgba(2, 6, 23, 0.34);
-      color: #e2e8f0;
-      border-radius: 14px;
-      padding: 8px 10px;
-      font: inherit;
-      font-size: 12px;
-      text-align: left;
-      cursor: pointer;
-    }
-
-    .highlightCard strong {
-      display: block;
-      color: #ffffff;
-      font-size: 13px;
-      margin-bottom: 2px;
-    }
-
-    .highlightCard span {
-      color: #94a3b8;
-    }
-
-    .statusPill {
-      display: grid;
-      gap: 4px;
-      padding: 10px 12px;
-      border-radius: 18px;
-      background: rgba(15, 23, 42, 0.74);
-      border: 1px solid rgba(148, 163, 184, 0.14);
-      color: #cbd5e1;
-      font-size: 12px;
-      font-weight: 600;
-      min-width: 0;
-    }
-
-    .statusPill strong {
-      color: #ffffff;
-    }
-
-    .statusPill__label {
-      color: #8d99aa;
-      font-size: 10px;
-      font-weight: 950;
-      letter-spacing: 0.11em;
-      text-transform: uppercase;
-    }
-
-    .statusPill__value {
-      overflow: hidden;
-      color: #fff7ed;
-      font-size: 18px;
-      font-weight: 950;
-      letter-spacing: -0.025em;
-      line-height: 1.05;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .statusPill__copy {
-      overflow: hidden;
-      color: #a8b0bf;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
     #mapShell {
@@ -2246,8 +2080,6 @@
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
     }
 
-    .highlightPanel,
-    .statusPill,
     #mapOverlayTabs,
     #venueRail,
     #mapLegend {
@@ -2258,23 +2090,16 @@
       box-shadow: var(--shadow-lg);
     }
 
-    .highlightPanel {
-      border-radius: 22px;
-    }
-
-    .highlightPanel__title,
     .legend__eyebrow,
     .venueRail__eyebrow {
       color: #22d3ee;
     }
 
-    .highlightCard,
     .venueRail__card {
       border-color: rgba(255, 255, 255, 0.1);
       background: rgba(255, 255, 255, 0.055);
     }
 
-    .highlightCard:hover,
     .venueRail__card:hover {
       border-color: rgba(34, 211, 238, 0.34);
       background: rgba(255, 255, 255, 0.095);
@@ -2899,31 +2724,8 @@
         padding: 9px 12px;
       }
 
-      .retentionHighlights {
-        gap: 8px;
-      }
-
-      .highlightPanel {
-        padding: 10px;
-        border-radius: 18px;
-      }
-
       .mapPersonalPanels {
         grid-template-columns: 1fr;
-      }
-
-      .highlightPanel__title {
-        margin-bottom: 6px;
-        font-size: 11px;
-      }
-
-      .highlightCard {
-        padding: 7px 9px;
-      }
-
-      .statusPill {
-        padding: 8px 10px;
-        font-size: 12px;
       }
 
       #mapShell {
@@ -3041,8 +2843,7 @@
       }
 
       .topbar__businessLinks::-webkit-scrollbar,
-      .chipRow::-webkit-scrollbar,
-      #statusBar::-webkit-scrollbar {
+      .chipRow::-webkit-scrollbar {
         display: none;
       }
 
@@ -3185,22 +2986,10 @@
         font-size: 10.5px;
       }
 
-      .quickActionStrip {
-        grid-template-columns: 1fr;
-        gap: 8px;
-        margin-top: 10px;
-      }
-
-      .quickActionButton {
-        min-height: 48px;
-        border-radius: 14px;
-      }
-
       .mapHeroCard .topbar__subtitle,
       .controlDeck__copy,
       .popularBeerRow,
-      .specialsFilterRow,
-      #statusBar {
+      .specialsFilterRow {
         display: none;
       }
 
@@ -3230,33 +3019,6 @@
         padding: 9px 12px;
         font-size: 12px;
         white-space: nowrap;
-      }
-
-      .retentionHighlights {
-        display: grid;
-        grid-template-columns: 1fr;
-      }
-
-      #statusBar {
-        display: none;
-      }
-
-      .statusPill {
-        gap: 2px;
-        padding: 7px 8px;
-        border-radius: 14px;
-      }
-
-      .statusPill__label {
-        font-size: 8.5px;
-      }
-
-      .statusPill__value {
-        font-size: 14px;
-      }
-
-      .statusPill__copy {
-        font-size: 10px;
       }
 
       #mapLegend {
@@ -3474,14 +3236,6 @@
         -webkit-line-clamp: 1;
       }
 
-      .statusPill__copy {
-        display: none;
-      }
-
-      #statusBar {
-        grid-template-columns: repeat(3, minmax(112px, 1fr));
-      }
-
       #mapShell {
         min-height: 64dvh;
       }
@@ -3542,22 +3296,16 @@
         <span id="locationStatus" class="locationStatus">Location off. Tap once to show approximate distances and nearby happy hours.</span>
       </div>
 
-      <div class="quickActionStrip" aria-label="Fast map actions">
-        <button id="nearMeNowButton" class="quickActionButton quickActionButton--primary" type="button">Near me now</button>
-        <a id="quickSubmitButton" class="quickActionButton" href="/submit.html?type=single_beer_price">Submit price</a>
-        <a class="quickActionButton" href="/pricing.html">Unlock perks</a>
-      </div>
-
-      <div class="popularBeerRow" aria-label="Popular beer filters">
-        <div id="beerChipHost" class="filterGroup chipRow__inline"></div>
-      </div>
-
       <div class="specialsFilterRow" aria-label="Specials filters">
         <div class="filterGroup chipRow__inline">
           <span class="filterGroup__label">Specials</span>
           <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
           <button class="filterChip" type="button" data-filter-chip="pint_path_specials">Pint Path specials</button>
         </div>
+      </div>
+
+      <div class="popularBeerRow" aria-label="Popular beer filters">
+        <div id="beerChipHost" class="filterGroup chipRow__inline"></div>
       </div>
 
       <div id="activeFilterSummary" class="activeFilterSummary" hidden>
@@ -3718,9 +3466,7 @@
       </aside>
     </div>
 
-    <div class="belowMapInsights">
-      <div id="retentionHighlights" class="retentionHighlights" aria-live="polite"></div>
-
+    <div id="belowMapInsights" class="belowMapInsights" hidden>
       <div id="mapPersonalPanels" class="mapPersonalPanels">
         <section id="recentlyViewedPanel" class="mapPersonalPanel" aria-labelledby="recentlyViewedTitle" hidden>
           <div class="mapPersonalPanel__header">
@@ -3743,12 +3489,6 @@
           </div>
           <div id="nightPlanList" class="mapPersonalPanel__list"></div>
         </section>
-      </div>
-
-      <div id="statusBar">
-        <div id="resultsSummary" class="statusPill">Loading venues…</div>
-        <div id="viewSummary" class="statusPill">All venues</div>
-        <div id="accessSummary" class="statusPill">Free preview</div>
       </div>
     </div>
 
@@ -3838,16 +3578,12 @@
     const advancedFiltersNoticeEl = document.getElementById("advancedFiltersNotice");
     const activeFilterSummaryEl = document.getElementById("activeFilterSummary");
     const activeFilterCopyEl = document.getElementById("activeFilterCopy");
+    const belowMapInsightsEl = document.getElementById("belowMapInsights");
     const useLocationButtonEl = document.getElementById("useLocationButton");
-    const nearMeNowButtonEl = document.getElementById("nearMeNowButton");
-    const quickSubmitButtonEl = document.getElementById("quickSubmitButton");
     const nearMeRadiusControlEl = document.getElementById("nearMeRadiusControl");
     const nearMeRadiusSelectEl = document.getElementById("nearMeRadiusSelect");
     const locationStatusEl = document.getElementById("locationStatus");
     const areaChipEls = Array.from(document.querySelectorAll("[data-area-chip]"));
-    const resultsSummaryEl = document.getElementById("resultsSummary");
-    const viewSummaryEl = document.getElementById("viewSummary");
-    const accessSummaryEl = document.getElementById("accessSummary");
     const legendTitleEl = document.getElementById("legendTitle");
     const legendSubtitleEl = document.getElementById("legendSubtitle");
     const legendStatsEl = document.getElementById("legendStats");
@@ -3870,7 +3606,6 @@
     const closeVenueDetailEl = document.getElementById("closeVenueDetail");
     const scopeChipEls = Array.from(document.querySelectorAll("[data-scope]"));
     const highValueChipEls = Array.from(document.querySelectorAll("[data-filter-chip]"));
-    const retentionHighlightsEl = document.getElementById("retentionHighlights");
     const searchThisAreaButtonEl = document.getElementById("searchThisAreaButton");
     const recentlyViewedPanelEl = document.getElementById("recentlyViewedPanel");
     const recentlyViewedListEl = document.getElementById("recentlyViewedList");
@@ -4581,7 +4316,6 @@
       venueDetailOverlayEl.setAttribute("aria-hidden", "true");
       venueDetailBodyEl.removeAttribute("aria-busy");
       activeVenueRecord = null;
-      syncQuickSubmitLink(null);
     }
 
     function showVenueDetailLoading() {
@@ -4615,7 +4349,6 @@
       venueDetailBodyEl.innerHTML = getVenueDetailContent(record);
       venueDetailOverlayEl.classList.remove("is-hidden-panel");
       venueDetailOverlayEl.setAttribute("aria-hidden", "false");
-      syncQuickSubmitLink(record);
       closeVenueDetailEl.focus({ preventScroll: true });
       rememberViewedVenue(record);
       trackVenueAnalytics("venue_detail_opened", record, source);
@@ -6431,15 +6164,6 @@
     }
 
     function syncStatusPills(filteredRows, viewState) {
-      const visibleCount = filteredRows.length;
-      const capturedCount = filteredRows.filter((row) => hasCapturedBeerData(row)).length;
-      const happyHourCount = filteredRows.filter((row) => getHappyHourDetails(row)).length;
-      const knownPriceCount = filteredRows.filter((row) => hasKnownPriceForView(row, viewState)).length;
-      const distanceCount = hasUserLocation()
-        ? filteredRows.filter((row) => getVenueDistanceKm(row) !== null).length
-        : 0;
-      const missingCount = visibleCount - capturedCount;
-      const viewCopy = getViewSummaryText(viewState);
       const hasActiveFilters = Boolean(
         viewState.scope !== "all" ||
         viewState.venueQuery ||
@@ -6447,33 +6171,6 @@
         viewState.onTapOnly ||
         viewState.filters.length,
       );
-      const coverageCopy = capturedCount > 0
-        ? `${capturedCount} with beer data · ${happyHourCount} with happy-hour info`
-        : "Coverage is growing. Help verify Melbourne beer prices.";
-      const verifiedCopy = viewState.beerQuery
-        ? `${knownPriceCount} verified ${viewState.beerQuery} ${knownPriceCount === 1 ? "price" : "prices"}`
-        : hasUserLocation()
-          ? `${distanceCount} with approximate distance`
-          : `${Math.max(0, missingCount)} need data`;
-      const accessCopy = businessAccess.hasFullAccess
-        ? "Unlimited exact prices and full filters"
-        : "Free preview: happy hours + Guinness, Carlton Draught, and Stone & Wood Pacific Ale pints";
-
-      resultsSummaryEl.innerHTML = `
-        <span class="statusPill__label">In this view</span>
-        <span class="statusPill__value">${visibleCount} ${visibleCount === 1 ? "venue" : "venues"}</span>
-        <span class="statusPill__copy">${escapeHtml(coverageCopy)}</span>
-      `;
-      viewSummaryEl.innerHTML = `
-        <span class="statusPill__label">Active filter</span>
-        <span class="statusPill__value">${escapeHtml(viewCopy)}</span>
-        <span class="statusPill__copy">${escapeHtml(verifiedCopy)}</span>
-      `;
-      accessSummaryEl.innerHTML = `
-        <span class="statusPill__label">Access</span>
-        <span class="statusPill__value">${escapeHtml(getAccessLabel())}</span>
-        <span class="statusPill__copy">${escapeHtml(accessCopy)}</span>
-      `;
       clearFiltersEl.hidden = !hasActiveFilters;
       syncActiveFilterSummary(viewState);
       syncScopeChipState();
@@ -6642,114 +6339,6 @@
         `)
         .join("");
       legendHintEl.textContent = config.hint;
-    }
-
-    function renderRetentionHighlights(rows, activeMarkerRecords = [], onSelectRecord = null) {
-      const currentViewState = getViewState();
-      const byDistance = (left, right) => {
-        const leftDistance = getVenueDistanceKm(left);
-        const rightDistance = getVenueDistanceKm(right);
-
-        if (leftDistance !== null && rightDistance !== null) {
-          return leftDistance - rightDistance;
-        }
-
-        if (leftDistance !== null) {
-          return -1;
-        }
-
-        if (rightDistance !== null) {
-          return 1;
-        }
-
-        return 0;
-      };
-      const optionScore = (row) =>
-        (hasActiveHappyHourNow(row) ? 5 : 0) +
-        (hasKnownPriceForView(row, currentViewState) ? 4 : 0) +
-        (isRecentlyVerified(row) ? 2 : 0) +
-        (hasVerifiedBeerData(row) ? 1 : 0);
-      const bestRows = rows
-        .filter((row) => optionScore(row) > 0)
-        .sort((left, right) => {
-          const scoreOrder = optionScore(right) - optionScore(left);
-          if (scoreOrder !== 0) {
-            return scoreOrder;
-          }
-
-          const distanceOrder = hasUserLocation() ? byDistance(left, right) : 0;
-          if (distanceOrder !== 0) {
-            return distanceOrder;
-          }
-
-          const leftPrice = getLowestBeerPrice(left);
-          const rightPrice = getLowestBeerPrice(right);
-          if (leftPrice !== null && rightPrice !== null) {
-            return leftPrice - rightPrice;
-          }
-          if (leftPrice !== null) return -1;
-          if (rightPrice !== null) return 1;
-          return 0;
-        })
-        .slice(0, 4);
-      const happyRows = rows
-        .filter(hasActiveHappyHourNow)
-        .sort(byDistance)
-        .slice(0, 4);
-      const verifiedRows = rows
-        .filter((row) => isRecentlyVerified(row) && getLowestBeerPrice(row) !== null)
-        .sort((left, right) => {
-          const distanceOrder = hasUserLocation() ? byDistance(left, right) : 0;
-          return distanceOrder || new Date(right.saved_at || right.beer_synced_at || 0).getTime() - new Date(left.saved_at || left.beer_synced_at || 0).getTime();
-        })
-        .slice(0, 4);
-      const card = (row, action) => {
-        const venue = getVenueRecord(row.venues) || {};
-        const lowest = getLowestBeerPrice(row);
-        const distanceCopy = hasUserLocation() ? formatVenueDistance(row) : null;
-        const priceCopy = lowest != null
-          ? businessAccess.hasFullAccess ? `${formatPriceValue(lowest)} cheapest captured` : "Verified price available"
-          : "No verified price yet";
-        return `
-          <button class="highlightCard" type="button" data-highlight-venue="${escapeHtml(getVenueMarkerId(row, venue, Number(venue.latitude), Number(venue.longitude)))}" data-action="${escapeHtml(action)}">
-            <strong>${escapeHtml(venue.name || row.venue_name || "Unknown venue")}</strong>
-            <span>${escapeHtml([venue.suburb || row.suburb || "Melbourne", distanceCopy, priceCopy].filter(Boolean).join(" · "))}</span>
-          </button>
-        `;
-      };
-
-      retentionHighlightsEl.innerHTML = `
-        <div class="highlightPanel">
-          <div class="highlightPanel__title">Best options right now</div>
-          <div class="highlightPanel__items">${bestRows.length ? bestRows.map((row) => card(row, "best_options")).join("") : '<div class="highlightEmpty"><strong>No trusted matches in this view yet.</strong>Try choosing an area, using location, or clearing filters.</div>'}</div>
-        </div>
-        <div class="highlightPanel">
-          <div class="highlightPanel__title">Happy hours active now</div>
-          <div class="highlightPanel__items">${happyRows.length ? happyRows.map((row) => card(row, "happy_hour_active_now")).join("") : '<div class="highlightEmpty"><strong>No happy hours match this view yet.</strong>Try clearing filters or submit a venue update if you spot one nearby.</div>'}</div>
-        </div>
-        <div class="highlightPanel">
-          <div class="highlightPanel__title">Recently verified prices</div>
-          <div class="highlightPanel__items">${verifiedRows.length ? verifiedRows.map((row) => card(row, "recently_verified")).join("") : '<div class="highlightEmpty"><strong>No recently verified prices here yet.</strong>Expand the map or help improve coverage with a fresh menu/photo source.</div>'}</div>
-        </div>
-      `;
-
-      retentionHighlightsEl.querySelectorAll("[data-highlight-venue]").forEach((buttonEl) => {
-        buttonEl.addEventListener("click", () => {
-          const record = activeMarkerRecords.find((item) => item.id === buttonEl.dataset.highlightVenue);
-          if (!record) {
-            return;
-          }
-
-          if (typeof onSelectRecord === "function") {
-            void onSelectRecord(record, buttonEl.dataset.action);
-            return;
-          }
-
-          trackVenueAnalytics("venue_card_viewed", record, buttonEl.dataset.action || "highlight", {
-            interactionType: "highlight_panel",
-          });
-        });
-      });
     }
 
     function getVenueRailSummary(record, viewState) {
@@ -7282,22 +6871,6 @@
       return `${url.pathname}${url.search}`;
     }
 
-    function syncQuickSubmitLink(record = activeVenueRecord) {
-      if (!quickSubmitButtonEl) {
-        return;
-      }
-
-      if (!record) {
-        quickSubmitButtonEl.href = "/submit.html?type=single_beer_price";
-        quickSubmitButtonEl.textContent = "Submit price";
-        return;
-      }
-
-      const snapshot = getVenueSnapshot(record);
-      quickSubmitButtonEl.href = getVenueSubmitUrl(record, "single_beer_price");
-      quickSubmitButtonEl.textContent = snapshot?.name ? "Submit here" : "Submit price";
-    }
-
     function getSearchShareUrl() {
       const viewState = getViewState();
       const url = new URL(window.location.origin + window.location.pathname);
@@ -7346,6 +6919,7 @@
       } else {
         recentlyViewedListEl.innerHTML = "";
       }
+      syncBelowMapInsightsVisibility();
     }
 
     function renderNightPlanPanel() {
@@ -7356,6 +6930,11 @@
       } else {
         nightPlanListEl.innerHTML = "";
       }
+      syncBelowMapInsightsVisibility();
+    }
+
+    function syncBelowMapInsightsVisibility() {
+      belowMapInsightsEl.hidden = recentlyViewedPanelEl.hidden && nightPlanPanelEl.hidden;
     }
 
     function rememberViewedVenue(record) {
@@ -8335,20 +7914,6 @@
           syncStatusPills(filteredRows, viewState);
           renderLegend(filteredRows, viewState);
           renderVenueRail(markerRecords, viewState);
-          renderRetentionHighlights(filteredRows, markerRecords, async (record, source) => {
-            setActiveMarker(record.marker);
-            const markerPosition = getMarkerPosition(record.marker);
-            if (markerPosition) {
-              map.panTo(markerPosition);
-            }
-            await openVenueDetailOverlay(record, source || "highlight");
-            venueRailBodyEl.querySelectorAll(".venueRail__card").forEach((cardEl) => {
-              cardEl.classList.toggle("is-active", cardEl.dataset.markerId === record.id);
-            });
-            trackVenueAnalytics("venue_card_viewed", record, source || "highlight", {
-              interactionType: "highlight_panel",
-            });
-          });
 
           if (initialSharedVenueId && !initialSharedVenueOpened) {
             const sharedRecord = markerRecords.find((record) => getRecordVenueId(record) === initialSharedVenueId || record.id === initialSharedVenueId);
@@ -8399,23 +7964,6 @@
           if (granted) {
             focusMapAroundUser("use_location_button");
           }
-        });
-
-        nearMeNowButtonEl?.addEventListener("click", async () => {
-          if (!hasUserLocation()) {
-            const granted = await requestUserLocation("near_me_now");
-            if (!granted) {
-              return;
-            }
-          }
-
-          venueRailSortMode = "nearest";
-          renderMarkers();
-          focusMapAroundUser("near_me_now");
-          showToast("Showing venues nearest to you.");
-          void trackBusinessEvent("near_me_now_used", getAnalyticsContext({
-            source: "quick_action",
-          }));
         });
 
         nearMeRadiusSelectEl.addEventListener("change", () => {

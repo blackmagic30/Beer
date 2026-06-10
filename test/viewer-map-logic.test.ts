@@ -191,7 +191,7 @@ describe("viewer map UI wiring", () => {
   it("renders advanced markers without visible map legend/list overlays", () => {
     expect(html).toContain("renderer: clusterRenderer");
     expect(html).toContain("getClusterVisual(count)");
-    expect(html).toContain("const currentViewState = getViewState();");
+    expect(html).toContain("const viewState = getViewState();");
     expect(html).toContain("AdvancedMarkerElement");
     expect(html).toContain("createAdvancedMapMarker");
     expect(html).toContain("advancedMapPin");
@@ -289,7 +289,10 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("syncAdvancedFiltersAvailability");
     expect(html).toContain("advancedFiltersToggleEl.hidden = false");
     expect(html).toContain('class="belowMapInsights"');
-    expect(html).toContain('id="accessSummary"');
+    expect(html).not.toContain('id="accessSummary"');
+    expect(html).not.toContain('id="statusBar"');
+    expect(html).not.toContain('id="retentionHighlights"');
+    expect(html).not.toContain("Unlock perks");
     expect(html).toContain("Drink responsibly");
   });
 
