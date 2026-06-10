@@ -64,20 +64,34 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="newVenuePanel"');
     expect(html).toContain('id="newVenueGoogleSearch"');
     expect(html).toContain('id="newVenueGoogleButton"');
-    expect(html).toContain('id="newVenueGoogleResults"');
+    expect(html).toContain('id="newVenueGoogleResults" class="adminGoogleVenueResults" aria-live="polite" hidden');
     expect(html).toContain('id="newVenueManualDetails"');
+    expect(html).toContain("<summary>Review selected details</summary>");
     expect(html).toContain("Search Google Maps and choose the matching bar, pub, restaurant, or nightlife venue.");
-    expect(html).toContain('id="newVenueName"');
-    expect(html).toContain('id="newVenueAddress"');
+    expect(html).toContain('id="newVenueName" type="text" maxlength="180" placeholder="Example: Moonlit Taproom" readonly');
+    expect(html).toContain('id="newVenueAddress" type="text" placeholder="Street address from Google Maps" readonly');
+    expect(html).toContain('id="newVenueSuburb" type="hidden"');
+    expect(html).toContain('id="newVenuePhone" type="hidden"');
+    expect(html).toContain('id="newVenueWebsite" type="hidden"');
+    expect(html).toContain('id="newVenueLatitude" type="hidden"');
+    expect(html).toContain('id="newVenueLongitude" type="hidden"');
+    expect(html).toContain('id="newVenueSubmitShortcut"');
     expect(html).toContain("function collectNewVenue()");
     expect(html).toContain("function createPendingVenueId()");
     expect(html).toContain("function searchNewVenueGooglePlaces()");
     expect(html).toContain("function loadNewVenueGoogleDetails");
+    expect(html).toContain("newVenueGoogleResults.hidden = true;");
+    expect(html).toContain("newVenueGoogleResults.hidden = false;");
+    expect(html).toContain('submissionTypeSelect.value = "single_beer_price";');
     expect(html).toContain("/api/business/venue-places/search");
     expect(html).toContain("/api/business/venue-places/");
     expect(html).toContain("googlePlaceId: selectedNewVenueGooglePlace?.googlePlaceId || null");
     expect(html).toContain("Choose the new venue from Google Maps before submitting");
     expect(html).toContain("newVenue,");
+    expect(html).not.toContain("Review/edit selected details");
+    expect(html).not.toContain('id="newVenueSuburb" type="text"');
+    expect(html).not.toContain('id="newVenuePhone" type="tel"');
+    expect(html).not.toContain('id="newVenueLatitude" type="number"');
     expect(html).not.toContain("Use saved location as venue coordinates");
     expect(html).not.toContain("Find coordinates from address");
     expect(html).not.toContain("Use manual fallback for now");
@@ -234,6 +248,26 @@ describe("submit page auth gate", () => {
     expect(html.indexOf('value="happy_hour_update"')).toBeLessThan(html.indexOf('value="full_venue_update"'));
     expect(html.indexOf('value="full_venue_update"')).toBeLessThan(html.indexOf('value="photo_upload"'));
     expect(html).not.toContain('id="typeGuidance"');
+  });
+
+  it("keeps beer row entry linear without the duplicate happy-hour price toggle", () => {
+    const html = submitHtml();
+    const css = businessCss();
+
+    expect(html).toContain('class="grid grid--two submitBeerRowGrid"');
+    expect(html).toContain('<input data-field="isHappyHourPrice" type="checkbox" hidden />');
+    expect(html).toContain('<input data-field="happyHourDetails" type="hidden" value="" />');
+    expect(html).toContain('set("isHappyHourPrice", false);');
+    expect(html).toContain('set("happyHourDetails", "");');
+    expect(html).not.toContain("Happy-hour price</label>");
+    expect(html).not.toContain('data-role="happyHourDetailsField"');
+    expect(css).toContain(".submitBeerRowGrid");
+    expect(css).toContain("row-gap: 16px");
+    expect(css).toContain(".submitOptionGrid");
+    expect(css).toContain("margin-top: 14px");
+    expect(css).toContain(".adminGoogleVenueResults[hidden]");
+    expect(css).toContain(".newVenueLockedField input[readonly]");
+    expect(css).toContain(".submitNewVenueShortcut");
   });
 
   it("explains submission location proof and offline queueing in the FAQ", () => {

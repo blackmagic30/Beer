@@ -101,41 +101,28 @@
               <button id="newVenueGoogleButton" class="button" type="button">Search Google Maps</button>
               <button id="clearNewVenueGoogleButton" class="button" type="button">Clear</button>
             </div>
-            <div id="newVenueGoogleResults" class="adminGoogleVenueResults" aria-live="polite"></div>
+            <div id="newVenueGoogleResults" class="adminGoogleVenueResults" aria-live="polite" hidden></div>
             <div id="newVenueSelectedSummary" class="notice notice--warning newVenueSelectedSummary">No new venue selected yet.</div>
             <details id="newVenueManualDetails" class="newVenueManualDetails">
-              <summary>Review/edit selected details</summary>
-              <div class="grid grid--two">
-                <label class="field">Venue name
-                  <input id="newVenueName" type="text" maxlength="180" placeholder="Example: Moonlit Taproom" />
+              <summary>Review selected details</summary>
+              <div class="newVenueReviewGrid">
+                <label class="field newVenueLockedField">Venue name
+                  <input id="newVenueName" type="text" maxlength="180" placeholder="Example: Moonlit Taproom" readonly />
                 </label>
-                <label class="field">Suburb
-                  <input id="newVenueSuburb" type="text" placeholder="Fitzroy" />
-                </label>
-              </div>
-              <label class="field">Address
-                <input id="newVenueAddress" type="text" placeholder="Street address or venue address from the menu" />
-                <span class="fieldHint">Address or venue coordinates are required before admin review.</span>
-              </label>
-              <div class="grid grid--two">
-                <label class="field">Phone
-                  <input id="newVenuePhone" type="tel" placeholder="Optional" />
-                </label>
-                <label class="field">Website
-                  <input id="newVenueWebsite" type="url" placeholder="https://example.com" />
+                <label class="field newVenueLockedField">Address
+                  <input id="newVenueAddress" type="text" placeholder="Street address from Google Maps" readonly />
                 </label>
               </div>
+              <input id="newVenueSuburb" type="hidden" />
+              <input id="newVenuePhone" type="hidden" />
+              <input id="newVenueWebsite" type="hidden" />
               <input id="newVenuePostcode" type="hidden" />
-              <div class="grid grid--two">
-                <label class="field">Latitude
-                  <input id="newVenueLatitude" type="number" min="-90" max="90" step="0.000001" placeholder="-37.8136" />
-                </label>
-                <label class="field">Longitude
-                  <input id="newVenueLongitude" type="number" min="-180" max="180" step="0.000001" placeholder="144.9631" />
-                </label>
-              </div>
+              <input id="newVenueLatitude" type="hidden" />
+              <input id="newVenueLongitude" type="hidden" />
+              <span class="fieldHint">Google Maps supplies the rest for admin review.</span>
             </details>
-            <span id="newVenueHelp" class="fieldHint">Pick the best Google result first. Manual edits are reviewed, but the venue type is verified from Google.</span>
+            <span id="newVenueHelp" class="fieldHint">Pick the best Google result first. Venue type is locked to eligible Google venue categories.</span>
+            <button id="newVenueSubmitShortcut" class="button button--primary submitNewVenueShortcut" type="submit">Submit new bar for review</button>
           </div>
         </section>
 
@@ -666,9 +653,8 @@
         set("price", row.price);
         set("isOnTap", row.isOnTap || "unknown");
         set("isNewBeer", row.isNewBeer);
-        set("isHappyHourPrice", row.isHappyHourPrice);
-        set("happyHourDetails", row.happyHourDetails);
-        syncRowHappyHourDetails(wrapper);
+        set("isHappyHourPrice", false);
+        set("happyHourDetails", "");
       });
       updateRowControls();
     }
@@ -985,6 +971,7 @@
       const { clearSearch = false, clearFields = true } = options;
       selectedNewVenueGooglePlace = null;
       newVenueGoogleResults.innerHTML = "";
+      newVenueGoogleResults.hidden = true;
       newVenueGoogleStatus.textContent = "Results are filtered to venues that make sense for Pint Path.";
       setNewVenueSelectedSummary(null);
       if (clearSearch) {
@@ -1013,9 +1000,11 @@
       newVenueLatitude.value = place.latitude == null ? "" : Number(place.latitude).toFixed(6);
       newVenueLongitude.value = place.longitude == null ? "" : Number(place.longitude).toFixed(6);
       newVenueGoogleSearch.value = place.name || newVenueGoogleSearch.value;
+      newVenueGoogleResults.innerHTML = "";
+      newVenueGoogleResults.hidden = true;
       setNewVenueSelectedSummary(place);
       newVenueGoogleStatus.textContent = `${place.name} selected. Add the beer or happy-hour data below.`;
-      newVenueHelp.textContent = "Venue details are ready for admin review. You can edit small details below, but the venue type stays locked to this Google result.";
+      newVenueHelp.textContent = "Venue details are ready for admin review. The name and address are locked from Google Maps so they stay accurate.";
       newVenueManualDetails.open = false;
     }
 
@@ -1023,10 +1012,12 @@
       const results = Array.isArray(places) ? places : [];
       if (!results.length) {
         newVenueGoogleResults.innerHTML = "";
+        newVenueGoogleResults.hidden = true;
         newVenueGoogleStatus.textContent = "No matching bar/pub/restaurant result found. Try a venue name plus suburb.";
         return;
       }
 
+      newVenueGoogleResults.hidden = false;
       newVenueGoogleResults.innerHTML = results.map((place) => {
         const meta = googleVenueMeta(place);
         const typeCopy = place.recommended ? "Recommended venue match" : "Venue candidate";
@@ -1046,6 +1037,7 @@
       const query = newVenueGoogleSearch.value.trim();
       if (query.length < VENUE_QUERY_MIN_LENGTH) {
         newVenueGoogleResults.innerHTML = "";
+        newVenueGoogleResults.hidden = true;
         newVenueGoogleStatus.textContent = "Type at least 2 characters to search Google Maps.";
         return;
       }
@@ -1143,7 +1135,7 @@
         if (newVenueGoogleSearch.value.trim().length >= VENUE_QUERY_MIN_LENGTH && !selectedNewVenueGooglePlace) {
           scheduleNewVenueGoogleSearch();
         }
-        submissionTypeSelect.value = "full_venue_update";
+        submissionTypeSelect.value = "single_beer_price";
         applySubmissionType();
       } else {
         venueSearchInput.disabled = false;
@@ -1222,7 +1214,7 @@
       const wrapper = document.createElement("div");
       wrapper.className = "listItem";
       wrapper.innerHTML = `
-        <div class="grid grid--two">
+        <div class="grid grid--two submitBeerRowGrid">
           <label class="field">Beer name
             <input data-field="beerName" list="trackedBeerSuggestions" placeholder="Start typing Guinness, Carlton Draught..." />
             <span data-role="beerHint" class="fieldHint">Choose a tracked beer from suggestions, or tick Add new beer below.</span>
@@ -1249,23 +1241,19 @@
         </div>
         <div class="submitOptionGrid">
           <label class="submitCheckbox"><input data-field="isNewBeer" type="checkbox" /> Add new beer</label>
-          <label class="submitCheckbox"><input data-field="isHappyHourPrice" type="checkbox" /> Happy-hour price</label>
+          <input data-field="isHappyHourPrice" type="checkbox" hidden />
+          <input data-field="happyHourDetails" type="hidden" value="" />
         </div>
-        <label class="field submitHappyHourDetails is-hidden" data-role="happyHourDetailsField">Happy-hour details
-          <input data-field="happyHourDetails" placeholder="Mon-Fri 4pm-6pm, house pints only" />
-        </label>
         <button class="button button--danger" type="button" data-remove>Remove row</button>
       `;
       const beerNameInput = wrapper.querySelector('[data-field="beerName"]');
       const isNewBeerInput = wrapper.querySelector('[data-field="isNewBeer"]');
-      const isHappyHourPriceInput = wrapper.querySelector('[data-field="isHappyHourPrice"]');
       const beerHint = wrapper.querySelector('[data-role="beerHint"]');
       isNewBeerInput.addEventListener("change", () => {
         beerHint.textContent = isNewBeerInput.checked
           ? "New beer mode: type the label exactly as it appears on the menu or tap list."
           : "Choose a tracked beer from suggestions, or tick Add new beer below.";
       });
-      isHappyHourPriceInput.addEventListener("change", () => syncRowHappyHourDetails(wrapper));
       beerNameInput.addEventListener("change", () => {
         const trackedBeer = findTrackedBeer(beerNameInput.value);
         if (trackedBeer && !isNewBeerInput.checked) {
@@ -1277,14 +1265,6 @@
         updateRowControls();
       });
       return wrapper;
-    }
-
-    function syncRowHappyHourDetails(row) {
-      const isHappyHourPrice = row.querySelector('[data-field="isHappyHourPrice"]')?.checked;
-      const detailsField = row.querySelector('[data-role="happyHourDetailsField"]');
-      if (detailsField) {
-        detailsField.classList.toggle("is-hidden", !isHappyHourPrice);
-      }
     }
 
     function appendBeerRow() {
