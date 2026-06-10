@@ -811,23 +811,134 @@ h3 {
   margin: 0;
 }
 
-.fieldTestConsole {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
-  align-items: center;
-  border: 1px solid rgba(34, 211, 238, 0.2);
-  border-radius: 22px;
-  background:
-    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.13), transparent 38%),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
-    rgba(3, 7, 18, 0.3);
-  padding: 12px;
-  margin-bottom: 16px;
+.submitPanel {
+  padding: clamp(16px, 3vw, 24px);
 }
 
-.fieldTestConsole__status,
-.fieldTestConsole__actions,
+.submitForm {
+  gap: 16px;
+}
+
+.submitStep {
+  display: grid;
+  gap: 14px;
+  padding: clamp(14px, 2vw, 18px);
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.048), rgba(255, 255, 255, 0.018)),
+    rgba(3, 7, 18, 0.24);
+}
+
+.submitStep__header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.submitStep__header h2 {
+  margin: 0;
+  font-size: clamp(18px, 2vw, 22px);
+  letter-spacing: -0.025em;
+}
+
+.submitStep__header p {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
+.submitStep__number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(34, 211, 238, 0.32);
+  border-radius: var(--radius-pill);
+  background: rgba(34, 211, 238, 0.12);
+  color: #dffbff;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.submitVenueGrid {
+  align-items: start;
+}
+
+.submitToggleCard {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
+}
+
+.submitToggleCard:hover {
+  border-color: rgba(34, 211, 238, 0.34);
+  background: rgba(34, 211, 238, 0.08);
+  transform: translateY(-1px);
+}
+
+.submitToggleCard input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent-neon-cyan);
+}
+
+.submitToggleCard span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.submitToggleCard strong {
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.submitToggleCard small {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.submitInsetPanel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(34, 211, 238, 0.16);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.1), transparent 34%),
+    rgba(15, 23, 42, 0.44);
+}
+
+.submissionTypeField {
+  max-width: 560px;
+}
+
+.submitBeerRows {
+  gap: 10px;
+}
+
+.submitForm .listItem {
+  padding: 14px;
+  border-color: rgba(148, 163, 184, 0.12);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.044), rgba(255, 255, 255, 0.014)),
+    rgba(7, 10, 18, 0.38);
+  box-shadow: none;
+}
+
+.submitOptionGrid,
 .fieldQuickBar {
   display: flex;
   flex-wrap: wrap;
@@ -835,15 +946,50 @@ h3 {
   align-items: center;
 }
 
-.fieldTestConsole__actions {
-  justify-content: flex-end;
-}
-
-.fieldTestConsole__actions .button,
-.fieldQuickBar .button {
+.submitCheckbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-height: 42px;
   padding: 9px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-secondary);
   font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.submitCheckbox input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent-neon-cyan);
+}
+
+.submitHappyHourDetails {
+  margin-top: -2px;
+}
+
+.submitActionDock {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.submitPrimaryAction {
+  min-height: 52px;
+  padding-inline: 22px;
+}
+
+.submitReviewNotice {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  margin: 0;
+  color: var(--text-secondary);
 }
 
 .fieldStatusPill {
@@ -965,6 +1111,12 @@ h3 {
 
 .fieldQuickBar {
   justify-content: space-between;
+}
+
+.fieldQuickBar .button {
+  min-height: 42px;
+  padding: 9px 12px;
+  font-size: 13px;
 }
 
 .missionContext {
@@ -3494,15 +3646,48 @@ h3 {
 
   .sectionHeader,
   .dataRow,
-  .fieldTestConsole,
   .accountSecurityPanel {
     flex-direction: column;
   }
 
-  .fieldTestConsole,
   .accountSecurityPanel {
     display: flex;
     align-items: stretch;
+  }
+
+  .submitPanel {
+    padding: 12px;
+  }
+
+  .submitStep {
+    gap: 12px;
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .submitStep__header {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .submitStep__number {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+
+  .submitStep__header p,
+  .submitToggleCard small {
+    display: none;
+  }
+
+  .submitInsetPanel {
+    padding: 12px;
+    border-radius: 17px;
+  }
+
+  .submitActionDock {
+    grid-template-columns: 1fr;
   }
 
   .queuedSubmissionsPanel__header,
@@ -3519,13 +3704,11 @@ h3 {
     width: 100%;
   }
 
-  .fieldTestConsole__actions,
   .fieldQuickBar {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .fieldTestConsole__actions .button,
   .fieldQuickBar .button {
     width: 100%;
   }

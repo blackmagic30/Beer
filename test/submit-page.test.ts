@@ -20,10 +20,10 @@ describe("submit page auth gate", () => {
     const html = submitHtml();
 
     expect(html).toContain('id="loginRequiredPanel"');
-    expect(html).toContain('id="submissionPanel" class="panel is-hidden"');
+    expect(html).toContain('id="submissionPanel" class="panel submitPanel is-hidden"');
     expect(html).toContain("Sign in before submitting data");
     expect(html).toContain("uploads accountable");
-    expect(html).toContain("False or abusive data can receive fraud strikes");
+    expect(html).toContain("Reviewed before publication");
     expect(html).toContain("await MelbBeerBusiness.apiFetch(\"/api/business/account\")");
     expect(html).toContain("window.location.assign(loginUrl)");
   });
@@ -40,11 +40,12 @@ describe("submit page auth gate", () => {
     const html = submitHtml();
 
     expect(html).toContain("Chosen venue");
-    expect(html).not.toContain("Choose venue");
+    expect(html).toContain("Choose venue");
+    expect(html).toContain('class="submitStep" aria-labelledby="submitVenueStepTitle"');
     expect(html).toContain('id="venueSelect" class="readonlySelect" required disabled');
     expect(html).toContain('id="venueSuggestionList" class="venueSuggestionList" role="listbox"');
     expect(html).toContain("Type 2 or more characters, then tap a venue.");
-    expect(html).toContain("Search above and tap the matching venue before submitting.");
+    expect(html).toContain("Search above and tap the matching venue.");
     expect(html).toContain("function clearSelectedVenue");
     expect(html).toContain("VENUE_SEARCH_DEBOUNCE_MS");
     expect(html).toContain("venueSearchCache");
@@ -65,7 +66,7 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="newVenueGoogleButton"');
     expect(html).toContain('id="newVenueGoogleResults"');
     expect(html).toContain('id="newVenueManualDetails"');
-    expect(html).toContain("Search Google Maps, choose the matching bar/pub/restaurant");
+    expect(html).toContain("Search Google Maps and choose the matching bar, pub, restaurant, or nightlife venue.");
     expect(html).toContain('id="newVenueName"');
     expect(html).toContain('id="newVenueAddress"');
     expect(html).toContain("function collectNewVenue()");
@@ -80,7 +81,7 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain("Use saved location as venue coordinates");
     expect(html).not.toContain("Find coordinates from address");
     expect(html).not.toContain("Use manual fallback for now");
-    expect(html).toContain("It only appears on the global map after admin approval.");
+    expect(html).toContain("Request it once, then add the beer data you saw.");
   });
 
   it("keeps submit-time, notes, and evidence fields constrained by submission type", () => {
@@ -148,13 +149,16 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain("window.addEventListener(\"DOMContentLoaded\", captureUploadLocation");
   });
 
-  it("adds compact field-test status, silent draft autosave, and offline queued submissions", () => {
+  it("keeps silent draft autosave and offline queued submissions without visible field-test status", () => {
     const html = submitHtml();
     const css = businessCss();
 
-    expect(html).toContain('class="fieldTestConsole"');
-    expect(html).toContain('id="networkStatusPill"');
-    expect(html).toContain('id="locationStatusPill"');
+    expect(html).not.toContain('class="fieldTestConsole"');
+    expect(html).not.toContain('id="networkStatusPill"');
+    expect(html).not.toContain('id="locationStatusPill"');
+    expect(html).toContain('const networkStatusPill = document.getElementById("networkStatusPill")');
+    expect(html).toContain('const locationStatusPill = document.getElementById("locationStatusPill")');
+    expect(html).toContain("if (!element) {");
     expect(html).toContain('id="submissionQueuePanel"');
     expect(html).toContain('id="submissionQueueList"');
     expect(html).toContain('id="retryQueuedSubmissionsButton"');
@@ -194,10 +198,11 @@ describe("submit page auth gate", () => {
     expect(html).toContain('const statusEl = document.getElementById("status")');
     expect(html).toContain("MelbBeerBusiness.setStatus(statusEl");
     expect(html).toContain("Photo attached. Pint Path compresses it and strips metadata before saving or sending.");
-    expect(css).toContain(".fieldTestConsole");
+    expect(css).not.toContain(".fieldTestConsole");
     expect(css).toContain(".queuedSubmissionsPanel");
     expect(css).toContain(".queuedSubmissionItem.is-sending");
-    expect(css).toContain(".fieldStatusPill--success");
+    expect(css).toContain(".submitStep");
+    expect(css).toContain(".submitActionDock");
     expect(css).not.toContain(".quickBeerChip");
   });
 
