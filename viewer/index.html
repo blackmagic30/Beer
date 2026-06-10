@@ -4088,6 +4088,10 @@
       return viewState.filters.some((filter) => isNearMeFilter(filter));
     }
 
+    function shouldConstrainToSelectedRadius() {
+      return hasUserLocation() && !userLocationState.outsideMelbourne;
+    }
+
     function isWithinSelectedRadius(row) {
       if (!userLocationState.coords) {
         return false;
@@ -5960,6 +5964,10 @@
         return false;
       }
 
+      if (shouldConstrainToSelectedRadius() && !isWithinSelectedRadius(row)) {
+        return false;
+      }
+
       if (viewState.filters.includes("happy_hour_near_me")) {
         if (!hasActiveHappyHourNow(row) || !isWithinSelectedRadius(row)) {
           return false;
@@ -6146,7 +6154,7 @@
         labels.push(getFilterLabel(filter));
       });
 
-      if (hasUserLocation() && hasNearMeFilter(viewState)) {
+      if (shouldConstrainToSelectedRadius()) {
         labels.push(`Within ${formatRadiusLabel(userLocationState.radiusKm)}`);
       }
 
@@ -6896,7 +6904,7 @@
       if (viewState.filters.length) {
         url.searchParams.set("filters", viewState.filters.join(","));
       }
-      if (hasUserLocation() && hasNearMeFilter(viewState)) {
+      if (hasUserLocation()) {
         url.searchParams.set("radiusKm", String(userLocationState.radiusKm));
       }
       return url.toString();
@@ -7581,7 +7589,7 @@
           const bounds = new google.maps.LatLngBounds();
           const viewState = getViewState();
           const filteredRows = allVenueRows.filter((item) => rowMatchesView(item, viewState));
-          const showRadius = hasUserLocation() && hasNearMeFilter(viewState);
+          const showRadius = shouldConstrainToSelectedRadius();
           let markerCount = 0;
 
           syncUserLocationOverlay(showRadius);
@@ -7984,7 +7992,7 @@
             ? `Location on · showing approximate distances within ${formatRadiusLabel(radiusKm)}.`
             : "Choose a radius, then tap Use my location to show nearby venues.";
           syncLocationUi();
-          syncUserLocationOverlay(hasUserLocation() && hasNearMeFilter(getViewState()));
+          syncUserLocationOverlay(shouldConstrainToSelectedRadius());
           if (shouldTrack) {
             void trackBusinessEvent("radius_filter_changed", getAnalyticsContext({
               radiusKm: userLocationState.radiusKm,

@@ -311,6 +311,10 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('type="range"');
     expect(html).toContain('id="nearMeRadiusValue"');
     expect(html).toContain('"radius_slider"');
+    expect(html).toContain("function shouldConstrainToSelectedRadius()");
+    expect(html).toContain("if (shouldConstrainToSelectedRadius() && !isWithinSelectedRadius(row))");
+    expect(html).toContain("const showRadius = shouldConstrainToSelectedRadius();");
+    expect(html).toContain("syncUserLocationOverlay(shouldConstrainToSelectedRadius())");
     expect(html).toContain('LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference"');
     expect(html).toContain('requestUserLocation("saved_location_preference")');
     expect(html).toContain('disableUserLocation("use_location_button_off")');
