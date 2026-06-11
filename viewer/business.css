@@ -3929,16 +3929,36 @@ h3 {
   .accountHighlightsGrid .metricCard,
   .accountHighlightsGrid .panel {
     min-height: auto;
-    padding: 20px;
+    padding: 18px;
+  }
+
+  .accountHeroMetric {
+    min-height: auto;
+  }
+
+  .accountDiscountFeature {
+    gap: 14px;
   }
 
   .accountDiscountFeature .sectionHeader {
-    gap: 14px;
+    gap: 10px;
+  }
+
+  .accountDiscountFeature .sectionHeader > div {
+    gap: 8px;
   }
 
   .accountDiscountFeature .pill {
     align-self: flex-start;
     max-width: none;
+  }
+
+  .accountDiscountFeature > .button {
+    margin-top: 0;
+  }
+
+  .accountDiscountFeature > .helperCopy {
+    line-height: 1.45;
   }
 
   .cookieConsent {
