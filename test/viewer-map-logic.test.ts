@@ -275,7 +275,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("Find a venue fast");
     expect(html).toContain('placeholder="Search beer, venue or suburb"');
     expect(html).toContain('id="advancedFiltersToggle"');
-    expect(html).toContain('aria-controls="advancedFiltersPanel">Advanced filters</button>');
+    expect(html).toContain('aria-controls="advancedFiltersPanel" hidden>Advanced filters</button>');
     expect(html).toContain('id="advancedFiltersPanel" class="advancedFiltersPanel" hidden');
     expect(html).toContain('aria-label="Beer availability filters"');
     expect(html).not.toContain('id="businessBanner"');
@@ -291,7 +291,14 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('<span class="filterGroup__label">Specials</span>');
     expect(html).toContain('data-premium-filter="true"');
     expect(html).toContain("syncAdvancedFiltersAvailability");
-    expect(html).toContain("advancedFiltersToggleEl.hidden = false");
+    expect(html).toContain("function canUseAdvancedFilters()");
+    expect(html).toContain("const canUseAdvancedFiltersValue = canUseAdvancedFilters();");
+    expect(html).toContain("advancedFiltersToggleEl.hidden = !canUseAdvancedFiltersValue");
+    expect(html).toContain("advancedFiltersPanelEl.hidden = true");
+    expect(html).toContain("onTapOnlyEl.disabled = !canUseAdvancedFilters()");
+    expect(html).toContain("const canApplyAdvancedFilters = canUseAdvancedFilters();");
+    expect(html).toContain('onTapOnlyEl.checked = canApplyAdvancedFilters &&');
+    expect(html).toContain('showToast("Advanced filters are for signed-in Premium or contributor accounts.")');
     expect(html).toContain('class="belowMapInsights"');
     expect(html).not.toContain('id="accessSummary"');
     expect(html).not.toContain('id="statusBar"');

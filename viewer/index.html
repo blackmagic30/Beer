@@ -3308,7 +3308,7 @@
         <datalist id="beerSuggestions"></datalist>
 
         <div class="toolbar__right">
-          <button id="advancedFiltersToggle" class="utilityButton" type="button" aria-expanded="false" aria-controls="advancedFiltersPanel">Advanced filters</button>
+          <button id="advancedFiltersToggle" class="utilityButton" type="button" aria-expanded="false" aria-controls="advancedFiltersPanel" hidden>Advanced filters</button>
         </div>
       </div>
 
@@ -3592,14 +3592,6 @@
     let googleMapsAuthFailed = false;
     let activeScope = "all";
     const activeFilterChips = new Set();
-    const premiumAdvancedFilters = new Set([
-      "cheapest_near_me",
-      "under_10",
-      "verified_only",
-      "recently_verified_near_me",
-      "nearest",
-      "my_saved_suburbs",
-    ]);
     let savedSuburbFilters = [];
     let savedVenueIds = new Set();
     let savedVenueRecords = [];
@@ -3783,7 +3775,7 @@
       syncAdvancedFiltersAvailability();
       beerSearchEl.disabled = false;
       beerSearchEl.placeholder = DEFAULT_BEER_SEARCH_PLACEHOLDER;
-      onTapOnlyEl.disabled = false;
+      onTapOnlyEl.disabled = !canUseAdvancedFilters();
       beerChipEls.forEach((chipEl) => {
         chipEl.disabled = false;
         chipEl.title = "Popular beer shortcut";
@@ -3792,8 +3784,20 @@
     }
 
     function syncAdvancedFiltersAvailability() {
-      advancedFiltersToggleEl.hidden = false;
-      advancedFiltersToggleEl.disabled = false;
+      const canUseAdvancedFiltersValue = canUseAdvancedFilters();
+      advancedFiltersToggleEl.hidden = !canUseAdvancedFiltersValue;
+      advancedFiltersToggleEl.disabled = !canUseAdvancedFiltersValue;
+
+      if (!canUseAdvancedFiltersValue) {
+        advancedFiltersPanelEl.hidden = true;
+        advancedFiltersToggleEl.setAttribute("aria-expanded", "false");
+        activeScope = "all";
+        activeFilterChips.clear();
+        onTapOnlyEl.checked = false;
+        if (advancedFiltersNoticeEl) {
+          advancedFiltersNoticeEl.hidden = true;
+        }
+      }
     }
 
     function getAccessLabel() {
@@ -4669,8 +4673,12 @@
       return FREE_PREVIEW_BEER_KEYS.has(queryKey) || FREE_PREVIEW_BEER_KEYS.has(trackedKey);
     }
 
+    function canUseAdvancedFilters() {
+      return Boolean(businessAccess.hasFullAccess);
+    }
+
     function isAdvancedFilterLocked(filter) {
-      return !businessAccess.hasFullAccess && premiumAdvancedFilters.has(filter);
+      return !canUseAdvancedFilters();
     }
 
     function syncAdvancedFilterLocks() {
@@ -4704,16 +4712,18 @@
         }
       }
 
-      if (["all", "needs_data"].includes(sharedScope)) {
+      const canApplyAdvancedFilters = canUseAdvancedFilters();
+
+      if (canApplyAdvancedFilters && ["all", "needs_data"].includes(sharedScope)) {
         activeScope = sharedScope;
       }
 
-      onTapOnlyEl.checked = params.get("onTap") === "true" || params.get("onTapOnly") === "true";
+      onTapOnlyEl.checked = canApplyAdvancedFilters && (params.get("onTap") === "true" || params.get("onTapOnly") === "true");
       activeFilterChips.clear();
       String(params.get("filters") || "")
         .split(",")
         .map((filter) => filter.trim())
-        .filter((filter) => validFilters.has(filter))
+        .filter((filter) => canApplyAdvancedFilters && validFilters.has(filter))
         .filter((filter) => !isAdvancedFilterLocked(filter))
         .forEach((filter) => activeFilterChips.add(filter));
 
@@ -4723,13 +4733,9 @@
     }
 
     function showAdvancedFilterUnlockPrompt() {
-      if (advancedFiltersNoticeEl) {
-        advancedFiltersNoticeEl.textContent = "Premium or approved contributor access unlocks deeper sorting and trust filters.";
-        advancedFiltersNoticeEl.hidden = false;
-      }
-
-      advancedFiltersPanelEl.hidden = false;
-      advancedFiltersToggleEl.setAttribute("aria-expanded", "true");
+      advancedFiltersPanelEl.hidden = true;
+      advancedFiltersToggleEl.setAttribute("aria-expanded", "false");
+      showToast("Advanced filters are for signed-in Premium or contributor accounts.");
     }
 
     function renderTrackedBeerChips() {
