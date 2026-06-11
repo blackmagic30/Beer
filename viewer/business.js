@@ -575,17 +575,11 @@ function renderNav(active = "") {
 }
 
 function installFieldTestChrome() {
-  if (!isFieldTestMode() || document.getElementById("fieldTestFeedbackButton")) {
+  if (!isFieldTestMode()) {
     return;
   }
 
   document.body.classList.add("fieldTestMode");
-  const feedbackButton = document.createElement("a");
-  feedbackButton.id = "fieldTestFeedbackButton";
-  feedbackButton.className = "floatingFeedback";
-  feedbackButton.href = "/feedback.html";
-  feedbackButton.textContent = "Send feedback";
-  document.body.appendChild(feedbackButton);
 }
 
 function installAccessibilityChrome() {

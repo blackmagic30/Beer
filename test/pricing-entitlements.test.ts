@@ -129,8 +129,10 @@ describe("premium pricing and entitlements", () => {
     expect(accountHtml).not.toContain("renderPremiumMemberHub");
     expect(accountHtml).not.toContain("premiumMemberToolkit");
     expect(accountHtml).toContain("requestedSettingsPanel");
-    expect(accountHtml).toContain('data-settings-target="watchlist"');
-    expect(accountHtml).toContain('id="settingsWatchlistPanel"');
+    expect(accountHtml).toContain('data-settings-target="stats"');
+    expect(accountHtml).toContain('id="settingsStatsPanel"');
+    expect(accountHtml).not.toContain('data-settings-target="watchlist"');
+    expect(accountHtml).not.toContain('id="settingsWatchlistPanel"');
     expect(businessCss).toContain(".venuePricingGrid");
     expect(businessCss).toContain(".businessToolkit");
     expect(businessCss).not.toContain(".premiumMemberHub");

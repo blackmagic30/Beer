@@ -274,6 +274,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("<h1>Verified local price index</h1>");
     expect(html).toContain('id="topbarBusinessLinks"');
     expect(html).toContain('id="accessPill"');
+    expect(html).toContain('<a href="/feedback.html">Feedback</a> · <a href="/privacy.html">Privacy</a>');
     expect(html).toContain('class="controlDeck"');
     expect(html).toContain("Find a venue fast");
     expect(html).toContain('placeholder="Search beer, venue or suburb"');

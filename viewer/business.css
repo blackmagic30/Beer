@@ -2026,12 +2026,12 @@ h3 {
 
 .accountHighlightsGrid {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(320px, 1.5fr);
+  grid-template-columns: minmax(260px, 0.95fr) minmax(340px, 1.35fr) minmax(250px, 0.78fr);
   gap: clamp(14px, 1.8vw, 20px);
   align-items: stretch;
 }
 
-.accountDashboard .accountHero {
+.accountDashboard .accountHighlightsGrid {
   order: 1;
 }
 
@@ -2039,20 +2039,12 @@ h3 {
   order: 2;
 }
 
-.accountDashboard .accountHighlightsGrid {
+.accountDashboard #accountSettingsHub {
   order: 3;
 }
 
-.accountDashboard .accountPrimaryGrid {
-  order: 4;
-}
-
-.accountDashboard #accountSettingsHub {
-  order: 5;
-}
-
 .accountDashboard #recentSubmissionsSection {
-  order: 6;
+  order: 4;
 }
 
 .accountHighlightsGrid .metricCard,
@@ -2062,11 +2054,12 @@ h3 {
   padding: clamp(22px, 2.1vw, 30px);
 }
 
-.accountHighlightsGrid .metricCard {
+.accountHighlightsGrid .metricCard,
+.accountHeroMetric {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 7px;
+  gap: 10px;
 }
 
 .accountHighlightsGrid .metricCard .metricValue {
@@ -2076,6 +2069,37 @@ h3 {
 .accountHighlightsGrid .metricCard .helperCopy {
   max-width: 26rem;
   margin: 0;
+}
+
+.accountHeroMetric {
+  min-height: clamp(230px, 26vw, 310px);
+}
+
+.accountHeroMetric--savings {
+  border-color: rgba(34, 211, 238, 0.3);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(34, 211, 238, 0.18), transparent 44%),
+    radial-gradient(circle at 92% 10%, rgba(139, 92, 246, 0.12), transparent 38%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.095), rgba(255, 255, 255, 0.028)),
+    rgba(15, 23, 42, 0.86);
+  box-shadow: 0 0 26px rgba(34, 211, 238, 0.1), var(--soft-shadow);
+}
+
+.accountHeroMetric--savings .metricValue {
+  margin-top: auto;
+  font-size: clamp(50px, 7vw, 86px);
+  letter-spacing: -0.06em;
+}
+
+.accountHeroMetric--special {
+  border-color: rgba(245, 197, 66, 0.35);
+  background:
+    radial-gradient(circle at 15% 0%, rgba(245, 197, 66, 0.17), transparent 40%),
+    radial-gradient(circle at 86% 10%, rgba(217, 70, 239, 0.14), transparent 38%),
+    radial-gradient(circle at 72% 88%, rgba(34, 211, 238, 0.11), transparent 42%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.028)),
+    rgba(18, 26, 44, 0.9);
+  box-shadow: var(--shadow-premium), var(--soft-shadow);
 }
 
 .accountDiscountFeature {
@@ -2126,6 +2150,83 @@ h3 {
   max-width: 42rem;
   margin: 0;
   line-height: 1.65;
+}
+
+.accountIdentityCard--compact {
+  align-content: start;
+  border-color: rgba(139, 92, 246, 0.28);
+  background:
+    radial-gradient(circle at 18% 0%, rgba(139, 92, 246, 0.18), transparent 42%),
+    radial-gradient(circle at 90% 8%, rgba(245, 197, 66, 0.08), transparent 38%),
+    rgba(18, 26, 44, 0.78);
+}
+
+.accountIdentityCard--compact strong {
+  font-size: clamp(0.98rem, 1.7vw, 1.18rem);
+  line-height: 1.22;
+  word-break: break-word;
+}
+
+.accountAccessBadgeRow {
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.accountAccessBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+  padding: 7px 11px;
+  font-size: 0.74rem;
+  font-weight: 950;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.accountAccessBadge--monthly {
+  border-color: rgba(34, 211, 238, 0.45);
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.2), rgba(139, 92, 246, 0.2));
+  color: #e0fbff;
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.12);
+}
+
+.accountAccessBadge--yearly {
+  border-color: rgba(245, 197, 66, 0.52);
+  background: linear-gradient(135deg, rgba(245, 197, 66, 0.24), rgba(217, 70, 239, 0.18), rgba(56, 189, 248, 0.14));
+  color: #fff4c4;
+  box-shadow: 0 0 24px rgba(245, 197, 66, 0.16), 0 0 28px rgba(217, 70, 239, 0.08);
+}
+
+.accountAccessBadge--freemium {
+  border-color: rgba(163, 230, 53, 0.42);
+  background: linear-gradient(135deg, rgba(163, 230, 53, 0.18), rgba(34, 211, 238, 0.13));
+  color: #ecfccb;
+  box-shadow: 0 0 18px rgba(163, 230, 53, 0.1);
+}
+
+.accountAccessBadge--access,
+.accountAccessBadge--verified {
+  border-color: rgba(34, 197, 94, 0.34);
+  background: rgba(34, 197, 94, 0.12);
+  color: #dcfce7;
+}
+
+.accountAccessBadge--pending,
+.accountAccessBadge--preview {
+  border-color: rgba(250, 204, 21, 0.3);
+  background: rgba(250, 204, 21, 0.1);
+  color: #fef3c7;
+}
+
+.accountAccessBadge--admin {
+  border-color: rgba(217, 70, 239, 0.38);
+  background: rgba(217, 70, 239, 0.12);
+  color: #fae8ff;
 }
 
 .discountPassResult {
@@ -2906,10 +3007,44 @@ h3 {
 }
 
 .accountSecurityPanel {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(320px, 1.1fr);
   gap: 16px;
-  align-items: center;
+  align-items: start;
+}
+
+.securityActionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.securityActionGrid .button {
+  width: 100%;
+}
+
+.securityLogoutAll {
+  grid-column: 1 / -1;
+  min-height: 56px;
+  font-size: 1rem;
+}
+
+.accountSupportGrid {
+  align-items: stretch;
+}
+
+.supportSubmitCard {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.supportSubmitCard .button {
+  justify-self: start;
+}
+
+.accountStatsActions {
+  justify-content: flex-end;
 }
 
 .accountWideForm {
@@ -3383,26 +3518,6 @@ h3 {
   font-weight: 800;
 }
 
-.floatingFeedback {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 30;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(244, 214, 150, 0.28);
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(245, 199, 107, 0.95), rgba(255, 123, 104, 0.95));
-  color: #17120a;
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.32);
-  padding: 12px 15px;
-  min-height: 44px;
-  font-size: 13px;
-  font-weight: 950;
-  text-decoration: none;
-}
-
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 3px solid rgba(244, 214, 150, 0.82);
   outline-offset: 3px;
@@ -3584,7 +3699,9 @@ h3 {
   .accountHighlightsGrid,
   .accountMetricGrid,
   .accountActionsGrid,
-  .accountStatsGrid {
+  .accountStatsGrid,
+  .accountSupportGrid,
+  .securityActionGrid {
     grid-template-columns: 1fr;
   }
 
@@ -3617,13 +3734,12 @@ h3 {
   }
 
   .sectionHeader,
-  .dataRow,
-  .accountSecurityPanel {
+  .dataRow {
     flex-direction: column;
   }
 
   .accountSecurityPanel {
-    display: flex;
+    grid-template-columns: 1fr;
     align-items: stretch;
   }
 
@@ -3823,12 +3939,6 @@ h3 {
   .accountDiscountFeature .pill {
     align-self: flex-start;
     max-width: none;
-  }
-
-  .floatingFeedback {
-    right: 12px;
-    bottom: 12px;
-    padding: 11px 13px;
   }
 
   .cookieConsent {

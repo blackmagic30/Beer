@@ -66,7 +66,7 @@ describe("account page shell", () => {
     expect(html).toContain('id="loggedOutView"');
     expect(html).toContain('id="accountDashboard"');
     expect(html).toContain("Pint Path Contributor Account");
-    expect(html).toContain("Contributor dashboard");
+    expect(html).not.toContain("Contributor dashboard");
     expect(html).not.toContain("Quick beer price upload");
     expect(html).toContain("Manage your Pint Path account");
     expect(html).toContain('id="accountSettingsHub"');
@@ -77,7 +77,8 @@ describe("account page shell", () => {
     expect(html).toContain("New venue pending admin approval");
     expect(html).toContain("submissionPendingNotice");
     expect(html).not.toContain("How verification works");
-    expect(html).toContain("Pint Path discount pass");
+    expect(html).toContain("Pint Path special");
+    expect(html).not.toContain("Pint Path discount pass");
     expect(html).not.toContain('href="/stats.html"');
     expect(html).toContain('data-settings-target="stats"');
     expect(html).not.toContain("Current status");
@@ -153,20 +154,23 @@ describe("account page shell", () => {
     expect(feedback.indexOf("Privacy note")).toBeLessThan(feedback.indexOf('id="feedbackForm"'));
     expect(script).toContain('{ key: "feedback", href: "/feedback.html", label: "Feedback" }');
     expect(script).not.toContain('href="/account.html#feedbackForm"');
+    expect(script).not.toContain("fieldTestFeedbackButton");
+    expect(script).not.toContain("floatingFeedback");
   });
 
   it("moves account actions into submit flows and a settings hub", () => {
     const html = accountHtml();
 
     expect(html).not.toContain('class="accountActionsGrid"');
-    expect(html).not.toContain('href="/submit.html"');
     expect(html).not.toContain('href="/submit.html?type=photo_upload"');
     expect(html).not.toContain('href="#recentSubmissionsSection"');
     expect(html).not.toContain('href="/stats.html"');
+    expect(html).toContain('href="/submit.html">Open Submit');
     expect(html).toContain('data-settings-target="submissions"');
     expect(html).toContain('data-settings-target="stats"');
-    expect(html).toContain('data-settings-target="preferences"');
-    expect(html).toContain('data-settings-target="watchlist"');
+    expect(html.indexOf('data-settings-target="stats"')).toBeLessThan(html.indexOf('data-settings-target="submissions"'));
+    expect(html).not.toContain('data-settings-target="preferences"');
+    expect(html).not.toContain('data-settings-target="watchlist"');
     expect(html).toContain('data-settings-target="privacy"');
     expect(html).toContain('data-settings-target="support"');
     expect(html).toContain('data-settings-target="security"');
@@ -178,14 +182,15 @@ describe("account page shell", () => {
     expect(html).not.toContain("submitQuickUpload");
   });
 
-  it("keeps Account focused on account ID, savings, and discount pass while moving detailed stats to My Stats", () => {
+  it("keeps Account focused on savings and specials while moving detailed stats to My Stats", () => {
     const html = accountHtml();
     const css = businessCss();
 
     expect(html).toContain('class="accountHighlightsGrid"');
-    expect(html).toContain('id="accountIdMetric"');
+    expect(html).not.toContain('id="accountIdMetric"');
     expect(html).toContain('id="savingsMetric"');
     expect(html).toContain('id="refreshDiscountPassButton"');
+    expect(html).toContain("Pint Path special");
     expect(html).not.toContain('id="totalUploadsMetric"');
     expect(html).not.toContain('id="pendingMetric"');
     expect(html).not.toContain('id="leaderboardMetric"');
@@ -195,8 +200,16 @@ describe("account page shell", () => {
     expect(html).toContain("renderAccountStatsPanel(result)");
     expect(html).toContain("accountStatsProgressCard");
     expect(html).toContain("same premium map access as a paid user");
+    expect(html).toContain("Account ID");
     expect(html).toContain("accountStatCard--");
+    expect(html).toContain("accountHeroMetric--savings");
+    expect(html).toContain("accountHeroMetric--special");
     expect(css).toContain(".accountHighlightsGrid");
+    expect(css).toContain(".accountHeroMetric--savings");
+    expect(css).toContain(".accountHeroMetric--special");
+    expect(css).toContain(".accountAccessBadge--monthly");
+    expect(css).toContain(".accountAccessBadge--yearly");
+    expect(css).toContain(".accountAccessBadge--freemium");
     expect(css).toContain(".accountStatsGrid");
     expect(css).toContain("display: grid;");
     expect(css).toContain(".accountStatsProgressCard");
@@ -215,8 +228,8 @@ describe("account page shell", () => {
     expect(html).not.toContain('href="/stats.html"');
     expect(html).toContain('data-settings-panel="submissions" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="stats" role="tabpanel" hidden');
-    expect(html).toContain('data-settings-panel="preferences" role="tabpanel" hidden');
-    expect(html).toContain('data-settings-panel="watchlist" role="tabpanel" hidden');
+    expect(html).not.toContain('data-settings-panel="preferences" role="tabpanel" hidden');
+    expect(html).not.toContain('data-settings-panel="watchlist" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="privacy" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="support" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="security" role="tabpanel" hidden');
@@ -232,8 +245,9 @@ describe("account page shell", () => {
     expect(css).not.toContain(".accountDashboard #premiumMemberHub");
     expect(css).not.toContain(".premiumMemberHub");
     expect(css).toContain(".accountDashboard #accountSettingsHub");
+    expect(css).toMatch(/\.accountDashboard \.accountHighlightsGrid\s*\{[^}]*order:\s*1;/s);
     expect(css).toContain("order: 3;");
-    expect(css).toContain("order: 5;");
+    expect(css).not.toContain(".accountDashboard .accountPrimaryGrid");
   });
 
   it("uses Supabase OAuth and email auth before falling back to local demo auth", () => {
@@ -457,14 +471,22 @@ describe("account page shell", () => {
     expect(html).toContain('id="dataRequestForm"');
     expect(html).toContain('id="downloadAccountDataButton"');
     expect(html).toContain('id="requestAccountDeletionButton"');
+    expect(html).not.toContain('id="requestForm"');
+    expect(html).toContain('class="panel supportSubmitCard"');
+    expect(html).toContain('href="/submit.html">Open Submit');
+    expect(html).not.toContain("Open Trust Centre");
     expect(html).toContain("/api/business/account/export");
     expect(html).toContain("/api/business/account/delete-request");
     expect(html).toContain("downloadJson");
     expect(html).toContain('id="logoutAllButton"');
+    expect(html).toContain('class="securityActionGrid"');
+    expect(html).toContain('class="button button--danger securityLogoutAll"');
     expect(html).toContain("/api/business/account/privacy-settings");
     expect(html).toContain("/api/business/auth/logout-all");
     expect(html).toContain("/community.html");
     expect(css).toContain(".accountSecurityPanel");
+    expect(css).toContain(".securityActionGrid");
+    expect(css).toContain(".securityLogoutAll");
     expect(css).toContain(".quickPrivacyActions");
     expect(css).toContain(".toggleLine");
     expect(script).toContain("setPrivacyPreferenceCache");

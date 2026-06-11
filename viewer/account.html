@@ -113,68 +113,41 @@
     </section>
 
     <section id="accountDashboard" class="dashboardMain accountDashboard is-hidden" hidden>
-      <section class="hero hero--compact accountHero">
-        <div>
-          <div class="eyebrow">My account</div>
-          <h1>Contributor dashboard</h1>
-          <p class="lead">Your Pint Path ID, savings, and rotating discount pass in one clean place.</p>
-        </div>
-        <div class="heroCard accountIdentityCard">
-          <span class="muted">Signed in as</span>
-          <strong id="accountEmail">Not signed in</strong>
-          <div id="accessBadgeRow" class="miniStatRow"></div>
-          <button id="logoutButton" class="button button--danger" type="button">Log out</button>
-        </div>
-      </section>
-
       <div id="dashboardStatus" class="notice" role="status">Loading your account...</div>
 
       <section class="accountHighlightsGrid" aria-label="Account highlights">
-        <article class="metricCard">
+        <article class="metricCard accountHeroMetric accountHeroMetric--savings">
+          <div class="eyebrow">Total saved</div>
           <div id="savingsMetric" class="metricValue">A$0</div>
-          <div class="metricLabel">Total saved</div>
-          <p class="helperCopy">Estimated from Pint Path discount redemptions logged by venues.</p>
+          <p class="helperCopy">Estimated from Pint Path special redemptions logged by venues.</p>
         </article>
 
-        <article class="metricCard">
-          <div id="accountIdMetric" class="metricValue metricValue--small">—</div>
-          <div class="metricLabel">Account ID</div>
-          <p class="helperCopy">Your public contributor ID for leaderboard ranking and discount lookup.</p>
-        </article>
-
-        <article class="panel discountPassPanel accountDiscountFeature">
+        <article class="panel discountPassPanel accountDiscountFeature accountHeroMetric accountHeroMetric--special">
           <div class="sectionHeader">
             <div>
-              <h2>Pint Path discount pass</h2>
-              <p class="muted">Premium and contributor accounts can show a rotating code or QR to redeem venue specials.</p>
+              <div class="eyebrow">Member special</div>
+              <h2>Pint Path special</h2>
+              <p class="muted">Premium and contributor accounts can show a rotating code or QR to redeem partner venue specials.</p>
             </div>
             <span class="pill">Rotates per session</span>
           </div>
-          <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate rotating code</button>
+          <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate special code</button>
           <div id="discountPassResult" class="discountPassResult is-hidden" hidden>
             <div>
               <span class="metricLabel">Current code</span>
               <div id="discountPassCode" class="discountCode">------</div>
               <p id="discountPassExpires" class="helperCopy"></p>
             </div>
-            <img id="discountPassQr" class="discountPassQr" alt="Pint Path discount QR code" />
+            <img id="discountPassQr" class="discountPassQr" alt="Pint Path special QR code" />
           </div>
-          <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special. Redemptions are logged to calculate your estimated savings.</p>
+          <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special.</p>
         </article>
-      </section>
 
-      <section class="grid grid--two accountPrimaryGrid accountPrimaryGrid--single">
-        <article class="panel accountProgressPanel">
-          <div class="sectionHeader">
-            <div>
-              <h2>Contributor unlock progress</h2>
-              <p class="muted" id="contributorProgressCopy">Approved data earns points toward contributor access.</p>
-            </div>
-            <span id="accountTierPill" class="pill">Free</span>
-          </div>
-          <div class="progressTrack" aria-hidden="true"><div id="contributorProgressBar" class="progressBar" style="width:0%;"></div></div>
-          <p id="rewardEligibilityCopy" class="helperCopy">18+ verification will be required for some future rewards.</p>
-          <button id="confirmAgeButton" class="button" type="button">Confirm I am 18+</button>
+        <article class="panel accountIdentityCard accountIdentityCard--compact">
+          <span class="muted">Signed in as</span>
+          <strong id="accountEmail">Not signed in</strong>
+          <div id="accessBadgeRow" class="miniStatRow accountAccessBadgeRow"></div>
+          <button id="logoutButton" class="button button--danger" type="button">Log out</button>
         </article>
       </section>
 
@@ -188,10 +161,8 @@
           <a class="button" href="/feedback.html">Send feedback</a>
         </div>
         <nav class="settingsNav" aria-label="Account settings sections">
-          <button class="settingsNavButton" type="button" data-settings-target="submissions" aria-controls="settingsSubmissionsPanel" aria-selected="false">View submissions</button>
           <button class="settingsNavButton" type="button" data-settings-target="stats" aria-controls="settingsStatsPanel" aria-selected="false">My stats</button>
-          <button class="settingsNavButton" type="button" data-settings-target="preferences" aria-controls="settingsPreferencesPanel" aria-selected="false">Preferences</button>
-          <button class="settingsNavButton" type="button" data-settings-target="watchlist" aria-controls="settingsWatchlistPanel" aria-selected="false">Watchlist</button>
+          <button class="settingsNavButton" type="button" data-settings-target="submissions" aria-controls="settingsSubmissionsPanel" aria-selected="false">View submissions</button>
           <button class="settingsNavButton" type="button" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
           <button class="settingsNavButton" type="button" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
           <button class="settingsNavButton" type="button" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
@@ -199,7 +170,7 @@
 
         <article id="settingsEmptyPanel" class="panel settingsEmptyPanel">
           <h2>What would you like to manage?</h2>
-          <p class="muted">Open submissions, stats, preferences, watchlist, privacy, support, or security from the buttons above.</p>
+          <p class="muted">Open stats, submissions, privacy, support, or security from the buttons above.</p>
         </article>
 
         <div id="settingsSubmissionsPanel" class="settingsPanel" data-settings-panel="submissions" role="tabpanel" hidden>
@@ -219,54 +190,15 @@
             <div class="sectionHeader">
               <div>
                 <h2>My stats</h2>
-                <p class="muted">Your contribution totals, unlock progress, and discount activity in one place.</p>
+                <p class="muted">Your contribution totals, unlock progress, account ID, and Pint Path special activity in one place.</p>
               </div>
-              <a class="button" href="/missions.html">Find missions</a>
+              <div class="actionRow accountStatsActions">
+                <button id="confirmAgeButton" class="button" type="button">Confirm I am 18+</button>
+                <a class="button" href="/missions.html">Find missions</a>
+              </div>
             </div>
             <div id="accountStatsGrid" class="statsGrid accountStatsGrid"></div>
           </section>
-        </div>
-
-        <div id="settingsPreferencesPanel" class="settingsPanel" data-settings-panel="preferences" role="tabpanel" hidden>
-          <form id="preferencesForm" class="panel form">
-            <h2>Preferences</h2>
-            <p class="muted">Save a few defaults so the map and missions feel more local to you.</p>
-            <label class="field">Favourite suburbs/areas <input name="preferredSuburbs" placeholder="Fitzroy, Richmond, St Kilda" /></label>
-            <label class="field">Favourite beers <input name="preferredBeers" placeholder="Guinness, Carlton Draught, Stone & Wood Pacific Ale" /></label>
-            <label class="field">Mostly interested in
-              <select name="preferredUseCases" multiple size="5">
-                <option value="cheapest_beer">Cheapest beer</option>
-                <option value="happy_hours">Happy hours</option>
-                <option value="specific_beers">Specific beers</option>
-                <option value="recently_verified">Recently verified prices</option>
-                <option value="contributing_data">Contributing data to unlock access</option>
-              </select>
-            </label>
-            <button class="button button--primary" type="submit">Save preferences</button>
-          </form>
-        </div>
-
-        <div id="settingsWatchlistPanel" class="settingsPanel" data-settings-panel="watchlist" role="tabpanel" hidden>
-          <div class="grid grid--two">
-            <form id="saveItemForm" class="panel form">
-              <h2>Watchlist shortcuts</h2>
-              <p class="muted">Keep venues, beers, and suburbs handy. Alerts can come later.</p>
-              <label class="field">Type
-                <select name="itemType">
-                  <option value="venue">Venue</option>
-                  <option value="beer">Beer</option>
-                  <option value="suburb">Suburb</option>
-                </select>
-              </label>
-              <label class="field">Name <input name="label" placeholder="Rooftop Bar or Carlton Draught" required /></label>
-              <label class="field">Suburb, if relevant <input name="suburb" placeholder="Melbourne" /></label>
-              <button class="button button--primary" type="submit">Save shortcut</button>
-            </form>
-            <div class="panel">
-              <h2>Saved items and searches</h2>
-              <div id="savedItemsList" class="list"></div>
-            </div>
-          </div>
         </div>
 
         <div id="settingsPrivacyPanel" class="settingsPanel" data-settings-panel="privacy" role="tabpanel" hidden>
@@ -276,7 +208,6 @@
                 <h2>Privacy settings</h2>
                 <p class="muted">Optional analytics controls. Essential security, billing, moderation, and contribution records may still be kept.</p>
               </div>
-              <a class="button" href="/trust.html">Open Trust Centre</a>
             </div>
             <label class="toggleLine">
               <input name="optionalAnalyticsEnabled" type="checkbox" />
@@ -299,7 +230,7 @@
         </div>
 
         <div id="settingsSupportPanel" class="settingsPanel" data-settings-panel="support" role="tabpanel" hidden>
-          <div class="grid grid--two">
+          <div class="grid grid--two accountSupportGrid">
             <form id="dataRequestForm" class="panel form">
               <h2>Privacy, support, and appeals</h2>
               <p class="muted">Create a tracked request for export, deletion, correction, moderation appeals, security reports, or billing help.</p>
@@ -323,23 +254,11 @@
               </label>
               <button class="button button--primary" type="submit">Send request</button>
             </form>
-            <form id="requestForm" class="panel form">
-              <h2>Request a venue or beer</h2>
-              <p class="muted">Use this when a venue, beer, or verification task is missing from Pint Path.</p>
-              <label class="field">Request type
-                <select name="requestType">
-                  <option value="missing_venue">Add a missing venue</option>
-                  <option value="missing_beer">Add a missing beer</option>
-                  <option value="verify_venue">Verify a venue</option>
-                  <option value="verify_beer_at_venue">Verify a beer at a venue</option>
-                </select>
-              </label>
-              <label class="field">Venue <input name="venueName" placeholder="Venue name" /></label>
-              <label class="field">Beer <input name="beerName" placeholder="Beer name, if relevant" /></label>
-              <label class="field">Suburb <input name="suburb" placeholder="Melbourne" /></label>
-              <label class="field">Notes <textarea name="notes" placeholder="What should we check?"></textarea></label>
-              <button class="button button--primary" type="submit">Send request</button>
-            </form>
+            <article class="panel supportSubmitCard">
+              <h2>Add venue data</h2>
+              <p class="muted">Missing venues, missing beers, and beer prices now go through Submit so the venue and beer data can be reviewed together before going live.</p>
+              <a class="button button--primary" href="/submit.html">Open Submit</a>
+            </article>
           </div>
         </div>
 
@@ -349,10 +268,10 @@
               <h2>Account security</h2>
               <p class="muted">If you used a shared device or think your account is unsafe, revoke all active Pint Path sessions and sign in again.</p>
             </div>
-            <div class="actionRow">
-              <button id="logoutAllButton" class="button button--danger" type="button">Log out all sessions</button>
+            <div class="securityActionGrid">
               <a class="button" href="/security.html">Security page</a>
               <a class="button" href="/community.html">Community rules</a>
+              <button id="logoutAllButton" class="button button--danger securityLogoutAll" type="button">Log out all sessions</button>
             </div>
           </article>
         </div>
@@ -391,13 +310,6 @@
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
-    }
-
-    function splitCsv(value) {
-      return String(value || "")
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
     }
 
     function downloadJson(filename, payload) {
@@ -445,9 +357,9 @@
 
     function requestedSettingsPanel() {
       const panel = new URLSearchParams(window.location.search).get("settings") || window.location.hash.replace("#", "");
-      return ["submissions", "stats", "preferences", "watchlist", "privacy", "support", "security"].includes(panel)
+      return ["stats", "submissions", "privacy", "support", "security"].includes(panel)
         ? panel
-        : null;
+        : "stats";
     }
 
     function localDatetimeIso(date = new Date()) {
@@ -519,44 +431,23 @@
       MelbBeerBusiness.setStatus($("authStatus"), showLogin ? "Sign in with email and password." : "Create an account to start contributing.");
     }
 
-    function showAccountSettingsPanel(target) {
+    function showAccountSettingsPanel(target = "stats") {
       const panels = Array.from(document.querySelectorAll("[data-settings-panel]"));
       const buttons = Array.from(document.querySelectorAll("[data-settings-target]"));
       const isValidTarget = panels.some((panel) => panel.dataset.settingsPanel === target);
+      const activeTarget = isValidTarget ? target : "stats";
 
-      $("settingsEmptyPanel").hidden = isValidTarget;
+      $("settingsEmptyPanel").hidden = true;
       panels.forEach((panel) => {
-        const active = panel.dataset.settingsPanel === target;
+        const active = panel.dataset.settingsPanel === activeTarget;
         panel.hidden = !active;
         panel.classList.toggle("is-active", active);
       });
       buttons.forEach((button) => {
-        const active = button.dataset.settingsTarget === target;
+        const active = button.dataset.settingsTarget === activeTarget;
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
       });
-    }
-
-    function renderSavedItems(items, recentSearches) {
-      const groups = {
-        venue: items.filter((item) => item.itemType === "venue"),
-        beer: items.filter((item) => item.itemType === "beer"),
-        suburb: items.filter((item) => item.itemType === "suburb"),
-        nightPlan: items.filter((item) => item.itemType === "night_plan"),
-      };
-      const section = (title, rows) => `
-        <div class="listItem">
-          <strong>${escapeHtml(title)}</strong>
-          <div class="muted">${rows.length ? rows.map((item) => escapeHtml(item.label)).join(" · ") : "None saved yet"}</div>
-        </div>
-      `;
-      $("savedItemsList").innerHTML = [
-        section("Saved venues", groups.venue),
-        section("Saved beers", groups.beer),
-        section("Saved suburbs", groups.suburb),
-        section("Saved night plans", groups.nightPlan),
-        `<div class="listItem"><strong>Recent searches</strong><div class="muted">${recentSearches.length ? recentSearches.map((item) => escapeHtml(item.label)).join(" · ") : "No recent searches yet"}</div></div>`,
-      ].join("");
     }
 
     function statusBadge(status) {
@@ -631,6 +522,7 @@
       const trustScore = Number(stats.trustScore ?? account.trustScore ?? 0);
       const savings = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
       const accountId = result.leaderboard?.accountId || account.publicAccountId || "—";
+      const ageCopy = result.ageVerification?.copy || "18+ confirmation unlocks future venue-special and reward features.";
       const progressPercent = Math.min(100, Math.round((points / threshold) * 100));
       const unlockReached = pointsNeeded <= 0;
       const unlockCopy = unlockReached
@@ -644,6 +536,7 @@
         { label: "Trust score", value: `${trustScore}%`, helper: "A working reliability signal for future contributor moderation.", tone: "info" },
         { label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" },
         { label: "Account ID", value: accountId, helper: "Your public contributor ID for leaderboard ranking and discount lookup.", tone: "id" },
+        { label: "Reward eligibility", value: account.ageConfirmedAt ? "18+ confirmed" : "Confirm 18+", helper: ageCopy, tone: account.ageConfirmedAt ? "success" : "pending" },
       ];
 
       grid.innerHTML = `
@@ -677,26 +570,46 @@
       `;
     }
 
+    function subscriptionBadge(account) {
+      const status = account.subscriptionStatus || "free";
+      if (status === "premium_yearly") {
+        return { label: "Premium yearly", tone: "yearly" };
+      }
+      if (status === "premium_monthly") {
+        return { label: "Premium monthly", tone: "monthly" };
+      }
+      if (status === "contributor_unlocked") {
+        return { label: "Freemium unlocked", tone: "freemium" };
+      }
+      if (status === "admin") {
+        return { label: "Admin", tone: "admin" };
+      }
+      return { label: "Freemium", tone: "freemium" };
+    }
+
+    function accessBadge(label, tone = "neutral") {
+      return `<span class="accountAccessBadge accountAccessBadge--${escapeHtml(tone)}">${escapeHtml(label)}</span>`;
+    }
+
     function renderDashboard(result) {
       state.accountData = result;
       MelbBeerBusiness.setAccountContext(result.account);
       showDashboard();
       const account = result.account;
       $("accountEmail").textContent = account.email;
-      $("accountTierPill").textContent = account.subscriptionStatus.replaceAll("_", " ");
+      const planBadge = subscriptionBadge(account);
       $("accessBadgeRow").innerHTML = [
-        `<span>${escapeHtml(account.subscriptionStatus.replaceAll("_", " "))}</span>`,
+        accessBadge(planBadge.label, planBadge.tone),
         result.access.hasFullAccess
-          ? "<span>Full map access</span>"
-          : "<span>Free preview: happy hours + core pint prices</span>",
-        account.emailVerifiedAt ? "<span>Email verified</span>" : "<span>Email verification pending</span>",
+          ? accessBadge("Full map access", "access")
+          : accessBadge("Core map preview", "preview"),
+        account.emailVerifiedAt ? accessBadge("Email verified", "verified") : accessBadge("Email pending", "pending"),
       ].join("");
-      $("accountIdMetric").textContent = result.leaderboard?.accountId || account.publicAccountId || "—";
       $("savingsMetric").textContent = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
       const discountPassButton = $("refreshDiscountPassButton");
       if (discountPassButton) {
         discountPassButton.disabled = !result.discounts?.eligible;
-        discountPassButton.textContent = result.discounts?.eligible ? "Generate rotating code" : "Premium/contributor only";
+        discountPassButton.textContent = result.discounts?.eligible ? "Generate special code" : "Premium/contributor only";
       }
       const discountPassResult = $("discountPassResult");
       if (discountPassResult) {
@@ -704,34 +617,18 @@
         discountPassResult.classList.add("is-hidden");
       }
 
-      const progress = result.contributorProgress || {};
-      const threshold = Math.max(1, progress.unlockThreshold || 15);
-      const points = Math.max(0, progress.pointsThisMonth || 0);
-      const percent = Math.min(100, Math.round((points / threshold) * 100));
-      $("contributorProgressBar").style.width = `${percent}%`;
-      $("contributorProgressCopy").textContent = progress.pointsNeeded > 0
-        ? `${formatPoints(points)} / ${formatPoints(threshold)} points. ${formatPoints(progress.pointsNeeded)} more points unlock premium until month end.`
-        : `${formatPoints(points)} / ${formatPoints(threshold)} points. Contributor unlock reached for this month.`;
-      $("rewardEligibilityCopy").textContent = result.ageVerification?.copy || "18+ verification will be required for some future rewards.";
       $("confirmAgeButton").style.display = account.ageConfirmedAt ? "none" : "inline-flex";
 
       $("dashboardStatus").hidden = account.status === "active";
       $("dashboardStatus").textContent = account.status === "active" ? "" : `Account status: ${account.status}`;
       $("dashboardStatus").className = `notice ${account.status === "active" ? "" : "notice--warning"}`;
 
-      const preferences = result.preferences || {};
-      $("preferencesForm").preferredSuburbs.value = (preferences.preferredSuburbs || []).join(", ");
-      $("preferencesForm").preferredBeers.value = (preferences.preferredBeers || []).join(", ");
-      Array.from($("preferencesForm").preferredUseCases.options).forEach((option) => {
-        option.selected = (preferences.preferredUseCases || []).includes(option.value);
-      });
       const privacySettings = result.privacySettings || {};
       $("privacySettingsForm").optionalAnalyticsEnabled.checked = privacySettings.optionalAnalyticsEnabled !== false;
       $("privacySettingsForm").venueReportInclusionEnabled.checked = privacySettings.venueReportInclusionEnabled !== false;
       $("privacySettingsForm").productResearchEnabled.checked = privacySettings.productResearchEnabled !== false;
       $("privacySettingsForm").emailUpdatesEnabled.checked = Boolean(privacySettings.emailUpdatesEnabled);
       MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings);
-      renderSavedItems(result.savedItems || [], result.recentSearches || []);
       renderRecentSubmissions(result.recentSubmissions || []);
       renderAccountStatsPanel(result);
     }
@@ -1045,29 +942,11 @@
           $("discountPassResult").hidden = false;
           $("discountPassResult").classList.remove("is-hidden");
           $("discountPassExpires").textContent = `Expires ${MelbBeerBusiness.formatDate(pass.expiresAt)}. Refresh the page or sign in again for a new session code.`;
-          MelbBeerBusiness.setStatus($("dashboardStatus"), "Rotating discount pass generated. Only show it to venue staff when redeeming a Pint Path special.");
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Pint Path special code generated. Only show it to venue staff when redeeming a special.");
         } catch (error) {
-          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not generate a discount pass.", true);
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not generate a Pint Path special code.", true);
         } finally {
           setLoading(button, false);
-        }
-      });
-      $("preferencesForm").addEventListener("submit", async (event) => {
-        event.preventDefault();
-        try {
-          await MelbBeerBusiness.apiFetch("/api/business/account/preferences", {
-            method: "POST",
-            body: JSON.stringify({
-              preferredSuburbs: splitCsv($("preferencesForm").preferredSuburbs.value),
-              preferredBeers: splitCsv($("preferencesForm").preferredBeers.value),
-              preferredUseCases: Array.from($("preferencesForm").preferredUseCases.selectedOptions).map((option) => option.value),
-              onboardingCompleted: true,
-            }),
-          });
-          MelbBeerBusiness.setStatus($("dashboardStatus"), "Preferences saved. Your suggested missions will use these areas.");
-          await refreshAccount();
-        } catch (error) {
-          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
       $("privacySettingsForm").addEventListener("submit", async (event) => {
@@ -1140,47 +1019,6 @@
           await MelbBeerBusiness.getSupabaseClient()?.auth.signOut().catch(() => null);
           MelbBeerBusiness.setAuthToken(null);
           showLoggedOut("All Pint Path sessions have been logged out.");
-        } catch (error) {
-          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
-        }
-      });
-      $("saveItemForm").addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const body = Object.fromEntries(new FormData($("saveItemForm")).entries());
-        try {
-          await MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
-            method: "POST",
-            body: JSON.stringify({
-              itemType: body.itemType,
-              itemId: String(body.label).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_"),
-              label: body.label,
-              suburb: body.suburb || null,
-              metadata: {},
-            }),
-          });
-          $("saveItemForm").reset();
-          await refreshAccount();
-        } catch (error) {
-          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
-        }
-      });
-      $("requestForm").addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const body = Object.fromEntries(new FormData($("requestForm")).entries());
-        try {
-          await MelbBeerBusiness.apiFetch("/api/business/requests", {
-            method: "POST",
-            body: JSON.stringify({
-              ...body,
-              anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
-              venueName: body.venueName || null,
-              beerName: body.beerName || null,
-              suburb: body.suburb || null,
-              notes: body.notes || null,
-            }),
-          });
-          $("requestForm").reset();
-          MelbBeerBusiness.setStatus($("dashboardStatus"), "Request saved. High-demand requests can become missions.");
         } catch (error) {
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
