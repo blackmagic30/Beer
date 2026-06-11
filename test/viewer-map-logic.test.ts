@@ -271,7 +271,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('class="mapHeroCard" aria-label="Map overview"');
     expect(html).toContain("Melbourne beer map");
     expect(html).toContain('<div class="topbar__eyebrow">Pint Path <span class="fieldTestBadge">Beta</span></div>');
-    expect(html).toContain("<h1>Verified local price index</h1>");
+    expect(html).toContain("<h1>Melbourne beer map</h1>");
+    expect(html).not.toContain("Verified local price index");
     expect(html).toContain('id="topbarBusinessLinks"');
     expect(html).toContain('id="accessPill"');
     expect(html).toContain('<a href="/feedback.html">Feedback</a> · <a href="/privacy.html">Privacy</a>');

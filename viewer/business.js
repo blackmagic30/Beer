@@ -564,7 +564,6 @@ function renderNav(active = "") {
     <nav class="topNav" aria-label="Primary">
       <a class="brand" href="/">
         <strong>Pint Path</strong>
-        <span>Verified local price index</span>
       </a>
       ${betaPill}
       <div class="navLinks">
