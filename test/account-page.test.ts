@@ -70,6 +70,9 @@ describe("account page shell", () => {
     expect(html).not.toContain("Quick beer price upload");
     expect(html).toContain("Manage your Pint Path account");
     expect(html).toContain('id="accountSettingsHub"');
+    expect(html).not.toContain("Account active. Uploads and verification actions are tracked against your signed-in user.");
+    expect(html).not.toContain('id="premiumMemberHub"');
+    expect(html).not.toContain("renderPremiumMemberHub");
     expect(html).toContain("Recent submissions");
     expect(html).toContain("New venue pending admin approval");
     expect(html).toContain("submissionPendingNotice");
@@ -226,10 +229,11 @@ describe("account page shell", () => {
     expect(css).toContain(".settingsNavButton");
     expect(css).toContain(".settingsPanel");
     expect(css).toContain(".settingsEmptyPanel");
-    expect(css).toContain(".accountDashboard #premiumMemberHub");
+    expect(css).not.toContain(".accountDashboard #premiumMemberHub");
+    expect(css).not.toContain(".premiumMemberHub");
     expect(css).toContain(".accountDashboard #accountSettingsHub");
     expect(css).toContain("order: 3;");
-    expect(css).toContain("order: 6;");
+    expect(css).toContain("order: 5;");
   });
 
   it("uses Supabase OAuth and email auth before falling back to local demo auth", () => {
@@ -243,8 +247,9 @@ describe("account page shell", () => {
     expect(html.indexOf("Reset password")).toBeLessThan(html.indexOf("Continue with Google"));
     expect(html).toContain("MelbBeerBusiness.signUpWithEmail");
     expect(html).toContain("MelbBeerBusiness.signInWithEmail");
-    expect(html).toContain('id="passwordResetLink" class="button" href="/reset-password.html"');
-    expect(html).toContain('id="resendConfirmationLink" class="button" href="/resend-confirmation.html"');
+    expect(html).toContain('class="authUtilityGrid" aria-label="Account recovery links"');
+    expect(html).toContain('id="passwordResetLink" class="authUtilityCard" href="/reset-password.html"');
+    expect(html).toContain('id="resendConfirmationLink" class="authUtilityCard" href="/resend-confirmation.html"');
     expect(html).toContain('authUtilityLink("/reset-password.html")');
     expect(html).toContain('authUtilityLink("/resend-confirmation.html")');
     expect(html).toContain("No Supabase confirmation email was sent.");

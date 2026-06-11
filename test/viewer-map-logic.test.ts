@@ -201,7 +201,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("venueRail__card--price-");
     expect(html).toContain("green, yellow, orange, and dark-red price rings");
     expect(html).toContain("__pintPathMapMarkerDebug");
-    expect(html).toContain('libraries: "marker,places"');
+    expect(html).toContain('libraries: "marker"');
+    expect(html).not.toContain('libraries: "marker,places"');
     expect(html).toContain('loading: "async"');
     expect(html).toContain("EFFECTIVE_GOOGLE_MAPS_MAP_ID");
     expect(html).toContain("useConfiguredGoogleMapsMapId");
@@ -269,6 +270,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('class="mapBrand" href="/"');
     expect(html).toContain('class="mapHeroCard" aria-label="Map overview"');
     expect(html).toContain("Melbourne beer map");
+    expect(html).toContain('<div class="topbar__eyebrow">Pint Path <span class="fieldTestBadge">Beta</span></div>');
+    expect(html).toContain("<h1>Verified local price index</h1>");
     expect(html).toContain('id="topbarBusinessLinks"');
     expect(html).toContain('id="accessPill"');
     expect(html).toContain('class="controlDeck"');

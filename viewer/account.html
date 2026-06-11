@@ -57,10 +57,17 @@
             </div>
             <div class="actionRow authActions">
               <button class="button button--primary" type="submit">Sign in</button>
-              <a id="passwordResetLink" class="button" href="/reset-password.html">Reset password</a>
-              <a id="resendConfirmationLink" class="button" href="/resend-confirmation.html">Resend confirmation</a>
             </div>
-            <p class="helperCopy authResetCopy">Forgot your password or missing a signup email? Use the dedicated recovery pages to resend the right email.</p>
+            <div class="authUtilityGrid" aria-label="Account recovery links">
+              <a id="passwordResetLink" class="authUtilityCard" href="/reset-password.html">
+                <strong>Reset password</strong>
+                <span>Send a recovery email.</span>
+              </a>
+              <a id="resendConfirmationLink" class="authUtilityCard" href="/resend-confirmation.html">
+                <strong>Resend confirmation</strong>
+                <span>Send the signup email again.</span>
+              </a>
+            </div>
             <div id="oauthStack" class="oauthStack" aria-label="Quick login options">
               <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
               <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
@@ -121,20 +128,6 @@
       </section>
 
       <div id="dashboardStatus" class="notice" role="status">Loading your account...</div>
-
-      <section id="premiumMemberHub" class="panel premiumMemberHub" aria-labelledby="premiumMemberHubTitle">
-        <div class="sectionHeader premiumMemberHub__header">
-          <div>
-            <div class="eyebrow">Paid member tools</div>
-            <h2 id="premiumMemberHubTitle">Premium member toolkit</h2>
-            <p id="premiumMemberHubSummary" class="muted">Loading paid-user benefits...</p>
-          </div>
-          <span id="premiumMemberHubBadge" class="tierBadge tierBadge--plus">Checking</span>
-        </div>
-        <div id="premiumMemberMetricGrid" class="premiumMemberMetricGrid" aria-label="Premium member metrics"></div>
-        <div id="premiumMemberPerkGrid" class="premiumMemberPerkGrid" aria-label="Premium member benefits"></div>
-        <div id="premiumMemberActionRow" class="actionRow premiumMemberActionRow"></div>
-      </section>
 
       <section class="accountHighlightsGrid" aria-label="Account highlights">
         <article class="metricCard">
@@ -684,58 +677,6 @@
       `;
     }
 
-    function renderPremiumMemberHub(result) {
-      const hub = $("premiumMemberHub");
-      if (!hub) {
-        return;
-      }
-
-      const toolkit = result.premiumMemberToolkit || result.access?.premiumToolkit || {};
-      const unlocked = Boolean(toolkit.enabled);
-      const counts = toolkit.counts || {};
-      hub.classList.toggle("premiumMemberHub--active", unlocked);
-      hub.classList.toggle("premiumMemberHub--locked", !unlocked);
-      $("premiumMemberHubTitle").textContent = toolkit.title || "Premium member toolkit";
-      $("premiumMemberHubSummary").textContent = toolkit.summary || "Paid users unlock exact prices, premium filters, saved shortcuts, discount-pass access, and savings tracking.";
-      $("premiumMemberHubBadge").className = `tierBadge ${unlocked ? "tierBadge--pro" : "tierBadge--plus"}`;
-      $("premiumMemberHubBadge").textContent = unlocked ? "Active" : "Locked";
-
-      const metricRows = [
-        { label: "Saved shortcuts", value: Number(counts.savedVenues || 0) + Number(counts.savedBeers || 0) + Number(counts.savedSuburbs || 0) + Number(counts.savedNightPlans || 0) },
-        { label: "Preference defaults", value: counts.preferredShortcuts || 0 },
-        { label: "Specials redeemed", value: counts.totalRedemptions || 0 },
-        { label: "Tracked savings", value: formatMoney((counts.estimatedSavingsCents || 0) / 100) },
-      ];
-      $("premiumMemberMetricGrid").innerHTML = metricRows.map((metric) => `
-        <article class="premiumMemberMetric">
-          <strong>${escapeHtml(metric.value)}</strong>
-          <span>${escapeHtml(metric.label)}</span>
-        </article>
-      `).join("");
-
-      const perks = Array.isArray(toolkit.perks) ? toolkit.perks : [];
-      $("premiumMemberPerkGrid").innerHTML = perks.map((perk) => `
-        <article class="premiumPerkCard ${perk.unlocked ? "is-unlocked" : "is-locked"}">
-          <div class="premiumPerkCard__top">
-            <h3>${escapeHtml(perk.title)}</h3>
-            <span>${escapeHtml(perk.badge || (perk.unlocked ? "Active" : "Paid"))}</span>
-          </div>
-          <p>${escapeHtml(perk.copy)}</p>
-          <a class="button" href="${escapeHtml(perk.href || "/pricing.html")}">${escapeHtml(perk.ctaLabel || "Open")}</a>
-        </article>
-      `).join("");
-
-      const primary = toolkit.primaryAction || { label: unlocked ? "Open value map" : "Upgrade monthly", href: unlocked ? "/index.html" : "/account.html?checkoutPlan=monthly" };
-      const secondary = toolkit.secondaryAction || { label: unlocked ? "Manage watchlist" : "Earn with missions", href: unlocked ? "/account.html?settings=watchlist" : "/missions.html" };
-      $("premiumMemberActionRow").innerHTML = [
-        `<a class="button ${unlocked ? "button--premium" : "button--primary"}" href="${escapeHtml(primary.href)}">${escapeHtml(primary.label)}</a>`,
-        `<a class="button" href="${escapeHtml(secondary.href)}">${escapeHtml(secondary.label)}</a>`,
-        unlocked
-          ? '<a class="button" href="/account.html?settings=stats">View savings</a>'
-          : '<a class="button button--premium" href="/account.html?checkoutPlan=yearly">Upgrade yearly</a>',
-      ].join("");
-    }
-
     function renderDashboard(result) {
       state.accountData = result;
       MelbBeerBusiness.setAccountContext(result.account);
@@ -774,9 +715,8 @@
       $("rewardEligibilityCopy").textContent = result.ageVerification?.copy || "18+ verification will be required for some future rewards.";
       $("confirmAgeButton").style.display = account.ageConfirmedAt ? "none" : "inline-flex";
 
-      $("dashboardStatus").textContent = account.status === "active"
-        ? "Account active. Uploads and verification actions are tracked against your signed-in user."
-        : `Account status: ${account.status}`;
+      $("dashboardStatus").hidden = account.status === "active";
+      $("dashboardStatus").textContent = account.status === "active" ? "" : `Account status: ${account.status}`;
       $("dashboardStatus").className = `notice ${account.status === "active" ? "" : "notice--warning"}`;
 
       const preferences = result.preferences || {};
@@ -793,7 +733,6 @@
       MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings);
       renderSavedItems(result.savedItems || [], result.recentSearches || []);
       renderRecentSubmissions(result.recentSubmissions || []);
-      renderPremiumMemberHub(result);
       renderAccountStatsPanel(result);
     }
 

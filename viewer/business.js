@@ -639,6 +639,7 @@ function formatDate(value) {
 }
 
 function setStatus(element, message, isError = false) {
+  element.hidden = false;
   element.textContent = message;
   element.className = `notice ${isError ? "notice--warning" : ""}`;
 }
