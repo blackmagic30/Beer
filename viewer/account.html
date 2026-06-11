@@ -124,42 +124,6 @@
 
       <div id="dashboardStatus" class="notice" role="status">Loading your account...</div>
 
-      <section class="accountHighlightsGrid" aria-label="Account highlights">
-        <article class="metricCard accountHeroMetric accountHeroMetric--savings">
-          <div class="eyebrow">Total saved</div>
-          <div id="savingsMetric" class="metricValue">A$0</div>
-          <p class="helperCopy">Estimated from Pint Path special redemptions logged by venues.</p>
-        </article>
-
-        <article class="panel discountPassPanel accountDiscountFeature accountHeroMetric accountHeroMetric--special">
-          <div class="sectionHeader">
-            <div>
-              <div class="eyebrow">Member special</div>
-              <h2>Pint Path special</h2>
-              <p class="muted">Premium and contributor accounts can show a rotating code or QR to redeem partner venue specials.</p>
-            </div>
-            <span class="pill">Rotates per session</span>
-          </div>
-          <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate special code</button>
-          <div id="discountPassResult" class="discountPassResult is-hidden" hidden>
-            <div>
-              <span class="metricLabel">Current code</span>
-              <div id="discountPassCode" class="discountCode">------</div>
-              <p id="discountPassExpires" class="helperCopy"></p>
-            </div>
-            <img id="discountPassQr" class="discountPassQr" alt="Pint Path special QR code" />
-          </div>
-          <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special.</p>
-        </article>
-
-        <article class="panel accountIdentityCard accountIdentityCard--compact">
-          <span class="muted">Signed in as</span>
-          <strong id="accountEmail">Not signed in</strong>
-          <div id="accessBadgeRow" class="miniStatRow accountAccessBadgeRow"></div>
-          <button id="logoutButton" class="button button--danger" type="button">Log out</button>
-        </article>
-      </section>
-
       <section id="accountSettingsHub" class="accountSectionStack settingsHub">
         <nav class="settingsNav" aria-label="Account settings sections">
           <button class="settingsNavButton" type="button" data-settings-target="stats" aria-controls="settingsStatsPanel" aria-selected="false">My stats</button>
@@ -168,6 +132,42 @@
           <button class="settingsNavButton" type="button" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
           <button class="settingsNavButton" type="button" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
         </nav>
+
+        <section class="accountHighlightsGrid" aria-label="Account highlights">
+          <article class="metricCard accountHeroMetric accountHeroMetric--savings">
+            <div class="eyebrow">Total saved</div>
+            <div id="savingsMetric" class="metricValue">A$0</div>
+            <p class="helperCopy">Estimated from Pint Path special redemptions logged by venues.</p>
+          </article>
+
+          <article class="panel discountPassPanel accountDiscountFeature accountHeroMetric accountHeroMetric--special">
+            <div class="sectionHeader">
+              <div>
+                <div class="eyebrow">Member special</div>
+                <h2>Pint Path special</h2>
+                <p class="muted">Premium and contributor accounts can show a rotating code or QR to redeem partner venue specials.</p>
+              </div>
+              <span class="pill">Rotates per session</span>
+            </div>
+            <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate special code</button>
+            <div id="discountPassResult" class="discountPassResult is-hidden" hidden>
+              <div>
+                <span class="metricLabel">Current code</span>
+                <div id="discountPassCode" class="discountCode">------</div>
+                <p id="discountPassExpires" class="helperCopy"></p>
+              </div>
+              <img id="discountPassQr" class="discountPassQr" alt="Pint Path special QR code" />
+            </div>
+            <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special.</p>
+          </article>
+
+          <article class="panel accountIdentityCard accountIdentityCard--compact">
+            <span class="muted">Signed in as</span>
+            <strong id="accountEmail">Not signed in</strong>
+            <div id="accessBadgeRow" class="miniStatRow accountAccessBadgeRow"></div>
+            <button id="logoutButton" class="button button--danger" type="button">Log out</button>
+          </article>
+        </section>
 
         <article id="settingsEmptyPanel" class="panel settingsEmptyPanel">
           <h2>What would you like to manage?</h2>

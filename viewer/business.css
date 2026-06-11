@@ -2039,16 +2039,12 @@ h3 {
   order: 2;
 }
 
-.accountDashboard .accountHighlightsGrid {
+.accountDashboard #accountSettingsHub {
   order: 3;
 }
 
-.accountDashboard #accountSettingsHub {
-  order: 4;
-}
-
 .accountDashboard #recentSubmissionsSection {
-  order: 5;
+  order: 4;
 }
 
 .accountHighlightsGrid .metricCard,
