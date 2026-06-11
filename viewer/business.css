@@ -2031,7 +2031,7 @@ h3 {
   align-items: stretch;
 }
 
-.accountDashboard .accountHighlightsGrid {
+.accountDashboard .accountDashboardIntro {
   order: 1;
 }
 
@@ -2039,12 +2039,16 @@ h3 {
   order: 2;
 }
 
-.accountDashboard #accountSettingsHub {
+.accountDashboard .accountHighlightsGrid {
   order: 3;
 }
 
-.accountDashboard #recentSubmissionsSection {
+.accountDashboard #accountSettingsHub {
   order: 4;
+}
+
+.accountDashboard #recentSubmissionsSection {
+  order: 5;
 }
 
 .accountHighlightsGrid .metricCard,
@@ -2548,6 +2552,22 @@ h3 {
 
 .accountDashboard {
   gap: 18px;
+}
+
+.accountDashboardIntro {
+  align-items: flex-end;
+  margin-bottom: -2px;
+}
+
+.accountDashboardIntro h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 1.03;
+}
+
+.accountDashboardIntro p {
+  margin: 7px 0 0;
+  max-width: 620px;
 }
 
 .accountHero {

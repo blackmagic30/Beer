@@ -202,9 +202,13 @@ describe("account page shell", () => {
     expect(html).toContain("same premium map access as a paid user");
     expect(html).toContain("Account ID");
     expect(html).toContain("accountStatCard--");
+    expect(html).toContain('class="accountDashboardIntro sectionHeader"');
+    expect(html.indexOf('id="accountDashboardTitle"')).toBeLessThan(html.indexOf('class="accountHighlightsGrid"'));
+    expect(html.indexOf('class="accountHighlightsGrid"')).toBeLessThan(html.indexOf('id="accountSettingsHub"'));
     expect(html).toContain("accountHeroMetric--savings");
     expect(html).toContain("accountHeroMetric--special");
     expect(css).toContain(".accountHighlightsGrid");
+    expect(css).toContain(".accountDashboardIntro");
     expect(css).toContain(".accountHeroMetric--savings");
     expect(css).toContain(".accountHeroMetric--special");
     expect(css).toContain(".accountAccessBadge--monthly");
@@ -245,8 +249,9 @@ describe("account page shell", () => {
     expect(css).not.toContain(".accountDashboard #premiumMemberHub");
     expect(css).not.toContain(".premiumMemberHub");
     expect(css).toContain(".accountDashboard #accountSettingsHub");
-    expect(css).toMatch(/\.accountDashboard \.accountHighlightsGrid\s*\{[^}]*order:\s*1;/s);
-    expect(css).toContain("order: 3;");
+    expect(css).toMatch(/\.accountDashboard \.accountDashboardIntro\s*\{[^}]*order:\s*1;/s);
+    expect(css).toMatch(/\.accountDashboard \.accountHighlightsGrid\s*\{[^}]*order:\s*3;/s);
+    expect(css).toMatch(/\.accountDashboard #accountSettingsHub\s*\{[^}]*order:\s*4;/s);
     expect(css).not.toContain(".accountDashboard .accountPrimaryGrid");
   });
 

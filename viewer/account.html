@@ -113,6 +113,15 @@
     </section>
 
     <section id="accountDashboard" class="dashboardMain accountDashboard is-hidden" hidden>
+      <section class="accountDashboardIntro sectionHeader" aria-labelledby="accountDashboardTitle">
+        <div>
+          <div class="eyebrow">Account settings</div>
+          <h1 id="accountDashboardTitle">Manage your Pint Path account</h1>
+          <p class="muted">Choose one area to open. The dashboard stays clean until you need a specific account tool.</p>
+        </div>
+        <a class="button" href="/feedback.html">Send feedback</a>
+      </section>
+
       <div id="dashboardStatus" class="notice" role="status">Loading your account...</div>
 
       <section class="accountHighlightsGrid" aria-label="Account highlights">
@@ -152,14 +161,6 @@
       </section>
 
       <section id="accountSettingsHub" class="accountSectionStack settingsHub">
-        <div class="sectionHeader">
-          <div>
-            <div class="eyebrow">Account settings</div>
-            <h2>Manage your Pint Path account</h2>
-            <p class="muted">Choose one area to open. The dashboard stays clean until you need a specific account tool.</p>
-          </div>
-          <a class="button" href="/feedback.html">Send feedback</a>
-        </div>
         <nav class="settingsNav" aria-label="Account settings sections">
           <button class="settingsNavButton" type="button" data-settings-target="stats" aria-controls="settingsStatsPanel" aria-selected="false">My stats</button>
           <button class="settingsNavButton" type="button" data-settings-target="submissions" aria-controls="settingsSubmissionsPanel" aria-selected="false">View submissions</button>
