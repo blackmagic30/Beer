@@ -442,7 +442,7 @@ async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, pri
         configured: true,
         synced: false,
         needsEmailConfirmation: true,
-        message: "Account created. Check your email to confirm your Pint Path login, then return here to sign in.",
+        message: "Account created and confirmation requested. Check your email, then return here to sign in. If no link arrives within a minute, use Resend confirmation.",
       };
     }
 
@@ -470,7 +470,7 @@ async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, pri
     configured: true,
     synced: false,
     needsEmailConfirmation: true,
-    message: "Account created. Check your email to confirm your Pint Path login, then return here to sign in.",
+    message: "Account created and confirmation requested. Check your email, then return here to sign in. If no link arrives within a minute, use Resend confirmation.",
   };
 }
 

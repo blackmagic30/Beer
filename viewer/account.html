@@ -534,14 +534,14 @@
         ? "Contributor access is unlocked for this month. You get the same premium map access as a paid user."
         : `${formatPoints(pointsNeeded)} more approved points unlock the same premium map access as a paid user until month end.`;
       const metrics = [
+        { label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" },
+        { label: "Verified", value: verifiedCount, helper: "Approved contributions that can count toward contributor unlocks.", tone: "success" },
         { label: "Total uploads", value: totalUploads, helper: "Beer price, venue, happy-hour, and source uploads linked to your account.", tone: "neutral" },
         { label: "Pending review", value: pendingCount, helper: "Waiting for reviewer checks before they can affect the public map.", tone: "pending" },
-        { label: "Verified", value: verifiedCount, helper: "Approved contributions that can count toward contributor unlocks.", tone: "success" },
-        { label: "Rejected", value: rejectedCount, helper: "Rejected uploads stay private and can guide better future submissions.", tone: "warning" },
         { label: "Trust score", value: `${trustScore}%`, helper: "A working reliability signal for future contributor moderation.", tone: "info" },
-        { label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" },
-        { label: "Account ID", value: accountId, helper: "Your public contributor ID for leaderboard ranking and discount lookup.", tone: "id" },
+        { label: "Rejected", value: rejectedCount, helper: "Rejected uploads stay private and can guide better future submissions.", tone: "warning" },
         { label: "Reward eligibility", value: account.ageConfirmedAt ? "18+ confirmed" : "Confirm 18+", helper: ageCopy, tone: account.ageConfirmedAt ? "success" : "pending" },
+        { label: "Account ID", value: accountId, helper: "Your public contributor ID for leaderboard ranking and discount lookup.", tone: "id" },
       ];
 
       grid.innerHTML = `
@@ -806,7 +806,8 @@
             );
             if (result.needsEmailConfirmation) {
               form.reset();
-              MelbBeerBusiness.setStatus($("authStatus"), result.message || "Account created. Check your email to confirm your Pint Path login, then return here to sign in.");
+              $("resendConfirmationLink").href = authUtilityLink("/resend-confirmation.html", body.email);
+              MelbBeerBusiness.setStatus($("authStatus"), result.message || "Account created and confirmation requested. Check your email, then return here to sign in. If no link arrives within a minute, use Resend confirmation.");
               return;
             }
           } else {
@@ -906,8 +907,8 @@
       });
       $("showLoginButton").addEventListener("click", () => showAuthTab("login"));
       $("showSignupButton").addEventListener("click", () => showAuthTab("signup"));
-      function authUtilityLink(pathname) {
-        const email = $("loginForm").email.value || $("signupForm").email.value;
+      function authUtilityLink(pathname, emailOverride = null) {
+        const email = emailOverride || $("loginForm").email.value || $("signupForm").email.value;
         if (!email) {
           return pathname;
         }

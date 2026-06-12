@@ -221,6 +221,8 @@ describe("account page shell", () => {
     expect(html.indexOf('class="accountHighlightsGrid"')).toBeLessThan(html.indexOf('id="settingsStatsPanel"'));
     expect(html).toContain("accountHeroMetric--savings");
     expect(html).toContain("accountHeroMetric--special");
+    expect(html.indexOf('label: "Total saved"')).toBeLessThan(html.indexOf('label: "Total uploads"'));
+    expect(html.indexOf('label: "Verified"')).toBeLessThan(html.indexOf('label: "Pending review"'));
     expect(css).toContain(".accountHighlightsGrid");
     expect(css).toContain(".accountDashboardIntro");
     expect(css).toContain(".accountHeroMetric--savings");
@@ -232,6 +234,17 @@ describe("account page shell", () => {
     expect(css).toContain("display: grid;");
     expect(css).toContain(".accountStatsProgressCard");
     expect(css).toContain(".accountStatCard .helperCopy");
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.accountStatsGrid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.accountStatCard \.helperCopy\s*\{[\s\S]*display:\s*none;/);
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.settingsNav\s*\{[\s\S]*overflow-x:\s*auto;/);
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.accountHighlightsGrid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountStatsGrid \.metricCard\s*\{[\s\S]*min-height:\s*104px;/);
+    expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountDiscountFeature \.sectionHeader p,[\s\S]*\.accountDiscountFeature > \.helperCopy\s*\{[\s\S]*display:\s*none;/);
+    expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountDashboardIntro \.button\s*\{[\s\S]*display:\s*none;/);
+    expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountIdentityCard--compact strong\s*\{[\s\S]*-webkit-line-clamp:\s*2;/);
+    expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountAccessBadgeRow\s*\{[\s\S]*flex-wrap:\s*nowrap;[\s\S]*overflow-x:\s*auto;/);
+    expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountAccessBadge\s*\{[\s\S]*font-size:\s*0\.56rem;/);
+    expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountAccessBadgeRow \.accountAccessBadge:not\(:first-child\)\s*\{[\s\S]*display:\s*none;/);
     expect(css).toContain(".accountDiscountFeature");
   });
 
@@ -285,6 +298,8 @@ describe("account page shell", () => {
     expect(html).toContain('id="resendConfirmationLink" class="authUtilityCard" href="/resend-confirmation.html"');
     expect(html).toContain('authUtilityLink("/reset-password.html")');
     expect(html).toContain('authUtilityLink("/resend-confirmation.html")');
+    expect(html).toContain('authUtilityLink("/resend-confirmation.html", body.email)');
+    expect(html).toContain("If no link arrives within a minute, use Resend confirmation.");
     expect(html).toContain("No Supabase confirmation email was sent.");
     expect(html).not.toContain('id="oauthTermsAccepted"');
     expect(html).not.toContain('id="oauthPrivacyAccepted"');
@@ -390,7 +405,7 @@ describe("account page shell", () => {
     expect(html).toContain('trackEvent("signup_started", { source: "account_page" }).catch(() => null)');
     expect(html).toContain("We could not finish account creation.");
     expect(html).toContain("result.message ||");
-    expect(script).toContain("Account created. Check your email to confirm your Pint Path login");
+    expect(script).toContain("Account created and confirmation requested.");
     expect(script).toContain("}).catch(() => null)");
   });
 

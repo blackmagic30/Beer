@@ -3662,10 +3662,8 @@ h3 {
   }
 
   .authTrustGrid,
-  .accountHighlightsGrid,
   .accountMetricGrid,
   .accountActionsGrid,
-  .accountStatsGrid,
   .accountSupportGrid,
   .securityActionGrid {
     grid-template-columns: 1fr;
@@ -3702,6 +3700,209 @@ h3 {
   .sectionHeader,
   .dataRow {
     flex-direction: column;
+  }
+
+  .accountDashboard {
+    gap: 12px;
+  }
+
+  .accountDashboardIntro {
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 0;
+  }
+
+  .accountDashboardIntro h1 {
+    font-size: clamp(1.9rem, 9vw, 2.55rem);
+    line-height: 1.04;
+  }
+
+  .accountDashboardIntro p {
+    max-width: 34rem;
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+
+  .settingsNav {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin-inline: -2px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding: 6px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .settingsNav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settingsNavButton {
+    flex: 0 0 auto;
+    min-height: 38px;
+    padding: 8px 11px;
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+
+  .accountHighlightsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .accountHighlightsGrid .metricCard,
+  .accountHighlightsGrid .panel {
+    min-height: auto;
+    padding: 14px;
+  }
+
+  .accountHeroMetric--savings {
+    order: 1;
+  }
+
+  .accountHeroMetric--special {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+
+  .accountIdentityCard--compact {
+    order: 2;
+  }
+
+  .accountHeroMetric--savings .metricValue {
+    font-size: clamp(2.35rem, 13vw, 3.5rem);
+  }
+
+  .accountHighlightsGrid .metricCard .helperCopy,
+  .accountDiscountFeature > .helperCopy {
+    font-size: 0.82rem;
+    line-height: 1.38;
+  }
+
+  .accountDiscountFeature {
+    gap: 12px;
+  }
+
+  .accountDiscountFeature .sectionHeader {
+    display: grid;
+    gap: 10px;
+  }
+
+  .accountDiscountFeature .sectionHeader h2 {
+    font-size: 1.35rem;
+  }
+
+  .accountDiscountFeature .pill {
+    max-width: none;
+    justify-self: start;
+  }
+
+  .accountDiscountFeature > .button {
+    align-self: stretch;
+    margin-top: 0;
+  }
+
+  .accountIdentityCard--compact {
+    gap: 8px;
+  }
+
+  .accountIdentityCard--compact strong {
+    font-size: 0.95rem;
+  }
+
+  .accountAccessBadgeRow {
+    gap: 6px;
+  }
+
+  .accountAccessBadge {
+    min-height: 28px;
+    padding: 6px 8px;
+    font-size: 0.62rem;
+  }
+
+  .accountStatsActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
+  .accountStatsActions .button {
+    width: 100%;
+  }
+
+  .accountStatsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .accountStatsGrid .metricCard {
+    min-height: 118px;
+    border-radius: 18px;
+    gap: 8px;
+    padding: 13px;
+  }
+
+  .accountStatsProgressCard {
+    grid-column: 1 / -1;
+    min-height: auto;
+    padding: 15px;
+  }
+
+  .accountStatsCardHeader {
+    align-items: center;
+    gap: 8px;
+  }
+
+  .accountStatsCardHeader h3 {
+    font-size: 1.25rem;
+  }
+
+  .accountStatsProgressValue {
+    margin-top: 2px;
+  }
+
+  .accountStatsProgressValue strong {
+    font-size: clamp(2.25rem, 12vw, 3.15rem);
+  }
+
+  .accountStatsProgressValue span {
+    font-size: 0.82rem;
+  }
+
+  .accountStatsProgressTrack {
+    height: 9px;
+  }
+
+  .accountStatCard .metricValue {
+    font-size: clamp(1.35rem, 8vw, 1.95rem);
+  }
+
+  .accountStatCard .helperCopy {
+    display: none;
+  }
+
+  .accountStatsProgressCard .helperCopy {
+    font-size: 0.86rem;
+    line-height: 1.4;
+  }
+
+  .accountStatCard--id,
+  .accountStatCard--premium {
+    grid-column: 1 / -1;
+  }
+
+  .accountStatCard--id .metricValue {
+    font-size: 1rem;
+    line-height: 1.2;
+  }
+
+  .accountStatDot {
+    width: 9px;
+    height: 9px;
   }
 
   .accountSecurityPanel {
@@ -3945,6 +4146,213 @@ h3 {
 
   .settingsNav {
     border-radius: 22px;
+  }
+}
+
+@media (max-width: 430px) {
+  .pageShell {
+    width: min(100% - 14px, 720px);
+    padding-top: 8px;
+  }
+
+  .accountDashboard {
+    gap: 10px;
+  }
+
+  .accountDashboardIntro {
+    padding: 16px;
+  }
+
+  .accountDashboardIntro h1 {
+    font-size: clamp(1.65rem, 9vw, 2.08rem);
+    line-height: 1.02;
+  }
+
+  .accountDashboardIntro p {
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+
+  .accountDashboardIntro .button {
+    display: none;
+  }
+
+  .settingsHub {
+    gap: 10px;
+  }
+
+  .settingsNav {
+    border-radius: 18px;
+    gap: 5px;
+    padding: 5px;
+  }
+
+  .settingsNavButton {
+    min-height: 36px;
+    padding: 7px 10px;
+    font-size: 0.72rem;
+  }
+
+  .accountHighlightsGrid {
+    gap: 8px;
+  }
+
+  .accountHighlightsGrid .metricCard,
+  .accountHighlightsGrid .panel {
+    padding: 12px;
+  }
+
+  .accountHeroMetric--savings .metricValue {
+    font-size: clamp(2.15rem, 12vw, 3.05rem);
+  }
+
+  .accountHighlightsGrid .metricCard .helperCopy,
+  .accountDiscountFeature .sectionHeader p,
+  .accountDiscountFeature > .helperCopy {
+    display: none;
+  }
+
+  .accountDiscountFeature {
+    gap: 10px;
+  }
+
+  .accountDiscountFeature .sectionHeader {
+    align-items: center;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .accountDiscountFeature .sectionHeader h2 {
+    font-size: 1.08rem;
+  }
+
+  .accountDiscountFeature .pill {
+    max-width: 76px;
+    padding: 7px 8px;
+    font-size: 0.64rem;
+  }
+
+  .accountDiscountFeature > .button {
+    min-height: 40px;
+    font-size: 0.82rem;
+  }
+
+  .accountIdentityCard--compact {
+    gap: 7px;
+  }
+
+  .accountIdentityCard--compact .muted,
+  .accountEmailHelper {
+    font-size: 0.76rem;
+  }
+
+  .accountIdentityCard--compact strong {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 0.84rem;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .accountIdentityCard--compact .button {
+    min-height: 38px;
+    padding: 8px;
+    font-size: 0.82rem;
+  }
+
+  .accountAccessBadgeRow {
+    gap: 5px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .accountAccessBadgeRow::-webkit-scrollbar {
+    display: none;
+  }
+
+  .accountAccessBadge {
+    flex: 0 0 auto;
+    min-height: 24px;
+    padding: 5px 6px;
+    font-size: 0.56rem;
+  }
+
+  .accountAccessBadgeRow .accountAccessBadge:not(:first-child) {
+    display: none;
+  }
+
+  .accountStatsActions {
+    gap: 7px;
+  }
+
+  .accountStatsActions .button {
+    min-height: 39px;
+    padding: 8px;
+    font-size: 0.78rem;
+  }
+
+  .accountStatsGrid {
+    gap: 8px;
+  }
+
+  .accountStatsGrid .metricCard {
+    min-height: 104px;
+    border-radius: 16px;
+    gap: 7px;
+    padding: 11px;
+  }
+
+  .accountStatsGrid .metricLabel {
+    font-size: 0.58rem;
+    letter-spacing: 0.07em;
+  }
+
+  .accountStatsCardHeader {
+    gap: 6px;
+  }
+
+  .accountStatsCardHeader h3 {
+    font-size: 1.08rem;
+  }
+
+  .accountStatsProgressCard {
+    padding: 13px;
+  }
+
+  .accountStatsProgressValue {
+    gap: 4px 7px;
+  }
+
+  .accountStatsProgressValue strong {
+    font-size: clamp(2rem, 11vw, 2.6rem);
+  }
+
+  .accountStatsProgressValue span,
+  .accountStatsProgressCard .helperCopy {
+    font-size: 0.78rem;
+    line-height: 1.34;
+  }
+
+  .accountStatsProgressTrack {
+    height: 8px;
+  }
+
+  .accountStatCard .metricValue {
+    font-size: clamp(1.18rem, 7vw, 1.65rem);
+  }
+
+  .accountStatCard--premium .metricValue {
+    font-size: clamp(1.08rem, 6vw, 1.45rem);
+  }
+
+  .accountStatCard--id .metricValue {
+    font-size: 0.82rem;
+    line-height: 1.18;
+  }
+
+  .accountStatDot {
+    width: 7px;
+    height: 7px;
   }
 }
 
