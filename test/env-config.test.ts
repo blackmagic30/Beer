@@ -101,6 +101,8 @@ describe("environment safety defaults", () => {
     expect(readinessScript).toContain('checkRequired("GOOGLE_PLACES_API_KEY"');
     expect(readinessScript).toContain('checkRequired("OPENAI_API_KEY"');
     expect(readinessScript).toContain('checkRequired("POS_WEBHOOK_SIGNING_SECRET"');
+    expect(readinessScript).toContain("SUPABASE_PROVIDER_CALLBACK_URL");
+    expect(readinessScript).toContain("/auth/v1/callback");
     expect(readinessScript).toContain("ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION");
   });
 });

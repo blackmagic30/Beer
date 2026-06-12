@@ -119,7 +119,8 @@ Supabase auth/account foundation:
 - The beta keeps the existing Pint Path bearer-session system for app API access, but can exchange a Supabase Auth OAuth session for a local Pint Path session through `POST /api/business/auth/supabase-session`.
 - `/account.html` shows Google and Apple quick-login buttons when `SUPABASE_URL` and `SUPABASE_ANON_KEY` are configured. Email/password signup/login still works through the existing Pint Path account flow.
 - Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google and name/email for Apple.
-- Add OAuth redirect URLs for local and hosted callback pages, for example `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`.
+- In Supabase Auth URL configuration, allow the app callback pages: `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`.
+- In the Google and Apple provider consoles, allow the Supabase provider callback URL derived from `SUPABASE_URL`. For production with `SUPABASE_URL=https://auth.pintpath.au`, the exact provider callback is `https://auth.pintpath.au/auth/v1/callback`.
 - New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
 - Supabase `user_metadata` is not trusted for age confirmation, legal acceptance, roles, venue access, or paid entitlements. Pint Path records those states through its own server-side account/legal/admin/Stripe flows.
 - Production admin access should use Supabase Auth MFA/Auth Assurance Level 2 (`aal2`) for normal operation. During owner-led field testing, `REQUIRE_ADMIN_MFA_IN_PRODUCTION=false` can temporarily skip MFA while still requiring the admin email allowlist and verified email.
@@ -701,6 +702,7 @@ npm run check
 - Confirm `PUBLIC_BASE_URL=https://pintpath.au` in production.
 - Confirm Supabase Auth Site URL is `https://pintpath.au`.
 - Confirm Supabase redirect URLs include `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`.
+- Confirm Google OAuth Authorized redirect URIs and Apple Sign in Return URLs include the Supabase provider callback from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`.
 - Confirm the chosen OAuth provider is enabled in Supabase and its provider console.
 - Confirm rate limiting is available: set `REDIS_URL` for production or explicitly allow the in-memory fallback for a short controlled beta.
 

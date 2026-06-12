@@ -9,6 +9,7 @@ interface ProviderCheck {
   label: string;
   status: CheckStatus;
   action: string | null;
+  details?: string | null;
 }
 
 function hasValue(name: string): boolean {
@@ -55,6 +56,34 @@ function checkNoTestKeyInProduction(name: string, label: string, testPrefix: str
   };
 }
 
+function getSupabaseProviderCallbackUrl(): string | null {
+  const supabaseUrl = getValue("SUPABASE_URL");
+  if (!supabaseUrl) {
+    return null;
+  }
+
+  try {
+    return new URL("/auth/v1/callback", supabaseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function checkSupabaseProviderCallbackUrl(): ProviderCheck {
+  const callbackUrl = getSupabaseProviderCallbackUrl();
+  return {
+    id: "SUPABASE_PROVIDER_CALLBACK_URL",
+    label: "Google/Apple OAuth provider callback URL",
+    status: callbackUrl ? "pass" : isProduction() ? "fail" : "warn",
+    action: callbackUrl
+      ? null
+      : "Set SUPABASE_URL so the provider callback URL can be derived for Google/Apple OAuth consoles.",
+    details: callbackUrl
+      ? `Add this exact URL to Google Authorized redirect URIs and Apple Sign in Return URLs: ${callbackUrl}`
+      : null,
+  };
+}
+
 const checks: ProviderCheck[] = [
   checkRequired("GOOGLE_MAPS_API_KEY", "Google Maps browser API key", "Create/restrict a browser key and set GOOGLE_MAPS_API_KEY."),
   checkRequired("GOOGLE_MAPS_MAP_ID", "Google Maps JavaScript vector map ID", "Create a JavaScript Map ID in Google Maps Platform and set GOOGLE_MAPS_MAP_ID."),
@@ -62,6 +91,7 @@ const checks: ProviderCheck[] = [
   checkRequired("OPENAI_API_KEY", "OpenAI menu OCR key", "Set OPENAI_API_KEY on the Railway app service and redeploy so menu photo OCR can initialise."),
   checkRequired("SUPABASE_URL", "Supabase project URL", "Set SUPABASE_URL for OAuth and provider-backed auth."),
   checkRequired("SUPABASE_ANON_KEY", "Supabase publishable/anon key", "Set the browser-safe Supabase publishable/anon key."),
+  checkSupabaseProviderCallbackUrl(),
   checkRequired("REDIS_URL", "Redis-backed rate limiter", "Provision Railway Redis/Upstash and set REDIS_URL before broad production."),
   checkRequired("SOURCE_EVIDENCE_SIGNING_SECRET", "Source evidence signing secret", "Generate a unique 32+ character secret for signed evidence URLs."),
   checkRequired("STRIPE_SECRET_KEY", "Stripe secret key", "Use Stripe test mode first; set STRIPE_SECRET_KEY before paid checkout."),

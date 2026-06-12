@@ -164,6 +164,7 @@
           <article class="panel accountIdentityCard accountIdentityCard--compact">
             <span class="muted">Signed in as</span>
             <strong id="accountEmail">Not signed in</strong>
+            <span id="accountEmailHelper" class="accountEmailHelper" hidden></span>
             <div id="accessBadgeRow" class="miniStatRow accountAccessBadgeRow"></div>
             <button id="logoutButton" class="button button--danger" type="button">Log out</button>
           </article>
@@ -409,6 +410,9 @@
       $("accountDashboard").hidden = true;
       $("accountDashboard").classList.add("is-hidden");
       $("accountEmail").textContent = "Not signed in";
+      $("accountEmail").removeAttribute("title");
+      $("accountEmailHelper").hidden = true;
+      $("accountEmailHelper").textContent = "";
       $("dashboardStatus").textContent = "Sign in to load your contributor dashboard.";
       $("logoutButton").disabled = true;
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
@@ -592,12 +596,42 @@
       return `<span class="accountAccessBadge accountAccessBadge--${escapeHtml(tone)}">${escapeHtml(label)}</span>`;
     }
 
+    function isApplePrivateRelayEmail(email) {
+      return /@privaterelay\.appleid\.com$/i.test(String(email || "").trim());
+    }
+
+    function renderAccountEmail(account) {
+      const email = String(account?.email || "").trim();
+      const emailEl = $("accountEmail");
+      const helperEl = $("accountEmailHelper");
+      if (!email) {
+        emailEl.textContent = "Signed in";
+        emailEl.removeAttribute("title");
+        helperEl.hidden = true;
+        helperEl.textContent = "";
+        return;
+      }
+
+      if (isApplePrivateRelayEmail(email)) {
+        emailEl.textContent = "Apple private email";
+        emailEl.title = email;
+        helperEl.textContent = "Apple is forwarding Pint Path emails through Hide My Email.";
+        helperEl.hidden = false;
+        return;
+      }
+
+      emailEl.textContent = email;
+      emailEl.removeAttribute("title");
+      helperEl.hidden = true;
+      helperEl.textContent = "";
+    }
+
     function renderDashboard(result) {
       state.accountData = result;
       MelbBeerBusiness.setAccountContext(result.account);
       showDashboard();
       const account = result.account;
-      $("accountEmail").textContent = account.email;
+      renderAccountEmail(account);
       const planBadge = subscriptionBadge(account);
       $("accessBadgeRow").innerHTML = [
         accessBadge(planBadge.label, planBadge.tone),

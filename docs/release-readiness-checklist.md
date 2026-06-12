@@ -53,7 +53,7 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 
 These are launch-critical but require provider/staging verification:
 
-- **Supabase OAuth:** Google and Apple provider credentials, callback URLs, and email-confirmation behavior must be verified in Supabase for `https://pintpath.au/auth/callback`.
+- **Supabase OAuth:** Google and Apple provider credentials, Supabase app redirect URLs, provider callback URLs, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; Google/Apple should allow the Supabase provider callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`.
 - **Supabase Auth security:** Enable leaked-password protection before public launch.
 - **Supabase RLS live audit:** Apply migrations, then test anonymous/authenticated access in the Supabase dashboard or staging client. Local SQL parsing is not a substitute for live policy verification.
 - **Storage bucket live audit:** Verify `beermap-source-evidence` is private, has the intended file-size limit, and owner-only policies work in Supabase Storage.

@@ -100,9 +100,11 @@ Required checks:
 - `SUPABASE_SERVICE_ROLE_KEY` is only server-side.
 - Google/Apple OAuth providers are configured with minimal scopes.
 - Leaked password protection is enabled in Supabase Auth.
-- Redirect URLs include:
+- Supabase Auth redirect URLs include the app callback pages:
   - `http://localhost:3000/auth/callback`
   - `https://pintpath.au/auth/callback`
+- Google and Apple provider consoles include the Supabase provider callback URL derived from `SUPABASE_URL`:
+  - `https://auth.pintpath.au/auth/v1/callback` when `SUPABASE_URL=https://auth.pintpath.au`
 - RLS policies from `supabase/migrations/` are applied and tested in staging.
 - The `beermap-source-evidence` Storage bucket is private and owner/admin access is verified.
 - Supabase MFA is enabled for admin accounts before public launch.

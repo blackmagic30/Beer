@@ -101,7 +101,20 @@ describe("account page shell", () => {
 
     expect(html).toContain('id="accountDashboard" class="dashboardMain accountDashboard is-hidden" hidden');
     expect(html).toContain('id="accountEmail">Not signed in</strong>');
+    expect(html).toContain('id="accountEmailHelper" class="accountEmailHelper" hidden');
     expect(css).toMatch(/\[hidden\]\s*\{[^}]*display:\s*none\s*!important;/s);
+  });
+
+  it("labels Apple Hide My Email relay addresses clearly", () => {
+    const html = accountHtml();
+    const css = businessCss();
+
+    expect(html).toContain("function isApplePrivateRelayEmail");
+    expect(html).toContain("@privaterelay\\.appleid\\.com");
+    expect(html).toContain("Apple private email");
+    expect(html).toContain("Apple is forwarding Pint Path emails through Hide My Email.");
+    expect(html).toContain("renderAccountEmail(account)");
+    expect(css).toContain(".accountEmailHelper");
   });
 
   it("does not show logged-out confirmation when no session existed", () => {
