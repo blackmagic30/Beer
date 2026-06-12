@@ -269,9 +269,10 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('class="mapNavCard" aria-label="Primary"');
     expect(html).toContain('class="mapBrand" href="/"');
     expect(html).toContain('class="mapHeroCard" aria-label="Map overview"');
-    expect(html).toContain('<strong>Pint Path</strong>');
-    expect(html).toContain('<div class="topbar__eyebrow">Pint Path <span class="fieldTestBadge">Beta</span></div>');
-    expect(html).toContain("<h1>Melbourne beer map</h1>");
+    expect(html.indexOf('class="mapHeroCard"')).toBeLessThan(html.indexOf('class="mapNavCard"'));
+    expect(html).toContain('<strong>Melbourne beer map</strong>');
+    expect(html).toContain('<div class="topbar__eyebrow">Melbourne beer map <span class="fieldTestBadge">Beta</span></div>');
+    expect(html).toContain("<h1>Pint Path</h1>");
     expect(html).not.toContain("Verified local price index");
     expect(html).toContain('id="topbarBusinessLinks"');
     expect(html).toContain('id="accessPill"');
