@@ -23,7 +23,8 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="submissionPanel" class="panel submitPanel is-hidden"');
     expect(html).toContain("Sign in before submitting data");
     expect(html).toContain("uploads accountable");
-    expect(html).toContain('<div id="status" class="notice submitReviewNotice">Ready to submit.</div>');
+    expect(html).toContain('<div id="status" class="notice submitReviewNotice" hidden></div>');
+    expect(html).not.toContain("Ready to submit.");
     expect(html).not.toContain("Reviewed before publication");
     expect(html).not.toContain("Offline uploads save locally");
     expect(html).toContain("await MelbBeerBusiness.apiFetch(\"/api/business/account\")");
@@ -54,6 +55,12 @@ describe("submit page auth gate", () => {
     expect(html).toContain("venueSearchRequestId");
     expect(html).toContain('venueSuggestionList.addEventListener("click"');
     expect(html).toContain("Search and choose a venue first, or tick that the venue is not on Pint Path yet.");
+    expect(html).not.toContain("Recent venues");
+    expect(html).not.toContain("recentVenuePanel");
+    expect(html).not.toContain("recentVenueButton");
+    expect(html).not.toContain("readRecentVenues");
+    expect(html).not.toContain("renderRecentVenues");
+    expect(html).not.toContain("rememberRecentVenue");
     expect(html).not.toContain('venueSelect.addEventListener("change"');
     expect(html).not.toContain('list="venueSuggestions"');
   });
@@ -215,6 +222,8 @@ describe("submit page auth gate", () => {
     expect(html).toContain("MelbBeerBusiness.setStatus(statusEl");
     expect(html).toContain("Photo attached. Pint Path compresses it and strips metadata before saving or sending.");
     expect(css).not.toContain(".fieldTestConsole");
+    expect(css).not.toContain(".recentVenuePanel");
+    expect(css).not.toContain(".recentVenueButton");
     expect(css).toContain(".queuedSubmissionsPanel");
     expect(css).toContain(".queuedSubmissionItem.is-sending");
     expect(css).toContain(".submitStep");
