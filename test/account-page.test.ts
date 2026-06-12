@@ -76,6 +76,11 @@ describe("account page shell", () => {
     expect(html).toContain("Recent submissions");
     expect(html).toContain("New venue pending admin approval");
     expect(html).toContain("submissionPendingNotice");
+    expect(html).toContain('id="authStatus" class="notice" role="status" hidden></div>');
+    expect(html).toContain('id="dashboardStatus" class="notice" role="status" hidden></div>');
+    expect(html).toContain("function hideAccountStatus");
+    expect(html).toContain("quietAuthMessages");
+    expect(html).toContain('hideAccountStatus($("dashboardStatus"))');
     expect(html).not.toContain("How verification works");
     expect(html).toContain("Pint Path special");
     expect(html).not.toContain("Pint Path discount pass");
@@ -430,6 +435,7 @@ describe("account page shell", () => {
     expect(html).toContain("MelbBeerBusiness.getSafeReturnPath");
     expect(html).toContain('returnPath.startsWith("/reset-password.html")');
     expect(html).toContain('result.account?.role === "venue_manager" ? "/venue-portal.html" : returnPath');
+    expect(html).not.toContain("If this takes more than a moment");
     expect(html).not.toContain("service_role");
   });
 

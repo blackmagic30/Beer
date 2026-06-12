@@ -108,7 +108,7 @@
           </div>
         </form>
 
-        <div id="authStatus" class="notice" role="status">Enter your details to continue.</div>
+        <div id="authStatus" class="notice" role="status" hidden></div>
       </section>
     </section>
 
@@ -122,7 +122,7 @@
         <a class="button" href="/feedback.html">Send feedback</a>
       </section>
 
-      <div id="dashboardStatus" class="notice" role="status">Loading your account...</div>
+      <div id="dashboardStatus" class="notice" role="status" hidden></div>
 
       <section id="accountSettingsHub" class="accountSectionStack settingsHub">
         <nav class="settingsNav" aria-label="Account settings sections">
@@ -401,7 +401,28 @@
       }
 
       setOauthButtonsLoading(false);
-      MelbBeerBusiness.setStatus($("authStatus"), message);
+      setAccountStatus($("authStatus"), message);
+    }
+
+    const quietAuthMessages = new Set([
+      "Enter your details to continue.",
+      "Sign in with email and password.",
+      "Create an account to start contributing.",
+    ]);
+
+    function hideAccountStatus(element) {
+      element.hidden = true;
+      element.textContent = "";
+      element.className = "notice";
+    }
+
+    function setAccountStatus(element, message, isError = false) {
+      if (!isError && quietAuthMessages.has(message)) {
+        hideAccountStatus(element);
+        return;
+      }
+
+      MelbBeerBusiness.setStatus(element, message, isError);
     }
 
     function showLoggedOut(message = "Enter your details to continue.", isError = false) {
@@ -413,10 +434,10 @@
       $("accountEmail").removeAttribute("title");
       $("accountEmailHelper").hidden = true;
       $("accountEmailHelper").textContent = "";
-      $("dashboardStatus").textContent = "Sign in to load your contributor dashboard.";
+      hideAccountStatus($("dashboardStatus"));
       $("logoutButton").disabled = true;
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
-      MelbBeerBusiness.setStatus($("authStatus"), message, isError);
+      setAccountStatus($("authStatus"), message, isError);
     }
 
     function showDashboard() {
@@ -433,7 +454,7 @@
       $("signupForm").classList.toggle("is-hidden", showLogin);
       $("showLoginButton").classList.toggle("is-active", showLogin);
       $("showSignupButton").classList.toggle("is-active", !showLogin);
-      MelbBeerBusiness.setStatus($("authStatus"), showLogin ? "Sign in with email and password." : "Create an account to start contributing.");
+      setAccountStatus($("authStatus"), showLogin ? "Sign in with email and password." : "Create an account to start contributing.");
     }
 
     function showAccountSettingsPanel(target = "stats") {
