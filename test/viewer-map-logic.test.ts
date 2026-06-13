@@ -279,7 +279,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('<a href="/feedback.html">Feedback</a> · <a href="/privacy.html">Privacy</a>');
     expect(html).toContain('class="controlDeck"');
     expect(html).toContain("Find a venue fast");
-    expect(html).toContain('placeholder="Search beer, venue or suburb"');
+    expect(html).toContain('placeholder="Suburb or venue"');
+    expect(html).toContain('<select id="beerSearch" class="controlInput beerSelect">');
+    expect(html).toContain('<option value="">Beer</option>');
     expect(html).toContain('id="advancedFiltersToggle"');
     expect(html).toContain('aria-controls="advancedFiltersPanel" hidden>Advanced filters</button>');
     expect(html).toContain('id="advancedFiltersPanel" class="advancedFiltersPanel" hidden');
@@ -341,6 +343,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('label: "Stone & Wood Pacific Ale", query: "Stone & Wood Pacific Ale"');
     expect(html).toContain("FREE_PREVIEW_BEER_CHIPS");
     expect(html).toContain("FREE_PREVIEW_BEER_KEYS");
+    expect(html).toContain('optgroup label="Unlock full beer search"');
+    expect(html).toContain('Locked - ');
     expect(html).not.toContain("Search for more beers");
   });
 
@@ -356,6 +360,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("-webkit-overflow-scrolling: touch");
     expect(html).toContain("-webkit-line-clamp: 2");
     expect(html).toContain("font-size: 16px");
+    expect(html).toContain(".mapBrand {\n        display: none;");
+    expect(html).toContain("grid-template-columns: minmax(0, 1fr) minmax(118px, 0.82fr);");
+    expect(html).toContain("flex-wrap: nowrap;");
     expect(html).toContain(".specialsFilterRow,\n      .popularBeerRow");
     expect(html).toContain(".advancedFiltersGrid {\n        grid-template-columns: 1fr;");
     expect(html).toContain("min-height: 62dvh");

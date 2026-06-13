@@ -265,13 +265,22 @@
 
     #toolbar {
       display: grid;
-      grid-template-columns: minmax(240px, 1fr) auto auto;
+      grid-template-columns: minmax(180px, 0.9fr) minmax(180px, 0.75fr) auto;
       gap: 12px;
       align-items: end;
     }
 
-    .hiddenSearchState {
-      display: none !important;
+    .beerSelect {
+      cursor: pointer;
+      padding-right: 36px;
+      background-image:
+        linear-gradient(45deg, transparent 50%, #38bdf8 50%),
+        linear-gradient(135deg, #38bdf8 50%, transparent 50%);
+      background-position:
+        calc(100% - 18px) 50%,
+        calc(100% - 12px) 50%;
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
     }
 
     .controlGroup {
@@ -2766,25 +2775,18 @@
       }
 
       .mapNavCard {
-        align-items: stretch;
-        flex-direction: column;
-        gap: 10px;
-        border-radius: 22px;
-        padding: 10px;
+        align-items: center;
+        gap: 6px;
+        border-radius: 18px;
+        padding: 6px;
         background: rgba(13, 18, 32, 0.96);
         box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
         backdrop-filter: none;
+        overflow: hidden;
       }
 
       .mapBrand {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 10px;
-      }
-
-      .mapBrand strong {
-        font-size: 18px;
+        display: none;
       }
 
       .mapHeroCard {
@@ -2832,14 +2834,15 @@
       }
 
       .topbar__businessLinks {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        display: flex;
+        flex-wrap: nowrap;
         width: 100%;
         max-width: none;
-        overflow: visible;
-        gap: 6px;
+        overflow-x: auto;
+        gap: 4px;
         padding: 0;
         scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
       }
 
       .topbar__businessLinks::-webkit-scrollbar,
@@ -2849,10 +2852,11 @@
 
       .topbar__businessLinks a,
       .accessPill {
-        min-height: 38px;
+        flex: 0 0 auto;
+        min-height: 34px;
         justify-content: center;
-        padding: 8px 6px;
-        font-size: 11.5px;
+        padding: 7px 8px;
+        font-size: 10px;
         white-space: nowrap;
       }
 
@@ -2876,13 +2880,12 @@
       }
 
       #toolbar {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 8px;
+        grid-template-columns: minmax(0, 1fr) minmax(118px, 0.82fr);
+        gap: 6px;
         align-items: stretch;
       }
 
       #toolbar .controlGroup {
-        grid-column: 1 / -1;
         gap: 0;
       }
 
@@ -2895,6 +2898,13 @@
         padding: 9px 11px;
         border-radius: 13px;
         font-size: 16px;
+      }
+
+      .beerSelect {
+        padding-right: 30px;
+        background-position:
+          calc(100% - 16px) 50%,
+          calc(100% - 10px) 50%;
       }
 
       .controlInput::placeholder {
@@ -2915,6 +2925,7 @@
       }
 
       .toolbar__right {
+        grid-column: 1 / -1;
         justify-content: stretch;
         min-width: 0;
       }
@@ -3288,13 +3299,17 @@
       </div>
 
       <div id="toolbar">
-        <label class="controlGroup" for="venueSearch">
-          <span>Search beer, venue or suburb</span>
-          <input id="venueSearch" class="controlInput" list="beerSuggestions" type="search" placeholder="Search beer, venue or suburb" />
+        <label class="controlGroup controlGroup--suburb" for="venueSearch">
+          <span>Suburb or venue</span>
+          <input id="venueSearch" class="controlInput" type="search" placeholder="Suburb or venue" autocomplete="off" />
         </label>
 
-        <input id="beerSearch" class="hiddenSearchState" type="search" aria-hidden="true" tabindex="-1" />
-        <datalist id="beerSuggestions"></datalist>
+        <label class="controlGroup controlGroup--beer" for="beerSearch">
+          <span>Beer</span>
+          <select id="beerSearch" class="controlInput beerSelect">
+            <option value="">Beer</option>
+          </select>
+        </label>
 
         <div class="toolbar__right">
           <button id="advancedFiltersToggle" class="utilityButton" type="button" aria-expanded="false" aria-controls="advancedFiltersPanel" hidden>Advanced filters</button>
@@ -3521,15 +3536,11 @@
       "stone wood pacific ale",
       "stone and wood pacific ale",
     ].map(toSearchKey));
-    const DEFAULT_BEER_SEARCH_PLACEHOLDER = TRACKED_BEERS.length >= 3
-      ? `Search ${TRACKED_BEERS.slice(0, 3).map((beer) => beer.name).join(", ")}…`
-      : "Search a beer";
     const topbarBusinessLinksEl = document.getElementById("topbarBusinessLinks");
     const venueDashboardLinkEl = document.getElementById("venueDashboardLink");
     const accessPillEl = document.getElementById("accessPill");
     const venueSearchEl = document.getElementById("venueSearch");
     const beerSearchEl = document.getElementById("beerSearch");
-    const beerSuggestionsEl = document.getElementById("beerSuggestions");
     const beerChipHostEl = document.getElementById("beerChipHost");
     const onTapOnlyEl = document.getElementById("onTapOnly");
     const clearFiltersEl = document.getElementById("clearFilters");
@@ -3591,6 +3602,8 @@
     let initialSharedVenueOpened = false;
     let venueRailSortMode = "smart";
     let analyticsVenueRows = [];
+    let beerOptionRows = [];
+    let pendingBeerSearchValue = "";
     let googleMapInstance = null;
     const userLocationState = {
       status: "idle",
@@ -3627,9 +3640,6 @@
         }
       });
     });
-
-    beerSearchEl.placeholder = DEFAULT_BEER_SEARCH_PLACEHOLDER;
-
     function readJsonArray(storageKey) {
       try {
         const parsed = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
@@ -3763,7 +3773,7 @@
       syncAdminNavLink();
       syncAdvancedFiltersAvailability();
       beerSearchEl.disabled = false;
-      beerSearchEl.placeholder = DEFAULT_BEER_SEARCH_PLACEHOLDER;
+      buildBeerSuggestionList(beerOptionRows);
       onTapOnlyEl.disabled = !canUseAdvancedFilters();
       beerChipEls.forEach((chipEl) => {
         chipEl.disabled = false;
@@ -4695,10 +4705,8 @@
       }
 
       if (sharedBeer) {
+        pendingBeerSearchValue = sharedBeer;
         beerSearchEl.value = sharedBeer;
-        if (!sharedQuery) {
-          venueSearchEl.value = sharedBeer;
-        }
       }
 
       const canApplyAdvancedFilters = canUseAdvancedFilters();
@@ -5791,16 +5799,15 @@
     function getViewState() {
       const searchQuery = venueSearchEl.value.trim();
       const explicitBeerQuery = beerSearchEl.value.trim();
-      const inferredBeerQuery = explicitBeerQuery || getInferredBeerQuery(searchQuery);
       const canUseBeerQuery = Boolean(
-        inferredBeerQuery &&
-        (businessAccess.hasFullAccess || isFreePreviewBeerQuery(inferredBeerQuery)),
+        explicitBeerQuery &&
+        (businessAccess.hasFullAccess || isFreePreviewBeerQuery(explicitBeerQuery)),
       );
-      const beerQuery = canUseBeerQuery ? inferredBeerQuery : "";
+      const beerQuery = canUseBeerQuery ? explicitBeerQuery : "";
 
       return {
         scope: activeScope,
-        venueQuery: beerQuery ? "" : searchQuery,
+        venueQuery: searchQuery,
         beerQuery,
         onTapOnly: onTapOnlyEl.checked,
         filters: Array.from(activeFilterChips),
@@ -6059,40 +6066,81 @@
       ];
     }
 
-    function buildBeerSuggestionList(rows) {
-      const labels = new Set(
-        businessAccess.hasFullAccess
-          ? TRACKED_BEERS.map((beer) => beer.name)
-          : FREE_PREVIEW_BEER_CHIPS.map((beer) => beer.label),
-      );
+    function getUniqueBeerLabels(rows) {
+      const labelsByKey = new Map();
+      const addLabel = (label) => {
+        const displayLabel = getTrackedBeerDisplayName(label);
+        const key = toSearchKey(displayLabel);
+        if (displayLabel && key && !labelsByKey.has(key)) {
+          labelsByKey.set(key, displayLabel);
+        }
+      };
 
-      if (businessAccess.hasFullAccess) {
-        rows.forEach((row) => {
-          getBeerItems(row).forEach((beer) => {
-            if (beer.label) {
-              labels.add(getTrackedBeerDisplayName(beer.label));
-            }
-          });
-        });
+      TRACKED_BEERS.forEach((beer) => addLabel(beer.name));
+      rows.forEach((row) => {
+        getBeerItems(row).forEach((beer) => addLabel(beer.label));
+      });
+
+      return Array.from(labelsByKey.values()).sort((left, right) => left.localeCompare(right));
+    }
+
+    function getMatchingBeerOptionValue(labels, query) {
+      const queryKey = toSearchKey(query);
+      if (!queryKey) {
+        return "";
       }
 
-      beerSuggestionsEl.innerHTML = Array.from(labels)
-        .sort((left, right) => left.localeCompare(right))
-        .map((label) => `<option value="${escapeHtml(label)}"></option>`)
-        .join("");
+      return labels.find((label) => toSearchKey(label) === queryKey) || "";
+    }
+
+    function getBeerOptionMarkup(label, isLocked = false) {
+      const lockedCopy = isLocked ? "Locked - " : "";
+      return `<option value="${escapeHtml(label)}"${isLocked ? " disabled" : ""}>${lockedCopy}${escapeHtml(label)}</option>`;
+    }
+
+    function buildBeerSuggestionList(rows) {
+      const previousValue = beerSearchEl.value.trim() || pendingBeerSearchValue;
+      const allLabels = getUniqueBeerLabels(rows);
+      const freeLabels = FREE_PREVIEW_BEER_CHIPS.map((beer) => beer.label);
+      const hasFullBeerAccess = Boolean(businessAccess.hasFullAccess);
+      const selectableLabels = hasFullBeerAccess ? allLabels : freeLabels;
+      const lockedLabels = hasFullBeerAccess
+        ? []
+        : allLabels.filter((label) => !isFreePreviewBeerQuery(label));
+      const selectedValue = getMatchingBeerOptionValue(selectableLabels, previousValue);
+      const lockedMarkup = lockedLabels.length
+        ? `
+          <optgroup label="Unlock full beer search">
+            ${lockedLabels.map((label) => getBeerOptionMarkup(label, true)).join("")}
+          </optgroup>
+        `
+        : "";
+
+      beerSearchEl.innerHTML = `
+        <option value="">Beer</option>
+        ${selectableLabels.map((label) => getBeerOptionMarkup(label)).join("")}
+        ${lockedMarkup}
+      `;
+      beerSearchEl.value = selectedValue;
+      pendingBeerSearchValue = "";
     }
 
     function getViewSummaryText(viewState) {
       const filterCopy = viewState.filters.length
         ? ` · ${viewState.filters.map((filter) => filter.replaceAll("_", " ")).join(", ")}`
         : "";
+      const venueCopy = viewState.venueQuery ? `${viewState.venueQuery} · ` : "";
 
       if (viewState.beerQuery) {
-        return `${viewState.beerQuery}${viewState.onTapOnly ? " · on tap only" : ""}${filterCopy}`;
+        return `${venueCopy}${viewState.beerQuery}${viewState.onTapOnly ? " · on tap only" : ""}${filterCopy}`;
       }
 
       if (viewState.scope === "needs_data") {
         return `Needs data${filterCopy}`;
+      }
+
+      if (viewState.venueQuery) {
+        return `${viewState.venueQuery}${filterCopy}`;
       }
 
       return `All venues${filterCopy}`;
@@ -8028,27 +8076,22 @@
         });
 
         venueSearchEl.addEventListener("input", () => {
-          beerSearchEl.value = "";
           renderMarkers();
         });
         venueSearchEl.addEventListener("change", () => {
           const query = venueSearchEl.value.trim();
           if (query) {
-            const inferredBeer = getInferredBeerQuery(query);
-            trackSearchAnalytics(inferredBeer ? "beer_search_performed" : "search_performed", inferredBeer || query, {
-              source: "unified_search",
-              searchKind: inferredBeer ? "beer" : "venue_or_suburb",
+            trackSearchAnalytics("search_performed", query, {
+              source: "suburb_venue_search",
+              searchKind: "venue_or_suburb",
             });
-            if (!inferredBeer) {
-              trackSearchAnalytics("suburb_search_performed", query, {
-                source: "unified_search",
-                searchKind: "suburb_or_area",
-                suburb: inferSuburbContext(query),
-              });
-            }
+            trackSearchAnalytics("suburb_search_performed", query, {
+              source: "suburb_venue_search",
+              searchKind: "suburb_or_area",
+              suburb: inferSuburbContext(query),
+            });
           }
         });
-        beerSearchEl.addEventListener("input", renderMarkers);
         beerSearchEl.addEventListener("change", () => {
           const query = beerSearchEl.value.trim();
           if (query) {
@@ -8084,7 +8127,6 @@
           chipEl.addEventListener("click", () => {
             const area = chipEl.dataset.areaChip || "";
             venueSearchEl.value = area;
-            beerSearchEl.value = "";
             trackSearchAnalytics("suburb_area_selected", area, {
               suburb: area,
               source: "area_quick_pick",
@@ -8197,11 +8239,9 @@
 
             if (chipBeerKey && chipBeerKey === currentBeerKey) {
               beerSearchEl.value = "";
-              venueSearchEl.value = "";
               onTapOnlyEl.checked = false;
             } else {
               beerSearchEl.value = chipBeer;
-              venueSearchEl.value = chipBeer;
               activeScope = "all";
             }
 
@@ -8214,7 +8254,8 @@
             renderMarkers();
           });
         });
-        buildBeerSuggestionList(venueRows);
+        beerOptionRows = venueRows;
+        buildBeerSuggestionList(beerOptionRows);
         renderMarkers();
 
         if (hasSavedLocationPreference()) {
