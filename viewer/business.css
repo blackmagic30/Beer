@@ -3550,33 +3550,22 @@ h3 {
 
   .topNav,
   .navLinks {
-    align-items: stretch;
+    align-items: center;
   }
 
   .topNav {
-    flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     top: 8px;
     margin-bottom: 16px;
-    border-radius: 22px;
-    padding: 10px;
+    border-radius: 18px;
+    padding: 6px;
     background: rgba(13, 18, 32, 0.96);
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
     backdrop-filter: none;
+    overflow: hidden;
   }
 
   .brand {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-  }
-
-  .brand strong {
-    font-size: 18px;
-  }
-
-  .brand span {
     display: none;
   }
 
@@ -3585,16 +3574,21 @@ h3 {
   }
 
   .navLinks {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
     width: 100%;
     border-radius: 18px;
-    overflow: visible;
+    overflow-x: auto;
     padding-bottom: 0;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
 
-  .navLinks a,
+  .navLinks::-webkit-scrollbar {
+    display: none;
+  }
+
   .button {
     min-height: 42px;
     display: inline-flex;
@@ -3603,9 +3597,10 @@ h3 {
   }
 
   .navLinks a {
-    min-height: 38px;
-    padding: 8px 6px;
-    font-size: 12px;
+    flex: 0 0 auto;
+    min-height: 34px;
+    padding: 7px 8px;
+    font-size: 10px;
     white-space: nowrap;
   }
 

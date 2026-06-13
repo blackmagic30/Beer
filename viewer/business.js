@@ -548,8 +548,8 @@ function renderNav(active = "") {
   const adminNav = active === "admin" || isAdminContext();
   const navItems = [
     { key: "map", href: "/", label: "Map" },
-    { key: "missions", href: "/missions.html", label: "Missions" },
     { key: "submit", href: "/submit.html", label: "Submit" },
+    { key: "missions", href: "/missions.html", label: "Missions" },
     ...(venueManagerNav ? [{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }] : []),
     ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
     { key: "pricing", href: "/pricing.html", label: "Pricing" },

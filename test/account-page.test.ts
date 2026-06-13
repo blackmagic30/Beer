@@ -355,16 +355,20 @@ describe("account page shell", () => {
     expect(script).toContain('const venueManagerNav = active === "venue-portal" || isVenueManagerContext()');
     expect(script).toContain('const adminNav = active === "admin" || isAdminContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
-    expect(script).toContain('{ key: "missions", href: "/missions.html", label: "Missions" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
+    expect(script).toContain('{ key: "missions", href: "/missions.html", label: "Missions" }');
+    expect(script.indexOf('{ key: "submit", href: "/submit.html", label: "Submit" }')).toBeLessThan(
+      script.indexOf('{ key: "missions", href: "/missions.html", label: "Missions" }'),
+    );
     expect(script).toContain('{ key: "admin", href: "/admin.html", label: "Admin" }');
     expect(script).toContain('{ key: "pricing", href: "/pricing.html", label: "Pricing" }');
     expect(script).toContain('{ key: "faq", href: "/trust.html", label: "FAQ" }');
     expect(script).toContain('{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }');
     expect(script).not.toContain("const authenticatedLinks");
     expect(html).toContain('id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard');
-    expect(html).toContain('href="/missions.html">Missions');
     expect(html).toContain('href="/submit.html">Submit');
+    expect(html).toContain('href="/missions.html">Missions');
+    expect(html.indexOf('href="/submit.html">Submit')).toBeLessThan(html.indexOf('href="/missions.html">Missions'));
     expect(html).toContain('href="/trust.html">FAQ');
     expect(html).not.toContain('href="/missions.html" data-auth-required');
     expect(html).not.toContain('href="/submit.html" data-auth-required');
