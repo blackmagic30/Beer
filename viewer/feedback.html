@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Send Feedback | Pint Path</title>
+  <title>Contact Us | Pint Path</title>
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
@@ -14,15 +14,16 @@
 
     <section class="hero hero--split feedbackHero">
       <div>
-        <div class="eyebrow">Field-test feedback</div>
-        <h1>Tell us what felt confusing, useful, or broken.</h1>
-        <p class="lead">Pint Path is still being tuned for real Melbourne venue visits. Send quick notes here instead of burying feedback at the bottom of your account page.</p>
+        <div class="eyebrow">Contact Pint Path</div>
+        <h1>Tell us what you need, or ask about joining as a venue.</h1>
+        <p class="lead">Send product issues, account requests, security concerns, or bar partnership messages from one simple place.</p>
       </div>
       <div class="panel feedbackPromise">
         <h2>What helps most</h2>
         <ul class="cleanList">
           <li>Where you were in the app</li>
           <li>What you expected to happen</li>
+          <li>For bars: venue name and best contact person</li>
           <li>Whether the issue was on mobile or desktop</li>
         </ul>
       </div>
@@ -31,18 +32,19 @@
     <section class="grid grid--two feedbackGrid">
       <article class="panel">
         <div class="eyebrow">Privacy note</div>
-        <h2>Feedback is for product quality, not public venue data.</h2>
-        <p class="muted">Wrong prices should still be reported from a venue detail card where possible. Privacy, security, abuse, deletion, export, billing, and moderation requests are routed here during beta and are not published on the map.</p>
+        <h2>Contact is for support, product notes, and venue partner interest.</h2>
+        <p class="muted">Wrong prices should still be reported from a venue detail card where possible. Privacy, security, abuse, deletion, export, billing, moderation, and venue partner requests are routed here during beta and are not published on the map.</p>
         <div class="divider"></div>
-        <p class="helperCopy">If you are reporting a broken login, map, or upload flow, include the device/browser and the page you were on. Tiny details save us a lot of detective work.</p>
+        <p class="helperCopy">If you are a bar, tell us the venue name, suburb, and whether you want to join, claim, or manage an existing listing.</p>
       </article>
 
       <form id="feedbackForm" class="panel form">
-        <h2>Send feedback</h2>
-        <p class="muted">Feedback can be anonymous, but if you are signed in we can link it to your account for follow-up.</p>
+        <h2>Send a message</h2>
+        <p class="muted">Messages can be anonymous, but if you are signed in we can link it to your account for follow-up.</p>
         <label class="field">Type
           <select name="feedbackType">
-            <option value="general_feedback">General feedback</option>
+            <option value="general_feedback">General contact</option>
+            <option value="venue_partner_interest">Bar wants to join or manage a venue</option>
             <option value="bug">Bug</option>
             <option value="wrong_data">Wrong data</option>
             <option value="feature_idea">Feature idea</option>
@@ -60,13 +62,13 @@
           <input name="venueName" placeholder="Optional venue name" />
         </label>
         <label class="field">Message
-          <textarea name="message" required maxlength="1200" placeholder="What should we improve?"></textarea>
+          <textarea name="message" required maxlength="1200" placeholder="How can we help?"></textarea>
         </label>
         <div class="actionRow">
-          <button id="feedbackSubmitButton" class="button button--primary" type="submit">Send feedback</button>
+          <button id="feedbackSubmitButton" class="button button--primary" type="submit">Send message</button>
           <a class="button" href="/">Back to map</a>
         </div>
-        <div id="feedbackStatus" class="notice">We read every field-test note. Please do not include private ID documents, payment details, passwords, or tokens.</div>
+        <div id="feedbackStatus" class="notice">We read every contact message. Please do not include private ID documents, payment details, passwords, or tokens.</div>
       </form>
     </section>
 
@@ -87,7 +89,7 @@
         const button = $("feedbackSubmitButton");
         const body = Object.fromEntries(new FormData($("feedbackForm")).entries());
         button.disabled = true;
-        MelbBeerBusiness.setStatus($("feedbackStatus"), "Sending feedback...");
+        MelbBeerBusiness.setStatus($("feedbackStatus"), "Sending message...");
 
         try {
           const result = await MelbBeerBusiness.apiFetch("/api/business/feedback", {
@@ -101,7 +103,7 @@
             }),
           });
           $("feedbackForm").reset();
-          MelbBeerBusiness.setStatus($("feedbackStatus"), result.message || "Feedback saved for review. Thank you.");
+          MelbBeerBusiness.setStatus($("feedbackStatus"), result.message || "Message saved for review. Thank you.");
         } catch (error) {
           MelbBeerBusiness.setStatus($("feedbackStatus"), error.message, true);
         } finally {

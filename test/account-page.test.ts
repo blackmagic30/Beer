@@ -190,7 +190,7 @@ describe("account page shell", () => {
     expect(trust).toContain("Source photos, receipts, upload-location proof, OCR evidence, and reviewer notes are private review material.");
   });
 
-  it("keeps feedback on a dedicated page instead of clustering the account dashboard", () => {
+  it("keeps contact on a dedicated page instead of clustering the account dashboard", () => {
     const html = accountHtml();
     const feedback = feedbackHtml();
     const script = businessJs();
@@ -198,11 +198,12 @@ describe("account page shell", () => {
     expect(html).not.toContain('id="feedbackForm"');
     expect(html).toContain('href="/feedback.html"');
     expect(feedback).toContain('id="feedbackForm"');
-    expect(feedback).toContain("Tell us what felt confusing, useful, or broken.");
+    expect(feedback).toContain("Tell us what you need, or ask about joining as a venue.");
+    expect(feedback).toContain("venue_partner_interest");
     expect(feedback).toContain('MelbBeerBusiness.renderNav("feedback")');
     expect(feedback).toContain('MelbBeerBusiness.apiFetch("/api/business/feedback"');
     expect(feedback.indexOf("Privacy note")).toBeLessThan(feedback.indexOf('id="feedbackForm"'));
-    expect(script).toContain('{ key: "feedback", href: "/feedback.html", label: "Feedback" }');
+    expect(script).toContain('{ key: "feedback", href: "/feedback.html", label: "Contact us" }');
     expect(script).not.toContain('href="/account.html#feedbackForm"');
     expect(script).not.toContain("fieldTestFeedbackButton");
     expect(script).not.toContain("floatingFeedback");
@@ -215,7 +216,7 @@ describe("account page shell", () => {
     expect(html).not.toContain('href="/submit.html?type=photo_upload"');
     expect(html).not.toContain('href="#recentSubmissionsSection"');
     expect(html).not.toContain('href="/stats.html"');
-    expect(html).toContain('href="/submit.html">Open Submit');
+    expect(html).not.toContain('href="/submit.html">Open Submit');
     expect(html).toContain('data-settings-target="submissions"');
     expect(html).toContain('data-settings-target="stats"');
     expect(html.indexOf('data-settings-target="stats"')).toBeLessThan(html.indexOf('data-settings-target="submissions"'));
@@ -259,7 +260,9 @@ describe("account page shell", () => {
     expect(html).toContain("accountHeroMetric--savings");
     expect(html).toContain("accountHeroMetric--special");
     expect(html.indexOf('label: "Total saved"')).toBeLessThan(html.indexOf('label: "Total uploads"'));
+    expect(html.indexOf('label: "Total uploads"')).toBeLessThan(html.indexOf('label: "Verified"'));
     expect(html.indexOf('label: "Verified"')).toBeLessThan(html.indexOf('label: "Pending review"'));
+    expect(html.indexOf('label: "Rejected"')).toBeLessThan(html.indexOf('label: "Trust score"'));
     expect(css).toContain(".accountHighlightsGrid");
     expect(css).toContain(".accountDashboardIntro");
     expect(css).toContain(".accountHeroMetric--savings");
@@ -615,6 +618,7 @@ describe("account page shell", () => {
     expect(feedback).toContain("security_report");
     expect(feedback).toContain("abuse_report");
     expect(feedback).toContain("billing_support");
+    expect(feedback).toContain("venue_partner_interest");
   });
 
   it("exposes signed-in privacy controls without clustering feedback back into account", () => {
@@ -629,8 +633,8 @@ describe("account page shell", () => {
     expect(html).toContain('id="downloadAccountDataButton"');
     expect(html).toContain('id="requestAccountDeletionButton"');
     expect(html).not.toContain('id="requestForm"');
-    expect(html).toContain('class="panel supportSubmitCard"');
-    expect(html).toContain('href="/submit.html">Open Submit');
+    expect(html).not.toContain('class="panel supportSubmitCard"');
+    expect(html).not.toContain("Add venue data");
     expect(html).not.toContain("Open Trust Centre");
     expect(html).toContain("/api/business/account/export");
     expect(html).toContain("/api/business/account/delete-request");
@@ -657,9 +661,9 @@ describe("account page shell", () => {
 
     expect(script).toContain("pintPathCookieConsent");
     expect(script).toContain("function installCookieConsent");
-    expect(script).toContain("Essential only");
-    expect(script).toContain("Allow optional analytics");
-    expect(script).toContain("Manage in Account");
+    expect(script).toContain("Essentials only");
+    expect(script).toContain("Accept all");
+    expect(script).toContain("Manage in account");
     expect(script).toContain("function hasAnalyticsConsent");
     expect(script).toContain("if (!hasAnalyticsConsent())");
     expect(script).toContain('aria-label="Primary"');

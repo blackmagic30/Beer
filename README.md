@@ -97,7 +97,7 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 - Exact price records are redacted by default unless they are part of the free preview: happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
 - Analytics are captured as aggregate events only. Search, filter, happy-hour interest, map pin clicks, venue opens, beer-list views, and price reveal events feed admin and paid venue-tier reports without exporting individual clickstreams.
 - The admin KPI dashboard tracks early validation metrics, retention cohorts, data coverage, and potential partner leads from aggregated demand.
-- Users can save venues, beers, and suburbs, submit feedback, report wrong prices, and request missing venues or beers.
+- Users can save venues, beers, and suburbs, contact Pint Path, report wrong prices, and request missing venues or beers.
 - The public map includes retention filter chips, active happy-hour previews, recently verified price previews, and wrong-price reporting.
 - The public map supports optional one-time browser location for “near me” sorting, approximate venue distances, and active happy hours nearby. Location is first requested after the user taps “Use my location”; if permission is granted, Pint Path remembers that on-device preference and can request one-time location again on future map visits. Users can tap “Location on” to turn the remembered preference off. Browsing coordinates are kept in browser state and analytics store only coarse context such as approximate suburb, selected radius, distance bucket, and coverage status.
 - Contributor uploads can optionally save an intentional one-time upload-location proof with the private submission record. The browser keeps the proof locally for up to 12 hours or until the submission succeeds, so a contributor can capture location at the venue and submit after signal returns. Approved submissions only earn points when that saved upload location is within 200m of the selected venue.
@@ -186,7 +186,7 @@ For the Melbourne beta, exact prices must flow through the Express API, not dire
 - Production admin routes require the configured admin email allowlist and verified email. They also require a fresh MFA/AAL2 claim when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`; this can be temporarily set to `false` for owner-led field testing.
 - Upload and verification actions require a verified account in production when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
 - Inline demo image evidence is never exposed publicly. Production field uploads use private filesystem/volume evidence storage plus signed review links; keep the `beermap-source-evidence` Supabase Storage bucket private if/when evidence storage is migrated there at larger scale.
-- `FIELD_TEST_MODE=true` adds an unobtrusive beta label, feedback entry point, and admin field-test summary without exposing debug details to public users.
+- `FIELD_TEST_MODE=true` adds an unobtrusive beta label, Contact us entry point, and admin field-test summary without exposing debug details to public users.
 - Run `npm run security:scan` before deploy to catch common committed secret patterns. If it flags a real key, rotate it immediately and replace it with an env placeholder.
 - Run `npm run security:audit` before deploy to catch high-severity dependency advisories.
 - Run `npm run test:release:pintpath` before a release candidate. This executes the repo-native Pint Path release-readiness suite against synthetic/local data only, plus secret and dependency checks. See `docs/release-readiness-checklist.md` for provider-only blockers that still need staging/manual verification.
@@ -353,7 +353,7 @@ What each one does:
 - `SOURCE_EVIDENCE_SIGNING_SECRET`: 32+ character random secret used to sign short-lived source evidence URLs. Public pages can boot without it, but source-evidence review/download links fail closed in production until configured.
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`: signed evidence URL lifetime. Defaults to `300`.
 - `POS_WEBHOOK_SIGNING_SECRET`: private 32+ character server-side secret used to derive per-venue POS webhook tokens for Pro venue discount redemptions. Generate it with `openssl rand -base64 32`; rotate it if a POS token is exposed.
-- `FIELD_TEST_MODE`: shows beta feedback affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
+- `FIELD_TEST_MODE`: shows beta contact affordances and an admin field-test summary. Keep enabled for private field tests; disable for a polished public launch.
 - `STRIPE_SECRET_KEY`: Stripe test/live secret key for checkout sessions and webhook calls.
 - `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.
 - `STRIPE_PRICE_MONTHLY`: Stripe price ID for the A$4.99/month plan.

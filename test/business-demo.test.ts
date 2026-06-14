@@ -828,6 +828,13 @@ describe("Supabase account and verification foundation", () => {
     const deletion = service.requestAccountDeletion(account, {
       message: "Please remove my contributor account.",
     });
+    const partnerInterest = service.submitFeedback(account, {
+      anonymousSessionId: null,
+      feedbackType: "venue_partner_interest",
+      message: "I manage Half Moon and want to join Pint Path.",
+      venueId: null,
+      venueName: "Half Moon",
+    });
 
     expect(security.feedback).toEqual(expect.objectContaining({
       priority: "high",
@@ -837,8 +844,13 @@ describe("Supabase account and verification foundation", () => {
       feedbackType: "account_deletion_request",
       priority: "high",
     }));
+    expect(partnerInterest.feedback).toEqual(expect.objectContaining({
+      feedbackType: "venue_partner_interest",
+      priority: "medium",
+      triageReason: expect.stringContaining("Venue partner wants to join"),
+    }));
     expect(repository.listFeedback(10).map((item) => item.feedbackType))
-      .toEqual(expect.arrayContaining(["security_report", "account_deletion_request"]));
+      .toEqual(expect.arrayContaining(["security_report", "account_deletion_request", "venue_partner_interest"]));
     expect(repository.listUserActivityEvents(account.id, 10).map((event) => event.eventType))
       .toContain("account_deletion_requested");
   });

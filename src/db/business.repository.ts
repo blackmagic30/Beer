@@ -30,6 +30,7 @@ export type FeedbackType =
   | "wrong_data"
   | "feature_idea"
   | "venue_suggestion"
+  | "venue_partner_interest"
   | "general_feedback"
   | "privacy_request"
   | "data_export_request"

@@ -277,7 +277,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('id="topbarBusinessLinks"');
     expect(html.indexOf('href="/submit.html">Submit')).toBeLessThan(html.indexOf('href="/missions.html">Missions'));
     expect(html).toContain('id="accessPill"');
-    expect(html).toContain('<a href="/feedback.html">Feedback</a> · <a href="/privacy.html">Privacy</a>');
+    expect(html).toContain('<a href="/feedback.html">Contact us</a> · <a href="/privacy.html">Privacy</a>');
     expect(html).toContain('class="controlDeck"');
     expect(html).toContain("Find a venue fast");
     expect(html).toContain('placeholder="Suburb or venue"');

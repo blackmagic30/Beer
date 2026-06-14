@@ -3410,6 +3410,11 @@ export class BusinessService {
           priority: "medium",
           triageReason: "Privacy, billing, abuse, or moderation workflow needs tracked follow-up.",
         };
+      case "venue_partner_interest":
+        return {
+          priority: "medium",
+          triageReason: "Venue partner wants to join, claim, or manage a Pint Path venue account.",
+        };
       case "wrong_data":
       case "venue_suggestion":
         return {

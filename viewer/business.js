@@ -561,7 +561,7 @@ function renderNav(active = "") {
     { key: "pricing", href: "/pricing.html", label: "Pricing" },
     { key: "faq", href: "/trust.html", label: "FAQ" },
     { key: "account", href: "/account.html", label: "Account" },
-    ...(isFieldTestMode() ? [{ key: "feedback", href: "/feedback.html", label: "Feedback" }] : []),
+    ...(isFieldTestMode() ? [{ key: "feedback", href: "/feedback.html", label: "Contact us" }] : []),
   ];
   const navLinks = navItems
     .map((item) => `<a ${activeKey === item.key ? 'class="pill"' : ""} href="${item.href}">${item.label}</a>`)
@@ -612,9 +612,9 @@ function installCookieConsent() {
       <p>Essential cookies keep login and security working. Optional analytics help improve map search and aggregate venue reports.</p>
     </div>
     <div class="cookieConsent__actions">
-      <button class="button" type="button" data-cookie-choice="essential">Essential only</button>
-      <button class="button button--primary" type="button" data-cookie-choice="optional">Allow optional analytics</button>
-      <a class="button" href="/account.html#privacyControlsSection">Manage in Account</a>
+      <button class="button" type="button" data-cookie-choice="essential">Essentials only</button>
+      <button class="button button--primary" type="button" data-cookie-choice="optional">Accept all</button>
+      <a class="button" href="/account.html#privacyControlsSection">Manage in account</a>
     </div>
   `;
 

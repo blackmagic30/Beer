@@ -898,6 +898,10 @@ h3 {
   padding-top: 2px;
 }
 
+.submitOptionGrid + [data-remove] {
+  margin-top: 14px;
+}
+
 .submitCheckbox {
   display: inline-flex;
   align-items: center;
@@ -3153,16 +3157,6 @@ h3 {
 
 .accountSupportGrid {
   align-items: stretch;
-}
-
-.supportSubmitCard {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-}
-
-.supportSubmitCard .button {
-  justify-self: start;
 }
 
 .accountStatsActions {

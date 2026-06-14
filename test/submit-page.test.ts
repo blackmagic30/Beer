@@ -276,6 +276,7 @@ describe("submit page auth gate", () => {
     expect(css).toContain("row-gap: 16px");
     expect(css).toContain(".submitOptionGrid");
     expect(css).toContain("margin-top: 14px");
+    expect(css).toContain(".submitOptionGrid + [data-remove]");
     expect(css).toContain(".adminGoogleVenueResults[hidden]");
     expect(css).toContain(".newVenueLockedField input[readonly]");
     expect(css).toContain(".submitNewVenueShortcut");

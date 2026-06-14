@@ -119,7 +119,7 @@
           <h1 id="accountDashboardTitle">Manage your Pint Path account</h1>
           <p class="muted">Choose one area to open. The dashboard stays clean until you need a specific account tool.</p>
         </div>
-        <a class="button" href="/feedback.html">Send feedback</a>
+        <a class="button" href="/feedback.html">Contact us</a>
       </section>
 
       <div id="dashboardStatus" class="notice" role="status" hidden></div>
@@ -249,6 +249,7 @@
                   <option value="security_report">Report a security issue</option>
                   <option value="abuse_report">Report abuse or fake submissions</option>
                   <option value="billing_support">Billing or subscription support</option>
+                  <option value="venue_partner_interest">Bar wants to join or manage a venue</option>
                 </select>
               </label>
               <label class="field">Details
@@ -256,11 +257,6 @@
               </label>
               <button class="button button--primary" type="submit">Send request</button>
             </form>
-            <article class="panel supportSubmitCard">
-              <h2>Add venue data</h2>
-              <p class="muted">Missing venues, missing beers, and beer prices now go through Submit so the venue and beer data can be reviewed together before going live.</p>
-              <a class="button button--primary" href="/submit.html">Open Submit</a>
-            </article>
           </div>
         </div>
 
@@ -556,11 +552,11 @@
         : `${formatPoints(pointsNeeded)} more approved points unlock the same premium map access as a paid user until month end.`;
       const metrics = [
         { label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" },
-        { label: "Verified", value: verifiedCount, helper: "Approved contributions that can count toward contributor unlocks.", tone: "success" },
         { label: "Total uploads", value: totalUploads, helper: "Beer price, venue, happy-hour, and source uploads linked to your account.", tone: "neutral" },
+        { label: "Verified", value: verifiedCount, helper: "Approved contributions that can count toward contributor unlocks.", tone: "success" },
         { label: "Pending review", value: pendingCount, helper: "Waiting for reviewer checks before they can affect the public map.", tone: "pending" },
-        { label: "Trust score", value: `${trustScore}%`, helper: "A working reliability signal for future contributor moderation.", tone: "info" },
         { label: "Rejected", value: rejectedCount, helper: "Rejected uploads stay private and can guide better future submissions.", tone: "warning" },
+        { label: "Trust score", value: `${trustScore}%`, helper: "A working reliability signal for future contributor moderation.", tone: "info" },
         { label: "Reward eligibility", value: account.ageConfirmedAt ? "18+ confirmed" : "Confirm 18+", helper: ageCopy, tone: account.ageConfirmedAt ? "success" : "pending" },
         { label: "Account ID", value: accountId, helper: "Your public contributor ID for leaderboard ranking and discount lookup.", tone: "id" },
       ];

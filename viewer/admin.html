@@ -38,7 +38,7 @@
         <section id="fieldTestPanel" class="panel adminPanelSpan" hidden>
           <div class="eyebrow">Field-test today</div>
           <h2>Tomorrow-ready signal check</h2>
-          <p class="muted">A quick daily view for private tests: usage, blocked reveals, submissions, reports, feedback, and demand signals.</p>
+          <p class="muted">A quick daily view for private tests: usage, blocked reveals, submissions, reports, contact messages, and demand signals.</p>
           <div id="fieldTestMetrics" class="metricGrid adminMetricBlock"></div>
           <div id="fieldTestSignals" class="list adminListBlock"></div>
         </section>
@@ -475,7 +475,7 @@
         renderMetric("Submissions", metrics.totalSubmissionCompletions),
         renderMetric("Pending approvals", metrics.totalPendingSubmissions),
         renderMetric("Wrong-price reports", queues.wrongPriceReports.length),
-        renderMetric("Feedback", queues.feedback.length),
+        renderMetric("Contact", queues.feedback.length),
       ].join("");
       fieldTestSignals.innerHTML = [
         `<div class="listItem"><strong>Top clicked venues today</strong><div class="muted">${formatBucketSummary(data.topClickedVenues, "No venue clicks today")}</div></div>`,
@@ -507,7 +507,7 @@
       reviewQueues.innerHTML = [
         `<div class="listItem"><strong>Wrong price reports</strong><div class="muted">${data.wrongPriceReports.length ? data.wrongPriceReports.slice(0, 6).map((row) => `${row.venueName}: ${row.reason}`).join(" · ") : "None open"}</div></div>`,
         `<div class="listItem"><strong>Venue and beer requests</strong><div class="muted">${data.venueRequests.length ? data.venueRequests.slice(0, 6).map((row) => `${row.requestType}: ${row.venueName || row.beerName || row.suburb || "request"}`).join(" · ") : "None open"}</div></div>`,
-        `<div class="listItem"><strong>Feedback</strong><div class="muted">${data.feedback.length ? data.feedback.slice(0, 6).map((row) => `${row.feedbackType}: ${row.message.slice(0, 80)}`).join(" · ") : "No feedback yet"}</div></div>`,
+        `<div class="listItem"><strong>Contact messages</strong><div class="muted">${data.feedback.length ? data.feedback.slice(0, 6).map((row) => `${row.feedbackType}: ${row.message.slice(0, 80)}`).join(" · ") : "No contact messages yet"}</div></div>`,
       ].join("");
     }
 
@@ -644,7 +644,7 @@
         },
         {
           title: `${trustIssues} trust ${trustIssues === 1 ? "item" : "items"}`,
-          copy: trustIssues ? "Wrong-price reports and feedback should be cleared before public launch." : "No open trust issues from the current queue.",
+          copy: trustIssues ? "Wrong-price reports and contact messages should be cleared before public launch." : "No open trust issues from the current queue.",
           action: "Trust queue",
         },
       ];
