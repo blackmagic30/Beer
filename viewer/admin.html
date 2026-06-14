@@ -19,14 +19,14 @@
 
     <div id="adminContent" hidden>
       <div class="adminWorkbench">
-      <nav class="adminJumpNav" aria-label="Admin workflow sections">
-        <a href="#adminReview">Review</a>
-        <a href="#adminCapture">Data capture</a>
-        <a href="#adminPartners">Partners</a>
-        <a href="#adminAnalytics">Analytics</a>
+      <nav class="adminJumpNav" role="tablist" aria-label="Admin workflow sections">
+        <button class="adminTabButton" type="button" data-admin-tab-target="review" aria-controls="adminReview" aria-selected="false">Review</button>
+        <button class="adminTabButton" type="button" data-admin-tab-target="capture" aria-controls="adminCapture" aria-selected="false">Data capture</button>
+        <button class="adminTabButton" type="button" data-admin-tab-target="partners" aria-controls="adminPartners" aria-selected="false">Partners</button>
+        <button class="adminTabButton" type="button" data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false">Analytics</button>
       </nav>
 
-      <section id="adminReview" class="adminSection adminSection--priority">
+      <section id="adminReview" class="adminSection adminSection--priority" data-admin-tab-panel="review" role="tabpanel" hidden>
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Start here</div>
@@ -76,7 +76,7 @@
         </div>
       </section>
 
-      <section id="adminCapture" class="adminSection">
+      <section id="adminCapture" class="adminSection" data-admin-tab-panel="capture" role="tabpanel" hidden>
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Data capture</div>
@@ -211,7 +211,7 @@
         </div>
       </section>
 
-      <section id="adminPartners" class="adminSection">
+      <section id="adminPartners" class="adminSection" data-admin-tab-panel="partners" role="tabpanel" hidden>
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Venue partners</div>
@@ -287,7 +287,7 @@
         </div>
       </section>
 
-      <section id="adminAnalytics" class="adminSection">
+      <section id="adminAnalytics" class="adminSection" data-admin-tab-panel="analytics" role="tabpanel" hidden>
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Growth signals</div>
@@ -397,6 +397,37 @@
     let selectedManagerVenueId = null;
     let managerAccountSearchMessage = "Search for the staff member's Pint Path account.";
     let latestAdminTodayPayload = null;
+    const ADMIN_TAB_KEYS = ["review", "capture", "partners", "analytics"];
+
+    function requestedAdminTab() {
+      const params = new URLSearchParams(window.location.search);
+      const hash = window.location.hash.replace("#", "").toLowerCase();
+      const legacyHashTargets = {
+        adminreview: "review",
+        admincapture: "capture",
+        adminpartners: "partners",
+        adminanalytics: "analytics",
+      };
+      const target = params.get("adminTab") || legacyHashTargets[hash] || hash;
+      return ADMIN_TAB_KEYS.includes(target) ? target : "review";
+    }
+
+    function showAdminTab(target = "review") {
+      const panels = Array.from(document.querySelectorAll("[data-admin-tab-panel]"));
+      const buttons = Array.from(document.querySelectorAll("[data-admin-tab-target]"));
+      const activeTarget = ADMIN_TAB_KEYS.includes(target) ? target : "review";
+
+      panels.forEach((panel) => {
+        const active = panel.dataset.adminTabPanel === activeTarget;
+        panel.hidden = !active;
+        panel.classList.toggle("is-active", active);
+      });
+      buttons.forEach((button) => {
+        const active = button.dataset.adminTabTarget === activeTarget;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+    }
 
     function renderKpis(data) {
       const metrics = data.metrics;
@@ -1688,6 +1719,10 @@
       nav.innerHTML = MelbBeerBusiness.renderNav("admin");
       statusEl = document.getElementById("status");
       adminContentEl = document.getElementById("adminContent");
+      document.querySelectorAll("[data-admin-tab-target]").forEach((button) => {
+        button.addEventListener("click", () => showAdminTab(button.dataset.adminTabTarget));
+      });
+      showAdminTab(requestedAdminTab());
       rangeSelect.addEventListener("change", loadAdmin);
       managerAssignForm.addEventListener("submit", handleManagerAssign);
       managerUserSearch.addEventListener("input", scheduleManagerAccountSearch);

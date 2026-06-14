@@ -466,11 +466,17 @@ describe("account page shell", () => {
       'id="partnerLeads"',
     ];
 
-    expect(html).toContain('class="adminJumpNav" aria-label="Admin workflow sections"');
-    expect(html).toContain('href="#adminReview"');
-    expect(html).toContain('href="#adminCapture"');
-    expect(html).toContain('href="#adminPartners"');
-    expect(html).toContain('href="#adminAnalytics"');
+    expect(html).toContain('class="adminJumpNav" role="tablist" aria-label="Admin workflow sections"');
+    expect(html).toContain('data-admin-tab-target="review" aria-controls="adminReview" aria-selected="false"');
+    expect(html).toContain('data-admin-tab-target="capture" aria-controls="adminCapture" aria-selected="false"');
+    expect(html).toContain('data-admin-tab-target="partners" aria-controls="adminPartners" aria-selected="false"');
+    expect(html).toContain('data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false"');
+    expect(html).toContain('data-admin-tab-panel="review" role="tabpanel" hidden');
+    expect(html).toContain('data-admin-tab-panel="capture" role="tabpanel" hidden');
+    expect(html).toContain('data-admin-tab-panel="partners" role="tabpanel" hidden');
+    expect(html).toContain('data-admin-tab-panel="analytics" role="tabpanel" hidden');
+    expect(html).toContain("function showAdminTab");
+    expect(html).toContain('document.querySelectorAll("[data-admin-tab-target]")');
     sectionOrder.forEach((section, index) => {
       expect(html).toContain(section);
       if (index > 0) {
@@ -481,6 +487,7 @@ describe("account page shell", () => {
     expect(css).toContain(".adminWorkbench");
     expect(css).toContain(".adminSection");
     expect(css).toContain(".adminJumpNav");
+    expect(css).toContain(".adminTabButton");
     expect(css).toContain(".adminGrid--two");
   });
 

@@ -1205,7 +1205,7 @@ h3 {
   padding: 10px;
 }
 
-.adminJumpNav a {
+.adminTabButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1214,6 +1214,7 @@ h3 {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.055);
   color: var(--text);
+  cursor: pointer;
   font-size: 13px;
   font-weight: 900;
   padding: 8px 14px;
@@ -1221,12 +1222,18 @@ h3 {
   transition: border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
 }
 
-.adminJumpNav a:hover,
-.adminJumpNav a:focus-visible {
+.adminTabButton:hover,
+.adminTabButton:focus-visible,
+.adminTabButton.is-active {
   border-color: rgba(34, 211, 238, 0.42);
   background: rgba(34, 211, 238, 0.12);
   outline: none;
   transform: translateY(-1px);
+}
+
+.adminTabButton.is-active {
+  color: #dff7ff;
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.22), 0 10px 22px rgba(34, 211, 238, 0.08);
 }
 
 .adminSection {
@@ -1241,6 +1248,10 @@ h3 {
     rgba(13, 18, 32, 0.62);
   box-shadow: 0 22px 56px rgba(0, 0, 0, 0.26);
   padding: 18px;
+}
+
+.adminSection.is-active {
+  animation: fadeUp 180ms ease both;
 }
 
 .adminSection--priority {
@@ -4170,7 +4181,7 @@ h3 {
     display: none;
   }
 
-  .adminJumpNav a {
+  .adminTabButton {
     flex: 0 0 auto;
     min-height: 34px;
     padding: 7px 11px;
