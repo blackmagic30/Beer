@@ -18,288 +18,323 @@
     </section>
 
     <div id="adminContent" hidden>
-    <section id="fieldTestPanel" class="panel" style="margin-bottom:16px;" hidden>
-      <div class="eyebrow">Field-test today</div>
-      <h2>Tomorrow-ready signal check</h2>
-      <p class="muted">A quick daily view for private tests: usage, blocked reveals, submissions, reports, feedback, and demand signals.</p>
-      <div id="fieldTestMetrics" class="metricGrid" style="margin-top:16px;"></div>
-      <div id="fieldTestSignals" class="list" style="margin-top:12px;"></div>
-    </section>
-    <section class="grid grid--two" style="margin-bottom:16px;">
-      <div class="panel">
-        <div class="eyebrow">Today queue</div>
-        <h2>Review first</h2>
-        <p class="muted">A simple daily queue for launch testing: new venues, OCR sources, price submissions, and trust issues.</p>
-        <div id="adminTodayQueue" class="list"></div>
-      </div>
-      <div class="panel">
-        <div class="eyebrow">System health</div>
-        <h2>Data tools status</h2>
-        <p class="muted">Plain-English readiness for the tools admins depend on during field tests.</p>
-        <div id="adminHealthPanel" class="list"></div>
-      </div>
-    </section>
-    <section class="panel" style="margin-bottom:16px;">
-      <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center;">
-        <div>
-          <h2>Early validation KPI dashboard</h2>
-          <p class="muted">Aggregated only. No individual clickstream is exposed to venues.</p>
-        </div>
-        <label class="field" style="max-width:220px;">Range
-          <select id="rangeSelect">
-            <option value="today">Today</option>
-            <option value="7d" selected>Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-            <option value="month">This month</option>
-            <option value="all">All time</option>
-          </select>
-        </label>
-      </div>
-      <div id="headlineMetrics" class="metricGrid" style="margin-top:16px;"></div>
-      <h3 style="margin-top:18px;">Early validation scorecard</h3>
-      <div id="scorecard" class="list"></div>
-    </section>
+      <div class="adminWorkbench">
+      <nav class="adminJumpNav" aria-label="Admin workflow sections">
+        <a href="#adminReview">Review</a>
+        <a href="#adminCapture">Data capture</a>
+        <a href="#adminPartners">Partners</a>
+        <a href="#adminAnalytics">Analytics</a>
+      </nav>
 
-    <section class="grid grid--two" style="margin-bottom:16px;">
-      <div class="panel">
-        <h2>Retention cohorts</h2>
-        <div id="retentionCohorts" class="list"></div>
-      </div>
-      <div class="panel">
-        <h2>Coverage</h2>
-        <div id="coverageDashboard" class="list"></div>
-      </div>
-    </section>
-
-    <section class="grid grid--two" style="margin-bottom:16px;">
-      <div class="panel">
-        <h2>Demand signals</h2>
-        <div id="demandSignals" class="list"></div>
-      </div>
-      <div class="panel">
-        <h2>Potential partner leads</h2>
-        <div id="partnerLeads" class="list partnerLeadList"></div>
-      </div>
-    </section>
-
-    <section class="panel" style="margin-bottom:16px;">
-      <div class="sectionHeader">
-        <div>
-          <div class="eyebrow">Data capture</div>
-          <h2>Venue, pint, menu photo, and source review tools</h2>
-        </div>
-        <button id="refreshAdminDataTools" class="button" type="button">Refresh queue</button>
-      </div>
-      <div id="adminCaptureMetrics" class="metricGrid"></div>
-    </section>
-
-    <section class="grid grid--two" style="margin-bottom:16px;">
-      <div class="panel form">
-        <h2>Add beers to a venue</h2>
-        <p class="muted">Manual entries and OCR results merge into the latest reviewed menu capture snapshot.</p>
-        <label class="field">Search venues
-          <input id="adminVenueSearch" type="search" placeholder="Venue, suburb, or address" />
-        </label>
-        <label class="field">Choose venue
-          <select id="adminVenueSelect" class="adminVenueSelect" size="8"></select>
-        </label>
-        <div id="adminSelectedVenue" class="notice">No venue selected yet.</div>
-
-        <label class="field">Menu photo OCR
-          <input id="adminMenuPhoto" type="file" accept="image/*" capture="environment" />
-        </label>
-        <div class="actionRow">
-          <button id="adminOcrButton" class="button" type="button">Read menu photo</button>
-          <button id="adminAddBeerRow" class="button" type="button">Add beer row</button>
-        </div>
-        <div id="adminOcrResult" class="fieldHint"></div>
-
-        <div id="adminBeerRows" class="adminBeerRows"></div>
-        <label class="field">Notes
-          <textarea id="adminCaptureNote" rows="3" placeholder="Optional reviewer notes"></textarea>
-        </label>
-        <button id="adminSaveBeers" class="button button--primary" type="button">Save beers to venue</button>
-        <div id="adminCaptureStatus" class="notice">Choose a venue and add at least one pint row.</div>
-      </div>
-
-      <form id="adminCreateVenueForm" class="panel form">
-        <h2>Add new pub or bar</h2>
-        <p class="muted">Search Google Maps first. Details auto-fill, then the venue is selected for beer capture.</p>
-        <label class="field">Find on Google Maps
-          <input id="adminGoogleVenueSearch" type="search" autocomplete="off" placeholder="Search venue name, suburb, or address" />
-        </label>
-        <div class="actionRow">
-          <button id="adminGoogleVenueButton" class="button" type="button">Search Google Maps</button>
-          <button id="adminClearGoogleVenueButton" class="button" type="button">Clear</button>
-        </div>
-        <div id="adminGoogleVenueResults" class="adminGoogleVenueResults"></div>
-        <div id="adminGoogleVenueStatus" class="fieldHint">Pick a Google result to fill name, address, phone, website, and coordinates.</div>
-        <input name="googlePlaceId" type="hidden" />
-        <label class="field">Name
-          <input name="name" required placeholder="The Duke of Wellington" />
-        </label>
-        <label class="field">Phone
-          <input name="phone" placeholder="+61..." />
-        </label>
-        <label class="field">Address
-          <input name="address" required placeholder="146 Flinders St, Melbourne VIC 3000" />
-        </label>
-        <div class="grid grid--two">
-          <label class="field">Suburb
-            <input name="suburb" placeholder="Melbourne" />
-          </label>
-          <label class="field">State
-            <input name="state" value="VIC" />
-          </label>
-        </div>
-        <div class="grid grid--two">
-          <label class="field">Postcode
-            <input name="postcode" inputmode="numeric" placeholder="3000" />
-          </label>
-          <label class="field">Website
-            <input name="website" type="url" placeholder="https://..." />
-          </label>
-        </div>
-        <div class="grid grid--two">
-          <label class="field">Latitude
-            <input name="latitude" required type="number" step="any" placeholder="-37.8136" />
-          </label>
-          <label class="field">Longitude
-            <input name="longitude" required type="number" step="any" placeholder="144.9631" />
-          </label>
-        </div>
-        <button class="button button--primary" type="submit">Create venue</button>
-        <div id="adminCreateVenueStatus" class="notice">New venues need coordinates before capture can start.</div>
-      </form>
-    </section>
-
-    <section class="grid grid--two" style="margin-bottom:16px;">
-      <form id="adminSourceQueueForm" class="panel form">
-        <h2>Queue source ingestion</h2>
-        <p class="muted">Queue a selected venue source for OCR and admin review before publishing.</p>
-        <label class="field">Source type
-          <select name="sourceType">
-            <option value="menu_photo_upload">Menu photo upload</option>
-            <option value="source_image_url">Source image URL</option>
-            <option value="source_reference">Source reference</option>
-          </select>
-        </label>
-        <label class="field">Direct image URL
-          <input name="sourceUrl" type="url" placeholder="https://..." />
-        </label>
-        <label class="field">Upload image
-          <input id="adminSourceImage" type="file" accept="image/*" capture="environment" />
-        </label>
-        <label class="field">Notes
-          <textarea name="note" rows="3" placeholder="Where this source came from"></textarea>
-        </label>
-        <button class="button button--primary" type="submit">Queue source</button>
-        <div id="adminSourceQueueStatus" class="notice">Select a venue above, then add a source URL or image.</div>
-      </form>
-
-      <div class="panel">
-        <div class="sectionHeader">
+      <section id="adminReview" class="adminSection adminSection--priority">
+        <div class="adminSectionHeader">
           <div>
-            <h2>Source ingestion review</h2>
-            <p class="muted">Review OCR output, publish clean rows, or reject noisy sources.</p>
+            <div class="eyebrow">Start here</div>
+            <h2>Review queue and system health</h2>
           </div>
-          <label class="field" style="max-width:220px;">Status
-            <select id="adminIngestionStatus">
-              <option value="pending_review">Pending</option>
-              <option value="published">Published</option>
-              <option value="rejected">Rejected</option>
-              <option value="">All</option>
+          <p class="muted">The work that affects what users and venues see next: submissions, trust issues, OCR readiness, and data-tool status.</p>
+        </div>
+
+        <section id="fieldTestPanel" class="panel adminPanelSpan" hidden>
+          <div class="eyebrow">Field-test today</div>
+          <h2>Tomorrow-ready signal check</h2>
+          <p class="muted">A quick daily view for private tests: usage, blocked reveals, submissions, reports, feedback, and demand signals.</p>
+          <div id="fieldTestMetrics" class="metricGrid adminMetricBlock"></div>
+          <div id="fieldTestSignals" class="list adminListBlock"></div>
+        </section>
+
+        <div class="adminGrid adminGrid--two">
+          <div class="panel">
+            <div class="eyebrow">Today queue</div>
+            <h2>Review first</h2>
+            <p class="muted">A simple daily queue for launch testing: new venues, OCR sources, price submissions, and trust issues.</p>
+            <div id="adminTodayQueue" class="list"></div>
+          </div>
+          <div class="panel">
+            <div class="eyebrow">System health</div>
+            <h2>Data tools status</h2>
+            <p class="muted">Plain-English readiness for the tools admins depend on during field tests.</p>
+            <div id="adminHealthPanel" class="list"></div>
+          </div>
+        </div>
+
+        <div class="adminGrid adminGrid--two">
+          <div class="panel">
+            <h2>Pending submissions</h2>
+            <div id="pendingSubmissions" class="list"></div>
+          </div>
+          <div class="panel">
+            <h2>Pending venue changes</h2>
+            <p class="muted">Manager edits stay private until approved here.</p>
+            <div id="pendingBarChanges" class="list"></div>
+          </div>
+        </div>
+
+        <div class="panel adminPanelSpan">
+          <h2>Review queues</h2>
+          <div id="reviewQueues" class="list"></div>
+        </div>
+      </section>
+
+      <section id="adminCapture" class="adminSection">
+        <div class="adminSectionHeader">
+          <div>
+            <div class="eyebrow">Data capture</div>
+            <h2>Add venues, prices, and menu sources</h2>
+          </div>
+          <button id="refreshAdminDataTools" class="button" type="button">Refresh queue</button>
+        </div>
+
+        <div id="adminCaptureMetrics" class="metricGrid"></div>
+
+        <div class="adminGrid adminGrid--two">
+          <div class="panel form">
+            <h2>Add beers to a venue</h2>
+            <p class="muted">Manual entries and OCR results merge into the latest reviewed menu capture snapshot.</p>
+            <label class="field">Search venues
+              <input id="adminVenueSearch" type="search" placeholder="Venue, suburb, or address" />
+            </label>
+            <label class="field">Choose venue
+              <select id="adminVenueSelect" class="adminVenueSelect" size="8"></select>
+            </label>
+            <div id="adminSelectedVenue" class="notice">No venue selected yet.</div>
+
+            <label class="field">Menu photo OCR
+              <input id="adminMenuPhoto" type="file" accept="image/*" capture="environment" />
+            </label>
+            <div class="actionRow">
+              <button id="adminOcrButton" class="button" type="button">Read menu photo</button>
+              <button id="adminAddBeerRow" class="button" type="button">Add beer row</button>
+            </div>
+            <div id="adminOcrResult" class="fieldHint"></div>
+
+            <div id="adminBeerRows" class="adminBeerRows"></div>
+            <label class="field">Notes
+              <textarea id="adminCaptureNote" rows="3" placeholder="Optional reviewer notes"></textarea>
+            </label>
+            <button id="adminSaveBeers" class="button button--primary" type="button">Save beers to venue</button>
+            <div id="adminCaptureStatus" class="notice">Choose a venue and add at least one pint row.</div>
+          </div>
+
+          <form id="adminCreateVenueForm" class="panel form">
+            <h2>Add new pub or bar</h2>
+            <p class="muted">Search Google Maps first. Details auto-fill, then the venue is selected for beer capture.</p>
+            <label class="field">Find on Google Maps
+              <input id="adminGoogleVenueSearch" type="search" autocomplete="off" placeholder="Search venue name, suburb, or address" />
+            </label>
+            <div class="actionRow">
+              <button id="adminGoogleVenueButton" class="button" type="button">Search Google Maps</button>
+              <button id="adminClearGoogleVenueButton" class="button" type="button">Clear</button>
+            </div>
+            <div id="adminGoogleVenueResults" class="adminGoogleVenueResults"></div>
+            <div id="adminGoogleVenueStatus" class="fieldHint">Pick a Google result to fill name, address, phone, website, and coordinates.</div>
+            <input name="googlePlaceId" type="hidden" />
+            <label class="field">Name
+              <input name="name" required placeholder="The Duke of Wellington" />
+            </label>
+            <label class="field">Phone
+              <input name="phone" placeholder="+61..." />
+            </label>
+            <label class="field">Address
+              <input name="address" required placeholder="146 Flinders St, Melbourne VIC 3000" />
+            </label>
+            <div class="grid grid--two">
+              <label class="field">Suburb
+                <input name="suburb" placeholder="Melbourne" />
+              </label>
+              <label class="field">State
+                <input name="state" value="VIC" />
+              </label>
+            </div>
+            <div class="grid grid--two">
+              <label class="field">Postcode
+                <input name="postcode" inputmode="numeric" placeholder="3000" />
+              </label>
+              <label class="field">Website
+                <input name="website" type="url" placeholder="https://..." />
+              </label>
+            </div>
+            <div class="grid grid--two">
+              <label class="field">Latitude
+                <input name="latitude" required type="number" step="any" placeholder="-37.8136" />
+              </label>
+              <label class="field">Longitude
+                <input name="longitude" required type="number" step="any" placeholder="144.9631" />
+              </label>
+            </div>
+            <button class="button button--primary" type="submit">Create venue</button>
+            <div id="adminCreateVenueStatus" class="notice">New venues need coordinates before capture can start.</div>
+          </form>
+        </div>
+
+        <div class="adminGrid adminGrid--two">
+          <form id="adminSourceQueueForm" class="panel form">
+            <h2>Queue source ingestion</h2>
+            <p class="muted">Queue a selected venue source for OCR and admin review before publishing.</p>
+            <label class="field">Source type
+              <select name="sourceType">
+                <option value="menu_photo_upload">Menu photo upload</option>
+                <option value="source_image_url">Source image URL</option>
+                <option value="source_reference">Source reference</option>
+              </select>
+            </label>
+            <label class="field">Direct image URL
+              <input name="sourceUrl" type="url" placeholder="https://..." />
+            </label>
+            <label class="field">Upload image
+              <input id="adminSourceImage" type="file" accept="image/*" capture="environment" />
+            </label>
+            <label class="field">Notes
+              <textarea name="note" rows="3" placeholder="Where this source came from"></textarea>
+            </label>
+            <button class="button button--primary" type="submit">Queue source</button>
+            <div id="adminSourceQueueStatus" class="notice">Select a venue above, then add a source URL or image.</div>
+          </form>
+
+          <div class="panel">
+            <div class="sectionHeader">
+              <div>
+                <h2>Source ingestion review</h2>
+                <p class="muted">Review OCR output, publish clean rows, or reject noisy sources.</p>
+              </div>
+              <label class="field compactField">Status
+                <select id="adminIngestionStatus">
+                  <option value="pending_review">Pending</option>
+                  <option value="published">Published</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="">All</option>
+                </select>
+              </label>
+            </div>
+            <div id="adminIngestionQueue" class="list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="adminPartners" class="adminSection">
+        <div class="adminSectionHeader">
+          <div>
+            <div class="eyebrow">Venue partners</div>
+            <h2>Manage venue access and outreach</h2>
+          </div>
+          <p class="muted">Claims, assigned staff, lead notes, and manager access live together here so bar onboarding is easier to run.</p>
+        </div>
+
+        <div class="adminGrid adminGrid--two">
+          <div class="panel">
+            <h2>Venue partner interest</h2>
+            <p class="muted">Venue partner interest and invite-only venue manager assignments. Public self-claiming is disabled during beta.</p>
+            <div id="venueInterestRequests" class="list"></div>
+            <h3>Authenticated venue claims</h3>
+            <div id="barClaimRequests" class="list"></div>
+          </div>
+          <div class="panel">
+            <h2>Venue manager assignments</h2>
+            <p class="muted">Managers can only see privacy-safe aggregates for venues assigned here.</p>
+            <div id="venueManagerAssignments" class="list"></div>
+          </div>
+        </div>
+
+        <div class="adminGrid adminGrid--two">
+          <form id="managerAssignForm" class="panel form">
+            <h2>Assign venue manager</h2>
+            <label class="field">Staff account
+              <input id="managerUserSearch" type="search" placeholder="Search email, name, or public account ID" autocomplete="off" />
+            </label>
+            <input id="managerUserId" name="userId" type="hidden" />
+            <div id="managerUserResults" class="list compactList">
+              <div class="listItem muted">Search for the staff member's Pint Path account.</div>
+            </div>
+            <label class="field">Venue
+              <input id="managerVenueSearch" type="search" placeholder="Search venue name or suburb" autocomplete="off" />
+            </label>
+            <select id="managerVenueSelect"></select>
+            <input id="managerVenueId" name="venueId" type="hidden" />
+            <input id="managerVenueName" name="venueName" type="hidden" />
+            <input id="managerVenueSuburb" name="suburb" type="hidden" />
+            <div id="managerAssignPreview" class="notice">Pick a staff account and a venue. Pint Path fills the IDs automatically.</div>
+            <button class="button button--primary" type="submit">Assign manager</button>
+          </form>
+          <form id="outreachForm" class="panel form">
+            <h2>Partner outreach note</h2>
+            <label class="field">Venue ID
+              <input name="venueId" required placeholder="venue id" />
+            </label>
+            <label class="field">Venue name
+              <input name="venueName" required placeholder="Rooftop Bar" />
+            </label>
+            <label class="field">Suburb
+              <input name="suburb" placeholder="Melbourne" />
+            </label>
+            <label class="field">Status
+              <select name="status">
+                <option value="lead">Lead</option>
+                <option value="contacted">Contacted</option>
+                <option value="interested">Interested</option>
+                <option value="partner">Partner</option>
+                <option value="not_interested">Not interested</option>
+                <option value="closed">Closed</option>
+              </select>
+            </label>
+            <label class="field">Contact name
+              <input name="contactName" placeholder="Manager name" />
+            </label>
+            <label class="field">Notes
+              <textarea name="notes" rows="3" placeholder="Follow-up notes"></textarea>
+            </label>
+            <button class="button button--primary" type="submit">Save outreach</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="adminAnalytics" class="adminSection">
+        <div class="adminSectionHeader">
+          <div>
+            <div class="eyebrow">Growth signals</div>
+            <h2>Validation, coverage, and partner opportunity</h2>
+          </div>
+          <label class="field compactField">Range
+            <select id="rangeSelect">
+              <option value="today">Today</option>
+              <option value="7d" selected>Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="month">This month</option>
+              <option value="all">All time</option>
             </select>
           </label>
         </div>
-        <div id="adminIngestionQueue" class="list"></div>
-      </div>
-    </section>
 
-    <section class="grid grid--two" style="margin-bottom:16px;">
-      <div class="panel">
-        <h2>Venue partner interest</h2>
-        <p class="muted">Venue partner interest and invite-only venue manager assignments. Public self-claiming is disabled during beta.</p>
-        <div id="venueInterestRequests" class="list"></div>
-        <h3>Authenticated venue claims</h3>
-        <div id="barClaimRequests" class="list"></div>
-      </div>
-      <div class="panel">
-        <h2>Venue manager assignments</h2>
-        <p class="muted">Managers can only see privacy-safe aggregates for venues assigned here.</p>
-        <div id="venueManagerAssignments" class="list"></div>
-      </div>
-    </section>
-
-    <section class="grid grid--two" style="margin-bottom:16px;">
-      <form id="managerAssignForm" class="panel form">
-        <h2>Assign venue manager</h2>
-        <label class="field">Staff account
-          <input id="managerUserSearch" type="search" placeholder="Search email, name, or public account ID" autocomplete="off" />
-        </label>
-        <input id="managerUserId" name="userId" type="hidden" />
-        <div id="managerUserResults" class="list compactList">
-          <div class="listItem muted">Search for the staff member's Pint Path account.</div>
+        <div class="panel">
+          <h2>Early validation KPI dashboard</h2>
+          <p class="muted">Aggregated only. No individual clickstream is exposed to venues.</p>
+          <div id="headlineMetrics" class="metricGrid adminMetricBlock"></div>
+          <h3 class="adminSubheading">Early validation scorecard</h3>
+          <div id="scorecard" class="list"></div>
         </div>
-        <label class="field">Venue
-          <input id="managerVenueSearch" type="search" placeholder="Search venue name or suburb" autocomplete="off" />
-        </label>
-        <select id="managerVenueSelect"></select>
-        <input id="managerVenueId" name="venueId" type="hidden" />
-        <input id="managerVenueName" name="venueName" type="hidden" />
-        <input id="managerVenueSuburb" name="suburb" type="hidden" />
-        <div id="managerAssignPreview" class="notice">Pick a staff account and a venue. Pint Path fills the IDs automatically.</div>
-        <button class="button button--primary" type="submit">Assign manager</button>
-      </form>
-      <form id="outreachForm" class="panel form">
-        <h2>Partner outreach note</h2>
-        <label class="field">Venue ID
-          <input name="venueId" required placeholder="venue id" />
-        </label>
-        <label class="field">Venue name
-          <input name="venueName" required placeholder="Rooftop Bar" />
-        </label>
-        <label class="field">Suburb
-          <input name="suburb" placeholder="Melbourne" />
-        </label>
-        <label class="field">Status
-          <select name="status">
-            <option value="lead">Lead</option>
-            <option value="contacted">Contacted</option>
-            <option value="interested">Interested</option>
-            <option value="partner">Partner</option>
-            <option value="not_interested">Not interested</option>
-            <option value="closed">Closed</option>
-          </select>
-        </label>
-        <label class="field">Contact name
-          <input name="contactName" placeholder="Manager name" />
-        </label>
-        <label class="field">Notes
-          <textarea name="notes" rows="3" placeholder="Follow-up notes"></textarea>
-        </label>
-        <button class="button button--primary" type="submit">Save outreach</button>
-      </form>
-    </section>
 
-    <section class="grid grid--two">
-      <div class="panel">
-        <h2>Pending submissions</h2>
-        <div id="pendingSubmissions" class="list"></div>
-      </div>
-      <div class="panel">
-        <h2>Pending venue changes</h2>
-        <p class="muted">Manager edits stay private until approved here.</p>
-        <div id="pendingBarChanges" class="list"></div>
-      </div>
-    </section>
+        <div class="adminGrid adminGrid--two">
+          <div class="panel">
+            <h2>Retention cohorts</h2>
+            <div id="retentionCohorts" class="list"></div>
+          </div>
+          <div class="panel">
+            <h2>Coverage</h2>
+            <div id="coverageDashboard" class="list"></div>
+          </div>
+        </div>
 
-    <section class="grid grid--two" style="margin-top:16px;">
-      <div class="panel">
-        <h2>Review queues</h2>
-        <div id="reviewQueues" class="list"></div>
+        <div class="adminGrid adminGrid--two">
+          <div class="panel">
+            <h2>Demand signals</h2>
+            <div id="demandSignals" class="list"></div>
+          </div>
+          <div class="panel">
+            <h2>Potential partner leads</h2>
+            <div id="partnerLeads" class="list partnerLeadList"></div>
+          </div>
+        </div>
+      </section>
       </div>
-    </section>
     </div>
 
     <div id="status" class="notice" style="margin-top:16px;">Log in as an admin account to review submissions.</div>

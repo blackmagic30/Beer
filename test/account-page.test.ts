@@ -435,6 +435,55 @@ describe("account page shell", () => {
     expect(css).toContain("overscroll-behavior: contain;");
   });
 
+  it("groups the admin page into clear workflow sections without removing tools", () => {
+    const html = adminHtml();
+    const css = businessCss();
+    const sectionOrder = [
+      'id="adminReview"',
+      'id="adminCapture"',
+      'id="adminPartners"',
+      'id="adminAnalytics"',
+    ];
+    const requiredAdminControls = [
+      'id="adminTodayQueue"',
+      'id="adminHealthPanel"',
+      'id="pendingSubmissions"',
+      'id="pendingBarChanges"',
+      'id="reviewQueues"',
+      'id="adminCaptureMetrics"',
+      'id="adminVenueSearch"',
+      'id="adminCreateVenueForm"',
+      'id="adminSourceQueueForm"',
+      'id="adminIngestionQueue"',
+      'id="venueInterestRequests"',
+      'id="venueManagerAssignments"',
+      'id="managerAssignForm"',
+      'id="outreachForm"',
+      'id="headlineMetrics"',
+      'id="retentionCohorts"',
+      'id="coverageDashboard"',
+      'id="demandSignals"',
+      'id="partnerLeads"',
+    ];
+
+    expect(html).toContain('class="adminJumpNav" aria-label="Admin workflow sections"');
+    expect(html).toContain('href="#adminReview"');
+    expect(html).toContain('href="#adminCapture"');
+    expect(html).toContain('href="#adminPartners"');
+    expect(html).toContain('href="#adminAnalytics"');
+    sectionOrder.forEach((section, index) => {
+      expect(html).toContain(section);
+      if (index > 0) {
+        expect(html.indexOf(sectionOrder[index - 1])).toBeLessThan(html.indexOf(section));
+      }
+    });
+    requiredAdminControls.forEach((control) => expect(html).toContain(control));
+    expect(css).toContain(".adminWorkbench");
+    expect(css).toContain(".adminSection");
+    expect(css).toContain(".adminJumpNav");
+    expect(css).toContain(".adminGrid--two");
+  });
+
   it("requires confirm password and keeps signup consent text readable", () => {
     const html = accountHtml();
     const css = businessCss();
