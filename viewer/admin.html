@@ -78,7 +78,7 @@
       </div>
       <div class="panel">
         <h2>Potential partner leads</h2>
-        <div id="partnerLeads" class="list"></div>
+        <div id="partnerLeads" class="list partnerLeadList"></div>
       </div>
     </section>
 
@@ -448,7 +448,7 @@
     function renderPartnerLeads(data) {
       partnerLeads.innerHTML = data.leads.length
         ? data.leads.map((lead) => `
-          <div class="listItem">
+          <div class="listItem partnerLeadList__item">
             <strong>${lead.venueName}</strong>
             <span class="pill">${lead.suggestedReason}</span>
             <div class="muted">${lead.suburb} · clicks ${lead.venueClicks} · searches nearby ${lead.searchesNearby} · requests ${lead.requests} · ${lead.dataFreshness}</div>

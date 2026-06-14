@@ -1429,6 +1429,34 @@ h3 {
   gap: 12px;
 }
 
+.partnerLeadList {
+  --partner-lead-row-height: 76px;
+  max-height: calc((var(--partner-lead-row-height) * 5) + (12px * 4));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-color: rgba(56, 189, 248, 0.55) rgba(255, 255, 255, 0.08);
+  scrollbar-width: thin;
+}
+
+.partnerLeadList::-webkit-scrollbar {
+  width: 8px;
+}
+
+.partnerLeadList::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+
+.partnerLeadList::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.7), rgba(139, 92, 246, 0.58));
+  border-radius: 999px;
+}
+
+.partnerLeadList__item {
+  min-height: var(--partner-lead-row-height);
+}
+
 .missionList {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));

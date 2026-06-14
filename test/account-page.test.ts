@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
@@ -11,8 +12,39 @@ function mapHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
 }
 
+function adminHtml() {
+  return fs.readFileSync(path.resolve(process.cwd(), "viewer/admin.html"), "utf8");
+}
+
 function businessJs() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/business.js"), "utf8");
+}
+
+function loadBusinessHelpers() {
+  const localStorage = new Map<string, string>();
+  const context = {
+    URL,
+    URLSearchParams,
+    crypto: { randomUUID: () => "test-uuid" },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    window: {
+      MELB_BEER_BOT_VIEWER_CONFIG: { business: { fieldTestMode: true } },
+      location: { origin: "https://pintpath.au", search: "" },
+      localStorage: {
+        getItem: (key: string) => localStorage.get(key) || null,
+        setItem: (key: string, value: string) => localStorage.set(key, String(value)),
+        removeItem: (key: string) => localStorage.delete(key),
+        key: (index: number) => Array.from(localStorage.keys())[index] || null,
+        get length() {
+          return localStorage.size;
+        },
+      },
+      addEventListener: () => undefined,
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(businessJs(), context);
+  return (context.window as { MelbBeerBusiness: { renderNav: (active?: string) => string } }).MelbBeerBusiness;
 }
 
 function businessCss() {
@@ -376,6 +408,31 @@ describe("account page shell", () => {
     expect(html).toContain("function syncAuthenticatedNavLinks");
     expect(html).toContain("window.MelbBeerBusiness?.isVenueManagerContext?.()");
     expect(html).toContain('document.querySelectorAll("[data-auth-required]")');
+  });
+
+  it("keeps the admin page nav focused on admin work", () => {
+    const helpers = loadBusinessHelpers();
+    const nav = helpers.renderNav("admin");
+
+    expect(nav).toContain('href="/">Map</a>');
+    expect(nav).toContain('href="/submit.html">Submit</a>');
+    expect(nav).toContain('class="pill" href="/admin.html">Admin</a>');
+    expect(nav).toContain('href="/account.html">Account</a>');
+    expect(nav).not.toContain('href="/missions.html"');
+    expect(nav).not.toContain('href="/pricing.html"');
+    expect(nav).not.toContain('href="/trust.html"');
+    expect(nav).not.toContain('href="/feedback.html"');
+  });
+
+  it("keeps potential partner leads compact on the admin page", () => {
+    const html = adminHtml();
+    const css = businessCss();
+
+    expect(html).toContain('id="partnerLeads" class="list partnerLeadList"');
+    expect(html).toContain('class="listItem partnerLeadList__item"');
+    expect(css).toContain("max-height: calc((var(--partner-lead-row-height) * 5) + (12px * 4));");
+    expect(css).toContain("overflow-y: auto;");
+    expect(css).toContain("overscroll-behavior: contain;");
   });
 
   it("requires confirm password and keeps signup consent text readable", () => {

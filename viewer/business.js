@@ -544,9 +544,15 @@ async function updatePassword(password) {
 function renderNav(active = "") {
   const activeKey = active === "trust" ? "faq" : active;
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
+  const adminPageNav = active === "admin";
   const venueManagerNav = active === "venue-portal" || isVenueManagerContext();
   const adminNav = active === "admin" || isAdminContext();
-  const navItems = [
+  const navItems = adminPageNav ? [
+    { key: "map", href: "/", label: "Map" },
+    { key: "submit", href: "/submit.html", label: "Submit" },
+    { key: "admin", href: "/admin.html", label: "Admin" },
+    { key: "account", href: "/account.html", label: "Account" },
+  ] : [
     { key: "map", href: "/", label: "Map" },
     { key: "submit", href: "/submit.html", label: "Submit" },
     { key: "missions", href: "/missions.html", label: "Missions" },
