@@ -72,6 +72,12 @@ const feedbackColumns = [
   { name: "triage_reason", definition: "TEXT" },
 ] as const;
 
+const venuePartnerOutreachColumns = [
+  { name: "tier_fit", definition: "TEXT" },
+  { name: "next_action", definition: "TEXT" },
+  { name: "last_contacted_at", definition: "TEXT" },
+] as const;
+
 const PUBLIC_ACCOUNT_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function ensureColumns(
@@ -344,6 +350,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "auth_sessions", authSessionsColumns);
   ensureColumns(database, "submissions", submissionColumns);
   ensureColumns(database, "feedback", feedbackColumns);
+  ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
   normalizeVenueTiers(database);
   backfillPublicAccountIds(database);
   ensureIndexes(database);

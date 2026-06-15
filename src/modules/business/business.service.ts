@@ -5837,7 +5837,7 @@ export class BusinessService {
       status: input.status,
       reviewedBy: admin.id,
       reviewedAt: now,
-      rejectionReason: input.status === "rejected" ? input.rejectionReason ?? "Rejected by admin review." : null,
+      rejectionReason: input.status === "rejected" ? input.rejectionReason ?? "Rejected by admin review." : input.rejectionReason,
     });
 
     this.auditSecurity({
@@ -6030,6 +6030,9 @@ export class BusinessService {
       venueName: input.venueName,
       suburb: input.suburb,
       status: input.status,
+      tierFit: input.tierFit,
+      nextAction: input.nextAction,
+      lastContactedAt: input.lastContactedAt,
       contactName: input.contactName,
       notes: input.notes,
       updatedBy: admin.id,

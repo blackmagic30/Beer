@@ -46,8 +46,8 @@
         <div class="adminGrid adminGrid--two">
           <div class="panel">
             <div class="eyebrow">Today queue</div>
-            <h2>Review first</h2>
-            <p class="muted">A simple daily queue for launch testing: new venues, OCR sources, price submissions, and trust issues.</p>
+            <h2>Command centre</h2>
+            <p class="muted">Work from the highest-risk public changes first. Each action below jumps to the right queue.</p>
             <div id="adminTodayQueue" class="list"></div>
           </div>
           <div class="panel">
@@ -220,6 +220,16 @@
           <p class="muted">Claims, assigned staff, lead notes, and manager access live together here so bar onboarding is easier to run.</p>
         </div>
 
+        <div id="pitchReadinessPanel" class="panel adminPanelSpan pitchReadinessPanel">
+          <div class="sectionHeader">
+            <div>
+              <h2>Pitch readiness</h2>
+              <p class="muted">The fastest solo-admin view of which venues are worth cleaning up and contacting next.</p>
+            </div>
+          </div>
+          <div id="pitchReadinessList" class="pitchReadinessGrid"></div>
+        </div>
+
         <div class="adminGrid adminGrid--two">
           <div class="panel">
             <h2>Venue partner interest</h2>
@@ -276,14 +286,40 @@
                 <option value="closed">Closed</option>
               </select>
             </label>
+            <div class="grid grid--two">
+              <label class="field">Tier fit
+                <select name="tierFit">
+                  <option value="">Not sure yet</option>
+                  <option value="basic">Free/basic</option>
+                  <option value="plus">Plus</option>
+                  <option value="pro">Pro</option>
+                </select>
+              </label>
+              <label class="field">Last contacted
+                <input name="lastContactedAt" type="date" />
+              </label>
+            </div>
+            <label class="field">Next action
+              <input name="nextAction" placeholder="Send venue dashboard invite" />
+            </label>
             <label class="field">Contact name
               <input name="contactName" placeholder="Manager name" />
             </label>
             <label class="field">Notes
-              <textarea name="notes" rows="3" placeholder="Follow-up notes"></textarea>
+              <textarea name="notes" rows="3" placeholder="Pitch angle, objections, and follow-up notes"></textarea>
             </label>
             <button class="button button--primary" type="submit">Save outreach</button>
           </form>
+        </div>
+
+        <div class="panel adminPanelSpan">
+          <div class="sectionHeader">
+            <div>
+              <h2>Outreach pipeline</h2>
+              <p class="muted">Lightweight CRM notes for bars that may want Plus, Pro, or manager access.</p>
+            </div>
+          </div>
+          <div id="venueOutreachList" class="list"></div>
         </div>
       </section>
 
@@ -338,6 +374,26 @@
     </div>
 
     <div id="status" class="notice" style="margin-top:16px;">Log in as an admin account to review submissions.</div>
+
+    <dialog id="reviewDecisionDialog" class="reviewDecisionDialog" aria-labelledby="reviewDecisionTitle">
+      <form method="dialog" class="reviewDecisionDialog__panel">
+        <div>
+          <div id="reviewDecisionEyebrow" class="eyebrow">Admin decision</div>
+          <h2 id="reviewDecisionTitle">Review decision</h2>
+          <p id="reviewDecisionCopy" class="muted">Choose a reason so the audit trail stays readable later.</p>
+        </div>
+        <label class="field">Decision reason
+          <select id="reviewDecisionReason"></select>
+        </label>
+        <label class="field">Admin note
+          <textarea id="reviewDecisionNote" rows="3" placeholder="Optional extra context"></textarea>
+        </label>
+        <div class="actionRow reviewDecisionDialog__actions">
+          <button id="reviewDecisionCancel" class="button" value="cancel" type="button">Cancel</button>
+          <button id="reviewDecisionConfirm" class="button button--primary" value="confirm" type="button">Confirm</button>
+        </div>
+      </form>
+    </dialog>
   </main>
 
   <script>
@@ -397,7 +453,50 @@
     let selectedManagerVenueId = null;
     let managerAccountSearchMessage = "Search for the staff member's Pint Path account.";
     let latestAdminTodayPayload = null;
+    let reviewDecisionState = null;
     const ADMIN_TAB_KEYS = ["review", "capture", "partners", "analytics"];
+    const REVIEW_REASON_OPTIONS = {
+      approved: [
+        "Clean evidence and venue match",
+        "Google venue match confirmed",
+        "Known venue data confirmed",
+      ],
+      needs_more_evidence: [
+        "Need clearer menu/photo evidence",
+        "Need venue/location proof",
+        "Need price or beer name clarification",
+      ],
+      rejected: [
+        "Could not verify source",
+        "Duplicate or outdated data",
+        "Venue mismatch",
+      ],
+      fraud_flagged: [
+        "Suspicious or manipulated evidence",
+        "Repeated bad submission pattern",
+        "Unsafe or abusive content",
+      ],
+      venue_change_approved: [
+        "Manager update looks correct",
+        "Removal requested by assigned venue manager",
+        "Matches trusted venue information",
+      ],
+      venue_change_rejected: [
+        "Needs more detail from venue manager",
+        "Would remove useful public data",
+        "Conflicts with trusted venue information",
+      ],
+      source_published: [
+        "Rows match the menu photo",
+        "Low-risk manual corrections applied",
+        "Trusted source reviewed",
+      ],
+      source_rejected: [
+        "OCR too noisy to publish",
+        "Source does not match venue",
+        "Image or URL is not usable",
+      ],
+    };
 
     function requestedAdminTab() {
       const params = new URLSearchParams(window.location.search);
@@ -427,6 +526,161 @@
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
       });
+    }
+
+    function adminJumpTo(target, selector) {
+      showAdminTab(target);
+      window.requestAnimationFrame(() => {
+        const element = selector ? document.querySelector(selector) : document.querySelector(`[data-admin-tab-panel="${target}"]`);
+        element?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+
+    function wireAdminJumpActions(root = document) {
+      root.querySelectorAll("[data-admin-jump]").forEach((button) => {
+        button.addEventListener("click", () => {
+          adminJumpTo(button.dataset.adminJump, button.dataset.adminJumpTarget);
+        });
+      });
+    }
+
+    function reasonOptionsHtml(options) {
+      return options.map((reason) => `<option value="${escapeHtml(reason)}">${escapeHtml(reason)}</option>`).join("");
+    }
+
+    function openReviewDecision(config) {
+      reviewDecisionState = config;
+      reviewDecisionEyebrow.textContent = config.eyebrow || "Admin decision";
+      reviewDecisionTitle.textContent = config.title || "Review decision";
+      reviewDecisionCopy.textContent = config.copy || "Choose a reason so the audit trail stays readable later.";
+      reviewDecisionReason.innerHTML = reasonOptionsHtml(config.reasons || ["Reviewed by admin"]);
+      reviewDecisionNote.value = config.defaultNote || "";
+      reviewDecisionNote.placeholder = config.notePlaceholder || "Optional extra context";
+      reviewDecisionConfirm.textContent = config.confirmLabel || "Confirm";
+      reviewDecisionConfirm.classList.toggle("button--danger", config.tone === "danger");
+      reviewDecisionConfirm.classList.toggle("button--primary", config.tone !== "danger");
+      if (typeof reviewDecisionDialog.showModal === "function") {
+        reviewDecisionDialog.showModal();
+      } else {
+        reviewDecisionDialog.setAttribute("open", "");
+      }
+      reviewDecisionReason.focus();
+    }
+
+    function closeReviewDecision() {
+      reviewDecisionState = null;
+      reviewDecisionDialog.close?.();
+      reviewDecisionDialog.removeAttribute("open");
+    }
+
+    function buildReviewNote(reason, note) {
+      const trimmedReason = String(reason || "").trim();
+      const trimmedNote = String(note || "").trim();
+      return [trimmedReason, trimmedNote].filter(Boolean).join(" · ") || null;
+    }
+
+    async function confirmReviewDecision() {
+      if (!reviewDecisionState?.onConfirm) {
+        closeReviewDecision();
+        return;
+      }
+
+      const reason = reviewDecisionReason.value;
+      const note = reviewDecisionNote.value;
+      reviewDecisionConfirm.disabled = true;
+      reviewDecisionCancel.disabled = true;
+      try {
+        await reviewDecisionState.onConfirm({ reason, note, combinedNote: buildReviewNote(reason, note) });
+        closeReviewDecision();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message || "Review action failed.", true);
+      } finally {
+        reviewDecisionConfirm.disabled = false;
+        reviewDecisionCancel.disabled = false;
+      }
+    }
+
+    function getSubmissionPriority(submission) {
+      let score = 0;
+      if (submission.pendingVenue) score += 70;
+      if (submission.sourcePhotoPath || submission.sourcePhotoDataUrl || submission.hasPhotoEvidence) score += 20;
+      if (Array.isArray(submission.items) && submission.items.length >= 3) score += 14;
+      if (submission.pointsEligibleByLocation) score += 8;
+      if (submission.submissionType === "happy_hour") score += 6;
+      if (submission.pointsEligibilityReason) score -= 4;
+      return score;
+    }
+
+    function submissionPriorityLabel(submission) {
+      const score = getSubmissionPriority(submission);
+      if (submission.pendingVenue) return { label: "Launch impact", tone: "premium" };
+      if (score >= 34) return { label: "High confidence", tone: "success" };
+      if (score >= 18) return { label: "Review next", tone: "info" };
+      return { label: "Needs care", tone: "warning" };
+    }
+
+    function getLeadScore(lead) {
+      return Math.min(100, Math.round(
+        Number(lead.venueClicks || 0) * 6 +
+        Number(lead.searchesNearby || 0) * 5 +
+        Number(lead.requests || 0) * 12 +
+        (lead.dataFreshness === "stale_or_missing" ? 14 : 4),
+      ));
+    }
+
+    function suggestedTierForLead(lead) {
+      const score = getLeadScore(lead);
+      if (score >= 72 || Number(lead.requests || 0) >= 3) return "pro";
+      if (score >= 36 || lead.dataFreshness === "stale_or_missing") return "plus";
+      return "basic";
+    }
+
+    function suggestedPitchForLead(lead) {
+      if (Number(lead.requests || 0) > 0) {
+        return "Users are already asking for this venue. Pitch verified prices, Pint Path specials, and owner-controlled updates.";
+      }
+      if (lead.dataFreshness === "stale_or_missing") {
+        return "High intent but weak data. Pitch a quick setup call to make their listing accurate before competitors look better.";
+      }
+      return "Healthy discovery signal. Pitch Plus visibility first, then Pro if they want Pint Path specials.";
+    }
+
+    function suggestedNextActionForLead(lead) {
+      const tier = suggestedTierForLead(lead);
+      return tier === "pro"
+        ? "Offer Pro demo and Pint Path special setup"
+        : tier === "plus"
+          ? "Send Plus visibility pitch"
+          : "Invite manager to claim venue dashboard";
+    }
+
+    function leadDatasetAttributes(lead, tier, pitch, nextAction) {
+      return [
+        `data-venue-id="${escapeHtml(lead.venueId || "")}"`,
+        `data-venue-name="${escapeHtml(lead.venueName || "")}"`,
+        `data-suburb="${escapeHtml(lead.suburb || "")}"`,
+        `data-tier-fit="${escapeHtml(tier || "")}"`,
+        `data-next-action="${escapeHtml(nextAction || "")}"`,
+        `data-notes="${escapeHtml(pitch || "")}"`,
+      ].join(" ");
+    }
+
+    function leadCaptureLabel(lead) {
+      if (lead.dataFreshness === "stale_or_missing") {
+        return { label: "Needs data cleanup", ready: false };
+      }
+      return { label: "Data looks pitchable", ready: true };
+    }
+
+    function leadChecklistItems(lead, outreach, hasManager) {
+      const demandCount = Number(lead.venueClicks || 0) + Number(lead.searchesNearby || 0) + Number(lead.requests || 0);
+      const capture = leadCaptureLabel(lead);
+      return [
+        { label: demandCount > 0 ? "Real user demand" : "Demand not proven yet", ready: demandCount > 0 },
+        { label: capture.label, ready: capture.ready },
+        { label: outreach ? `Outreach: ${String(outreach.status || "lead").replace("_", " ")}` : "No outreach note yet", ready: Boolean(outreach) },
+        { label: hasManager ? "Manager access ready" : "Manager access not assigned", ready: hasManager },
+      ];
     }
 
     function renderKpis(data) {
@@ -513,14 +767,124 @@
 
     function renderPartnerLeads(data) {
       partnerLeads.innerHTML = data.leads.length
-        ? data.leads.map((lead) => `
+        ? data.leads.map((lead) => {
+          const score = getLeadScore(lead);
+          const tier = suggestedTierForLead(lead);
+          const pitch = suggestedPitchForLead(lead);
+          const nextAction = suggestedNextActionForLead(lead);
+          const attrs = leadDatasetAttributes(lead, tier, pitch, nextAction);
+          return `
           <div class="listItem partnerLeadList__item">
-            <strong>${lead.venueName}</strong>
-            <span class="pill">${lead.suggestedReason}</span>
-            <div class="muted">${lead.suburb} · clicks ${lead.venueClicks} · searches nearby ${lead.searchesNearby} · requests ${lead.requests} · ${lead.dataFreshness}</div>
+            <div class="adminCrmLead__header">
+              <div>
+                <strong>${escapeHtml(lead.venueName)}</strong>
+                <div class="muted">${escapeHtml(lead.suburb)} · clicks ${lead.venueClicks} · searches nearby ${lead.searchesNearby} · requests ${lead.requests} · ${escapeHtml(lead.dataFreshness)}</div>
+              </div>
+              <span class="pill pill--premium">${score}/100</span>
+            </div>
+            <div class="adminCrmLead__meta">
+              <span class="pill">${escapeHtml(lead.suggestedReason)}</span>
+              <span class="pill">${escapeHtml(tier.toUpperCase())} fit</span>
+              <span class="pill">${escapeHtml(nextAction)}</span>
+            </div>
+            <div class="muted">${escapeHtml(pitch)}</div>
+            <button
+              class="button button--small"
+              type="button"
+              data-prefill-lead
+              ${attrs}
+            >Use this lead</button>
           </div>
-        `).join("")
+        `;
+        }).join("")
         : '<div class="listItem muted">No partner-lead signals yet.</div>';
+      partnerLeads.querySelectorAll("[data-prefill-lead]").forEach((button) => {
+        button.addEventListener("click", () => prefillOutreachFromLead(button.dataset));
+      });
+    }
+
+    function renderPitchReadiness(leadsData, partnerData = {}) {
+      const leads = Array.isArray(leadsData?.leads) ? leadsData.leads : [];
+      const outreachByVenue = new Map((partnerData.outreach || []).map((item) => [item.venueId, item]));
+      const assignedVenueIds = new Set((partnerData.assignments || []).map((item) => item.venueId));
+      const topLeads = [...leads]
+        .sort((a, b) => getLeadScore(b) - getLeadScore(a))
+        .slice(0, 3);
+
+      pitchReadinessList.innerHTML = topLeads.length
+        ? topLeads.map((lead, index) => {
+          const score = getLeadScore(lead);
+          const tier = suggestedTierForLead(lead);
+          const pitch = suggestedPitchForLead(lead);
+          const nextAction = suggestedNextActionForLead(lead);
+          const outreach = outreachByVenue.get(lead.venueId);
+          const hasManager = assignedVenueIds.has(lead.venueId);
+          const checklist = leadChecklistItems(lead, outreach, hasManager);
+          const attrs = leadDatasetAttributes(lead, tier, pitch, nextAction);
+          const tone = tier === "pro" ? "premium" : tier === "plus" ? "info" : "success";
+          return `
+            <article class="pitchReadinessCard pitchReadinessCard--${escapeHtml(tone)}">
+              <div class="adminCrmLead__header">
+                <div>
+                  <span class="eyebrow">Pitch ${index + 1}</span>
+                  <h3>${escapeHtml(lead.venueName)}</h3>
+                  <div class="muted">${escapeHtml(lead.suburb || "Melbourne")} · clicks ${lead.venueClicks || 0} · searches ${lead.searchesNearby || 0} · requests ${lead.requests || 0}</div>
+                </div>
+                <span class="pill pill--${escapeHtml(tone)}">${score}/100</span>
+              </div>
+              <div class="adminCrmLead__meta">
+                <span class="pill">${escapeHtml(tier.toUpperCase())} fit</span>
+                <span class="pill">${escapeHtml(nextAction)}</span>
+              </div>
+              <p class="muted">${escapeHtml(pitch)}</p>
+              <ul class="pitchReadinessChecklist">
+                ${checklist.map((item) => `<li class="${item.ready ? "is-ready" : ""}">${escapeHtml(item.label)}</li>`).join("")}
+              </ul>
+              <div class="actionRow actionRow--compact">
+                <button class="button button--small button--primary" type="button" data-prep-pitch ${attrs}>Prep pitch</button>
+                <button class="button button--small" type="button" data-capture-lead ${attrs}>Open capture</button>
+              </div>
+            </article>
+          `;
+        }).join("")
+        : '<div class="listItem muted">No pitch-ready venues yet. Add more field data and partner signals first.</div>';
+
+      pitchReadinessList.querySelectorAll("[data-prep-pitch]").forEach((button) => {
+        button.addEventListener("click", () => prefillOutreachFromLead(button.dataset));
+      });
+      pitchReadinessList.querySelectorAll("[data-capture-lead]").forEach((button) => {
+        button.addEventListener("click", () => openLeadCapture(button.dataset));
+      });
+    }
+
+    function prefillOutreachFromLead(lead) {
+      outreachForm.elements.venueId.value = lead.venueId || "";
+      outreachForm.elements.venueName.value = lead.venueName || "";
+      outreachForm.elements.suburb.value = lead.suburb || "";
+      outreachForm.elements.status.value = "lead";
+      outreachForm.elements.tierFit.value = lead.tierFit || "";
+      outreachForm.elements.nextAction.value = lead.nextAction || "";
+      outreachForm.elements.notes.value = lead.notes || "";
+      adminJumpTo("partners", "#outreachForm");
+      MelbBeerBusiness.setStatus(statusEl, "Partner lead copied into the outreach form.");
+    }
+
+    function openLeadCapture(lead) {
+      const venueId = lead.venueId || "";
+      const venue = adminVenues.find((item) => item.id === venueId);
+      if (venue) {
+        selectedAdminVenueId = venue.id;
+        adminVenueSearch.value = venue.name;
+        renderAdminVenueOptions();
+        setLocalNotice(adminCaptureStatus, `${venue.name} is selected for beer capture.`);
+      } else {
+        const query = [lead.venueName, lead.suburb].filter(Boolean).join(" ");
+        adminVenueSearch.value = query;
+        adminGoogleVenueSearch.value = query;
+        renderAdminVenueOptions();
+        setLocalNotice(adminCaptureStatus, "Search is filled. Pick an existing venue, or use Google venue add if it is missing.", true);
+      }
+      adminJumpTo("capture", "#adminVenueSearch");
     }
 
     function setLocalNotice(element, message, isWarning = false) {
@@ -631,21 +995,33 @@
           title: `${newVenueCount} new venue ${newVenueCount === 1 ? "request" : "requests"}`,
           copy: newVenueCount ? "Check Google match, beer rows, and evidence before publishing." : "No new venue requests waiting.",
           action: "Pending submissions",
+          target: "review",
+          selector: "#pendingSubmissions",
+          tone: newVenueCount ? "premium" : "success",
         },
         {
           title: `${pendingSubmissions.length} price/data ${pendingSubmissions.length === 1 ? "submission" : "submissions"}`,
           copy: pendingSubmissions.length ? "Approve clean rows first; send unclear rows to evidence." : "No pending user submissions.",
           action: "Review submissions",
+          target: "review",
+          selector: "#pendingSubmissions",
+          tone: pendingSubmissions.length ? "info" : "success",
         },
         {
           title: `${ocrPending} OCR ${ocrPending === 1 ? "source" : "sources"} pending`,
           copy: ocrPending ? "Review extracted rows and publish only clean, venue-matched prices." : "No pending OCR source queue items loaded.",
           action: "Source review",
+          target: "capture",
+          selector: "#adminIngestionQueue",
+          tone: ocrPending ? "warning" : "success",
         },
         {
           title: `${trustIssues} trust ${trustIssues === 1 ? "item" : "items"}`,
           copy: trustIssues ? "Wrong-price reports and contact messages should be cleared before public launch." : "No open trust issues from the current queue.",
           action: "Trust queue",
+          target: "review",
+          selector: "#reviewQueues",
+          tone: trustIssues ? "warning" : "success",
         },
       ];
 
@@ -654,16 +1030,19 @@
           ${renderMetric("Searches today", Number(metrics.totalVenueSearches || 0) + Number(metrics.totalBeerSearches || 0))}
           ${renderMetric("Submissions today", metrics.totalSubmissionCompletions || 0)}
         </div>
-        ${rows.map((row) => `
-          <div class="listItem dataRow">
+        <div class="adminCommandGrid">
+        ${rows.map((row, index) => `
+          <button class="listItem listItem--button adminCommandCard adminCommandCard--${escapeHtml(row.tone)}" type="button" data-admin-jump="${escapeHtml(row.target)}" data-admin-jump-target="${escapeHtml(row.selector)}">
             <div>
               <strong>${escapeHtml(row.title)}</strong>
               <div class="muted">${escapeHtml(row.copy)}</div>
             </div>
-            <span class="pill">${escapeHtml(row.action)}</span>
-          </div>
+            <span class="pill">${index + 1}. ${escapeHtml(row.action)}</span>
+          </button>
         `).join("")}
+        </div>
       `;
+      wireAdminJumpActions(adminTodayQueue);
     }
 
     function syncAdminCaptureControls() {
@@ -1253,6 +1632,39 @@
       ]);
     }
 
+    function confidencePill(confidence) {
+      if (confidence == null) {
+        return '<span class="pill">No confidence</span>';
+      }
+      const percent = Math.round(Number(confidence) * 100);
+      const tone = percent >= 82 ? "pill--success" : percent >= 58 ? "pill--warning" : "pill--danger";
+      return `<span class="pill ${tone}">${percent}% confidence</span>`;
+    }
+
+    function renderSourceEvidence(item) {
+      const source = item.imageDataUrl || item.sourceUrl;
+      const sourceLabel = item.imageDataUrl ? "Uploaded image" : item.sourceUrl ? "Source URL" : "No image source";
+      const canPreviewImage = source && (/^data:image\//i.test(source) || /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(source));
+      return `
+        <aside class="adminSourceEvidence">
+          <div class="eyebrow">Evidence</div>
+          <strong>${escapeHtml(sourceLabel)}</strong>
+          ${canPreviewImage ? `
+            <a href="${escapeHtml(source)}" target="_blank" rel="noopener" class="adminSourceEvidence__imageLink" aria-label="Open source image">
+              <img src="${escapeHtml(source)}" alt="Menu source for ${escapeHtml(item.venueName)}" />
+            </a>
+          ` : `
+            <div class="adminSourceEvidence__empty">${source ? escapeHtml(source) : "No preview available for this source."}</div>
+          `}
+          <div class="adminSourceEvidence__meta">
+            <span>${escapeHtml(item.sourceType)}</span>
+            <span>${escapeHtml(MelbBeerBusiness.formatDate(item.createdAt))}</span>
+            ${item.venueNameGuess ? `<span>OCR venue: ${escapeHtml(item.venueNameGuess)}</span>` : ""}
+          </div>
+        </aside>
+      `;
+    }
+
     function renderAdminIngestionQueue(items) {
       window.__adminIngestionQueueItems = Array.isArray(items) ? items : [];
       renderAdminTodayQueue();
@@ -1267,14 +1679,26 @@
                   <div class="muted">${escapeHtml(item.sourceType)} · ${escapeHtml(item.status)} · ${escapeHtml(MelbBeerBusiness.formatDate(item.createdAt))}</div>
                   <div class="muted">${escapeHtml(item.capturedNotes || item.note || "No source notes")}</div>
                 </div>
-                <span class="pill">${item.overallConfidence == null ? "No confidence" : `${Math.round(Number(item.overallConfidence) * 100)}% confidence`}</span>
+                ${confidencePill(item.overallConfidence)}
               </div>
-              <div class="adminQueueBeerRows" data-ingestion-beers="${escapeHtml(item.id)}"></div>
-              <label class="field" style="margin-top:12px;">Review note
-                <textarea data-ingestion-note rows="2" placeholder="Optional publish or rejection note"></textarea>
-              </label>
+              <div class="adminSourceReviewLayout">
+                ${renderSourceEvidence(item)}
+                <section class="adminSourceRows">
+                  <div class="sectionHeader">
+                    <div>
+                      <h3>Extracted rows</h3>
+                      <p class="muted">Edit only the rows you are comfortable publishing.</p>
+                    </div>
+                    <span class="pill">${beers.length} row${beers.length === 1 ? "" : "s"}</span>
+                  </div>
+                  <div class="adminQueueBeerRows" data-ingestion-beers="${escapeHtml(item.id)}"></div>
+                  <label class="field" style="margin-top:12px;">Review note
+                    <textarea data-ingestion-note rows="2" placeholder="Optional publish or rejection note"></textarea>
+                  </label>
+                </section>
+              </div>
               ${item.status === "pending_review" ? `
-                <div class="actionRow" style="margin-top:10px;">
+                <div class="actionRow adminReviewActionBar" style="margin-top:10px;">
                   <button class="button button--small button--primary" type="button" data-publish-ingestion>Publish rows</button>
                   <button class="button button--small button--danger" type="button" data-reject-ingestion>Reject source</button>
                 </div>
@@ -1290,10 +1714,10 @@
         setBeerRows(rowsContainer, beers);
       });
       adminIngestionQueue.querySelectorAll("[data-publish-ingestion]").forEach((button) => {
-        button.addEventListener("click", () => publishQueuedIngestion(button.closest(".adminIngestionItem")));
+        button.addEventListener("click", () => promptQueuedIngestionReview(button.closest(".adminIngestionItem"), "publish"));
       });
       adminIngestionQueue.querySelectorAll("[data-reject-ingestion]").forEach((button) => {
-        button.addEventListener("click", () => rejectQueuedIngestion(button.closest(".adminIngestionItem")));
+        button.addEventListener("click", () => promptQueuedIngestionReview(button.closest(".adminIngestionItem"), "reject"));
       });
     }
 
@@ -1439,14 +1863,44 @@
       }
     }
 
-    async function publishQueuedIngestion(article) {
+    function promptQueuedIngestionReview(article, action) {
+      if (!article) return;
+      const venueName = article.querySelector("strong")?.textContent || "source ingestion";
+      const note = article.querySelector("[data-ingestion-note]")?.value || "";
+      if (action === "publish") {
+        openReviewDecision({
+          eyebrow: "Source review",
+          title: `Publish OCR rows for ${venueName}`,
+          copy: "Only publish rows that match the visible source and venue.",
+          confirmLabel: "Publish rows",
+          reasons: REVIEW_REASON_OPTIONS.source_published,
+          defaultNote: note,
+          onConfirm: ({ combinedNote }) => publishQueuedIngestion(article, combinedNote),
+        });
+        return;
+      }
+
+      openReviewDecision({
+        eyebrow: "Source review",
+        title: `Reject OCR source for ${venueName}`,
+        copy: "Pick the clearest rejection reason so future admins understand what happened.",
+        confirmLabel: "Reject source",
+        tone: "danger",
+        reasons: REVIEW_REASON_OPTIONS.source_rejected,
+        defaultNote: note,
+        onConfirm: ({ combinedNote }) => rejectQueuedIngestion(article, combinedNote),
+      });
+    }
+
+    async function publishQueuedIngestion(article, modalNote = null) {
       if (!article) return;
       try {
         const beers = collectBeerRows(article.querySelector(".adminQueueBeerRows"));
         if (!beers.length) {
           throw new Error("Keep at least one beer row before publishing.");
         }
-        const note = article.querySelector("[data-ingestion-note]").value.trim() || null;
+        const inlineNote = article.querySelector("[data-ingestion-note]").value.trim() || null;
+        const note = modalNote || inlineNote;
         await MelbBeerBusiness.apiFetch(`/api/admin/ingestions/${encodeURIComponent(article.dataset.ingestionId)}/publish`, {
           method: "POST",
           body: JSON.stringify({ beers, note }),
@@ -1458,10 +1912,11 @@
       }
     }
 
-    async function rejectQueuedIngestion(article) {
+    async function rejectQueuedIngestion(article, modalNote = null) {
       if (!article) return;
       try {
-        const note = article.querySelector("[data-ingestion-note]").value.trim() || null;
+        const inlineNote = article.querySelector("[data-ingestion-note]").value.trim() || null;
+        const note = modalNote || inlineNote;
         await MelbBeerBusiness.apiFetch(`/api/admin/ingestions/${encodeURIComponent(article.dataset.ingestionId)}/reject`, {
           method: "POST",
           body: JSON.stringify({ note }),
@@ -1525,15 +1980,43 @@
         button.addEventListener("click", () => revokeVenueManager(button.dataset.revokeUser, button.dataset.revokeVenue));
       });
 
+      const outreach = data.outreach || [];
+      venueOutreachList.innerHTML = outreach.length
+        ? outreach.map((item) => `
+          <article class="listItem adminCrmCard">
+            <div class="adminCrmLead__header">
+              <div>
+                <strong>${escapeHtml(item.venueName)}</strong>
+                <div class="muted">${escapeHtml(item.suburb || "Melbourne")} · updated ${escapeHtml(MelbBeerBusiness.formatDate(item.updatedAt))}</div>
+              </div>
+              <div class="adminReviewCard__badges">
+                <span class="pill">${escapeHtml(String(item.status || "lead").replace("_", " "))}</span>
+                ${item.tierFit ? `<span class="pill pill--premium">${escapeHtml(String(item.tierFit).toUpperCase())}</span>` : ""}
+              </div>
+            </div>
+            <div class="adminCrmLead__meta">
+              ${item.contactName ? `<span class="pill">Contact: ${escapeHtml(item.contactName)}</span>` : ""}
+              ${item.lastContactedAt ? `<span class="pill">Last: ${escapeHtml(item.lastContactedAt)}</span>` : ""}
+              ${item.nextAction ? `<span class="pill">Next: ${escapeHtml(item.nextAction)}</span>` : ""}
+            </div>
+            <div class="muted">${escapeHtml(item.notes || "No outreach notes yet.")}</div>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No outreach notes saved yet. Use a partner lead or save the form above.</div>';
+
       const pendingChanges = data.pendingChanges || [];
       pendingBarChanges.innerHTML = pendingChanges.length
         ? pendingChanges.map((change) => `
-          <article class="listItem">
-            <strong>${escapeHtml(change.changeType.replace("_", " "))} · ${escapeHtml(change.action)}</strong>
-            <span class="pill">${escapeHtml(change.status)}</span>
-            <div class="muted">${escapeHtml(change.venueId || change.barId)} · submitted by ${escapeHtml(change.submittedBy)} · ${escapeHtml(change.submittedAt)}</div>
+          <article class="listItem adminReviewCard">
+            <div class="adminReviewCard__header">
+              <div>
+                <strong>${escapeHtml(change.changeType.replace("_", " "))} · ${escapeHtml(change.action)}</strong>
+                <div class="muted">${escapeHtml(change.venueId || change.barId)} · submitted by ${escapeHtml(change.submittedBy)} · ${escapeHtml(change.submittedAt)}</div>
+              </div>
+              <span class="pill">${escapeHtml(change.status)}</span>
+            </div>
             <div class="muted">${escapeHtml(summarizePendingPayload(change.payload))}</div>
-            <div class="actionRow">
+            <div class="actionRow adminReviewActionBar">
               <button class="button button--small button--primary" type="button" data-review-change="${escapeHtml(change.id)}" data-review-status="approved">Approve</button>
               <button class="button button--small button--danger" type="button" data-review-change="${escapeHtml(change.id)}" data-review-status="rejected">Reject</button>
             </div>
@@ -1541,7 +2024,8 @@
         `).join("")
         : '<div class="listItem muted">No pending venue changes.</div>';
       pendingBarChanges.querySelectorAll("[data-review-change]").forEach((button) => {
-        button.addEventListener("click", () => reviewVenueChange(button.dataset.reviewChange, button.dataset.reviewStatus));
+        const change = pendingChanges.find((item) => item.id === button.dataset.reviewChange);
+        button.addEventListener("click", () => promptVenueChangeReview(change, button.dataset.reviewStatus));
       });
     }
 
@@ -1552,11 +2036,50 @@
         .join(" · ") || "Pending venue update";
     }
 
-    async function reviewSubmission(id, status) {
+    function promptSubmissionReview(submission, status) {
+      if (!submission?.id || !status) return;
+      const reasonKey = status;
+      const approve = status === "approved";
+      const titleByStatus = {
+        approved: submission.pendingVenue ? "Approve and publish venue" : "Approve submission",
+        needs_more_evidence: "Ask for more evidence",
+        rejected: "Reject submission",
+        fraud_flagged: "Flag submission as fraud",
+      };
+      openReviewDecision({
+        eyebrow: "Submission review",
+        title: `${titleByStatus[status] || "Review submission"} · ${submission.venueName}`,
+        copy: approve
+          ? "Confirm the evidence is good enough to publish and award points."
+          : "Choose the clearest reason so the contributor and future admins have context.",
+        confirmLabel: approve ? "Approve" : titleByStatus[status] || "Confirm",
+        tone: status === "rejected" || status === "fraud_flagged" ? "danger" : "default",
+        reasons: REVIEW_REASON_OPTIONS[reasonKey] || REVIEW_REASON_OPTIONS.rejected,
+        onConfirm: ({ combinedNote }) => reviewSubmission(submission.id, status, combinedNote),
+      });
+    }
+
+    function promptVenueChangeReview(change, status) {
+      if (!change?.id || !status) return;
+      const approved = status === "approved";
+      openReviewDecision({
+        eyebrow: "Venue manager change",
+        title: `${approved ? "Approve" : "Reject"} ${String(change.changeType || "venue change").replace("_", " ")}`,
+        copy: approved
+          ? "Approving publishes this manager change to the live venue data."
+          : "Rejecting keeps the public venue data unchanged.",
+        confirmLabel: approved ? "Approve change" : "Reject change",
+        tone: approved ? "default" : "danger",
+        reasons: REVIEW_REASON_OPTIONS[approved ? "venue_change_approved" : "venue_change_rejected"],
+        onConfirm: ({ combinedNote }) => reviewVenueChange(change.id, status, combinedNote),
+      });
+    }
+
+    async function reviewSubmission(id, status, note = null) {
       try {
         const body = status === "approved"
-          ? { status, confidence: "photo_verified" }
-          : { status, rejectionReason: status === "fraud_flagged" ? "Fraud flagged by admin." : "Rejected during demo review.", fraudFlagged: status === "fraud_flagged" };
+          ? { status, confidence: "photo_verified", rejectionReason: note }
+          : { status, rejectionReason: note || (status === "fraud_flagged" ? "Fraud flagged by admin." : "Rejected during admin review."), fraudFlagged: status === "fraud_flagged" };
         const result = await MelbBeerBusiness.apiFetch(`/api/business/submissions/${id}/review`, {
           method: "POST",
           body: JSON.stringify(body),
@@ -1568,14 +2091,14 @@
       }
     }
 
-    async function reviewVenueChange(id, status) {
+    async function reviewVenueChange(id, status, note = null) {
       if (!id || !status) return;
       try {
         await MelbBeerBusiness.apiFetch(`/api/business/admin/venue-pending-changes/${encodeURIComponent(id)}/review`, {
           method: "POST",
           body: JSON.stringify({
             status,
-            rejectionReason: status === "rejected" ? "Rejected during admin review." : null,
+            rejectionReason: note,
           }),
         });
         MelbBeerBusiness.setStatus(statusEl, status === "approved" ? "Venue change approved and published." : "Venue change rejected.");
@@ -1663,13 +2186,24 @@
 
     async function loadAdmin() {
       const submissions = await MelbBeerBusiness.apiFetch("/api/business/submissions?status=pending&limit=100");
-      pendingSubmissions.innerHTML = submissions.submissions.length
-        ? submissions.submissions.map((submission) => `
-          <article class="listItem">
-            <strong>${submission.venueName}</strong>
-            <span class="pill">${submission.submissionType}</span>
-            ${submission.pendingVenue ? '<span class="pill">New venue</span>' : ""}
-            <div class="muted">${submission.suburb || "Melbourne"} · observed ${MelbBeerBusiness.formatDate(submission.observedAt)}</div>
+      const prioritySubmissions = [...(submissions.submissions || [])]
+        .sort((a, b) => getSubmissionPriority(b) - getSubmissionPriority(a));
+      pendingSubmissions.innerHTML = prioritySubmissions.length
+        ? prioritySubmissions.map((submission) => {
+          const priority = submissionPriorityLabel(submission);
+          return `
+          <article class="listItem adminReviewCard adminReviewCard--${escapeHtml(priority.tone)}">
+            <div class="adminReviewCard__header">
+              <div>
+                <strong>${escapeHtml(submission.venueName)}</strong>
+                <div class="muted">${escapeHtml(submission.suburb || "Melbourne")} · observed ${MelbBeerBusiness.formatDate(submission.observedAt)}</div>
+              </div>
+              <div class="adminReviewCard__badges">
+                <span class="pill pill--${escapeHtml(priority.tone)}">${escapeHtml(priority.label)}</span>
+                <span class="pill">${escapeHtml(submission.submissionType)}</span>
+                ${submission.pendingVenue ? '<span class="pill pill--premium">New venue</span>' : ""}
+              </div>
+            </div>
             ${submission.pendingVenue ? `
               <div class="muted">Venue request: ${escapeHtml(submission.pendingVenue.address || "Address not supplied")}${submission.pendingVenue.latitude != null && submission.pendingVenue.longitude != null ? ` · ${Number(submission.pendingVenue.latitude).toFixed(5)}, ${Number(submission.pendingVenue.longitude).toFixed(5)}` : ""}</div>
               <div class="muted">${escapeHtml([submission.pendingVenue.phone, submission.pendingVenue.website].filter(Boolean).join(" · ") || "No phone or website supplied")}</div>
@@ -1679,17 +2213,32 @@
             </div>
             <div class="muted">Points location: ${submission.pointsEligibleByLocation ? "within 200m" : "not eligible"}${submission.distanceToVenueMeters != null ? ` · ${Math.round(Number(submission.distanceToVenueMeters))}m from venue` : ""}${submission.pointsEligibilityReason ? ` · ${escapeHtml(submission.pointsEligibilityReason)}` : ""}</div>
             <div class="muted">${escapeHtml(submission.notes || "No notes")}</div>
-            <button class="button button--primary" data-approve="${submission.id}">${submission.pendingVenue ? "Approve + publish venue" : "Approve"}</button>
-            <button class="button" data-evidence="${submission.id}">Needs evidence</button>
-            <button class="button button--danger" data-reject="${submission.id}">Reject</button>
-            <button class="button button--danger" data-fraud="${submission.id}">Flag fraud</button>
+            <div class="actionRow adminReviewActionBar">
+              <button class="button button--primary" data-approve="${escapeHtml(submission.id)}">${submission.pendingVenue ? "Approve + publish venue" : "Approve"}</button>
+              <button class="button" data-evidence="${escapeHtml(submission.id)}">Needs evidence</button>
+              <button class="button button--danger" data-reject="${escapeHtml(submission.id)}">Reject</button>
+              <button class="button button--danger" data-fraud="${escapeHtml(submission.id)}">Flag fraud</button>
+            </div>
           </article>
-        `).join("")
+        `;
+        }).join("")
         : '<div class="listItem muted">No pending submissions.</div>';
-      pendingSubmissions.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.approve, "approved")));
-      pendingSubmissions.querySelectorAll("[data-evidence]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.evidence, "needs_more_evidence")));
-      pendingSubmissions.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.reject, "rejected")));
-      pendingSubmissions.querySelectorAll("[data-fraud]").forEach((button) => button.addEventListener("click", () => reviewSubmission(button.dataset.fraud, "fraud_flagged")));
+      pendingSubmissions.querySelectorAll("[data-approve]").forEach((button) => {
+        const submission = prioritySubmissions.find((item) => item.id === button.dataset.approve);
+        button.addEventListener("click", () => promptSubmissionReview(submission, "approved"));
+      });
+      pendingSubmissions.querySelectorAll("[data-evidence]").forEach((button) => {
+        const submission = prioritySubmissions.find((item) => item.id === button.dataset.evidence);
+        button.addEventListener("click", () => promptSubmissionReview(submission, "needs_more_evidence"));
+      });
+      pendingSubmissions.querySelectorAll("[data-reject]").forEach((button) => {
+        const submission = prioritySubmissions.find((item) => item.id === button.dataset.reject);
+        button.addEventListener("click", () => promptSubmissionReview(submission, "rejected"));
+      });
+      pendingSubmissions.querySelectorAll("[data-fraud]").forEach((button) => {
+        const submission = prioritySubmissions.find((item) => item.id === button.dataset.fraud);
+        button.addEventListener("click", () => promptSubmissionReview(submission, "fraud_flagged"));
+      });
 
       const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners] = await Promise.all([
         MelbBeerBusiness.apiFetch(`/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`),
@@ -1708,6 +2257,7 @@
       renderPartnerLeads(leads);
       renderQueues(queues);
       renderVenuePartners(venuePartners);
+      renderPitchReadiness(leads, venuePartners);
       await loadAdminDataTools();
       adminContentEl.hidden = false;
       MelbBeerBusiness.setStatus(statusEl, "Admin tools loaded.");
@@ -1719,6 +2269,11 @@
       nav.innerHTML = MelbBeerBusiness.renderNav("admin");
       statusEl = document.getElementById("status");
       adminContentEl = document.getElementById("adminContent");
+      reviewDecisionCancel.addEventListener("click", closeReviewDecision);
+      reviewDecisionConfirm.addEventListener("click", confirmReviewDecision);
+      reviewDecisionDialog.addEventListener("cancel", () => {
+        reviewDecisionState = null;
+      });
       document.querySelectorAll("[data-admin-tab-target]").forEach((button) => {
         button.addEventListener("click", () => showAdminTab(button.dataset.adminTabTarget));
       });

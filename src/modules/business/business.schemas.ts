@@ -44,6 +44,12 @@ const requestTypeSchema = z.enum(["missing_venue", "missing_beer", "verify_venue
 const barMembershipTierSchema = z.enum(["basic", "plus", "pro"]);
 const partnerInterestStatusSchema = z.enum(["open", "contacted", "interested", "partner", "not_interested", "closed"]);
 const venueOutreachStatusSchema = z.enum(["lead", "contacted", "interested", "partner", "not_interested", "closed"]);
+const venueOutreachTierFitSchema = z.preprocess((value) => {
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
+  return value;
+}, z.enum(["basic", "plus", "pro"]).nullable());
 const submissionStatusSchema = z.enum([
   "pending",
   "needs_more_evidence",
@@ -502,6 +508,9 @@ export const venueOutreachSchema = z.object({
   venueName: z.string().trim().min(1).max(180),
   suburb: nullableTrimmedStringSchema.default(null),
   status: venueOutreachStatusSchema.default("lead"),
+  tierFit: venueOutreachTierFitSchema.default(null),
+  nextAction: nullableTrimmedStringSchema.default(null),
+  lastContactedAt: nullableTrimmedStringSchema.default(null),
   contactName: nullableTrimmedStringSchema.default(null),
   notes: nullableTrimmedStringSchema.default(null),
 });

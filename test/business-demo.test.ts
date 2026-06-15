@@ -3594,6 +3594,24 @@ describe("business demo contribution model", () => {
     expect(partnerAdmin.interests[0]).toEqual(expect.objectContaining({ venueName: "Rooftop Bar" }));
     expect(partnerAdmin.claimRequests).toEqual([]);
     expect(partnerAdmin.assignments[0]).toEqual(expect.objectContaining({ userId: manager.id, venueId: "venue-1" }));
+    const outreach = service.upsertVenueOutreach(admin, {
+      venueId: "venue-1",
+      venueName: "Rooftop Bar",
+      suburb: "Melbourne",
+      status: "contacted",
+      tierFit: "pro",
+      nextAction: "Offer Pro demo and Pint Path special setup",
+      lastContactedAt: "2026-06-15",
+      contactName: "Riley Manager",
+      notes: "Strong fit because users requested this venue.",
+    });
+    expect(outreach.outreach).toEqual(expect.objectContaining({
+      venueId: "venue-1",
+      status: "contacted",
+      tierFit: "pro",
+      nextAction: "Offer Pro demo and Pint Path special setup",
+      lastContactedAt: "2026-06-15",
+    }));
 
     const revoked = service.revokeVenueManager(admin, { userId: manager.id, venueId: "venue-1" });
     expect(revoked.assignment.status).toBe("revoked");

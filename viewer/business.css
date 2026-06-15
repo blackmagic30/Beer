@@ -1295,6 +1295,81 @@ h3 {
   margin: 0;
 }
 
+.adminCommandGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.adminCommandCard {
+  display: grid;
+  gap: 12px;
+  min-height: 126px;
+  border-color: rgba(255, 255, 255, 0.11);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+    rgba(7, 10, 18, 0.54);
+}
+
+.adminCommandCard .pill {
+  justify-self: start;
+}
+
+.adminCommandCard--premium {
+  border-color: rgba(245, 197, 66, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(245, 197, 66, 0.08), 0 14px 30px rgba(245, 197, 66, 0.08);
+}
+
+.adminCommandCard--warning {
+  border-color: rgba(250, 204, 21, 0.28);
+}
+
+.adminCommandCard--info {
+  border-color: rgba(56, 189, 248, 0.28);
+}
+
+.adminReviewCard {
+  display: grid;
+  gap: 10px;
+}
+
+.adminReviewCard__header,
+.adminCrmLead__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.adminReviewCard__badges,
+.adminCrmLead__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.adminReviewCard__badges {
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.adminReviewCard--premium {
+  border-color: rgba(245, 197, 66, 0.24);
+}
+
+.adminReviewCard--success {
+  border-color: rgba(34, 197, 94, 0.22);
+}
+
+.adminReviewCard--warning {
+  border-color: rgba(250, 204, 21, 0.22);
+}
+
+.adminReviewActionBar {
+  align-items: stretch;
+}
+
 .adminGrid {
   display: grid;
   gap: 16px;
@@ -1312,6 +1387,89 @@ h3 {
 
 .adminPanelSpan {
   grid-column: 1 / -1;
+}
+
+.pitchReadinessPanel {
+  overflow: hidden;
+}
+
+.pitchReadinessGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pitchReadinessCard {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(34, 211, 238, 0.11), transparent 34%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+    rgba(7, 10, 18, 0.5);
+  padding: 14px;
+}
+
+.pitchReadinessCard--premium {
+  border-color: rgba(245, 197, 66, 0.26);
+  box-shadow: inset 0 0 0 1px rgba(245, 197, 66, 0.06), 0 18px 34px rgba(245, 197, 66, 0.08);
+}
+
+.pitchReadinessCard--info {
+  border-color: rgba(34, 211, 238, 0.24);
+}
+
+.pitchReadinessCard--success {
+  border-color: rgba(34, 197, 94, 0.22);
+}
+
+.pitchReadinessCard h3 {
+  margin: 4px 0 0;
+  font-size: 1.22rem;
+}
+
+.pitchReadinessCard p {
+  margin: 0;
+}
+
+.pitchReadinessChecklist {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pitchReadinessChecklist li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.pitchReadinessChecklist li::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.82);
+  box-shadow: 0 0 12px rgba(250, 204, 21, 0.18);
+}
+
+.pitchReadinessChecklist li.is-ready {
+  color: var(--text-secondary);
+}
+
+.pitchReadinessChecklist li.is-ready::before {
+  background: rgba(34, 197, 94, 0.9);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.2);
 }
 
 .adminMetricBlock,
@@ -1486,6 +1644,73 @@ h3 {
   flex-wrap: wrap;
 }
 
+.adminSourceReviewLayout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.78fr) minmax(0, 1.22fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.adminSourceEvidence,
+.adminSourceRows,
+.adminCrmCard {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.044), rgba(255, 255, 255, 0.014)),
+    rgba(3, 7, 18, 0.32);
+  padding: 13px;
+}
+
+.adminSourceEvidence {
+  display: grid;
+  gap: 10px;
+}
+
+.adminSourceEvidence__imageLink {
+  display: block;
+  overflow: hidden;
+  border: 1px solid rgba(34, 211, 238, 0.18);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.adminSourceEvidence__imageLink img {
+  display: block;
+  width: 100%;
+  max-height: 380px;
+  object-fit: contain;
+}
+
+.adminSourceEvidence__empty {
+  min-height: 126px;
+  overflow-wrap: anywhere;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  color: var(--muted);
+  line-height: 1.45;
+  padding: 12px;
+}
+
+.adminSourceEvidence__meta {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.adminSourceRows {
+  display: grid;
+  gap: 12px;
+}
+
+.adminCrmCard,
+.adminCrmLead__header,
+.adminCrmLead__meta {
+  min-width: 0;
+}
+
 .readonlySelect {
   pointer-events: none;
   opacity: 1;
@@ -1570,7 +1795,7 @@ h3 {
 }
 
 .partnerLeadList {
-  --partner-lead-row-height: 76px;
+  --partner-lead-row-height: 174px;
   max-height: calc((var(--partner-lead-row-height) * 5) + (12px * 4));
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -3632,6 +3857,52 @@ h3 {
   color: #bbf7d0;
 }
 
+.pill--warning {
+  border-color: rgba(250, 204, 21, 0.35);
+  background: rgba(250, 204, 21, 0.12);
+  color: #fef3c7;
+}
+
+.pill--danger {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.12);
+  color: #fecaca;
+}
+
+.pill--info {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.12);
+  color: #bae6fd;
+}
+
+.reviewDecisionDialog {
+  width: min(560px, calc(100vw - 28px));
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.18), transparent 36%),
+    radial-gradient(circle at bottom right, rgba(139, 92, 246, 0.16), transparent 34%),
+    rgba(13, 18, 32, 0.98);
+  color: var(--text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  padding: 0;
+}
+
+.reviewDecisionDialog::backdrop {
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.reviewDecisionDialog__panel {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.reviewDecisionDialog__actions {
+  justify-content: flex-end;
+}
+
 .footerCopy {
   margin-top: 28px;
   color: var(--muted);
@@ -4175,6 +4446,21 @@ h3 {
     gap: 14px;
   }
 
+  .adminCommandGrid,
+  .adminSourceReviewLayout,
+  .pitchReadinessGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .adminCommandCard {
+    min-height: auto;
+  }
+
+  .pitchReadinessCard {
+    border-radius: 18px;
+    padding: 12px;
+  }
+
   .adminJumpNav {
     top: 66px;
     flex-wrap: nowrap;
@@ -4206,6 +4492,39 @@ h3 {
   .adminSectionHeader {
     flex-direction: column;
     gap: 10px;
+  }
+
+  .adminReviewCard__header,
+  .adminCrmLead__header {
+    display: grid;
+    gap: 9px;
+  }
+
+  .adminReviewCard__badges {
+    justify-content: flex-start;
+  }
+
+  .adminReviewActionBar {
+    position: sticky;
+    bottom: 8px;
+    z-index: 5;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    border: 1px solid rgba(34, 211, 238, 0.16);
+    border-radius: 18px;
+    background:
+      linear-gradient(145deg, rgba(13, 18, 32, 0.96), rgba(18, 26, 44, 0.94));
+    box-shadow: 0 18px 38px rgba(0, 0, 0, 0.36);
+    padding: 8px;
+  }
+
+  .adminReviewActionBar .button {
+    width: 100%;
+  }
+
+  .adminSourceEvidence__imageLink img {
+    max-height: 280px;
   }
 
   .adminSectionHeader .button,

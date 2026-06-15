@@ -380,6 +380,9 @@ export interface VenuePartnerOutreach {
   venueName: string;
   suburb: string | null;
   status: string;
+  tierFit: string | null;
+  nextAction: string | null;
+  lastContactedAt: string | null;
   contactName: string | null;
   notes: string | null;
   updatedBy: string | null;
@@ -904,6 +907,9 @@ interface VenuePartnerOutreachRow {
   venue_name: string;
   suburb: string | null;
   status: string;
+  tier_fit: string | null;
+  next_action: string | null;
+  last_contacted_at: string | null;
   contact_name: string | null;
   notes: string | null;
   updated_by: string | null;
@@ -1457,6 +1463,9 @@ function toVenuePartnerOutreach(row: VenuePartnerOutreachRow): VenuePartnerOutre
     venueName: row.venue_name,
     suburb: row.suburb,
     status: row.status,
+    tierFit: row.tier_fit,
+    nextAction: row.next_action,
+    lastContactedAt: row.last_contacted_at,
     contactName: row.contact_name,
     notes: row.notes,
     updatedBy: row.updated_by,
@@ -4828,6 +4837,9 @@ export class BusinessRepository {
     venueName: string;
     suburb: string | null;
     status: string;
+    tierFit: string | null;
+    nextAction: string | null;
+    lastContactedAt: string | null;
     contactName: string | null;
     notes: string | null;
     updatedBy: string;
@@ -4836,12 +4848,16 @@ export class BusinessRepository {
     this.database
       .prepare(
         `INSERT INTO venue_partner_outreach (
-          id, venue_id, venue_name, suburb, status, contact_name, notes, updated_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, venue_id, venue_name, suburb, status, tier_fit, next_action, last_contacted_at,
+          contact_name, notes, updated_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(venue_id) DO UPDATE SET
           venue_name = excluded.venue_name,
           suburb = excluded.suburb,
           status = excluded.status,
+          tier_fit = excluded.tier_fit,
+          next_action = excluded.next_action,
+          last_contacted_at = excluded.last_contacted_at,
           contact_name = excluded.contact_name,
           notes = excluded.notes,
           updated_by = excluded.updated_by,
@@ -4853,6 +4869,9 @@ export class BusinessRepository {
         input.venueName,
         input.suburb,
         input.status,
+        input.tierFit,
+        input.nextAction,
+        input.lastContactedAt,
         input.contactName,
         input.notes,
         input.updatedBy,

@@ -488,11 +488,15 @@ describe("account page shell", () => {
       'id="venueManagerAssignments"',
       'id="managerAssignForm"',
       'id="outreachForm"',
+      'id="pitchReadinessPanel"',
+      'id="pitchReadinessList"',
+      'id="venueOutreachList"',
       'id="headlineMetrics"',
       'id="retentionCohorts"',
       'id="coverageDashboard"',
       'id="demandSignals"',
       'id="partnerLeads"',
+      'id="reviewDecisionDialog"',
     ];
 
     expect(html).toContain('class="adminJumpNav" role="tablist" aria-label="Admin workflow sections"');
@@ -505,6 +509,19 @@ describe("account page shell", () => {
     expect(html).toContain('data-admin-tab-panel="partners" role="tabpanel" hidden');
     expect(html).toContain('data-admin-tab-panel="analytics" role="tabpanel" hidden');
     expect(html).toContain("function showAdminTab");
+    expect(html).toContain("function openReviewDecision");
+    expect(html).toContain("function promptSubmissionReview");
+    expect(html).toContain("function promptQueuedIngestionReview");
+    expect(html).toContain("function prefillOutreachFromLead");
+    expect(html).toContain("function renderPitchReadiness");
+    expect(html).toContain("function openLeadCapture");
+    expect(html).toContain('class="adminSourceReviewLayout"');
+    expect(html).toContain('data-prefill-lead');
+    expect(html).toContain('data-prep-pitch');
+    expect(html).toContain('data-capture-lead');
+    expect(html).toContain('name="tierFit"');
+    expect(html).toContain('name="nextAction"');
+    expect(html).toContain('name="lastContactedAt"');
     expect(html).toContain('document.querySelectorAll("[data-admin-tab-target]")');
     sectionOrder.forEach((section, index) => {
       expect(html).toContain(section);
@@ -518,6 +535,12 @@ describe("account page shell", () => {
     expect(css).toContain(".adminJumpNav");
     expect(css).toContain(".adminTabButton");
     expect(css).toContain(".adminGrid--two");
+    expect(css).toContain(".adminCommandCard");
+    expect(css).toContain(".adminReviewActionBar");
+    expect(css).toContain(".adminSourceReviewLayout");
+    expect(css).toContain(".pitchReadinessGrid");
+    expect(css).toContain(".pitchReadinessChecklist");
+    expect(css).toContain(".reviewDecisionDialog");
   });
 
   it("requires confirm password and keeps signup consent text readable", () => {
