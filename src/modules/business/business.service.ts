@@ -814,7 +814,7 @@ function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceReco
     ...record,
     beerName: isSpecial
       ? record.specialExclusive
-        ? "Pint Path exclusive"
+        ? "Pint Path special"
         : "Venue special"
       : record.beerName,
     price: null,
@@ -825,7 +825,7 @@ function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceReco
     happyHourEndTime: null,
     specialTitle: isSpecial
       ? record.specialExclusive
-        ? "Pint Path exclusive"
+        ? "Pint Path special"
         : "Venue special"
       : record.specialTitle ?? null,
     specialDescription: isSpecial ? null : record.specialDescription ?? null,
@@ -1036,7 +1036,7 @@ function buildPlusVenueDemandSnapshot(input: {
     funnel: [
       { label: "Discovery interest", value: analytics.barLookups, helper: "Map pins, cards, detail opens and lookups." },
       { label: "Beer-price intent", value: analytics.beerListViews + analytics.priceReveals, helper: "Beer-list views and price reveals." },
-      { label: "Specials intent", value: analytics.specialsViews, helper: "Specials, deal and happy-hour interest." },
+      { label: "Specials intent", value: analytics.specialsViews, helper: "Pint Path special and happy-hour interest." },
       { label: "Action intent", value: actionIntent, helper: "Directions, saves, night-plan adds and shares." },
     ],
     demandHighlights,
@@ -1045,7 +1045,7 @@ function buildPlusVenueDemandSnapshot(input: {
         ? `Keep ${topBeer.key} pricing fresh and visible before peak weekend search windows.`
         : "Keep the three highest-volume tap-list rows current while nearby demand grows.",
       analytics.specialsViews > 0
-        ? "Refresh one clear weekly special so demand from deal/happy-hour views lands on a current offer."
+        ? "Refresh one clear weekly special so demand from Pint Path special and happy-hour views lands on a current offer."
         : "Add one simple reviewed special to create a stronger reason to choose this venue.",
       listingQualityScore < 80
         ? "Improve listing quality before paid campaigns; missing profile details reduce conversion."
@@ -1065,12 +1065,12 @@ function getProVenueRecommendations(input: {
   return [
     searchedBeer
       ? `Feature one high-margin special around nearby "${searchedBeer}" demand, then keep the offer current through the weekend.`
-      : "Run one tightly scoped featured Pint Path exclusive each week so Pro placement points to a real current offer.",
+      : "Run one tightly scoped Pro Pint Path special each week so Pro placement points to a real current offer.",
     searchedStyle
       ? `Refresh your tap-list rows for ${searchedStyle} before Thursday afternoon so discovery placement has fresh matching data.`
       : "Add beer styles and serve sizes to every current row so Pro discovery can match more search intent.",
     qualityScore < 80
-      ? "Lift the listing quality score before pushing featured offers; missing profile details weaken Pro visibility."
+      ? "Lift the listing quality score before pushing Pro specials; missing profile details weaken Pro visibility."
       : "Use Pro priority review for specials and profile edits that support Friday-Saturday trading.",
   ];
 }
@@ -1095,7 +1095,7 @@ function buildProVenueGrowthPlan(input: {
     },
     spotlightReadiness: [
       { label: "Premium map/listing halo active", complete: true },
-      { label: "Featured Pint Path exclusive eligible", complete: true },
+      { label: "Pro Pint Path special treatment active", complete: true },
       { label: "Priority review active for venue edits", complete: true },
       { label: "Listing quality at 80% or better", complete: listingQualityScore >= 80 },
       { label: "No open wrong-price disputes", complete: openDisputes === 0 },
@@ -1103,11 +1103,11 @@ function buildProVenueGrowthPlan(input: {
     priorityMoves: recommendations,
     weekendPlaybook: [
       analytics.privacyFloorMet && analytics.areaBeerSearches[0]
-        ? `Build the next featured exclusive around ${analytics.areaBeerSearches[0].key} demand.`
-        : "Use a broad, easy-to-understand featured exclusive until nearby search demand matures.",
+        ? `Build the next Pro Pint Path special around ${analytics.areaBeerSearches[0].key} demand.`
+        : "Use a broad, easy-to-understand Pint Path special until nearby search demand matures.",
       analytics.specialsViews > 0
-        ? "Put the active special in the first line of the venue description before Friday afternoon."
-        : "Submit a clean featured exclusive and use priority review so it is ready for weekend traffic.",
+        ? "Refresh the active Pint Path special before Friday afternoon so premium attention lands on a current offer."
+        : "Submit a clean Pint Path special and use priority review so it is ready for weekend traffic.",
       getTotalVenueActionIntent(analytics) > 0
         ? "Keep address, opening hours and happy-hour conditions exact because users are showing action intent."
         : "Add a stronger call-to-action in the profile copy so premium attention has a clear next step.",
@@ -1528,7 +1528,7 @@ export class BusinessService {
   private requireFeaturedSpecialsTier(account: BusinessAccount, venueId: string): void {
     const membershipTier = this.repository.getBarProfile(venueId)?.membershipTier ?? "basic";
     if (!getBarTierCapabilities(membershipTier).featuredSpecials) {
-      throw new AppError("Pro venue tier required to feature Pint Path exclusive specials.", 403);
+      throw new AppError("Pro venue tier required for premium Pint Path special treatment.", 403);
     }
   }
 
@@ -2870,9 +2870,13 @@ export class BusinessService {
     return Array.from(merged.values()).slice(0, limit);
   }
 
-  private assertAccountCanSubmit(account: BusinessAccount): void {
+  private assertAccountCanSubmit(account: BusinessAccount, options: { allowVenueManager?: boolean } = {}): void {
     if (account.status === "suspended") {
       throw new AppError("Suspended accounts cannot submit reward-eligible data.", 403);
+    }
+
+    if (account.role === "venue_manager" && !options.allowVenueManager) {
+      throw new AppError("Venue accounts use the venue dashboard instead of reward submissions.", 403);
     }
 
     this.requireVerifiedEmail(account, "Verify your email before uploading venue data.");
@@ -2944,8 +2948,9 @@ export class BusinessService {
     return this.createSubmission(account, verifiedInput);
   }
 
-  createSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
-    this.assertAccountCanSubmit(account);
+  createSubmission(account: BusinessAccount, input: CreateSubmissionInput, options: { allowVenueManager?: boolean; rewardEligible?: boolean } = {}) {
+    this.assertAccountCanSubmit(account, { allowVenueManager: options.allowVenueManager === true });
+    const rewardEligible = options.rewardEligible ?? true;
 
     if (input.clientSubmissionId) {
       const existingSubmission = this.repository.getSubmissionByClientSubmissionId(account.id, input.clientSubmissionId);
@@ -2963,7 +2968,14 @@ export class BusinessService {
     const pendingVenue = this.normalizePendingVenue(input);
     this.assertPendingVenueIsNotKnownDuplicate(pendingVenue);
     const sourcePhotoUrl = this.resolveSourcePhoto(account, input);
-    const locationEligibility = this.getSubmissionLocationEligibility(input);
+    const rawLocationEligibility = this.getSubmissionLocationEligibility(input);
+    const locationEligibility = rewardEligible
+      ? rawLocationEligibility
+      : {
+          ...rawLocationEligibility,
+          pointsEligibleByLocation: false,
+          pointsEligibilityReason: "venue_manager_not_reward_eligible",
+        };
     const submission = this.repository.createSubmission({
       id: crypto.randomUUID(),
       clientSubmissionId: input.clientSubmissionId,
@@ -3007,6 +3019,7 @@ export class BusinessService {
         itemCount: input.items.length,
         hasSourcePhoto: Boolean(sourcePhotoUrl),
         pointsEligibleByLocation: submission.pointsEligibleByLocation,
+        rewardEligible,
         newVenue: Boolean(pendingVenue),
       },
     });
@@ -3020,6 +3033,7 @@ export class BusinessService {
         venueId: submission.venueId,
         itemCount: input.items.length,
         pointsEligibleByLocation: submission.pointsEligibleByLocation,
+        rewardEligible,
         newVenue: Boolean(pendingVenue),
       },
     });
@@ -3028,6 +3042,8 @@ export class BusinessService {
       submission,
       statusCopy: pendingVenue
         ? "New venue and beer data submitted for admin review. It will appear on the global map only after approval."
+        : !rewardEligible
+        ? "Venue update submitted for review. Venue-manager updates do not earn contributor points."
         : submission.pointsEligibleByLocation
         ? "Submitted for review. If approved, this can earn points toward this month's contributor unlock."
         : "Submitted for review. Points need a saved upload location within 200m of the venue.",
@@ -5487,7 +5503,7 @@ export class BusinessService {
         input.notes,
         "Venue manager submitted update. Keep pending for admin/data-quality review unless manually approved.",
       ].filter(Boolean).join(" "),
-    });
+    }, { allowVenueManager: true, rewardEligible: false });
 
     this.trackEvent(account, {
       anonymousSessionId: null,
@@ -5626,18 +5642,6 @@ export class BusinessService {
       throw new AppError("Beer row not found for this venue.", 404);
     }
 
-    if (!this.isAdmin(account)) {
-      return this.createPendingBarChange({
-        account,
-        venueId,
-        changeType: "beer",
-        action: "delete",
-        targetId: beerId,
-        payload: { id: beerId, beerName: existing.beerName },
-        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
-      });
-    }
-
     const deleted = this.repository.deleteBarBeer({ id: beerId, barId: venueId });
     if (!deleted) {
       throw new AppError("Beer row not found for this venue.", 404);
@@ -5711,18 +5715,6 @@ export class BusinessService {
       throw new AppError("Happy hour not found for this venue.", 404);
     }
 
-    if (!this.isAdmin(account)) {
-      return this.createPendingBarChange({
-        account,
-        venueId,
-        changeType: "happy_hour",
-        action: "delete",
-        targetId: happyHourId,
-        payload: { id: happyHourId, title: existing.title },
-        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
-      });
-    }
-
     const deleted = this.repository.deleteBarHappyHour({ id: happyHourId, barId: venueId });
     if (!deleted) {
       throw new AppError("Happy hour not found for this venue.", 404);
@@ -5793,7 +5785,7 @@ export class BusinessService {
       metadata: { section: "specials", active: special.active, exclusive: special.exclusive, hasPrice: special.price != null },
     });
 
-    return { special, message: "Deal or special saved." };
+    return { special, message: "Pint Path special saved." };
   }
 
   deleteBarSpecial(account: BusinessAccount, venueId: string, specialId: string) {
@@ -5802,18 +5794,6 @@ export class BusinessService {
     const existing = this.repository.getBarSpecialById(specialId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Special not found for this venue.", 404);
-    }
-
-    if (!this.isAdmin(account)) {
-      return this.createPendingBarChange({
-        account,
-        venueId,
-        changeType: "special",
-        action: "delete",
-        targetId: specialId,
-        payload: { id: specialId, title: existing.title },
-        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
-      });
     }
 
     const deleted = this.repository.deleteBarSpecial({ id: specialId, barId: venueId });
@@ -5830,7 +5810,7 @@ export class BusinessService {
       metadata: { section: "specials", action: "delete" },
     });
 
-    return { deleted: true, message: "Deal or special removed." };
+    return { deleted: true, message: "Pint Path special removed." };
   }
 
   reviewBarPendingChange(admin: BusinessAccount, changeId: string, input: BarPendingChangeReviewInput) {

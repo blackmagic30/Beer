@@ -44,7 +44,12 @@ function loadBusinessHelpers() {
   };
   vm.createContext(context);
   vm.runInContext(businessJs(), context);
-  return (context.window as { MelbBeerBusiness: { renderNav: (active?: string) => string } }).MelbBeerBusiness;
+  return (context.window as {
+    MelbBeerBusiness: {
+      renderNav: (active?: string) => string;
+      setAccountContext: (account: Record<string, unknown> | null) => void;
+    };
+  }).MelbBeerBusiness;
 }
 
 function businessCss() {
@@ -387,7 +392,7 @@ describe("account page shell", () => {
     expect(script).toContain("function isVenueManagerContext");
     expect(script).toContain("function isAdminContext");
     expect(script).toContain("subscriptionStatus: account.subscriptionStatus || null");
-    expect(script).toContain('const venueManagerNav = active === "venue-portal" || isVenueManagerContext()');
+    expect(script).toContain('const venueManagerNav = active === "venue-portal" || active === "bar-faq" || isVenueManagerContext()');
     expect(script).toContain('const adminNav = active === "admin" || isAdminContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
@@ -401,16 +406,37 @@ describe("account page shell", () => {
     expect(script).toContain('{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }');
     expect(script).not.toContain("const authenticatedLinks");
     expect(html).toContain('id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard');
-    expect(html).toContain('href="/submit.html">Submit');
-    expect(html).toContain('href="/missions.html">Missions');
-    expect(html.indexOf('href="/submit.html">Submit')).toBeLessThan(html.indexOf('href="/missions.html">Missions'));
-    expect(html).toContain('href="/trust.html">FAQ');
+    expect(html).toContain('href="/submit.html" data-venue-hidden>Submit');
+    expect(html).toContain('href="/missions.html" data-venue-hidden>Missions');
+    expect(html.indexOf('href="/submit.html" data-venue-hidden>Submit')).toBeLessThan(
+      html.indexOf('href="/missions.html" data-venue-hidden>Missions'),
+    );
+    expect(html).toContain('href="/trust.html" id="venueFaqLink">FAQ');
     expect(html).not.toContain('href="/missions.html" data-auth-required');
     expect(html).not.toContain('href="/submit.html" data-auth-required');
     expect(html).not.toContain('href="/submit.html" class="primary" data-auth-required');
     expect(html).toContain("function syncAuthenticatedNavLinks");
     expect(html).toContain("window.MelbBeerBusiness?.isVenueManagerContext?.()");
     expect(html).toContain('document.querySelectorAll("[data-auth-required]")');
+  });
+
+  it("keeps venue-manager navigation focused on bar account tools", () => {
+    const helpers = loadBusinessHelpers();
+    helpers.setAccountContext({
+      id: "venue-user-1",
+      role: "venue_manager",
+      status: "active",
+      email: "venue@example.com",
+    });
+    const nav = helpers.renderNav("account");
+
+    expect(nav).toContain('href="/">Map</a>');
+    expect(nav).toContain('href="/venue-portal.html">Dashboard</a>');
+    expect(nav).toContain('href="/pricing.html">Pricing</a>');
+    expect(nav).toContain('href="/trust.html?audience=bars">Bar FAQ</a>');
+    expect(nav).not.toContain('href="/account.html">Account</a>');
+    expect(nav).not.toContain('href="/submit.html"');
+    expect(nav).not.toContain('href="/missions.html"');
   });
 
   it("keeps the admin page nav focused on admin work", () => {
@@ -591,6 +617,10 @@ describe("account page shell", () => {
     expect(trust).toContain("Can bars edit the map directly?");
     expect(trust).toContain("How do I report a security or privacy concern?");
     expect(trust).toContain("How do I add a missing venue?");
+    expect(trust).toContain('params.get("audience") === "bars"');
+    expect(trust).toContain("Answers for venues using Pint Path.");
+    expect(trust).toContain("What can my bar account manage?");
+    expect(trust).toContain("What do venue reports show?");
     expect(trust).toContain("faqList");
     expect(trust).not.toContain("faqActionPanel");
     expect(trust).not.toContain("Need something else?");

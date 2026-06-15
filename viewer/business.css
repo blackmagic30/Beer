@@ -442,7 +442,8 @@ h3 {
 .accountActionsGrid > *,
 .accountStatsGrid > *,
 .pricingTierGrid > *,
-.venuePricingGrid > * {
+.venuePricingGrid > *,
+.specialScheduleGrid > * {
   min-width: 0;
 }
 
@@ -1130,6 +1131,13 @@ h3 {
   border-color: rgba(148, 163, 184, 0.12);
   background: rgba(15, 23, 42, 0.48);
   color: var(--text-disabled);
+}
+
+.specialScheduleGrid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.4fr) minmax(140px, 0.8fr) minmax(140px, 0.8fr);
+  gap: 16px;
+  align-items: start;
 }
 
 .is-hidden {
@@ -1969,6 +1977,11 @@ h3 {
   border-color: rgba(245, 199, 107, 0.4);
   background: rgba(245, 199, 107, 0.12);
   color: #ffe4a8;
+}
+
+.venueLogoutButton {
+  width: 100%;
+  margin-top: 12px;
 }
 
 .completionGrid {
@@ -3779,6 +3792,7 @@ h3 {
   .venuePricingGrid,
   .tierGuide,
   .tierGuide__lists,
+  .specialScheduleGrid,
   .growthSummaryGrid,
   .discountQuickPanel,
   .discountOpsPanel {

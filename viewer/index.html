@@ -3283,11 +3283,11 @@
         <div id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation">
           <a href="/" aria-current="page">Map</a>
           <a id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard</a>
-          <a href="/submit.html">Submit</a>
-          <a href="/missions.html">Missions</a>
+          <a href="/submit.html" data-venue-hidden>Submit</a>
+          <a href="/missions.html" data-venue-hidden>Missions</a>
           <a href="/pricing.html">Pricing</a>
-          <a href="/trust.html">FAQ</a>
-          <a href="/account.html">Account</a>
+          <a href="/trust.html" id="venueFaqLink">FAQ</a>
+          <a href="/account.html" data-venue-hidden>Account</a>
         </div>
       </div>
     </nav>
@@ -3538,6 +3538,7 @@
     ].map(toSearchKey));
     const topbarBusinessLinksEl = document.getElementById("topbarBusinessLinks");
     const venueDashboardLinkEl = document.getElementById("venueDashboardLink");
+    const venueFaqLinkEl = document.getElementById("venueFaqLink");
     const accessPillEl = document.getElementById("accessPill");
     const venueSearchEl = document.getElementById("venueSearch");
     const beerSearchEl = document.getElementById("beerSearch");
@@ -3755,8 +3756,15 @@
       document.querySelectorAll("[data-auth-required]").forEach((link) => {
         link.hidden = !isAuthenticated || isVenueManager;
       });
+      document.querySelectorAll("[data-venue-hidden]").forEach((link) => {
+        link.hidden = isVenueManager;
+      });
       if (venueDashboardLinkEl) {
         venueDashboardLinkEl.hidden = !isVenueManager;
+      }
+      if (venueFaqLinkEl) {
+        venueFaqLinkEl.href = isVenueManager ? "/trust.html?audience=bars" : "/trust.html";
+        venueFaqLinkEl.textContent = isVenueManager ? "Bar FAQ" : "FAQ";
       }
     }
 
@@ -5083,7 +5091,7 @@
           <div class="beerPopup__happy">
             <div class="beerPopup__happyHeader">
               <div>
-                <div class="beerPopup__happyEyebrow">${escapeHtml(special.exclusive ? "Pint Path exclusive" : "Venue special")}</div>
+                <div class="beerPopup__happyEyebrow">${escapeHtml(special.exclusive ? "Pint Path special" : "Venue special")}</div>
                 <div class="beerPopup__happyStatus">${escapeHtml(special.title)}</div>
               </div>
               ${special.lastVerifiedAt ? `<div class="beerPopup__happyCaptured">Updated ${escapeHtml(formatDateLabel(special.lastVerifiedAt) || "recently")}</div>` : ""}
@@ -5177,7 +5185,7 @@
         .filter((special) => special.active !== false)
         .map((special) => ({
           id: special.id || "",
-          title: special.title || (special.exclusive ? "Pint Path exclusive" : "Venue special"),
+          title: special.title || (special.exclusive ? "Pint Path special" : "Venue special"),
           description: special.description || null,
           priceText: special.price_redacted
             ? "Unlock details"

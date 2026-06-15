@@ -275,7 +275,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("<h1>Pint Path</h1>");
     expect(html).not.toContain("Verified local price index");
     expect(html).toContain('id="topbarBusinessLinks"');
-    expect(html.indexOf('href="/submit.html">Submit')).toBeLessThan(html.indexOf('href="/missions.html">Missions'));
+    expect(html.indexOf('href="/submit.html" data-venue-hidden>Submit')).toBeLessThan(
+      html.indexOf('href="/missions.html" data-venue-hidden>Missions'),
+    );
     expect(html).toContain('id="accessPill"');
     expect(html).toContain('<a href="/feedback.html">Contact us</a> · <a href="/privacy.html">Privacy</a>');
     expect(html).toContain('class="controlDeck"');

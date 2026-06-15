@@ -68,7 +68,7 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Monthly venue reports");
     expect(pricingHtml).toContain("CSV and JSON report exports");
     expect(pricingHtml).toContain("Premium map pin, listing card, badge, and highlighted venue name.");
-    expect(pricingHtml).toContain("Featured Pint Path exclusive specials after review.");
+    expect(pricingHtml).toContain("Premium Pint Path special treatment after review.");
     expect(pricingHtml).toContain("Priority admin review queue");
     expect(pricingHtml).toContain("Pro growth studio with premium-placement checklist and weekend playbook.");
     expect(pricingHtml).toContain("Transparent discovery boost");
@@ -106,7 +106,7 @@ describe("premium pricing and entitlements", () => {
 
     expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
     expect(pricingHtml).toContain("Add normal reviewed Pint Path specials.");
-    expect(pricingHtml).toContain("Featured Pint Path exclusive specials after review.");
+    expect(pricingHtml).toContain("Premium Pint Path special treatment after review.");
     expect(mapHtml).toContain("Unlock full access to view times, specials, and discount details.");
     expect(mapHtml).toContain("Unlock full access to view the days, times, specials, and discount details.");
     expect(readme).toContain("venue special-discount details");

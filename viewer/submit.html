@@ -1687,7 +1687,14 @@
           return false;
         }
 
-        await MelbBeerBusiness.apiFetch("/api/business/account");
+        const accountResult = await MelbBeerBusiness.apiFetch("/api/business/account");
+        if (accountResult?.account?.role === "venue_manager") {
+          MelbBeerBusiness.setStatus(authGateStatus, "Venue accounts use the venue dashboard instead of reward submissions.");
+          loginRequiredPanel.classList.remove("is-hidden");
+          submissionPanel.classList.add("is-hidden");
+          window.location.assign("/venue-portal.html");
+          return false;
+        }
         loginRequiredPanel.classList.add("is-hidden");
         submissionPanel.classList.remove("is-hidden");
         return true;

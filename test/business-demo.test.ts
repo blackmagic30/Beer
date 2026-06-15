@@ -3648,6 +3648,25 @@ describe("business demo contribution model", () => {
     const managerAccount = repository.getAccountById(manager.id)!;
     const otherManagerAccount = repository.getAccountById(otherManager.id)!;
 
+    expect(() => service.createSubmission(managerAccount, createSubmissionSchema.parse({
+      venueId: "bar-1",
+      venueName: "Corner Hotel",
+      suburb: "Richmond",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: PNG_DATA_URL,
+      sourcePhotoUrl: null,
+      notes: null,
+      items: [{
+        beerName: "Carlton Draught",
+        servingSize: "pint",
+        price: 13,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    }))).toThrow("Venue accounts use the venue dashboard instead of reward submissions.");
+
     expect(() => service.upsertBarBeer(normalUser, "bar-1", {
       id: null,
       beerName: "Carlton Draught",
@@ -3966,6 +3985,18 @@ describe("business demo contribution model", () => {
     expect(afterPriceApproval.records).toEqual(expect.arrayContaining([
       expect.objectContaining({ beerName: "Carlton Draught", price: 15.5 }),
     ]));
+
+    expect(service.deleteBarBeer(managerAccount, "bar-1", approvedBeerId))
+      .toEqual(expect.objectContaining({ deleted: true, message: "Beer row removed." }));
+    expect(service.deleteBarHappyHour(managerAccount, "bar-1", happyHourPending.targetId!))
+      .toEqual(expect.objectContaining({ deleted: true, message: "Happy hour removed." }));
+    expect(service.deleteBarSpecial(managerAccount, "bar-1", specialPending.targetId!))
+      .toEqual(expect.objectContaining({ deleted: true, message: "Pint Path special removed." }));
+    const afterDirectDelete = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
+    expect(afterDirectDelete.inventory.beers).toHaveLength(0);
+    expect(afterDirectDelete.inventory.happyHours).toHaveLength(0);
+    expect(afterDirectDelete.inventory.specials).toHaveLength(0);
+    expect(afterDirectDelete.pendingChanges).toHaveLength(0);
   });
 
   it("limits Free venue accounts to beer and happy-hour data", () => {

@@ -542,21 +542,27 @@ async function updatePassword(password) {
 }
 
 function renderNav(active = "") {
-  const activeKey = active === "trust" ? "faq" : active;
+  const activeKey = active === "trust" || active === "bar-faq" ? "faq" : active;
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
   const adminPageNav = active === "admin";
-  const venueManagerNav = active === "venue-portal" || isVenueManagerContext();
+  const venueManagerNav = active === "venue-portal" || active === "bar-faq" || isVenueManagerContext();
   const adminNav = active === "admin" || isAdminContext();
   const navItems = adminPageNav ? [
     { key: "map", href: "/", label: "Map" },
     { key: "submit", href: "/submit.html", label: "Submit" },
     { key: "admin", href: "/admin.html", label: "Admin" },
     { key: "account", href: "/account.html", label: "Account" },
+  ] : venueManagerNav ? [
+    { key: "map", href: "/", label: "Map" },
+    { key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" },
+    ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
+    { key: "pricing", href: "/pricing.html", label: "Pricing" },
+    { key: "faq", href: "/trust.html?audience=bars", label: "Bar FAQ" },
+    ...(isFieldTestMode() ? [{ key: "feedback", href: "/feedback.html", label: "Contact us" }] : []),
   ] : [
     { key: "map", href: "/", label: "Map" },
     { key: "submit", href: "/submit.html", label: "Submit" },
     { key: "missions", href: "/missions.html", label: "Missions" },
-    ...(venueManagerNav ? [{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }] : []),
     ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
     { key: "pricing", href: "/pricing.html", label: "Pricing" },
     { key: "faq", href: "/trust.html", label: "FAQ" },

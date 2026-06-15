@@ -14,21 +14,21 @@
 
     <section class="hero hero--compact">
       <div>
-        <div class="eyebrow">FAQ</div>
-        <h1>Quick answers before you use Pint Path.</h1>
-        <p class="lead">The short version: search the map, submit what you actually saw, and only approved venue data appears publicly.</p>
+        <div id="faqHeroEyebrow" class="eyebrow">FAQ</div>
+        <h1 id="faqHeroTitle">Quick answers before you use Pint Path.</h1>
+        <p id="faqHeroLead" class="lead">The short version: search the map, submit what you actually saw, and only approved venue data appears publicly.</p>
       </div>
     </section>
 
     <section class="panel faqStack">
       <div class="sectionHeader">
         <div>
-          <div class="eyebrow">Most asked</div>
-          <h2>Simple answers for using Pint Path well.</h2>
+          <div id="faqSectionEyebrow" class="eyebrow">Most asked</div>
+          <h2 id="faqSectionTitle">Simple answers for using Pint Path well.</h2>
         </div>
       </div>
 
-      <div class="faqList">
+      <div id="faqList" class="faqList">
         <details class="faqItem" open>
           <summary>Can I trust the beer prices?</summary>
           <p>Prices are treated as pending until reviewed or sufficiently verified. Approved records may still change, so check with the venue before ordering.</p>
@@ -92,7 +92,58 @@
 
   <script>
     window.addEventListener("DOMContentLoaded", () => {
-      nav.innerHTML = MelbBeerBusiness.renderNav("faq");
+      const params = new URLSearchParams(window.location.search);
+      const isBarFaq = params.get("audience") === "bars" || MelbBeerBusiness.isVenueManagerContext();
+      nav.innerHTML = MelbBeerBusiness.renderNav(isBarFaq ? "bar-faq" : "faq");
+
+      if (!isBarFaq) {
+        return;
+      }
+
+      document.title = "Bar FAQ | Pint Path";
+      faqHeroEyebrow.textContent = "Bar FAQ";
+      faqHeroTitle.textContent = "Answers for venues using Pint Path.";
+      faqHeroLead.textContent = "How bar accounts, venue updates, specials, reports, and review workflows work before anything appears publicly.";
+      faqSectionEyebrow.textContent = "Venue tools";
+      faqSectionTitle.textContent = "Simple answers for bar owners and managers.";
+      faqList.innerHTML = `
+        <details class="faqItem" open>
+          <summary>What can my bar account manage?</summary>
+          <p>Assigned venue managers can keep beer prices, tap status, happy hours, listing details, and eligible Pint Path specials up to date from the venue dashboard.</p>
+        </details>
+        <details class="faqItem">
+          <summary>Do my changes go live immediately?</summary>
+          <p>No. Venue updates are submitted for review first, then approved data publishes to the public map. This keeps user trust high and protects venues from accidental or incorrect edits.</p>
+        </details>
+        <details class="faqItem">
+          <summary>What is the difference between Free, Plus, and Pro for venues?</summary>
+          <p>Free venues can add core beer and happy-hour data. Plus and Pro add more visibility, richer listing treatment, specials tools, reporting, and higher-priority business features.</p>
+        </details>
+        <details class="faqItem">
+          <summary>Can staff members help manage the venue?</summary>
+          <p>Yes. Admins can assign verified staff to a venue account. Each staff member should use their own login so changes and review history stay traceable.</p>
+        </details>
+        <details class="faqItem">
+          <summary>How do Pint Path specials work?</summary>
+          <p>Eligible venues can create app-only specials, and users can show a rotating Pint Path special code when redeeming. Redemptions help estimate saved value and venue performance.</p>
+        </details>
+        <details class="faqItem">
+          <summary>What do venue reports show?</summary>
+          <p>Reports focus on aggregate listing performance, discovery activity, searches, saves, directions, specials activity, and trends where privacy thresholds are met. They do not expose individual user behaviour.</p>
+        </details>
+        <details class="faqItem">
+          <summary>Can I edit another venue?</summary>
+          <p>No. Venue manager access is scoped to assigned venues only. If you manage multiple venues, each one needs to be assigned to your account.</p>
+        </details>
+        <details class="faqItem">
+          <summary>Why does Pint Path review venue data?</summary>
+          <p>Review keeps public prices reliable, prevents spam or accidental mistakes, and gives users confidence that venue information is not being changed without oversight.</p>
+        </details>
+        <details class="faqItem">
+          <summary>How do I get help with my bar account?</summary>
+          <p>Use the <a href="/feedback.html">contact page</a> for account, billing, venue setup, specials, or staff-access questions.</p>
+        </details>
+      `;
     });
   </script>
 </body>

@@ -15,7 +15,7 @@
     <section class="hero hero--compact">
       <div class="eyebrow">Venue portal</div>
       <h1>Manage your venue’s beer data and happy hours.</h1>
-      <p class="lead">Assigned and verified venue accounts can keep beer stock and happy hours up to date. Plus adds reviewed specials and analytics; Pro adds featured exclusives, priority review, and premium discovery treatment.</p>
+      <p class="lead">Assigned and verified venue accounts can keep beer stock and happy hours up to date. Plus adds reviewed Pint Path specials and analytics; Pro adds priority review and premium discovery treatment.</p>
     </section>
 
     <section id="portalAccess" class="notice">Log in with an assigned venue-manager account to view this dashboard.</section>
@@ -48,10 +48,11 @@
             <button class="tabButton" type="button" data-tab="profile">Profile</button>
             <button class="tabButton" type="button" data-tab="beers">Beers / stock</button>
             <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
-            <button class="tabButton" type="button" data-tab="specials" data-specials-only>Deals & specials</button>
+            <button class="tabButton" type="button" data-tab="specials" data-specials-only>Pint Path specials</button>
             <button class="tabButton" type="button" data-tab="analytics">Analytics</button>
             <button class="tabButton" type="button" data-tab="report">Monthly report</button>
           </nav>
+          <button id="venueLogoutButton" class="button button--danger venueLogoutButton" type="button">Log out</button>
         </aside>
 
         <div class="dashboardMain">
@@ -69,7 +70,7 @@
                 <div class="actionRow">
                   <button class="button button--primary" type="button" data-jump-tab="beers">Add beer on tap</button>
                   <button class="button" type="button" data-jump-tab="happy-hours">Add happy hour</button>
-                  <button class="button" type="button" data-jump-tab="specials" data-specials-only>Add special</button>
+                  <button class="button" type="button" data-jump-tab="specials" data-specials-only>Add Pint Path special</button>
                   <button class="button" type="button" data-jump-tab="profile">Edit profile</button>
                 </div>
               </article>
@@ -190,9 +191,6 @@
               <label class="field">Instagram / social link
                 <input name="instagram" placeholder="https://instagram.com/..." />
               </label>
-              <label class="field">Short description
-                <textarea name="description" placeholder="A short venue description for future listing pages."></textarea>
-              </label>
               <label class="field">Opening hours note
                 <textarea name="openingHoursNote" placeholder="e.g. Mon-Thu 12pm-late, Fri-Sun 11am-late."></textarea>
               </label>
@@ -300,7 +298,7 @@
                   </label>
                 </div>
                 <datalist id="happyHourTimeSuggestions"></datalist>
-                <label class="field">Description / deal details
+                <label class="field">Happy-hour conditions
                   <textarea name="description" placeholder="e.g. $9 house pints, selected taps only." required></textarea>
                 </label>
                 <label class="dayChip"><input name="active" type="checkbox" checked /> Active</label>
@@ -328,13 +326,10 @@
             </article>
             <div id="specialsEditor" class="grid grid--two">
               <form id="specialForm" class="panel form">
-                <h2>Deals and specials</h2>
+                <h2>Pint Path specials</h2>
                 <input name="id" type="hidden" />
-                <label class="field">Deal title
-                  <input name="title" placeholder="e.g. Thursday burger and pint" required />
-                </label>
-                <label class="field">Description
-                  <textarea name="description" placeholder="Describe the special and any conditions." required></textarea>
+                <label class="field">Special title
+                  <input name="title" placeholder="e.g. $2 off selected pints" required />
                 </label>
                 <div class="grid grid--two">
                   <label class="field">Price optional
@@ -344,29 +339,29 @@
                     <input name="discount" placeholder="e.g. 20% off selected pints" />
                   </label>
                 </div>
-                <div class="grid grid--two">
-                  <label class="field">Start date optional
-                    <input name="startsAt" type="date" />
+                <div class="specialScheduleGrid">
+                  <div>
+                    <div class="field" style="margin-bottom:8px;">Days</div>
+                    <div id="specialDays" class="dayChecklist"></div>
+                  </div>
+                  <label class="field">Start time
+                    <select name="startTime"></select>
                   </label>
-                  <label class="field">End date optional
-                    <input name="endsAt" type="date" />
+                  <label class="field">End time
+                    <select name="endTime"></select>
                   </label>
                 </div>
-                <label class="field">Day/time restrictions optional
-                  <input name="scheduleNote" placeholder="e.g. Fridays 4pm-7pm only" />
-                </label>
                 <div class="dayChecklist">
-                  <label id="featuredSpecialChip" class="dayChip dayChip--wide"><input name="exclusive" type="checkbox" /> Featured exclusive (Pro)</label>
                   <label class="dayChip"><input name="active" type="checkbox" checked /> Active</label>
                 </div>
                 <div class="actionRow">
                   <button class="button button--primary" type="submit">Save special</button>
                   <button id="resetSpecialForm" class="button" type="button">Clear form</button>
                 </div>
-                <div id="specialStatus" class="notice">Plus venues can submit current deals and weekly specials. Pro venues can mark one as a featured Pint Path exclusive after review.</div>
+                <div id="specialStatus" class="notice">Plus and Pro venues can submit reviewed Pint Path specials. Pro specials receive premium discovery treatment automatically.</div>
               </form>
               <article class="panel">
-                <h2>Current deals and specials</h2>
+                <h2>Current Pint Path specials</h2>
                 <div id="specialList" class="list"></div>
               </article>
             </div>
@@ -444,7 +439,7 @@
       ];
     const trackedBeerLookup = new Map();
     let lastBeerAutofill = { brewery: "", style: "", abv: "" };
-    const tagOptions = ["has food", "outdoor seating", "good for groups", "sports on TV", "dog friendly", "live music"];
+    const tagOptions = ["outdoor seating", "good for groups", "sports on TV", "dog friendly", "live music"];
     const dayOptions = [
       ["mon", "Mon"],
       ["tue", "Tue"],
@@ -454,6 +449,7 @@
       ["sat", "Sat"],
       ["sun", "Sun"],
     ];
+    const dayLabelByValue = Object.fromEntries(dayOptions);
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -540,7 +536,6 @@
     }
 
     function renderTimeSuggestions() {
-      if (!window.happyHourTimeSuggestions) return;
       const options = [];
       for (let hour = 10; hour <= 23; hour += 1) {
         for (const minute of [0, 30]) {
@@ -548,7 +543,22 @@
           options.push(`<option value="${formatFriendlyTime(normalized)}">${normalized}</option>`);
         }
       }
-      window.happyHourTimeSuggestions.innerHTML = options.join("");
+      if (window.happyHourTimeSuggestions) {
+        window.happyHourTimeSuggestions.innerHTML = options.join("");
+      }
+      const selectOptions = [
+        '<option value="">No time limit</option>',
+        ...options.map((option) => {
+          const value = option.match(/<option value="([^"]+)"/)?.[1] || "";
+          const label = option.replace(/^.*>(.*)<\/option>$/, "$1");
+          return `<option value="${escapeHtml(value)}">${escapeHtml(value)} (${escapeHtml(label)})</option>`;
+        }),
+      ].join("");
+      [field(specialForm, "startTime"), field(specialForm, "endTime")].forEach((select) => {
+        if (select) {
+          select.innerHTML = selectOptions;
+        }
+      });
     }
 
     function normalizeTimeField(input) {
@@ -648,7 +658,6 @@
 
     function syncTierControls(data) {
       const canSpecials = portalCanManageSpecials(data);
-      const canFeatureSpecials = portalCanFeatureSpecials(data);
       document.querySelectorAll("[data-specials-only]").forEach((element) => {
         element.hidden = !canSpecials;
         if ("disabled" in element) {
@@ -663,23 +672,10 @@
       if (!canSpecials && visiblePanel?.dataset.panel === "specials") {
         showTab("beers");
       }
-      const featuredInput = field(specialForm, "exclusive");
-      if (featuredInput) {
-        featuredInput.disabled = !canFeatureSpecials;
-        if (!canFeatureSpecials) {
-          featuredInput.checked = false;
-        }
-      }
-      if (window.featuredSpecialChip) {
-        featuredSpecialChip.classList.toggle("is-disabled", !canFeatureSpecials);
-        featuredSpecialChip.title = canFeatureSpecials
-          ? "Pro venues can feature Pint Path exclusive specials after review."
-          : "Featured Pint Path exclusive specials require the Pro venue tier.";
-      }
       if (window.specialStatus) {
-        specialStatus.textContent = canFeatureSpecials
-          ? "Pro is active. Mark a special as featured when it is a genuine Pint Path exclusive and ready for review."
-          : "Plus venues can submit reviewed deals and specials. Featured Pint Path exclusives require Pro.";
+        specialStatus.textContent = portalCanFeatureSpecials(data)
+          ? "Pro is active. Pint Path specials receive premium discovery treatment automatically after review."
+          : "Plus venues can submit reviewed Pint Path specials. Pro adds premium discovery treatment.";
       }
     }
 
@@ -694,6 +690,51 @@
 
     function checkedValues(container) {
       return Array.from(container.querySelectorAll("input:checked")).map((input) => input.value);
+    }
+
+    function buildSpecialScheduleNote() {
+      const days = checkedValues(specialDays).map((day) => dayLabelByValue[day] || day);
+      const startTime = normalizeHappyHourTime(field(specialForm, "startTime").value);
+      const endTime = normalizeHappyHourTime(field(specialForm, "endTime").value);
+      const dayCopy = days.length ? days.join(", ") : "Every day";
+      const timeCopy = startTime && endTime
+        ? `${formatFriendlyTime(startTime)}-${formatFriendlyTime(endTime)}`
+        : startTime
+          ? `from ${formatFriendlyTime(startTime)}`
+          : endTime
+            ? `until ${formatFriendlyTime(endTime)}`
+            : "";
+      return [dayCopy, timeCopy].filter(Boolean).join(" · ");
+    }
+
+    function setSpecialScheduleFromNote(note = "") {
+      const lowerNote = String(note || "").toLowerCase();
+      const selectedDays = dayOptions
+        .filter(([value, label]) => lowerNote.includes(value) || lowerNote.includes(label.toLowerCase()))
+        .map(([value]) => value);
+      renderChecklist(specialDays, dayOptions, selectedDays);
+      const timeMatches = Array.from(String(note || "").matchAll(/\b(\d{1,2}(?::\d{2})?\s?(?:am|pm)|\d{1,2}:\d{2})\b/gi))
+        .map((match) => normalizeHappyHourTime(match[1]))
+        .filter(Boolean);
+      field(specialForm, "startTime").value = timeMatches[0] ? formatFriendlyTime(timeMatches[0]) : "";
+      field(specialForm, "endTime").value = timeMatches[1] ? formatFriendlyTime(timeMatches[1]) : "";
+    }
+
+    function resetSpecialFormState() {
+      resetForm(specialForm);
+      field(specialForm, "active").checked = true;
+      renderChecklist(specialDays, dayOptions);
+      field(specialForm, "startTime").value = "";
+      field(specialForm, "endTime").value = "";
+    }
+
+    function specialDescriptionFromForm() {
+      const parts = [
+        field(specialForm, "discount").value,
+        field(specialForm, "price").value ? `${formatCurrency(field(specialForm, "price").value)} special` : "",
+        buildSpecialScheduleNote(),
+      ].map((part) => String(part || "").trim()).filter(Boolean);
+      return parts.join(" · ") || field(specialForm, "title").value || "Pint Path special";
     }
 
     function renderPortal(data) {
@@ -741,10 +782,10 @@
       const happyHours = data.inventory?.happyHours || [];
       const specials = data.inventory?.specials || [];
       const completion = [
-        ["Profile", Boolean(profile.name && profile.suburb && profile.description)],
+        ["Profile", Boolean(profile.name && profile.suburb)],
         ["Beers added", beers.length > 0],
         ["Happy hours", happyHours.length > 0],
-      ].concat(tier.canManageSpecials ? [["Deals added", specials.length > 0]] : []);
+      ].concat(tier.canManageSpecials ? [["Pint Path specials", specials.length > 0]] : []);
       completionGrid.innerHTML = completion.map(([label, done]) => `
         <div class="completionItem ${done ? "is-complete" : ""}">
           <strong>${done ? "Done" : "Next"}</strong>
@@ -773,7 +814,6 @@
       field(profileForm, "phone").value = profile.phone || "";
       field(profileForm, "website").value = profile.website || "";
       field(profileForm, "instagram").value = profile.instagram || "";
-      field(profileForm, "description").value = profile.description || "";
       field(profileForm, "openingHoursNote").value = profile.openingHours?.note || "";
       field(profileForm, "active").checked = Boolean(profile.active);
       renderChecklist(venueTags, tagOptions, profile.venueTags || []);
@@ -813,9 +853,9 @@
       const staffModeCard = document.getElementById("staffModeCard");
       const publicPreviewCard = document.getElementById("publicPreviewCard");
       const staffInviteCard = document.getElementById("staffInviteCard");
-      const profileReady = Boolean(profile.name && profile.suburb && profile.description);
+      const profileReady = Boolean(profile.name && profile.suburb);
       const nextAction = !profileReady
-        ? { label: "Finish profile", tab: "profile", copy: "Add suburb, short description, and contact details so users trust the listing." }
+        ? { label: "Finish profile", tab: "profile", copy: "Add suburb and contact details so users trust the listing." }
         : beers.length < 3
           ? { label: "Add 3 beers", tab: "beers", copy: "Three current tap prices make the venue useful on the map and in beer search." }
           : !happyHours.length
@@ -889,11 +929,11 @@
       if (tier.canManageSpecials) included.push("Reviewed Pint Path specials");
       if (!tier.analyticsLocked) included.push("Privacy-safe analytics and monthly reports");
       if (tier.premiumDisplay) included.push("Premium map, card, and venue-name treatment");
-      if (tier.featuredSpecials) included.push("Featured Pint Path exclusive specials");
+      if (tier.featuredSpecials) included.push("Premium Pint Path special treatment");
       if (tier.priorityReview) included.push("Priority admin review queue");
       if (tier.advancedRecommendations) included.push("Pro growth recommendations in reports");
       if (!tier.premiumDisplay) locked.push("Premium venue display");
-      if (!tier.featuredSpecials) locked.push("Featured exclusive specials");
+      if (!tier.featuredSpecials) locked.push("Premium Pint Path special treatment");
       if (!tier.priorityReview) locked.push("Priority admin review");
       if (!tier.advancedRecommendations) locked.push("Pro report recommendations");
 
@@ -903,7 +943,7 @@
           <h2>${escapeHtml(tierName)} venue access</h2>
           <p class="muted">${tier.canManageSpecials
             ? tier.featuredSpecials
-              ? "This Pro venue gets premium discovery treatment, featured-exclusive special eligibility, priority review, and privacy-safe demand signals."
+              ? "This Pro venue gets premium discovery treatment, priority review, and privacy-safe demand signals."
               : "This Plus venue can submit reviewed specials and see privacy-safe demand signals when enough local data exists."
             : "Free venues can keep beer data and happy-hour data current without exposing analytics or specials tools."}</p>
         </div>
@@ -1016,7 +1056,7 @@
         ` : `
           <div class="upgradeNudge" style="margin-top:12px;">
             <strong>Pro adds paid discovery placement</strong>
-            <p class="helperCopy">Upgrade when you want premium map/listing treatment, featured exclusive specials, priority review, and a sharper monthly growth playbook.</p>
+            <p class="helperCopy">Upgrade when you want premium map/listing treatment, Pro Pint Path special treatment, priority review, and a sharper monthly growth playbook.</p>
             <button class="button button--premium" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
           </div>
         `}
@@ -1173,8 +1213,8 @@
           <div class="listItem dataRow">
             <div>
               <strong>${escapeHtml(item.title)}</strong>
-              <div class="muted">${item.active ? "Active" : "Inactive"}${item.exclusive ? " · Featured Pint Path exclusive" : ""}${item.price != null ? ` · ${money(item.price)}` : ""}</div>
-              <p class="helperCopy">${escapeHtml(item.description)}</p>
+              <div class="muted">${item.active ? "Active" : "Inactive"}${item.exclusive ? " · Pro Pint Path special" : ""}${item.price != null ? ` · ${money(item.price)}` : ""}</div>
+              ${(item.discount || item.scheduleNote) ? `<p class="helperCopy">${escapeHtml([item.discount, item.scheduleNote].filter(Boolean).join(" · "))}</p>` : ""}
             </div>
             <div class="rowActions">
               <button class="button button--small" type="button" data-edit-special="${escapeHtml(item.id)}">Edit</button>
@@ -1182,7 +1222,7 @@
             </div>
           </div>
         `).join("")
-        : '<div class="emptyState"><strong>No deals or specials yet.</strong><br />Add weekly deals or active specials so users know what is current.</div>';
+        : '<div class="emptyState"><strong>No Pint Path specials yet.</strong><br />Add a clear venue special so users know what is current.</div>';
     }
 
     function renderAnalytics(data) {
@@ -1248,7 +1288,7 @@
             ["Venue lookups", report.totalBarLookups],
             ["Profile views", report.totalProfileViews],
             ["Beer list views", report.totalBeerListViews],
-            ["Special/deal views", report.totalSpecialsDealsViews],
+            ["Pint Path special views", report.totalSpecialsDealsViews],
           ].map(([label, value]) => `<div class="metricCard"><div class="metricValue">${Number(value || 0)}</div><div class="metricLabel">${escapeHtml(label)}</div></div>`).join("")}
         </div>
         <div class="listItem" style="margin-top:12px;">
@@ -1271,7 +1311,7 @@
             ${discoveryPlacement ? `
               <div class="miniStatRow">
                 <span>Premium display active</span>
-                <span>Featured specials eligible</span>
+                <span>Pint Path special treatment active</span>
                 <span>Priority review active</span>
               </div>
             ` : ""}
@@ -1341,6 +1381,7 @@
       MelbBeerBusiness.installFieldTestChrome();
       renderChecklist(venueTags, tagOptions);
       renderChecklist(happyHourDays, dayOptions);
+      renderChecklist(specialDays, dayOptions);
       syncTierControls({ tier: { canManageSpecials: false } });
       seedTrackedBeerLookup();
       populateBeerSuggestions();
@@ -1379,6 +1420,18 @@
         button.addEventListener("click", () => showTab(button.dataset.jumpTab));
       });
 
+      venueLogoutButton.addEventListener("click", async () => {
+        venueLogoutButton.disabled = true;
+        try {
+          await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" });
+        } catch {
+          // Local logout is still useful if the server session already expired.
+        } finally {
+          MelbBeerBusiness.setAuthToken(null);
+          window.location.assign("/account.html");
+        }
+      });
+
       venueSelect.addEventListener("change", () => {
         void loadPortal(venueSelect.value).catch((error) => MelbBeerBusiness.setStatus(portalAccess, error.message, true));
       });
@@ -1394,7 +1447,7 @@
           phone: field(profileForm, "phone").value || null,
           website: field(profileForm, "website").value || null,
           instagram: field(profileForm, "instagram").value || null,
-          description: field(profileForm, "description").value || null,
+          description: currentPortal?.profile?.description || null,
           openingHours: field(profileForm, "openingHoursNote").value ? { note: field(profileForm, "openingHoursNote").value } : {},
           venueTags: checkedValues(venueTags),
           active: field(profileForm, "active").checked,
@@ -1482,21 +1535,20 @@
         const body = {
           id: field(specialForm, "id").value || null,
           title: field(specialForm, "title").value,
-          description: field(specialForm, "description").value,
+          description: specialDescriptionFromForm(),
           price: nullableNumber(field(specialForm, "price").value),
           discount: field(specialForm, "discount").value || null,
-          startsAt: field(specialForm, "startsAt").value || null,
-          endsAt: field(specialForm, "endsAt").value || null,
-          scheduleNote: field(specialForm, "scheduleNote").value || null,
-          exclusive: portalCanFeatureSpecials() && field(specialForm, "exclusive").checked,
+          startsAt: null,
+          endsAt: null,
+          scheduleNote: buildSpecialScheduleNote(),
+          exclusive: portalCanFeatureSpecials(),
           active: field(specialForm, "active").checked,
         };
         try {
-          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/specials`, body, specialStatus, "Special saved.");
-          resetForm(specialForm);
-          field(specialForm, "active").checked = true;
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/specials`, body, specialStatus, "Pint Path special saved.");
+          resetSpecialFormState();
         } catch (error) {
-          MelbBeerBusiness.setStatus(specialStatus, error.message || "Could not save special.", true);
+          MelbBeerBusiness.setStatus(specialStatus, error.message || "Could not save Pint Path special.", true);
         }
       });
 
@@ -1537,7 +1589,7 @@
         updateBeerCatalogueState();
       });
       resetHappyHourForm.addEventListener("click", () => { resetForm(happyHourForm); field(happyHourForm, "active").checked = true; renderChecklist(happyHourDays, dayOptions); });
-      resetSpecialForm.addEventListener("click", () => { resetForm(specialForm); field(specialForm, "active").checked = true; });
+      resetSpecialForm.addEventListener("click", resetSpecialFormState);
       [
         ["csv", exportReportCsv],
         ["json", exportReportJson],
@@ -1683,13 +1735,9 @@
           if (!item) return;
           field(specialForm, "id").value = item.id;
           field(specialForm, "title").value = item.title || "";
-          field(specialForm, "description").value = item.description || "";
           field(specialForm, "price").value = item.price ?? "";
           field(specialForm, "discount").value = item.discount || "";
-          field(specialForm, "startsAt").value = item.startsAt || "";
-          field(specialForm, "endsAt").value = item.endsAt || "";
-          field(specialForm, "scheduleNote").value = item.scheduleNote || "";
-          field(specialForm, "exclusive").checked = portalCanFeatureSpecials() && Boolean(item.exclusive);
+          setSpecialScheduleFromNote(item.scheduleNote || "");
           field(specialForm, "active").checked = Boolean(item.active);
           showTab("specials");
           return;

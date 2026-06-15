@@ -27,7 +27,9 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain("Ready to submit.");
     expect(html).not.toContain("Reviewed before publication");
     expect(html).not.toContain("Offline uploads save locally");
-    expect(html).toContain("await MelbBeerBusiness.apiFetch(\"/api/business/account\")");
+    expect(html).toContain("const accountResult = await MelbBeerBusiness.apiFetch(\"/api/business/account\")");
+    expect(html).toContain("Venue accounts use the venue dashboard instead of reward submissions.");
+    expect(html).toContain('window.location.assign("/venue-portal.html")');
     expect(html).toContain("window.location.assign(loginUrl)");
   });
 
