@@ -107,6 +107,7 @@ const nullableUrlSchema = z.preprocess((value) => {
 export const authSignupSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8),
+  displayName: nullableTrimmedStringSchema.default(null),
   ageConfirmed: z.boolean().refine((value) => value === true, "You must confirm you are 18+."),
   termsAccepted: z.boolean().refine((value) => value === true, "You must accept the Terms and Conditions."),
   privacyAccepted: z.boolean().refine((value) => value === true, "You must accept the Privacy Policy."),
@@ -683,6 +684,34 @@ export const leaderboardQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
+export const displayNameUpdateSchema = z.object({
+  displayName: nullableTrimmedStringSchema.default(null),
+});
+
+export const pubGolfPlanSchema = z.object({
+  startLocation: z.string().trim().min(2).max(160),
+  finishLocation: z.string().trim().min(2).max(160),
+  drinks: z.array(z.string().trim().min(1).max(80)).length(9),
+  mode: z.enum(["auto", "walking", "transit"]).default("auto"),
+});
+
+const leaderboardMonthKeySchema = z.string().trim().regex(/^\d{4}-\d{2}$/, "Use a YYYY-MM month key.");
+
+export const leaderboardPrizeCampaignSchema = z.object({
+  monthKey: leaderboardMonthKeySchema,
+  title: z.string().trim().min(3).max(120).default("Monthly contributor leaderboard"),
+  affiliateBar: nullableTrimmedStringSchema.default(null),
+  terms: nullableTrimmedStringSchema.default(null),
+  firstPlaceCents: z.coerce.number().int().min(0).max(100_000).default(10_000),
+  secondPlaceCents: z.coerce.number().int().min(0).max(100_000).default(5_000),
+  thirdPlaceCents: z.coerce.number().int().min(0).max(100_000).default(2_500),
+});
+
+export const leaderboardPrizeFinalizeSchema = z.object({
+  monthKey: leaderboardMonthKeySchema,
+  force: z.boolean().default(false),
+});
+
 export const discountRedemptionSchema = z.object({
   code: z.string().trim()
     .regex(/^[A-Za-z0-9]{6}$/, "Use the current 6-character Pint Path discount code.")
@@ -767,6 +796,10 @@ export type RetentionQuery = z.infer<typeof retentionQuerySchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
 export type CheckoutSessionInput = z.infer<typeof checkoutSessionSchema>;
 export type LeaderboardQuery = z.infer<typeof leaderboardQuerySchema>;
+export type DisplayNameUpdateInput = z.infer<typeof displayNameUpdateSchema>;
+export type PubGolfPlanInput = z.infer<typeof pubGolfPlanSchema>;
+export type LeaderboardPrizeCampaignInput = z.infer<typeof leaderboardPrizeCampaignSchema>;
+export type LeaderboardPrizeFinalizeInput = z.infer<typeof leaderboardPrizeFinalizeSchema>;
 export type DiscountRedemptionInput = z.infer<typeof discountRedemptionSchema>;
 export type PosDiscountRedemptionInput = z.infer<typeof posDiscountRedemptionSchema>;
 export type BarTierCheckoutInput = z.infer<typeof barTierCheckoutSchema>;

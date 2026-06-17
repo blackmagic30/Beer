@@ -84,6 +84,25 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).not.toContain("code text not null");
   });
 
+  it("keeps leaderboard prize vouchers private and server-write-only", () => {
+    const sql = migration("20260617000000_leaderboard_prizes_and_reward_vouchers.sql");
+
+    expect(sql).toContain("create table if not exists public.account_reward_vouchers");
+    expect(sql).toContain("create table if not exists public.leaderboard_prize_campaigns");
+    expect(sql).toContain("create table if not exists public.leaderboard_prize_awards");
+    expect(sql).toContain("alter table public.account_reward_vouchers enable row level security");
+    expect(sql).toContain("alter table public.leaderboard_prize_campaigns enable row level security");
+    expect(sql).toContain("alter table public.leaderboard_prize_awards enable row level security");
+    expect(sql).toContain('create policy "reward_vouchers_select_own"');
+    expect(sql).toContain("(select auth.uid()) = user_id");
+    expect(sql).toContain("revoke all on public.account_reward_vouchers from anon");
+    expect(sql).toContain("revoke all on public.account_reward_vouchers from authenticated");
+    expect(sql).toContain("grant select on public.account_reward_vouchers to authenticated");
+    expect(sql).toContain("revoke all on public.leaderboard_prize_awards from anon");
+    expect(sql).toContain("revoke all on public.leaderboard_prize_awards from authenticated");
+    expect(sql).not.toMatch(/grant\s+(insert|update|delete).*account_reward_vouchers\s+to\s+authenticated/i);
+  });
+
   it("hardens private security-definer helpers against public execution and mutable search paths", () => {
     const sql = migration("20260603000000_harden_private_helper_functions.sql");
 

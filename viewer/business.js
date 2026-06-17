@@ -405,7 +405,7 @@ async function signInWithEmail(email, password) {
   return syncSupabaseSession();
 }
 
-async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, privacyAccepted) {
+async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, privacyAccepted, displayName = null) {
   const client = getSupabaseClient();
   if (!client) {
     throw new Error("Supabase email signup is not configured for this environment.");
@@ -423,6 +423,8 @@ async function signUpWithEmail(email, password, ageConfirmed, termsAccepted, pri
         age_confirmed: Boolean(ageConfirmed),
         terms_accepted: Boolean(termsAccepted),
         privacy_accepted: Boolean(privacyAccepted),
+        display_name: displayName || undefined,
+        full_name: displayName || undefined,
         terms_version: LEGAL_POLICY_VERSION,
         privacy_version: LEGAL_POLICY_VERSION,
       },

@@ -84,6 +84,10 @@
               <label class="field">Email
                 <input name="email" type="email" autocomplete="email" required />
               </label>
+              <label class="field">Display name <span class="muted">(optional)</span>
+                <input name="displayName" maxlength="28" autocomplete="nickname" placeholder="Shown on leaderboards" />
+                <span class="fieldHint">No slurs, impersonation, URLs, or abusive names.</span>
+              </label>
               <label class="field passwordField">Password
                 <span class="passwordInputWrap">
                   <input name="password" type="password" autocomplete="new-password" minlength="8" required />
@@ -131,6 +135,7 @@
           <button class="settingsNavButton" type="button" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
           <button class="settingsNavButton" type="button" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
           <button class="settingsNavButton" type="button" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
+          <button id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta" type="button" data-settings-target="beta-testing" aria-controls="settingsBetaTestingPanel" aria-selected="false" hidden>BetaTesting</button>
         </nav>
 
         <section class="accountHighlightsGrid" aria-label="Account highlights">
@@ -199,7 +204,61 @@
                 <a class="button" href="/missions.html">Find missions</a>
               </div>
             </div>
+            <form id="displayNameForm" class="displayNameForm">
+              <label class="field">Leaderboard display name
+                <input name="displayName" maxlength="28" placeholder="Pick a public name" autocomplete="nickname" />
+                <span class="fieldHint">Shown on monthly leaderboards. Community-rule names only; emails stay private.</span>
+              </label>
+              <button class="button" type="submit">Save name</button>
+            </form>
             <div id="accountStatsGrid" class="statsGrid accountStatsGrid"></div>
+          </section>
+        </div>
+
+        <div id="settingsBetaTestingPanel" class="settingsPanel" data-settings-panel="beta-testing" role="tabpanel" hidden>
+          <section class="panel betaTestingPanel">
+            <div class="sectionHeader">
+              <div>
+                <div class="eyebrow">Premium beta</div>
+                <h2>Monthly contributor race</h2>
+                <p class="muted">Top contributors earn account vouchers after the monthly leaderboard closes and admin confirms winners.</p>
+              </div>
+              <span id="betaCampaignBadge" class="pill pill--premium">Monthly</span>
+            </div>
+            <div id="leaderboardPodium" class="leaderboardPodium"></div>
+            <div id="leaderboardList" class="betaLeaderboardList"></div>
+            <div id="rewardVoucherList" class="rewardVoucherList"></div>
+          </section>
+
+          <section class="panel pubGolfPanel">
+            <div class="sectionHeader">
+              <div>
+                <div class="eyebrow">Beta route planner</div>
+                <h2>Pub Golf</h2>
+                <p class="muted">Pick nine drinks and Pint Path will build a route from verified venue data.</p>
+              </div>
+              <button id="randomizePubGolfButton" class="button" type="button">Randomise drinks</button>
+            </div>
+            <form id="pubGolfForm" class="form">
+              <div class="grid grid--two">
+                <label class="field">Start
+                  <input name="startLocation" maxlength="160" placeholder="e.g. Melbourne CBD" required />
+                </label>
+                <label class="field">Finish
+                  <input name="finishLocation" maxlength="160" placeholder="e.g. Richmond station" required />
+                </label>
+              </div>
+              <label class="field">Route style
+                <select name="mode">
+                  <option value="auto">Auto: walk short legs, transit longer legs</option>
+                  <option value="walking">Prefer walking</option>
+                  <option value="transit">Prefer public transport</option>
+                </select>
+              </label>
+              <div id="pubGolfDrinkGrid" class="pubGolfDrinkGrid" aria-label="Pub Golf drinks"></div>
+              <button class="button button--primary" type="submit">Build Pub Golf route</button>
+            </form>
+            <div id="pubGolfResult" class="pubGolfResult"></div>
           </section>
         </div>
 
@@ -297,6 +356,23 @@
       fraud_flagged: "Fraud flagged",
     };
 
+    const pubGolfDrinkOptions = [
+      "Guinness",
+      "Carlton Draught",
+      "Stone & Wood Pacific Ale",
+      "Lager",
+      "Pale Ale",
+      "IPA",
+      "Cider",
+      "Red wine",
+      "White wine",
+      "Vodka soda",
+      "Gin and tonic",
+      "Whisky",
+      "Tequila",
+      "Non-alcoholic beer",
+    ];
+
     function $(id) {
       return document.getElementById(id);
     }
@@ -355,7 +431,7 @@
 
     function requestedSettingsPanel() {
       const panel = new URLSearchParams(window.location.search).get("settings") || window.location.hash.replace("#", "");
-      return ["stats", "submissions", "privacy", "support", "security"].includes(panel)
+      return ["stats", "submissions", "privacy", "support", "security", "beta-testing"].includes(panel)
         ? panel
         : "stats";
     }
@@ -592,6 +668,133 @@
       `;
     }
 
+    function renderDisplayNameForm(account) {
+      const form = $("displayNameForm");
+      if (!form) {
+        return;
+      }
+      form.displayName.value = account.displayName || "";
+    }
+
+    function renderPubGolfDrinkGrid(defaultDrinks = []) {
+      const grid = $("pubGolfDrinkGrid");
+      if (!grid || grid.dataset.ready === "true") {
+        return;
+      }
+      const drinks = Array.from({ length: 9 }, (_, index) => defaultDrinks[index] || pubGolfDrinkOptions[index % pubGolfDrinkOptions.length]);
+      grid.innerHTML = drinks.map((drink, index) => `
+        <label class="field pubGolfDrinkField">Hole ${index + 1}
+          <select name="drink${index}" required>
+            ${pubGolfDrinkOptions.map((option) => `<option value="${escapeHtml(option)}"${option === drink ? " selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+          </select>
+        </label>
+      `).join("");
+      grid.dataset.ready = "true";
+    }
+
+    function randomizePubGolfDrinks() {
+      const selects = Array.from(document.querySelectorAll("#pubGolfDrinkGrid select"));
+      const shuffled = [...pubGolfDrinkOptions].sort(() => Math.random() - 0.5);
+      selects.forEach((select, index) => {
+        select.value = shuffled[index % shuffled.length];
+      });
+    }
+
+    function renderBetaTestingPanel(result) {
+      const beta = result.betaTesting || {};
+      const enabled = Boolean(beta.enabled);
+      const betaButton = $("betaTestingNavButton");
+      if (betaButton) {
+        betaButton.hidden = !enabled;
+      }
+      if (!enabled) {
+        if (document.querySelector("[data-settings-panel='beta-testing']")?.classList.contains("is-active")) {
+          showAccountSettingsPanel("stats");
+        }
+        return;
+      }
+
+      renderPubGolfDrinkGrid(beta.pubGolf?.defaultDrinks || []);
+      const campaign = beta.leaderboard?.campaign || {};
+      const monthCopy = campaign.monthKey ? campaign.monthKey.replace("-", " ") : "This month";
+      $("betaCampaignBadge").textContent = `${monthCopy} · ${campaign.status || "active"}`;
+      const podium = beta.leaderboard?.podium || [];
+      $("leaderboardPodium").innerHTML = podium.length
+        ? podium.map((entry) => `
+          <article class="podiumCard podiumCard--rank${entry.rank}">
+            <div class="podiumRank">${entry.rank}</div>
+            <strong>${escapeHtml(entry.displayName || entry.accountId)}</strong>
+            <span>${escapeHtml(entry.prizeLabel || "Prize")}</span>
+            <small>${escapeHtml(formatPoints(entry.points))} pts · ${escapeHtml(entry.approvedSubmissions)} verified</small>
+          </article>
+        `).join("")
+        : `<div class="emptyState"><strong>No monthly leaders yet.</strong><span>Approved contributions will appear here.</span></div>`;
+
+      const entries = beta.leaderboard?.entries || [];
+      const me = beta.leaderboard?.me || null;
+      $("leaderboardList").innerHTML = `
+        <div class="betaLeaderboardMeta">
+          <strong>${escapeHtml(campaign.title || "Monthly contributor leaderboard")}</strong>
+          <span>${escapeHtml([campaign.firstPlaceLabel, campaign.secondPlaceLabel, campaign.thirdPlaceLabel].filter(Boolean).join(" · "))}</span>
+          ${me ? `<em>Your rank: #${escapeHtml(me.rank)} · ${escapeHtml(formatPoints(me.points))} pts</em>` : "<em>Your approved points will rank after review.</em>"}
+        </div>
+        ${entries.slice(0, 10).map((entry) => `
+          <div class="betaLeaderboardRow">
+            <span>#${escapeHtml(entry.rank)}</span>
+            <strong>${escapeHtml(entry.displayName || entry.accountId)}</strong>
+            <em>${escapeHtml(formatPoints(entry.points))} pts</em>
+          </div>
+        `).join("")}
+      `;
+      const vouchers = result.rewards?.vouchers || [];
+      $("rewardVoucherList").innerHTML = vouchers.length
+        ? `
+          <div class="betaLeaderboardMeta">
+            <strong>Your reward vouchers</strong>
+            <span>Use these when a partnered venue confirms a Pint Path special redemption.</span>
+          </div>
+          ${vouchers.map((voucher) => `
+            <div class="rewardVoucherCard">
+              <span>${escapeHtml(voucher.amountLabel || formatMoney((voucher.amountCents || 0) / 100))}</span>
+              <strong>${escapeHtml(voucher.title || "Pint Path voucher")}</strong>
+              <em>${escapeHtml(voucher.venueScope || "Partner venue")} · ${escapeHtml(voucher.status || "active")}</em>
+            </div>
+          `).join("")}
+        `
+        : "";
+    }
+
+    function renderPubGolfResult(result) {
+      const target = $("pubGolfResult");
+      if (!target) {
+        return;
+      }
+      const warnings = (result.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
+      target.innerHTML = `
+        <div class="pubGolfSummary">
+          <strong>${escapeHtml(result.completion || "Pub Golf plan")}</strong>
+          <span>${escapeHtml(result.summary?.totalDistanceKm ?? 0)} km estimated · ${escapeHtml(result.summary?.plannedStops ?? 0)}/9 stops</span>
+        </div>
+        <div class="pubGolfRoute">
+          ${(result.holes || []).map((hole) => `
+            <article class="pubGolfHole ${hole.status === "needs_data" ? "pubGolfHole--missing" : ""}">
+              <span class="podiumRank">${escapeHtml(hole.hole)}</span>
+              <div>
+                <strong>${escapeHtml(hole.drink)}</strong>
+                ${hole.venue
+                  ? `<p>${escapeHtml(hole.venue.name)}${hole.venue.suburb ? ` · ${escapeHtml(hole.venue.suburb)}` : ""}</p>
+                     <small>${escapeHtml(hole.venue.beerName)}${hole.venue.price != null ? ` · ${formatPrice(hole.venue.price)}` : ""} · ${escapeHtml(hole.leg?.guidance || "Open Maps")}</small>
+                     <a href="${escapeHtml(hole.venue.mapsUrl)}" target="_blank" rel="noopener">Open Maps</a>`
+                  : `<p>${escapeHtml(hole.leg?.guidance || "No match yet.")}</p>`}
+              </div>
+            </article>
+          `).join("")}
+        </div>
+        ${warnings ? `<ul class="pubGolfWarnings">${warnings}</ul>` : ""}
+        <p class="helperCopy">${escapeHtml(result.safetyCopy || "")}</p>
+      `;
+    }
+
     function subscriptionBadge(account) {
       const status = account.subscriptionStatus || "free";
       if (status === "premium_yearly") {
@@ -683,6 +886,8 @@
       MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings);
       renderRecentSubmissions(result.recentSubmissions || []);
       renderAccountStatsPanel(result);
+      renderDisplayNameForm(account);
+      renderBetaTestingPanel(result);
     }
 
     async function resumeCheckoutIfRequested(result) {
@@ -820,6 +1025,7 @@
               body.ageConfirmed,
               body.termsAccepted,
               body.privacyAccepted,
+              body.displayName || null,
             );
             if (result.needsEmailConfirmation) {
               form.reset();
@@ -982,6 +1188,24 @@
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
+      $("displayNameForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = $("displayNameForm");
+        const button = form.querySelector('button[type="submit"]');
+        try {
+          setLoading(button, true, "Saving...");
+          await MelbBeerBusiness.apiFetch("/api/business/account/display-name", {
+            method: "POST",
+            body: JSON.stringify({ displayName: form.displayName.value }),
+          });
+          const result = await refreshAccount();
+          MelbBeerBusiness.setStatus($("dashboardStatus"), result?.account?.displayName ? "Display name saved for the leaderboard." : "Display name cleared.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not save display name.", true);
+        } finally {
+          setLoading(button, false);
+        }
+      });
       $("refreshDiscountPassButton").addEventListener("click", async () => {
         const button = $("refreshDiscountPassButton");
         try {
@@ -998,6 +1222,31 @@
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Pint Path special code generated. Only show it to venue staff when redeeming a special.");
         } catch (error) {
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not generate a Pint Path special code.", true);
+        } finally {
+          setLoading(button, false);
+        }
+      });
+      $("randomizePubGolfButton").addEventListener("click", randomizePubGolfDrinks);
+      $("pubGolfForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = $("pubGolfForm");
+        const button = form.querySelector('button[type="submit"]');
+        const body = {
+          startLocation: form.startLocation.value,
+          finishLocation: form.finishLocation.value,
+          mode: form.mode.value,
+          drinks: Array.from({ length: 9 }, (_, index) => form[`drink${index}`].value),
+        };
+        try {
+          setLoading(button, true, "Planning...");
+          const result = await MelbBeerBusiness.apiFetch("/api/business/beta/pub-golf/plan", {
+            method: "POST",
+            body: JSON.stringify(body),
+          });
+          renderPubGolfResult(result);
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Pub Golf route built from verified venue drink data.");
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not build Pub Golf route.", true);
         } finally {
           setLoading(button, false);
         }

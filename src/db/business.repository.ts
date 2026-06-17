@@ -570,6 +570,69 @@ export interface LeaderboardEntry {
   points: number;
 }
 
+export interface AccountRewardVoucher {
+  id: string;
+  userId: string;
+  publicAccountId: string;
+  sourceType: string;
+  sourceId: string | null;
+  title: string;
+  amountCents: number;
+  currency: string;
+  venueScope: string | null;
+  status: "active" | "redeemed" | "expired" | "void";
+  issuedAt: string;
+  expiresAt: string | null;
+  redeemedAt: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LeaderboardPrizeCampaign {
+  monthKey: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  firstPlaceCents: number;
+  secondPlaceCents: number;
+  thirdPlaceCents: number;
+  affiliateBar: string | null;
+  terms: string | null;
+  status: "active" | "finalized";
+  finalizedAt: string | null;
+  finalizedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LeaderboardPrizeAward {
+  id: string;
+  monthKey: string;
+  rank: number;
+  userId: string;
+  publicAccountId: string;
+  displayName: string | null;
+  points: number;
+  approvedSubmissions: number;
+  voucherId: string | null;
+  createdAt: string;
+}
+
+export interface PubGolfVenueCandidate {
+  venueId: string;
+  venueName: string;
+  address: string | null;
+  suburb: string | null;
+  membershipTier: BarMembershipTier;
+  latitude: number | null;
+  longitude: number | null;
+  beerName: string;
+  servingSize: string | null;
+  price: number | null;
+  updatedAt: string;
+}
+
 export interface AccountDiscountPass {
   id: string;
   userId: string;
@@ -706,6 +769,55 @@ interface AgeVerificationRow {
   expires_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface AccountRewardVoucherRow {
+  id: string;
+  user_id: string;
+  public_account_id: string;
+  source_type: string;
+  source_id: string | null;
+  title: string;
+  amount_cents: number;
+  currency: string;
+  venue_scope: string | null;
+  status: "active" | "redeemed" | "expired" | "void";
+  issued_at: string;
+  expires_at: string | null;
+  redeemed_at: string | null;
+  metadata_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface LeaderboardPrizeCampaignRow {
+  month_key: string;
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  first_place_cents: number;
+  second_place_cents: number;
+  third_place_cents: number;
+  affiliate_bar: string | null;
+  terms: string | null;
+  status: "active" | "finalized";
+  finalized_at: string | null;
+  finalized_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface LeaderboardPrizeAwardRow {
+  id: string;
+  month_key: string;
+  rank: number;
+  user_id: string;
+  public_account_id: string;
+  display_name: string | null;
+  points: number;
+  approved_submissions: number;
+  voucher_id: string | null;
+  created_at: string;
 }
 
 interface SubmissionRow {
@@ -1124,6 +1236,61 @@ function toProfile(row: ProfileRow): PublicProfile {
     isOver18Verified: Boolean(row.is_over_18_verified),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function toAccountRewardVoucher(row: AccountRewardVoucherRow): AccountRewardVoucher {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    publicAccountId: row.public_account_id,
+    sourceType: row.source_type,
+    sourceId: row.source_id,
+    title: row.title,
+    amountCents: row.amount_cents,
+    currency: row.currency,
+    venueScope: row.venue_scope,
+    status: row.status,
+    issuedAt: row.issued_at,
+    expiresAt: row.expires_at,
+    redeemedAt: row.redeemed_at,
+    metadata: parseJsonObject(row.metadata_json),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toLeaderboardPrizeCampaign(row: LeaderboardPrizeCampaignRow): LeaderboardPrizeCampaign {
+  return {
+    monthKey: row.month_key,
+    title: row.title,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+    firstPlaceCents: row.first_place_cents,
+    secondPlaceCents: row.second_place_cents,
+    thirdPlaceCents: row.third_place_cents,
+    affiliateBar: row.affiliate_bar,
+    terms: row.terms,
+    status: row.status,
+    finalizedAt: row.finalized_at,
+    finalizedBy: row.finalized_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toLeaderboardPrizeAward(row: LeaderboardPrizeAwardRow): LeaderboardPrizeAward {
+  return {
+    id: row.id,
+    monthKey: row.month_key,
+    rank: row.rank,
+    userId: row.user_id,
+    publicAccountId: row.public_account_id,
+    displayName: row.display_name,
+    points: row.points,
+    approvedSubmissions: row.approved_submissions,
+    voucherId: row.voucher_id,
+    createdAt: row.created_at,
   };
 }
 
@@ -1940,6 +2107,38 @@ export class BusinessRepository {
     return this.getAccountById(input.userId)!;
   }
 
+  updateAccountDisplayName(input: { userId: string; displayName: string | null; now: string }): BusinessAccount {
+    this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE accounts
+           SET display_name = ?,
+               updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(input.displayName, input.now, input.userId);
+
+      const account = this.getAccountById(input.userId);
+      if (account) {
+        this.upsertProfile({
+          id: account.id,
+          publicAccountId: account.publicAccountId,
+          email: account.email,
+          displayName: input.displayName,
+          username: null,
+          avatarUrl: account.avatarUrl,
+          role: account.role,
+          accountStatus: account.status,
+          ageVerificationStatus: account.ageVerificationStatus,
+          isOver18Verified: account.isOver18Verified,
+          now: input.now,
+        });
+      }
+    })();
+
+    return this.getAccountById(input.userId)!;
+  }
+
   getAccountByPublicAccountId(publicAccountId: string): BusinessAccount | null {
     const row = this.database
       .prepare("SELECT * FROM accounts WHERE upper(public_account_id) = upper(?) LIMIT 1")
@@ -2427,15 +2626,12 @@ export class BusinessRepository {
     return rows.map(toUserActivityEvent);
   }
 
-  listLeaderboard(input: { period: "month" | "all_time"; limit: number; now: string }): LeaderboardEntry[] {
+  listLeaderboard(input: { period: "month" | "all_time"; limit: number; now: string; monthKey?: string | undefined }): LeaderboardEntry[] {
     const values: unknown[] = [];
-    const monthFilter = input.period === "month" ? "AND COALESCE(s.reviewed_at, s.updated_at) >= ?" : "";
+    const monthFilter = input.period === "month" ? "AND ledger.month_key = ?" : "";
 
     if (input.period === "month") {
-      const start = new Date(input.now);
-      start.setUTCDate(1);
-      start.setUTCHours(0, 0, 0, 0);
-      values.push(start.toISOString());
+      values.push(input.monthKey ?? input.now.slice(0, 7));
     }
 
     values.push(input.limit);
@@ -2446,18 +2642,24 @@ export class BusinessRepository {
            a.id AS user_id,
            COALESCE(a.public_account_id, a.id) AS account_id,
            COALESCE(NULLIF(a.display_name, ''), NULLIF(p.display_name, ''), COALESCE(a.public_account_id, a.id)) AS display_name,
-           count(s.id) AS approved_submissions,
-           COALESCE(sum(s.points_awarded), 0) AS points
-         FROM submissions s
-         JOIN accounts a ON a.id = s.user_id
+           (
+             SELECT count(*)
+               FROM submissions submission
+              WHERE submission.user_id = a.id
+                AND submission.status = 'approved'
+                AND COALESCE(submission.fraud_flagged, 0) = 0
+                ${input.period === "month" ? "AND strftime('%Y-%m', COALESCE(submission.reviewed_at, submission.updated_at)) = ledger.month_key" : ""}
+           ) AS approved_submissions,
+           COALESCE(sum(ledger.points), 0) AS points,
+           min(ledger.created_at) AS first_points_at
+         FROM contribution_ledger ledger
+         JOIN accounts a ON a.id = ledger.user_id
          LEFT JOIN profiles p ON p.id = a.id
-         WHERE s.status = 'approved'
-           AND COALESCE(s.fraud_flagged, 0) = 0
-           AND a.status != 'suspended'
+         WHERE a.status != 'suspended'
            ${monthFilter}
          GROUP BY a.id
-         HAVING count(s.id) > 0
-         ORDER BY approved_submissions DESC, points DESC, min(COALESCE(s.reviewed_at, s.updated_at)) ASC, account_id ASC
+         HAVING COALESCE(sum(ledger.points), 0) > 0
+         ORDER BY points DESC, approved_submissions DESC, first_points_at ASC, account_id ASC
          LIMIT ?`,
       )
       .all(...values) as Array<{
@@ -2477,7 +2679,7 @@ export class BusinessRepository {
     }));
   }
 
-  getLeaderboardRank(input: { userId: string; period: "month" | "all_time"; now: string }): LeaderboardEntry | null {
+  getLeaderboardRank(input: { userId: string; period: "month" | "all_time"; now: string; monthKey?: string | undefined }): LeaderboardEntry | null {
     const account = this.getAccountById(input.userId);
     if (!account) {
       return null;
@@ -2488,8 +2690,259 @@ export class BusinessRepository {
         period: input.period,
         limit: 10_000,
         now: input.now,
+        monthKey: input.monthKey,
       }).find((entry) => entry.accountId === account.publicAccountId) ?? null
     );
+  }
+
+  getLeaderboardPrizeCampaign(monthKey: string): LeaderboardPrizeCampaign | null {
+    const row = this.database
+      .prepare("SELECT * FROM leaderboard_prize_campaigns WHERE month_key = ?")
+      .get(monthKey) as LeaderboardPrizeCampaignRow | undefined;
+    return row ? toLeaderboardPrizeCampaign(row) : null;
+  }
+
+  upsertLeaderboardPrizeCampaign(input: {
+    monthKey: string;
+    title: string;
+    startsAt: string;
+    endsAt: string;
+    firstPlaceCents: number;
+    secondPlaceCents: number;
+    thirdPlaceCents: number;
+    affiliateBar: string | null;
+    terms: string | null;
+    now: string;
+  }): LeaderboardPrizeCampaign {
+    this.database
+      .prepare(
+        `INSERT INTO leaderboard_prize_campaigns (
+          month_key, title, starts_at, ends_at, first_place_cents, second_place_cents,
+          third_place_cents, affiliate_bar, terms, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        ON CONFLICT(month_key) DO UPDATE SET
+          title = excluded.title,
+          starts_at = excluded.starts_at,
+          ends_at = excluded.ends_at,
+          first_place_cents = excluded.first_place_cents,
+          second_place_cents = excluded.second_place_cents,
+          third_place_cents = excluded.third_place_cents,
+          affiliate_bar = excluded.affiliate_bar,
+          terms = excluded.terms,
+          status = CASE
+            WHEN leaderboard_prize_campaigns.status = 'finalized' THEN leaderboard_prize_campaigns.status
+            ELSE 'active'
+          END,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.monthKey,
+        input.title,
+        input.startsAt,
+        input.endsAt,
+        input.firstPlaceCents,
+        input.secondPlaceCents,
+        input.thirdPlaceCents,
+        input.affiliateBar,
+        input.terms,
+        input.now,
+        input.now,
+      );
+    return this.getLeaderboardPrizeCampaign(input.monthKey)!;
+  }
+
+  listLeaderboardPrizeAwards(monthKey: string): LeaderboardPrizeAward[] {
+    const rows = this.database
+      .prepare("SELECT * FROM leaderboard_prize_awards WHERE month_key = ? ORDER BY rank ASC")
+      .all(monthKey) as LeaderboardPrizeAwardRow[];
+    return rows.map(toLeaderboardPrizeAward);
+  }
+
+  listAccountRewardVouchers(userId: string, limit: number): AccountRewardVoucher[] {
+    const rows = this.database
+      .prepare("SELECT * FROM account_reward_vouchers WHERE user_id = ? ORDER BY issued_at DESC LIMIT ?")
+      .all(userId, limit) as AccountRewardVoucherRow[];
+    return rows.map(toAccountRewardVoucher);
+  }
+
+  finalizeLeaderboardPrizeCampaign(input: {
+    campaign: LeaderboardPrizeCampaign;
+    entries: LeaderboardEntry[];
+    finalizedBy: string;
+    now: string;
+  }): { campaign: LeaderboardPrizeCampaign; awards: LeaderboardPrizeAward[]; vouchers: AccountRewardVoucher[] } {
+    const finalize = this.database.transaction(() => {
+      const campaign = this.getLeaderboardPrizeCampaign(input.campaign.monthKey);
+      if (!campaign) {
+        throw new Error("Leaderboard prize campaign not found");
+      }
+
+      const amountsByRank = new Map([
+        [1, campaign.firstPlaceCents],
+        [2, campaign.secondPlaceCents],
+        [3, campaign.thirdPlaceCents],
+      ]);
+      const vouchers: AccountRewardVoucher[] = [];
+      const insertVoucher = this.database.prepare(
+        `INSERT OR IGNORE INTO account_reward_vouchers (
+          id, user_id, public_account_id, source_type, source_id, title, amount_cents,
+          currency, venue_scope, status, issued_at, expires_at, redeemed_at,
+          metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'AUD', ?, 'active', ?, ?, NULL, ?, ?, ?)`,
+      );
+      const insertAward = this.database.prepare(
+        `INSERT OR IGNORE INTO leaderboard_prize_awards (
+          id, month_key, rank, user_id, public_account_id, display_name,
+          points, approved_submissions, voucher_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+
+      for (const entry of input.entries.slice(0, 3)) {
+        const account = this.getAccountByPublicAccountId(entry.accountId);
+        if (!account) {
+          continue;
+        }
+        const amountCents = amountsByRank.get(entry.rank) ?? 0;
+        if (amountCents <= 0) {
+          continue;
+        }
+        const voucherId = `${campaign.monthKey}:${entry.rank}:${account.id}:voucher`;
+        const awardId = `${campaign.monthKey}:${entry.rank}:${account.id}`;
+        const title = `${campaign.title} ${entry.rank === 1 ? "winner" : `place ${entry.rank}`}`;
+        insertVoucher.run(
+          voucherId,
+          account.id,
+          account.publicAccountId,
+          "leaderboard_prize",
+          `${campaign.monthKey}:${entry.rank}`,
+          title,
+          amountCents,
+          campaign.affiliateBar,
+          input.now,
+          null,
+          JSON.stringify({
+            monthKey: campaign.monthKey,
+            rank: entry.rank,
+            points: entry.points,
+            approvedSubmissions: entry.approvedSubmissions,
+          }),
+          input.now,
+          input.now,
+        );
+        insertAward.run(
+          awardId,
+          campaign.monthKey,
+          entry.rank,
+          account.id,
+          account.publicAccountId,
+          entry.displayName,
+          entry.points,
+          entry.approvedSubmissions,
+          voucherId,
+          input.now,
+        );
+        const voucher = this.getAccountRewardVoucherById(voucherId);
+        if (voucher) {
+          vouchers.push(voucher);
+        }
+      }
+
+      this.database
+        .prepare(
+          `UPDATE leaderboard_prize_campaigns
+             SET status = 'finalized',
+                 finalized_at = COALESCE(finalized_at, ?),
+                 finalized_by = COALESCE(finalized_by, ?),
+                 updated_at = ?
+           WHERE month_key = ?`,
+        )
+        .run(input.now, input.finalizedBy, input.now, campaign.monthKey);
+
+      return {
+        campaign: this.getLeaderboardPrizeCampaign(campaign.monthKey)!,
+        awards: this.listLeaderboardPrizeAwards(campaign.monthKey),
+        vouchers,
+      };
+    });
+
+    return finalize();
+  }
+
+  getAccountRewardVoucherById(id: string): AccountRewardVoucher | null {
+    const row = this.database
+      .prepare("SELECT * FROM account_reward_vouchers WHERE id = ?")
+      .get(id) as AccountRewardVoucherRow | undefined;
+    return row ? toAccountRewardVoucher(row) : null;
+  }
+
+  listPubGolfVenueCandidates(drinkNames: string[], limitPerDrink: number): PubGolfVenueCandidate[] {
+    const normalizedDrinks = Array.from(new Set(
+      drinkNames
+        .map((drink) => drink.trim().toLowerCase())
+        .filter(Boolean),
+    ));
+    if (!normalizedDrinks.length) {
+      return [];
+    }
+
+    const rows: PubGolfVenueCandidate[] = [];
+    const query = this.database.prepare(
+      `SELECT
+         beer.venue_id AS venue_id,
+         profile.name AS venue_name,
+         profile.address AS address,
+         profile.suburb AS suburb,
+         profile.membership_tier AS membership_tier,
+         location.latitude AS latitude,
+         location.longitude AS longitude,
+         beer.beer_name AS beer_name,
+         beer.serve_size AS serving_size,
+         beer.price AS price,
+         beer.updated_at AS updated_at
+       FROM venue_beers beer
+       INNER JOIN venue_profiles profile ON profile.venue_id = beer.venue_id
+       LEFT JOIN venue_location_cache location ON location.venue_id = beer.venue_id
+       WHERE profile.active = 1
+         AND beer.in_stock = 1
+         AND lower(beer.beer_name) LIKE ?
+       ORDER BY
+         CASE profile.membership_tier WHEN 'pro' THEN 0 WHEN 'plus' THEN 1 ELSE 2 END,
+         location.latitude IS NULL,
+         beer.updated_at DESC,
+         profile.name COLLATE NOCASE ASC
+       LIMIT ?`,
+    );
+
+    for (const drink of normalizedDrinks) {
+      const matches = query.all(`%${drink}%`, limitPerDrink) as Array<{
+        venue_id: string;
+        venue_name: string;
+        address: string | null;
+        suburb: string | null;
+        membership_tier: BarMembershipTier;
+        latitude: number | null;
+        longitude: number | null;
+        beer_name: string;
+        serving_size: string | null;
+        price: number | null;
+        updated_at: string;
+      }>;
+      rows.push(...matches.map((row) => ({
+        venueId: row.venue_id,
+        venueName: row.venue_name,
+        address: row.address,
+        suburb: row.suburb,
+        membershipTier: row.membership_tier,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        beerName: row.beer_name,
+        servingSize: row.serving_size,
+        price: row.price,
+        updatedAt: row.updated_at,
+      })));
+    }
+
+    return rows;
   }
 
   createDiscountPass(input: {

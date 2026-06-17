@@ -26,10 +26,13 @@ import {
   checkoutSessionSchema,
   createMissionSchema,
   createSubmissionSchema,
+  displayNameUpdateSchema,
   discountRedemptionSchema,
   eventTrackSchema,
   feedbackSchema,
   geocodeQuerySchema,
+  leaderboardPrizeCampaignSchema,
+  leaderboardPrizeFinalizeSchema,
   leaderboardQuerySchema,
   legalAcceptanceSchema,
   missionsQuerySchema,
@@ -38,6 +41,7 @@ import {
   monthlyReportGenerateSchema,
   posDiscountRedemptionSchema,
   priceRecordsQuerySchema,
+  pubGolfPlanSchema,
   removeSavedItemSchema,
   retentionQuerySchema,
   reviewSubmissionSchema,
@@ -188,6 +192,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/account", (req, res) => {
     const account = requireAccount(req, businessService);
     res.json(success(businessService.getAccountDashboard(account)));
+  });
+
+  router.post("/account/display-name", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(displayNameUpdateSchema, req.body, "Invalid display name payload");
+    res.json(success(businessService.updateDisplayName(account, body)));
   });
 
   router.post("/account/discount-pass", async (req, res, next) => {
@@ -411,6 +421,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getLeaderboard(account, query)));
   });
 
+  router.post("/beta/pub-golf/plan", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(pubGolfPlanSchema, req.body, "Invalid Pub Golf planner payload");
+    res.json(success(businessService.planPubGolf(account, body)));
+  });
+
   router.post("/events", eventLimiter, (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const body = parseWithSchema(eventTrackSchema, req.body, "Invalid analytics event payload");
@@ -578,6 +594,23 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/admin/venue-partners", (req, res) => {
     const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getVenuePartnerAdmin(admin)));
+  });
+
+  router.get("/admin/leaderboard-prizes", (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    res.json(success(businessService.getLeaderboardPrizeAdmin(admin)));
+  });
+
+  router.post("/admin/leaderboard-prizes", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(leaderboardPrizeCampaignSchema, req.body, "Invalid leaderboard prize payload");
+    res.json(success(businessService.saveLeaderboardPrizeCampaign(admin, body)));
+  });
+
+  router.post("/admin/leaderboard-prizes/finalize", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(leaderboardPrizeFinalizeSchema, req.body, "Invalid leaderboard finalization payload");
+    res.json(success(businessService.finalizeLeaderboardPrizeCampaign(admin, body)));
   });
 
   router.get("/admin/accounts", (req, res) => {

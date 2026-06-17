@@ -111,6 +111,12 @@ describe("account page shell", () => {
     expect(html).not.toContain('id="premiumMemberHub"');
     expect(html).not.toContain("renderPremiumMemberHub");
     expect(html).toContain("Recent submissions");
+    expect(html).toContain('id="displayNameForm"');
+    expect(html).toContain('id="settingsBetaTestingPanel"');
+    expect(html).toContain('id="betaTestingNavButton"');
+    expect(html).toContain('id="leaderboardPodium"');
+    expect(html).toContain('id="rewardVoucherList"');
+    expect(html).toContain('id="pubGolfForm"');
     expect(html).toContain("New venue pending admin approval");
     expect(html).toContain("submissionPendingNotice");
     expect(html).toContain('id="authStatus" class="notice" role="status" hidden></div>');
@@ -291,6 +297,10 @@ describe("account page shell", () => {
     expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountAccessBadge\s*\{[\s\S]*font-size:\s*0\.56rem;/);
     expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountAccessBadgeRow \.accountAccessBadge:not\(:first-child\)\s*\{[\s\S]*display:\s*none;/);
     expect(css).toContain(".accountDiscountFeature");
+    expect(css).toContain(".betaTestingPanel");
+    expect(css).toContain(".leaderboardPodium");
+    expect(css).toContain(".rewardVoucherCard");
+    expect(css).toContain(".pubGolfDrinkGrid");
   });
 
   it("opens account settings sections on demand instead of rendering every panel open", () => {
@@ -309,11 +319,17 @@ describe("account page shell", () => {
     expect(html).toContain('data-settings-panel="privacy" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="support" role="tabpanel" hidden');
     expect(html).toContain('data-settings-panel="security" role="tabpanel" hidden');
+    expect(html).toContain('id="betaTestingNavButton"');
+    expect(html).toContain('data-settings-target="beta-testing"');
+    expect(html).toContain('aria-controls="settingsBetaTestingPanel"');
+    expect(html).toContain('data-settings-panel="beta-testing" role="tabpanel" hidden');
     expect(html).toContain("function showAccountSettingsPanel");
     expect(html).toContain('document.querySelectorAll("[data-settings-target]")');
     expect(html).toContain("showAccountSettingsPanel(button.dataset.settingsTarget)");
     expect(html).toContain("function requestedSettingsPanel");
     expect(html).toContain("showAccountSettingsPanel(requestedSettingsPanel())");
+    expect(html).toContain("renderBetaTestingPanel(result)");
+    expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/beta/pub-golf/plan"');
     expect(html).not.toContain('id="privacyControlsSection"');
     expect(css).toContain(".settingsNavButton");
     expect(css).toContain(".settingsPanel");
@@ -471,6 +487,7 @@ describe("account page shell", () => {
       'id="adminReview"',
       'id="adminCapture"',
       'id="adminPartners"',
+      'id="adminLeaderboard"',
       'id="adminAnalytics"',
     ];
     const requiredAdminControls = [
@@ -491,6 +508,10 @@ describe("account page shell", () => {
       'id="pitchReadinessPanel"',
       'id="pitchReadinessList"',
       'id="venueOutreachList"',
+      'id="leaderboardPrizeForm"',
+      'id="adminLeaderboardPodium"',
+      'id="adminLeaderboardEntries"',
+      'id="adminLeaderboardAwards"',
       'id="headlineMetrics"',
       'id="retentionCohorts"',
       'id="coverageDashboard"',
@@ -503,10 +524,12 @@ describe("account page shell", () => {
     expect(html).toContain('data-admin-tab-target="review" aria-controls="adminReview" aria-selected="false"');
     expect(html).toContain('data-admin-tab-target="capture" aria-controls="adminCapture" aria-selected="false"');
     expect(html).toContain('data-admin-tab-target="partners" aria-controls="adminPartners" aria-selected="false"');
+    expect(html).toContain('data-admin-tab-target="leaderboard" aria-controls="adminLeaderboard" aria-selected="false"');
     expect(html).toContain('data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false"');
     expect(html).toContain('data-admin-tab-panel="review" role="tabpanel" hidden');
     expect(html).toContain('data-admin-tab-panel="capture" role="tabpanel" hidden');
     expect(html).toContain('data-admin-tab-panel="partners" role="tabpanel" hidden');
+    expect(html).toContain('data-admin-tab-panel="leaderboard" role="tabpanel" hidden');
     expect(html).toContain('data-admin-tab-panel="analytics" role="tabpanel" hidden');
     expect(html).toContain("function showAdminTab");
     expect(html).toContain("function openReviewDecision");
@@ -514,6 +537,8 @@ describe("account page shell", () => {
     expect(html).toContain("function promptQueuedIngestionReview");
     expect(html).toContain("function prefillOutreachFromLead");
     expect(html).toContain("function renderPitchReadiness");
+    expect(html).toContain("function renderAdminLeaderboardPrizes");
+    expect(html).toContain("function handleLeaderboardPrizeFinalize");
     expect(html).toContain("function openLeadCapture");
     expect(html).toContain('class="adminSourceReviewLayout"');
     expect(html).toContain('data-prefill-lead');

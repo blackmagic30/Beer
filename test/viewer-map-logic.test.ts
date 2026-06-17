@@ -265,6 +265,33 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("search_shared");
   });
 
+  it("lets venue managers refresh beer prices in a fast checklist flow", () => {
+    expect(venuePortalHtml).toContain('id="priceRefreshPanel"');
+    expect(venuePortalHtml).toContain('id="confirmAllPricesButton"');
+    expect(venuePortalHtml).toContain("All prices are the same");
+    expect(venuePortalHtml).toContain('id="priceRefreshSearch"');
+    expect(venuePortalHtml).toContain('id="submitPriceRefreshButton"');
+    expect(venuePortalHtml).toContain("function renderPriceRefreshPanel");
+    expect(venuePortalHtml).toContain("function sortedBeerRows");
+    expect(venuePortalHtml).toContain("function collectPriceRefreshUpdates");
+    expect(venuePortalHtml).toContain("function submitPriceRefreshUpdates");
+    expect(venuePortalHtml).toContain('data-jump-tab="${escapeHtml(nextAction.tab)}"');
+    expect(venuePortalHtml).toContain('tab: "price-refresh"');
+  });
+
+  it("moves venue discount redemption into a focused code workspace", () => {
+    expect(venuePortalHtml).toContain('data-tab="redemption"');
+    expect(venuePortalHtml).toContain('data-panel="redemption"');
+    expect(venuePortalHtml).toContain("Redeem a user code");
+    expect(venuePortalHtml).toContain("Manual now · POS ready");
+    expect(venuePortalHtml).toContain('id="discountSpecialChoices"');
+    expect(venuePortalHtml).toContain('name="specialId" type="hidden"');
+    expect(venuePortalHtml).toContain("function renderDiscountSpecialChoices");
+    expect(venuePortalHtml).toContain("data-discount-special-id");
+    expect(venuePortalHtml).toContain('data-jump-tab="redemption"');
+    expect(venuePortalHtml).toContain('specialId: field(discountRedemptionFormElement, "specialId").value || null');
+  });
+
   it("renders the simplified public header, primary controls, and shared advanced filters", () => {
     expect(html).toContain('class="mapNavCard" aria-label="Primary"');
     expect(html).toContain('class="mapBrand" href="/"');

@@ -148,6 +148,66 @@ CREATE INDEX IF NOT EXISTS idx_discount_redemptions_user
 CREATE INDEX IF NOT EXISTS idx_discount_redemptions_venue
   ON discount_redemptions (venue_id, redeemed_at DESC);
 
+CREATE TABLE IF NOT EXISTS account_reward_vouchers (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  public_account_id TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_id TEXT,
+  title TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'AUD',
+  venue_scope TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  issued_at TEXT NOT NULL,
+  expires_at TEXT,
+  redeemed_at TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_reward_vouchers_user
+  ON account_reward_vouchers (user_id, status, issued_at DESC);
+
+CREATE TABLE IF NOT EXISTS leaderboard_prize_campaigns (
+  month_key TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  ends_at TEXT NOT NULL,
+  first_place_cents INTEGER NOT NULL DEFAULT 10000,
+  second_place_cents INTEGER NOT NULL DEFAULT 5000,
+  third_place_cents INTEGER NOT NULL DEFAULT 2500,
+  affiliate_bar TEXT,
+  terms TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  finalized_at TEXT,
+  finalized_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS leaderboard_prize_awards (
+  id TEXT PRIMARY KEY,
+  month_key TEXT NOT NULL,
+  rank INTEGER NOT NULL,
+  user_id TEXT NOT NULL,
+  public_account_id TEXT NOT NULL,
+  display_name TEXT,
+  points REAL NOT NULL DEFAULT 0,
+  approved_submissions INTEGER NOT NULL DEFAULT 0,
+  voucher_id TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (month_key, rank),
+  UNIQUE (month_key, user_id),
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (voucher_id) REFERENCES account_reward_vouchers(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_leaderboard_prize_awards_user
+  ON leaderboard_prize_awards (user_id, month_key DESC);
+
 CREATE TABLE IF NOT EXISTS security_audit_log (
   id TEXT PRIMARY KEY,
   actor_user_id TEXT,

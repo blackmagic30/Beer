@@ -23,6 +23,7 @@
         <button class="adminTabButton" type="button" data-admin-tab-target="review" aria-controls="adminReview" aria-selected="false">Review</button>
         <button class="adminTabButton" type="button" data-admin-tab-target="capture" aria-controls="adminCapture" aria-selected="false">Data capture</button>
         <button class="adminTabButton" type="button" data-admin-tab-target="partners" aria-controls="adminPartners" aria-selected="false">Partners</button>
+        <button class="adminTabButton" type="button" data-admin-tab-target="leaderboard" aria-controls="adminLeaderboard" aria-selected="false">Prizes</button>
         <button class="adminTabButton" type="button" data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false">Analytics</button>
       </nav>
 
@@ -323,6 +324,76 @@
         </div>
       </section>
 
+      <section id="adminLeaderboard" class="adminSection" data-admin-tab-panel="leaderboard" role="tabpanel" hidden>
+        <div class="adminSectionHeader">
+          <div>
+            <div class="eyebrow">Contributor prizes</div>
+            <h2>Monthly leaderboard rewards</h2>
+          </div>
+          <p class="muted">Set the public prize copy, watch the monthly top three, and finalize vouchers after the month closes.</p>
+        </div>
+
+        <div class="adminGrid adminGrid--two">
+          <form id="leaderboardPrizeForm" class="panel form">
+            <h2>Prize settings</h2>
+            <label class="field">Month
+              <input name="monthKey" required pattern="\d{4}-\d{2}" placeholder="2026-06" />
+            </label>
+            <label class="field">Title
+              <input name="title" required maxlength="120" placeholder="Monthly contributor leaderboard" />
+            </label>
+            <label class="field">Affiliated venue copy
+              <input name="affiliateBar" maxlength="180" placeholder="Affiliated Pint Path venue" />
+            </label>
+            <div class="grid grid--three">
+              <label class="field">1st place AUD
+                <input name="firstPlaceDollars" type="number" min="0" max="1000" step="1" required />
+              </label>
+              <label class="field">2nd place AUD
+                <input name="secondPlaceDollars" type="number" min="0" max="1000" step="1" required />
+              </label>
+              <label class="field">3rd place AUD
+                <input name="thirdPlaceDollars" type="number" min="0" max="1000" step="1" required />
+              </label>
+            </div>
+            <label class="field">Terms shown to users
+              <textarea name="terms" rows="3" placeholder="Prize redemption terms, RSA note, partner venue availability."></textarea>
+            </label>
+            <div class="actionRow">
+              <button class="button button--primary" type="submit">Save prizes</button>
+              <button id="finalizeLeaderboardPrizeButton" class="button button--danger" type="button">Finalize winners</button>
+            </div>
+            <label class="toggleLine">
+              <input id="forceLeaderboardFinalize" type="checkbox" />
+              <span><strong>Force finalize early</strong><em>Use only after manually confirming the campaign should close before month end.</em></span>
+            </label>
+            <div id="leaderboardPrizeStatus" class="notice">Loading prize settings...</div>
+          </form>
+
+          <div class="panel">
+            <div class="sectionHeader">
+              <div>
+                <h2>Current podium</h2>
+                <p class="muted">This snapshots into vouchers when you finalize.</p>
+              </div>
+              <span id="leaderboardPrizeCampaignBadge" class="pill pill--premium">Monthly</span>
+            </div>
+            <div id="adminLeaderboardPodium" class="leaderboardPodium adminLeaderboardPodium"></div>
+          </div>
+        </div>
+
+        <div class="adminGrid adminGrid--two">
+          <div class="panel">
+            <h2>Top contributors</h2>
+            <div id="adminLeaderboardEntries" class="betaLeaderboardList"></div>
+          </div>
+          <div class="panel">
+            <h2>Finalized awards</h2>
+            <div id="adminLeaderboardAwards" class="list"></div>
+          </div>
+        </div>
+      </section>
+
       <section id="adminAnalytics" class="adminSection" data-admin-tab-panel="analytics" role="tabpanel" hidden>
         <div class="adminSectionHeader">
           <div>
@@ -410,6 +481,22 @@
       return `${Math.round(Number(value || 0) * 100)}%`;
     }
 
+    function formatAudCents(value) {
+      return new Intl.NumberFormat("en-AU", {
+        style: "currency",
+        currency: "AUD",
+        maximumFractionDigits: Number(value || 0) % 100 === 0 ? 0 : 2,
+      }).format(Number(value || 0) / 100);
+    }
+
+    function dollarsToCents(value) {
+      return Math.max(0, Math.round(Number(value || 0) * 100));
+    }
+
+    function centsToDollars(value) {
+      return Number((Number(value || 0) / 100).toFixed(2));
+    }
+
     function renderMetric(label, value) {
       return `
         <div class="metricCard">
@@ -454,7 +541,7 @@
     let managerAccountSearchMessage = "Search for the staff member's Pint Path account.";
     let latestAdminTodayPayload = null;
     let reviewDecisionState = null;
-    const ADMIN_TAB_KEYS = ["review", "capture", "partners", "analytics"];
+    const ADMIN_TAB_KEYS = ["review", "capture", "partners", "leaderboard", "analytics"];
     const REVIEW_REASON_OPTIONS = {
       approved: [
         "Clean evidence and venue match",
@@ -505,6 +592,7 @@
         adminreview: "review",
         admincapture: "capture",
         adminpartners: "partners",
+        adminleaderboard: "leaderboard",
         adminanalytics: "analytics",
       };
       const target = params.get("adminTab") || legacyHashTargets[hash] || hash;
@@ -855,6 +943,119 @@
       pitchReadinessList.querySelectorAll("[data-capture-lead]").forEach((button) => {
         button.addEventListener("click", () => openLeadCapture(button.dataset));
       });
+    }
+
+    function fillLeaderboardPrizeForm(campaign = {}) {
+      leaderboardPrizeForm.elements.monthKey.value = campaign.monthKey || "";
+      leaderboardPrizeForm.elements.title.value = campaign.title || "Monthly contributor leaderboard";
+      leaderboardPrizeForm.elements.affiliateBar.value = campaign.affiliateBar || "";
+      leaderboardPrizeForm.elements.firstPlaceDollars.value = centsToDollars(campaign.firstPlaceCents ?? 10000);
+      leaderboardPrizeForm.elements.secondPlaceDollars.value = centsToDollars(campaign.secondPlaceCents ?? 5000);
+      leaderboardPrizeForm.elements.thirdPlaceDollars.value = centsToDollars(campaign.thirdPlaceCents ?? 2500);
+      leaderboardPrizeForm.elements.terms.value = campaign.terms || "";
+      leaderboardPrizeCampaignBadge.textContent = `${campaign.monthKey || "Monthly"} · ${campaign.status || "active"}`;
+    }
+
+    function renderAdminLeaderboardPrizes(data = {}) {
+      const campaign = data.campaign || data.leaderboard?.campaign || {};
+      const leaderboard = data.leaderboard || {};
+      const entries = leaderboard.entries || [];
+      const podium = leaderboard.podium || entries.slice(0, 3);
+      const awards = data.awards || [];
+
+      fillLeaderboardPrizeForm(campaign);
+      adminLeaderboardPodium.innerHTML = podium.length
+        ? podium.map((entry) => `
+          <article class="podiumCard podiumCard--rank${escapeHtml(entry.rank)}">
+            <div class="podiumRank">${escapeHtml(entry.rank)}</div>
+            <strong>${escapeHtml(entry.displayName || entry.accountId || entry.publicAccountId || "Contributor")}</strong>
+            <span>${escapeHtml(entry.prizeLabel || formatAudCents(entry.prizeCents || 0))}</span>
+            <small>${escapeHtml(entry.points || 0)} pts · ${escapeHtml(entry.approvedSubmissions || 0)} verified</small>
+          </article>
+        `).join("")
+        : '<div class="emptyState"><strong>No podium yet.</strong><span>Approved monthly contributions will appear here.</span></div>';
+
+      adminLeaderboardEntries.innerHTML = entries.length
+        ? entries.slice(0, 25).map((entry) => `
+          <div class="betaLeaderboardRow">
+            <span>#${escapeHtml(entry.rank)}</span>
+            <strong>${escapeHtml(entry.displayName || entry.accountId)}</strong>
+            <em>${escapeHtml(entry.points || 0)} pts · ${escapeHtml(entry.approvedSubmissions || 0)} verified</em>
+          </div>
+        `).join("")
+        : '<div class="listItem muted">No leaderboard entries for this month yet.</div>';
+
+      adminLeaderboardAwards.innerHTML = awards.length
+        ? awards.map((award) => `
+          <div class="listItem">
+            <strong>#${escapeHtml(award.rank)} ${escapeHtml(award.displayName || award.publicAccountId)}</strong>
+            <div class="muted">${escapeHtml(award.points)} pts · voucher ${escapeHtml(award.voucherId || "not linked")}</div>
+          </div>
+        `).join("")
+        : '<div class="listItem muted">No awards finalized yet.</div>';
+
+      const copy = data.copy || data.message || "Edit prizes before finalizing the monthly top three.";
+      setLocalNotice(leaderboardPrizeStatus, copy, campaign.status === "finalized");
+    }
+
+    async function loadLeaderboardPrizes() {
+      const result = await MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes");
+      renderAdminLeaderboardPrizes(result);
+      return result;
+    }
+
+    async function handleLeaderboardPrizeSave(event) {
+      event.preventDefault();
+      const button = leaderboardPrizeForm.querySelector('button[type="submit"]');
+      const form = leaderboardPrizeForm.elements;
+      const body = {
+        monthKey: form.monthKey.value,
+        title: form.title.value,
+        affiliateBar: form.affiliateBar.value || null,
+        terms: form.terms.value || null,
+        firstPlaceCents: dollarsToCents(form.firstPlaceDollars.value),
+        secondPlaceCents: dollarsToCents(form.secondPlaceDollars.value),
+        thirdPlaceCents: dollarsToCents(form.thirdPlaceDollars.value),
+      };
+      try {
+        button.disabled = true;
+        setLocalNotice(leaderboardPrizeStatus, "Saving prize settings...");
+        const result = await MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        renderAdminLeaderboardPrizes(result);
+        MelbBeerBusiness.setStatus(statusEl, "Leaderboard prize settings saved.");
+      } catch (error) {
+        setLocalNotice(leaderboardPrizeStatus, error.message || "Could not save prize settings.", true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function handleLeaderboardPrizeFinalize() {
+      const monthKey = leaderboardPrizeForm.elements.monthKey.value;
+      if (!monthKey) {
+        setLocalNotice(leaderboardPrizeStatus, "Choose a month before finalizing.", true);
+        return;
+      }
+      try {
+        finalizeLeaderboardPrizeButton.disabled = true;
+        setLocalNotice(leaderboardPrizeStatus, "Finalizing winners and creating vouchers...");
+        await MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes/finalize", {
+          method: "POST",
+          body: JSON.stringify({
+            monthKey,
+            force: Boolean(forceLeaderboardFinalize.checked),
+          }),
+        });
+        await loadLeaderboardPrizes();
+        MelbBeerBusiness.setStatus(statusEl, "Leaderboard winners finalized and vouchers created.");
+      } catch (error) {
+        setLocalNotice(leaderboardPrizeStatus, error.message || "Could not finalize prizes.", true);
+      } finally {
+        finalizeLeaderboardPrizeButton.disabled = false;
+      }
     }
 
     function prefillOutreachFromLead(lead) {
@@ -2240,7 +2441,7 @@
         button.addEventListener("click", () => promptSubmissionReview(submission, "fraud_flagged"));
       });
 
-      const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners] = await Promise.all([
+      const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners, leaderboardPrizes] = await Promise.all([
         MelbBeerBusiness.apiFetch(`/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`),
         MelbBeerBusiness.apiFetch("/api/business/admin/kpis?range=today"),
         MelbBeerBusiness.apiFetch("/api/business/admin/retention?groupBy=week&limit=12"),
@@ -2248,6 +2449,7 @@
         MelbBeerBusiness.apiFetch("/api/business/admin/partner-leads"),
         MelbBeerBusiness.apiFetch("/api/business/admin/queues"),
         MelbBeerBusiness.apiFetch("/api/business/admin/venue-partners"),
+        MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes"),
       ]);
       renderKpis(kpis);
       renderAdminTodayQueue(todayKpis, queues, submissions.submissions);
@@ -2258,6 +2460,7 @@
       renderQueues(queues);
       renderVenuePartners(venuePartners);
       renderPitchReadiness(leads, venuePartners);
+      renderAdminLeaderboardPrizes(leaderboardPrizes);
       await loadAdminDataTools();
       adminContentEl.hidden = false;
       MelbBeerBusiness.setStatus(statusEl, "Admin tools loaded.");
@@ -2287,6 +2490,8 @@
         syncManagerAssignPreview();
       });
       outreachForm.addEventListener("submit", handleOutreach);
+      leaderboardPrizeForm.addEventListener("submit", handleLeaderboardPrizeSave);
+      finalizeLeaderboardPrizeButton.addEventListener("click", handleLeaderboardPrizeFinalize);
       refreshAdminDataTools.addEventListener("click", loadAdminDataTools);
       adminVenueSearch.addEventListener("input", renderAdminVenueOptions);
       adminVenueSelect.addEventListener("change", () => {

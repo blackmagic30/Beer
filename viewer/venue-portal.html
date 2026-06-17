@@ -45,6 +45,7 @@
           <div id="selectedVenueSummary" class="venueSummaryCard"></div>
           <nav class="tabNav" aria-label="Bar dashboard sections">
             <button class="tabButton is-active" type="button" data-tab="overview">Overview</button>
+            <button class="tabButton" type="button" data-tab="redemption">Redeem code</button>
             <button class="tabButton" type="button" data-tab="profile">Profile</button>
             <button class="tabButton" type="button" data-tab="beers">Beers / stock</button>
             <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
@@ -68,17 +69,18 @@
                 <h2>Quick actions</h2>
                 <p class="muted">Fast edits for the things users care about most.</p>
                 <div class="actionRow">
-                  <button class="button button--primary" type="button" data-jump-tab="beers">Add beer on tap</button>
-                  <button class="button" type="button" data-jump-tab="happy-hours">Add happy hour</button>
+                  <button class="button button--primary" type="button" data-jump-tab="price-refresh">Keep prices fresh</button>
+                  <button class="button" type="button" data-jump-tab="redemption">Redeem user code</button>
                   <button class="button" type="button" data-jump-tab="specials" data-specials-only>Add Pint Path special</button>
-                  <button class="button" type="button" data-jump-tab="profile">Edit profile</button>
+                  <button class="button" type="button" data-jump-tab="happy-hours">Add happy hour</button>
                 </div>
               </article>
             </div>
 
-            <div class="grid grid--two" style="margin-top:16px;">
+            <div class="venueHeroGrid" style="margin-top:16px;">
               <article id="weeklyActionCard" class="panel"></article>
               <article id="staffModeCard" class="panel"></article>
+              <article id="specialsHeroCard" class="panel"></article>
             </div>
 
             <div class="grid grid--two" style="margin-top:16px;">
@@ -107,16 +109,52 @@
               <p class="helperCopy">Manager edits are saved privately until Pint Path admin approval. Public map/listing views keep showing the last approved data.</p>
               <div id="pendingChanges" class="list"></div>
             </article>
+          </section>
 
-            <article class="panel" style="margin-top:16px;">
+          <section class="tabPanel is-hidden" data-panel="redemption">
+            <article class="panel redemptionHeroPanel">
               <div class="sectionHeader">
                 <div>
-                  <h2>Redeem Pint Path discount</h2>
-                  <p class="muted">Enter the user’s current rotating code after they show it at the venue.</p>
+                  <div class="eyebrow">Pint Path specials</div>
+                  <h2>Redeem a user code</h2>
+                  <p class="muted">The user opens their Pint Path special code, staff enters or scans it here, and the venue records the discount without exposing user details.</p>
                 </div>
-                <span class="pill">Explicit redemption only</span>
+                <span class="pill pill--premium">Manual now · POS ready</span>
+              </div>
+              <div class="redemptionFlowGrid" aria-label="Discount redemption workflow">
+                <div class="redemptionFlowStep">
+                  <strong>1</strong>
+                  <span>User shows code</span>
+                  <small>Premium or contributor users generate a rotating QR or 6-character code.</small>
+                </div>
+                <div class="redemptionFlowStep">
+                  <strong>2</strong>
+                  <span>Staff validates</span>
+                  <small>Enter the code and the drink discount. Pint Path checks it server-side.</small>
+                </div>
+                <div class="redemptionFlowStep">
+                  <strong>3</strong>
+                  <span>Discount is logged</span>
+                  <small>Savings, item, quantity and time are stored for venue reporting.</small>
+                </div>
+                <div class="redemptionFlowStep">
+                  <strong>4</strong>
+                  <span>Pro POS webhook</span>
+                  <small>Later, POS can send the same code and discount payload automatically.</small>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="sectionHeader">
+                <div>
+                  <h2>Manual staff redemption</h2>
+                  <p class="muted">Use this when a user shows their Pint Path special at the bar.</p>
+                </div>
+                <span class="pill">Server validated</span>
               </div>
               <form id="discountRedemptionForm" class="form">
+                <input name="specialId" type="hidden" />
                 <div class="discountQuickPanel">
                   <div>
                     <span class="eyebrow">Common app discount</span>
@@ -134,6 +172,7 @@
                     </div>
                   </div>
                 </div>
+                <div id="discountSpecialChoices" class="discountSpecialChoices"></div>
                 <div class="grid grid--two">
                   <label class="field">User code
                     <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="ABC123" required />
@@ -207,6 +246,25 @@
           </section>
 
           <section class="tabPanel is-hidden" data-panel="beers">
+            <article id="priceRefreshPanel" class="panel priceRefreshPanel">
+              <div class="sectionHeader">
+                <div>
+                  <div class="eyebrow">Keep data fresh</div>
+                  <h2>Review current prices</h2>
+                  <p class="muted">Confirm unchanged beers in one pass, or open a row to update the price that changed.</p>
+                </div>
+                <button id="confirmAllPricesButton" class="button button--primary" type="button">All prices are the same</button>
+              </div>
+              <div class="priceRefreshToolbar">
+                <label class="field">Search beer
+                  <input id="priceRefreshSearch" type="search" placeholder="Search by beer, brewery, or size" autocomplete="off" />
+                </label>
+                <button id="submitPriceRefreshButton" class="button" type="button">Submit selected updates</button>
+              </div>
+              <div id="priceRefreshList" class="priceRefreshList"></div>
+              <div id="priceRefreshStatus" class="notice">Tick unchanged beers, or click a row to edit its price.</div>
+            </article>
+
             <div class="grid grid--two">
               <form id="beerForm" class="panel form">
                 <div class="sectionHeader">
@@ -656,6 +714,33 @@
       });
     }
 
+    function jumpToPortalTarget(name) {
+      if (name === "price-refresh") {
+        showTab("beers");
+        window.requestAnimationFrame(() => {
+          priceRefreshPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+          priceRefreshSearch?.focus({ preventScroll: true });
+        });
+        return;
+      }
+      if (name === "redemption") {
+        showTab("redemption");
+        window.requestAnimationFrame(() => {
+          const form = document.getElementById("discountRedemptionForm");
+          const status = document.getElementById("discountRedemptionStatus");
+          form?.scrollIntoView({ behavior: "smooth", block: "start" });
+          if (form instanceof HTMLFormElement) {
+            field(form, "code")?.focus({ preventScroll: true });
+          }
+          if (status) {
+            MelbBeerBusiness.setStatus(status, "Staff mode ready. Enter or scan the user's current Pint Path code.");
+          }
+        });
+        return;
+      }
+      showTab(name);
+    }
+
     function syncTierControls(data) {
       const canSpecials = portalCanManageSpecials(data);
       document.querySelectorAll("[data-specials-only]").forEach((element) => {
@@ -795,6 +880,7 @@
 
       renderProfileForm(profile);
       renderBeerList(beers);
+      renderPriceRefreshPanel(beers);
       renderHappyHours(happyHours);
       renderSpecials(specials);
       renderOverviewData(data);
@@ -802,6 +888,7 @@
       renderTierGuide(data);
       renderBusinessToolkit(data);
       renderDiscountOps(data);
+      renderDiscountSpecialChoices(data);
       renderPendingChanges(data.pendingChanges || []);
       renderAnalytics(data);
       renderMonthlyReport(data);
@@ -851,6 +938,7 @@
       const records = data.insights?.priceRecords || [];
       const weeklyActionCard = document.getElementById("weeklyActionCard");
       const staffModeCard = document.getElementById("staffModeCard");
+      const specialsHeroCard = document.getElementById("specialsHeroCard");
       const publicPreviewCard = document.getElementById("publicPreviewCard");
       const staffInviteCard = document.getElementById("staffInviteCard");
       const profileReady = Boolean(profile.name && profile.suburb);
@@ -862,7 +950,7 @@
             ? { label: "Add happy hour", tab: "happy-hours", copy: "Happy hours are one of the fastest ways to get users to choose a venue tonight." }
             : tier.canManageSpecials && !specials.length
               ? { label: "Add app special", tab: "specials", copy: "Plus and Pro venues can add reviewed Pint Path specials for extra conversion proof." }
-              : { label: "Keep prices fresh", tab: "beers", copy: "Update one price or tap status each week so users keep trusting the listing." };
+              : { label: "Keep prices fresh", tab: "price-refresh", copy: "Confirm unchanged prices in one pass, or edit only the rows that changed." };
       const previewBeer = records[0] || beers[0] || null;
       const mapQuery = encodeURIComponent([profile.name, profile.address, profile.suburb].filter(Boolean).join(", "));
       const mailSubject = encodeURIComponent(`Pint Path staff invite for ${profile.name || "my venue"}`);
@@ -876,7 +964,9 @@
 
       if (weeklyActionCard) {
         weeklyActionCard.innerHTML = `
-          <div class="eyebrow">This week</div>
+          <div class="eyebrow">Keep data fresh</div>
+          <div class="venueHeroStat">${formatCount(beers.length)}</div>
+          <span class="muted">beer row${beers.length === 1 ? "" : "s"} managed</span>
           <h2>${escapeHtml(nextAction.label)}</h2>
           <p class="muted">${escapeHtml(nextAction.copy)}</p>
           <button class="button button--primary" type="button" data-jump-tab="${escapeHtml(nextAction.tab)}">${escapeHtml(nextAction.label)}</button>
@@ -884,12 +974,36 @@
       }
 
       if (staffModeCard) {
+        const totalRedemptions = Number(data.discounts?.totalRedemptions || 0);
         staffModeCard.innerHTML = `
           <div class="eyebrow">Staff mode</div>
-          <h2>Redeem a user discount fast</h2>
-          <p class="muted">For bar staff: choose $1 or $2 off, enter the user code, then redeem. No analytics or setup screens needed.</p>
-          <button class="button button--primary" type="button" data-scroll-discount="true">Open redemption</button>
+          <div class="venueHeroStat">${formatCount(totalRedemptions)}</div>
+          <span class="muted">redeemed Pint Path special${totalRedemptions === 1 ? "" : "s"}</span>
+          <h2>Redeem user code</h2>
+          <p class="muted">Staff enter the user's rotating QR/code, choose the drink discount, and Pint Path records the saving.</p>
+          <button class="button button--primary" type="button" data-jump-tab="redemption">Open redemption</button>
         `;
+      }
+
+      if (specialsHeroCard) {
+        const activeSpecials = specials.filter((special) => special.active !== false).length;
+        specialsHeroCard.innerHTML = tier.canManageSpecials
+          ? `
+            <div class="eyebrow">Specials</div>
+            <div class="venueHeroStat">${formatCount(activeSpecials)}</div>
+            <span class="muted">active Pint Path special${activeSpecials === 1 ? "" : "s"}</span>
+            <h2>Drive app redemptions</h2>
+            <p class="muted">Use a clear $1 or $2 beer discount so staff can redeem it manually now and POS can automate it later.</p>
+            <button class="button button--primary" type="button" data-jump-tab="specials">Manage specials</button>
+          `
+          : `
+            <div class="eyebrow">Upgrade path</div>
+            <div class="venueHeroStat">Plus</div>
+            <span class="muted">unlocks Pint Path specials</span>
+            <h2>Create app-only offers</h2>
+            <p class="muted">Free venues can manage beer and happy-hour data. Plus and Pro add reviewed Pint Path specials.</p>
+            <button class="button button--premium" type="button" data-upgrade-tier="plus">Unlock specials</button>
+          `;
       }
 
       if (publicPreviewCard) {
@@ -1121,6 +1235,17 @@
             <span class="muted">Token preview</span>
             <code>${escapeHtml(pos.tokenPreview || "Not enabled")}</code>
           </div>
+          <details class="posPayloadExample">
+            <summary>POS payload example</summary>
+            <code>${escapeHtml(JSON.stringify(pos.payloadExample || {
+              venueId: data.selectedVenue?.venueId || "venue-id",
+              code: "ABC123",
+              itemName: "Pint Path special pint",
+              quantity: 1,
+              discountAmountCents: 200,
+              posReference: "receipt-12345",
+            }, null, 2))}</code>
+          </details>
           <div class="actionRow actionRow--compact" style="margin-top:12px;">
             <button class="button button--small" type="button" data-copy-pos-endpoint="true" ${pos.endpoint ? "" : "disabled"}>Copy endpoint</button>
             <button class="button button--small button--primary" type="button" data-copy-pos-token="true" ${pos.token ? "" : "disabled"}>Copy token</button>
@@ -1136,6 +1261,52 @@
               </div>
             `).join("") : '<div class="listItem muted">Recent redemptions will appear here for staff reconciliation.</div>'}
           </div>
+        </div>
+      `;
+    }
+
+    function inferSpecialSavingsDollars(special) {
+      const copy = [special.title, special.discount, special.description].filter(Boolean).join(" ");
+      const explicitOff = copy.match(/\$?\s?(\d+(?:\.\d{1,2})?)\s*(?:off|discount|saving|savings)/i);
+      if (explicitOff) return Number(explicitOff[1]);
+      return 2;
+    }
+
+    function renderDiscountSpecialChoices(data) {
+      const panel = document.getElementById("discountSpecialChoices");
+      if (!panel) return;
+
+      const specials = (data.inventory?.specials || []).filter((special) => special.active !== false);
+      if (!specials.length) {
+        panel.innerHTML = `
+          <div class="discountSpecialChoices__empty">
+            <strong>No live Pint Path specials yet.</strong>
+            <span>Add a Plus/Pro special first, then staff can choose it here while redeeming user codes.</span>
+          </div>
+        `;
+        return;
+      }
+
+      panel.innerHTML = `
+        <div class="eyebrow">Choose a live Pint Path special</div>
+        <div class="discountSpecialChoiceGrid">
+          ${specials.slice(0, 8).map((special) => {
+            const savings = inferSpecialSavingsDollars(special);
+            const labelParts = [
+              special.title,
+              special.price != null ? money(special.price) : special.discount,
+              savings ? `${formatCurrency(savings)} default discount` : "",
+            ].filter(Boolean);
+            return `
+              <button
+                class="discountSpecialChoice"
+                type="button"
+                data-discount-special-id="${escapeHtml(special.id)}"
+                data-discount-item="${escapeHtml(special.title || "Pint Path special")}"
+                data-savings-dollars="${escapeHtml(savings)}"
+              >${escapeHtml(labelParts.join(" · "))}</button>
+            `;
+          }).join("")}
         </div>
       `;
     }
@@ -1187,6 +1358,174 @@
           </div>
         `).join("")
         : '<div class="emptyState"><strong>No beers yet.</strong><br />Add your first beer so Pint Path users can see what is available now.</div>';
+    }
+
+    function sortedBeerRows(beers) {
+      return [...(beers || [])].sort((a, b) => {
+        const nameCompare = String(a.beerName || "").localeCompare(String(b.beerName || ""), undefined, { sensitivity: "base" });
+        if (nameCompare !== 0) return nameCompare;
+        return String(a.serveSize || "").localeCompare(String(b.serveSize || ""), undefined, { sensitivity: "base" });
+      });
+    }
+
+    function beerRefreshSearchText(beer) {
+      return [
+        beer.beerName,
+        beer.brewery,
+        beer.style,
+        beer.serveSize,
+        beer.price != null ? String(beer.price) : "",
+      ].filter(Boolean).join(" ").toLowerCase();
+    }
+
+    function renderPriceRefreshPanel(beers) {
+      const sortedBeers = sortedBeerRows(beers);
+      if (!sortedBeers.length) {
+        priceRefreshList.innerHTML = '<div class="emptyState"><strong>No prices to refresh yet.</strong><br />Add beer rows first, then this tool becomes your weekly price check.</div>';
+        confirmAllPricesButton.disabled = true;
+        submitPriceRefreshButton.disabled = true;
+        priceRefreshSearch.disabled = true;
+        MelbBeerBusiness.setStatus(priceRefreshStatus, "Add beer rows first, then come back to refresh them.");
+        return;
+      }
+
+      confirmAllPricesButton.disabled = false;
+      submitPriceRefreshButton.disabled = false;
+      priceRefreshSearch.disabled = false;
+      priceRefreshList.innerHTML = sortedBeers.map((beer) => `
+        <article
+          class="priceRefreshRow"
+          data-refresh-row="${escapeHtml(beer.id)}"
+          data-search-text="${escapeHtml(beerRefreshSearchText(beer))}"
+          data-original-price="${escapeHtml(beer.price ?? "")}"
+        >
+          <label class="priceRefreshRow__check">
+            <input type="checkbox" data-refresh-same="${escapeHtml(beer.id)}" />
+            <span>Same</span>
+          </label>
+          <button class="priceRefreshRow__summary" type="button" data-refresh-edit="${escapeHtml(beer.id)}">
+            <strong>${escapeHtml(beer.beerName)}</strong>
+            <span>${escapeHtml([beer.brewery, beer.style, beer.serveSize].filter(Boolean).join(" · ") || "Beer row")}</span>
+            <small>${escapeHtml([beer.onTap ? "On tap" : "Off tap", beer.inStock ? "In stock" : "Out of stock", `Current ${money(beer.price)}`, `Updated ${MelbBeerBusiness.formatDate(beer.updatedAt)}`].join(" · "))}</small>
+          </button>
+          <div class="priceRefreshRow__edit" hidden>
+            <label class="field">New price
+              <input data-refresh-price="${escapeHtml(beer.id)}" type="number" min="0" max="250" step="0.01" value="${escapeHtml(beer.price ?? "")}" placeholder="No price" />
+            </label>
+            <div class="fieldHint">Leave blank only if this beer should not show a price.</div>
+          </div>
+        </article>
+      `).join("");
+      filterPriceRefreshRows();
+      MelbBeerBusiness.setStatus(priceRefreshStatus, "Tick unchanged beers, or click a row to edit its price.");
+    }
+
+    function setPriceRefreshRowEditing(row, editing) {
+      row.classList.toggle("is-editing", editing);
+      const editPanel = row.querySelector(".priceRefreshRow__edit");
+      if (editPanel) {
+        editPanel.hidden = !editing;
+      }
+      if (editing) {
+        row.querySelector("[data-refresh-same]").checked = false;
+        window.requestAnimationFrame(() => row.querySelector("[data-refresh-price]")?.focus({ preventScroll: true }));
+      }
+    }
+
+    function filterPriceRefreshRows() {
+      if (!window.priceRefreshSearch || !window.priceRefreshList) return;
+      const query = priceRefreshSearch.value.trim().toLowerCase();
+      let visibleCount = 0;
+      priceRefreshList.querySelectorAll("[data-refresh-row]").forEach((row) => {
+        const visible = !query || String(row.dataset.searchText || "").includes(query);
+        row.hidden = !visible;
+        if (visible) visibleCount += 1;
+      });
+      if (currentPortal?.inventory?.beers?.length) {
+        const suffix = query ? `${visibleCount} matching beer${visibleCount === 1 ? "" : "s"} shown.` : "Rows are sorted alphabetically.";
+        priceRefreshStatus.textContent = `Tick unchanged beers, or click a row to edit its price. ${suffix}`;
+      }
+    }
+
+    function priceRefreshPayloadFromBeer(beer, price) {
+      const freshnessNote = "Venue manager price freshness check.";
+      return {
+        id: beer.id,
+        beerName: beer.beerName,
+        brewery: beer.brewery,
+        style: beer.style,
+        abv: beer.abv,
+        serveSize: beer.serveSize,
+        price,
+        onTap: Boolean(beer.onTap),
+        inStock: Boolean(beer.inStock),
+        notes: [
+          beer.notes,
+          String(beer.notes || "").includes(freshnessNote) ? null : freshnessNote,
+        ].filter(Boolean).join(" "),
+      };
+    }
+
+    function collectPriceRefreshUpdates({ allSame = false } = {}) {
+      const beerById = new Map((currentPortal?.inventory?.beers || []).map((beer) => [beer.id, beer]));
+      const updates = [];
+      priceRefreshList.querySelectorAll("[data-refresh-row]").forEach((row) => {
+        const beer = beerById.get(row.dataset.refreshRow);
+        if (!beer) return;
+        const sameChecked = row.querySelector("[data-refresh-same]")?.checked;
+        const priceInput = row.querySelector("[data-refresh-price]");
+        const originalPrice = row.dataset.originalPrice;
+        const nextPriceValue = priceInput?.value ?? "";
+        const priceChanged = String(nextPriceValue) !== String(originalPrice ?? "");
+        if (!allSame && !sameChecked && !priceChanged) return;
+        updates.push({
+          beer,
+          body: priceRefreshPayloadFromBeer(beer, nextPriceValue === "" ? null : Number(nextPriceValue)),
+          action: allSame || sameChecked ? "same" : "changed",
+        });
+      });
+      return updates;
+    }
+
+    async function submitPriceRefreshUpdates({ allSame = false } = {}) {
+      const venueId = selectedVenueId();
+      if (!venueId) return;
+      const updates = allSame
+        ? (currentPortal?.inventory?.beers || []).map((beer) => ({
+            beer,
+            body: priceRefreshPayloadFromBeer(beer, beer.price),
+            action: "same",
+          }))
+        : collectPriceRefreshUpdates();
+
+      if (!updates.length) {
+        MelbBeerBusiness.setStatus(priceRefreshStatus, "Tick at least one unchanged beer or edit a changed price before submitting.", true);
+        return;
+      }
+
+      const changedCount = updates.filter((update) => update.action === "changed").length;
+      confirmAllPricesButton.disabled = true;
+      submitPriceRefreshButton.disabled = true;
+      MelbBeerBusiness.setStatus(priceRefreshStatus, `Submitting ${updates.length} price freshness update${updates.length === 1 ? "" : "s"}...`);
+      try {
+        for (const update of updates) {
+          await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/beers`, {
+            method: "POST",
+            body: JSON.stringify(update.body),
+          });
+        }
+        MelbBeerBusiness.setStatus(
+          priceRefreshStatus,
+          changedCount
+            ? `${updates.length} update${updates.length === 1 ? "" : "s"} submitted, including ${changedCount} changed price${changedCount === 1 ? "" : "s"}.`
+            : `${updates.length} beer price${updates.length === 1 ? "" : "s"} submitted as still current.`,
+        );
+        await loadPortal(venueId);
+      } catch (error) {
+        MelbBeerBusiness.setStatus(priceRefreshStatus, error.message || "Could not submit price refresh.", true);
+        confirmAllPricesButton.disabled = false;
+        submitPriceRefreshButton.disabled = false;
+      }
     }
 
     function renderHappyHours(happyHours) {
@@ -1388,7 +1727,9 @@
       renderTimeSuggestions();
       const discountRedemptionFormElement = document.getElementById("discountRedemptionForm");
       const discountRedemptionStatus = document.getElementById("discountRedemptionStatus");
-      const discountCodeFromQr = new URLSearchParams(window.location.search).get("discountCode");
+      const urlParams = new URLSearchParams(window.location.search);
+      const discountCodeFromQr = urlParams.get("discountCode");
+      const requestedTab = urlParams.get("tab");
       if (discountCodeFromQr && discountRedemptionFormElement) {
         field(discountRedemptionFormElement, "code").value = discountCodeFromQr.toUpperCase();
       }
@@ -1404,7 +1745,10 @@
       });
 
       try {
-        await loadPortal(new URLSearchParams(window.location.search).get("venueId"));
+        await loadPortal(urlParams.get("venueId"));
+        if (requestedTab || discountCodeFromQr) {
+          jumpToPortalTarget(requestedTab || "redemption");
+        }
       } catch (error) {
         claimPanel.classList.add("is-hidden");
         const message = /login required/i.test(error.message || "")
@@ -1417,7 +1761,33 @@
         button.addEventListener("click", () => showTab(button.dataset.tab));
       });
       document.querySelectorAll("[data-jump-tab]").forEach((button) => {
-        button.addEventListener("click", () => showTab(button.dataset.jumpTab));
+        button.addEventListener("click", () => jumpToPortalTarget(button.dataset.jumpTab));
+      });
+
+      priceRefreshSearch.addEventListener("input", filterPriceRefreshRows);
+      confirmAllPricesButton.addEventListener("click", () => {
+        void submitPriceRefreshUpdates({ allSame: true });
+      });
+      submitPriceRefreshButton.addEventListener("click", () => {
+        void submitPriceRefreshUpdates();
+      });
+      priceRefreshList.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        const sameControl = target.closest(".priceRefreshRow__check");
+        if (sameControl) {
+          const row = sameControl.closest("[data-refresh-row]");
+          const checkbox = sameControl.querySelector("[data-refresh-same]");
+          window.setTimeout(() => {
+            if (row && checkbox?.checked) {
+              setPriceRefreshRowEditing(row, false);
+            }
+          }, 0);
+          return;
+        }
+        const row = target.closest("[data-refresh-row]");
+        if (!row) return;
+        setPriceRefreshRowEditing(row, !row.classList.contains("is-editing"));
       });
 
       venueLogoutButton.addEventListener("click", async () => {
@@ -1560,6 +1930,7 @@
           const savingsDollars = Number(field(discountRedemptionFormElement, "estimatedSavingsDollars").value || 0);
           const body = {
             code: field(discountRedemptionFormElement, "code").value,
+            specialId: field(discountRedemptionFormElement, "specialId").value || null,
             itemName: field(discountRedemptionFormElement, "itemName").value || null,
             quantity: Number(field(discountRedemptionFormElement, "quantity").value || 1),
             estimatedSavingsCents: Math.round(Math.max(0, savingsDollars) * 100),
@@ -1611,14 +1982,22 @@
         if (!(target instanceof HTMLElement) || !selectedVenueId()) return;
 
         if (target.dataset.jumpTab) {
-          showTab(target.dataset.jumpTab);
+          jumpToPortalTarget(target.dataset.jumpTab);
           return;
         }
 
         if (target.dataset.scrollDiscount && discountRedemptionFormElement) {
-          discountRedemptionFormElement.scrollIntoView({ behavior: "smooth", block: "center" });
-          field(discountRedemptionFormElement, "code").focus({ preventScroll: true });
-          MelbBeerBusiness.setStatus(discountRedemptionStatus, "Staff mode ready. Enter the user's current Pint Path code.");
+          jumpToPortalTarget("redemption");
+          return;
+        }
+
+        if (target.dataset.discountSpecialId && discountRedemptionFormElement) {
+          field(discountRedemptionFormElement, "specialId").value = target.dataset.discountSpecialId;
+          field(discountRedemptionFormElement, "itemName").value = target.dataset.discountItem || "Pint Path special";
+          if (target.dataset.savingsDollars) {
+            field(discountRedemptionFormElement, "estimatedSavingsDollars").value = target.dataset.savingsDollars;
+          }
+          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem || "Pint Path special"} selected. Enter the user's code to redeem.`);
           return;
         }
 

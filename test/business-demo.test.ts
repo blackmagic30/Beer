@@ -2360,6 +2360,171 @@ describe("business demo contribution model", () => {
     expect(JSON.stringify(leaderboard)).not.toContain(secondUser.email);
   });
 
+  it("moderates public display names before they appear on leaderboards", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "display-name-user");
+
+    const updated = service.updateDisplayName(user, { displayName: "Tap Legend" });
+    expect(updated.account.displayName).toBe("Tap Legend");
+    expect(repository.getProfileById(user.id)?.displayName).toBe("Tap Legend");
+
+    expect(() => service.updateDisplayName(user, { displayName: "PintPath Admin" }))
+      .toThrow("community rules");
+    expect(() => service.updateDisplayName(user, { displayName: "www.bad-name.test" }))
+      .toThrow("community rules");
+  });
+
+  it("lets admins finalize monthly leaderboard prizes into private account vouchers", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "prize-admin", "admin");
+    const firstUser = createAccount(repository, "prize-first");
+    const secondUser = createAccount(repository, "prize-second");
+    const thirdUser = createAccount(repository, "prize-third");
+
+    service.updateDisplayName(firstUser, { displayName: "First Pint" });
+    service.updateDisplayName(secondUser, { displayName: "Second Pint" });
+    service.updateDisplayName(thirdUser, { displayName: "Third Pint" });
+
+    [
+      [firstUser.id, "prize-venue-1"],
+      [firstUser.id, "prize-venue-2"],
+      [firstUser.id, "prize-venue-3"],
+      [secondUser.id, "prize-venue-4"],
+      [secondUser.id, "prize-venue-5"],
+      [thirdUser.id, "prize-venue-6"],
+    ].forEach(([userId, venueId], index) => {
+      const submission = createSubmission(repository, {
+        id: `prize-submission-${index}`,
+        userId,
+        venueId,
+      });
+      approve(repository, submission.id, admin.id);
+    });
+
+    service.saveLeaderboardPrizeCampaign(admin, {
+      monthKey: MONTH_KEY,
+      title: "June beta prize race",
+      affiliateBar: "Half Moon",
+      terms: "Prize vouchers are venue tab credits for eligible partner venues.",
+      firstPlaceCents: 10_000,
+      secondPlaceCents: 5_000,
+      thirdPlaceCents: 2_500,
+    });
+
+    const result = service.finalizeLeaderboardPrizeCampaign(admin, { monthKey: MONTH_KEY, force: true });
+    expect(result.awards).toHaveLength(3);
+    expect(result.vouchers.map((voucher) => voucher.amountCents)).toEqual([10_000, 5_000, 2_500]);
+    expect(result.awards[0]).toEqual(expect.objectContaining({
+      rank: 1,
+      publicAccountId: firstUser.publicAccountId,
+      displayName: "First Pint",
+    }));
+
+    const dashboard = service.getAccountDashboard(firstUser);
+    expect(dashboard.rewards.vouchers[0]).toEqual(expect.objectContaining({
+      title: "June beta prize race winner",
+      amountLabel: "$100",
+      venueScope: "Half Moon",
+      status: "active",
+    }));
+    expect(JSON.stringify(dashboard.rewards.vouchers)).not.toContain(firstUser.email);
+  });
+
+  it("keeps Pub Golf beta premium-only and plans nine drink stops from verified venue data", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "pub-golf-admin", "admin");
+    const freeUser = createAccount(repository, "pub-golf-free");
+    const premiumUser = updateSubscription(
+      repository,
+      createAccount(repository, "pub-golf-premium").id,
+      "premium_monthly",
+      PREMIUM_UNTIL,
+    );
+    const drinks = [
+      "Guinness",
+      "Carlton Draught",
+      "Stone & Wood Pacific Ale",
+      "Lager",
+      "Pale Ale",
+      "IPA",
+      "Cider",
+      "Red wine",
+      "Vodka soda",
+    ];
+
+    drinks.forEach((drink, index) => {
+      const venueId = `pub-golf-venue-${index}`;
+      repository.upsertBarProfile({
+        barId: venueId,
+        name: `Pub Golf Stop ${index + 1}`,
+        address: `${index + 1} Test Street, Melbourne`,
+        suburb: index < 4 ? "Melbourne" : "Richmond",
+        area: index < 4 ? "CBD" : "Richmond",
+        phone: null,
+        website: null,
+        instagram: null,
+        description: null,
+        openingHours: {},
+        venueTags: ["pub"],
+        membershipTier: index === 0 ? "pro" : index === 1 ? "plus" : "basic",
+        highlightedName: false,
+        premiumBadge: null,
+        promoted: false,
+        featuredSpecialEligible: false,
+        active: true,
+        now: NOW,
+      });
+      repository.upsertVenueLocationCache({
+        venueId,
+        venueName: `Pub Golf Stop ${index + 1}`,
+        suburb: index < 4 ? "Melbourne" : "Richmond",
+        latitude: -37.8136 + index * 0.004,
+        longitude: 144.9631 + index * 0.004,
+        now: NOW,
+      });
+      repository.upsertBarBeer({
+        id: `pub-golf-beer-${index}`,
+        barId: venueId,
+        beerName: drink,
+        brewery: null,
+        style: null,
+        abv: null,
+        serveSize: "pint",
+        price: 12 + index,
+        currency: "AUD",
+        onTap: true,
+        inStock: true,
+        notes: null,
+        now: NOW,
+      });
+    });
+
+    expect(() => service.planPubGolf(freeUser, {
+      startLocation: "Melbourne CBD",
+      finishLocation: "Richmond",
+      drinks,
+      mode: "auto",
+    })).toThrow("premium or contributor");
+
+    const plan = service.planPubGolf(premiumUser, {
+      startLocation: "Melbourne CBD",
+      finishLocation: "Richmond",
+      drinks,
+      mode: "auto",
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.holes).toHaveLength(9);
+    expect(plan.summary.plannedStops).toBe(9);
+    expect(plan.warnings).toEqual([]);
+    expect(plan.holes[0].venue?.name).toBe("Pub Golf Stop 1");
+    expect(plan.holes.every((hole) => hole.venue?.mapsUrl.includes("www.google.com/maps/search/"))).toBe(true);
+    expect(repository.getAccountById(admin.id)).toBeTruthy();
+  });
+
   it("generates rotating discount passes without storing raw codes and revokes them on logout", async () => {
     const { database, repository } = createRepository();
     const service = createBusinessService(repository);
@@ -2380,6 +2545,7 @@ describe("business demo contribution model", () => {
     expect(pass.code).toMatch(/^[A-Z0-9]{6}$/);
     expect(pass.qrDataUrl).toMatch(/^data:image\/png;base64,/);
     expect(pass.redeemUrl).toContain("venue-portal.html");
+    expect(pass.redeemUrl).toContain("tab=redemption");
     expect(storedPass.status).toBe("active");
     expect(storedPass.code_hash).not.toBe(pass.code);
 

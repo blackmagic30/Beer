@@ -25,7 +25,9 @@ import {
   type BusinessSubmissionItem,
   type ConfidenceLabel,
   type FeedbackPriority,
+  type LeaderboardPrizeCampaign,
   type PendingVenueDetails,
+  type PubGolfVenueCandidate,
   type PublicVenuePriceRecord,
   type SavedItem,
   type ServingSize,
@@ -62,17 +64,21 @@ import type {
   CheckoutInput,
   CheckoutSessionInput,
   CreateSubmissionInput,
+  DisplayNameUpdateInput,
   DiscountRedemptionInput,
   EventTrackInput,
   FeedbackInput,
   AdminAccountSearchInput,
   LegalAcceptanceInput,
+  LeaderboardPrizeCampaignInput,
+  LeaderboardPrizeFinalizeInput,
   LeaderboardQuery,
   MonthlyReportDeliveryInput,
   MonthlyReportExportQuery,
   MonthlyReportGenerateInput,
   PosDiscountRedemptionInput,
   PriceRecordsQuery,
+  PubGolfPlanInput,
   RemoveSavedItemInput,
   ReviewSubmissionInput,
   RetentionQuery,
@@ -278,6 +284,132 @@ function distanceMetersBetween(
     Math.sin(deltaLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
   return radiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const DISPLAY_NAME_MAX_LENGTH = 28;
+const DISPLAY_NAME_DENY_PATTERNS = [
+  /\b(?:admin|moderator|staff|support|pint\s*path|pintpath)\b/i,
+  /\b(?:n[i1!]+g+(?:e|a|3)?r?|c[o0]on|g[o0]{2}k|ch[i1!]+nk|p[a4]k[i1!]|r[a4]ghead|sp[i1!]c|k[i1!]ke)\b/i,
+  /\b(?:f[a4]g+(?:ot)?|tr[a4]nny|dyke|h[o0]m[o0])\b/i,
+  /\b(?:ret[a4]rd|sp[a4]stic|mongoloid)\b/i,
+  /\b(?:wh[o0]re|sl[uü]t|c[uü]nt|b[i1!]tch)\b/i,
+  /(?:https?:\/\/|www\.|@)/i,
+] as const;
+
+const PUB_GOLF_DEFAULT_DRINKS = [
+  "Guinness",
+  "Carlton Draught",
+  "Stone & Wood Pacific Ale",
+  "Lager",
+  "Pale Ale",
+  "IPA",
+  "Cider",
+  "Red wine",
+  "Vodka soda",
+];
+
+const MELBOURNE_AREA_COORDINATES: Record<string, { latitude: number; longitude: number; label: string }> = {
+  cbd: { latitude: -37.8136, longitude: 144.9631, label: "Melbourne CBD" },
+  melbourne: { latitude: -37.8136, longitude: 144.9631, label: "Melbourne CBD" },
+  fitzroy: { latitude: -37.7984, longitude: 144.9780, label: "Fitzroy" },
+  collingwood: { latitude: -37.8024, longitude: 144.9886, label: "Collingwood" },
+  richmond: { latitude: -37.8230, longitude: 145.0027, label: "Richmond" },
+  brunswick: { latitude: -37.7667, longitude: 144.9612, label: "Brunswick" },
+  "brunswick east": { latitude: -37.7726, longitude: 144.9733, label: "Brunswick East" },
+  prahran: { latitude: -37.8510, longitude: 144.9937, label: "Prahran" },
+  southbank: { latitude: -37.8239, longitude: 144.9640, label: "Southbank" },
+  st_kilda: { latitude: -37.8676, longitude: 144.9785, label: "St Kilda" },
+  "st kilda": { latitude: -37.8676, longitude: 144.9785, label: "St Kilda" },
+  brighton: { latitude: -37.9050, longitude: 144.9993, label: "Brighton" },
+};
+
+function normalizePublicDisplayName(value: string | null | undefined): string | null {
+  const trimmed = value?.trim().replace(/\s+/g, " ") ?? "";
+  return trimmed || null;
+}
+
+function validatePublicDisplayName(value: string | null | undefined): string | null {
+  const displayName = normalizePublicDisplayName(value);
+  if (!displayName) {
+    return null;
+  }
+
+  if (displayName.length < 2 || displayName.length > DISPLAY_NAME_MAX_LENGTH) {
+    throw new AppError(`Display name must be 2-${DISPLAY_NAME_MAX_LENGTH} characters.`, 400);
+  }
+
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ._'’-]*[A-Za-z0-9]$/.test(displayName)) {
+    throw new AppError("Display name can use letters, numbers, spaces, dots, apostrophes, underscores, and hyphens.", 400);
+  }
+
+  const normalized = displayName
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  if (DISPLAY_NAME_DENY_PATTERNS.some((pattern) => pattern.test(displayName) || pattern.test(normalized))) {
+    throw new AppError("Choose a display name that follows the community rules.", 400);
+  }
+
+  return displayName;
+}
+
+function safeProviderDisplayName(value: string | null): string | null {
+  try {
+    return validatePublicDisplayName(value);
+  } catch {
+    return null;
+  }
+}
+
+function prizeAmountForRank(campaign: LeaderboardPrizeCampaign, rank: number): number {
+  if (rank === 1) {
+    return campaign.firstPlaceCents;
+  }
+  if (rank === 2) {
+    return campaign.secondPlaceCents;
+  }
+  if (rank === 3) {
+    return campaign.thirdPlaceCents;
+  }
+  return 0;
+}
+
+function formatAudCents(cents: number): string {
+  return new Intl.NumberFormat("en-AU", {
+    style: "currency",
+    currency: "AUD",
+    maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
+  }).format(cents / 100);
+}
+
+function monthKeyRange(monthKey: string, timezone: string) {
+  const range = getZonedMonthRangeIso(monthKey, timezone || DEFAULT_REPORT_TIMEZONE);
+  return {
+    startsAt: range.startIso,
+    endsAt: range.endIso,
+  };
+}
+
+function hasCoordinates(value: { latitude: number | null; longitude: number | null }): value is { latitude: number; longitude: number } {
+  return typeof value.latitude === "number" && typeof value.longitude === "number";
+}
+
+function routeLegCopy(distanceMeters: number | null, requestedMode: "auto" | "walking" | "transit"): string {
+  if (distanceMeters == null) {
+    return "Open Maps for the best walking or public transport leg.";
+  }
+  const distanceKm = distanceMeters / 1000;
+  if (requestedMode === "walking" || (requestedMode === "auto" && distanceKm <= 1.4)) {
+    return `${distanceKm.toFixed(distanceKm < 1 ? 1 : 1)} km walk`;
+  }
+  if (requestedMode === "transit" || distanceKm > 2.2) {
+    return `${distanceKm.toFixed(1)} km, public transport or rideshare suggested`;
+  }
+  return `${distanceKm.toFixed(1)} km, walkable if the group is comfortable`;
 }
 
 function startOfTodayIso(): string {
@@ -1842,10 +1974,12 @@ export class BusinessService {
 
     const now = nowIso();
     const adminEmails = this.getAdminEmailAllowlist();
+    const displayName = validatePublicDisplayName(input.displayName);
     const account = this.repository.createAccount({
       id: crypto.randomUUID(),
       email,
       passwordHash: hashPassword(input.password),
+      displayName,
       role: adminEmails.has(email) ? "admin" : "user",
       subscriptionStatus: adminEmails.has(email) ? "admin" : "free",
       termsAcceptedAt: now,
@@ -1938,12 +2072,15 @@ export class BusinessService {
 
     const email = normalizeEmail(supabaseEmail);
     const metadata = (supabaseUser.user_metadata ?? {}) as Record<string, unknown>;
-    const displayName =
+    const providerDisplayName =
       typeof metadata.full_name === "string"
         ? metadata.full_name
         : typeof metadata.name === "string"
           ? metadata.name
-          : null;
+          : typeof metadata.display_name === "string"
+            ? metadata.display_name
+            : null;
+    const displayName = safeProviderDisplayName(providerDisplayName);
     const avatarUrl = typeof metadata.avatar_url === "string" ? metadata.avatar_url : null;
 
     let account = this.repository.getAccountBySupabaseUserId(supabaseUser.id) ?? this.repository.getAccountByEmail(email);
@@ -1979,12 +2116,13 @@ export class BusinessService {
         relatedEntityId: account.id,
         metadata: { authProvider: "supabase" },
       });
-    } else if (!account.supabaseUserId || account.authProvider !== "supabase" || account.displayName !== displayName || account.avatarUrl !== avatarUrl) {
+    } else if (!account.supabaseUserId || account.authProvider !== "supabase" || (!account.displayName && displayName) || account.avatarUrl !== avatarUrl) {
+      const nextDisplayName = account.displayName ?? displayName;
       account = this.repository.linkSupabaseAccount({
         userId: account.id,
         supabaseUserId: supabaseUser.id,
         authProvider: "supabase",
-        displayName,
+        displayName: nextDisplayName,
         avatarUrl,
         emailVerifiedAt,
         mfaLevel: mfaClaims.mfaLevel,
@@ -2067,6 +2205,29 @@ export class BusinessService {
     });
     return {
       account: sanitizeAccount(updated),
+    };
+  }
+
+  updateDisplayName(account: BusinessAccount, input: DisplayNameUpdateInput) {
+    const displayName = validatePublicDisplayName(input.displayName);
+    const updated = this.repository.updateAccountDisplayName({
+      userId: account.id,
+      displayName,
+      now: nowIso(),
+    });
+    this.recordUserActivity({
+      account: updated,
+      eventType: "display_name_updated",
+      relatedEntityType: "account",
+      relatedEntityId: updated.id,
+      metadata: { hasDisplayName: Boolean(displayName) },
+    });
+    return {
+      account: sanitizeAccount(updated),
+      profile: this.repository.getProfileById(updated.id),
+      message: displayName
+        ? "Display name saved for the contributor leaderboard."
+        : "Display name cleared. Your public account ID will show on the leaderboard.",
     };
   }
 
@@ -2180,8 +2341,16 @@ export class BusinessService {
 
   getLeaderboard(account: BusinessAccount | null, query: LeaderboardQuery) {
     const now = nowIso();
-    const entries = this.repository.listLeaderboard({ period: query.period, limit: query.limit, now });
-    const me = account ? this.repository.getLeaderboardRank({ userId: account.id, period: query.period, now }) : null;
+    const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
+    const monthKey = getZonedMonthKey(new Date(now), timezone);
+    const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, now);
+    const entries = this.repository.listLeaderboard({ period: query.period, limit: query.limit, now, monthKey });
+    const me = account ? this.repository.getLeaderboardRank({ userId: account.id, period: query.period, now, monthKey }) : null;
+    const podium = entries.slice(0, 3).map((entry) => ({
+      ...entry,
+      prizeCents: prizeAmountForRank(campaign, entry.rank),
+      prizeLabel: formatAudCents(prizeAmountForRank(campaign, entry.rank)),
+    }));
 
     if (account) {
       this.recordUserActivity({
@@ -2195,10 +2364,355 @@ export class BusinessService {
 
     return {
       period: query.period,
+      monthKey,
+      campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
+      podium,
       entries,
       me,
-      copy: "Leaderboard rankings count approved Pint Path submissions only. Rejected, pending, and fraud-flagged updates do not count.",
+      copy: "Leaderboard rankings count approved Pint Path contribution points only. Rejected, pending, and fraud-flagged updates do not count.",
     };
+  }
+
+  private getOrCreateLeaderboardPrizeCampaign(monthKey: string, now: string): LeaderboardPrizeCampaign {
+    const existing = this.repository.getLeaderboardPrizeCampaign(monthKey);
+    if (existing) {
+      return existing;
+    }
+
+    const range = monthKeyRange(monthKey, this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
+    return this.repository.upsertLeaderboardPrizeCampaign({
+      monthKey,
+      title: "Monthly contributor leaderboard",
+      startsAt: range.startsAt,
+      endsAt: range.endsAt,
+      firstPlaceCents: 10_000,
+      secondPlaceCents: 5_000,
+      thirdPlaceCents: 2_500,
+      affiliateBar: "Affiliated Pint Path venue",
+      terms: "Prizes are awarded as account vouchers after admin review. Venue redemption depends on partner availability and RSA obligations.",
+      now,
+    });
+  }
+
+  private sanitizeLeaderboardPrizeCampaign(campaign: LeaderboardPrizeCampaign) {
+    return {
+      monthKey: campaign.monthKey,
+      title: campaign.title,
+      startsAt: campaign.startsAt,
+      endsAt: campaign.endsAt,
+      firstPlaceCents: campaign.firstPlaceCents,
+      secondPlaceCents: campaign.secondPlaceCents,
+      thirdPlaceCents: campaign.thirdPlaceCents,
+      firstPlaceLabel: formatAudCents(campaign.firstPlaceCents),
+      secondPlaceLabel: formatAudCents(campaign.secondPlaceCents),
+      thirdPlaceLabel: formatAudCents(campaign.thirdPlaceCents),
+      affiliateBar: campaign.affiliateBar,
+      terms: campaign.terms,
+      status: campaign.status,
+      finalizedAt: campaign.finalizedAt,
+    };
+  }
+
+  getLeaderboardPrizeAdmin(_admin: BusinessAccount) {
+    const now = nowIso();
+    const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
+    const monthKey = getZonedMonthKey(new Date(now), timezone);
+    const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, now);
+    const leaderboard = this.getLeaderboard(_admin, { period: "month", limit: 25 });
+    return {
+      campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
+      awards: this.repository.listLeaderboardPrizeAwards(campaign.monthKey),
+      leaderboard,
+      copy: "Edit the monthly prize amounts before finalizing. Finalization snapshots the top three and creates account vouchers once per month.",
+    };
+  }
+
+  saveLeaderboardPrizeCampaign(admin: BusinessAccount, input: LeaderboardPrizeCampaignInput) {
+    const now = nowIso();
+    const range = monthKeyRange(input.monthKey, this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
+    const campaign = this.repository.upsertLeaderboardPrizeCampaign({
+      monthKey: input.monthKey,
+      title: input.title,
+      startsAt: range.startsAt,
+      endsAt: range.endsAt,
+      firstPlaceCents: input.firstPlaceCents,
+      secondPlaceCents: input.secondPlaceCents,
+      thirdPlaceCents: input.thirdPlaceCents,
+      affiliateBar: input.affiliateBar,
+      terms: input.terms,
+      now,
+    });
+    this.auditSecurity({
+      actor: admin,
+      action: "leaderboard_prize_campaign_saved",
+      targetType: "leaderboard_prize_campaign",
+      targetId: campaign.monthKey,
+      metadata: {
+        firstPlaceCents: campaign.firstPlaceCents,
+        secondPlaceCents: campaign.secondPlaceCents,
+        thirdPlaceCents: campaign.thirdPlaceCents,
+      },
+    });
+    return {
+      campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
+      leaderboard: this.getLeaderboard(admin, { period: "month", limit: 25 }),
+    };
+  }
+
+  finalizeLeaderboardPrizeCampaign(admin: BusinessAccount, input: LeaderboardPrizeFinalizeInput) {
+    const now = nowIso();
+    const campaign = this.repository.getLeaderboardPrizeCampaign(input.monthKey) ??
+      this.getOrCreateLeaderboardPrizeCampaign(input.monthKey, now);
+    if (campaign.status === "finalized") {
+      return {
+        campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
+        awards: this.repository.listLeaderboardPrizeAwards(campaign.monthKey),
+        vouchers: [],
+        message: "This leaderboard month has already been finalized.",
+      };
+    }
+    if (!input.force && new Date(now).getTime() < new Date(campaign.endsAt).getTime()) {
+      throw new AppError("This leaderboard month is still running. Use force only after manually confirming the campaign should close early.", 400);
+    }
+    const entries = this.repository.listLeaderboard({
+      period: "month",
+      limit: 3,
+      now,
+      monthKey: campaign.monthKey,
+    });
+    const result = this.repository.finalizeLeaderboardPrizeCampaign({
+      campaign,
+      entries,
+      finalizedBy: admin.id,
+      now,
+    });
+    this.auditSecurity({
+      actor: admin,
+      action: "leaderboard_prize_campaign_finalized",
+      targetType: "leaderboard_prize_campaign",
+      targetId: campaign.monthKey,
+      metadata: { awardCount: result.awards.length, voucherCount: result.vouchers.length },
+    });
+    return {
+      campaign: this.sanitizeLeaderboardPrizeCampaign(result.campaign),
+      awards: result.awards,
+      vouchers: result.vouchers,
+      message: `Finalized ${campaign.monthKey}. ${result.vouchers.length} voucher${result.vouchers.length === 1 ? "" : "s"} created.`,
+    };
+  }
+
+  planPubGolf(account: BusinessAccount, input: PubGolfPlanInput) {
+    if (!isFullAccess(account)) {
+      throw new AppError("Pub Golf beta planning is for premium or contributor accounts.", 403);
+    }
+
+    const start = this.resolvePubGolfLocation(input.startLocation);
+    const finish = this.resolvePubGolfLocation(input.finishLocation);
+    const requestedDrinks = input.drinks.map((drink) => drink.trim()).filter(Boolean).slice(0, 9);
+    if (requestedDrinks.length !== 9) {
+      throw new AppError("Choose exactly nine drinks for Pub Golf.", 400);
+    }
+
+    const candidates = this.repository.listPubGolfVenueCandidates(requestedDrinks, 16);
+    const usedVenueIds = new Set<string>();
+    let current = start;
+    let totalDistanceMeters = 0;
+    const warnings: string[] = [];
+
+    const holes = requestedDrinks.map((drink, index) => {
+      const drinkKey = normalizeBeerSearchKey(drink);
+      const directMatches = candidates.filter((candidate) =>
+        normalizeBeerSearchKey(candidate.beerName).includes(drinkKey) ||
+        drinkKey.includes(normalizeBeerSearchKey(candidate.beerName)),
+      );
+      const unusedMatches = directMatches.filter((candidate) => !usedVenueIds.has(candidate.venueId));
+      const pool = unusedMatches.length ? unusedMatches : directMatches;
+      const chosen = this.choosePubGolfCandidate(pool, current, finish, input.mode);
+      if (!chosen) {
+        warnings.push(`No verified Pint Path venue currently has ${drink}.`);
+        return {
+          hole: index + 1,
+          drink,
+          status: "needs_data",
+          venue: null,
+          leg: {
+            distanceMeters: null,
+            distanceKm: null,
+            guidance: "No verified match yet. Try another drink or use this as a field-test data mission.",
+          },
+        };
+      }
+
+      usedVenueIds.add(chosen.venueId);
+      const legDistance = current && hasCoordinates(current) && hasCoordinates(chosen)
+        ? Math.round(distanceMetersBetween(current, chosen))
+        : null;
+      if (legDistance != null) {
+        totalDistanceMeters += legDistance;
+      }
+      current = hasCoordinates(chosen)
+        ? { latitude: chosen.latitude, longitude: chosen.longitude, label: chosen.venueName, source: "venue_data" }
+        : current;
+
+      return {
+        hole: index + 1,
+        drink,
+        status: unusedMatches.length ? "planned" : "repeat_venue",
+        venue: {
+          id: chosen.venueId,
+          name: chosen.venueName,
+          address: chosen.address,
+          suburb: chosen.suburb,
+          membershipTier: chosen.membershipTier,
+          beerName: chosen.beerName,
+          servingSize: chosen.servingSize,
+          price: chosen.price,
+          updatedAt: chosen.updatedAt,
+          mapsUrl: this.googleMapsSearchUrl(chosen),
+        },
+        leg: {
+          distanceMeters: legDistance,
+          distanceKm: legDistance == null ? null : Number((legDistance / 1000).toFixed(2)),
+          guidance: routeLegCopy(legDistance, input.mode),
+        },
+      };
+    });
+
+    const plannedCount = holes.filter((hole) => hole.status !== "needs_data").length;
+    const completion = plannedCount === 9
+      ? "Route ready"
+      : `${plannedCount}/9 stops matched from verified Pint Path data`;
+    const destinationLeg = current && finish && hasCoordinates(current) && hasCoordinates(finish)
+      ? Math.round(distanceMetersBetween(current, finish))
+      : null;
+    if (destinationLeg != null) {
+      totalDistanceMeters += destinationLeg;
+    }
+
+    this.recordUserActivity({
+      account,
+      eventType: "pub_golf_plan_generated",
+      relatedEntityType: "beta_feature",
+      relatedEntityId: "pub_golf",
+      metadata: {
+        startLocation: input.startLocation,
+        finishLocation: input.finishLocation,
+        plannedCount,
+        mode: input.mode,
+      },
+    });
+
+    return {
+      status: plannedCount === 9 ? "ready" : "partial",
+      completion,
+      start,
+      finish,
+      requestedDrinks,
+      holes,
+      summary: {
+        plannedStops: plannedCount,
+        missingStops: 9 - plannedCount,
+        totalDistanceMeters: Math.round(totalDistanceMeters),
+        totalDistanceKm: Number((totalDistanceMeters / 1000).toFixed(2)),
+        destinationLeg: destinationLeg == null
+          ? null
+          : {
+              distanceMeters: destinationLeg,
+              distanceKm: Number((destinationLeg / 1000).toFixed(2)),
+              guidance: routeLegCopy(destinationLeg, input.mode),
+            },
+        travelMode: input.mode,
+      },
+      warnings,
+      safetyCopy: "Plan the route before drinking, use public transport or walking, pace the night, drink water, and follow RSA rules at every venue.",
+    };
+  }
+
+  private choosePubGolfCandidate(
+    candidates: PubGolfVenueCandidate[],
+    current: { latitude: number | null; longitude: number | null } | null,
+    finish: { latitude: number | null; longitude: number | null } | null,
+    mode: "auto" | "walking" | "transit",
+  ): PubGolfVenueCandidate | null {
+    if (!candidates.length) {
+      return null;
+    }
+
+    return [...candidates].sort((left, right) => {
+      const leftScore = this.pubGolfCandidateScore(left, current, finish, mode);
+      const rightScore = this.pubGolfCandidateScore(right, current, finish, mode);
+      return leftScore - rightScore || left.venueName.localeCompare(right.venueName);
+    })[0] ?? null;
+  }
+
+  private pubGolfCandidateScore(
+    candidate: PubGolfVenueCandidate,
+    current: { latitude: number | null; longitude: number | null } | null,
+    finish: { latitude: number | null; longitude: number | null } | null,
+    mode: "auto" | "walking" | "transit",
+  ): number {
+    const tierScore = candidate.membershipTier === "pro" ? -150 : candidate.membershipTier === "plus" ? -70 : 0;
+    if (!hasCoordinates(candidate)) {
+      return 900_000 + tierScore;
+    }
+    const fromCurrent = current && hasCoordinates(current)
+      ? distanceMetersBetween(current, candidate)
+      : 0;
+    const toFinish = finish && hasCoordinates(finish)
+      ? distanceMetersBetween(candidate, finish)
+      : 0;
+    const distancePenalty = mode === "walking" ? fromCurrent * 1.25 : fromCurrent;
+    return distancePenalty + toFinish * 0.28 + tierScore;
+  }
+
+  private resolvePubGolfLocation(query: string): { latitude: number | null; longitude: number | null; label: string; source: string } | null {
+    const normalized = query.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (!normalized) {
+      return null;
+    }
+
+    const keyed = MELBOURNE_AREA_COORDINATES[normalized] ?? MELBOURNE_AREA_COORDINATES[normalized.replace(/\s+/g, "_")];
+    if (keyed) {
+      return { ...keyed, source: "area_hint" };
+    }
+
+    const missionArea = this.resolveMissionAreaFromLocalCache(query);
+    if (missionArea) {
+      return {
+        latitude: missionArea.latitude,
+        longitude: missionArea.longitude,
+        label: missionArea.label,
+        source: missionArea.source,
+      };
+    }
+
+    const venue = this.repository.listLocalVenues({ query, limit: 8 })
+      .find((candidate) => typeof candidate.latitude === "number" && typeof candidate.longitude === "number");
+    if (venue) {
+      return {
+        latitude: venue.latitude,
+        longitude: venue.longitude,
+        label: [venue.name, venue.suburb].filter(Boolean).join(", "),
+        source: "venue_data",
+      };
+    }
+
+    return {
+      latitude: null,
+      longitude: null,
+      label: query.trim(),
+      source: "text_only",
+    };
+  }
+
+  private googleMapsSearchUrl(candidate: PubGolfVenueCandidate): string {
+    const query = [candidate.venueName, candidate.address, candidate.suburb, "Victoria Australia"]
+      .filter(Boolean)
+      .join(", ");
+    const url = new URL("https://www.google.com/maps/search/");
+    url.searchParams.set("api", "1");
+    url.searchParams.set("query", query);
+    return url.toString();
   }
 
   async getDiscountPass(account: BusinessAccount, authorizationHeader: string | undefined) {
@@ -2249,6 +2763,7 @@ export class BusinessService {
     const redeemUrl = new URL("/venue-portal.html", this.config.PUBLIC_BASE_URL);
     redeemUrl.searchParams.set("discountCode", code);
     redeemUrl.searchParams.set("accountId", account.publicAccountId);
+    redeemUrl.searchParams.set("tab", "redemption");
     const qrDataUrl = await QRCode.toDataURL(redeemUrl.toString(), {
       margin: 1,
       width: 240,
@@ -2601,9 +3116,15 @@ export class BusinessService {
       ["rejected", "disputed", "fraud_flagged"].includes(submission.status),
     ).length;
     const dashboardNow = nowIso();
-    const leaderboardRank = this.repository.getLeaderboardRank({ userId: account.id, period: "month", now: dashboardNow });
+    const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
+    const monthKey = getZonedMonthKey(new Date(dashboardNow), timezone);
+    const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, dashboardNow);
+    const leaderboardRank = this.repository.getLeaderboardRank({ userId: account.id, period: "month", now: dashboardNow, monthKey });
+    const leaderboardEntries = this.repository.listLeaderboard({ period: "month", limit: 25, now: dashboardNow, monthKey });
     const discountStats = this.repository.getDiscountRedemptionStats(account.id);
     const recentDiscountRedemptions = this.repository.listDiscountRedemptionsForUser(account.id, 10);
+    const rewardVouchers = this.repository.listAccountRewardVouchers(account.id, 10);
+    const hasFullAccess = isFullAccess(account);
 
     return {
       account: sanitizeAccount(account),
@@ -2652,7 +3173,15 @@ export class BusinessService {
       leaderboard: {
         accountId: account.publicAccountId,
         monthRank: leaderboardRank,
-        copy: "Leaderboard counts approved submissions only.",
+        monthKey,
+        campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
+        podium: leaderboardEntries.slice(0, 3).map((entry) => ({
+          ...entry,
+          prizeCents: prizeAmountForRank(campaign, entry.rank),
+          prizeLabel: formatAudCents(prizeAmountForRank(campaign, entry.rank)),
+        })),
+        entries: leaderboardEntries,
+        copy: "Leaderboard counts approved contribution points only.",
       },
       discounts: {
         eligible: isFullAccess(account),
@@ -2664,10 +3193,35 @@ export class BusinessService {
         copy: "Discount redemptions are logged only when you show your rotating code or QR at a venue.",
       },
       rewards: {
-        status: "coming_soon",
+        status: rewardVouchers.length ? "active" : "leaderboard_monthly",
         eligiblePlaceholder: canAccessAgeGatedRewards({ account, latestAgeVerification }),
         ageGatedEligible: canAccessAgeGatedRewards({ account, latestAgeVerification }),
         ageThreshold: 18,
+        vouchers: rewardVouchers.map((voucher) => ({
+          ...voucher,
+          amountDollars: Number((voucher.amountCents / 100).toFixed(2)),
+          amountLabel: formatAudCents(voucher.amountCents),
+        })),
+      },
+      betaTesting: {
+        enabled: hasFullAccess,
+        label: hasFullAccess ? "BetaTesting unlocked" : "Premium feature",
+        leaderboard: {
+          monthKey,
+          campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
+          podium: leaderboardEntries.slice(0, 3).map((entry) => ({
+            ...entry,
+            prizeCents: prizeAmountForRank(campaign, entry.rank),
+            prizeLabel: formatAudCents(prizeAmountForRank(campaign, entry.rank)),
+          })),
+          entries: leaderboardEntries,
+          me: leaderboardRank,
+        },
+        pubGolf: {
+          enabled: hasFullAccess,
+          defaultDrinks: PUB_GOLF_DEFAULT_DRINKS,
+          copy: "Build a nine-stop Pub Golf route from real venue drink data. Beta routing uses Pint Path venue coordinates with walking/transit hints.",
+        },
       },
       ageVerification: {
         latest: latestAgeVerification,
