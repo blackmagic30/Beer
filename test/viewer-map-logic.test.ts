@@ -412,7 +412,9 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).not.toContain("Claim your bar");
     expect(venuePortalHtml).not.toContain('<select name="membershipTier">');
     expect(venuePortalHtml).not.toContain("near public transport");
-    expect(venuePortalHtml).toContain('id="tierGuide"');
+    expect(venuePortalHtml).not.toContain('id="tierGuide"');
+    expect(venuePortalHtml).not.toContain("Current plan");
+    expect(venuePortalHtml).toContain('data-tab="pending-reviews"');
     expect(venuePortalHtml).toContain('return value === "pro" ? "Pro" : value === "plus" ? "Plus" : "Free";');
     expect(venuePortalHtml).toContain("Free venue accounts can add beer data and happy-hour data only.");
     expect(venuePortalHtml).toContain("data-specials-only");

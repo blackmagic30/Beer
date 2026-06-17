@@ -1823,6 +1823,58 @@ export class BusinessService {
     };
   }
 
+  private maybeQueueVenueDeleteForReview(input: {
+    account: BusinessAccount;
+    venueId: string;
+    changeType: Exclude<BarPendingChangeType, "profile">;
+    targetId: string;
+    payload: Record<string, unknown>;
+    suburb?: string | null | undefined;
+  }) {
+    if (this.isAdmin(input.account)) {
+      return null;
+    }
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const recentDeletes = this.repository.countRecentVenueManagerDeletes({
+      userId: input.account.id,
+      venueId: input.venueId,
+      since: oneHourAgo,
+    });
+    if (recentDeletes < 3) {
+      return null;
+    }
+
+    const existingPendingDelete = this.repository
+      .listBarPendingChanges({ barId: input.venueId, status: "pending", limit: 100 })
+      .find((change) =>
+        change.action === "delete" &&
+        change.changeType === input.changeType &&
+        change.targetId === input.targetId
+      );
+    if (existingPendingDelete) {
+      return {
+        pendingChange: existingPendingDelete,
+        message: "Delete held for admin review because several venue items were removed in the last hour.",
+      };
+    }
+
+    const result = this.createPendingBarChange({
+      account: input.account,
+      venueId: input.venueId,
+      changeType: input.changeType,
+      action: "delete",
+      targetId: input.targetId,
+      payload: input.payload,
+      suburb: input.suburb,
+    });
+
+    return {
+      ...result,
+      message: "Delete held for admin review because several venue items were removed in the last hour.",
+    };
+  }
+
   private applyApprovedBarChange(change: BarPendingChange, admin: BusinessAccount, now: string): void {
     if (change.action === "delete") {
       if (!change.targetId) {
@@ -6196,6 +6248,23 @@ export class BusinessService {
       throw new AppError("Beer row not found for this venue.", 404);
     }
 
+    const queuedDelete = this.maybeQueueVenueDeleteForReview({
+      account,
+      venueId,
+      changeType: "beer",
+      targetId: beerId,
+      payload: {
+        id: existing.id,
+        beerName: existing.beerName,
+        serveSize: existing.serveSize,
+        price: existing.price,
+      },
+      suburb: assignment?.suburb ?? null,
+    });
+    if (queuedDelete) {
+      return queuedDelete;
+    }
+
     const deleted = this.repository.deleteBarBeer({ id: beerId, barId: venueId });
     if (!deleted) {
       throw new AppError("Beer row not found for this venue.", 404);
@@ -6267,6 +6336,24 @@ export class BusinessService {
     const existing = this.repository.getBarHappyHourById(happyHourId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Happy hour not found for this venue.", 404);
+    }
+
+    const queuedDelete = this.maybeQueueVenueDeleteForReview({
+      account,
+      venueId,
+      changeType: "happy_hour",
+      targetId: happyHourId,
+      payload: {
+        id: existing.id,
+        title: existing.title,
+        daysOfWeek: existing.daysOfWeek,
+        startTime: existing.startTime,
+        endTime: existing.endTime,
+      },
+      suburb: assignment?.suburb ?? null,
+    });
+    if (queuedDelete) {
+      return queuedDelete;
     }
 
     const deleted = this.repository.deleteBarHappyHour({ id: happyHourId, barId: venueId });
@@ -6348,6 +6435,23 @@ export class BusinessService {
     const existing = this.repository.getBarSpecialById(specialId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Special not found for this venue.", 404);
+    }
+
+    const queuedDelete = this.maybeQueueVenueDeleteForReview({
+      account,
+      venueId,
+      changeType: "special",
+      targetId: specialId,
+      payload: {
+        id: existing.id,
+        title: existing.title,
+        price: existing.price,
+        discount: existing.discount,
+      },
+      suburb: assignment?.suburb ?? null,
+    });
+    if (queuedDelete) {
+      return queuedDelete;
     }
 
     const deleted = this.repository.deleteBarSpecial({ id: specialId, barId: venueId });

@@ -5392,6 +5392,25 @@ export class BusinessRepository {
       );
   }
 
+  countRecentVenueManagerDeletes(input: {
+    userId: string;
+    venueId: string;
+    since: string;
+  }): number {
+    const row = this.database
+      .prepare(
+        `SELECT count(*) AS count
+         FROM events
+         WHERE user_id = ?
+           AND venue_id = ?
+           AND event_type = 'venue_update_submitted'
+           AND created_at >= ?
+           AND json_extract(metadata_json, '$.action') = 'delete'`,
+      )
+      .get(input.userId, input.venueId, input.since) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
   insertSecurityAuditLog(input: {
     id: string;
     actorUserId: string | null;

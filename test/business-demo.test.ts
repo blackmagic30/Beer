@@ -4183,6 +4183,64 @@ describe("business demo contribution model", () => {
     expect(afterDirectDelete.pendingChanges).toHaveLength(0);
   });
 
+  it("holds burst venue-manager deletes for admin review after three deletes in an hour", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "delete-guard-admin", "admin");
+    const manager = createAccount(repository, "delete-guard-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "delete-guard-bar",
+      venueName: "Delete Guard Bar",
+      suburb: "Brighton",
+    });
+    const managerAccount = repository.getAccountById(manager.id)!;
+
+    const beerIds = ["guard-beer-1", "guard-beer-2", "guard-beer-3", "guard-beer-4"];
+    for (const [index, beerId] of beerIds.entries()) {
+      service.upsertBarBeer(admin, "delete-guard-bar", {
+        id: beerId,
+        beerName: `Guard Beer ${index + 1}`,
+        brewery: null,
+        style: null,
+        abv: null,
+        serveSize: "pint",
+        price: 10 + index,
+        onTap: true,
+        inStock: true,
+        notes: null,
+      });
+    }
+
+    for (const beerId of beerIds.slice(0, 3)) {
+      expect(service.deleteBarBeer(managerAccount, "delete-guard-bar", beerId))
+        .toEqual(expect.objectContaining({ deleted: true, message: "Beer row removed." }));
+    }
+
+    const heldDelete = service.deleteBarBeer(managerAccount, "delete-guard-bar", beerIds[3]);
+    const pendingDelete = pendingBarChangeFrom(heldDelete);
+    expect(heldDelete).toEqual(expect.objectContaining({
+      message: "Delete held for admin review because several venue items were removed in the last hour.",
+    }));
+    expect(pendingDelete).toEqual(expect.objectContaining({
+      action: "delete",
+      changeType: "beer",
+      targetId: beerIds[3],
+      status: "pending",
+    }));
+
+    const portalAfterHeldDelete = service.getVenuePortal(managerAccount, { venueId: "delete-guard-bar" });
+    expect(portalAfterHeldDelete.inventory.beers).toHaveLength(1);
+    expect(portalAfterHeldDelete.inventory.beers[0]?.id).toBe(beerIds[3]);
+    expect(portalAfterHeldDelete.pendingChanges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: pendingDelete.id, action: "delete", targetId: beerIds[3] }),
+    ]));
+
+    service.reviewBarPendingChange(admin, pendingDelete.id, { status: "approved", rejectionReason: null });
+    expect(service.getVenuePortal(managerAccount, { venueId: "delete-guard-bar" }).inventory.beers).toHaveLength(0);
+  });
+
   it("limits Free venue accounts to beer and happy-hour data", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);

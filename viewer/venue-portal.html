@@ -50,6 +50,7 @@
             <button class="tabButton" type="button" data-tab="beers">Beers / stock</button>
             <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
             <button class="tabButton" type="button" data-tab="specials" data-specials-only>Pint Path specials</button>
+            <button class="tabButton" type="button" data-tab="pending-reviews">Pending reviews</button>
             <button class="tabButton" type="button" data-tab="analytics">Analytics</button>
             <button class="tabButton" type="button" data-tab="report">Monthly report</button>
           </nav>
@@ -63,7 +64,6 @@
                 <h2 id="overviewName">Your bar</h2>
                 <p id="overviewMeta" class="muted"></p>
                 <div id="tierBadge" class="pill">Basic</div>
-                <div id="completionGrid" class="completionGrid"></div>
               </article>
               <article class="card">
                 <h2>Quick actions</h2>
@@ -83,13 +83,7 @@
               <article id="specialsHeroCard" class="panel"></article>
             </div>
 
-            <div class="grid grid--two" style="margin-top:16px;">
-              <article id="publicPreviewCard" class="panel"></article>
-              <article id="staffInviteCard" class="panel"></article>
-            </div>
-
-            <article id="tierGuide" class="panel tierGuide" style="margin-top:16px;"></article>
-            <article id="businessToolkit" class="panel businessToolkit is-hidden" style="margin-top:16px;"></article>
+            <article id="staffInviteCard" class="panel" style="margin-top:16px;"></article>
 
             <div class="grid grid--two" style="margin-top:16px;">
               <article class="panel">
@@ -103,7 +97,9 @@
                 <div id="priceRecords" class="list"></div>
               </article>
             </div>
+          </section>
 
+          <section class="tabPanel is-hidden" data-panel="pending-reviews">
             <article class="panel" style="margin-top:16px;">
               <h2>Pending review</h2>
               <p class="helperCopy">Manager edits are saved privately until Pint Path admin approval. Public map/listing views keep showing the last approved data.</p>
@@ -194,7 +190,7 @@
                 </label>
                 <button class="button button--primary" type="submit">Redeem discount</button>
               </form>
-              <div id="discountRedemptionStatus" class="notice" role="status">Enter a current code to redeem.</div>
+              <div id="discountRedemptionStatus" class="notice" role="status" hidden></div>
               <div id="discountOpsPanel" class="discountOpsPanel" style="margin-top:16px;"></div>
             </article>
           </section>
@@ -241,7 +237,7 @@
                 <input name="active" type="checkbox" checked />
                 Active / listed
               </label>
-              <div id="profileStatus" class="notice">Profile edits save to this managed bar only.</div>
+              <div id="profileStatus" class="notice" role="status" hidden></div>
             </form>
           </section>
 
@@ -251,7 +247,6 @@
                 <div>
                   <div class="eyebrow">Keep data fresh</div>
                   <h2>Review current prices</h2>
-                  <p class="muted">Confirm unchanged beers in one pass, or open a row to update the price that changed.</p>
                 </div>
                 <button id="confirmAllPricesButton" class="button button--primary" type="button">All prices are the same</button>
               </div>
@@ -262,7 +257,7 @@
                 <button id="submitPriceRefreshButton" class="button" type="button">Submit selected updates</button>
               </div>
               <div id="priceRefreshList" class="priceRefreshList"></div>
-              <div id="priceRefreshStatus" class="notice">Tick unchanged beers, or click a row to edit its price.</div>
+              <div id="priceRefreshStatus" class="notice" role="status" hidden></div>
             </article>
 
             <div class="grid grid--two">
@@ -270,7 +265,6 @@
                 <div class="sectionHeader">
                   <div>
                     <h2>Beers, stock and on tap</h2>
-                    <p class="muted">Required: beer name only. Prices and stock status are optional but useful.</p>
                   </div>
                 </div>
                 <input name="id" type="hidden" />
@@ -324,7 +318,7 @@
                   <button class="button button--primary" type="submit">Save beer</button>
                   <button id="resetBeerForm" class="button" type="button">Clear form</button>
                 </div>
-                <div id="beerStatus" class="notice">Add the beers you want users to see as available now.</div>
+                <div id="beerStatus" class="notice" role="status" hidden></div>
               </form>
               <article class="panel">
                 <h2>Current beer list</h2>
@@ -364,7 +358,7 @@
                   <button class="button button--primary" type="submit">Save happy hour</button>
                   <button id="resetHappyHourForm" class="button" type="button">Clear form</button>
                 </div>
-                <div id="happyHourStatus" class="notice">Add days, times and clear conditions.</div>
+                <div id="happyHourStatus" class="notice" role="status" hidden></div>
               </form>
               <article class="panel">
                 <h2>Current happy hours</h2>
@@ -416,7 +410,7 @@
                   <button class="button button--primary" type="submit">Save special</button>
                   <button id="resetSpecialForm" class="button" type="button">Clear form</button>
                 </div>
-                <div id="specialStatus" class="notice">Plus and Pro venues can submit reviewed Pint Path specials. Pro specials receive premium discovery treatment automatically.</div>
+                <div id="specialStatus" class="notice" role="status" hidden></div>
               </form>
               <article class="panel">
                 <h2>Current Pint Path specials</h2>
@@ -714,6 +708,13 @@
       });
     }
 
+    function clearStatus(element) {
+      if (!element) return;
+      element.hidden = true;
+      element.textContent = "";
+      element.className = "notice";
+    }
+
     function jumpToPortalTarget(name) {
       if (name === "price-refresh") {
         showTab("beers");
@@ -732,9 +733,7 @@
           if (form instanceof HTMLFormElement) {
             field(form, "code")?.focus({ preventScroll: true });
           }
-          if (status) {
-            MelbBeerBusiness.setStatus(status, "Staff mode ready. Enter or scan the user's current Pint Path code.");
-          }
+          clearStatus(status);
         });
         return;
       }
@@ -757,11 +756,7 @@
       if (!canSpecials && visiblePanel?.dataset.panel === "specials") {
         showTab("beers");
       }
-      if (window.specialStatus) {
-        specialStatus.textContent = portalCanFeatureSpecials(data)
-          ? "Pro is active. Pint Path specials receive premium discovery treatment automatically after review."
-          : "Plus venues can submit reviewed Pint Path specials. Pro adds premium discovery treatment.";
-      }
+      clearStatus(window.specialStatus);
     }
 
     function renderChecklist(container, options, selected = []) {
@@ -866,17 +861,6 @@
       const beers = data.inventory?.beers || [];
       const happyHours = data.inventory?.happyHours || [];
       const specials = data.inventory?.specials || [];
-      const completion = [
-        ["Profile", Boolean(profile.name && profile.suburb)],
-        ["Beers added", beers.length > 0],
-        ["Happy hours", happyHours.length > 0],
-      ].concat(tier.canManageSpecials ? [["Pint Path specials", specials.length > 0]] : []);
-      completionGrid.innerHTML = completion.map(([label, done]) => `
-        <div class="completionItem ${done ? "is-complete" : ""}">
-          <strong>${done ? "Done" : "Next"}</strong>
-          <span>${label}</span>
-        </div>
-      `).join("");
 
       renderProfileForm(profile);
       renderBeerList(beers);
@@ -885,8 +869,6 @@
       renderSpecials(specials);
       renderOverviewData(data);
       renderVenuePortalLaunchCards(data);
-      renderTierGuide(data);
-      renderBusinessToolkit(data);
       renderDiscountOps(data);
       renderDiscountSpecialChoices(data);
       renderPendingChanges(data.pendingChanges || []);
@@ -935,11 +917,9 @@
       const beers = data.inventory?.beers || [];
       const happyHours = data.inventory?.happyHours || [];
       const specials = data.inventory?.specials || [];
-      const records = data.insights?.priceRecords || [];
       const weeklyActionCard = document.getElementById("weeklyActionCard");
       const staffModeCard = document.getElementById("staffModeCard");
       const specialsHeroCard = document.getElementById("specialsHeroCard");
-      const publicPreviewCard = document.getElementById("publicPreviewCard");
       const staffInviteCard = document.getElementById("staffInviteCard");
       const profileReady = Boolean(profile.name && profile.suburb);
       const nextAction = !profileReady
@@ -951,8 +931,6 @@
             : tier.canManageSpecials && !specials.length
               ? { label: "Add app special", tab: "specials", copy: "Plus and Pro venues can add reviewed Pint Path specials for extra conversion proof." }
               : { label: "Keep prices fresh", tab: "price-refresh", copy: "Confirm unchanged prices in one pass, or edit only the rows that changed." };
-      const previewBeer = records[0] || beers[0] || null;
-      const mapQuery = encodeURIComponent([profile.name, profile.address, profile.suburb].filter(Boolean).join(", "));
       const mailSubject = encodeURIComponent(`Pint Path staff invite for ${profile.name || "my venue"}`);
       const mailBody = encodeURIComponent([
         `Venue: ${profile.name || ""}`,
@@ -1006,19 +984,6 @@
           `;
       }
 
-      if (publicPreviewCard) {
-        publicPreviewCard.innerHTML = `
-          <div class="eyebrow">Public preview</div>
-          <h2>${escapeHtml(profile.name || "Your listing")}</h2>
-          <p class="muted">${escapeHtml([profile.suburb, prettyTier(profile.membershipTier)].filter(Boolean).join(" · ") || "Melbourne venue")}</p>
-          <div class="portalPreviewCard">
-            <strong>${escapeHtml(previewBeer?.beerName || previewBeer?.name || "No public beer price yet")}</strong>
-            <span>${escapeHtml(previewBeer?.price != null ? money(previewBeer.price) : previewBeer?.priceNumeric != null ? money(previewBeer.priceNumeric) : "Add a current pint price")}</span>
-          </div>
-          <a class="button" href="/?q=${mapQuery}" target="_blank" rel="noopener">View on map</a>
-        `;
-      }
-
       if (staffInviteCard) {
         staffInviteCard.innerHTML = `
           <div class="eyebrow">Staff access</div>
@@ -1027,57 +992,6 @@
           <a class="button" href="mailto:admin@pintpath.au?subject=${mailSubject}&body=${mailBody}">Request staff invite</a>
         `;
       }
-    }
-
-    function renderTierGuide(data) {
-      const tier = data.tier || {};
-      const tierName = prettyTier(tier.tier || data.profile?.membershipTier);
-      const included = [
-        "Beer data and tap-list updates",
-        "Happy-hour data",
-        "Profile edits submitted for review",
-      ];
-      const locked = [];
-      if (!tier.canManageSpecials) locked.push("Pint Path specials");
-      if (tier.analyticsLocked) locked.push("Analytics and monthly reports");
-      if (tier.canManageSpecials) included.push("Reviewed Pint Path specials");
-      if (!tier.analyticsLocked) included.push("Privacy-safe analytics and monthly reports");
-      if (tier.premiumDisplay) included.push("Premium map, card, and venue-name treatment");
-      if (tier.featuredSpecials) included.push("Premium Pint Path special treatment");
-      if (tier.priorityReview) included.push("Priority admin review queue");
-      if (tier.advancedRecommendations) included.push("Pro growth recommendations in reports");
-      if (!tier.premiumDisplay) locked.push("Premium venue display");
-      if (!tier.featuredSpecials) locked.push("Premium Pint Path special treatment");
-      if (!tier.priorityReview) locked.push("Priority admin review");
-      if (!tier.advancedRecommendations) locked.push("Pro report recommendations");
-
-      tierGuide.innerHTML = `
-        <div>
-          <div class="eyebrow">Current plan</div>
-          <h2>${escapeHtml(tierName)} venue access</h2>
-          <p class="muted">${tier.canManageSpecials
-            ? tier.featuredSpecials
-              ? "This Pro venue gets premium discovery treatment, priority review, and privacy-safe demand signals."
-              : "This Plus venue can submit reviewed specials and see privacy-safe demand signals when enough local data exists."
-            : "Free venues can keep beer data and happy-hour data current without exposing analytics or specials tools."}</p>
-        </div>
-        <div class="tierGuide__lists">
-          <div>
-            <strong>Included</strong>
-            <ul class="cleanList tierList">${included.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-          </div>
-          <div>
-            <strong>${locked.length ? "Locked" : "Unlocked"}</strong>
-            <ul class="cleanList tierList">${(locked.length ? locked : ["Every Pro venue feature is active"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-          </div>
-        </div>
-        ${tier.analyticsLocked || !tier.canManageSpecials ? `
-          <div class="actionRow">
-            <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
-            <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
-          </div>
-        ` : ""}
-      `;
     }
 
     function renderBusinessToolkit(data) {
@@ -1385,7 +1299,7 @@
         confirmAllPricesButton.disabled = true;
         submitPriceRefreshButton.disabled = true;
         priceRefreshSearch.disabled = true;
-        MelbBeerBusiness.setStatus(priceRefreshStatus, "Add beer rows first, then come back to refresh them.");
+        clearStatus(priceRefreshStatus);
         return;
       }
 
@@ -1417,7 +1331,7 @@
         </article>
       `).join("");
       filterPriceRefreshRows();
-      MelbBeerBusiness.setStatus(priceRefreshStatus, "Tick unchanged beers, or click a row to edit its price.");
+      clearStatus(priceRefreshStatus);
     }
 
     function setPriceRefreshRowEditing(row, editing) {
@@ -1435,16 +1349,11 @@
     function filterPriceRefreshRows() {
       if (!window.priceRefreshSearch || !window.priceRefreshList) return;
       const query = priceRefreshSearch.value.trim().toLowerCase();
-      let visibleCount = 0;
       priceRefreshList.querySelectorAll("[data-refresh-row]").forEach((row) => {
         const visible = !query || String(row.dataset.searchText || "").includes(query);
         row.hidden = !visible;
-        if (visible) visibleCount += 1;
       });
-      if (currentPortal?.inventory?.beers?.length) {
-        const suffix = query ? `${visibleCount} matching beer${visibleCount === 1 ? "" : "s"} shown.` : "Rows are sorted alphabetically.";
-        priceRefreshStatus.textContent = `Tick unchanged beers, or click a row to edit its price. ${suffix}`;
-      }
+      clearStatus(priceRefreshStatus);
     }
 
     function priceRefreshPayloadFromBeer(beer, price) {
@@ -1997,7 +1906,7 @@
           if (target.dataset.savingsDollars) {
             field(discountRedemptionFormElement, "estimatedSavingsDollars").value = target.dataset.savingsDollars;
           }
-          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem || "Pint Path special"} selected. Enter the user's code to redeem.`);
+          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem || "Pint Path special"} selected.`);
           return;
         }
 
@@ -2016,13 +1925,13 @@
 
         if (target.dataset.savingsDollars && discountRedemptionFormElement) {
           field(discountRedemptionFormElement, "estimatedSavingsDollars").value = target.dataset.savingsDollars;
-          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${formatCurrency(target.dataset.savingsDollars)} discount selected. Enter the user's code to redeem.`);
+          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${formatCurrency(target.dataset.savingsDollars)} discount selected.`);
           return;
         }
 
         if (target.dataset.discountItem && discountRedemptionFormElement) {
           field(discountRedemptionFormElement, "itemName").value = target.dataset.discountItem;
-          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem} selected. Enter the user's code to redeem.`);
+          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem} selected.`);
           return;
         }
 
@@ -2135,8 +2044,12 @@
             return;
           }
           try {
-            await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/${route}/${encodeURIComponent(id)}`, { method: "DELETE" });
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/${route}/${encodeURIComponent(id)}`, { method: "DELETE" });
             await loadPortal(selectedVenueId());
+            if (result?.pendingChange) {
+              showTab("pending-reviews");
+              MelbBeerBusiness.setStatus(portalAccess, result.message || "Delete held for admin review.");
+            }
           } catch (error) {
             MelbBeerBusiness.setStatus(portalAccess, error.message || "Could not remove item.", true);
           }
