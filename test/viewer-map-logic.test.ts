@@ -52,6 +52,10 @@ describe("viewer map price logic", () => {
       destination: { lat?: number; lng?: number; latitude?: number; longitude?: number },
       radiusKm: number,
     ) => boolean;
+    isLatLngInBounds: (
+      value: { lat?: number; lng?: number; latitude?: number; longitude?: number },
+      bounds: { south: number; north: number; west: number; east: number },
+    ) => boolean;
   };
 
   it("does not convert unknown, zero, unavailable, or off-tap prices into cheap numeric prices", () => {
@@ -182,6 +186,15 @@ describe("viewer map price logic", () => {
     expect(logic.isWithinRadiusKm(flindersStreet, richmond, 5)).toBe(true);
     expect(logic.isWithinRadiusKm(flindersStreet, richmond, 1)).toBe(false);
   });
+
+  it("rejects invalid or world-default coordinates before they can stretch map bounds", () => {
+    const australiaBounds = { south: -44.5, north: -9, west: 112, east: 154.5 };
+
+    expect(logic.isLatLngInBounds({ lat: -37.916, lng: 144.997 }, australiaBounds)).toBe(true);
+    expect(logic.isLatLngInBounds({ latitude: 0, longitude: 0 }, australiaBounds)).toBe(false);
+    expect(logic.isLatLngInBounds({ latitude: -37.916, longitude: 0 }, australiaBounds)).toBe(false);
+    expect(logic.isLatLngInBounds({ latitude: 99, longitude: 144.997 }, australiaBounds)).toBe(false);
+  });
 });
 
 describe("viewer map UI wiring", () => {
@@ -208,9 +221,12 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("useConfiguredGoogleMapsMapId");
     expect(html).toContain('gestureHandling: "cooperative"');
     expect(html).toContain("zoomControl: false");
+    expect(html).toContain("clickableIcons: false");
     expect(html).toContain("installCommandScrollZoomAssist(map, mapElement)");
     expect(html).toContain('mapElement.addEventListener("wheel"');
     expect(html).toContain("if (!event.metaKey && !event.ctrlKey)");
+    expect(html).toContain("PINT_PATH_VENUE_COORDINATE_BOUNDS");
+    expect(html).toContain("getMappableVenueLatLng");
     expect(html).not.toContain('id="mapZoomControls"');
     expect(html).toContain("const MAP_OVERLAYS_ENABLED = false");
     expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');

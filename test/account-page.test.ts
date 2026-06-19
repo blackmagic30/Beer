@@ -96,7 +96,55 @@ function statusHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/status.html"), "utf8");
 }
 
+function viewerHtmlFiles(directory = path.resolve(process.cwd(), "viewer")): string[] {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const filePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return viewerHtmlFiles(filePath);
+    }
+    return entry.isFile() && entry.name.endsWith(".html") ? [filePath] : [];
+  });
+}
+
 describe("account page shell", () => {
+  it("installs Pint Path logo assets and favicon metadata across every viewer page", () => {
+    const script = businessJs();
+    const css = businessCss();
+    const manifest = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "viewer/site.webmanifest"), "utf8")) as {
+      icons: Array<{ src: string; sizes: string; type: string }>;
+    };
+    const requiredAssets = [
+      "viewer/favicon.png",
+      "viewer/assets/pint-path-logo.png",
+      "viewer/assets/pint-path-icon-192.png",
+      "viewer/assets/pint-path-icon-512.png",
+      "viewer/assets/pint-path-apple-touch-icon.png",
+    ];
+
+    requiredAssets.forEach((assetPath) => {
+      expect(fs.existsSync(path.resolve(process.cwd(), assetPath))).toBe(true);
+    });
+    expect(manifest.icons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ src: "/assets/pint-path-icon-192.png", sizes: "192x192", type: "image/png" }),
+        expect.objectContaining({ src: "/assets/pint-path-icon-512.png", sizes: "512x512", type: "image/png" }),
+      ]),
+    );
+    expect(script).toContain('class="brandLogo" src="/assets/pint-path-icon-192.png"');
+    expect(mapHtml()).toContain('class="mapBrandLogo" src="/assets/pint-path-icon-192.png"');
+    expect(css).toContain(".brandLogo");
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.brandText\s*\{[\s\S]*display:\s*none;/);
+
+    viewerHtmlFiles().forEach((filePath) => {
+      const html = fs.readFileSync(filePath, "utf8");
+      expect(html, filePath).toContain('href="/favicon.png"');
+      expect(html, filePath).toContain('href="/assets/pint-path-icon-192.png"');
+      expect(html, filePath).toContain('rel="apple-touch-icon"');
+      expect(html, filePath).toContain('href="/site.webmanifest"');
+      expect(html, filePath).toContain('property="og:image" content="https://pintpath.au/assets/pint-path-logo.png"');
+    });
+  });
+
   it("renders separate logged-out auth and logged-in dashboard states", () => {
     const html = accountHtml();
 
@@ -117,7 +165,7 @@ describe("account page shell", () => {
     expect(html).toContain('id="leaderboardPodium"');
     expect(html).toContain('id="rewardVoucherList"');
     expect(html).toContain('id="pubGolfForm"');
-    expect(html).toContain("New venue pending admin approval");
+    expect(html).toContain("Venue added to the public map");
     expect(html).toContain("submissionPendingNotice");
     expect(html).toContain('id="authStatus" class="notice" role="status" hidden></div>');
     expect(html).toContain('id="dashboardStatus" class="notice" role="status" hidden></div>');

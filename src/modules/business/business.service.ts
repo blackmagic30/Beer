@@ -108,6 +108,8 @@ interface VenueRow {
   premiumBadge?: string | null;
   promoted?: boolean;
   featuredSpecialEligible?: boolean;
+  venueTags?: string[];
+  isUserSubmittedVenue?: boolean;
 }
 
 interface MissionAreaLookup {
@@ -166,6 +168,7 @@ const AUTO_MISSION_TARGET_BEERS = [
 const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
+const COMMUNITY_SUBMISSION_CONFIRMATIONS_REQUIRED = 2;
 
 interface StripeEvent {
   id: string;
@@ -3548,6 +3551,10 @@ export class BusinessService {
     };
   }
 
+  private shouldPublishSubmittedVenueImmediately(pendingVenue: PendingVenueDetails | null): boolean {
+    return Boolean(pendingVenue?.googlePlaceId);
+  }
+
   async createUserSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
     this.assertAccountCanSubmit(account);
     const verifiedInput = await this.withVerifiedPendingGoogleVenue(account, input);
@@ -3611,6 +3618,17 @@ export class BusinessService {
         };
       }),
     });
+    const publishedVenueImmediately = this.shouldPublishSubmittedVenueImmediately(pendingVenue);
+
+    if (publishedVenueImmediately) {
+      this.repository.publishPendingVenue({
+        venueId: submission.venueId,
+        venueName: submission.venueName,
+        suburb: submission.suburb,
+        pendingVenue,
+        now,
+      });
+    }
 
     const firstItemBeerName = input.items[0] ? canonicalizeTrackedBeerName(input.items[0].beerName) : null;
     this.trackEvent(account, {
@@ -3627,6 +3645,7 @@ export class BusinessService {
         pointsEligibleByLocation: submission.pointsEligibleByLocation,
         rewardEligible,
         newVenue: Boolean(pendingVenue),
+        venuePublishedImmediately: publishedVenueImmediately,
       },
     });
     this.recordUserActivity({
@@ -3641,12 +3660,15 @@ export class BusinessService {
         pointsEligibleByLocation: submission.pointsEligibleByLocation,
         rewardEligible,
         newVenue: Boolean(pendingVenue),
+        venuePublishedImmediately: publishedVenueImmediately,
       },
     });
 
     return {
       submission,
-      statusCopy: pendingVenue
+      statusCopy: publishedVenueImmediately
+        ? "Venue added to the public map. Beer data is saved for review before prices appear publicly."
+        : pendingVenue
         ? "New venue and beer data submitted for admin review. It will appear on the global map only after approval."
         : !rewardEligible
         ? "Venue update submitted for review. Venue-manager updates do not earn contributor points."
@@ -4313,10 +4335,85 @@ export class BusinessService {
       },
     });
 
+    const communityReview = input.result === "confirmed"
+      ? this.maybeApproveSubmissionByCommunityConsensus(submissionId, account)
+      : null;
+
     return {
       verification,
-      message: "Verification saved. Community confirmations help improve data confidence.",
+      autoApproved: Boolean(communityReview),
+      message: communityReview
+        ? "Verification saved. This price has enough community confirmations and is now live."
+        : "Verification saved. Community confirmations help improve data confidence.",
     };
+  }
+
+  private maybeApproveSubmissionByCommunityConsensus(submissionId: string, verifier: BusinessAccount) {
+    const confirmedCount = this.repository.countConfirmedVerificationsForSubmission(submissionId);
+    if (confirmedCount < COMMUNITY_SUBMISSION_CONFIRMATIONS_REQUIRED) {
+      return null;
+    }
+
+    const submission = this.repository.getSubmissionById(submissionId);
+    if (!submission) {
+      return null;
+    }
+
+    if (submission.submission.status !== "pending" && submission.submission.status !== "needs_more_evidence") {
+      return null;
+    }
+
+    const suggestedPoints = this.calculatePoints(submission.submission, submission.items);
+    const points = submission.submission.pointsEligibleByLocation
+      ? roundPoints(suggestedPoints)
+      : 0;
+    const reviewedAt = nowIso();
+    const result = this.repository.reviewSubmission({
+      submissionId,
+      reviewerId: verifier.id,
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      pointsAwarded: points,
+      confidence: "community_confirmed",
+      now: reviewedAt,
+      monthKey: monthKeyFromIso(submission.submission.observedAt),
+      premiumUntil: endOfMonthIso(reviewedAt),
+      contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
+    });
+
+    this.trackEvent(result.account, {
+      anonymousSessionId: null,
+      eventType: "submission_approved",
+      venueId: result.submission.venueId,
+      beerId: submission.items[0]?.normalizedBeerId ?? null,
+      suburb: result.submission.suburb,
+      metadata: {
+        submissionId,
+        reviewedByAdmin: false,
+        reviewSource: "community_consensus",
+        confirmedVerifications: confirmedCount,
+        pointsAwarded: result.pointsAwarded,
+        suggestedPoints,
+      },
+    });
+
+    if (result.account.subscriptionStatus === "contributor_unlocked" && result.pointsAwarded > 0) {
+      this.trackEvent(result.account, {
+        anonymousSessionId: null,
+        eventType: "contributor_access_unlocked",
+        venueId: result.submission.venueId,
+        beerId: null,
+        suburb: result.submission.suburb,
+        metadata: {
+          pointsThisMonth: result.account.contributionPointsCurrentMonth,
+          premiumUntil: result.account.premiumUntil,
+          reviewSource: "community_consensus",
+        },
+      });
+    }
+
+    return result;
   }
 
   reviewSubmission(admin: BusinessAccount, submissionId: string, input: ReviewSubmissionInput) {

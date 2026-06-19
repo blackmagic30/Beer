@@ -1,0 +1,21 @@
+{
+  "name": "Pint Path",
+  "short_name": "Pint Path",
+  "description": "Verified local beer prices, happy hours, and Pint Path specials.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070A12",
+  "theme_color": "#070A12",
+  "icons": [
+    {
+      "src": "/assets/pint-path-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/pint-path-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -67,7 +67,7 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain('list="venueSuggestions"');
   });
 
-  it("lets contributors request a missing venue with beer data before admin approval", () => {
+  it("lets contributors request a missing venue with beer data from a Google-verified venue", () => {
     const html = submitHtml();
 
     expect(html).toContain('id="newVenueToggle"');
@@ -288,7 +288,8 @@ describe("submit page auth gate", () => {
     const html = faqHtml();
 
     expect(html).toContain("How do submits work?");
-    expect(html).toContain("New prices and venues are checked before publication.");
+    expect(html).toContain("Google-selected new venues can appear on the map quickly");
+    expect(html).toContain("beer prices stay pending until admin review or matching community confirmations");
     expect(html).toContain("saves the upload locally in your browser and retries when you are back online");
     expect(html).toContain("Why does Submit ask for location services?");
     expect(html).toContain("Location proof helps reviewers confirm that data was uploaded from the venue area.");

@@ -577,7 +577,10 @@ function renderNav(active = "") {
   return `
     <nav class="topNav" aria-label="Primary">
       <a class="brand" href="/">
-        <strong>Pint Path</strong>
+        <img class="brandLogo" src="/assets/pint-path-icon-192.png" alt="" width="36" height="36" aria-hidden="true" />
+        <span class="brandText">
+          <strong>Pint Path</strong>
+        </span>
       </a>
       ${betaPill}
       <div class="navLinks">

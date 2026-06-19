@@ -343,11 +343,40 @@
     const lat = Number(value.lat ?? value.latitude);
     const lng = Number(value.lng ?? value.longitude);
 
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      lat < -90 ||
+      lat > 90 ||
+      lng < -180 ||
+      lng > 180
+    ) {
       return null;
     }
 
     return { lat, lng };
+  }
+
+  function isLatLngInBounds(value, bounds) {
+    const coords = normalizeLatLng(value);
+    const south = Number(bounds && bounds.south);
+    const north = Number(bounds && bounds.north);
+    const west = Number(bounds && bounds.west);
+    const east = Number(bounds && bounds.east);
+
+    if (
+      !coords ||
+      !Number.isFinite(south) ||
+      !Number.isFinite(north) ||
+      !Number.isFinite(west) ||
+      !Number.isFinite(east) ||
+      south > north ||
+      west > east
+    ) {
+      return false;
+    }
+
+    return coords.lat >= south && coords.lat <= north && coords.lng >= west && coords.lng <= east;
   }
 
   function getDistanceKm(origin, destination) {
@@ -467,6 +496,7 @@
     getMarkerScale,
     getClusterVisual,
     isUnderPriceThreshold,
+    isLatLngInBounds,
     getDistanceKm,
     formatDistance,
     isWithinRadiusKm,

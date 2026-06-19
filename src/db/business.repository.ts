@@ -234,6 +234,8 @@ export interface LocalVenueLookup {
   postcode: string | null;
   latitude: number | null;
   longitude: number | null;
+  venueTags?: string[];
+  isUserSubmittedVenue?: boolean;
 }
 
 export interface PublicVenuePriceRecord {
@@ -2578,6 +2580,17 @@ export class BusinessRepository {
     return row ? toVerification(row) : null;
   }
 
+  countConfirmedVerificationsForSubmission(uploadId: string): number {
+    const row = this.database
+      .prepare(
+        `SELECT count(DISTINCT verifier_user_id) AS count
+         FROM verifications
+         WHERE upload_id = ? AND result = 'confirmed'`,
+      )
+      .get(uploadId) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
   listVerificationsForUser(userId: string, limit: number): UserVerification[] {
     const rows = this.database
       .prepare("SELECT * FROM verifications WHERE verifier_user_id = ? ORDER BY created_at DESC LIMIT ?")
@@ -3476,25 +3489,28 @@ export class BusinessRepository {
     }
   }
 
-  private publishPendingVenueIfNeeded(
-    current: { submission: BusinessSubmission; items: BusinessSubmissionItem[] },
-    now: string,
-  ): void {
-    const pendingVenue = current.submission.pendingVenue;
+  publishPendingVenue(input: {
+    venueId: string;
+    venueName: string;
+    suburb: string | null;
+    pendingVenue: PendingVenueDetails | null;
+    now: string;
+  }): void {
+    const pendingVenue = input.pendingVenue;
     if (!pendingVenue) {
       return;
     }
 
     this.upsertBarProfile({
-      barId: current.submission.venueId,
-      name: pendingVenue.name || current.submission.venueName,
+      barId: input.venueId,
+      name: pendingVenue.name || input.venueName,
       address: pendingVenue.address,
-      suburb: pendingVenue.suburb ?? current.submission.suburb,
-      area: pendingVenue.suburb ?? current.submission.suburb,
+      suburb: pendingVenue.suburb ?? input.suburb,
+      area: pendingVenue.suburb ?? input.suburb,
       phone: pendingVenue.phone,
       website: pendingVenue.website,
       instagram: null,
-      description: "User-submitted venue. Published after Pint Path admin review.",
+      description: "User-submitted venue. Beer data is reviewed before prices appear publicly.",
       openingHours: {},
       venueTags: ["user submitted"],
       membershipTier: "basic",
@@ -3503,15 +3519,28 @@ export class BusinessRepository {
       promoted: false,
       featuredSpecialEligible: false,
       active: true,
-      now,
+      now: input.now,
     });
 
     this.upsertVenueLocationCache({
-      venueId: current.submission.venueId,
-      venueName: pendingVenue.name || current.submission.venueName,
-      suburb: pendingVenue.suburb ?? current.submission.suburb,
+      venueId: input.venueId,
+      venueName: pendingVenue.name || input.venueName,
+      suburb: pendingVenue.suburb ?? input.suburb,
       latitude: pendingVenue.latitude,
       longitude: pendingVenue.longitude,
+      now: input.now,
+    });
+  }
+
+  private publishPendingVenueIfNeeded(
+    current: { submission: BusinessSubmission; items: BusinessSubmissionItem[] },
+    now: string,
+  ): void {
+    this.publishPendingVenue({
+      venueId: current.submission.venueId,
+      venueName: current.submission.venueName,
+      suburb: current.submission.suburb,
+      pendingVenue: current.submission.pendingVenue,
       now,
     });
   }
@@ -3910,6 +3939,7 @@ export class BusinessRepository {
            profile.name AS name,
            profile.address AS address,
            profile.suburb AS suburb,
+           profile.venue_tags_json AS venue_tags_json,
            location.latitude AS latitude,
            location.longitude AS longitude
          FROM venue_profiles profile
@@ -3923,6 +3953,7 @@ export class BusinessRepository {
         name: string;
         address: string | null;
         suburb: string | null;
+        venue_tags_json: string | null;
         latitude: number | null;
         longitude: number | null;
       }>;
@@ -3939,16 +3970,21 @@ export class BusinessRepository {
           .includes(query);
       })
       .slice(0, input.limit)
-      .map((row) => ({
-        id: row.id,
-        name: row.name,
-        address: row.address,
-        suburb: row.suburb,
-        state: "VIC",
-        postcode: null,
-        latitude: row.latitude,
-        longitude: row.longitude,
-      }));
+      .map((row) => {
+        const venueTags = parseJsonArray(row.venue_tags_json ?? "[]");
+        return {
+          id: row.id,
+          name: row.name,
+          address: row.address,
+          suburb: row.suburb,
+          state: "VIC",
+          postcode: null,
+          latitude: row.latitude,
+          longitude: row.longitude,
+          venueTags,
+          isUserSubmittedVenue: venueTags.includes("user submitted"),
+        };
+      });
   }
 
   listVenueManagerPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {

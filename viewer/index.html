@@ -4,8 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pint Path</title>
+  <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/pint-path-icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/pint-path-apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
+  <meta name="theme-color" content="#070A12" />
+  <meta property="og:site_name" content="Pint Path" />
+  <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <script src="https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer/dist/index.min.js"></script>
-  <script src="./map-logic.js?v=20260606-price-rings"></script>
+  <script src="./map-logic.js?v=20260619-coordinate-guard"></script>
   <script src="./config.js"></script>
   <script src="./business.js"></script>
   <style>
@@ -98,10 +105,27 @@
     }
 
     .mapBrand {
-      display: grid;
-      gap: 2px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 42px;
       color: var(--text-primary);
       text-decoration: none;
+    }
+
+    .mapBrandLogo {
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.22), 0 10px 26px rgba(0, 0, 0, 0.28);
+      object-fit: cover;
+    }
+
+    .mapBrandText {
+      display: grid;
+      gap: 2px;
     }
 
     .mapBrand strong {
@@ -2786,6 +2810,21 @@
       }
 
       .mapBrand {
+        display: inline-flex;
+        justify-content: center;
+        width: 38px;
+        min-width: 38px;
+        min-height: 38px;
+        gap: 0;
+      }
+
+      .mapBrandLogo {
+        width: 32px;
+        height: 32px;
+        flex-basis: 32px;
+      }
+
+      .mapBrandText {
         display: none;
       }
 
@@ -2829,14 +2868,16 @@
       }
 
       .topbar__actions {
+        flex: 1 1 auto;
         min-width: 0;
-        width: 100%;
+        width: auto;
       }
 
       .topbar__businessLinks {
         display: flex;
+        flex: 1 1 auto;
         flex-wrap: nowrap;
-        width: 100%;
+        width: auto;
         max-width: none;
         overflow-x: auto;
         gap: 4px;
@@ -3277,7 +3318,10 @@
 
     <nav class="mapNavCard" aria-label="Primary">
       <a class="mapBrand" href="/">
-        <strong>Melbourne beer map</strong>
+        <img class="mapBrandLogo" src="/assets/pint-path-icon-192.png" alt="" width="36" height="36" aria-hidden="true" />
+        <span class="mapBrandText">
+          <strong>Pint Path</strong>
+        </span>
       </a>
       <div class="topbar__actions">
         <div id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation">
@@ -3508,6 +3552,12 @@
     const MELBOURNE_CENTER = Object.freeze({ lat: -37.8136, lng: 144.9631 });
     const NEAR_ME_DEFAULT_RADIUS_KM = 2;
     const MELBOURNE_COVERAGE_RADIUS_KM = 85;
+    const PINT_PATH_VENUE_COORDINATE_BOUNDS = Object.freeze({
+      south: -44.5,
+      north: -9,
+      west: 112,
+      east: 154.5,
+    });
     const GOOGLE_MAPS_KEY =
       params.get("googleMapsKey") ||
       window.localStorage.getItem("googleMapsKey") ||
@@ -4063,16 +4113,29 @@
       return Boolean(userLocationState.coords);
     }
 
-    function getVenueLatLng(row) {
-      const venue = getVenueRecord(row.venues) || {};
-      const lat = Number(venue.latitude);
-      const lng = Number(venue.longitude);
-
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    function getMappableVenueLatLng(venue) {
+      if (!venue || typeof venue !== "object") {
         return null;
       }
 
-      return { lat, lng };
+      const lat = Number(venue.latitude ?? venue.lat);
+      const lng = Number(venue.longitude ?? venue.lng);
+      const coords = { lat, lng };
+
+      if (
+        !window.MelbBeerMapLogic ||
+        typeof window.MelbBeerMapLogic.isLatLngInBounds !== "function" ||
+        !window.MelbBeerMapLogic.isLatLngInBounds(coords, PINT_PATH_VENUE_COORDINATE_BOUNDS)
+      ) {
+        return null;
+      }
+
+      return coords;
+    }
+
+    function getVenueLatLng(row) {
+      const venue = getVenueRecord(row.venues) || {};
+      return getMappableVenueLatLng(venue);
     }
 
     function getVenueDistanceKm(row) {
@@ -5539,6 +5602,16 @@
       }
     }
 
+    function isUserSubmittedVenue(row) {
+      const venue = getVenueRecord(row?.venues || row);
+      const venueTags = Array.isArray(venue?.venueTags) ? venue.venueTags : [];
+      return Boolean(
+        row?.isUserSubmittedVenue ||
+        venue?.isUserSubmittedVenue ||
+        venueTags.some((tag) => toSearchKey(tag) === "user submitted")
+      );
+    }
+
     function buildEmptyVenueRow(venue) {
       return {
         id: `venue:${venue.id}`,
@@ -6803,14 +6876,16 @@
         return null;
       }
 
+      const coords = getMappableVenueLatLng(value);
+
       return {
         id,
         markerId: String(value.markerId || id).trim(),
         name,
         suburb: String(value.suburb || "Melbourne").trim(),
         address: String(value.address || "").trim(),
-        latitude: Number.isFinite(Number(value.latitude)) ? Number(value.latitude) : null,
-        longitude: Number.isFinite(Number(value.longitude)) ? Number(value.longitude) : null,
+        latitude: coords?.lat ?? null,
+        longitude: coords?.lng ?? null,
         tier: ["free", "plus", "pro"].includes(String(value.tier || "")) ? String(value.tier) : "free",
         updatedAt: String(value.updatedAt || new Date().toISOString()),
       };
@@ -6902,12 +6977,11 @@
 
     function getVenueDirectionsUrl(recordOrSnapshot) {
       const venue = recordOrSnapshot?.venue || getVenueRecord(recordOrSnapshot?.row?.venues) || recordOrSnapshot || {};
-      const lat = Number(venue.latitude);
-      const lng = Number(venue.longitude);
+      const coords = getMappableVenueLatLng(venue);
       const name = venue.name || recordOrSnapshot?.name || recordOrSnapshot?.row?.venue_name || "Pint Path venue";
       const address = formatAddress(venue) || recordOrSnapshot?.address || "";
-      const destination = Number.isFinite(lat) && Number.isFinite(lng)
-        ? `${lat},${lng}`
+      const destination = coords
+        ? `${coords.lat},${coords.lng}`
         : [name, address].filter(Boolean).join(", ");
       return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
     }
@@ -7357,6 +7431,7 @@
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: true,
+          clickableIcons: false,
           mapId: EFFECTIVE_GOOGLE_MAPS_MAP_ID,
         });
         googleMapInstance = map;
@@ -7423,11 +7498,7 @@
         });
 
         const allVenueRows = allVenues
-          .filter((venue) => {
-            const lat = Number(venue.latitude);
-            const lng = Number(venue.longitude);
-            return Number.isFinite(lat) && Number.isFinite(lng);
-          })
+          .filter((venue) => Boolean(getMappableVenueLatLng(venue)))
           .map((venue) => {
             const mergedRow = buildMergedVenueRow(
               venue,
@@ -7442,7 +7513,11 @@
             );
             return mergeBusinessPriceRecords(mergedRow, venueRecords);
           });
-        const venueRows = allVenueRows.filter((item) => hasCapturedBeerData(item) || hasHappyHourData(item));
+        const venueRows = allVenueRows.filter((item) => (
+          hasCapturedBeerData(item) ||
+          hasHappyHourData(item) ||
+          isUserSubmittedVenue(item)
+        ));
         analyticsVenueRows = allVenueRows;
         applySharedSearchParams();
         void trackBusinessEvent("map_viewed", getAnalyticsContext({
@@ -7647,8 +7722,13 @@
 
           filteredRows.forEach((item) => {
             const venue = getVenueRecord(item.venues);
-            const lat = Number(venue.latitude);
-            const lng = Number(venue.longitude);
+            const coords = getVenueLatLng(item);
+
+            if (!coords) {
+              return;
+            }
+
+            const { lat, lng } = coords;
             const featuredBeer = getFeaturedBeer(item, viewState);
             const markerId = getVenueMarkerId(item, venue, lat, lng);
             const markerVisual = applyVenueTierToMarkerVisual(getMarkerVisual(viewState, featuredBeer, markerId), item);

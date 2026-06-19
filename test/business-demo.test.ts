@@ -1555,7 +1555,7 @@ describe("production hardening", () => {
     )).toBe(true);
   });
 
-  it("publishes a user-requested new venue and its beer rows only after admin approval", async () => {
+  it("keeps manually-created new venues and beer rows pending until admin approval", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const uploader = createAccount(repository, "new-venue-uploader");
@@ -2944,12 +2944,14 @@ describe("business demo contribution model", () => {
     }
   });
 
-  it("requires user new-venue submissions to verify a Google place server-side", async () => {
-    const { repository } = createRepository();
+  it("publishes Google-verified user venues immediately but gates beer rows until community confirmation", async () => {
+    const { repository, database } = createRepository();
     const service = createBusinessService(repository, {
       GOOGLE_PLACES_API_KEY: "test-google-places-key",
     });
     const user = createAccount(repository, "locked-venue-submit-user");
+    const firstVerifier = createAccount(repository, "google-venue-first-verifier");
+    const secondVerifier = createAccount(repository, "google-venue-second-verifier");
     const googlePlace = {
       id: "google-place-locked-venue",
       displayName: { text: "Locked Google Bar" },
@@ -3028,6 +3030,7 @@ describe("business demo contribution model", () => {
       expect(result.submission.venueId).toMatch(/^venue-google-[a-f0-9]{24}$/);
       expect(result.submission.venueName).toBe("Locked Google Bar");
       expect(result.submission.suburb).toBe("Fitzroy");
+      expect(result.statusCopy).toContain("Venue added to the public map");
       expect(result.submission.pendingVenue).toEqual(expect.objectContaining({
         googlePlaceId: "google-place-locked-venue",
         name: "Locked Google Bar",
@@ -3039,6 +3042,40 @@ describe("business demo contribution model", () => {
         latitude: -37.798,
         longitude: 144.979,
       }));
+
+      const venues = await service.listVenues("Locked Google", 10);
+      expect(venues).toContainEqual(expect.objectContaining({
+        id: result.submission.venueId,
+        name: "Locked Google Bar",
+        address: "12 Lock St, Fitzroy VIC 3065",
+        suburb: "Fitzroy",
+        isUserSubmittedVenue: true,
+      }));
+      expect(repository.listVenueManagerPriceRecords(20, result.submission.venueId)).toEqual([]);
+
+      const firstVerification = service.verifySubmission(firstVerifier, result.submission.id, {
+        result: "confirmed",
+        notes: "Matches the venue menu board.",
+      });
+      expect(firstVerification.autoApproved).toBe(false);
+      expect(repository.listVenueManagerPriceRecords(20, result.submission.venueId)).toEqual([]);
+
+      const secondVerification = service.verifySubmission(secondVerifier, result.submission.id, {
+        result: "confirmed",
+        notes: "Same pint price seen tonight.",
+      });
+      expect(secondVerification.autoApproved).toBe(true);
+      expect(repository.getSubmissionById(result.submission.id)?.submission.status).toBe("approved");
+      expect(repository.listVenueManagerPriceRecords(20, result.submission.venueId))
+        .toEqual([expect.objectContaining({
+          beerName: "Guinness",
+          venueName: "Locked Google Bar",
+          price: 13,
+        })]);
+      const publishedRecord = database
+        .prepare("SELECT confidence FROM venue_price_records WHERE source_submission_id = ?")
+        .get(result.submission.id) as { confidence: string } | undefined;
+      expect(publishedRecord?.confidence).toBe("community_confirmed");
     } finally {
       vi.unstubAllGlobals();
     }

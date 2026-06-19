@@ -4,6 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Account | Pint Path</title>
+  <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/pint-path-icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/pint-path-apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
+  <meta name="theme-color" content="#070A12" />
+  <meta property="og:site_name" content="Pint Path" />
+  <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -574,7 +581,7 @@
           : "Menu/photo evidence for reviewer queue";
         const evidenceCopy = submission.hasEvidence ? "Private evidence attached" : "No photo evidence";
         const newVenueCopy = submission.isNewVenue && submission.status === "pending"
-          ? '<div class="notice submissionPendingNotice">New venue pending admin approval. It will appear on the public map after approval.</div>'
+          ? '<div class="notice submissionPendingNotice">Venue added to the public map. Beer data is pending review before prices appear publicly.</div>'
           : "";
         return `
           <article class="submissionCard">

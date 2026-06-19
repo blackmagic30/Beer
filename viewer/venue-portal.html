@@ -4,6 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Venue Dashboard | Pint Path</title>
+  <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/pint-path-icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/pint-path-apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
+  <meta name="theme-color" content="#070A12" />
+  <meta property="og:site_name" content="Pint Path" />
+  <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
@@ -12,10 +19,10 @@
   <main class="pageShell">
     <div id="nav"></div>
 
-    <section class="hero hero--compact">
+    <section class="hero hero--compact venuePortalHero">
       <div class="eyebrow">Venue portal</div>
-      <h1>Manage your venue’s beer data and happy hours.</h1>
-      <p class="lead">Assigned and verified venue accounts can keep beer stock and happy hours up to date. Plus adds reviewed Pint Path specials and analytics; Pro adds priority review and premium discovery treatment.</p>
+      <h1>Venue dashboard</h1>
+      <p class="lead">Keep prices fresh, redeem Pint Path specials, review pending changes, and see the work that will make your venue more useful on the map.</p>
     </section>
 
     <section id="portalAccess" class="notice">Log in with an assigned venue-manager account to view this dashboard.</section>
@@ -59,33 +66,35 @@
 
         <div class="dashboardMain">
           <section class="tabPanel" data-panel="overview">
-            <div class="grid grid--two">
-              <article class="card">
+            <article class="venueCommandCenter panel">
+              <div class="venueCommandCenter__identity">
+                <div class="eyebrow">Command centre</div>
                 <h2 id="overviewName">Your bar</h2>
                 <p id="overviewMeta" class="muted"></p>
-                <div id="tierBadge" class="pill">Basic</div>
-              </article>
-              <article class="card">
-                <h2>Quick actions</h2>
-                <p class="muted">Fast edits for the things users care about most.</p>
-                <div class="actionRow">
-                  <button class="button button--primary" type="button" data-jump-tab="price-refresh">Keep prices fresh</button>
-                  <button class="button" type="button" data-jump-tab="redemption">Redeem user code</button>
-                  <button class="button" type="button" data-jump-tab="specials" data-specials-only>Add Pint Path special</button>
-                  <button class="button" type="button" data-jump-tab="happy-hours">Add happy hour</button>
+                <div class="venueStatusPills">
+                  <span id="tierBadge" class="pill">Basic</span>
+                  <span id="overviewPendingBadge" class="pill">0 pending</span>
+                  <span id="overviewPosBadge" class="pill">Manual redemptions</span>
                 </div>
-              </article>
-            </div>
+              </div>
+              <div class="venueCommandCenter__actions" aria-label="Venue dashboard quick actions">
+                <button class="button button--primary" type="button" data-jump-tab="price-refresh">Keep prices fresh</button>
+                <button class="button" type="button" data-jump-tab="redemption">Redeem code</button>
+                <button class="button" type="button" data-jump-tab="happy-hours">Happy hour</button>
+                <button class="button" type="button" data-jump-tab="specials" data-specials-only>Pint Path special</button>
+              </div>
+            </article>
 
-            <div class="venueHeroGrid" style="margin-top:16px;">
+            <div id="venuePulseGrid" class="venuePulseGrid"></div>
+
+            <div class="venueActionGrid">
               <article id="weeklyActionCard" class="panel"></article>
               <article id="staffModeCard" class="panel"></article>
               <article id="specialsHeroCard" class="panel"></article>
+              <article id="staffInviteCard" class="panel"></article>
             </div>
 
-            <article id="staffInviteCard" class="panel" style="margin-top:16px;"></article>
-
-            <div class="grid grid--two" style="margin-top:16px;">
+            <div class="venueOverviewColumns">
               <article class="panel">
                 <h2>Listing quality</h2>
                 <div id="qualityScore" class="qualityScore"></div>
@@ -856,7 +865,12 @@
       overviewName.textContent = profile.name;
       overviewMeta.textContent = [profile.suburb, profile.address].filter(Boolean).join(" · ") || "Add suburb and address in Profile.";
       tierBadge.textContent = prettyTier(profile.membershipTier);
-      tierBadge.className = `pill ${profile.membershipTier === "pro" ? "pill--premium" : ""}`;
+      tierBadge.className = `pill ${profile.membershipTier === "pro" ? "pill--premium" : profile.membershipTier === "plus" ? "pill--info" : ""}`;
+      const pendingCount = data.pendingChanges?.length || 0;
+      overviewPendingBadge.textContent = pendingCount ? `${formatCount(pendingCount)} pending` : "No pending";
+      overviewPendingBadge.className = `pill ${pendingCount ? "pill--warning" : "pill--success"}`;
+      overviewPosBadge.textContent = data.posIntegration?.enabled ? "POS ready" : "Manual redemption";
+      overviewPosBadge.className = `pill ${data.posIntegration?.enabled ? "pill--premium" : "pill--info"}`;
 
       const beers = data.inventory?.beers || [];
       const happyHours = data.inventory?.happyHours || [];
@@ -868,6 +882,7 @@
       renderHappyHours(happyHours);
       renderSpecials(specials);
       renderOverviewData(data);
+      renderVenuePulseGrid(data);
       renderVenuePortalLaunchCards(data);
       renderDiscountOps(data);
       renderDiscountSpecialChoices(data);
@@ -895,11 +910,14 @@
         qualityChecklist.innerHTML = quality.checklist
           .map((item) => `<li>${item.complete ? "Complete" : "Needs work"} · ${escapeHtml(item.label)}</li>`)
           .join("");
+      } else {
+        qualityScore.innerHTML = `<strong>--</strong><span class="muted">listing quality</span>`;
+        qualityChecklist.innerHTML = '<li>Build the venue profile, beer list, and happy hours to unlock a quality score.</li>';
       }
 
       const records = data.insights?.priceRecords || [];
       priceRecords.innerHTML = records.length
-        ? records.map((record) => `
+        ? records.slice(0, 5).map((record) => `
           <div class="listItem dataRow">
             <div>
               <strong>${escapeHtml(record.beerName)} · ${escapeHtml(record.servingSize)}</strong>
@@ -909,6 +927,71 @@
           </div>
         `).join("")
         : '<div class="listItem muted">No verified price rows yet. Add beers, upload a tap-list source, or submit verified data for review.</div>';
+    }
+
+    function renderVenuePulseGrid(data) {
+      const container = document.getElementById("venuePulseGrid");
+      if (!container) return;
+
+      const beers = data.inventory?.beers || [];
+      const happyHours = data.inventory?.happyHours || [];
+      const specials = data.inventory?.specials || [];
+      const pendingCount = data.pendingChanges?.length || 0;
+      const discounts = data.discounts || {};
+      const activeHappyHours = happyHours.filter((item) => item.active !== false).length;
+      const activeSpecials = specials.filter((item) => item.active !== false).length;
+      const onTapCount = beers.filter((beer) => beer.onTap).length;
+      const pricedCount = beers.filter((beer) => beer.price != null).length;
+      const quality = data.insights?.listingQuality;
+      const redemptions = Number(discounts.totalRedemptions || 0);
+      const savings = formatCurrency(discounts.estimatedSavingsDollars || 0);
+
+      const pulse = [
+        {
+          label: "Beer coverage",
+          value: formatCount(beers.length),
+          helper: `${formatCount(onTapCount)} on tap · ${formatCount(pricedCount)} priced`,
+          tone: beers.length >= 3 ? "success" : "warning",
+        },
+        {
+          label: "Happy hours",
+          value: formatCount(activeHappyHours),
+          helper: `${formatCount(happyHours.length)} total saved`,
+          tone: activeHappyHours ? "success" : "warning",
+        },
+        {
+          label: "Pending review",
+          value: formatCount(pendingCount),
+          helper: pendingCount ? "Waiting on Pint Path admin" : "No blocked venue edits",
+          tone: pendingCount ? "warning" : "success",
+        },
+        {
+          label: "Specials redeemed",
+          value: formatCount(redemptions),
+          helper: `${savings} tracked savings`,
+          tone: redemptions ? "premium" : "info",
+        },
+        {
+          label: "Listing quality",
+          value: quality ? `${formatCount(quality.score)}%` : "--",
+          helper: quality ? `${quality.checklist.filter((item) => item.complete).length}/${quality.checklist.length} checks complete` : "Build profile and stock data",
+          tone: quality?.score >= 80 ? "success" : quality?.score >= 50 ? "warning" : "info",
+        },
+        {
+          label: "Pint Path specials",
+          value: data.tier?.canManageSpecials ? formatCount(activeSpecials) : "Locked",
+          helper: data.tier?.canManageSpecials ? `${formatCount(specials.length)} total offers` : "Plus or Pro venue feature",
+          tone: data.tier?.canManageSpecials ? (activeSpecials ? "premium" : "warning") : "info",
+        },
+      ];
+
+      container.innerHTML = pulse.map((item) => `
+        <article class="venuePulseCard venuePulseCard--${escapeHtml(item.tone)}">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(item.value)}</strong>
+          <small>${escapeHtml(item.helper)}</small>
+        </article>
+      `).join("");
     }
 
     function renderVenuePortalLaunchCards(data) {
@@ -942,9 +1025,10 @@
 
       if (weeklyActionCard) {
         weeklyActionCard.innerHTML = `
-          <div class="eyebrow">Keep data fresh</div>
-          <div class="venueHeroStat">${formatCount(beers.length)}</div>
-          <span class="muted">beer row${beers.length === 1 ? "" : "s"} managed</span>
+          <div class="venueCardHeader">
+            <div class="eyebrow">Next best action</div>
+            <span class="pill pill--warning">Priority</span>
+          </div>
           <h2>${escapeHtml(nextAction.label)}</h2>
           <p class="muted">${escapeHtml(nextAction.copy)}</p>
           <button class="button button--primary" type="button" data-jump-tab="${escapeHtml(nextAction.tab)}">${escapeHtml(nextAction.label)}</button>
@@ -953,12 +1037,19 @@
 
       if (staffModeCard) {
         const totalRedemptions = Number(data.discounts?.totalRedemptions || 0);
+        const totalSavings = formatCurrency(data.discounts?.estimatedSavingsDollars || 0);
         staffModeCard.innerHTML = `
-          <div class="eyebrow">Staff mode</div>
-          <div class="venueHeroStat">${formatCount(totalRedemptions)}</div>
-          <span class="muted">redeemed Pint Path special${totalRedemptions === 1 ? "" : "s"}</span>
+          <div class="venueCardHeader">
+            <div class="eyebrow">Staff mode</div>
+            <span class="pill ${data.posIntegration?.enabled ? "pill--premium" : "pill--info"}">${data.posIntegration?.enabled ? "POS ready" : "Manual"}</span>
+          </div>
           <h2>Redeem user code</h2>
-          <p class="muted">Staff enter the user's rotating QR/code, choose the drink discount, and Pint Path records the saving.</p>
+          <div class="venueMiniStats">
+            <strong>${formatCount(totalRedemptions)}</strong>
+            <span>redemptions</span>
+            <strong>${escapeHtml(totalSavings)}</strong>
+            <span>tracked savings</span>
+          </div>
           <button class="button button--primary" type="button" data-jump-tab="redemption">Open redemption</button>
         `;
       }
@@ -967,17 +1058,19 @@
         const activeSpecials = specials.filter((special) => special.active !== false).length;
         specialsHeroCard.innerHTML = tier.canManageSpecials
           ? `
-            <div class="eyebrow">Specials</div>
-            <div class="venueHeroStat">${formatCount(activeSpecials)}</div>
-            <span class="muted">active Pint Path special${activeSpecials === 1 ? "" : "s"}</span>
+            <div class="venueCardHeader">
+              <div class="eyebrow">Pint Path specials</div>
+              <span class="pill ${activeSpecials ? "pill--premium" : "pill--warning"}">${formatCount(activeSpecials)} active</span>
+            </div>
             <h2>Drive app redemptions</h2>
-            <p class="muted">Use a clear $1 or $2 beer discount so staff can redeem it manually now and POS can automate it later.</p>
+            <p class="muted">Keep one simple app-only beer discount live so users have a reason to choose you tonight.</p>
             <button class="button button--primary" type="button" data-jump-tab="specials">Manage specials</button>
           `
           : `
-            <div class="eyebrow">Upgrade path</div>
-            <div class="venueHeroStat">Plus</div>
-            <span class="muted">unlocks Pint Path specials</span>
+            <div class="venueCardHeader">
+              <div class="eyebrow">Upgrade path</div>
+              <span class="pill pill--info">Plus</span>
+            </div>
             <h2>Create app-only offers</h2>
             <p class="muted">Free venues can manage beer and happy-hour data. Plus and Pro add reviewed Pint Path specials.</p>
             <button class="button button--premium" type="button" data-upgrade-tier="plus">Unlock specials</button>
@@ -986,9 +1079,12 @@
 
       if (staffInviteCard) {
         staffInviteCard.innerHTML = `
-          <div class="eyebrow">Staff access</div>
-          <h2>Invite staff by email</h2>
-          <p class="muted">Ask staff to create a Pint Path account, then send the email to admin for assignment. This keeps venue controls private.</p>
+          <div class="venueCardHeader">
+            <div class="eyebrow">Team access</div>
+            <span class="pill pill--success">Private</span>
+          </div>
+          <h2>Add trusted staff</h2>
+          <p class="muted">Send the staff email to Pint Path admin so the right people can refresh prices and redeem specials.</p>
           <a class="button" href="mailto:admin@pintpath.au?subject=${mailSubject}&body=${mailBody}">Request staff invite</a>
         `;
       }

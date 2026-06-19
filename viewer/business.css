@@ -134,15 +134,33 @@ a {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  text-decoration: none;
+}
+
+.brandLogo {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.22), 0 10px 26px rgba(0, 0, 0, 0.28);
+  object-fit: cover;
+}
+
+.brandText {
   display: grid;
   gap: 2px;
-  text-decoration: none;
 }
 
 .brand strong {
   font-family: var(--display-font);
   font-size: 20px;
   letter-spacing: -0.03em;
+  color: var(--text-primary);
 }
 
 .brand span,
@@ -171,6 +189,7 @@ a {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  min-width: 0;
 }
 
 .navLinks a,
@@ -2305,6 +2324,194 @@ h3 {
   display: grid;
   gap: 16px;
   min-width: 0;
+}
+
+.venuePortalHero {
+  gap: 10px;
+  margin: 20px 0 20px;
+  padding: clamp(20px, 3vw, 30px);
+  border-radius: 30px;
+}
+
+.venuePortalHero h1 {
+  font-size: clamp(34px, 4.8vw, 58px);
+  line-height: 0.98;
+}
+
+.venuePortalHero .lead {
+  max-width: 880px;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.venueCommandCenter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 390px);
+  gap: 18px;
+  align-items: center;
+  border-color: rgba(34, 211, 238, 0.24);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.14), transparent 34%),
+    radial-gradient(circle at 96% 10%, rgba(245, 197, 66, 0.09), transparent 30%),
+    rgba(13, 18, 32, 0.86);
+}
+
+.venueCommandCenter h2 {
+  margin-top: 6px;
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.02;
+}
+
+.venueStatusPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.venueCommandCenter__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.venuePulseGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.venuePulseCard {
+  display: grid;
+  gap: 6px;
+  min-height: 118px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  padding: 14px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.022)),
+    rgba(15, 23, 42, 0.74);
+  box-shadow: var(--soft-shadow);
+}
+
+.venuePulseCard span {
+  color: #d9dfeb;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.venuePulseCard strong {
+  color: var(--text-primary);
+  font-family: var(--display-font);
+  font-size: clamp(26px, 3.6vw, 38px);
+  line-height: 0.95;
+}
+
+.venuePulseCard small {
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.venuePulseCard--success {
+  border-color: rgba(34, 197, 94, 0.28);
+}
+
+.venuePulseCard--warning {
+  border-color: rgba(250, 204, 21, 0.3);
+}
+
+.venuePulseCard--premium {
+  border-color: rgba(245, 197, 66, 0.36);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(245, 197, 66, 0.14), transparent 36%),
+    radial-gradient(circle at 100% 10%, rgba(217, 70, 239, 0.1), transparent 34%),
+    rgba(15, 23, 42, 0.8);
+}
+
+.venuePulseCard--info {
+  border-color: rgba(56, 189, 248, 0.24);
+}
+
+.venueActionGrid,
+.venueOverviewColumns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.venueActionGrid {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.venueActionGrid .panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 220px;
+  border-color: rgba(34, 211, 238, 0.16);
+}
+
+.venueActionGrid .panel:nth-child(2) {
+  border-color: rgba(245, 197, 66, 0.24);
+}
+
+.venueActionGrid .panel:nth-child(3) {
+  border-color: rgba(139, 92, 246, 0.24);
+}
+
+.venueCardHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: stretch;
+  flex-wrap: wrap;
+  min-height: 46px;
+}
+
+.venueCardHeader .eyebrow {
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 160px;
+  max-width: 190px;
+  min-height: 46px;
+  margin-bottom: 0;
+  padding: 8px 14px;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.venueCardHeader .pill {
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  text-align: center;
+}
+
+.venueMiniStats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 14px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 16px;
+  background: rgba(3, 7, 18, 0.28);
+}
+
+.venueMiniStats strong {
+  color: var(--text-primary);
+  font-family: var(--display-font);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.venueMiniStats span {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .venueHeroGrid {
@@ -4494,6 +4701,21 @@ h3 {
   }
 
   .brand {
+    display: inline-flex;
+    justify-content: center;
+    width: 38px;
+    min-width: 38px;
+    min-height: 38px;
+    gap: 0;
+  }
+
+  .brandLogo {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+  }
+
+  .brandText {
     display: none;
   }
 
@@ -4503,9 +4725,10 @@ h3 {
 
   .navLinks {
     display: flex;
+    flex: 1 1 auto;
     flex-wrap: nowrap;
     gap: 4px;
-    width: 100%;
+    width: auto;
     border-radius: 18px;
     overflow-x: auto;
     padding-bottom: 0;
@@ -4561,10 +4784,38 @@ h3 {
   .specialScheduleGrid,
   .growthSummaryGrid,
   .venueHeroGrid,
+  .venueCommandCenter,
+  .venueOverviewColumns,
   .redemptionFlowGrid,
   .discountQuickPanel,
   .discountOpsPanel {
     grid-template-columns: 1fr;
+  }
+
+  .venuePortalHero {
+    margin: 12px 0 14px;
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .venuePortalHero h1 {
+    font-size: clamp(2rem, 12vw, 2.9rem);
+    line-height: 1.02;
+  }
+
+  .venueCommandCenter {
+    gap: 14px;
+  }
+
+  .venueCommandCenter__actions,
+  .venuePulseGrid,
+  .venueActionGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .venuePulseCard,
+  .venueActionGrid .panel {
+    min-height: auto;
   }
 
   .updateLinkCard,
