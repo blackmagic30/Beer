@@ -301,11 +301,27 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain("Redeem a user code");
     expect(venuePortalHtml).toContain("Manual now · POS ready");
     expect(venuePortalHtml).toContain('id="discountSpecialChoices"');
+    expect(venuePortalHtml).toContain('id="selectedDiscountSpecial"');
     expect(venuePortalHtml).toContain('name="specialId" type="hidden"');
     expect(venuePortalHtml).toContain("function renderDiscountSpecialChoices");
+    expect(venuePortalHtml).toContain("function syncSelectedDiscountSpecial");
+    expect(venuePortalHtml).toContain("Fixed-price special selected. Enter actual savings if you want it tracked.");
     expect(venuePortalHtml).toContain("data-discount-special-id");
     expect(venuePortalHtml).toContain('data-jump-tab="redemption"');
     expect(venuePortalHtml).toContain('specialId: field(discountRedemptionFormElement, "specialId").value || null');
+  });
+
+  it("surfaces paid venue demand insights in a switchable overview cockpit", () => {
+    expect(venuePortalHtml).toContain('id="venueDemandPanel"');
+    expect(venuePortalHtml).toContain("function renderVenueDemandPanel");
+    expect(venuePortalHtml).toContain("currentDemandPeriod");
+    expect(venuePortalHtml).toContain("data-demand-period");
+    expect(venuePortalHtml).toContain("exact searches");
+    expect(venuePortalHtml).toContain("map/detail opens");
+    expect(venuePortalHtml).toContain("Most searched near you");
+    expect(venuePortalHtml).toContain("Beer intent");
+    expect(venuePortalHtml).toContain("Specials intent");
+    expect(venuePortalHtml).toContain("Action intent");
   });
 
   it("renders the simplified public header, primary controls, and shared advanced filters", () => {
@@ -313,7 +329,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('class="mapBrand" href="/"');
     expect(html).toContain('class="mapHeroCard" aria-label="Map overview"');
     expect(html.indexOf('class="mapHeroCard"')).toBeLessThan(html.indexOf('class="mapNavCard"'));
-    expect(html).toContain('<strong>Melbourne beer map</strong>');
+    expect(html).toContain('<strong>Pint Path</strong>');
     expect(html).toContain('<div class="topbar__eyebrow">Melbourne beer map <span class="fieldTestBadge">Beta</span></div>');
     expect(html).toContain("<h1>Pint Path</h1>");
     expect(html).not.toContain("Verified local price index");
@@ -406,7 +422,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("-webkit-overflow-scrolling: touch");
     expect(html).toContain("-webkit-line-clamp: 2");
     expect(html).toContain("font-size: 16px");
-    expect(html).toContain(".mapBrand {\n        display: none;");
+    expect(html).toContain(".mapBrand {\n        display: inline-flex;");
+    expect(html).toContain(".mapBrandText {\n        display: none;");
     expect(html).toContain("grid-template-columns: minmax(0, 1fr) minmax(118px, 0.82fr);");
     expect(html).toContain("flex-wrap: nowrap;");
     expect(html).toContain(".specialsFilterRow,\n      .popularBeerRow");

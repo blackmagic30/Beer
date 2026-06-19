@@ -2704,6 +2704,7 @@ describe("business demo contribution model", () => {
     expect(integration.token).toMatch(/^[a-f0-9]{64}$/);
     expect(integration.payloadExample).toEqual(expect.objectContaining({
       venueId: "pos-discount-venue",
+      specialId: "special_venue_offer_id",
       discountAmountCents: 200,
     }));
 
@@ -4010,22 +4011,24 @@ describe("business demo contribution model", () => {
 
     const beerPending = pendingBarChangeFrom(beer);
     const happyHourPending = pendingBarChangeFrom(happyHour);
-    const specialPending = pendingBarChangeFrom(special);
     expect(beerPending).toEqual(expect.objectContaining({ status: "pending", changeType: "beer", action: "upsert" }));
     expect(happyHourPending).toEqual(expect.objectContaining({ status: "pending", changeType: "happy_hour", action: "upsert" }));
-    expect(specialPending).toEqual(expect.objectContaining({ status: "pending", changeType: "special", action: "upsert" }));
+    expect(special).toEqual(expect.objectContaining({
+      special: expect.objectContaining({ title: "Thursday burger and pint", active: true }),
+      message: "Pint Path special saved.",
+    }));
 
     const portal = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
-    expect(portal.pendingChanges).toHaveLength(4);
-    expect(portal.pendingChanges.map((change) => change.changeType)).toEqual(expect.arrayContaining(["profile", "beer", "happy_hour", "special"]));
+    expect(portal.pendingChanges).toHaveLength(3);
+    expect(portal.pendingChanges.map((change) => change.changeType)).toEqual(expect.arrayContaining(["profile", "beer", "happy_hour"]));
     expect(portal.inventory.beers).toHaveLength(0);
     expect(portal.inventory.happyHours).toHaveLength(0);
-    expect(portal.inventory.specials).toHaveLength(0);
+    expect(portal.inventory.specials).toHaveLength(1);
     expect(portal.tier.analyticsLocked).toBe(false);
 
     const adminPortal = service.getVenuePortal(admin, { venueId: "bar-1" });
-    expect(adminPortal.pendingChanges).toHaveLength(4);
-    expect(service.getVenuePartnerAdmin(admin).pendingChanges).toHaveLength(4);
+    expect(adminPortal.pendingChanges).toHaveLength(3);
+    expect(service.getVenuePartnerAdmin(admin).pendingChanges).toHaveLength(3);
     expect(service.getVenuePortal(otherManagerAccount, { venueId: "bar-2" }).pendingChanges).toHaveLength(0);
     expect(() => service.getVenuePortal(otherManagerAccount, { venueId: "bar-1" })).toThrow("assigned venues");
 
@@ -4035,9 +4038,18 @@ describe("business demo contribution model", () => {
       anonymousSessionId: "bar-before-approval",
       reveal: true,
     });
-    expect(publicBeforeApproval.records).toEqual([]);
+    expect(publicBeforeApproval.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displayKind: "special",
+        specialTitle: "Venue special",
+        priceRedacted: true,
+        sourceType: "venue_manager_portal:special",
+      }),
+    ]));
+    expect(publicBeforeApproval.records.some((record) => record.beerName === "Carlton Draught")).toBe(false);
+    expect(publicBeforeApproval.records.some((record) => record.displayKind === "happy_hour")).toBe(false);
 
-    for (const change of [profilePending, beerPending, happyHourPending, specialPending]) {
+    for (const change of [profilePending, beerPending, happyHourPending]) {
       const review = service.reviewBarPendingChange(admin, change.id, { status: "approved", rejectionReason: null });
       expect(review.pendingChange?.status).toBe("approved");
     }
@@ -4211,7 +4223,7 @@ describe("business demo contribution model", () => {
       .toEqual(expect.objectContaining({ deleted: true, message: "Beer row removed." }));
     expect(service.deleteBarHappyHour(managerAccount, "bar-1", happyHourPending.targetId!))
       .toEqual(expect.objectContaining({ deleted: true, message: "Happy hour removed." }));
-    expect(service.deleteBarSpecial(managerAccount, "bar-1", specialPending.targetId!))
+    expect(service.deleteBarSpecial(managerAccount, "bar-1", special.special.id))
       .toEqual(expect.objectContaining({ deleted: true, message: "Pint Path special removed." }));
     const afterDirectDelete = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
     expect(afterDirectDelete.inventory.beers).toHaveLength(0);
@@ -4652,6 +4664,17 @@ describe("business demo contribution model", () => {
       metadata: {},
       createdAt: NOW,
     });
+    repository.recordEvent({
+      id: "bar-tier-venue-search",
+      userId: null,
+      anonymousSessionId: "anon-area-venue-search",
+      eventType: "search_performed",
+      venueId: null,
+      beerId: null,
+      suburb: "South Melbourne",
+      metadata: { query: "Railway Hotel" },
+      createdAt: NOW,
+    });
 
     const plusProfile = service.upsertBarProfile(admin, "bar-tier-1", {
       name: "Railway Hotel",
@@ -4683,6 +4706,24 @@ describe("business demo contribution model", () => {
       title: "Suburb demand snapshot",
       privacyFloorMet: true,
       recommendedNextActions: expect.arrayContaining([expect.any(String)]),
+    }));
+    expect(plusPortal.demandDashboard).toEqual(expect.objectContaining({
+      title: "Paid demand snapshot",
+      proActive: false,
+      periodOrder: ["today", "week", "month"],
+      periods: expect.objectContaining({
+        today: expect.objectContaining({
+          venueSearches: 2,
+          venueSearchQueries: 1,
+          venueOpens: 1,
+          topAreaBeer: { key: "lager", count: 10 },
+        }),
+        month: expect.objectContaining({
+          venueSearches: 2,
+          beerIntent: expect.any(Number),
+          recommendedAction: expect.stringContaining("lager"),
+        }),
+      }),
     }));
     expect(plusPortal.businessToolkit?.proGrowthPlan).toBeNull();
     expect(plusPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
@@ -4723,6 +4764,14 @@ describe("business demo contribution model", () => {
       }),
       weekendPlaybook: expect.arrayContaining([expect.any(String)]),
     }));
+    expect(proPortal.businessToolkit?.demandDashboard).toEqual(expect.objectContaining({
+      title: "Pro demand cockpit",
+      proActive: true,
+      headline: expect.stringContaining("lager"),
+      proAdvantage: expect.arrayContaining([
+        expect.stringContaining("Premium map/listing treatment"),
+      ]),
+    }));
     expect(proPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
       proRecommendations: expect.arrayContaining([
         expect.any(String),
@@ -4750,7 +4799,11 @@ describe("business demo contribution model", () => {
       exclusive: true,
       active: true,
     });
-    expect(pendingBarChangeFrom(proSpecial).payload.exclusive).toBe(true);
+    expect(proSpecial.special).toEqual(expect.objectContaining({
+      title: "Friday Pint Path exclusive",
+      exclusive: true,
+      active: true,
+    }));
   });
 
   it("prioritises Pro venue changes in the admin review queue", () => {

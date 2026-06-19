@@ -111,3 +111,34 @@ export function getZonedMonthRangeIso(month: string, timezone = DEFAULT_REPORT_T
     endIso: zonedLocalTimeToUtc({ year: nextMonth.year, month: nextMonth.month, day: 1, timezone }).toISOString(),
   };
 }
+
+export function getZonedDayRangeIso(date = new Date(), timezone = DEFAULT_REPORT_TIMEZONE): {
+  timezone: string;
+  startIso: string;
+  endIso: string;
+} {
+  const parts = getZonedParts(date, timezone);
+
+  return {
+    timezone,
+    startIso: zonedLocalTimeToUtc({ year: parts.year, month: parts.month, day: parts.day, timezone }).toISOString(),
+    endIso: zonedLocalTimeToUtc({ year: parts.year, month: parts.month, day: parts.day + 1, timezone }).toISOString(),
+  };
+}
+
+export function getZonedWeekRangeIso(date = new Date(), timezone = DEFAULT_REPORT_TIMEZONE): {
+  timezone: string;
+  startIso: string;
+  endIso: string;
+} {
+  const parts = getZonedParts(date, timezone);
+  const localWeekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+  const daysSinceMonday = (localWeekday + 6) % 7;
+  const startDay = parts.day - daysSinceMonday;
+
+  return {
+    timezone,
+    startIso: zonedLocalTimeToUtc({ year: parts.year, month: parts.month, day: startDay, timezone }).toISOString(),
+    endIso: zonedLocalTimeToUtc({ year: parts.year, month: parts.month, day: startDay + 7, timezone }).toISOString(),
+  };
+}

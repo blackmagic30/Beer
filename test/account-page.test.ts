@@ -114,6 +114,7 @@ describe("account page shell", () => {
       icons: Array<{ src: string; sizes: string; type: string }>;
     };
     const requiredAssets = [
+      "viewer/favicon.ico",
       "viewer/favicon.png",
       "viewer/assets/pint-path-logo.png",
       "viewer/assets/pint-path-icon-192.png",
@@ -137,6 +138,7 @@ describe("account page shell", () => {
 
     viewerHtmlFiles().forEach((filePath) => {
       const html = fs.readFileSync(filePath, "utf8");
+      expect(html, filePath).toContain('href="/favicon.ico"');
       expect(html, filePath).toContain('href="/favicon.png"');
       expect(html, filePath).toContain('href="/assets/pint-path-icon-192.png"');
       expect(html, filePath).toContain('rel="apple-touch-icon"');

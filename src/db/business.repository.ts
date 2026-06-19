@@ -5208,24 +5208,41 @@ export class BusinessRepository {
 
   getBarAreaAnalytics(input: {
     barId: string;
+    venueName?: string | null | undefined;
     area: string | null;
     month?: string | undefined;
+    startIso?: string | undefined;
+    endIso?: string | undefined;
     timezone?: string | undefined;
     privacyThreshold?: number | undefined;
   }) {
     const privacyThreshold = Math.max(1, input.privacyThreshold ?? 10);
-    const monthRange = getReportMonthRange(input.month, input.timezone);
+    const customRange = input.startIso && input.endIso
+      ? { startIso: input.startIso, endIso: input.endIso }
+      : null;
+    const dateRange = customRange ?? getReportMonthRange(input.month, input.timezone);
     const count = (sql: string, values: unknown[] = []) => {
       const row = this.database.prepare(sql).get(...values) as { count: number } | undefined;
       return Number(row?.count ?? 0);
     };
     const grouped = (sql: string, values: unknown[] = []) =>
       this.database.prepare(sql).all(...values) as AnalyticsBucket[];
-    const rangeClause = monthRange ? "AND created_at >= ? AND created_at < ?" : "";
-    const rangeValues = monthRange ? [monthRange.startIso, monthRange.endIso] : [];
+    const rangeClause = dateRange ? "AND created_at >= ? AND created_at < ?" : "";
+    const rangeValues = dateRange ? [dateRange.startIso, dateRange.endIso] : [];
     const eventAreaClause = input.area ? "AND lower(COALESCE(suburb, '')) = lower(?)" : "";
     const barAreaClause = input.area ? "AND lower(COALESCE(suburb, area, '')) = lower(?)" : "";
     const areaValues = input.area ? [input.area] : [];
+    const venueSearchQueries = input.venueName?.trim()
+      ? count(
+          `SELECT count(*) AS count
+           FROM events
+           WHERE event_type IN ('search_performed', 'suburb_search_performed')
+             ${eventAreaClause}
+             AND lower(COALESCE(json_extract(metadata_json, '$.query'), '')) = lower(?)
+             ${rangeClause}`,
+          [...areaValues, input.venueName.trim(), ...rangeValues],
+        )
+      : 0;
 
     const barEventCount = (eventTypes: string[]) => {
       const placeholders = eventTypes.map(() => "?").join(", ");
@@ -5290,6 +5307,7 @@ export class BusinessRepository {
       beerListViews: barEventCount(["beer_list_viewed", "price_view_revealed", "venue_detail_opened"]),
       specialsViews: barEventCount(["deal_viewed", "special_viewed", "happy_hour_active_now_used", "happy_hour_near_me_used"]),
       markerClicks: barEventCount(["map_pin_click"]),
+      venueSearchQueries,
       priceReveals: barEventCount(["price_view_revealed"]),
       directionsClicks: barEventCount(["directions_clicked"]) +
         barMetadataEventCount("venue_lookup", "$.interactionType", "directions_click"),
@@ -5306,15 +5324,21 @@ export class BusinessRepository {
 
   getVenueAreaAnalytics(input: {
     venueId: string;
+    venueName?: string | null | undefined;
     area: string | null;
     month?: string | undefined;
+    startIso?: string | undefined;
+    endIso?: string | undefined;
     timezone?: string | undefined;
     privacyThreshold?: number | undefined;
   }) {
     return this.getBarAreaAnalytics({
       barId: input.venueId,
+      venueName: input.venueName,
       area: input.area,
       month: input.month,
+      startIso: input.startIso,
+      endIso: input.endIso,
       timezone: input.timezone,
       privacyThreshold: input.privacyThreshold,
     });

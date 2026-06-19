@@ -38,7 +38,14 @@ import { SUPPORTED_BEERS, VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, fin
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { redactSecrets } from "../../lib/redact.js";
-import { DEFAULT_REPORT_TIMEZONE, getPreviousZonedMonthKey, getZonedMonthKey, getZonedMonthRangeIso } from "../../lib/time.js";
+import {
+  DEFAULT_REPORT_TIMEZONE,
+  getPreviousZonedMonthKey,
+  getZonedDayRangeIso,
+  getZonedMonthKey,
+  getZonedMonthRangeIso,
+  getZonedWeekRangeIso,
+} from "../../lib/time.js";
 import {
   type GoogleAddressComponent,
   type GooglePlaceCandidate,
@@ -1247,6 +1254,110 @@ function buildProVenueGrowthPlan(input: {
         ? "Keep address, opening hours and happy-hour conditions exact because users are showing action intent."
         : "Add a stronger call-to-action in the profile copy so premium attention has a clear next step.",
     ],
+  };
+}
+
+function getVenueDemandPeriodRanges(timezone: string) {
+  const now = new Date();
+  const month = getZonedMonthKey(now, timezone);
+  return [
+    {
+      key: "today",
+      label: "Today",
+      helper: "Since local midnight",
+      ...getZonedDayRangeIso(now, timezone),
+    },
+    {
+      key: "week",
+      label: "This week",
+      helper: "Monday to Sunday",
+      ...getZonedWeekRangeIso(now, timezone),
+    },
+    {
+      key: "month",
+      label: "This month",
+      helper: month,
+      ...getZonedMonthRangeIso(month, timezone),
+    },
+  ];
+}
+
+function buildVenueDemandPeriod(input: {
+  key: string;
+  label: string;
+  helper: string;
+  analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
+}) {
+  const { analytics } = input;
+  const actionIntent = getTotalVenueActionIntent(analytics);
+  const beerIntent = analytics.beerListViews + analytics.priceReveals;
+  const topBeer = analytics.privacyFloorMet ? analytics.areaBeerSearches[0] ?? null : null;
+  const topStyle = analytics.privacyFloorMet ? analytics.areaStyleSearches[0] ?? null : null;
+  const recommendedAction = topBeer
+    ? `Keep ${topBeer.key} current and consider a simple special around that demand.`
+    : analytics.barLookups > 0
+      ? "Turn venue interest into action with fresh beer prices and one clear Pint Path special."
+      : "Keep prices fresh so the venue is ready when nearby demand appears.";
+
+  return {
+    key: input.key,
+    label: input.label,
+    helper: input.helper,
+    venueSearchQueries: analytics.venueSearchQueries,
+    venueOpens: analytics.barLookups,
+    venueSearches: analytics.venueSearchQueries + analytics.barLookups,
+    profileViews: analytics.profileViews,
+    beerIntent,
+    specialsIntent: analytics.specialsViews,
+    actionIntent,
+    areaSearches: analytics.areaSearches,
+    topAreaBeer: topBeer ? { key: topBeer.key, count: topBeer.count } : null,
+    topAreaStyle: topStyle ? { key: topStyle.key, count: topStyle.count } : null,
+    privacyFloorMet: analytics.privacyFloorMet,
+    privacyThreshold: analytics.privacyThreshold,
+    recommendedAction,
+  };
+}
+
+function buildVenueDemandDashboard(input: {
+  tier: BarMembershipTier;
+  area: string | null;
+  periods: Array<{
+    key: string;
+    label: string;
+    helper: string;
+    analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
+  }>;
+}) {
+  const isPro = input.tier === "pro";
+  const periodCards = input.periods.map((period) => buildVenueDemandPeriod(period));
+  const month = periodCards.find((period) => period.key === "month") ?? periodCards[periodCards.length - 1];
+  const topBeer = month?.topAreaBeer ?? null;
+  const topStyle = month?.topAreaStyle ?? null;
+
+  return {
+    title: isPro ? "Pro demand cockpit" : "Paid demand snapshot",
+    tier: input.tier,
+    area: input.area,
+    proActive: isPro,
+    privacyCopy: "Aggregate only. No individual users, emails, or exact locations are shown.",
+    periodOrder: periodCards.map((period) => period.key),
+    periods: periodCards.reduce<Record<string, ReturnType<typeof buildVenueDemandPeriod>>>((accumulator, period) => {
+      accumulator[period.key] = period;
+      return accumulator;
+    }, {}),
+    headline: topBeer
+      ? `${topBeer.key} is the strongest beer search near ${input.area || "this venue"}.`
+      : topStyle
+        ? `${topStyle.key} style searches are building near ${input.area || "this venue"}.`
+        : "Nearby demand is still building toward the privacy threshold.",
+    proAdvantage: isPro
+      ? [
+          "Premium map/listing treatment is active.",
+          "Priority review keeps Pint Path specials fresher before peak nights.",
+          "Use the top searched beer signal to choose the next app-only special.",
+        ]
+      : [],
   };
 }
 
@@ -3009,6 +3120,7 @@ export class BusinessService {
       payloadExample: {
         venueId,
         code: "ABC123",
+        specialId: "special_venue_offer_id",
         itemName: "House pint",
         quantity: 1,
         discountAmountCents: 200,
@@ -5605,6 +5717,7 @@ export class BusinessService {
     const range = getZonedMonthRangeIso(month, timezone);
     const analytics = this.repository.getVenueAreaAnalytics({
       venueId: profile.barId,
+      venueName: profile.name,
       area: profile.area ?? profile.suburb,
       month,
       timezone,
@@ -5983,6 +6096,7 @@ export class BusinessService {
         analytics: null,
         monthlyReport: null,
         businessToolkit: null,
+        demandDashboard: null,
         updateLink: null,
         claimRequests: [],
         message: "Venue management is invite-only during beta. Ask the Pint Path admin to assign your account to a venue.",
@@ -5999,6 +6113,7 @@ export class BusinessService {
         insights: null,
         updateLink: null,
         businessToolkit: null,
+        demandDashboard: null,
         privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
       };
     }
@@ -6024,6 +6139,7 @@ export class BusinessService {
     const analytics = capabilities.analytics
       ? this.repository.getVenueAreaAnalytics({
           venueId: selectedVenueId,
+          venueName: profile.name,
           area: profile.area ?? profile.suburb ?? suburb,
           month: reportMonth,
           timezone: this.getReportTimezone(),
@@ -6042,6 +6158,28 @@ export class BusinessService {
       : null;
     const proGrowthPlan = analytics && capabilities.advancedRecommendations
       ? buildProVenueGrowthPlan({ analytics, insights })
+      : null;
+    const demandDashboard = analytics && capabilities.analytics
+      ? buildVenueDemandDashboard({
+          tier: profile.membershipTier,
+          area: profile.area ?? profile.suburb ?? suburb,
+          periods: getVenueDemandPeriodRanges(this.getReportTimezone()).map((period) => ({
+            key: period.key,
+            label: period.label,
+            helper: period.helper,
+            analytics: period.key === "month"
+              ? analytics
+              : this.repository.getVenueAreaAnalytics({
+                  venueId: selectedVenueId,
+                  venueName: profile.name,
+                  area: profile.area ?? profile.suburb ?? suburb,
+                  startIso: period.startIso,
+                  endIso: period.endIso,
+                  timezone: this.getReportTimezone(),
+                  privacyThreshold: venueInsightPrivacyThreshold,
+                }),
+          })),
+        })
       : null;
     const discountSummary = this.getVenueDiscountSummary({
       venueId: selectedVenueId,
@@ -6133,12 +6271,14 @@ export class BusinessService {
       pendingChanges: this.repository.listBarPendingChanges({ barId: selectedVenueId, status: "pending", limit: 100 }),
       insights,
       analytics,
+      demandDashboard,
       discounts: discountSummary,
       posIntegration,
       monthlyReport,
       businessToolkit: {
         plusDemandSnapshot,
         proGrowthPlan,
+        demandDashboard,
         updateLink,
         qrCopy: "Copy this update link or turn it into a QR code for your venue/tap-list area.",
       },
@@ -6479,19 +6619,6 @@ export class BusinessService {
     const existing = input.id ? this.repository.getBarSpecialById(input.id) : null;
     if (existing && existing.barId !== venueId) {
       throw new AppError("Special belongs to another venue.", 403);
-    }
-
-    if (!this.isAdmin(account)) {
-      const targetId = input.id ?? crypto.randomUUID();
-      return this.createPendingBarChange({
-        account,
-        venueId,
-        changeType: "special",
-        action: "upsert",
-        targetId,
-        payload: { ...input, id: targetId },
-        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
-      });
     }
 
     const profile = this.ensureBarProfile({

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Venue Dashboard | Pint Path</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/pint-path-icon-192.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/pint-path-apple-touch-icon.png" />
@@ -58,7 +59,7 @@
             <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
             <button class="tabButton" type="button" data-tab="specials" data-specials-only>Pint Path specials</button>
             <button class="tabButton" type="button" data-tab="pending-reviews">Pending reviews</button>
-            <button class="tabButton" type="button" data-tab="analytics">Analytics</button>
+            <button class="tabButton" type="button" data-tab="analytics">Live insights</button>
             <button class="tabButton" type="button" data-tab="report">Monthly report</button>
           </nav>
           <button id="venueLogoutButton" class="button button--danger venueLogoutButton" type="button">Log out</button>
@@ -84,6 +85,8 @@
                 <button class="button" type="button" data-jump-tab="specials" data-specials-only>Pint Path special</button>
               </div>
             </article>
+
+            <article id="venueDemandPanel" class="venueDemandPanel panel is-hidden"></article>
 
             <div id="venuePulseGrid" class="venuePulseGrid"></div>
 
@@ -178,6 +181,7 @@
                   </div>
                 </div>
                 <div id="discountSpecialChoices" class="discountSpecialChoices"></div>
+                <div id="selectedDiscountSpecial" class="selectedDiscountSpecial" hidden></div>
                 <div class="grid grid--two">
                   <label class="field">User code
                     <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="ABC123" required />
@@ -433,7 +437,7 @@
             <article id="analyticsContent" class="panel is-hidden">
               <div class="sectionHeader">
                 <div>
-                  <h2>Area analytics</h2>
+                  <h2>Live area insights</h2>
                   <p class="muted">Aggregated trends only. Individual user clickstream, precise location and competitor-level private data are not shown.</p>
                 </div>
               </div>
@@ -456,7 +460,7 @@
             <article id="reportContent" class="panel is-hidden">
               <div class="sectionHeader">
                 <div>
-                  <h2>Monthly report preview</h2>
+                  <h2>Monthly report</h2>
                   <p class="muted">This preview uses current beta analytics where available. Exportable reports stay scoped to this venue.</p>
                 </div>
                 <div class="reportToolbar">
@@ -480,6 +484,7 @@
 
   <script>
     let currentPortal = null;
+    let currentDemandPeriod = "today";
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
@@ -882,6 +887,7 @@
       renderHappyHours(happyHours);
       renderSpecials(specials);
       renderOverviewData(data);
+      renderVenueDemandPanel(data);
       renderVenuePulseGrid(data);
       renderVenuePortalLaunchCards(data);
       renderDiscountOps(data);
@@ -927,6 +933,87 @@
           </div>
         `).join("")
         : '<div class="listItem muted">No verified price rows yet. Add beers, upload a tap-list source, or submit verified data for review.</div>';
+    }
+
+    function renderVenueDemandPanel(data) {
+      const panel = document.getElementById("venueDemandPanel");
+      if (!panel) return;
+
+      const dashboard = data.demandDashboard || data.businessToolkit?.demandDashboard || null;
+      const periods = dashboard?.periods || {};
+      const order = Array.isArray(dashboard?.periodOrder) && dashboard.periodOrder.length
+        ? dashboard.periodOrder
+        : Object.keys(periods);
+      if (!dashboard || !order.length) {
+        panel.classList.add("is-hidden");
+        panel.innerHTML = "";
+        return;
+      }
+
+      if (!periods[currentDemandPeriod]) {
+        currentDemandPeriod = order[0];
+      }
+
+      const period = periods[currentDemandPeriod] || periods[order[0]];
+      const isPro = Boolean(dashboard.proActive);
+      const topBeer = period.topAreaBeer;
+      const topStyle = period.topAreaStyle;
+      const topDemand = topBeer
+        ? { label: topBeer.key, helper: `${formatCount(topBeer.count)} nearby searches`, tone: "beer" }
+        : topStyle
+          ? { label: topStyle.key, helper: `${formatCount(topStyle.count)} nearby style searches`, tone: "style" }
+          : { label: "Building", helper: `${formatCount(period.areaSearches)} nearby searches so far`, tone: "building" };
+
+      panel.classList.remove("is-hidden");
+      panel.classList.toggle("venueDemandPanel--pro", isPro);
+      panel.innerHTML = `
+        <div class="venueDemandPanel__header">
+          <div>
+            <div class="eyebrow">${escapeHtml(isPro ? "Pro demand cockpit" : "Paid demand snapshot")}</div>
+            <h2>${escapeHtml(dashboard.headline || dashboard.title || "Venue demand")}</h2>
+          </div>
+          <div class="venueDemandTabs" role="tablist" aria-label="Venue demand period">
+            ${order.map((key) => {
+              const item = periods[key];
+              if (!item) return "";
+              return `<button class="venueDemandTab ${key === currentDemandPeriod ? "is-active" : ""}" type="button" data-demand-period="${escapeHtml(key)}">${escapeHtml(item.label)}</button>`;
+            }).join("")}
+          </div>
+        </div>
+        <div class="venueDemandPanel__body">
+          <article class="venueDemandHero">
+            <span>${escapeHtml(period.label)}</span>
+            <strong>${formatCount(period.venueSearches)}</strong>
+            <small>${formatCount(period.venueSearchQueries)} exact searches · ${formatCount(period.venueOpens)} map/detail opens</small>
+          </article>
+          <div class="venueDemandMetrics">
+            <article>
+              <span>Beer intent</span>
+              <strong>${formatCount(period.beerIntent)}</strong>
+              <small>beer-list views + price reveals</small>
+            </article>
+            <article>
+              <span>Specials intent</span>
+              <strong>${formatCount(period.specialsIntent)}</strong>
+              <small>Pint Path special + happy-hour views</small>
+            </article>
+            <article>
+              <span>Action intent</span>
+              <strong>${formatCount(period.actionIntent)}</strong>
+              <small>directions, saves and shares</small>
+            </article>
+          </div>
+          <aside class="venueDemandOpportunity venueDemandOpportunity--${escapeHtml(topDemand.tone)}">
+            <span>Most searched near you</span>
+            <strong>${escapeHtml(topDemand.label)}</strong>
+            <small>${escapeHtml(topDemand.helper)}</small>
+          </aside>
+        </div>
+        <div class="venueDemandPanel__footer">
+          <p>${escapeHtml(period.recommendedAction || "Keep venue data current before peak trading periods.")}</p>
+          <small>${escapeHtml(dashboard.privacyCopy || "Aggregate only. Individual users are never shown.")}</small>
+        </div>
+      `;
     }
 
     function renderVenuePulseGrid(data) {
@@ -1279,7 +1366,32 @@
       const copy = [special.title, special.discount, special.description].filter(Boolean).join(" ");
       const explicitOff = copy.match(/\$?\s?(\d+(?:\.\d{1,2})?)\s*(?:off|discount|saving|savings)/i);
       if (explicitOff) return Number(explicitOff[1]);
-      return 2;
+      return 0;
+    }
+
+    function syncSelectedDiscountSpecial() {
+      const panel = document.getElementById("selectedDiscountSpecial");
+      const form = document.getElementById("discountRedemptionForm");
+      if (!panel || !form) return;
+      const specialId = field(form, "specialId").value;
+      if (!specialId) {
+        panel.hidden = true;
+        panel.innerHTML = "";
+        return;
+      }
+
+      const special = (currentPortal?.inventory?.specials || []).find((item) => item.id === specialId);
+      const title = special?.title || field(form, "itemName").value || "Pint Path special";
+      const savings = Number(field(form, "estimatedSavingsDollars").value || 0);
+      const savingsCopy = savings > 0
+        ? `${formatCurrency(savings)} estimated saving`
+        : "Fixed-price special selected. Enter actual savings if you want it tracked.";
+      panel.hidden = false;
+      panel.innerHTML = `
+        <strong>Selected special</strong>
+        <span>${escapeHtml(title)}</span>
+        <small>${escapeHtml(savingsCopy)}</small>
+      `;
     }
 
     function renderDiscountSpecialChoices(data) {
@@ -1294,6 +1406,7 @@
             <span>Add a Plus/Pro special first, then staff can choose it here while redeeming user codes.</span>
           </div>
         `;
+        syncSelectedDiscountSpecial();
         return;
       }
 
@@ -1319,6 +1432,7 @@
           }).join("")}
         </div>
       `;
+      syncSelectedDiscountSpecial();
     }
 
     function renderPendingChanges(changes) {
@@ -1575,9 +1689,9 @@
       analyticsContent.classList.toggle("is-hidden", locked);
       if (locked) {
         analyticsGate.innerHTML = `
-          <h2>Analytics are available on Plus</h2>
+          <h2>Live insights are available on Plus</h2>
           <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Plus to view privacy-safe suburb analytics and monthly reports.")}</p>
-          <div class="notice">Free venue accounts can still add beer data and happy-hour data. Plus unlocks reviewed Pint Path specials and analytics.</div>
+          <div class="notice">Free venue accounts can still add beer data and happy-hour data. Plus unlocks reviewed Pint Path specials and live insights.</div>
           <div class="actionRow">
             <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
             <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
@@ -1951,10 +2065,14 @@
               `Redeemed for account ${result.accountId}. Estimated savings ${formatCurrency(result.estimatedSavingsDollars)}.`,
             );
             discountRedemptionFormElement.reset();
+            syncSelectedDiscountSpecial();
             await loadPortal(venueId);
           } catch (error) {
             MelbBeerBusiness.setStatus(discountRedemptionStatus, error.message || "Could not redeem discount.", true);
           }
+        });
+        ["itemName", "estimatedSavingsDollars"].forEach((fieldName) => {
+          field(discountRedemptionFormElement, fieldName).addEventListener("input", syncSelectedDiscountSpecial);
         });
       }
 
@@ -1991,6 +2109,12 @@
           return;
         }
 
+        if (target.dataset.demandPeriod) {
+          currentDemandPeriod = target.dataset.demandPeriod;
+          renderVenueDemandPanel(currentPortal);
+          return;
+        }
+
         if (target.dataset.scrollDiscount && discountRedemptionFormElement) {
           jumpToPortalTarget("redemption");
           return;
@@ -2002,6 +2126,7 @@
           if (target.dataset.savingsDollars) {
             field(discountRedemptionFormElement, "estimatedSavingsDollars").value = target.dataset.savingsDollars;
           }
+          syncSelectedDiscountSpecial();
           MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem || "Pint Path special"} selected.`);
           return;
         }
@@ -2021,12 +2146,14 @@
 
         if (target.dataset.savingsDollars && discountRedemptionFormElement) {
           field(discountRedemptionFormElement, "estimatedSavingsDollars").value = target.dataset.savingsDollars;
+          syncSelectedDiscountSpecial();
           MelbBeerBusiness.setStatus(discountRedemptionStatus, `${formatCurrency(target.dataset.savingsDollars)} discount selected.`);
           return;
         }
 
         if (target.dataset.discountItem && discountRedemptionFormElement) {
           field(discountRedemptionFormElement, "itemName").value = target.dataset.discountItem;
+          syncSelectedDiscountSpecial();
           MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem} selected.`);
           return;
         }
