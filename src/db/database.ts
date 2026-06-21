@@ -137,6 +137,33 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE INDEX IF NOT EXISTS idx_discount_redemptions_venue
       ON discount_redemptions (venue_id, redeemed_at DESC);
 
+    CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_user
+      ON pint_point_drink_records (user_id, recorded_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_venue
+      ON pint_point_drink_records (venue_id, recorded_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_user
+      ON free_pint_reward_codes (user_id, status, expires_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_code
+      ON free_pint_reward_codes (code_hash);
+
+    CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_venue
+      ON free_pint_reward_codes (redeemed_venue_id, status, used_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_free_pint_reward_redemptions_user
+      ON free_pint_reward_redemptions (user_id, redeemed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_free_pint_reward_redemptions_venue
+      ON free_pint_reward_redemptions (venue_id, redeemed_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_pint_point_ledger_user
+      ON pint_point_ledger (user_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_pint_point_ledger_venue
+      ON pint_point_ledger (venue_id, created_at DESC);
+
     CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_review
       ON venue_pending_changes (status, reviewed_at DESC, submitted_at DESC);
 

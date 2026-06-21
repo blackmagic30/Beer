@@ -30,6 +30,8 @@ import {
   discountRedemptionSchema,
   eventTrackSchema,
   feedbackSchema,
+  freePintRewardCodeSchema,
+  freePintRewardDecisionSchema,
   geocodeQuerySchema,
   leaderboardPrizeCampaignSchema,
   leaderboardPrizeFinalizeSchema,
@@ -39,6 +41,7 @@ import {
   monthlyReportDeliverySchema,
   monthlyReportExportQuerySchema,
   monthlyReportGenerateSchema,
+  pintPointDrinkRecordSchema,
   posDiscountRedemptionSchema,
   priceRecordsQuerySchema,
   pubGolfPlanSchema,
@@ -204,6 +207,16 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     try {
       const account = requireAccount(req, businessService);
       res.json(success(await businessService.getDiscountPass(account, getAuthorization(req))));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/account/free-pint-reward-code", async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      const body = parseWithSchema(freePintRewardCodeSchema, req.body, "Invalid Free Pint Reward payload");
+      res.json(success(await businessService.createFreePintRewardCode(account, body)));
     } catch (error) {
       next(error);
     }
@@ -525,6 +538,20 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const body = parseWithSchema(discountRedemptionSchema, req.body, "Invalid discount redemption payload");
     const venueId = String(req.params.venueId ?? "");
     res.status(201).json(success(businessService.redeemDiscountPass(account, venueId, body)));
+  });
+
+  router.post("/venue-portal/:venueId/pint-point-drinks", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(pintPointDrinkRecordSchema, req.body, "Invalid Pint Points drink payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.status(201).json(success(businessService.recordPintPointDrink(account, venueId, body)));
+  });
+
+  router.post("/venue-portal/:venueId/free-pint-rewards", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(freePintRewardDecisionSchema, req.body, "Invalid Free Pint Reward payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.status(201).json(success(businessService.handleFreePintRewardCode(account, venueId, body)));
   });
 
   router.get("/venue-portal/:venueId/pos-integration", (req, res) => {

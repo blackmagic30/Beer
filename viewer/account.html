@@ -174,6 +174,27 @@
             <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special.</p>
           </article>
 
+          <article class="panel discountPassPanel accountHeroMetric accountHeroMetric--points">
+            <div class="sectionHeader">
+              <div>
+                <div class="eyebrow">Pint Points</div>
+                <h2 id="pintPointBalanceHero">0 / 50</h2>
+                <p id="pintPointProgressHero" class="muted">Earn 1 Pint Point for each paid alcoholic drink recorded.</p>
+              </div>
+              <span id="pintPointRewardBadge" class="pill">Reward locked</span>
+            </div>
+            <button id="freePintRewardButton" class="button button--premium" type="button" disabled>Redeem Free Pint</button>
+            <div id="freePintRewardResult" class="discountPassResult is-hidden" hidden>
+              <div>
+                <span class="metricLabel">Reward code</span>
+                <div id="freePintRewardCode" class="discountCode">------</div>
+                <p id="freePintRewardExpires" class="helperCopy"></p>
+              </div>
+              <img id="freePintRewardQr" class="discountPassQr" alt="Free Pint Reward QR code" />
+            </div>
+            <p class="helperCopy">Free Pint Rewards use 50 Pint Points at affiliated bars only.</p>
+          </article>
+
           <article class="panel accountIdentityCard accountIdentityCard--compact">
             <span class="muted">Signed in as</span>
             <strong id="accountEmail">Not signed in</strong>
@@ -627,6 +648,7 @@
       const rejectedCount = Number(stats.rejectedCount ?? stats.rejected ?? countStatus(["rejected"]));
       const trustScore = Number(stats.trustScore ?? account.trustScore ?? 0);
       const savings = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
+      const pintPoints = result.pintPoints || {};
       const accountId = result.leaderboard?.accountId || account.publicAccountId || "—";
       const ageCopy = result.ageVerification?.copy || "18+ confirmation unlocks future venue-special and reward features.";
       const progressPercent = Math.min(100, Math.round((points / threshold) * 100));
@@ -636,6 +658,7 @@
         : `${formatPoints(pointsNeeded)} more approved points unlock the same premium map access as a paid user until month end.`;
       const metrics = [
         { label: "Total saved", value: savings, helper: "Estimated from Pint Path discount redemptions logged by venues.", tone: "premium" },
+        { label: "Pint Points", value: `${pintPoints.available ?? 0}/${pintPoints.threshold ?? 50}`, helper: "Paid alcoholic drinks earn 1 point each. Free pints do not earn points.", tone: "premium" },
         { label: "Total uploads", value: totalUploads, helper: "Beer price, venue, happy-hour, and source uploads linked to your account.", tone: "neutral" },
         { label: "Verified", value: verifiedCount, helper: "Approved contributions that can count toward contributor unlocks.", tone: "success" },
         { label: "Pending review", value: pendingCount, helper: "Waiting for reviewer checks before they can affect the public map.", tone: "pending" },
@@ -869,6 +892,23 @@
         account.emailVerifiedAt ? accessBadge("Email verified", "verified") : accessBadge("Email pending", "pending"),
       ].join("");
       $("savingsMetric").textContent = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
+      const pintPoints = result.pintPoints || {};
+      const pintPointThreshold = pintPoints.threshold || 50;
+      $("pintPointBalanceHero").textContent = `${pintPoints.available ?? 0} / ${pintPointThreshold}`;
+      $("pintPointProgressHero").textContent = (pintPoints.pointsUntilReward || 0) > 0
+        ? `${pintPoints.pointsUntilReward} Pint Points until your Free Pint Reward.`
+        : "Free Pint Reward available at affiliated bars.";
+      $("pintPointRewardBadge").textContent = pintPoints.rewardAvailable ? "Ready" : "Locked";
+      const freePintRewardButton = $("freePintRewardButton");
+      if (freePintRewardButton) {
+        freePintRewardButton.disabled = !pintPoints.rewardAvailable;
+        freePintRewardButton.textContent = pintPoints.rewardAvailable ? "Redeem Free Pint" : "50 Pint Points needed";
+      }
+      const freePintRewardResult = $("freePintRewardResult");
+      if (freePintRewardResult) {
+        freePintRewardResult.hidden = true;
+        freePintRewardResult.classList.add("is-hidden");
+      }
       const discountPassButton = $("refreshDiscountPassButton");
       if (discountPassButton) {
         discountPassButton.disabled = !result.discounts?.eligible;
@@ -1232,6 +1272,32 @@
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not generate a Pint Path special code.", true);
         } finally {
           setLoading(button, false);
+        }
+      });
+      $("freePintRewardButton").addEventListener("click", async () => {
+        const button = $("freePintRewardButton");
+        let createdRewardCode = false;
+        try {
+          setLoading(button, true, "Creating...");
+          const reward = await MelbBeerBusiness.apiFetch("/api/business/account/free-pint-reward-code", {
+            method: "POST",
+            body: "{}",
+          });
+          $("freePintRewardCode").textContent = reward.code;
+          $("freePintRewardQr").src = reward.qrDataUrl;
+          $("freePintRewardResult").hidden = false;
+          $("freePintRewardResult").classList.remove("is-hidden");
+          $("freePintRewardExpires").textContent = `Expires ${MelbBeerBusiness.formatDate(reward.expiresAt)}. Show it only when staff are ready to confirm the Free Pint Reward.`;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Free Pint Reward code created. Venue staff still need to complete age, ID, and responsible service checks.");
+          createdRewardCode = true;
+        } catch (error) {
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not create a Free Pint Reward code.", true);
+        } finally {
+          setLoading(button, false);
+          if (createdRewardCode) {
+            button.disabled = true;
+            button.textContent = "Reward code active";
+          }
         }
       });
       $("randomizePubGolfButton").addEventListener("click", randomizePubGolfDrinks);

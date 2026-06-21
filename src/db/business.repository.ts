@@ -665,6 +665,84 @@ export interface DiscountRedemption {
   createdAt: string;
 }
 
+export type PintPointLedgerType =
+  | "drink_scan"
+  | "manual_drink_entry"
+  | "reward_code_created"
+  | "reward_code_expired"
+  | "reward_redeemed"
+  | "reward_cancelled"
+  | "reward_rejected"
+  | "admin_adjustment"
+  | "fraud_reversal";
+
+export type FreePintRewardCodeStatus = "active" | "used" | "expired" | "cancelled" | "rejected";
+
+export interface PintPointDrinkRecord {
+  id: string;
+  userId: string;
+  venueId: string;
+  venueName: string;
+  suburb: string | null;
+  itemName: string | null;
+  beverageCategory: string;
+  quantity: number;
+  isAlcoholic: boolean;
+  source: string;
+  rewardCodeId: string | null;
+  recordedByUserId: string | null;
+  recordedAt: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface PintPointLedgerEntry {
+  id: string;
+  userId: string;
+  venueId: string | null;
+  drinkRecordId: string | null;
+  rewardCodeId: string | null;
+  type: PintPointLedgerType;
+  pointsDelta: number;
+  pointsReservedDelta: number;
+  description: string;
+  createdAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface FreePintRewardCode {
+  id: string;
+  userId: string;
+  publicAccountId: string;
+  codeHash: string;
+  eligibleVenueScope: string;
+  status: FreePintRewardCodeStatus;
+  pointsReserved: number;
+  createdAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+  cancelledAt: string | null;
+  rejectedAt: string | null;
+  rejectedReason: string | null;
+  redeemedByUserId: string | null;
+  redeemedVenueId: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface FreePintRewardRedemption {
+  id: string;
+  userId: string;
+  publicAccountId: string;
+  rewardCodeId: string;
+  venueId: string;
+  venueName: string;
+  suburb: string | null;
+  redeemedByUserId: string | null;
+  redeemedAt: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
 interface AccountRow {
   id: string;
   public_account_id: string | null;
@@ -1175,6 +1253,71 @@ interface DiscountRedemptionRow {
   created_at: string;
 }
 
+interface PintPointDrinkRecordRow {
+  id: string;
+  user_id: string;
+  venue_id: string;
+  venue_name: string;
+  suburb: string | null;
+  item_name: string | null;
+  beverage_category: string;
+  quantity: number;
+  is_alcoholic: number;
+  source: string;
+  reward_code_id: string | null;
+  recorded_by_user_id: string | null;
+  recorded_at: string;
+  metadata_json: string;
+  created_at: string;
+}
+
+interface PintPointLedgerRow {
+  id: string;
+  user_id: string;
+  venue_id: string | null;
+  drink_record_id: string | null;
+  reward_code_id: string | null;
+  type: PintPointLedgerType;
+  points_delta: number;
+  points_reserved_delta: number;
+  description: string;
+  created_at: string;
+  metadata_json: string;
+}
+
+interface FreePintRewardCodeRow {
+  id: string;
+  user_id: string;
+  public_account_id: string;
+  code_hash: string;
+  eligible_venue_scope: string;
+  status: FreePintRewardCodeStatus;
+  points_reserved: number;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+  cancelled_at: string | null;
+  rejected_at: string | null;
+  rejected_reason: string | null;
+  redeemed_by_user_id: string | null;
+  redeemed_venue_id: string | null;
+  metadata_json: string;
+}
+
+interface FreePintRewardRedemptionRow {
+  id: string;
+  user_id: string;
+  public_account_id: string;
+  reward_code_id: string;
+  venue_id: string;
+  venue_name: string;
+  suburb: string | null;
+  redeemed_by_user_id: string | null;
+  redeemed_at: string;
+  metadata_json: string;
+  created_at: string;
+}
+
 function toAccount(row: AccountRow): BusinessAccount {
   return {
     id: row.id,
@@ -1323,6 +1466,79 @@ function toDiscountRedemption(row: DiscountRedemptionRow): DiscountRedemption {
     quantity: row.quantity,
     estimatedSavingsCents: row.estimated_savings_cents,
     discountPassId: row.discount_pass_id,
+    redeemedByUserId: row.redeemed_by_user_id,
+    redeemedAt: row.redeemed_at,
+    metadata: parseJsonObject(row.metadata_json),
+    createdAt: row.created_at,
+  };
+}
+
+function toPintPointDrinkRecord(row: PintPointDrinkRecordRow): PintPointDrinkRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    suburb: row.suburb,
+    itemName: row.item_name,
+    beverageCategory: row.beverage_category,
+    quantity: row.quantity,
+    isAlcoholic: Boolean(row.is_alcoholic),
+    source: row.source,
+    rewardCodeId: row.reward_code_id,
+    recordedByUserId: row.recorded_by_user_id,
+    recordedAt: row.recorded_at,
+    metadata: parseJsonObject(row.metadata_json),
+    createdAt: row.created_at,
+  };
+}
+
+function toPintPointLedgerEntry(row: PintPointLedgerRow): PintPointLedgerEntry {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    venueId: row.venue_id,
+    drinkRecordId: row.drink_record_id,
+    rewardCodeId: row.reward_code_id,
+    type: row.type,
+    pointsDelta: row.points_delta,
+    pointsReservedDelta: row.points_reserved_delta,
+    description: row.description,
+    createdAt: row.created_at,
+    metadata: parseJsonObject(row.metadata_json),
+  };
+}
+
+function toFreePintRewardCode(row: FreePintRewardCodeRow): FreePintRewardCode {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    publicAccountId: row.public_account_id,
+    codeHash: row.code_hash,
+    eligibleVenueScope: row.eligible_venue_scope,
+    status: row.status,
+    pointsReserved: row.points_reserved,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    usedAt: row.used_at,
+    cancelledAt: row.cancelled_at,
+    rejectedAt: row.rejected_at,
+    rejectedReason: row.rejected_reason,
+    redeemedByUserId: row.redeemed_by_user_id,
+    redeemedVenueId: row.redeemed_venue_id,
+    metadata: parseJsonObject(row.metadata_json),
+  };
+}
+
+function toFreePintRewardRedemption(row: FreePintRewardRedemptionRow): FreePintRewardRedemption {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    publicAccountId: row.public_account_id,
+    rewardCodeId: row.reward_code_id,
+    venueId: row.venue_id,
+    venueName: row.venue_name,
+    suburb: row.suburb,
     redeemedByUserId: row.redeemed_by_user_id,
     redeemedAt: row.redeemed_at,
     metadata: parseJsonObject(row.metadata_json),
@@ -3224,6 +3440,526 @@ export class BusinessRepository {
       quantity: Number(row.quantity),
       estimatedSavingsCents: Number(row.estimated_savings_cents),
     }));
+  }
+
+  createPintPointDrinkRecord(input: {
+    id: string;
+    userId: string;
+    venueId: string;
+    venueName: string;
+    suburb: string | null;
+    itemName: string | null;
+    beverageCategory: string;
+    quantity: number;
+    isAlcoholic: boolean;
+    source: string;
+    recordedByUserId: string | null;
+    recordedAt: string;
+    metadata: Record<string, unknown>;
+  }): PintPointDrinkRecord {
+    const pointsAwarded = input.isAlcoholic ? input.quantity : 0;
+    const create = this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO pint_point_drink_records (
+            id, user_id, venue_id, venue_name, suburb, item_name, beverage_category,
+            quantity, is_alcoholic, source, reward_code_id, recorded_by_user_id,
+            recorded_at, metadata_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          input.userId,
+          input.venueId,
+          input.venueName,
+          input.suburb,
+          input.itemName,
+          input.beverageCategory,
+          input.quantity,
+          input.isAlcoholic ? 1 : 0,
+          input.source,
+          input.recordedByUserId,
+          input.recordedAt,
+          JSON.stringify(redactSecrets(input.metadata)),
+          input.recordedAt,
+        );
+
+      if (pointsAwarded > 0) {
+        this.createPintPointLedgerEntry({
+          id: crypto.randomUUID(),
+          userId: input.userId,
+          venueId: input.venueId,
+          drinkRecordId: input.id,
+          rewardCodeId: null,
+          type: input.source === "manual_entry" ? "manual_drink_entry" : "drink_scan",
+          pointsDelta: pointsAwarded,
+          pointsReservedDelta: 0,
+          description: pointsAwarded === 1 ? "Alcoholic beverage recorded." : `${pointsAwarded} alcoholic beverages recorded.`,
+          createdAt: input.recordedAt,
+          metadata: {
+            itemName: input.itemName,
+            quantity: input.quantity,
+            source: input.source,
+          },
+        });
+      }
+    });
+
+    create();
+    return this.getPintPointDrinkRecordById(input.id)!;
+  }
+
+  getPintPointDrinkRecordById(id: string): PintPointDrinkRecord | null {
+    const row = this.database
+      .prepare("SELECT * FROM pint_point_drink_records WHERE id = ?")
+      .get(id) as PintPointDrinkRecordRow | undefined;
+    return row ? toPintPointDrinkRecord(row) : null;
+  }
+
+  listPintPointDrinkRecordsForUser(userId: string, limit: number): PintPointDrinkRecord[] {
+    const rows = this.database
+      .prepare("SELECT * FROM pint_point_drink_records WHERE user_id = ? ORDER BY recorded_at DESC LIMIT ?")
+      .all(userId, limit) as PintPointDrinkRecordRow[];
+    return rows.map(toPintPointDrinkRecord);
+  }
+
+  createPintPointLedgerEntry(input: {
+    id: string;
+    userId: string;
+    venueId: string | null;
+    drinkRecordId: string | null;
+    rewardCodeId: string | null;
+    type: PintPointLedgerType;
+    pointsDelta: number;
+    pointsReservedDelta: number;
+    description: string;
+    createdAt: string;
+    metadata: Record<string, unknown>;
+  }): PintPointLedgerEntry {
+    this.database
+      .prepare(
+        `INSERT INTO pint_point_ledger (
+          id, user_id, venue_id, drink_record_id, reward_code_id, type,
+          points_delta, points_reserved_delta, description, created_at, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.userId,
+        input.venueId,
+        input.drinkRecordId,
+        input.rewardCodeId,
+        input.type,
+        input.pointsDelta,
+        input.pointsReservedDelta,
+        input.description,
+        input.createdAt,
+        JSON.stringify(redactSecrets(input.metadata)),
+      );
+
+    return this.getPintPointLedgerEntryById(input.id)!;
+  }
+
+  getPintPointLedgerEntryById(id: string): PintPointLedgerEntry | null {
+    const row = this.database
+      .prepare("SELECT * FROM pint_point_ledger WHERE id = ?")
+      .get(id) as PintPointLedgerRow | undefined;
+    return row ? toPintPointLedgerEntry(row) : null;
+  }
+
+  listPintPointLedgerForUser(userId: string, limit: number): PintPointLedgerEntry[] {
+    const rows = this.database
+      .prepare("SELECT * FROM pint_point_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(userId, limit) as PintPointLedgerRow[];
+    return rows.map(toPintPointLedgerEntry);
+  }
+
+  getPintPointBalance(userId: string): {
+    balance: number;
+    reserved: number;
+    available: number;
+    lifetimeEarned: number;
+    lifetimeRedeemed: number;
+  } {
+    const row = this.database
+      .prepare(
+        `SELECT
+           COALESCE(sum(points_delta), 0) AS balance,
+           COALESCE(sum(points_reserved_delta), 0) AS reserved,
+           COALESCE(sum(CASE WHEN points_delta > 0 THEN points_delta ELSE 0 END), 0) AS lifetime_earned,
+           ABS(COALESCE(sum(CASE WHEN points_delta < 0 THEN points_delta ELSE 0 END), 0)) AS lifetime_redeemed
+         FROM pint_point_ledger
+         WHERE user_id = ?`,
+      )
+      .get(userId) as {
+        balance: number;
+        reserved: number;
+        lifetime_earned: number;
+        lifetime_redeemed: number;
+      } | undefined;
+
+    const balance = Number(row?.balance ?? 0);
+    const reserved = Number(row?.reserved ?? 0);
+    return {
+      balance,
+      reserved,
+      available: Math.max(0, balance - reserved),
+      lifetimeEarned: Number(row?.lifetime_earned ?? 0),
+      lifetimeRedeemed: Number(row?.lifetime_redeemed ?? 0),
+    };
+  }
+
+  createFreePintRewardCode(input: {
+    id: string;
+    userId: string;
+    publicAccountId: string;
+    codeHash: string;
+    createdAt: string;
+    expiresAt: string;
+    metadata: Record<string, unknown>;
+  }): FreePintRewardCode {
+    const create = this.database.transaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO free_pint_reward_codes (
+            id, user_id, public_account_id, code_hash, eligible_venue_scope, status,
+            points_reserved, created_at, expires_at, metadata_json
+          ) VALUES (?, ?, ?, ?, 'affiliated', 'active', 50, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          input.userId,
+          input.publicAccountId,
+          input.codeHash,
+          input.createdAt,
+          input.expiresAt,
+          JSON.stringify(redactSecrets(input.metadata)),
+        );
+
+      this.createPintPointLedgerEntry({
+        id: crypto.randomUUID(),
+        userId: input.userId,
+        venueId: null,
+        drinkRecordId: null,
+        rewardCodeId: input.id,
+        type: "reward_code_created",
+        pointsDelta: 0,
+        pointsReservedDelta: 50,
+        description: "Free Pint Reward code created.",
+        createdAt: input.createdAt,
+        metadata: { expiresAt: input.expiresAt },
+      });
+    });
+
+    create();
+    return this.getFreePintRewardCodeById(input.id)!;
+  }
+
+  getFreePintRewardCodeById(id: string): FreePintRewardCode | null {
+    const row = this.database
+      .prepare("SELECT * FROM free_pint_reward_codes WHERE id = ?")
+      .get(id) as FreePintRewardCodeRow | undefined;
+    return row ? toFreePintRewardCode(row) : null;
+  }
+
+  getFreePintRewardCodeByCodeHash(codeHash: string): FreePintRewardCode | null {
+    const row = this.database
+      .prepare("SELECT * FROM free_pint_reward_codes WHERE code_hash = ? LIMIT 1")
+      .get(codeHash) as FreePintRewardCodeRow | undefined;
+    return row ? toFreePintRewardCode(row) : null;
+  }
+
+  getActiveFreePintRewardCodeByCodeHash(input: { codeHash: string; now: string }): FreePintRewardCode | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM free_pint_reward_codes
+         WHERE code_hash = ?
+           AND status = 'active'
+           AND expires_at > ?
+         LIMIT 1`,
+      )
+      .get(input.codeHash, input.now) as FreePintRewardCodeRow | undefined;
+    return row ? toFreePintRewardCode(row) : null;
+  }
+
+  listFreePintRewardCodesForUser(userId: string, limit: number): FreePintRewardCode[] {
+    const rows = this.database
+      .prepare("SELECT * FROM free_pint_reward_codes WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(userId, limit) as FreePintRewardCodeRow[];
+    return rows.map(toFreePintRewardCode);
+  }
+
+  expireFreePintRewardCodesForUser(input: { userId: string; now: string }): number {
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM free_pint_reward_codes
+         WHERE user_id = ?
+           AND status = 'active'
+           AND expires_at <= ?`,
+      )
+      .all(input.userId, input.now) as FreePintRewardCodeRow[];
+
+    const expire = this.database.transaction(() => {
+      for (const row of rows) {
+        this.database
+          .prepare("UPDATE free_pint_reward_codes SET status = 'expired' WHERE id = ? AND status = 'active'")
+          .run(row.id);
+        this.createPintPointLedgerEntry({
+          id: crypto.randomUUID(),
+          userId: row.user_id,
+          venueId: null,
+          drinkRecordId: null,
+          rewardCodeId: row.id,
+          type: "reward_code_expired",
+          pointsDelta: 0,
+          pointsReservedDelta: -row.points_reserved,
+          description: "Free Pint Reward code expired.",
+          createdAt: input.now,
+          metadata: { expiresAt: row.expires_at },
+        });
+      }
+    });
+
+    expire();
+    return rows.length;
+  }
+
+  cancelFreePintRewardCode(input: { userId: string; codeId: string; now: string }): FreePintRewardCode | null {
+    const code = this.getFreePintRewardCodeById(input.codeId);
+    if (!code || code.userId !== input.userId || code.status !== "active") {
+      return null;
+    }
+
+    const cancel = this.database.transaction(() => {
+      this.database
+        .prepare("UPDATE free_pint_reward_codes SET status = 'cancelled', cancelled_at = ? WHERE id = ? AND status = 'active'")
+        .run(input.now, input.codeId);
+      this.createPintPointLedgerEntry({
+        id: crypto.randomUUID(),
+        userId: code.userId,
+        venueId: null,
+        drinkRecordId: null,
+        rewardCodeId: code.id,
+        type: "reward_cancelled",
+        pointsDelta: 0,
+        pointsReservedDelta: -code.pointsReserved,
+        description: "Free Pint Reward code cancelled.",
+        createdAt: input.now,
+        metadata: {},
+      });
+    });
+
+    cancel();
+    return this.getFreePintRewardCodeById(input.codeId);
+  }
+
+  rejectFreePintRewardCode(input: {
+    codeId: string;
+    venueId: string;
+    actorUserId: string | null;
+    reason: string | null;
+    now: string;
+    metadata: Record<string, unknown>;
+  }): FreePintRewardCode | null {
+    const code = this.getFreePintRewardCodeById(input.codeId);
+    if (!code || code.status !== "active") {
+      return null;
+    }
+
+    const reject = this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE free_pint_reward_codes
+           SET status = 'rejected',
+               rejected_at = ?,
+               rejected_reason = ?,
+               redeemed_by_user_id = ?,
+               redeemed_venue_id = ?
+           WHERE id = ? AND status = 'active'`,
+        )
+        .run(input.now, input.reason, input.actorUserId, input.venueId, input.codeId);
+      this.createPintPointLedgerEntry({
+        id: crypto.randomUUID(),
+        userId: code.userId,
+        venueId: input.venueId,
+        drinkRecordId: null,
+        rewardCodeId: code.id,
+        type: "reward_rejected",
+        pointsDelta: 0,
+        pointsReservedDelta: -code.pointsReserved,
+        description: "Free Pint Reward rejected by venue.",
+        createdAt: input.now,
+        metadata: {
+          reason: input.reason,
+          ...input.metadata,
+        },
+      });
+    });
+
+    reject();
+    return this.getFreePintRewardCodeById(input.codeId);
+  }
+
+  redeemFreePintRewardCode(input: {
+    codeId: string;
+    userId: string;
+    publicAccountId: string;
+    venueId: string;
+    venueName: string;
+    suburb: string | null;
+    redeemedByUserId: string | null;
+    redeemedAt: string;
+    metadata: Record<string, unknown>;
+  }): FreePintRewardRedemption | null {
+    const code = this.getFreePintRewardCodeById(input.codeId);
+    if (!code || code.status !== "active" || code.userId !== input.userId) {
+      return null;
+    }
+
+    const redemptionId = crypto.randomUUID();
+    const redeem = this.database.transaction(() => {
+      const update = this.database
+        .prepare(
+          `UPDATE free_pint_reward_codes
+           SET status = 'used',
+               used_at = ?,
+               redeemed_by_user_id = ?,
+               redeemed_venue_id = ?
+           WHERE id = ? AND status = 'active'`,
+        )
+        .run(input.redeemedAt, input.redeemedByUserId, input.venueId, input.codeId);
+
+      if (update.changes !== 1) {
+        return;
+      }
+
+      this.database
+        .prepare(
+          `INSERT INTO free_pint_reward_redemptions (
+            id, user_id, public_account_id, reward_code_id, venue_id, venue_name,
+            suburb, redeemed_by_user_id, redeemed_at, metadata_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          redemptionId,
+          input.userId,
+          input.publicAccountId,
+          input.codeId,
+          input.venueId,
+          input.venueName,
+          input.suburb,
+          input.redeemedByUserId,
+          input.redeemedAt,
+          JSON.stringify(redactSecrets(input.metadata)),
+          input.redeemedAt,
+        );
+
+      this.createPintPointLedgerEntry({
+        id: crypto.randomUUID(),
+        userId: input.userId,
+        venueId: input.venueId,
+        drinkRecordId: null,
+        rewardCodeId: input.codeId,
+        type: "reward_redeemed",
+        pointsDelta: -code.pointsReserved,
+        pointsReservedDelta: -code.pointsReserved,
+        description: "Free Pint Reward redeemed.",
+        createdAt: input.redeemedAt,
+        metadata: {
+          venueName: input.venueName,
+          suburb: input.suburb,
+        },
+      });
+    });
+
+    redeem();
+    return this.getFreePintRewardRedemptionById(redemptionId);
+  }
+
+  getFreePintRewardRedemptionById(id: string): FreePintRewardRedemption | null {
+    const row = this.database
+      .prepare("SELECT * FROM free_pint_reward_redemptions WHERE id = ?")
+      .get(id) as FreePintRewardRedemptionRow | undefined;
+    return row ? toFreePintRewardRedemption(row) : null;
+  }
+
+  listFreePintRewardRedemptionsForUser(userId: string, limit: number): FreePintRewardRedemption[] {
+    const rows = this.database
+      .prepare("SELECT * FROM free_pint_reward_redemptions WHERE user_id = ? ORDER BY redeemed_at DESC LIMIT ?")
+      .all(userId, limit) as FreePintRewardRedemptionRow[];
+    return rows.map(toFreePintRewardRedemption);
+  }
+
+  getPintPointStatsForVenue(input: {
+    venueId: string;
+    startIso?: string | null | undefined;
+    endIso?: string | null | undefined;
+  }): {
+    pointsIssued: number;
+    drinkRecords: number;
+    alcoholicDrinks: number;
+    freeRewardsRedeemed: number;
+    expiredOrRejectedCodes: number;
+  } {
+    const drinkClauses = ["venue_id = ?"];
+    const drinkValues: unknown[] = [input.venueId];
+    const rewardClauses = ["redeemed_venue_id = ?"];
+    const rewardValues: unknown[] = [input.venueId];
+
+    if (input.startIso) {
+      drinkClauses.push("recorded_at >= ?");
+      drinkValues.push(input.startIso);
+      rewardClauses.push("COALESCE(used_at, rejected_at, cancelled_at, expires_at) >= ?");
+      rewardValues.push(input.startIso);
+    }
+
+    if (input.endIso) {
+      drinkClauses.push("recorded_at < ?");
+      drinkValues.push(input.endIso);
+      rewardClauses.push("COALESCE(used_at, rejected_at, cancelled_at, expires_at) < ?");
+      rewardValues.push(input.endIso);
+    }
+
+    const drinkRow = this.database
+      .prepare(
+        `SELECT
+           count(*) AS drink_records,
+           COALESCE(sum(CASE WHEN is_alcoholic = 1 THEN quantity ELSE 0 END), 0) AS alcoholic_drinks
+         FROM pint_point_drink_records
+         WHERE ${drinkClauses.join(" AND ")}`,
+      )
+      .get(...drinkValues) as { drink_records: number; alcoholic_drinks: number } | undefined;
+
+    const ledgerRow = this.database
+      .prepare(
+        `SELECT COALESCE(sum(points_delta), 0) AS points_issued
+         FROM pint_point_ledger
+         WHERE venue_id = ?
+           AND points_delta > 0
+           ${input.startIso ? "AND created_at >= ?" : ""}
+           ${input.endIso ? "AND created_at < ?" : ""}`,
+      )
+      .get(...[input.venueId, ...(input.startIso ? [input.startIso] : []), ...(input.endIso ? [input.endIso] : [])]) as {
+        points_issued: number;
+      } | undefined;
+
+    const rewardRow = this.database
+      .prepare(
+        `SELECT
+           COALESCE(sum(CASE WHEN status = 'used' THEN 1 ELSE 0 END), 0) AS redeemed,
+           COALESCE(sum(CASE WHEN status IN ('expired', 'rejected') THEN 1 ELSE 0 END), 0) AS failed
+         FROM free_pint_reward_codes
+         WHERE ${rewardClauses.join(" AND ")}`,
+      )
+      .get(...rewardValues) as { redeemed: number; failed: number } | undefined;
+
+    return {
+      pointsIssued: Number(ledgerRow?.points_issued ?? 0),
+      drinkRecords: Number(drinkRow?.drink_records ?? 0),
+      alcoholicDrinks: Number(drinkRow?.alcoholic_drinks ?? 0),
+      freeRewardsRedeemed: Number(rewardRow?.redeemed ?? 0),
+      expiredOrRejectedCodes: Number(rewardRow?.failed ?? 0),
+    };
   }
 
   getSubmissionById(id: string): { submission: BusinessSubmission; items: BusinessSubmissionItem[] } | null {

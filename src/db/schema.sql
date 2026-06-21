@@ -148,6 +148,109 @@ CREATE INDEX IF NOT EXISTS idx_discount_redemptions_user
 CREATE INDEX IF NOT EXISTS idx_discount_redemptions_venue
   ON discount_redemptions (venue_id, redeemed_at DESC);
 
+CREATE TABLE IF NOT EXISTS pint_point_drink_records (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  suburb TEXT,
+  item_name TEXT,
+  beverage_category TEXT NOT NULL DEFAULT 'alcoholic',
+  quantity INTEGER NOT NULL DEFAULT 1,
+  is_alcoholic INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL DEFAULT 'venue_portal',
+  reward_code_id TEXT,
+  recorded_by_user_id TEXT,
+  recorded_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (reward_code_id) REFERENCES free_pint_reward_codes(id) ON DELETE SET NULL,
+  FOREIGN KEY (recorded_by_user_id) REFERENCES accounts(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_user
+  ON pint_point_drink_records (user_id, recorded_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_venue
+  ON pint_point_drink_records (venue_id, recorded_at DESC);
+
+CREATE TABLE IF NOT EXISTS free_pint_reward_codes (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  public_account_id TEXT NOT NULL,
+  code_hash TEXT NOT NULL UNIQUE,
+  eligible_venue_scope TEXT NOT NULL DEFAULT 'affiliated',
+  status TEXT NOT NULL DEFAULT 'active',
+  points_reserved INTEGER NOT NULL DEFAULT 50,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  cancelled_at TEXT,
+  rejected_at TEXT,
+  rejected_reason TEXT,
+  redeemed_by_user_id TEXT,
+  redeemed_venue_id TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (redeemed_by_user_id) REFERENCES accounts(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_user
+  ON free_pint_reward_codes (user_id, status, expires_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_code
+  ON free_pint_reward_codes (code_hash);
+
+CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_venue
+  ON free_pint_reward_codes (redeemed_venue_id, status, used_at DESC);
+
+CREATE TABLE IF NOT EXISTS free_pint_reward_redemptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  public_account_id TEXT NOT NULL,
+  reward_code_id TEXT NOT NULL,
+  venue_id TEXT NOT NULL,
+  venue_name TEXT NOT NULL,
+  suburb TEXT,
+  redeemed_by_user_id TEXT,
+  redeemed_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (reward_code_id) REFERENCES free_pint_reward_codes(id) ON DELETE CASCADE,
+  FOREIGN KEY (redeemed_by_user_id) REFERENCES accounts(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_free_pint_reward_redemptions_user
+  ON free_pint_reward_redemptions (user_id, redeemed_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_free_pint_reward_redemptions_venue
+  ON free_pint_reward_redemptions (venue_id, redeemed_at DESC);
+
+CREATE TABLE IF NOT EXISTS pint_point_ledger (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  venue_id TEXT,
+  drink_record_id TEXT,
+  reward_code_id TEXT,
+  type TEXT NOT NULL,
+  points_delta INTEGER NOT NULL DEFAULT 0,
+  points_reserved_delta INTEGER NOT NULL DEFAULT 0,
+  description TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (drink_record_id) REFERENCES pint_point_drink_records(id) ON DELETE SET NULL,
+  FOREIGN KEY (reward_code_id) REFERENCES free_pint_reward_codes(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pint_point_ledger_user
+  ON pint_point_ledger (user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_pint_point_ledger_venue
+  ON pint_point_ledger (venue_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS account_reward_vouchers (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

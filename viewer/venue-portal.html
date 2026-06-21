@@ -20,10 +20,12 @@
   <main class="pageShell">
     <div id="nav"></div>
 
-    <section class="hero hero--compact venuePortalHero">
-      <div class="eyebrow">Venue portal</div>
-      <h1>Venue dashboard</h1>
-      <p class="lead">Keep prices fresh, redeem Pint Path specials, review pending changes, and see the work that will make your venue more useful on the map.</p>
+    <section class="venuePortalHero" aria-label="Venue dashboard header">
+      <div class="venuePortalHero__inner">
+        <div class="eyebrow">Venue portal</div>
+        <h1 id="venuePortalTitle">Venue portal</h1>
+        <p id="venuePortalMeta" class="venuePortalHero__meta">Sign in with an assigned venue account.</p>
+      </div>
     </section>
 
     <section id="portalAccess" class="notice">Log in with an assigned venue-manager account to view this dashboard.</section>
@@ -59,7 +61,6 @@
             <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
             <button class="tabButton" type="button" data-tab="specials" data-specials-only>Pint Path specials</button>
             <button class="tabButton" type="button" data-tab="pending-reviews">Pending reviews</button>
-            <button class="tabButton" type="button" data-tab="analytics">Live insights</button>
             <button class="tabButton" type="button" data-tab="report">Monthly report</button>
           </nav>
           <button id="venueLogoutButton" class="button button--danger venueLogoutButton" type="button">Log out</button>
@@ -67,48 +68,7 @@
 
         <div class="dashboardMain">
           <section class="tabPanel" data-panel="overview">
-            <article class="venueCommandCenter panel">
-              <div class="venueCommandCenter__identity">
-                <div class="eyebrow">Command centre</div>
-                <h2 id="overviewName">Your bar</h2>
-                <p id="overviewMeta" class="muted"></p>
-                <div class="venueStatusPills">
-                  <span id="tierBadge" class="pill">Basic</span>
-                  <span id="overviewPendingBadge" class="pill">0 pending</span>
-                  <span id="overviewPosBadge" class="pill">Manual redemptions</span>
-                </div>
-              </div>
-              <div class="venueCommandCenter__actions" aria-label="Venue dashboard quick actions">
-                <button class="button button--primary" type="button" data-jump-tab="price-refresh">Keep prices fresh</button>
-                <button class="button" type="button" data-jump-tab="redemption">Redeem code</button>
-                <button class="button" type="button" data-jump-tab="happy-hours">Happy hour</button>
-                <button class="button" type="button" data-jump-tab="specials" data-specials-only>Pint Path special</button>
-              </div>
-            </article>
-
-            <article id="venueDemandPanel" class="venueDemandPanel panel is-hidden"></article>
-
-            <div id="venuePulseGrid" class="venuePulseGrid"></div>
-
-            <div class="venueActionGrid">
-              <article id="weeklyActionCard" class="panel"></article>
-              <article id="staffModeCard" class="panel"></article>
-              <article id="specialsHeroCard" class="panel"></article>
-              <article id="staffInviteCard" class="panel"></article>
-            </div>
-
-            <div class="venueOverviewColumns">
-              <article class="panel">
-                <h2>Listing quality</h2>
-                <div id="qualityScore" class="qualityScore"></div>
-                <ul id="qualityChecklist" class="checkList"></ul>
-              </article>
-              <article class="panel">
-                <h2>Current public data</h2>
-                <p class="helperCopy">Verified public prices remain controlled by Pint Path access rules. Unknown prices are never shown as $0.</p>
-                <div id="priceRecords" class="list"></div>
-              </article>
-            </div>
+            <article id="premiumVenueDashboard" class="premiumVenueDashboard"></article>
           </section>
 
           <section class="tabPanel is-hidden" data-panel="pending-reviews">
@@ -163,20 +123,14 @@
               </div>
               <form id="discountRedemptionForm" class="form">
                 <input name="specialId" type="hidden" />
+                <input name="estimatedSavingsDollars" type="hidden" value="0" />
                 <div class="discountQuickPanel">
                   <div>
                     <span class="eyebrow">Common app discount</span>
                     <div class="actionRow actionRow--compact">
+                      <button class="button button--small" type="button" data-savings-dollars="0">$0</button>
                       <button class="button button--small" type="button" data-savings-dollars="1">$1 off</button>
-                      <button class="button button--small button--primary" type="button" data-savings-dollars="2">$2 off</button>
-                    </div>
-                  </div>
-                  <div>
-                    <span class="eyebrow">Fast drink labels</span>
-                    <div class="actionRow actionRow--compact">
-                      <button class="button button--small" type="button" data-discount-item="House pint">House pint</button>
-                      <button class="button button--small" type="button" data-discount-item="Tap beer">Tap beer</button>
-                      <button class="button button--small" type="button" data-discount-item="Pint Path special">Pint Path special</button>
+                      <button class="button button--small" type="button" data-savings-dollars="2">$2 off</button>
                     </div>
                   </div>
                 </div>
@@ -187,25 +141,47 @@
                     <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="ABC123" required />
                   </label>
                   <label class="field">Drink or special
-                    <input name="itemName" placeholder="e.g. Pint Path special pint" />
+                    <select name="itemName" required>
+                      <option value="">Choose a current drink or special</option>
+                    </select>
                   </label>
                 </div>
-                <div class="grid grid--two">
-                  <label class="field">Quantity
-                    <input name="quantity" type="number" min="1" max="20" value="1" />
-                  </label>
-                  <label class="field">Estimated savings (A$)
-                    <input name="estimatedSavingsDollars" type="number" min="0" max="1000" step="0.01" value="0" />
-                  </label>
-                </div>
+                <label class="field">Quantity
+                  <input name="quantity" type="number" min="1" max="20" value="1" />
+                </label>
                 <label class="field">Notes
                   <textarea name="notes" placeholder="Optional staff note"></textarea>
                 </label>
-                <button class="button button--primary" type="submit">Redeem discount</button>
+                <button class="button button--primary" type="submit">Redeem code</button>
               </form>
               <div id="discountRedemptionStatus" class="notice" role="status" hidden></div>
               <div id="discountOpsPanel" class="discountOpsPanel" style="margin-top:16px;"></div>
             </article>
+
+            <div>
+              <article class="panel">
+                <div class="sectionHeader">
+                  <div>
+                    <h2>Free Pint Reward</h2>
+                    <p class="muted">Confirm only after age, ID, and responsible service checks.</p>
+                  </div>
+                  <span class="pill pill--premium">50 points</span>
+                </div>
+                <form id="freePintRewardForm" class="form">
+                  <label class="field">Reward code
+                    <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="ABC123" required />
+                  </label>
+                  <label class="field">Reject reason
+                    <input name="reason" placeholder="Optional if rejecting" />
+                  </label>
+                  <div class="actionRow">
+                    <button class="button button--premium" type="submit" data-free-pint-action="confirm">Confirm Free Pint</button>
+                    <button class="button button--danger" type="submit" data-free-pint-action="reject">Reject</button>
+                  </div>
+                </form>
+                <div id="freePintRewardStatus" class="notice" role="status" hidden></div>
+              </article>
+            </div>
           </section>
 
           <section class="tabPanel is-hidden" data-panel="profile">
@@ -255,24 +231,6 @@
           </section>
 
           <section class="tabPanel is-hidden" data-panel="beers">
-            <article id="priceRefreshPanel" class="panel priceRefreshPanel">
-              <div class="sectionHeader">
-                <div>
-                  <div class="eyebrow">Keep data fresh</div>
-                  <h2>Review current prices</h2>
-                </div>
-                <button id="confirmAllPricesButton" class="button button--primary" type="button">All prices are the same</button>
-              </div>
-              <div class="priceRefreshToolbar">
-                <label class="field">Search beer
-                  <input id="priceRefreshSearch" type="search" placeholder="Search by beer, brewery, or size" autocomplete="off" />
-                </label>
-                <button id="submitPriceRefreshButton" class="button" type="button">Submit selected updates</button>
-              </div>
-              <div id="priceRefreshList" class="priceRefreshList"></div>
-              <div id="priceRefreshStatus" class="notice" role="status" hidden></div>
-            </article>
-
             <div class="grid grid--two">
               <form id="beerForm" class="panel form">
                 <div class="sectionHeader">
@@ -338,6 +296,26 @@
                 <div id="beerList" class="list"></div>
               </article>
             </div>
+
+            <article id="priceRefreshPanel" class="panel priceRefreshPanel">
+              <div class="sectionHeader">
+                <div>
+                  <div class="eyebrow">Keep data fresh</div>
+                  <h2>Review current prices</h2>
+                </div>
+                <button id="confirmAllPricesButton" class="button button--primary" type="button">All prices are the same</button>
+              </div>
+              <div class="priceRefreshToolbar">
+                <label class="field">Search beer
+                  <input id="priceRefreshSearch" type="search" placeholder="Search by beer, brewery, or size" autocomplete="off" />
+                </label>
+              </div>
+              <div id="priceRefreshList" class="priceRefreshList"></div>
+              <div class="priceRefreshActions">
+                <button id="submitPriceRefreshButton" class="button" type="button">Submit selected updates</button>
+              </div>
+              <div id="priceRefreshStatus" class="notice" role="status" hidden></div>
+            </article>
           </section>
 
           <section class="tabPanel is-hidden" data-panel="happy-hours">
@@ -485,6 +463,7 @@
   <script>
     let currentPortal = null;
     let currentDemandPeriod = "today";
+    let dashboardPreviewPlan = null;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
@@ -539,8 +518,154 @@
       return new Intl.NumberFormat("en-AU").format(Number(value || 0));
     }
 
+    function formatOptionalCurrency(value, fallback = "Not tracked") {
+      const numeric = Number(value || 0);
+      return numeric > 0 ? formatCurrency(numeric) : fallback;
+    }
+
     function prettyTier(value) {
       return value === "pro" ? "Pro" : value === "plus" ? "Plus" : "Free";
+    }
+
+    const VENUE_DASHBOARD_PLANS = ["free", "plus", "pro"];
+    const VENUE_DASHBOARD_FEATURES = {
+      free: ["basic_snapshot", "beer_data_status", "basic_alerts"],
+      plus: [
+        "basic_snapshot",
+        "beer_data_status",
+        "basic_alerts",
+        "app_value_overview",
+        "demand_signals",
+        "specials_performance",
+        "customer_interest",
+        "marketing_performance",
+        "action_centre",
+      ],
+      pro: [
+        "basic_snapshot",
+        "beer_data_status",
+        "basic_alerts",
+        "app_value_overview",
+        "demand_signals",
+        "specials_performance",
+        "customer_interest",
+        "marketing_performance",
+        "action_centre",
+        "demand_command_centre",
+        "growth_recommendations",
+        "lost_opportunity_risk",
+        "specials_strategy",
+        "premium_reports",
+      ],
+    };
+
+    const PREMIUM_VENUE_MOCK = {
+      type: "Pint Path venue",
+      venueSearchesToday: 42,
+      mapViewsToday: 186,
+      profileViewsToday: 74,
+      beerIntentToday: 128,
+      priceRevealsToday: 96,
+      specialViewsToday: 58,
+      redemptionsToday: 12,
+      redemptionsWeek: 43,
+      trackedSavingsToday: 24,
+      trackedSavingsWeek: 128,
+      appValueToday: 1152,
+      appValueWeek: 4128,
+      appValueMonth: 16320,
+      averageSpend: 96,
+      pendingReviews: 10,
+      activeSpecials: 2,
+      happyHours: 3,
+      beerRows: 24,
+      onTapRows: 18,
+      pricedRows: 22,
+      stalePrices: 5,
+      listingQuality: 84,
+      opportunityScore: 76,
+      alerts: [
+        "5 beer rows need a fresh price check.",
+        "Guinness is the top nearby beer search this week.",
+        "2 Pint Path specials are active and ready for staff redemption.",
+      ],
+      appValueBars: [
+        { label: "Today", value: 1152, percent: 46 },
+        { label: "This week", value: 4128, percent: 66 },
+        { label: "This month", value: 16320, percent: 82 },
+      ],
+      demandSignals: [
+        { label: "Exact venue searches", value: 42, helper: "Today" },
+        { label: "Map/detail opens", value: 186, helper: "Today" },
+        { label: "Beer intent", value: 128, helper: "Beer list views + price reveals" },
+        { label: "Specials intent", value: 58, helper: "Special views today" },
+      ],
+      beerDemand: [
+        { label: "Guinness", value: 38, helper: "nearby searches" },
+        { label: "Carlton Draught", value: 24, helper: "nearby searches" },
+        { label: "Stone & Wood Pacific Ale", value: 19, helper: "nearby searches" },
+        { label: "Lager", value: 17, helper: "style searches" },
+      ],
+      customerInterest: [
+        { label: "New interest", value: 64, tone: "info" },
+        { label: "Repeat interest", value: 31, tone: "success" },
+        { label: "Directions clicks", value: 22, tone: "premium" },
+        { label: "Saves/shares", value: 18, tone: "warning" },
+      ],
+      marketing: [
+        { label: "Special views", value: 58 },
+        { label: "Redemptions", value: 43 },
+        { label: "Tracked savings", value: "$128" },
+        { label: "Best offer", value: "$2 off pints" },
+      ],
+      plusActions: [
+        "Refresh 5 stale beer prices before the weekend.",
+        "Keep one clear Pint Path special live for tonight.",
+        "Add Guinness if it is currently on tap.",
+        "Review 10 pending changes so the map stays trusted.",
+      ],
+      aiRecommendations: [
+        "Guinness is the strongest nearby search. Keep its price verified and visible.",
+        "Your app special has views but low redemptions. Make the staff prompt simpler.",
+        "Stone & Wood searches are rising nearby. Add or confirm the current pint price.",
+        "Pending reviews are hiding useful updates. Clear them before Friday night.",
+      ],
+      risks: [
+        { label: "Stale prices", value: 5, helper: "Refresh before peak hours" },
+        { label: "Pending reviews", value: 10, helper: "Waiting on Pint Path admin" },
+        { label: "Missing beer demand", value: 3, helper: "High-search beers not confirmed" },
+        { label: "Special friction", value: "Medium", helper: "Low redemption rate" },
+      ],
+      priceFreshness: [
+        { label: "Fresh", value: 19, helper: "verified rows" },
+        { label: "Needs check", value: 5, helper: "older price rows" },
+        { label: "On tap", value: 18, helper: "current tap rows" },
+        { label: "Priced", value: 22, helper: "rows with price" },
+      ],
+      specialsStrategy: [
+        { title: "$2 off selected pints", audience: 58, redemptions: 14, value: "$28 saved" },
+        { title: "$10 Guinness window", audience: 38, redemptions: 9, value: "$18 saved" },
+        { title: "Happy-hour reminder", audience: 31, redemptions: 6, value: "$12 saved" },
+      ],
+      reports: [
+        "Search demand",
+        "Special performance",
+        "Beer freshness",
+        "Redemption value",
+        "Price coverage",
+      ],
+    };
+
+    function normalizeDashboardPlan(value) {
+      return value === "pro" ? "pro" : value === "plus" ? "plus" : "free";
+    }
+
+    function hasDashboardFeature(plan, feature) {
+      return Boolean(VENUE_DASHBOARD_FEATURES[normalizeDashboardPlan(plan)]?.includes(feature));
+    }
+
+    function premiumFeatureGate(plan, feature, unlockedHtml, lockedHtml) {
+      return hasDashboardFeature(plan, feature) ? unlockedHtml : lockedHtml;
     }
 
     function portalCanManageSpecials(data = currentPortal) {
@@ -741,8 +866,10 @@
       if (name === "redemption") {
         showTab("redemption");
         window.requestAnimationFrame(() => {
-          const form = document.getElementById("discountRedemptionForm");
-          const status = document.getElementById("discountRedemptionStatus");
+          const rewardForm = document.getElementById("freePintRewardForm");
+          const rewardCode = rewardForm instanceof HTMLFormElement ? field(rewardForm, "code")?.value : "";
+          const form = rewardCode ? rewardForm : document.getElementById("discountRedemptionForm");
+          const status = rewardCode ? document.getElementById("freePintRewardStatus") : document.getElementById("discountRedemptionStatus");
           form?.scrollIntoView({ behavior: "smooth", block: "start" });
           if (form instanceof HTMLFormElement) {
             field(form, "code")?.focus({ preventScroll: true });
@@ -867,15 +994,19 @@
         <span class="pill">${escapeHtml(prettyTier(profile.membershipTier))}</span>
       `;
 
-      overviewName.textContent = profile.name;
-      overviewMeta.textContent = [profile.suburb, profile.address].filter(Boolean).join(" · ") || "Add suburb and address in Profile.";
-      tierBadge.textContent = prettyTier(profile.membershipTier);
-      tierBadge.className = `pill ${profile.membershipTier === "pro" ? "pill--premium" : profile.membershipTier === "plus" ? "pill--info" : ""}`;
-      const pendingCount = data.pendingChanges?.length || 0;
-      overviewPendingBadge.textContent = pendingCount ? `${formatCount(pendingCount)} pending` : "No pending";
-      overviewPendingBadge.className = `pill ${pendingCount ? "pill--warning" : "pill--success"}`;
-      overviewPosBadge.textContent = data.posIntegration?.enabled ? "POS ready" : "Manual redemption";
-      overviewPosBadge.className = `pill ${data.posIntegration?.enabled ? "pill--premium" : "pill--info"}`;
+      const venuePortalTitle = document.getElementById("venuePortalTitle");
+      const venuePortalMeta = document.getElementById("venuePortalMeta");
+      if (venuePortalTitle) {
+        venuePortalTitle.textContent = profile.name || "Venue portal";
+      }
+      if (venuePortalMeta) {
+        const metaParts = [
+          profile.suburb || data.selectedVenue?.suburb || null,
+          prettyTier(profile.membershipTier),
+        ].filter(Boolean);
+        venuePortalMeta.textContent = metaParts.join(" · ");
+        venuePortalMeta.classList.toggle("is-hidden", !metaParts.length);
+      }
 
       const beers = data.inventory?.beers || [];
       const happyHours = data.inventory?.happyHours || [];
@@ -886,12 +1017,10 @@
       renderPriceRefreshPanel(beers);
       renderHappyHours(happyHours);
       renderSpecials(specials);
-      renderOverviewData(data);
-      renderVenueDemandPanel(data);
-      renderVenuePulseGrid(data);
-      renderVenuePortalLaunchCards(data);
+      renderPremiumVenueDashboard(data);
       renderDiscountOps(data);
       renderDiscountSpecialChoices(data);
+      renderRedemptionItemOptions(data);
       renderPendingChanges(data.pendingChanges || []);
       renderAnalytics(data);
       renderMonthlyReport(data);
@@ -907,6 +1036,475 @@
       field(profileForm, "openingHoursNote").value = profile.openingHours?.note || "";
       field(profileForm, "active").checked = Boolean(profile.active);
       renderChecklist(venueTags, tagOptions, profile.venueTags || []);
+    }
+
+    function premiumKpiCard(item) {
+      return `
+        <article class="premiumKpiCard premiumKpiCard--${escapeHtml(item.tone || "neutral")}">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(String(item.value))}</strong>
+          <small>${escapeHtml(item.helper || "")}</small>
+        </article>
+      `;
+    }
+
+    function premiumLockedCard(title, description, plan = "plus") {
+      return `
+        <article class="premiumLockedCard" aria-label="${escapeHtml(title)} locked preview">
+          <div class="premiumLockedCard__lock">Lock</div>
+          <div>
+            <strong>${escapeHtml(title)}</strong>
+            <p>${escapeHtml(description)}</p>
+          </div>
+          <div class="premiumLockedCard__preview" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <button class="button button--small button--premium" type="button" data-upgrade-tier="${escapeHtml(plan)}">Unlock ${escapeHtml(prettyTier(plan))}</button>
+        </article>
+      `;
+    }
+
+    function premiumSignalList(rows) {
+      return rows.map((row) => `
+        <div class="premiumListRow">
+          <div>
+            <strong>${escapeHtml(row.label)}</strong>
+            <small>${escapeHtml(row.helper || "")}</small>
+          </div>
+          <span class="pill">${escapeHtml(String(row.value))}</span>
+        </div>
+      `).join("");
+    }
+
+    function premiumAlertList(alerts) {
+      return alerts.map((alert) => `
+        <div class="premiumAlertRow">
+          <span></span>
+          <strong>${escapeHtml(alert)}</strong>
+        </div>
+      `).join("");
+    }
+
+    function premiumProgressRows(rows, valueFormatter = (value) => String(value)) {
+      return rows.map((row) => `
+        <div class="premiumProgressRow">
+          <div>
+            <strong>${escapeHtml(row.label)}</strong>
+            <span>${escapeHtml(valueFormatter(row.value))}</span>
+          </div>
+          <div class="premiumProgressTrack"><i style="width:${Math.max(0, Math.min(100, Number(row.percent || row.value || 0)))}%"></i></div>
+        </div>
+      `).join("");
+    }
+
+    function premiumMiniMetricRows(rows) {
+      return rows.map((item) => `
+        <div class="premiumMiniMetric premiumMiniMetric--${escapeHtml(item.tone || "neutral")}">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(String(item.value))}</strong>
+          ${item.helper ? `<small>${escapeHtml(item.helper)}</small>` : ""}
+        </div>
+      `).join("");
+    }
+
+    function premiumActionCentre(actions) {
+      return `
+        <section class="premiumDashboardCard premiumDashboardCard--action">
+          <div class="premiumCardHeader">
+            <span class="eyebrow">Action centre</span>
+            <button class="button button--small" type="button" data-jump-tab="redemption">Open staff mode</button>
+          </div>
+          <h3>What to do next</h3>
+          <div class="premiumActionList">
+            ${actions.map((action, index) => `
+              <button class="premiumActionItem" type="button">
+                <span>${index + 1}</span>
+                <strong>${escapeHtml(action)}</strong>
+              </button>
+            `).join("")}
+          </div>
+        </section>
+      `;
+    }
+
+    function buildGrowthRecommendations(input) {
+      const recommendations = [];
+      const topBeer = input.topBeerRows?.[0];
+
+      if (topBeer?.label) {
+        recommendations.push(`${topBeer.label} is the strongest nearby beer search. Keep its price verified and visible.`);
+      }
+
+      if (input.stalePrices > 0) {
+        recommendations.push(`Refresh ${formatCount(input.stalePrices)} beer price row${input.stalePrices === 1 ? "" : "s"} so users can compare you with confidence.`);
+      }
+
+      if (input.specialViews > 0 && input.redemptions <= Math.max(1, Math.floor(input.specialViews / 6))) {
+        recommendations.push("Your Pint Path special is getting views but low redemptions. Make the staff redemption prompt simpler.");
+      }
+
+      if (!input.activeSpecials) {
+        recommendations.push("Add one simple Pint Path special so users have a clear reason to choose you tonight.");
+      }
+
+      if (input.pendingReviews > 0) {
+        recommendations.push(`${formatCount(input.pendingReviews)} pending review${input.pendingReviews === 1 ? "" : "s"} may be hiding useful updates from the public map.`);
+      }
+
+      if (input.beerIntent > 0 && input.beerRows < 3) {
+        recommendations.push("Beer searches are active nearby. Add at least 3 current beer rows to improve the listing.");
+      }
+
+      return recommendations.length
+        ? recommendations.slice(0, 4)
+        : [
+          "No urgent issues right now. Keep prices fresh before peak trading.",
+          "Check that your best-selling beer rows are priced and on tap.",
+          "Keep one clear Pint Path special live for app users.",
+        ];
+    }
+
+    function renderFreeVenueDashboard(mock) {
+      return `
+        <div class="premiumDashboardMain premiumDashboardMain--free">
+          <div class="premiumDashboardColumn">
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Today's snapshot</span>
+              <h3>${formatCount(mock.mapViewsToday)} map/detail opens</h3>
+              <div class="premiumSnapshotGrid">
+                ${premiumMiniMetricRows([
+                  { label: "Venue searches", value: formatCount(mock.venueSearchesToday), tone: "info" },
+                  { label: "Beer intent", value: formatCount(mock.beerIntentToday), tone: "success" },
+                  { label: "Price reveals", value: formatCount(mock.priceRevealsToday), tone: "premium" },
+                ])}
+              </div>
+            </section>
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Beer data status</span>
+              <h3>${formatCount(mock.beerRows)} beer rows managed</h3>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.priceFreshness)}</div>
+            </section>
+          </div>
+          <aside class="premiumDashboardColumn">
+            <section class="premiumDashboardCard premiumDashboardCard--warning">
+              <span class="eyebrow">Basic alerts</span>
+              <h3>Needs attention</h3>
+              <div class="premiumAlertList">${premiumAlertList(mock.alerts)}</div>
+            </section>
+            ${premiumFeatureGate("free", "app_value_overview", "", premiumLockedCard("App Value Overview", "See redemptions, tracked savings, average spend and app-influenced value.", "plus"))}
+            ${premiumFeatureGate("free", "demand_signals", "", premiumLockedCard("Demand Signals", "See the beers, suburbs and searches creating interest near your venue.", "plus"))}
+          </aside>
+        </div>
+        <section class="premiumUpgradeBanner">
+          <div>
+            <strong>Upgrade to Plus to understand searches, special views and redemption value.</strong>
+            <p>Free stays useful for beer and happy-hour basics. Plus turns the venue portal into a cleaner business tool.</p>
+          </div>
+          <button class="button button--premium" type="button" data-upgrade-tier="plus">Unlock Plus Insights</button>
+        </section>
+      `;
+    }
+
+    function renderPlusVenueDashboard(mock) {
+      return `
+        <div class="premiumDashboardMain">
+          <div class="premiumDashboardColumn premiumDashboardColumn--main">
+            <section class="premiumDashboardCard premiumDashboardCard--revenue">
+              <span class="eyebrow">App value overview</span>
+              <h3>${formatCurrency(mock.appValueWeek)} app-influenced value</h3>
+              <p class="muted">Estimated from Pint Path special redemptions and average spend signals. Average spend is ${formatOptionalCurrency(mock.averageSpend).toLowerCase()}.</p>
+              <div class="premiumProgressList">${premiumProgressRows(mock.appValueBars, formatCurrency)}</div>
+            </section>
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Demand signals</span>
+              <h3>What people are looking for nearby</h3>
+              <div class="premiumList">${premiumSignalList(mock.beerDemand)}</div>
+            </section>
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Specials performance</span>
+              <h3>${formatCount(mock.redemptionsWeek)} redemptions this week</h3>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.marketing)}</div>
+            </section>
+          </div>
+          <aside class="premiumDashboardColumn">
+            ${premiumActionCentre(mock.plusActions)}
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Customer interest</span>
+              <h3>Aggregate intent only</h3>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.customerInterest)}</div>
+            </section>
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Marketing performance</span>
+              <h3>${formatCount(mock.specialViewsToday)} special views today</h3>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.marketing)}</div>
+            </section>
+            ${premiumFeatureGate("plus", "growth_recommendations", "", premiumLockedCard("Growth Recommendations", "Turn search demand, stale prices and specials performance into clear next actions.", "pro"))}
+            ${premiumFeatureGate("plus", "lost_opportunity_risk", "", premiumLockedCard("Lost Opportunity Risk", "Spot stale prices, missing beer demand and low-redemption specials before users bounce.", "pro"))}
+          </aside>
+        </div>
+        <section class="premiumUpgradeBanner premiumUpgradeBanner--pro">
+          <div>
+            <strong>Upgrade to Pro for priority visibility, stronger recommendations and premium reports.</strong>
+            <p>Pro is built for venues that want Pint Path demand signals turned into practical actions.</p>
+          </div>
+          <button class="button button--premium" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+        </section>
+      `;
+    }
+
+    function renderProVenueDashboard(mock) {
+      return `
+        <div class="premiumDashboardMain premiumDashboardMain--pro">
+          <div class="premiumDashboardColumn premiumDashboardColumn--main">
+            <section class="premiumDashboardCard premiumDashboardCard--live">
+              <div class="premiumCardHeader">
+                <span class="eyebrow">Demand command centre</span>
+                <span class="pill pill--premium">Pro</span>
+              </div>
+              <h3>Today on Pint Path</h3>
+              <div class="premiumRoomGrid">
+                ${mock.demandSignals.map((signal) => `
+                  <div class="premiumRoomTile">
+                    <span>${escapeHtml(signal.label)}</span>
+                    <strong>${escapeHtml(String(signal.value))}</strong>
+                    <small>${escapeHtml(signal.helper)}</small>
+                  </div>
+                `).join("")}
+              </div>
+            </section>
+            <section class="premiumDashboardCard premiumDashboardCard--revenue">
+              <span class="eyebrow">App value overview</span>
+              <h3>${formatCurrency(mock.appValueWeek)} app-influenced this week</h3>
+              <div class="premiumProgressList">${premiumProgressRows(mock.appValueBars, formatCurrency)}</div>
+            </section>
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Price freshness</span>
+              <h3>${formatCount(mock.stalePrices)} rows need a check</h3>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.priceFreshness)}</div>
+            </section>
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Premium reports</span>
+              <h3>Owner-ready intelligence</h3>
+              <div class="premiumReportGrid">${mock.reports.map((report) => `<button class="button button--small" type="button">${escapeHtml(report)}</button>`).join("")}</div>
+            </section>
+            <div class="premiumDashboardBottom premiumDashboardBottom--inline">
+              <section class="premiumDashboardCard">
+                <span class="eyebrow">Customer interest</span>
+                <h3>Aggregate and privacy-safe</h3>
+                <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.customerInterest)}</div>
+              </section>
+              <section class="premiumDashboardCard">
+                <span class="eyebrow">Marketing Performance</span>
+                <h3>${formatCount(mock.redemptionsWeek)} redemptions this week</h3>
+                <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.marketing)}</div>
+              </section>
+              ${premiumActionCentre(mock.plusActions)}
+            </div>
+          </div>
+          <aside class="premiumDashboardColumn">
+            <section class="premiumDashboardCard premiumDashboardCard--ai">
+              <span class="eyebrow">Growth recommendations</span>
+              <h3>Highest-value moves</h3>
+              <p class="muted">Updates whenever this dashboard reloads from current Pint Path signals.</p>
+              <div class="premiumActionList">${mock.aiRecommendations.map((item, index) => `
+                <button class="premiumActionItem" type="button"><span>${index + 1}</span><strong>${escapeHtml(item)}</strong></button>
+              `).join("")}</div>
+            </section>
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Demand signals</span>
+              <h3>Top nearby beer intent</h3>
+              <div class="premiumList">${premiumSignalList(mock.beerDemand)}</div>
+            </section>
+            <section class="premiumDashboardCard premiumDashboardCard--warning">
+              <span class="eyebrow">Lost opportunity risk</span>
+              <h3>Fix what hides you from users</h3>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.risks)}</div>
+            </section>
+            <section class="premiumDashboardCard">
+              <span class="eyebrow">Specials strategy</span>
+              <h3>${formatCount(mock.activeSpecials)} active Pint Path specials</h3>
+              <div class="premiumCampaignList">${mock.specialsStrategy.map((special) => `
+                <div class="premiumCampaignRow">
+                  <div>
+                    <strong>${escapeHtml(special.title)}</strong>
+                    <small>${formatCount(special.audience)} views · ${formatCount(special.redemptions)} redemptions · ${escapeHtml(special.value)}</small>
+                  </div>
+                  <button class="button button--small button--primary" type="button" data-jump-tab="specials">Tune special</button>
+                </div>
+              `).join("")}</div>
+            </section>
+          </aside>
+        </div>
+      `;
+    }
+
+    function renderPremiumVenueDashboard(data) {
+      const container = document.getElementById("premiumVenueDashboard");
+      if (!container) return;
+      const profile = data.profile || {};
+      const actualPlan = normalizeDashboardPlan(profile.membershipTier);
+      const plan = normalizeDashboardPlan(dashboardPreviewPlan || actualPlan);
+      const beers = data.inventory?.beers || [];
+      const happyHours = data.inventory?.happyHours || [];
+      const specials = data.inventory?.specials || [];
+      const analytics = data.analytics || {};
+      const discounts = data.discounts || {};
+      const demandDashboard = data.demandDashboard || data.businessToolkit?.demandDashboard || null;
+      const demandToday = demandDashboard?.periods?.today || {};
+      const demandMonth = demandDashboard?.periods?.month || {};
+      const activeSpecials = specials.filter((special) => special.active !== false).length;
+      const activeHappyHours = happyHours.filter((item) => item.active !== false).length;
+      const onTapRows = beers.filter((beer) => beer.onTap).length;
+      const pricedRows = beers.filter((beer) => beer.price != null).length;
+      const pendingReviews = data.pendingChanges?.length || 0;
+      const discountRedemptions = Number(discounts.totalRedemptions || 0);
+      const discountSavings = Number(discounts.estimatedSavingsDollars || 0);
+      const qualityScore = data.insights?.listingQuality?.score;
+      const realMapViews = Number(demandToday.venueOpens || analytics.profileViews || analytics.markerClicks || 0);
+      const realSearches = Number(demandToday.venueSearches || demandToday.venueSearchQueries || analytics.barLookups || 0);
+      const realBeerIntent = Number(demandToday.beerIntent || analytics.beerListViews || 0);
+      const realSpecialViews = Number(demandToday.specialsIntent || analytics.specialsViews || 0);
+      const realPriceReveals = Number(analytics.beerListViews || demandToday.beerIntent || 0);
+      const topBeerRows = (analytics.areaBeerSearches || demandMonth.areaBeerSearches || [])
+        .slice(0, 4)
+        .map((row) => ({ label: row.key || row.label || "Beer search", value: Number(row.count || 0), helper: "nearby searches" }));
+      const alerts = [
+        beers.length < 3 ? "Add at least 3 beer rows so users can compare you properly." : "",
+        pricedRows < beers.length ? `${formatCount(Math.max(0, beers.length - pricedRows))} beer rows need a current price.` : "",
+        pendingReviews ? `${formatCount(pendingReviews)} changes are waiting for Pint Path admin review.` : "",
+        activeSpecials ? "" : "Add one simple Pint Path special to give users a reason to choose you tonight.",
+      ].filter(Boolean);
+      const mock = {
+        ...PREMIUM_VENUE_MOCK,
+        venueName: profile.name || "Monarch Rooftop",
+        location: profile.suburb || profile.area || "Melbourne",
+        type: `${prettyTier(plan)} Pint Path venue`,
+        venueSearchesToday: realSearches,
+        mapViewsToday: realMapViews,
+        profileViewsToday: Number(analytics.profileViews || realMapViews || 0),
+        beerIntentToday: realBeerIntent,
+        priceRevealsToday: realPriceReveals,
+        specialViewsToday: realSpecialViews,
+        redemptionsToday: discountRedemptions,
+        redemptionsWeek: discountRedemptions,
+        trackedSavingsToday: discountSavings,
+        trackedSavingsWeek: discountSavings,
+        appValueToday: discountSavings,
+        appValueWeek: discountSavings,
+        appValueMonth: discountSavings,
+        appValueBars: [
+          { label: "Today", value: discountSavings, percent: discountSavings ? 48 : 0 },
+          { label: "This week", value: discountSavings, percent: discountSavings ? 68 : 0 },
+          { label: "This month", value: discountSavings, percent: discountSavings ? 82 : 0 },
+        ],
+        averageSpend: Number(discounts.averageSpendDollars || 0),
+        pendingReviews,
+        activeSpecials,
+        happyHours: activeHappyHours,
+        beerRows: beers.length,
+        onTapRows,
+        pricedRows,
+        stalePrices: Math.max(0, beers.length - pricedRows),
+        listingQuality: typeof qualityScore === "number" ? qualityScore : PREMIUM_VENUE_MOCK.listingQuality,
+        alerts: alerts.length ? alerts : ["No critical data issues right now. Keep prices fresh before peak trading."],
+        demandSignals: [
+          { label: "Exact venue searches", value: realSearches, helper: "Today" },
+          { label: "Map/detail opens", value: realMapViews, helper: "Today" },
+          { label: "Beer intent", value: realBeerIntent, helper: "Beer list views + price reveals" },
+          { label: "Specials intent", value: realSpecialViews, helper: "Special views today" },
+        ],
+        beerDemand: topBeerRows.length ? topBeerRows : PREMIUM_VENUE_MOCK.beerDemand,
+        customerInterest: [
+          { label: "Map/detail opens", value: realMapViews, tone: "info" },
+          { label: "Venue searches", value: realSearches, tone: "success" },
+          { label: "Beer intent", value: realBeerIntent, tone: "premium" },
+          { label: "Special views", value: realSpecialViews, tone: "warning" },
+        ],
+        marketing: [
+          { label: "Special views", value: realSpecialViews },
+          { label: "Redemptions", value: discountRedemptions },
+          { label: "Tracked savings", value: formatCurrency(discountSavings) },
+          { label: "Active specials", value: activeSpecials },
+        ],
+        priceFreshness: [
+          { label: "Fresh", value: pricedRows, helper: "priced rows" },
+          { label: "Needs check", value: Math.max(0, beers.length - pricedRows), helper: "missing prices" },
+          { label: "On tap", value: onTapRows, helper: "current tap rows" },
+          { label: "Happy hours", value: activeHappyHours, helper: "active offers" },
+        ],
+        risks: [
+          { label: "Missing prices", value: Math.max(0, beers.length - pricedRows), helper: "Users cannot compare these rows" },
+          { label: "Pending reviews", value: pendingReviews, helper: "Waiting on Pint Path admin" },
+          { label: "No special live", value: activeSpecials ? "No" : "Yes", helper: activeSpecials ? "Specials are visible" : "Add one clear app-only offer" },
+          { label: "Low beer coverage", value: beers.length < 3 ? "Yes" : "No", helper: `${formatCount(beers.length)} rows managed` },
+        ],
+        aiRecommendations: buildGrowthRecommendations({
+          topBeerRows: topBeerRows.length ? topBeerRows : PREMIUM_VENUE_MOCK.beerDemand,
+          stalePrices: Math.max(0, beers.length - pricedRows),
+          activeSpecials,
+          pendingReviews,
+          specialViews: realSpecialViews,
+          redemptions: discountRedemptions,
+          beerIntent: realBeerIntent,
+          beerRows: beers.length,
+        }),
+      };
+      const today = new Intl.DateTimeFormat("en-AU", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      }).format(new Date());
+      const upgradePlan = plan === "free" ? "plus" : plan === "plus" ? "pro" : null;
+      const kpisByPlan = {
+        free: [
+          { label: "Map/detail opens", value: formatCount(mock.mapViewsToday), helper: "Today", tone: "info" },
+          { label: "Venue searches", value: formatCount(mock.venueSearchesToday), helper: "Exact + nearby", tone: "success" },
+          { label: "Beer rows", value: formatCount(mock.beerRows), helper: `${formatCount(mock.pricedRows)} priced`, tone: "neutral" },
+          { label: "Pending review", value: formatCount(mock.pendingReviews), helper: "Waiting on admin", tone: mock.pendingReviews ? "warning" : "success" },
+        ],
+        plus: [
+          { label: "App value today", value: formatCurrency(mock.appValueToday), helper: "Tracked specials", tone: "premium" },
+          { label: "Tracked savings", value: formatCurrency(mock.trackedSavingsWeek), helper: "From redemptions", tone: "success" },
+          { label: "Special views", value: formatCount(mock.specialViewsToday), helper: "Today", tone: "info" },
+          { label: "Redemptions", value: formatCount(mock.redemptionsWeek), helper: "Logged by staff", tone: "warning" },
+          { label: "Avg spend", value: formatOptionalCurrency(mock.averageSpend), helper: "When recorded", tone: "neutral" },
+          { label: "Pending review", value: formatCount(mock.pendingReviews), helper: "Waiting on admin", tone: mock.pendingReviews ? "warning" : "success" },
+        ],
+        pro: [
+          { label: "Demand score", value: `${formatCount(mock.opportunityScore)}%`, helper: "Search + data strength", tone: "premium" },
+          { label: "Map/detail opens", value: formatCount(mock.mapViewsToday), helper: "Today", tone: "success" },
+          { label: "Avg spend", value: formatOptionalCurrency(mock.averageSpend), helper: "When recorded", tone: "neutral" },
+          { label: "Redemptions", value: formatCount(mock.redemptionsWeek), helper: "Logged by staff", tone: "info" },
+          { label: "Price freshness", value: `${formatCount(mock.pricedRows)}/${formatCount(Math.max(mock.beerRows, 1))}`, helper: "Rows priced", tone: mock.stalePrices ? "warning" : "success" },
+          { label: "Specials", value: formatCount(mock.activeSpecials), helper: "Active Pint Path offers", tone: "premium" },
+        ],
+      };
+
+      container.className = `premiumVenueDashboard premiumVenueDashboard--${plan}`;
+      container.innerHTML = `
+        <header class="premiumDashboardHeader">
+          <div>
+            <div class="eyebrow">Venue command centre</div>
+            <h2>${escapeHtml(mock.venueName)}</h2>
+            <p>${escapeHtml(today)} · ${escapeHtml(mock.type)} · ${escapeHtml(mock.location)}</p>
+          </div>
+          <div class="premiumDashboardHeader__tools">
+            <div class="premiumPlanSwitcher" role="group" aria-label="Preview venue dashboard plan">
+              ${VENUE_DASHBOARD_PLANS.map((item) => `
+                <button class="${item === plan ? "is-active" : ""}" type="button" data-dashboard-plan="${escapeHtml(item)}">${escapeHtml(prettyTier(item))}</button>
+              `).join("")}
+            </div>
+            <span class="premiumPlanBadge premiumPlanBadge--${escapeHtml(plan)}">${escapeHtml(prettyTier(plan))}</span>
+            ${upgradePlan ? `<button class="button button--premium" type="button" data-upgrade-tier="${escapeHtml(upgradePlan)}">Upgrade to ${escapeHtml(prettyTier(upgradePlan))}</button>` : ""}
+            <button class="button" type="button" data-jump-tab="specials">Manage specials</button>
+            <button class="button" type="button" data-jump-tab="price-refresh">Keep prices fresh</button>
+          </div>
+        </header>
+        <div class="premiumKpiGrid">
+          ${kpisByPlan[plan].map(premiumKpiCard).join("")}
+        </div>
+        ${plan === "pro" ? renderProVenueDashboard(mock) : plan === "plus" ? renderPlusVenueDashboard(mock) : renderFreeVenueDashboard(mock)}
+      `;
     }
 
     function renderOverviewData(data) {
@@ -1369,10 +1967,23 @@
       return 0;
     }
 
+    function syncDiscountSavingsButtons() {
+      const form = document.getElementById("discountRedemptionForm");
+      if (!form) return;
+      const selectedValue = String(Number(field(form, "estimatedSavingsDollars").value || 0));
+      document.querySelectorAll(".discountQuickPanel [data-savings-dollars]").forEach((button) => {
+        const buttonValue = String(Number(button.dataset.savingsDollars || 0));
+        const isSelected = buttonValue === selectedValue;
+        button.classList.toggle("button--primary", isSelected);
+        button.setAttribute("aria-pressed", isSelected ? "true" : "false");
+      });
+    }
+
     function syncSelectedDiscountSpecial() {
       const panel = document.getElementById("selectedDiscountSpecial");
       const form = document.getElementById("discountRedemptionForm");
       if (!panel || !form) return;
+      syncDiscountSavingsButtons();
       const specialId = field(form, "specialId").value;
       if (!specialId) {
         panel.hidden = true;
@@ -1382,16 +1993,79 @@
 
       const special = (currentPortal?.inventory?.specials || []).find((item) => item.id === specialId);
       const title = special?.title || field(form, "itemName").value || "Pint Path special";
-      const savings = Number(field(form, "estimatedSavingsDollars").value || 0);
-      const savingsCopy = savings > 0
-        ? `${formatCurrency(savings)} estimated saving`
-        : "Fixed-price special selected. Enter actual savings if you want it tracked.";
       panel.hidden = false;
       panel.innerHTML = `
         <strong>Selected special</strong>
         <span>${escapeHtml(title)}</span>
-        <small>${escapeHtml(savingsCopy)}</small>
       `;
+    }
+
+    function syncRedemptionItemSelection() {
+      const form = document.getElementById("discountRedemptionForm");
+      if (!form) return;
+      const select = field(form, "itemName");
+      const selectedOption = select.selectedOptions?.[0] || null;
+      const specialId = selectedOption?.dataset?.discountSpecialId || "";
+      field(form, "specialId").value = specialId;
+      if (selectedOption?.dataset?.savingsDollars != null) {
+        field(form, "estimatedSavingsDollars").value = selectedOption.dataset.savingsDollars || "0";
+      }
+      syncSelectedDiscountSpecial();
+    }
+
+    function redemptionBeerLabel(beer) {
+      return [
+        beer.beerName,
+        beer.serveSize,
+        beer.price != null ? money(beer.price) : "",
+        beer.onTap ? "on tap" : "",
+      ].filter(Boolean).join(" · ");
+    }
+
+    function renderRedemptionItemOptions(data) {
+      const form = document.getElementById("discountRedemptionForm");
+      if (!form) return;
+      const select = field(form, "itemName");
+      const previousValue = select.value;
+      const specials = (data.inventory?.specials || [])
+        .filter((special) => special.active !== false && special.title)
+        .sort((a, b) => String(a.title || "").localeCompare(String(b.title || "")));
+      const beers = (data.inventory?.beers || [])
+        .filter((beer) => beer.inStock !== false && beer.beerName)
+        .sort((a, b) => String(a.beerName || "").localeCompare(String(b.beerName || "")));
+
+      const specialOptions = specials.map((special) => {
+        const savings = inferSpecialSavingsDollars(special);
+        const label = [
+          special.title,
+          special.price != null ? money(special.price) : special.discount,
+        ].filter(Boolean).join(" · ");
+        return `
+          <option
+            value="${escapeHtml(special.title || "Pint Path special")}"
+            data-discount-special-id="${escapeHtml(special.id)}"
+            data-savings-dollars="${escapeHtml(savings)}"
+          >${escapeHtml(label)}</option>
+        `;
+      }).join("");
+
+      const beerOptions = beers.map((beer) => {
+        const label = redemptionBeerLabel(beer);
+        return `<option value="${escapeHtml(label)}">${escapeHtml(label)}</option>`;
+      }).join("");
+
+      select.innerHTML = `
+        <option value="">Choose a current drink or special</option>
+        ${specialOptions ? `<optgroup label="Pint Path specials">${specialOptions}</optgroup>` : ""}
+        ${beerOptions ? `<optgroup label="Beers / stock">${beerOptions}</optgroup>` : ""}
+      `;
+
+      if (previousValue && Array.from(select.options).some((option) => option.value === previousValue)) {
+        select.value = previousValue;
+      } else {
+        select.value = "";
+      }
+      syncRedemptionItemSelection();
     }
 
     function renderDiscountSpecialChoices(data) {
@@ -1846,11 +2520,17 @@
       renderTimeSuggestions();
       const discountRedemptionFormElement = document.getElementById("discountRedemptionForm");
       const discountRedemptionStatus = document.getElementById("discountRedemptionStatus");
+      const freePintRewardForm = document.getElementById("freePintRewardForm");
+      const freePintRewardStatus = document.getElementById("freePintRewardStatus");
       const urlParams = new URLSearchParams(window.location.search);
       const discountCodeFromQr = urlParams.get("discountCode");
+      const freePintCodeFromQr = urlParams.get("freePintCode");
       const requestedTab = urlParams.get("tab");
       if (discountCodeFromQr && discountRedemptionFormElement) {
         field(discountRedemptionFormElement, "code").value = discountCodeFromQr.toUpperCase();
+      }
+      if (freePintCodeFromQr && freePintRewardForm instanceof HTMLFormElement) {
+        field(freePintRewardForm, "code").value = freePintCodeFromQr.toUpperCase();
       }
       field(beerForm, "beerName").addEventListener("change", updateBeerCatalogueState);
       field(beerForm, "beerName").addEventListener("input", () => {
@@ -2060,19 +2740,51 @@
               method: "POST",
               body: JSON.stringify(body),
             });
+            const pointsCopy = Number(result.pointsEarned || 0) > 0
+              ? ` ${formatCount(result.pointsEarned)} Pint Point${Number(result.pointsEarned) === 1 ? "" : "s"} added automatically.`
+              : "";
             MelbBeerBusiness.setStatus(
               discountRedemptionStatus,
-              `Redeemed for account ${result.accountId}. Estimated savings ${formatCurrency(result.estimatedSavingsDollars)}.`,
+              `Redeemed for account ${result.accountId}.${pointsCopy}`,
             );
             discountRedemptionFormElement.reset();
-            syncSelectedDiscountSpecial();
+            syncRedemptionItemSelection();
             await loadPortal(venueId);
           } catch (error) {
             MelbBeerBusiness.setStatus(discountRedemptionStatus, error.message || "Could not redeem discount.", true);
           }
         });
-        ["itemName", "estimatedSavingsDollars"].forEach((fieldName) => {
-          field(discountRedemptionFormElement, fieldName).addEventListener("input", syncSelectedDiscountSpecial);
+        field(discountRedemptionFormElement, "itemName").addEventListener("change", syncRedemptionItemSelection);
+        field(discountRedemptionFormElement, "estimatedSavingsDollars").addEventListener("input", syncSelectedDiscountSpecial);
+      }
+
+      if (freePintRewardForm instanceof HTMLFormElement) {
+        freePintRewardForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const venueId = selectedVenueId();
+          if (!venueId) return;
+          const action = event.submitter?.dataset?.freePintAction === "reject" ? "reject" : "confirm";
+          const body = {
+            code: field(freePintRewardForm, "code").value,
+            action,
+            reason: field(freePintRewardForm, "reason").value || null,
+          };
+          try {
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/free-pint-rewards`, {
+              method: "POST",
+              body: JSON.stringify(body),
+            });
+            MelbBeerBusiness.setStatus(
+              freePintRewardStatus,
+              action === "reject"
+                ? result.copy || "Free Pint Reward rejected and points released."
+                : `${result.reward || "Free Pint Reward"} confirmed for ${result.accountId}. ${result.instruction || ""}`.trim(),
+            );
+            freePintRewardForm.reset();
+            await loadPortal(venueId);
+          } catch (error) {
+            MelbBeerBusiness.setStatus(freePintRewardStatus, error.message || "Could not process Free Pint Reward.", true);
+          }
         });
       }
 
@@ -2112,6 +2824,12 @@
         if (target.dataset.demandPeriod) {
           currentDemandPeriod = target.dataset.demandPeriod;
           renderVenueDemandPanel(currentPortal);
+          return;
+        }
+
+        if (target.dataset.dashboardPlan) {
+          dashboardPreviewPlan = normalizeDashboardPlan(target.dataset.dashboardPlan);
+          renderPremiumVenueDashboard(currentPortal);
           return;
         }
 

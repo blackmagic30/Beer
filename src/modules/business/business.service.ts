@@ -80,9 +80,12 @@ import type {
   LeaderboardPrizeCampaignInput,
   LeaderboardPrizeFinalizeInput,
   LeaderboardQuery,
+  FreePintRewardCodeInput,
+  FreePintRewardDecisionInput,
   MonthlyReportDeliveryInput,
   MonthlyReportExportQuery,
   MonthlyReportGenerateInput,
+  PintPointDrinkRecordInput,
   PosDiscountRedemptionInput,
   PriceRecordsQuery,
   PubGolfPlanInput,
@@ -478,6 +481,8 @@ function hashToken(token: string): string {
 }
 
 const DISCOUNT_PASS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const FREE_PINT_REWARD_POINTS = 50;
+const FREE_PINT_REWARD_CODE_MINUTES = 10;
 
 function generateDiscountCode(): string {
   return Array.from({ length: 6 }, () =>
@@ -3034,6 +3039,31 @@ export class BusinessService {
       })),
     });
 
+    const pintPointRecord = this.repository.createPintPointDrinkRecord({
+      id: crypto.randomUUID(),
+      userId: user.id,
+      venueId: input.venueId,
+      venueName: input.venueName,
+      suburb: input.suburb,
+      itemName: input.itemName,
+      beverageCategory: "alcoholic",
+      quantity: input.quantity,
+      isAlcoholic: true,
+      source: input.source,
+      recordedByUserId: input.actor?.id ?? null,
+      recordedAt: now,
+      metadata: sanitizeEventMetadata(redactSecrets({
+        discountRedemptionId: redemption.id,
+        discountPassId: pass.id,
+        specialId: input.specialId,
+        source: input.source,
+        redeemedByRole: input.redeemedByRole,
+        posReference: input.posReference,
+        terminalId: input.terminalId,
+      })),
+    });
+    const pointsEarned = input.quantity;
+
     this.repository.markDiscountPassUsed({ id: pass.id, lastUsedAt: now });
     this.recordUserActivity({
       account: user,
@@ -3049,6 +3079,21 @@ export class BusinessService {
         source: input.source,
       },
     });
+    this.recordUserActivity({
+      account: user,
+      eventType: "pint_point_drink_recorded",
+      relatedEntityType: "venue",
+      relatedEntityId: input.venueId,
+      metadata: {
+        venueName: input.venueName,
+        suburb: input.suburb,
+        itemName: input.itemName,
+        quantity: input.quantity,
+        pointsEarned,
+        source: input.source,
+        discountRedemptionId: redemption.id,
+      },
+    });
     this.auditSecurity({
       actor: input.actor,
       action: "discount_redeemed",
@@ -3059,6 +3104,8 @@ export class BusinessService {
         itemName: input.itemName,
         quantity: input.quantity,
         estimatedSavingsCents: input.estimatedSavingsCents,
+        pointsEarned,
+        pintPointDrinkRecordId: pintPointRecord.id,
         source: input.source,
         posReference: input.posReference,
       },
@@ -3072,7 +3119,8 @@ export class BusinessService {
       venueName: input.venueName,
       suburb: input.suburb,
       estimatedSavingsDollars: Number((redemption.estimatedSavingsCents / 100).toFixed(2)),
-      copy: "Discount redemption logged. Pint Path uses these explicit redemptions to show users their savings and provide aggregate venue insights.",
+      pointsEarned,
+      copy: "Redemption logged and Pint Points added automatically.",
     };
   }
 
@@ -3186,6 +3234,347 @@ export class BusinessService {
     });
   }
 
+  private expirePintPointRewardCodesForAccount(accountId: string, now = nowIso()) {
+    this.repository.expireFreePintRewardCodesForUser({ userId: accountId, now });
+  }
+
+  private getPintPointWalletForAccount(account: BusinessAccount, now = nowIso()) {
+    this.expirePintPointRewardCodesForAccount(account.id, now);
+    const balance = this.repository.getPintPointBalance(account.id);
+    const rewardProgress = Math.min(FREE_PINT_REWARD_POINTS, balance.available);
+    const activeCodes = this.repository
+      .listFreePintRewardCodesForUser(account.id, 10)
+      .filter((code) => code.status === "active" && code.expiresAt > now);
+    const recentDrinkRecords = this.repository.listPintPointDrinkRecordsForUser(account.id, 10);
+    const recentLedger = this.repository.listPintPointLedgerForUser(account.id, 20);
+    const rewardRedemptions = this.repository.listFreePintRewardRedemptionsForUser(account.id, 10);
+
+    return {
+      balance: balance.balance,
+      reserved: balance.reserved,
+      available: balance.available,
+      lifetimeEarned: balance.lifetimeEarned,
+      lifetimeRedeemed: balance.lifetimeRedeemed,
+      threshold: FREE_PINT_REWARD_POINTS,
+      progress: rewardProgress,
+      pointsUntilReward: Math.max(0, FREE_PINT_REWARD_POINTS - balance.available),
+      rewardAvailable: balance.available >= FREE_PINT_REWARD_POINTS,
+      activeCodes: activeCodes.map((code) => ({
+        id: code.id,
+        status: code.status,
+        expiresAt: code.expiresAt,
+        pointsReserved: code.pointsReserved,
+      })),
+      recentDrinkRecords,
+      recentLedger,
+      rewardRedemptions,
+      copy: {
+        earnRule: "Earn 1 Pint Point for each alcoholic beverage recorded at a venue.",
+        rewardRule: "50 Pint Points unlocks 1 Free Pint Reward at affiliated bars.",
+        freePintRule: "Free Pint Reward redemptions do not earn Pint Points.",
+      },
+    };
+  }
+
+  private resolvePintPointUser(input: { code?: string | undefined; accountId?: string | null | undefined; now: string }) {
+    if (input.code) {
+      const pass = this.repository.getActiveDiscountPassByCodeHash({
+        codeHash: hashDiscountCode(input.code),
+        now: input.now,
+      });
+      if (!pass) {
+        throw new AppError("Pint Path code expired or not found. Ask the user to refresh their code.", 404);
+      }
+      const user = this.repository.getAccountById(pass.userId);
+      if (!user) {
+        throw new AppError("Pint Path account not found.", 404);
+      }
+      return user;
+    }
+
+    if (input.accountId) {
+      const user = this.repository.getAccountByPublicAccountId(input.accountId);
+      if (!user) {
+        throw new AppError("Pint Path account ID not found.", 404);
+      }
+      return user;
+    }
+
+    throw new AppError("Enter a Pint Path code or public account ID.", 400);
+  }
+
+  async createFreePintRewardCode(account: BusinessAccount, input: FreePintRewardCodeInput) {
+    if (account.status !== "active") {
+      throw new AppError("Suspended accounts cannot create Free Pint Reward codes.", 403);
+    }
+
+    const now = nowIso();
+    const wallet = this.getPintPointWalletForAccount(account, now);
+    if (wallet.available < FREE_PINT_REWARD_POINTS) {
+      throw new AppError(`${FREE_PINT_REWARD_POINTS} Pint Points are required for a Free Pint Reward.`, 403);
+    }
+
+    let code = "";
+    let rewardCodeId = "";
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        code = generateDiscountCode();
+        rewardCodeId = crypto.randomUUID();
+        this.repository.createFreePintRewardCode({
+          id: rewardCodeId,
+          userId: account.id,
+          publicAccountId: account.publicAccountId,
+          codeHash: hashDiscountCode(code),
+          createdAt: now,
+          expiresAt: addMinutes(now, FREE_PINT_REWARD_CODE_MINUTES),
+          metadata: {
+            requestedVenueId: input.venueId,
+            reward: "free_pint",
+          },
+        });
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError || !code || !rewardCodeId) {
+      throw new AppError("Could not create a Free Pint Reward code right now.", 500);
+    }
+
+    const rewardCode = this.repository.getFreePintRewardCodeById(rewardCodeId);
+    if (!rewardCode) {
+      throw new AppError("Could not create a Free Pint Reward code right now.", 500);
+    }
+
+    const redeemUrl = new URL("/venue-portal.html", this.config.PUBLIC_BASE_URL);
+    redeemUrl.searchParams.set("freePintCode", code);
+    redeemUrl.searchParams.set("accountId", account.publicAccountId);
+    redeemUrl.searchParams.set("tab", "redemption");
+    if (input.venueId) {
+      redeemUrl.searchParams.set("venueId", input.venueId);
+    }
+
+    const qrDataUrl = await QRCode.toDataURL(redeemUrl.toString(), {
+      margin: 1,
+      width: 240,
+    });
+
+    this.recordUserActivity({
+      account,
+      eventType: "free_pint_reward_code_created",
+      relatedEntityType: "free_pint_reward",
+      relatedEntityId: rewardCode.id,
+      metadata: { expiresAt: rewardCode.expiresAt },
+    });
+
+    const updatedWallet = this.getPintPointWalletForAccount(account, now);
+    return {
+      accountId: account.publicAccountId,
+      code,
+      qrDataUrl,
+      redeemUrl: redeemUrl.toString(),
+      expiresAt: rewardCode.expiresAt,
+      validMinutes: FREE_PINT_REWARD_CODE_MINUTES,
+      pointsReserved: FREE_PINT_REWARD_POINTS,
+      wallet: updatedWallet,
+      copy: "Show this one-time Free Pint Reward code to staff at an affiliated Pint Path bar. Venue staff must still complete age, ID, and responsible service checks.",
+    };
+  }
+
+  recordPintPointDrink(account: BusinessAccount, venueId: string, input: PintPointDrinkRecordInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const venue = this.getDiscountVenueIdentity(venueId, assignment);
+    const now = nowIso();
+    const user = this.resolvePintPointUser({
+      code: input.code,
+      accountId: input.accountId,
+      now,
+    });
+
+    if (user.status !== "active") {
+      throw new AppError("This Pint Path account cannot receive Pint Points right now.", 403);
+    }
+
+    const isAlcoholic = input.isAlcoholic ?? input.beverageCategory === "alcoholic";
+    const record = this.repository.createPintPointDrinkRecord({
+      id: crypto.randomUUID(),
+      userId: user.id,
+      venueId,
+      venueName: venue.venueName,
+      suburb: venue.suburb,
+      itemName: input.itemName,
+      beverageCategory: input.beverageCategory,
+      quantity: input.quantity,
+      isAlcoholic,
+      source: "venue_portal",
+      recordedByUserId: account.id,
+      recordedAt: now,
+      metadata: {
+        notes: input.notes,
+        enteredByRole: account.role,
+      },
+    });
+
+    const wallet = this.getPintPointWalletForAccount(user, now);
+    const pointsEarned = isAlcoholic ? input.quantity : 0;
+    this.recordUserActivity({
+      account: user,
+      eventType: "pint_point_drink_recorded",
+      relatedEntityType: "venue",
+      relatedEntityId: venueId,
+      metadata: {
+        venueName: venue.venueName,
+        suburb: venue.suburb,
+        itemName: input.itemName,
+        quantity: input.quantity,
+        pointsEarned,
+      },
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "pint_point_drink_recorded",
+      targetType: "venue",
+      targetId: venueId,
+      metadata: {
+        publicAccountId: user.publicAccountId,
+        quantity: input.quantity,
+        pointsEarned,
+        beverageCategory: input.beverageCategory,
+      },
+    });
+
+    return {
+      record,
+      accountId: user.publicAccountId,
+      pointsEarned,
+      wallet,
+      copy: pointsEarned > 0
+        ? `Nice — you earned ${pointsEarned} Pint Point${pointsEarned === 1 ? "" : "s"}.`
+        : "Recorded. Food and non-alcoholic drinks do not earn Pint Points.",
+      progressCopy: `You now have ${wallet.available} / ${FREE_PINT_REWARD_POINTS} Pint Points.`,
+      rewardCopy: wallet.pointsUntilReward === 0
+        ? "You have enough Pint Points for a Free Pint Reward."
+        : `${wallet.pointsUntilReward} Pint Point${wallet.pointsUntilReward === 1 ? "" : "s"} until your Free Pint Reward.`,
+    };
+  }
+
+  handleFreePintRewardCode(account: BusinessAccount, venueId: string, input: FreePintRewardDecisionInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const venue = this.getDiscountVenueIdentity(venueId, assignment);
+    const profile = this.repository.getBarProfile(venueId);
+    const tier = profile?.membershipTier ?? "basic";
+    const capabilities = getBarTierCapabilities(tier, this.isAdmin(account));
+
+    if (!capabilities.canManageSpecials) {
+      throw new AppError("Free Pint Rewards can only be redeemed at affiliated Plus or Pro Pint Path venues.", 403);
+    }
+
+    const now = nowIso();
+    const codeHash = hashDiscountCode(input.code);
+    const code = this.repository.getFreePintRewardCodeByCodeHash(codeHash);
+    if (!code) {
+      throw new AppError("Free Pint Reward code not found.", 404);
+    }
+
+    if (code.status === "active" && code.expiresAt <= now) {
+      this.repository.expireFreePintRewardCodesForUser({ userId: code.userId, now });
+      throw new AppError("Free Pint Reward code has expired. Ask the user to generate a new one.", 410);
+    }
+
+    if (code.status !== "active") {
+      throw new AppError(`Free Pint Reward code is already ${code.status}.`, 409);
+    }
+
+    const user = this.repository.getAccountById(code.userId);
+    if (!user || user.status !== "active") {
+      throw new AppError("This Pint Path account cannot redeem rewards right now.", 403);
+    }
+
+    const wallet = this.repository.getPintPointBalance(user.id);
+    if (wallet.balance < FREE_PINT_REWARD_POINTS || wallet.reserved < FREE_PINT_REWARD_POINTS) {
+      throw new AppError("This Free Pint Reward no longer has enough reserved Pint Points.", 409);
+    }
+
+    if (input.action === "reject") {
+      const rejected = this.repository.rejectFreePintRewardCode({
+        codeId: code.id,
+        venueId,
+        actorUserId: account.id,
+        reason: input.reason,
+        now,
+        metadata: {
+          venueName: venue.venueName,
+          suburb: venue.suburb,
+        },
+      });
+      return {
+        status: "rejected",
+        code: rejected,
+        accountId: user.publicAccountId,
+        venueId,
+        venueName: venue.venueName,
+        wallet: this.getPintPointWalletForAccount(user, now),
+        copy: "Free Pint Reward rejected and reserved Pint Points released.",
+      };
+    }
+
+    const redemption = this.repository.redeemFreePintRewardCode({
+      codeId: code.id,
+      userId: user.id,
+      publicAccountId: user.publicAccountId,
+      venueId,
+      venueName: venue.venueName,
+      suburb: venue.suburb,
+      redeemedByUserId: account.id,
+      redeemedAt: now,
+      metadata: {
+        instruction: "Serve only if age, ID and responsible service checks are satisfied.",
+      },
+    });
+
+    if (!redemption) {
+      throw new AppError("Free Pint Reward could not be redeemed. Refresh and try again.", 409);
+    }
+
+    this.recordUserActivity({
+      account: user,
+      eventType: "free_pint_reward_redeemed",
+      relatedEntityType: "venue",
+      relatedEntityId: venueId,
+      metadata: {
+        venueName: venue.venueName,
+        suburb: venue.suburb,
+        rewardCodeId: code.id,
+      },
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "free_pint_reward_redeemed",
+      targetType: "venue",
+      targetId: venueId,
+      metadata: {
+        publicAccountId: user.publicAccountId,
+        rewardCodeId: code.id,
+      },
+    });
+
+    return {
+      status: "redeemed",
+      redemption,
+      accountId: user.publicAccountId,
+      venueId,
+      venueName: venue.venueName,
+      wallet: this.getPintPointWalletForAccount(user, now),
+      title: "Valid Pint Path Reward",
+      reward: "Free Pint Reward",
+      instruction: "Serve only if age, ID and responsible service checks are satisfied.",
+      copy: "Free Pint Reward redeemed. No Pint Point is earned for this free pint.",
+    };
+  }
+
   private getVenueDiscountSummary(input: {
     venueId: string;
     startIso?: string | null | undefined;
@@ -3291,6 +3680,7 @@ export class BusinessService {
     const discountStats = this.repository.getDiscountRedemptionStats(account.id);
     const recentDiscountRedemptions = this.repository.listDiscountRedemptionsForUser(account.id, 10);
     const rewardVouchers = this.repository.listAccountRewardVouchers(account.id, 10);
+    const pintPointsWallet = this.getPintPointWalletForAccount(account, dashboardNow);
     const hasFullAccess = isFullAccess(account);
 
     return {
@@ -3359,6 +3749,7 @@ export class BusinessService {
         recentRedemptions: recentDiscountRedemptions,
         copy: "Discount redemptions are logged only when you show your rotating code or QR at a venue.",
       },
+      pintPoints: pintPointsWallet,
       rewards: {
         status: rewardVouchers.length ? "active" : "leaderboard_monthly",
         eligiblePlaceholder: canAccessAgeGatedRewards({ account, latestAgeVerification }),
@@ -6186,6 +6577,17 @@ export class BusinessService {
       includeRecent: true,
       recentLimit: 10,
     });
+    const todayRange = getZonedDayRangeIso(new Date(), this.getReportTimezone());
+    const pintPointTodayStats = this.repository.getPintPointStatsForVenue({
+      venueId: selectedVenueId,
+      startIso: todayRange.startIso,
+      endIso: todayRange.endIso,
+    });
+    const pintPointMonthStats = this.repository.getPintPointStatsForVenue({
+      venueId: selectedVenueId,
+      startIso: monthKeyRange(reportMonth, this.getReportTimezone()).startsAt,
+      endIso: monthKeyRange(reportMonth, this.getReportTimezone()).endsAt,
+    });
     const posIntegration = this.getVenuePosIntegration(account, selectedVenueId);
     const monthlyReport = capabilities.monthlyReports
       ? savedMonthlyReport ?? {
@@ -6273,6 +6675,12 @@ export class BusinessService {
       analytics,
       demandDashboard,
       discounts: discountSummary,
+      pintPoints: {
+        today: pintPointTodayStats,
+        month: pintPointMonthStats,
+        rewardThreshold: FREE_PINT_REWARD_POINTS,
+        copy: "Pint Points count only paid alcoholic beverages. Free Pint Rewards do not earn another point.",
+      },
       posIntegration,
       monthlyReport,
       businessToolkit: {

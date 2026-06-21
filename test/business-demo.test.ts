@@ -2625,6 +2625,7 @@ describe("business demo contribution model", () => {
     expect(redemption.accountId).toBe(premiumUser.publicAccountId);
     expect(redemption.venueName).toBe("Discount Venue A");
     expect(redemption.estimatedSavingsDollars).toBe(6);
+    expect(redemption.pointsEarned).toBe(2);
     expect(dashboard.discounts).toEqual(expect.objectContaining({
       totalRedemptions: 1,
       estimatedSavingsCents: 600,
@@ -2635,6 +2636,10 @@ describe("business demo contribution model", () => {
       venueName: "Discount Venue A",
       itemName: "House pint",
       estimatedSavingsCents: 600,
+    }));
+    expect(dashboard.pintPoints).toEqual(expect.objectContaining({
+      balance: 2,
+      available: 2,
     }));
     expect(dashboard.premiumMemberToolkit).toEqual(expect.objectContaining({
       enabled: true,
@@ -2655,6 +2660,162 @@ describe("business demo contribution model", () => {
       "personal_preferences",
       "savings_tracker",
     ]));
+  });
+
+  it("tracks Pint Points, reserves 50 points for one-time Free Pint Rewards, and scopes venue redemption", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "pint-points-admin", "admin");
+    const manager = createAccount(repository, "pint-points-manager");
+    const otherManager = createAccount(repository, "pint-points-other-manager");
+    const user = createAccount(repository, "pint-points-user");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "pint-points-venue",
+      venueName: "Pint Points Venue",
+      suburb: "Fitzroy",
+    });
+    service.assignVenueManager(admin, {
+      userId: otherManager.id,
+      venueId: "pint-points-other-venue",
+      venueName: "Other Pint Points Venue",
+      suburb: "Brunswick",
+    });
+    service.upsertBarProfile(admin, "pint-points-venue", {
+      name: "Pint Points Venue",
+      address: "1 Test St",
+      suburb: "Fitzroy",
+      area: "Fitzroy",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: "Affiliated Plus venue.",
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "plus",
+      active: true,
+    });
+
+    const assignedManager = repository.getAccountById(manager.id)!;
+    const unassignedManager = repository.getAccountById(otherManager.id)!;
+
+    const firstDrink = service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+      accountId: user.publicAccountId,
+      code: undefined,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 2,
+      isAlcoholic: undefined,
+      notes: null,
+    });
+    expect(firstDrink.pointsEarned).toBe(2);
+    expect(firstDrink.wallet.available).toBe(2);
+
+    const zeroPointDrink = service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+      accountId: user.publicAccountId,
+      code: undefined,
+      itemName: "Burger",
+      beverageCategory: "food",
+      quantity: 3,
+      isAlcoholic: undefined,
+      notes: "Food should not earn points.",
+    });
+    expect(zeroPointDrink.pointsEarned).toBe(0);
+    expect(zeroPointDrink.wallet.available).toBe(2);
+
+    for (const quantity of [20, 20, 8]) {
+      service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+        accountId: user.publicAccountId,
+        code: undefined,
+        itemName: "Carlton Draught pint",
+        beverageCategory: "alcoholic",
+        quantity,
+        isAlcoholic: undefined,
+        notes: null,
+      });
+    }
+
+    const dashboardBeforeReward = service.getAccountDashboard(repository.getAccountById(user.id)!);
+    expect(dashboardBeforeReward.pintPoints).toEqual(expect.objectContaining({
+      balance: 50,
+      available: 50,
+      reserved: 0,
+      rewardAvailable: true,
+    }));
+
+    const reward = await service.createFreePintRewardCode(repository.getAccountById(user.id)!, { venueId: "pint-points-venue" });
+    expect(reward.code).toMatch(/^[A-Z0-9]{6}$/);
+    expect(reward.qrDataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(reward.redeemUrl).toContain("freePintCode=");
+    expect(reward.wallet).toEqual(expect.objectContaining({
+      balance: 50,
+      available: 0,
+      reserved: 50,
+      rewardAvailable: false,
+    }));
+
+    expect(() =>
+      service.handleFreePintRewardCode(unassignedManager, "pint-points-venue", {
+        code: reward.code,
+        action: "confirm",
+        reason: null,
+      }),
+    ).toThrow("You can only access assigned venues.");
+
+    const rejected = service.handleFreePintRewardCode(assignedManager, "pint-points-venue", {
+      code: reward.code,
+      action: "reject",
+      reason: "User could not complete venue checks.",
+    });
+    expect(rejected).toEqual(expect.objectContaining({
+      status: "rejected",
+      accountId: user.publicAccountId,
+      venueId: "pint-points-venue",
+    }));
+    expect(rejected.wallet).toEqual(expect.objectContaining({
+      balance: 50,
+      available: 50,
+      reserved: 0,
+      rewardAvailable: true,
+    }));
+
+    const secondReward = await service.createFreePintRewardCode(repository.getAccountById(user.id)!, { venueId: "pint-points-venue" });
+    const redemption = service.handleFreePintRewardCode(assignedManager, "pint-points-venue", {
+      code: secondReward.code,
+      action: "confirm",
+      reason: null,
+    });
+    expect(redemption).toEqual(expect.objectContaining({
+      status: "redeemed",
+      reward: "Free Pint Reward",
+      accountId: user.publicAccountId,
+      venueId: "pint-points-venue",
+      instruction: expect.stringContaining("responsible service"),
+    }));
+    expect(redemption.wallet).toEqual(expect.objectContaining({
+      balance: 0,
+      available: 0,
+      reserved: 0,
+      lifetimeRedeemed: 50,
+    }));
+    expect(() =>
+      service.handleFreePintRewardCode(assignedManager, "pint-points-venue", {
+        code: secondReward.code,
+        action: "confirm",
+        reason: null,
+      }),
+    ).toThrow("already used");
+
+    const portal = service.getVenuePortal(assignedManager, { venueId: "pint-points-venue" });
+    expect(portal.pintPoints.today).toEqual(expect.objectContaining({
+      pointsIssued: 50,
+      drinkRecords: 5,
+      alcoholicDrinks: 50,
+      freeRewardsRedeemed: 1,
+      expiredOrRejectedCodes: 1,
+    }));
+    expect(portal.pintPoints.copy).toContain("Free Pint Rewards do not earn another point");
   });
 
   it("supports Pro venue POS discount webhooks with scoped tokens and privacy-safe venue stats", async () => {
@@ -2737,6 +2898,7 @@ describe("business demo contribution model", () => {
 
     expect(redemption.accountId).toBe(premiumUser.publicAccountId);
     expect(redemption.estimatedSavingsDollars).toBe(2);
+    expect(redemption.pointsEarned).toBe(1);
     expect(redemption.redemption.redeemedByUserId).toBeNull();
     expect(redemption.redemption.metadata).toEqual(expect.objectContaining({
       source: "pos_webhook",

@@ -723,6 +723,31 @@ export const discountRedemptionSchema = z.object({
   notes: nullableTrimmedStringSchema.default(null),
 });
 
+export const pintPointDrinkRecordSchema = z.object({
+  code: z.string().trim()
+    .regex(/^[A-Za-z0-9]{6}$/, "Use the current 6-character Pint Path code.")
+    .transform((value) => value.toUpperCase())
+    .optional(),
+  accountId: nullableTrimmedStringSchema.default(null),
+  itemName: nullableTrimmedStringSchema.default(null),
+  beverageCategory: z.enum(["alcoholic", "non_alcoholic", "food"]).default("alcoholic"),
+  quantity: z.coerce.number().int().min(1).max(20).default(1),
+  isAlcoholic: z.boolean().optional(),
+  notes: nullableTrimmedStringSchema.default(null),
+});
+
+export const freePintRewardCodeSchema = z.object({
+  venueId: nullableTrimmedStringSchema.default(null),
+});
+
+export const freePintRewardDecisionSchema = z.object({
+  code: z.string().trim()
+    .regex(/^[A-Za-z0-9]{6}$/, "Use the current 6-character Free Pint Reward code.")
+    .transform((value) => value.toUpperCase()),
+  action: z.enum(["confirm", "reject"]).default("confirm"),
+  reason: nullableTrimmedStringSchema.default(null),
+});
+
 export const posDiscountRedemptionSchema = z.object({
   venueId: z.string().trim().min(1).max(180),
   code: z.string().trim()
@@ -801,6 +826,9 @@ export type PubGolfPlanInput = z.infer<typeof pubGolfPlanSchema>;
 export type LeaderboardPrizeCampaignInput = z.infer<typeof leaderboardPrizeCampaignSchema>;
 export type LeaderboardPrizeFinalizeInput = z.infer<typeof leaderboardPrizeFinalizeSchema>;
 export type DiscountRedemptionInput = z.infer<typeof discountRedemptionSchema>;
+export type PintPointDrinkRecordInput = z.infer<typeof pintPointDrinkRecordSchema>;
+export type FreePintRewardCodeInput = z.infer<typeof freePintRewardCodeSchema>;
+export type FreePintRewardDecisionInput = z.infer<typeof freePintRewardDecisionSchema>;
 export type PosDiscountRedemptionInput = z.infer<typeof posDiscountRedemptionSchema>;
 export type BarTierCheckoutInput = z.infer<typeof barTierCheckoutSchema>;
 export type PriceRecordsQuery = z.infer<typeof priceRecordsQuerySchema>;

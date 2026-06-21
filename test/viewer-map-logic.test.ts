@@ -305,23 +305,35 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain('name="specialId" type="hidden"');
     expect(venuePortalHtml).toContain("function renderDiscountSpecialChoices");
     expect(venuePortalHtml).toContain("function syncSelectedDiscountSpecial");
-    expect(venuePortalHtml).toContain("Fixed-price special selected. Enter actual savings if you want it tracked.");
+    expect(venuePortalHtml).toContain("function renderRedemptionItemOptions");
+    expect(venuePortalHtml).toContain("function syncRedemptionItemSelection");
+    expect(venuePortalHtml).toContain('<select name="itemName" required>');
+    expect(venuePortalHtml).toContain('optgroup label="Pint Path specials"');
+    expect(venuePortalHtml).toContain('optgroup label="Beers / stock"');
+    expect(venuePortalHtml).toContain('data-savings-dollars="0">$0');
+    expect(venuePortalHtml).toContain('name="estimatedSavingsDollars" type="hidden" value="0"');
+    expect(venuePortalHtml).toContain("added automatically");
+    expect(venuePortalHtml).not.toContain("Fixed-price special selected. Enter actual savings if you want it tracked.");
+    expect(venuePortalHtml).not.toContain("Issue Pint Points");
+    expect(venuePortalHtml).not.toContain("Fast drink labels");
     expect(venuePortalHtml).toContain("data-discount-special-id");
     expect(venuePortalHtml).toContain('data-jump-tab="redemption"');
     expect(venuePortalHtml).toContain('specialId: field(discountRedemptionFormElement, "specialId").value || null');
   });
 
-  it("surfaces paid venue demand insights in a switchable overview cockpit", () => {
-    expect(venuePortalHtml).toContain('id="venueDemandPanel"');
-    expect(venuePortalHtml).toContain("function renderVenueDemandPanel");
-    expect(venuePortalHtml).toContain("currentDemandPeriod");
-    expect(venuePortalHtml).toContain("data-demand-period");
-    expect(venuePortalHtml).toContain("exact searches");
-    expect(venuePortalHtml).toContain("map/detail opens");
-    expect(venuePortalHtml).toContain("Most searched near you");
-    expect(venuePortalHtml).toContain("Beer intent");
-    expect(venuePortalHtml).toContain("Specials intent");
-    expect(venuePortalHtml).toContain("Action intent");
+  it("surfaces the premium tiered venue command centre preview", () => {
+    expect(venuePortalHtml).toContain('id="premiumVenueDashboard"');
+    expect(venuePortalHtml).toContain("function renderPremiumVenueDashboard");
+    expect(venuePortalHtml).toContain("VENUE_DASHBOARD_FEATURES");
+    expect(venuePortalHtml).toContain("data-dashboard-plan");
+    expect(venuePortalHtml).toContain("App Value Overview");
+    expect(venuePortalHtml).toContain("Demand Signals");
+    expect(venuePortalHtml).toContain("Growth Recommendations");
+    expect(venuePortalHtml).toContain("function buildGrowthRecommendations");
+    expect(venuePortalHtml).toContain("Lost Opportunity Risk");
+    expect(venuePortalHtml).toContain("Price freshness");
+    expect(venuePortalHtml).toContain("Specials strategy");
+    expect(venuePortalHtml).toContain("premiumLockedCard");
   });
 
   it("renders the simplified public header, primary controls, and shared advanced filters", () => {

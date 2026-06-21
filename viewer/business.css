@@ -759,6 +759,7 @@ h3 {
 .priceRefreshPanel {
   display: grid;
   gap: 14px;
+  margin-top: 16px;
   margin-bottom: 16px;
 }
 
@@ -778,6 +779,12 @@ h3 {
   padding-right: 4px;
   scrollbar-color: rgba(56, 189, 248, 0.55) rgba(255, 255, 255, 0.08);
   scrollbar-width: thin;
+}
+
+.priceRefreshActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .priceRefreshRow {
@@ -2352,7 +2359,7 @@ h3 {
 
 .dashboardSidebar {
   position: sticky;
-  top: 104px;
+  top: 18px;
   display: grid;
   gap: 14px;
 }
@@ -2364,21 +2371,519 @@ h3 {
 }
 
 .venuePortalHero {
-  gap: 10px;
-  margin: 20px 0 20px;
-  padding: clamp(20px, 3vw, 30px);
-  border-radius: 30px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: clamp(116px, 16vw, 178px);
+  margin: 18px 0 20px;
+  padding: clamp(18px, 3vw, 34px);
+  border: 1px solid rgba(34, 211, 238, 0.18);
+  border-radius: 32px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(34, 211, 238, 0.12), transparent 44%),
+    radial-gradient(circle at 86% 35%, rgba(139, 92, 246, 0.13), transparent 38%),
+    linear-gradient(135deg, rgba(7, 10, 18, 0.72), rgba(13, 18, 32, 0.9));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.venuePortalHero::before {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 24px;
+  pointer-events: none;
+}
+
+.venuePortalHero__inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.venuePortalHero .eyebrow {
+  margin-bottom: 0;
 }
 
 .venuePortalHero h1 {
-  font-size: clamp(34px, 4.8vw, 58px);
+  max-width: min(100%, 980px);
+  margin: 0;
+  font-size: clamp(42px, 7vw, 92px);
+  line-height: 0.92;
+  letter-spacing: 0;
+}
+
+.venuePortalHero__meta {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.premiumVenueDashboard {
+  display: grid;
+  gap: 18px;
+}
+
+.premiumDashboardHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: clamp(20px, 3vw, 30px);
+  border: 1px solid rgba(34, 211, 238, 0.18);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(34, 211, 238, 0.13), transparent 34%),
+    radial-gradient(circle at 88% 18%, rgba(139, 92, 246, 0.12), transparent 34%),
+    rgba(13, 18, 32, 0.88);
+  box-shadow: var(--soft-shadow);
+}
+
+.premiumVenueDashboard--pro .premiumDashboardHeader {
+  border-color: rgba(245, 197, 66, 0.28);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(245, 197, 66, 0.14), transparent 34%),
+    radial-gradient(circle at 88% 20%, rgba(217, 70, 239, 0.12), transparent 34%),
+    rgba(13, 18, 32, 0.9);
+}
+
+.premiumDashboardHeader h2 {
+  margin: 0;
+  font-size: clamp(30px, 4.6vw, 58px);
   line-height: 0.98;
 }
 
-.venuePortalHero .lead {
-  max-width: 880px;
-  font-size: 16px;
-  line-height: 1.55;
+.premiumDashboardHeader p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.premiumDashboardHeader__tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  max-width: 580px;
+}
+
+.premiumPlanSwitcher {
+  display: inline-grid;
+  grid-auto-flow: column;
+  gap: 4px;
+  align-items: center;
+  padding: 5px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 999px;
+  background: rgba(3, 7, 18, 0.42);
+}
+
+.premiumPlanSwitcher button {
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0 14px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 950;
+  background: transparent;
+  cursor: pointer;
+}
+
+.premiumPlanSwitcher button:hover,
+.premiumPlanSwitcher button:focus-visible {
+  color: var(--text-primary);
+  border-color: rgba(34, 211, 238, 0.28);
+}
+
+.premiumPlanSwitcher button.is-active {
+  color: #06111f;
+  background: linear-gradient(135deg, #67e8f9, #8b5cf6);
+  box-shadow: 0 12px 28px rgba(34, 211, 238, 0.14);
+}
+
+.premiumPlanBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.premiumPlanBadge--free {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.premiumPlanBadge--plus {
+  border-color: rgba(34, 211, 238, 0.34);
+  background: rgba(34, 211, 238, 0.12);
+  color: #cffafe;
+}
+
+.premiumPlanBadge--pro {
+  border-color: rgba(245, 197, 66, 0.42);
+  background: linear-gradient(135deg, rgba(245, 197, 66, 0.18), rgba(217, 70, 239, 0.12));
+  color: #ffefbd;
+}
+
+.premiumKpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.premiumKpiCard,
+.premiumDashboardCard,
+.premiumLockedCard {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 24px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+    rgba(15, 23, 42, 0.72);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.2);
+}
+
+.premiumKpiCard {
+  display: grid;
+  align-content: space-between;
+  min-width: 0;
+  min-height: 132px;
+  padding: 18px;
+  overflow: hidden;
+}
+
+.premiumKpiCard span,
+.premiumMiniMetric span,
+.premiumRoomTile span {
+  color: #d9dfeb;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.premiumKpiCard strong {
+  color: var(--text-primary);
+  font-family: var(--display-font);
+  font-size: clamp(24px, 2.6vw, 38px);
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.premiumKpiCard small,
+.premiumMiniMetric small,
+.premiumRoomTile small,
+.premiumListRow small,
+.premiumCampaignRow small {
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.premiumKpiCard--premium,
+.premiumDashboardCard--revenue,
+.premiumDashboardCard--live {
+  border-color: rgba(245, 197, 66, 0.28);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(245, 197, 66, 0.12), transparent 40%),
+    rgba(15, 23, 42, 0.78);
+}
+
+.premiumKpiCard--success {
+  border-color: rgba(34, 197, 94, 0.25);
+}
+
+.premiumKpiCard--warning,
+.premiumDashboardCard--warning {
+  border-color: rgba(250, 204, 21, 0.25);
+}
+
+.premiumKpiCard--danger {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.premiumDashboardMain {
+  display: grid;
+  grid-template-columns: minmax(0, 1.36fr) minmax(320px, 0.78fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.premiumDashboardMain--free {
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.75fr);
+}
+
+.premiumDashboardColumn {
+  display: grid;
+  gap: 16px;
+}
+
+.premiumDashboardCard {
+  display: grid;
+  gap: 14px;
+  padding: clamp(18px, 2.4vw, 24px);
+}
+
+.premiumDashboardCard h3 {
+  margin: 0;
+  font-size: clamp(22px, 2.7vw, 32px);
+  line-height: 1.08;
+}
+
+.premiumDashboardCard p {
+  margin: 0;
+}
+
+.premiumCardHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.premiumSnapshotGrid,
+.premiumMiniGrid,
+.premiumRoomGrid,
+.premiumDashboardBottom,
+.premiumReportGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.premiumSnapshotGrid,
+.premiumMiniGrid {
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+}
+
+.premiumRoomGrid {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.premiumDashboardBottom {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.premiumDashboardBottom--inline {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.premiumMiniMetric,
+.premiumRoomTile {
+  display: grid;
+  gap: 6px;
+  min-height: 96px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.25);
+}
+
+.premiumMiniMetric strong,
+.premiumRoomTile strong {
+  color: var(--text-primary);
+  font-family: var(--display-font);
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 0.95;
+}
+
+.premiumList,
+.premiumAlertList,
+.premiumActionList,
+.premiumProgressList,
+.premiumCampaignList {
+  display: grid;
+  gap: 10px;
+}
+
+.premiumListRow,
+.premiumAlertRow,
+.premiumActionItem,
+.premiumCampaignRow,
+.premiumProgressRow {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.23);
+}
+
+.premiumListRow,
+.premiumCampaignRow,
+.premiumProgressRow > div:first-child {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.premiumListRow,
+.premiumCampaignRow {
+  display: grid;
+}
+
+.premiumAlertRow {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.premiumAlertRow span {
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: #facc15;
+  box-shadow: 0 0 0 5px rgba(250, 204, 21, 0.1);
+}
+
+.premiumActionItem {
+  appearance: none;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  width: 100%;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.premiumActionItem span {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.13);
+  color: #cffafe;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.premiumProgressRow > div:first-child {
+  display: grid;
+}
+
+.premiumProgressTrack {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.premiumProgressTrack i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22d3ee, #8b5cf6, #f5c542);
+}
+
+.premiumLockedCard {
+  position: relative;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  overflow: hidden;
+}
+
+.premiumLockedCard::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, transparent, rgba(148, 163, 184, 0.05));
+  pointer-events: none;
+}
+
+.premiumLockedCard__lock {
+  display: inline-flex;
+  width: fit-content;
+  padding: 6px 10px;
+  border: 1px solid rgba(245, 197, 66, 0.25);
+  border-radius: 999px;
+  color: #ffefbd;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.premiumLockedCard strong {
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
+.premiumLockedCard p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.premiumLockedCard__preview {
+  display: grid;
+  gap: 8px;
+  opacity: 0.58;
+  filter: blur(0.6px);
+}
+
+.premiumLockedCard__preview span {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.42), rgba(245, 197, 66, 0.22));
+}
+
+.premiumLockedCard__preview span:nth-child(2) {
+  width: 74%;
+}
+
+.premiumLockedCard__preview span:nth-child(3) {
+  width: 52%;
+}
+
+.premiumUpgradeBanner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.14), transparent 38%),
+    rgba(13, 18, 32, 0.84);
+}
+
+.premiumUpgradeBanner--pro {
+  border-color: rgba(245, 197, 66, 0.28);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(245, 197, 66, 0.14), transparent 38%),
+    rgba(13, 18, 32, 0.84);
+}
+
+.premiumUpgradeBanner strong {
+  color: var(--text-primary);
+  font-size: 17px;
+}
+
+.premiumUpgradeBanner p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+}
+
+.premiumReportGrid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .venueCommandCenter {
@@ -5001,6 +5506,14 @@ h3 {
   .specialScheduleGrid,
   .growthSummaryGrid,
   .venueHeroGrid,
+  .premiumDashboardHeader,
+  .premiumDashboardMain,
+  .premiumDashboardMain--free,
+  .premiumDashboardMain--pro,
+  .premiumDashboardBottom,
+  .premiumUpgradeBanner,
+  .premiumListRow,
+  .premiumCampaignRow,
   .venueCommandCenter,
   .venueDemandPanel__header,
   .venueDemandPanel__body,
@@ -5022,6 +5535,50 @@ h3 {
   .venuePortalHero h1 {
     font-size: clamp(2rem, 12vw, 2.9rem);
     line-height: 1.02;
+  }
+
+  .premiumDashboardHeader {
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .premiumDashboardHeader__tools {
+    justify-content: stretch;
+  }
+
+  .premiumDashboardHeader__tools > *,
+  .premiumUpgradeBanner .button {
+    width: 100%;
+  }
+
+  .premiumPlanSwitcher {
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-flow: row;
+  }
+
+  .premiumPlanSwitcher button {
+    padding: 0 8px;
+  }
+
+  .premiumKpiGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .premiumKpiCard {
+    min-height: 118px;
+    padding: 14px;
+  }
+
+  .premiumDashboardCard {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .premiumSnapshotGrid,
+  .premiumMiniGrid,
+  .premiumRoomGrid {
+    grid-template-columns: 1fr;
   }
 
   .venueCommandCenter {
@@ -5126,8 +5683,13 @@ h3 {
   }
 
   .priceRefreshToolbar .button,
+  .priceRefreshActions .button,
   #confirmAllPricesButton {
     width: 100%;
+  }
+
+  .priceRefreshActions {
+    justify-content: stretch;
   }
 
   .tabNav {
@@ -5718,6 +6280,20 @@ h3 {
   .pageShell {
     width: min(100% - 14px, 720px);
     padding-top: 8px;
+  }
+
+  .premiumKpiGrid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .premiumDashboardHeader h2 {
+    font-size: clamp(1.8rem, 11vw, 2.4rem);
+  }
+
+  .premiumDashboardHeader p,
+  .premiumUpgradeBanner p {
+    font-size: 0.88rem;
   }
 
   .accountDashboard {
