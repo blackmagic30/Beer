@@ -153,55 +153,36 @@
             <p class="helperCopy">Estimated from Pint Path special redemptions logged by venues.</p>
           </article>
 
-          <article class="panel discountPassPanel accountDiscountFeature accountHeroMetric accountHeroMetric--special">
-            <div class="sectionHeader">
-              <div>
-                <div class="eyebrow">Member special</div>
-                <h2>Pint Path special</h2>
-                <p class="muted">Premium and contributor accounts can show a rotating code or QR to redeem partner venue specials.</p>
+          <div class="accountSpecialIdentityGrid">
+            <article class="panel discountPassPanel accountDiscountFeature accountHeroMetric accountHeroMetric--special">
+              <div class="sectionHeader">
+                <div>
+                  <div class="eyebrow">Member special</div>
+                  <h2>Pint Path special</h2>
+                  <p class="muted">Premium and contributor accounts can show a rotating code or QR to redeem partner venue specials.</p>
+                </div>
+                <span class="pill">Rotates per session</span>
               </div>
-              <span class="pill">Rotates per session</span>
-            </div>
-            <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate special code</button>
-            <div id="discountPassResult" class="discountPassResult is-hidden" hidden>
-              <div>
-                <span class="metricLabel">Current code</span>
-                <div id="discountPassCode" class="discountCode">------</div>
-                <p id="discountPassExpires" class="helperCopy"></p>
+              <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate special code</button>
+              <div id="discountPassResult" class="discountPassResult is-hidden" hidden>
+                <div>
+                  <span class="metricLabel">Current code</span>
+                  <div id="discountPassCode" class="discountCode">------</div>
+                  <p id="discountPassExpires" class="helperCopy"></p>
+                </div>
+                <img id="discountPassQr" class="discountPassQr" alt="Pint Path special QR code" />
               </div>
-              <img id="discountPassQr" class="discountPassQr" alt="Pint Path special QR code" />
-            </div>
-            <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special.</p>
-          </article>
+              <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special.</p>
+            </article>
 
-          <article class="panel discountPassPanel accountHeroMetric accountHeroMetric--points">
-            <div class="sectionHeader">
-              <div>
-                <div class="eyebrow">Pint Points</div>
-                <h2 id="pintPointBalanceHero">0 / 50</h2>
-                <p id="pintPointProgressHero" class="muted">Earn 1 Pint Point for each paid alcoholic drink recorded.</p>
-              </div>
-              <span id="pintPointRewardBadge" class="pill">Reward locked</span>
-            </div>
-            <button id="freePintRewardButton" class="button button--premium" type="button" disabled>Redeem Free Pint</button>
-            <div id="freePintRewardResult" class="discountPassResult is-hidden" hidden>
-              <div>
-                <span class="metricLabel">Reward code</span>
-                <div id="freePintRewardCode" class="discountCode">------</div>
-                <p id="freePintRewardExpires" class="helperCopy"></p>
-              </div>
-              <img id="freePintRewardQr" class="discountPassQr" alt="Free Pint Reward QR code" />
-            </div>
-            <p class="helperCopy">Free Pint Rewards use 50 Pint Points at affiliated bars only.</p>
-          </article>
-
-          <article class="panel accountIdentityCard accountIdentityCard--compact">
-            <span class="muted">Signed in as</span>
-            <strong id="accountEmail">Not signed in</strong>
-            <span id="accountEmailHelper" class="accountEmailHelper" hidden></span>
-            <div id="accessBadgeRow" class="miniStatRow accountAccessBadgeRow"></div>
-            <button id="logoutButton" class="button button--danger" type="button">Log out</button>
-          </article>
+            <article class="panel accountIdentityCard accountIdentityCard--compact">
+              <span class="muted">Signed in as</span>
+              <strong id="accountEmail">Not signed in</strong>
+              <span id="accountEmailHelper" class="accountEmailHelper" hidden></span>
+              <div id="accessBadgeRow" class="miniStatRow accountAccessBadgeRow"></div>
+              <button id="logoutButton" class="button button--danger" type="button">Log out</button>
+            </article>
+          </div>
         </section>
 
         <article id="settingsEmptyPanel" class="panel settingsEmptyPanel">
@@ -245,49 +226,90 @@
         </div>
 
         <div id="settingsBetaTestingPanel" class="settingsPanel" data-settings-panel="beta-testing" role="tabpanel" hidden>
-          <section class="panel betaTestingPanel">
-            <div class="sectionHeader">
+          <section class="panel betaTestingPanel betaTestingShell">
+            <div class="betaTestingHeader">
               <div>
                 <div class="eyebrow">Premium beta</div>
-                <h2>Monthly contributor race</h2>
-                <p class="muted">Top contributors earn account vouchers after the monthly leaderboard closes and admin confirms winners.</p>
+                <h2 id="betaFeatureTitle">BetaTesting</h2>
+                <p class="muted">Choose one beta field at a time so the tools stay clean on phones.</p>
               </div>
-              <span id="betaCampaignBadge" class="pill pill--premium">Monthly</span>
+              <div class="betaFeatureMenu">
+                <button id="betaFeatureMenuButton" class="button button--premium" type="button" aria-haspopup="true" aria-expanded="false">Pub Golf</button>
+                <div class="betaFeatureDropdown" role="menu" aria-label="BetaTesting fields">
+                  <button type="button" role="menuitem" data-beta-feature-target="pub-golf">Pub Golf</button>
+                  <button type="button" role="menuitem" data-beta-feature-target="leaderboard">Leaderboard</button>
+                  <button type="button" role="menuitem" data-beta-feature-target="pint-points">Pint Point Wallet</button>
+                </div>
+              </div>
             </div>
-            <div id="leaderboardPodium" class="leaderboardPodium"></div>
-            <div id="leaderboardList" class="betaLeaderboardList"></div>
-            <div id="rewardVoucherList" class="rewardVoucherList"></div>
-          </section>
 
-          <section class="panel pubGolfPanel">
-            <div class="sectionHeader">
-              <div>
-                <div class="eyebrow">Beta route planner</div>
-                <h2>Pub Golf</h2>
-                <p class="muted">Pick nine drinks and Pint Path will build a route from verified venue data.</p>
+            <section id="betaFeaturePubGolf" class="betaFeaturePanel pubGolfPanel" data-beta-feature-panel="pub-golf">
+              <div class="sectionHeader">
+                <div>
+                  <div class="eyebrow">Beta route planner</div>
+                  <h3>Pub Golf</h3>
+                  <p class="muted">Pick nine drinks and Pint Path will build a walking/public-transport route from verified venue data.</p>
+                </div>
+                <button id="randomizePubGolfButton" class="button" type="button">Randomise drinks</button>
               </div>
-              <button id="randomizePubGolfButton" class="button" type="button">Randomise drinks</button>
-            </div>
-            <form id="pubGolfForm" class="form">
-              <div class="grid grid--two">
-                <label class="field">Start
-                  <input name="startLocation" maxlength="160" placeholder="e.g. Melbourne CBD" required />
+              <form id="pubGolfForm" class="form">
+                <div class="grid grid--two">
+                  <label class="field">Start
+                    <input name="startLocation" maxlength="160" placeholder="Start address, station, or venue" autocomplete="off" data-pub-golf-location="start" required />
+                  </label>
+                  <label class="field">Finish
+                    <input name="finishLocation" maxlength="160" placeholder="Finish address, station, or venue" autocomplete="off" data-pub-golf-location="finish" required />
+                  </label>
+                </div>
+                <label class="field">Route style
+                  <select name="mode">
+                    <option value="auto">Auto: walk short legs, public transport for longer legs</option>
+                    <option value="walking">Prefer walking</option>
+                    <option value="transit">Prefer public transport</option>
+                  </select>
                 </label>
-                <label class="field">Finish
-                  <input name="finishLocation" maxlength="160" placeholder="e.g. Richmond station" required />
-                </label>
+                <div id="pubGolfDrinkGrid" class="pubGolfDrinkGrid" aria-label="Pub Golf drinks"></div>
+                <button class="button button--primary" type="submit">Build Pub Golf route</button>
+              </form>
+              <div id="pubGolfResult" class="pubGolfResult"></div>
+            </section>
+
+            <section id="betaFeatureLeaderboard" class="betaFeaturePanel" data-beta-feature-panel="leaderboard" hidden>
+              <div class="sectionHeader">
+                <div>
+                  <div class="eyebrow">Monthly race</div>
+                  <h3>Leaderboard</h3>
+                  <p class="muted">Top contributors earn account vouchers after the monthly leaderboard closes and admin confirms winners.</p>
+                </div>
+                <span id="betaCampaignBadge" class="pill pill--premium">Monthly</span>
               </div>
-              <label class="field">Route style
-                <select name="mode">
-                  <option value="auto">Auto: walk short legs, transit longer legs</option>
-                  <option value="walking">Prefer walking</option>
-                  <option value="transit">Prefer public transport</option>
-                </select>
-              </label>
-              <div id="pubGolfDrinkGrid" class="pubGolfDrinkGrid" aria-label="Pub Golf drinks"></div>
-              <button class="button button--primary" type="submit">Build Pub Golf route</button>
-            </form>
-            <div id="pubGolfResult" class="pubGolfResult"></div>
+              <div id="leaderboardPodium" class="leaderboardPodium"></div>
+              <div id="leaderboardList" class="betaLeaderboardList"></div>
+              <div id="rewardVoucherList" class="rewardVoucherList"></div>
+            </section>
+
+            <section id="betaFeaturePintPoints" class="betaFeaturePanel" data-beta-feature-panel="pint-points" hidden>
+              <article class="panel discountPassPanel accountHeroMetric accountHeroMetric--points">
+                <div class="sectionHeader">
+                  <div>
+                    <div class="eyebrow">Pint Point Wallet</div>
+                    <h3 id="pintPointBalanceHero">0 / 50</h3>
+                    <p id="pintPointProgressHero" class="muted">Earn 1 Pint Point for each paid alcoholic drink recorded.</p>
+                  </div>
+                  <span id="pintPointRewardBadge" class="pill">Reward locked</span>
+                </div>
+                <button id="freePintRewardButton" class="button button--premium" type="button" disabled>Redeem Free Pint</button>
+                <div id="freePintRewardResult" class="discountPassResult is-hidden" hidden>
+                  <div>
+                    <span class="metricLabel">Reward code</span>
+                    <div id="freePintRewardCode" class="discountCode">------</div>
+                    <p id="freePintRewardExpires" class="helperCopy"></p>
+                  </div>
+                  <img id="freePintRewardQr" class="discountPassQr" alt="Free Pint Reward QR code" />
+                </div>
+                <p class="helperCopy">Free Pint Rewards use 50 Pint Points at affiliated bars only.</p>
+              </article>
+            </section>
           </section>
         </div>
 
@@ -374,6 +396,11 @@
       oauthLoginOpening: false,
       checkoutResumeStarted: false,
       checkoutReconcileStarted: false,
+      activeBetaFeature: "pub-golf",
+      googleMapsLoader: null,
+      pubGolfAutocompleteReady: false,
+      pubGolfMap: null,
+      pubGolfDirectionsRenderer: null,
     };
 
     const statusLabels = {
@@ -401,6 +428,19 @@
       "Tequila",
       "Non-alcoholic beer",
     ];
+
+    const betaFeatureLabels = {
+      "pub-golf": "Pub Golf",
+      leaderboard: "Leaderboard",
+      "pint-points": "Pint Point Wallet",
+    };
+
+    const melbourneBoundsLiteral = {
+      north: -37.45,
+      south: -38.45,
+      east: 145.65,
+      west: 144.35,
+    };
 
     function $(id) {
       return document.getElementById(id);
@@ -441,6 +481,69 @@
 
     function formatMoney(value) {
       return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(Number(value || 0));
+    }
+
+    function googleMapsConfig() {
+      const config = MelbBeerBusiness.getViewerConfig();
+      return {
+        key: config.googleMapsApiKey || "",
+        mapId: config.googleMapsMapId || "",
+      };
+    }
+
+    function loadAccountGoogleMaps() {
+      if (
+        window.google &&
+        window.google.maps &&
+        typeof window.google.maps.Map === "function" &&
+        typeof window.google.maps.DirectionsService === "function"
+      ) {
+        return Promise.resolve(window.google.maps);
+      }
+
+      if (state.googleMapsLoader) {
+        return state.googleMapsLoader;
+      }
+
+      const { key, mapId } = googleMapsConfig();
+      if (!key) {
+        return Promise.reject(new Error("Google Maps is not configured for route previews."));
+      }
+
+      state.googleMapsLoader = new Promise((resolve, reject) => {
+        const existingScript = document.querySelector("script[data-account-google-maps]");
+        if (existingScript) {
+          existingScript.addEventListener("load", () => resolve(window.google.maps), { once: true });
+          existingScript.addEventListener("error", () => reject(new Error("Google Maps failed to load.")), { once: true });
+          return;
+        }
+
+        const params = new URLSearchParams({
+          key,
+          v: "weekly",
+          libraries: "places,marker",
+        });
+        if (mapId) {
+          params.set("map_ids", mapId);
+        }
+
+        const script = document.createElement("script");
+        script.dataset.accountGoogleMaps = "true";
+        script.async = true;
+        script.defer = true;
+        script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
+        script.addEventListener("load", () => {
+          if (window.google?.maps?.Map) {
+            resolve(window.google.maps);
+          } else {
+            reject(new Error("Google Maps loaded without map support."));
+          }
+        }, { once: true });
+        script.addEventListener("error", () => reject(new Error("Google Maps failed to load.")), { once: true });
+        document.head.appendChild(script);
+      });
+
+      return state.googleMapsLoader;
     }
 
     function pendingCheckoutPlan() {
@@ -575,6 +678,92 @@
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
       });
+    }
+
+    function showBetaFeature(target = "pub-golf") {
+      const activeTarget = betaFeatureLabels[target] ? target : "pub-golf";
+      state.activeBetaFeature = activeTarget;
+      document.querySelectorAll("[data-beta-feature-panel]").forEach((panel) => {
+        const active = panel.dataset.betaFeaturePanel === activeTarget;
+        panel.hidden = !active;
+        panel.classList.toggle("is-active", active);
+      });
+      document.querySelectorAll("[data-beta-feature-target]").forEach((button) => {
+        const active = button.dataset.betaFeatureTarget === activeTarget;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-current", active ? "true" : "false");
+      });
+      const button = $("betaFeatureMenuButton");
+      if (button) {
+        button.textContent = betaFeatureLabels[activeTarget];
+        button.setAttribute("aria-expanded", "false");
+      }
+      document.querySelector(".betaFeatureMenu")?.classList.remove("is-open");
+      if (activeTarget === "pub-golf") {
+        installPubGolfLocationAutocomplete().catch(() => null);
+      }
+    }
+
+    function installBetaFeatureMenu() {
+      const menu = document.querySelector(".betaFeatureMenu");
+      const button = $("betaFeatureMenuButton");
+      if (!menu || !button || menu.dataset.ready === "true") {
+        return;
+      }
+      menu.dataset.ready = "true";
+      button.addEventListener("click", () => {
+        const open = !menu.classList.contains("is-open");
+        menu.classList.toggle("is-open", open);
+        button.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      document.querySelectorAll("[data-beta-feature-target]").forEach((item) => {
+        item.addEventListener("click", () => showBetaFeature(item.dataset.betaFeatureTarget));
+      });
+      document.addEventListener("click", (event) => {
+        if (!menu.contains(event.target)) {
+          menu.classList.remove("is-open");
+          button.setAttribute("aria-expanded", "false");
+        }
+      });
+    }
+
+    async function installPubGolfLocationAutocomplete() {
+      if (state.pubGolfAutocompleteReady) {
+        return;
+      }
+      const inputs = Array.from(document.querySelectorAll("[data-pub-golf-location]"));
+      if (!inputs.length) {
+        return;
+      }
+      const maps = await loadAccountGoogleMaps();
+      if (!maps.places?.Autocomplete) {
+        return;
+      }
+      const bounds = new maps.LatLngBounds(
+        { lat: melbourneBoundsLiteral.south, lng: melbourneBoundsLiteral.west },
+        { lat: melbourneBoundsLiteral.north, lng: melbourneBoundsLiteral.east },
+      );
+      inputs.forEach((input) => {
+        const autocomplete = new maps.places.Autocomplete(input, {
+          bounds,
+          componentRestrictions: { country: "au" },
+          fields: ["formatted_address", "geometry", "name", "place_id"],
+          strictBounds: false,
+        });
+        autocomplete.addListener("place_changed", () => {
+          const place = autocomplete.getPlace();
+          const location = place.geometry?.location;
+          if (place.formatted_address || place.name) {
+            input.value = place.formatted_address || place.name;
+          }
+          if (location) {
+            input.dataset.latitude = String(location.lat());
+            input.dataset.longitude = String(location.lng());
+            input.dataset.placeId = place.place_id || "";
+          }
+        });
+      });
+      state.pubGolfAutocompleteReady = true;
     }
 
     function statusBadge(status) {
@@ -746,6 +935,8 @@
       }
 
       renderPubGolfDrinkGrid(beta.pubGolf?.defaultDrinks || []);
+      installBetaFeatureMenu();
+      showBetaFeature(state.activeBetaFeature);
       const campaign = beta.leaderboard?.campaign || {};
       const monthCopy = campaign.monthKey ? campaign.monthKey.replace("-", " ") : "This month";
       $("betaCampaignBadge").textContent = `${monthCopy} · ${campaign.status || "active"}`;
@@ -804,8 +995,19 @@
       target.innerHTML = `
         <div class="pubGolfSummary">
           <strong>${escapeHtml(result.completion || "Pub Golf plan")}</strong>
-          <span>${escapeHtml(result.summary?.totalDistanceKm ?? 0)} km estimated · ${escapeHtml(result.summary?.plannedStops ?? 0)}/9 stops</span>
+          <span>${escapeHtml(result.summary?.totalDistanceKm ?? 0)} km estimated · ${escapeHtml(result.summary?.plannedStops ?? 0)}/9 stops · walking/public transport only</span>
         </div>
+        <section class="pubGolfMapShell" aria-label="Pub Golf route map">
+          <div class="pubGolfMapHeader">
+            <div>
+              <strong>Route preview</strong>
+              <span>No driving route is generated.</span>
+            </div>
+            <a id="pubGolfDirectionsLink" class="button button--small" href="#" target="_blank" rel="noopener" hidden>Open in Maps</a>
+          </div>
+          <div id="pubGolfRouteMap" class="pubGolfRouteMap" role="img" aria-label="Map showing your Pub Golf route"></div>
+          <p id="pubGolfMapStatus" class="helperCopy">Loading walking/public transport route preview...</p>
+        </section>
         <div class="pubGolfRoute">
           ${(result.holes || []).map((hole) => `
             <article class="pubGolfHole ${hole.status === "needs_data" ? "pubGolfHole--missing" : ""}">
@@ -824,6 +1026,157 @@
         ${warnings ? `<ul class="pubGolfWarnings">${warnings}</ul>` : ""}
         <p class="helperCopy">${escapeHtml(result.safetyCopy || "")}</p>
       `;
+      renderPubGolfRouteMap(result).catch((error) => {
+        const status = $("pubGolfMapStatus");
+        if (status) {
+          status.textContent = error.message || "Route map unavailable. Use each stop's Maps link and avoid driving.";
+        }
+      });
+    }
+
+    function pubGolfLocationPoint(location, fallbackLabel) {
+      const latitude = Number(location?.latitude);
+      const longitude = Number(location?.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return null;
+      }
+      return {
+        lat: latitude,
+        lng: longitude,
+        label: location?.label || fallbackLabel,
+      };
+    }
+
+    function pubGolfRoutePoints(result) {
+      return [
+        pubGolfLocationPoint(result.start, "Start"),
+        ...(result.holes || []).map((hole) => pubGolfLocationPoint(hole.venue, `Hole ${hole.hole}`)),
+        pubGolfLocationPoint(result.finish, "Finish"),
+      ].filter(Boolean);
+    }
+
+    function pubGolfDirectionsUrl(points, mode) {
+      if (points.length < 2) {
+        return "#";
+      }
+      const url = new URL("https://www.google.com/maps/dir/");
+      url.searchParams.set("api", "1");
+      url.searchParams.set("origin", `${points[0].lat},${points[0].lng}`);
+      url.searchParams.set("destination", `${points[points.length - 1].lat},${points[points.length - 1].lng}`);
+      const waypoints = points.slice(1, -1);
+      if (waypoints.length) {
+        url.searchParams.set("waypoints", waypoints.map((point) => `${point.lat},${point.lng}`).join("|"));
+      }
+      url.searchParams.set("travelmode", mode === "transit" ? "transit" : "walking");
+      return url.toString();
+    }
+
+    function createPubGolfMarker(maps, map, point, index) {
+      const label = index === 0 ? "S" : index === -1 ? "F" : String(index);
+      const content = document.createElement("span");
+      content.className = "pubGolfMapMarker";
+      content.textContent = label;
+      if (maps.marker?.AdvancedMarkerElement) {
+        return new maps.marker.AdvancedMarkerElement({
+          map,
+          position: { lat: point.lat, lng: point.lng },
+          title: point.label,
+          content,
+        });
+      }
+      return new maps.Marker({
+        map,
+        position: { lat: point.lat, lng: point.lng },
+        title: point.label,
+        label,
+      });
+    }
+
+    function drawPubGolfFallbackTrail(maps, map, points) {
+      new maps.Polyline({
+        map,
+        path: points.map((point) => ({ lat: point.lat, lng: point.lng })),
+        geodesic: true,
+        strokeColor: "#22D3EE",
+        strokeOpacity: 0.95,
+        strokeWeight: 4,
+      });
+    }
+
+    async function renderPubGolfRouteMap(result) {
+      const mapElement = $("pubGolfRouteMap");
+      const status = $("pubGolfMapStatus");
+      const directionsLink = $("pubGolfDirectionsLink");
+      if (!mapElement || !status) {
+        return;
+      }
+      const points = pubGolfRoutePoints(result);
+      if (directionsLink && points.length >= 2) {
+        directionsLink.href = pubGolfDirectionsUrl(points, result.summary?.travelMode);
+        directionsLink.hidden = false;
+      }
+      if (points.length < 2) {
+        status.textContent = "Add a start, finish, and matched venue stops to preview the route map.";
+        return;
+      }
+
+      const maps = await loadAccountGoogleMaps();
+      const { mapId } = googleMapsConfig();
+      const bounds = new maps.LatLngBounds();
+      points.forEach((point) => bounds.extend({ lat: point.lat, lng: point.lng }));
+      const map = new maps.Map(mapElement, {
+        center: { lat: points[0].lat, lng: points[0].lng },
+        zoom: 13,
+        mapId: mapId || undefined,
+        clickableIcons: false,
+        fullscreenControl: true,
+        mapTypeControl: false,
+        streetViewControl: false,
+      });
+      state.pubGolfMap = map;
+
+      points.forEach((point, index) => {
+        const markerIndex = index === points.length - 1 ? -1 : index;
+        createPubGolfMarker(maps, map, point, markerIndex);
+      });
+      map.fitBounds(bounds, 48);
+
+      if (state.pubGolfDirectionsRenderer) {
+        state.pubGolfDirectionsRenderer.setMap(null);
+      }
+      const renderer = new maps.DirectionsRenderer({
+        map,
+        suppressMarkers: true,
+        preserveViewport: true,
+        polylineOptions: {
+          strokeColor: "#8B5CF6",
+          strokeOpacity: 0.94,
+          strokeWeight: 5,
+        },
+      });
+      state.pubGolfDirectionsRenderer = renderer;
+      const service = new maps.DirectionsService();
+      const waypoints = points.slice(1, -1).map((point) => ({
+        location: { lat: point.lat, lng: point.lng },
+        stopover: true,
+      }));
+      service.route({
+        origin: { lat: points[0].lat, lng: points[0].lng },
+        destination: { lat: points[points.length - 1].lat, lng: points[points.length - 1].lng },
+        waypoints,
+        optimizeWaypoints: false,
+        travelMode: maps.TravelMode.WALKING,
+      }, (response, routeStatus) => {
+        if (routeStatus === "OK" && response) {
+          renderer.setDirections(response);
+          status.textContent = result.summary?.travelMode === "transit"
+            ? "Trail drawn through each stop. Use public transport for longer legs and walking between close venues."
+            : "Walking trail drawn through each matched stop. Use public transport for any leg that feels too long.";
+          return;
+        }
+        drawPubGolfFallbackTrail(maps, map, points);
+        status.textContent = "Stop trail drawn. Open Maps for live walking/public transport timing.";
+      });
     }
 
     function subscriptionBadge(account) {

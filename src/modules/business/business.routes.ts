@@ -434,10 +434,14 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getLeaderboard(account, query)));
   });
 
-  router.post("/beta/pub-golf/plan", writeLimiter, (req, res) => {
-    const account = requireAccount(req, businessService);
-    const body = parseWithSchema(pubGolfPlanSchema, req.body, "Invalid Pub Golf planner payload");
-    res.json(success(businessService.planPubGolf(account, body)));
+  router.post("/beta/pub-golf/plan", writeLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      const body = parseWithSchema(pubGolfPlanSchema, req.body, "Invalid Pub Golf planner payload");
+      res.json(success(await businessService.planPubGolf(account, body)));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/events", eventLimiter, (req, res) => {

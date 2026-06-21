@@ -3565,9 +3565,25 @@ h3 {
 
 .accountHighlightsGrid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.95fr) minmax(340px, 1.35fr) minmax(250px, 0.78fr);
+  grid-template-columns: minmax(260px, 0.78fr) minmax(520px, 1.62fr);
   gap: clamp(14px, 1.8vw, 20px);
   align-items: stretch;
+}
+
+.accountSpecialIdentityGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.46fr);
+  gap: clamp(14px, 1.8vw, 20px);
+  align-items: stretch;
+  min-width: 0;
+}
+
+.accountSpecialIdentityGrid > * {
+  min-width: 0;
+}
+
+.accountSpecialIdentityGrid .discountPassPanel {
+  grid-column: auto;
 }
 
 .accountDashboard .accountDashboardIntro {
@@ -3693,6 +3709,8 @@ h3 {
 
 .accountIdentityCard--compact {
   align-content: start;
+  display: grid;
+  gap: 12px;
   border-color: rgba(139, 92, 246, 0.28);
   background:
     radial-gradient(circle at 18% 0%, rgba(139, 92, 246, 0.18), transparent 42%),
@@ -4629,6 +4647,91 @@ h3 {
     rgba(15, 23, 42, 0.74);
 }
 
+.betaTestingShell {
+  display: grid;
+  gap: 16px;
+}
+
+.betaTestingHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.betaTestingHeader h2,
+.betaTestingHeader p {
+  margin: 0;
+}
+
+.betaFeatureMenu {
+  position: relative;
+  justify-self: end;
+  min-width: 210px;
+  z-index: 5;
+}
+
+.betaFeatureMenu > .button {
+  width: 100%;
+  justify-content: center;
+}
+
+.betaFeatureDropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  min-width: 230px;
+  padding: 8px;
+  border: 1px solid rgba(245, 197, 66, 0.24);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(245, 197, 66, 0.14), transparent 40%),
+    rgba(13, 18, 32, 0.98);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.36);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.betaFeatureMenu:hover .betaFeatureDropdown,
+.betaFeatureMenu:focus-within .betaFeatureDropdown,
+.betaFeatureMenu.is-open .betaFeatureDropdown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.betaFeatureDropdown button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 14px;
+  padding: 9px 12px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: 950;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.betaFeatureDropdown button:hover,
+.betaFeatureDropdown button:focus-visible,
+.betaFeatureDropdown button.is-active {
+  color: var(--text-primary);
+  background: rgba(34, 211, 238, 0.12);
+}
+
+.betaFeaturePanel {
+  display: grid;
+  gap: 14px;
+}
+
+.betaFeaturePanel[hidden] {
+  display: none;
+}
+
 .leaderboardPodium {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 0.9fr);
@@ -4782,6 +4885,58 @@ h3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.pubGolfMapShell {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid rgba(34, 211, 238, 0.18);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(34, 211, 238, 0.1), transparent 42%),
+    rgba(3, 7, 18, 0.26);
+  padding: 12px;
+}
+
+.pubGolfMapHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.pubGolfMapHeader > div {
+  display: grid;
+  gap: 2px;
+}
+
+.pubGolfMapHeader span {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.pubGolfRouteMap {
+  min-height: clamp(260px, 42vw, 430px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  background: rgba(226, 232, 240, 0.08);
+  overflow: hidden;
+}
+
+.pubGolfMapMarker {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 2px solid rgba(255, 255, 255, 0.82);
+  border-radius: 999px;
+  background: linear-gradient(135deg, #22d3ee, #8b5cf6);
+  color: #07111f;
+  font-size: 0.78rem;
+  font-weight: 950;
+  box-shadow: 0 10px 28px rgba(34, 211, 238, 0.24);
 }
 
 .pubGolfHole {
@@ -5754,7 +5909,12 @@ h3 {
   }
 
   .accountHighlightsGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .accountSpecialIdentityGrid {
+    grid-template-columns: minmax(0, 1fr) minmax(210px, 0.52fr);
     gap: 10px;
   }
 
@@ -5769,8 +5929,8 @@ h3 {
   }
 
   .accountHeroMetric--special {
-    grid-column: 1 / -1;
-    order: 3;
+    grid-column: auto;
+    order: 1;
   }
 
   .accountIdentityCard--compact {
@@ -5816,6 +5976,29 @@ h3 {
 
   .accountIdentityCard--compact strong {
     font-size: 0.95rem;
+  }
+
+  .betaTestingHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .betaFeatureMenu {
+    justify-self: stretch;
+    min-width: 0;
+  }
+
+  .betaFeatureDropdown {
+    left: 0;
+    right: 0;
+  }
+
+  .pubGolfMapHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pubGolfMapHeader .button {
+    width: 100%;
   }
 
   .accountAccessBadgeRow {
@@ -6338,6 +6521,11 @@ h3 {
     gap: 8px;
   }
 
+  .accountSpecialIdentityGrid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
   .accountHighlightsGrid .metricCard,
   .accountHighlightsGrid .panel {
     padding: 12px;
@@ -6409,6 +6597,27 @@ h3 {
 
   .accountAccessBadgeRow::-webkit-scrollbar {
     display: none;
+  }
+
+  .betaFeatureDropdown {
+    position: static;
+    display: none;
+    min-width: 0;
+    margin-top: 8px;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+
+  .betaFeatureMenu:hover .betaFeatureDropdown,
+  .betaFeatureMenu:focus-within .betaFeatureDropdown,
+  .betaFeatureMenu.is-open .betaFeatureDropdown {
+    display: grid;
+    transform: none;
+  }
+
+  .pubGolfRouteMap {
+    min-height: 300px;
   }
 
   .accountAccessBadge {
@@ -6521,10 +6730,10 @@ h3 {
   }
 
   .accountHighlightsGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 
-  .accountDiscountFeature {
-    grid-column: 1 / -1;
+  .accountSpecialIdentityGrid {
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 0.48fr);
   }
 }

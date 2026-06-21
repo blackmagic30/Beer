@@ -2672,13 +2672,13 @@ export class BusinessService {
     };
   }
 
-  planPubGolf(account: BusinessAccount, input: PubGolfPlanInput) {
+  async planPubGolf(account: BusinessAccount, input: PubGolfPlanInput) {
     if (!isFullAccess(account)) {
       throw new AppError("Pub Golf beta planning is for premium or contributor accounts.", 403);
     }
 
-    const start = this.resolvePubGolfLocation(input.startLocation);
-    const finish = this.resolvePubGolfLocation(input.finishLocation);
+    const start = await this.resolvePubGolfLocation(input.startLocation);
+    const finish = await this.resolvePubGolfLocation(input.finishLocation);
     const requestedDrinks = input.drinks.map((drink) => drink.trim()).filter(Boolean).slice(0, 9);
     if (requestedDrinks.length !== 9) {
       throw new AppError("Choose exactly nine drinks for Pub Golf.", 400);
@@ -2734,6 +2734,8 @@ export class BusinessService {
           name: chosen.venueName,
           address: chosen.address,
           suburb: chosen.suburb,
+          latitude: chosen.latitude,
+          longitude: chosen.longitude,
           membershipTier: chosen.membershipTier,
           beerName: chosen.beerName,
           servingSize: chosen.servingSize,
@@ -2836,7 +2838,7 @@ export class BusinessService {
     return distancePenalty + toFinish * 0.28 + tierScore;
   }
 
-  private resolvePubGolfLocation(query: string): { latitude: number | null; longitude: number | null; label: string; source: string } | null {
+  private async resolvePubGolfLocation(query: string): Promise<{ latitude: number | null; longitude: number | null; label: string; source: string } | null> {
     const normalized = query.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     if (!normalized) {
       return null;
@@ -2865,6 +2867,16 @@ export class BusinessService {
         longitude: venue.longitude,
         label: [venue.name, venue.suburb].filter(Boolean).join(", "),
         source: "venue_data",
+      };
+    }
+
+    const googleLocation = await this.resolveMissionAreaWithGoogle(query);
+    if (googleLocation) {
+      return {
+        latitude: googleLocation.latitude,
+        longitude: googleLocation.longitude,
+        label: googleLocation.label,
+        source: googleLocation.source,
       };
     }
 

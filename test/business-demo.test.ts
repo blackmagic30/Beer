@@ -2432,7 +2432,7 @@ describe("business demo contribution model", () => {
     expect(JSON.stringify(dashboard.rewards.vouchers)).not.toContain(firstUser.email);
   });
 
-  it("keeps Pub Golf beta premium-only and plans nine drink stops from verified venue data", () => {
+  it("keeps Pub Golf beta premium-only and plans nine drink stops from verified venue data", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const admin = createAccount(repository, "pub-golf-admin", "admin");
@@ -2502,14 +2502,14 @@ describe("business demo contribution model", () => {
       });
     });
 
-    expect(() => service.planPubGolf(freeUser, {
+    await expect(service.planPubGolf(freeUser, {
       startLocation: "Melbourne CBD",
       finishLocation: "Richmond",
       drinks,
       mode: "auto",
-    })).toThrow("premium or contributor");
+    })).rejects.toThrow("premium or contributor");
 
-    const plan = service.planPubGolf(premiumUser, {
+    const plan = await service.planPubGolf(premiumUser, {
       startLocation: "Melbourne CBD",
       finishLocation: "Richmond",
       drinks,
@@ -2521,6 +2521,7 @@ describe("business demo contribution model", () => {
     expect(plan.summary.plannedStops).toBe(9);
     expect(plan.warnings).toEqual([]);
     expect(plan.holes[0].venue?.name).toBe("Pub Golf Stop 1");
+    expect(plan.holes[0].venue?.latitude).toBeCloseTo(-37.8136);
     expect(plan.holes.every((hole) => hole.venue?.mapsUrl.includes("www.google.com/maps/search/"))).toBe(true);
     expect(repository.getAccountById(admin.id)).toBeTruthy();
   });
