@@ -614,12 +614,16 @@ function installCookieConsent() {
   }
 
   const banner = document.createElement("aside");
+  const backdrop = document.createElement("div");
+  backdrop.id = "cookieConsentBackdrop";
+  backdrop.className = "cookieConsentBackdrop";
   banner.id = "cookieConsent";
   banner.className = "cookieConsent";
   banner.setAttribute("aria-label", "Cookie and analytics choices");
   banner.innerHTML = `
-    <div>
-      <strong>Privacy choices</strong>
+    <div class="cookieConsent__copy">
+      <span class="cookieConsent__badge">Privacy</span>
+      <strong>Choose your cookie settings</strong>
       <p>Essential cookies keep login and security working. Optional analytics help improve map search and aggregate venue reports.</p>
     </div>
     <div class="cookieConsent__actions">
@@ -632,10 +636,12 @@ function installCookieConsent() {
   banner.querySelectorAll("[data-cookie-choice]").forEach((button) => {
     button.addEventListener("click", () => {
       setCookieConsentDecision(button.getAttribute("data-cookie-choice"));
+      backdrop.remove();
       banner.remove();
     });
   });
 
+  document.body.appendChild(backdrop);
   document.body.appendChild(banner);
 }
 

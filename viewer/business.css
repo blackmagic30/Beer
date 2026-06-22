@@ -4723,6 +4723,14 @@ h3 {
   background: rgba(34, 211, 238, 0.12);
 }
 
+.fieldHint--success {
+  color: #a7f3d0;
+}
+
+.fieldHint--error {
+  color: #fecaca;
+}
+
 .betaFeaturePanel {
   display: grid;
   gap: 14px;
@@ -5501,6 +5509,10 @@ h3 {
   outline-offset: 3px;
 }
 
+.cookieConsentBackdrop {
+  display: none;
+}
+
 .cookieConsent {
   position: fixed;
   left: 18px;
@@ -5522,6 +5534,24 @@ h3 {
   padding: 16px;
   color: #f7f1e7;
   backdrop-filter: blur(18px);
+}
+
+.cookieConsent__copy {
+  display: grid;
+  gap: 6px;
+}
+
+.cookieConsent__badge {
+  width: max-content;
+  border: 1px solid rgba(34, 211, 238, 0.34);
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.12);
+  color: #c7f9ff;
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+  padding: 5px 9px;
+  text-transform: uppercase;
 }
 
 .cookieConsent p {
@@ -5914,8 +5944,7 @@ h3 {
   }
 
   .accountSpecialIdentityGrid {
-    grid-template-columns: minmax(0, 1fr) minmax(210px, 0.52fr);
-    gap: 10px;
+    display: contents;
   }
 
   .accountHighlightsGrid .metricCard,
@@ -5925,16 +5954,16 @@ h3 {
   }
 
   .accountHeroMetric--savings {
-    order: 1;
+    order: 3;
   }
 
   .accountHeroMetric--special {
     grid-column: auto;
-    order: 1;
+    order: 2;
   }
 
   .accountIdentityCard--compact {
-    order: 2;
+    order: 1;
   }
 
   .accountHeroMetric--savings .metricValue {
@@ -5987,9 +6016,24 @@ h3 {
     min-width: 0;
   }
 
+  .betaFeatureMenu > .button {
+    display: none;
+  }
+
   .betaFeatureDropdown {
-    left: 0;
-    right: 0;
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-width: 0;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+
+  .betaFeatureDropdown button {
+    min-height: 44px;
+    padding: 8px;
+    text-align: center;
   }
 
   .pubGolfMapHeader {
@@ -6439,10 +6483,30 @@ h3 {
   }
 
   .cookieConsent {
+    top: 50%;
+    bottom: auto;
     grid-template-columns: 1fr;
-    left: 12px;
-    right: 12px;
-    bottom: 64px;
+    left: 18px;
+    right: 18px;
+    max-width: 440px;
+    border-color: rgba(245, 197, 66, 0.3);
+    background:
+      radial-gradient(circle at 0% 0%, rgba(245, 197, 66, 0.16), transparent 38%),
+      radial-gradient(circle at 100% 0%, rgba(34, 211, 238, 0.14), transparent 38%),
+      linear-gradient(145deg, rgba(22, 28, 45, 0.98), rgba(8, 13, 25, 0.98));
+    padding: 18px;
+    transform: translateY(-50%);
+  }
+
+  .cookieConsentBackdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 28;
+    display: block;
+    background:
+      radial-gradient(circle at 50% 15%, rgba(34, 211, 238, 0.14), transparent 34%),
+      rgba(3, 7, 18, 0.58);
+    backdrop-filter: blur(8px);
   }
 
   .cookieConsent__actions {
@@ -6522,7 +6586,6 @@ h3 {
   }
 
   .accountSpecialIdentityGrid {
-    grid-template-columns: 1fr;
     gap: 8px;
   }
 
@@ -6601,7 +6664,8 @@ h3 {
 
   .betaFeatureDropdown {
     position: static;
-    display: none;
+    display: grid;
+    grid-template-columns: 1fr;
     min-width: 0;
     margin-top: 8px;
     opacity: 1;
