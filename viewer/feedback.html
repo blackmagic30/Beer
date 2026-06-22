@@ -22,13 +22,13 @@
 
     <section class="hero hero--split feedbackHero">
       <div>
-        <div class="eyebrow">Contact Pint Path</div>
-        <h1>Tell us what you need, or ask about joining as a venue.</h1>
-        <p class="lead">Send product issues, account requests, security concerns, or bar partnership messages from one simple place.</p>
+        <div id="feedbackEyebrow" class="eyebrow">Contact Pint Path</div>
+        <h1 id="feedbackTitle">Tell us what you need, or ask about joining as a venue.</h1>
+        <p id="feedbackLead" class="lead">Send product issues, account requests, security concerns, or bar partnership messages from one simple place.</p>
       </div>
       <div class="panel feedbackPromise">
-        <h2>What helps most</h2>
-        <ul class="cleanList">
+        <h2 id="feedbackPromiseTitle">What helps most</h2>
+        <ul id="feedbackPromiseList" class="cleanList">
           <li>Where you were in the app</li>
           <li>What you expected to happen</li>
           <li>For bars: venue name and best contact person</li>
@@ -40,15 +40,15 @@
     <section class="grid grid--two feedbackGrid">
       <article class="panel">
         <div class="eyebrow">Privacy note</div>
-        <h2>Contact is for support, product notes, and venue partner interest.</h2>
-        <p class="muted">Wrong prices should still be reported from a venue detail card where possible. Privacy, security, abuse, deletion, export, billing, moderation, and venue partner requests are routed here during beta and are not published on the map.</p>
+        <h2 id="feedbackPrivacyTitle">Contact is for support, product notes, and venue partner interest.</h2>
+        <p id="feedbackPrivacyCopy" class="muted">Wrong prices should still be reported from a venue detail card where possible. Privacy, security, abuse, deletion, export, billing, moderation, and venue partner requests are routed here during beta and are not published on the map.</p>
         <div class="divider"></div>
-        <p class="helperCopy">If you are a bar, tell us the venue name, suburb, and whether you want to join, claim, or manage an existing listing.</p>
+        <p id="feedbackHelperCopy" class="helperCopy">If you are a bar, tell us the venue name, suburb, and whether you want to join, claim, or manage an existing listing.</p>
       </article>
 
       <form id="feedbackForm" class="panel form">
-        <h2>Send a message</h2>
-        <p class="muted">Messages can be anonymous, but if you are signed in we can link it to your account for follow-up.</p>
+        <h2 id="feedbackFormTitle">Send a message</h2>
+        <p id="feedbackFormCopy" class="muted">Messages can be anonymous, but if you are signed in we can link it to your account for follow-up.</p>
         <label class="field">Type
           <select name="feedbackType">
             <option value="general_feedback">General contact</option>
@@ -69,12 +69,15 @@
         <label class="field">Venue, if relevant
           <input name="venueName" placeholder="Optional venue name" />
         </label>
+        <label class="field">Reply email, if needed
+          <input name="contactEmail" type="email" autocomplete="email" placeholder="Optional email for follow-up" />
+        </label>
         <label class="field">Message
           <textarea name="message" required maxlength="1200" placeholder="How can we help?"></textarea>
         </label>
         <div class="actionRow">
           <button id="feedbackSubmitButton" class="button button--primary" type="submit">Send message</button>
-          <a class="button" href="/">Back to map</a>
+          <a id="feedbackBackLink" class="button" href="/">Back to map</a>
         </div>
         <div id="feedbackStatus" class="notice">We read every contact message. Please do not include private ID documents, payment details, passwords, or tokens.</div>
       </form>
@@ -89,15 +92,45 @@
     }
 
     window.addEventListener("DOMContentLoaded", async () => {
-      $("nav").innerHTML = MelbBeerBusiness.renderNav("feedback");
+      const params = new URLSearchParams(window.location.search);
+      const isVenueSupport = params.get("audience") === "bars" || MelbBeerBusiness.isVenueManagerContext();
+      $("nav").innerHTML = MelbBeerBusiness.renderNav(isVenueSupport ? "venue-support" : "feedback");
       await MelbBeerBusiness.syncSupabaseSession().catch(() => null);
+      if (isVenueSupport) {
+        document.title = "Venue Support | Pint Path";
+        $("feedbackEyebrow").textContent = "Venue support";
+        $("feedbackTitle").textContent = "Ask Pint Path about your venue account.";
+        $("feedbackLead").textContent = "Questions about claiming, pricing, dashboard tools, staff access, Pint Path specials, or venue data all land in one support queue.";
+        $("feedbackPromiseTitle").textContent = "For a faster reply";
+        $("feedbackPromiseList").innerHTML = `
+          <li>Venue name and suburb</li>
+          <li>What tab or tool you were using</li>
+          <li>The staff member or owner who needs help</li>
+          <li>Whether it affects pricing, specials, or account access</li>
+        `;
+        $("feedbackPrivacyTitle").textContent = "Venue questions stay private.";
+        $("feedbackPrivacyCopy").textContent = "Support messages are saved to the Pint Path admin inbox for follow-up. They are not published on the map and do not change your public listing.";
+        $("feedbackHelperCopy").textContent = "Use this for bar account setup, plan questions, staff access, support, and partnership enquiries.";
+        $("feedbackFormTitle").textContent = "Send venue support request";
+        $("feedbackFormCopy").textContent = "If you are signed in, we attach your account to the request. Add a reply email if another owner or staff member should be contacted.";
+        $("feedbackSubmitButton").textContent = "Send to venue support";
+        $("feedbackBackLink").href = "/venue-portal.html";
+        $("feedbackBackLink").textContent = "Back to dashboard";
+        $("feedbackStatus").textContent = "Venue support messages are saved into the Pint Path admin support inbox.";
+        $("feedbackForm").elements.namedItem("feedbackType").value = "venue_partner_interest";
+      }
 
       $("feedbackForm").addEventListener("submit", async (event) => {
         event.preventDefault();
         const button = $("feedbackSubmitButton");
         const body = Object.fromEntries(new FormData($("feedbackForm")).entries());
+        const message = [
+          body.contactEmail ? `Reply email: ${body.contactEmail}` : null,
+          isVenueSupport ? "Venue support request." : null,
+          body.message,
+        ].filter(Boolean).join("\n\n").slice(0, 1200);
         button.disabled = true;
-        MelbBeerBusiness.setStatus($("feedbackStatus"), "Sending message...");
+        MelbBeerBusiness.setStatus($("feedbackStatus"), isVenueSupport ? "Sending to venue support..." : "Sending message...");
 
         try {
           const result = await MelbBeerBusiness.apiFetch("/api/business/feedback", {
@@ -105,13 +138,16 @@
             body: JSON.stringify({
               anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
               feedbackType: body.feedbackType,
-              message: body.message,
+              message,
               venueName: body.venueName || null,
               venueId: null,
             }),
           });
           $("feedbackForm").reset();
-          MelbBeerBusiness.setStatus($("feedbackStatus"), result.message || "Message saved for review. Thank you.");
+          MelbBeerBusiness.setStatus($("feedbackStatus"), result.message || (isVenueSupport ? "Venue support request saved. Thank you." : "Message saved for review. Thank you."));
+          if (isVenueSupport) {
+            $("feedbackForm").elements.namedItem("feedbackType").value = "venue_partner_interest";
+          }
         } catch (error) {
           MelbBeerBusiness.setStatus($("feedbackStatus"), error.message, true);
         } finally {

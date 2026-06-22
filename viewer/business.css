@@ -1270,6 +1270,56 @@ h3 {
   color: var(--text-disabled);
 }
 
+.openingHoursEditor {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.openingHoursRow {
+  display: grid;
+  grid-template-columns: minmax(94px, 0.8fr) minmax(120px, 1fr) minmax(120px, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.44);
+  padding: 10px;
+}
+
+.openingHoursToggle,
+.openingHoursTime {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.openingHoursToggle {
+  grid-template-columns: 22px 1fr;
+  align-items: center;
+  color: var(--text-primary);
+  font-weight: 900;
+}
+
+.openingHoursToggle input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent-neon-cyan);
+}
+
+.openingHoursTime span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.openingHoursTime input:disabled {
+  opacity: 0.45;
+}
+
 .specialScheduleGrid {
   display: grid;
   grid-template-columns: minmax(240px, 1.4fr) minmax(140px, 0.8fr) minmax(140px, 0.8fr);
@@ -4947,6 +4997,87 @@ h3 {
   box-shadow: 0 10px 28px rgba(34, 211, 238, 0.24);
 }
 
+.pubGolfLiveItinerary {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(245, 197, 66, 0.18);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(245, 197, 66, 0.1), transparent 36%),
+    rgba(3, 7, 18, 0.26);
+  padding: 12px;
+}
+
+.pubGolfItineraryHeader {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.pubGolfItineraryHeader > div {
+  display: grid;
+  gap: 4px;
+}
+
+.pubGolfItineraryHeader span:not(.pill) {
+  color: var(--text-muted);
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.pubGolfItineraryList {
+  display: grid;
+  gap: 10px;
+}
+
+.pubGolfItineraryLeg {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: rgba(5, 9, 18, 0.38);
+  padding: 11px;
+}
+
+.pubGolfItineraryLeg--transit {
+  border-color: rgba(34, 211, 238, 0.22);
+}
+
+.pubGolfLegBadge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 46px;
+  min-height: 34px;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.12);
+  color: #c7f9ff;
+  font-size: 0.72rem;
+  font-weight: 950;
+}
+
+.pubGolfItineraryLeg p,
+.pubGolfItineraryLeg small,
+.pubGolfItineraryLeg em,
+.pubGolfStopBuffer {
+  display: block;
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-style: normal;
+  font-weight: 780;
+  line-height: 1.38;
+}
+
+.pubGolfItineraryLeg em {
+  color: var(--text-secondary);
+}
+
+.pubGolfStopBuffer {
+  color: #fde68a;
+}
+
 .pubGolfHole {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -5704,11 +5835,16 @@ h3 {
   .venueDemandPanel__body,
   .venueDemandPanel__footer,
   .venueOverviewColumns,
+  .openingHoursRow,
   .redemptionFlowGrid,
   .discountQuickPanel,
   .discountOpsPanel,
   .selectedDiscountSpecial {
     grid-template-columns: 1fr;
+  }
+
+  .openingHoursRow {
+    gap: 8px;
   }
 
   .venuePortalHero {
@@ -6037,6 +6173,11 @@ h3 {
   }
 
   .pubGolfMapHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pubGolfItineraryHeader {
     align-items: stretch;
     flex-direction: column;
   }
@@ -6682,6 +6823,14 @@ h3 {
 
   .pubGolfRouteMap {
     min-height: 300px;
+  }
+
+  .pubGolfItineraryLeg {
+    grid-template-columns: 1fr;
+  }
+
+  .pubGolfLegBadge {
+    justify-self: start;
   }
 
   .accountAccessBadge {

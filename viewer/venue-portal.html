@@ -62,6 +62,7 @@
             <button class="tabButton" type="button" data-tab="specials" data-specials-only>Pint Path specials</button>
             <button class="tabButton" type="button" data-tab="pending-reviews">Pending reviews</button>
             <button class="tabButton" type="button" data-tab="report">Monthly report</button>
+            <button class="tabButton" type="button" data-tab="support">Support</button>
           </nav>
           <button id="venueLogoutButton" class="button button--danger venueLogoutButton" type="button">Log out</button>
         </aside>
@@ -189,7 +190,7 @@
               <div class="sectionHeader">
                 <div>
                   <h2>Venue profile details</h2>
-                  <p class="muted">Keep contact details, opening notes and venue tags current.</p>
+                  <p class="muted">Keep contact details, opening hours and venue tags current.</p>
                 </div>
                 <button class="button button--primary" type="submit">Save profile</button>
               </div>
@@ -215,9 +216,11 @@
               <label class="field">Instagram / social link
                 <input name="instagram" placeholder="https://instagram.com/..." />
               </label>
-              <label class="field">Opening hours note
-                <textarea name="openingHoursNote" placeholder="e.g. Mon-Thu 12pm-late, Fri-Sun 11am-late."></textarea>
-              </label>
+              <div class="field">
+                <span>Opening hours</span>
+                <div id="openingHoursEditor" class="openingHoursEditor" aria-label="Weekly opening hours"></div>
+                <p id="openingHoursLegacyNote" class="helperCopy is-hidden"></p>
+              </div>
               <div>
                 <div class="field" style="margin-bottom:8px;">Venue tags</div>
                 <div id="venueTags" class="dayChecklist"></div>
@@ -453,6 +456,41 @@
               <div id="reportExportStatus" class="notice is-hidden" role="status"></div>
             </article>
           </section>
+
+          <section class="tabPanel is-hidden" data-panel="support">
+            <article class="panel form">
+              <div class="sectionHeader">
+                <div>
+                  <div class="eyebrow">Venue support</div>
+                  <h2>Ask Pint Path a question</h2>
+                  <p class="muted">Use this for venue setup, dashboard questions, plan changes, staff access, Pint Path specials, or account support.</p>
+                </div>
+                <a class="button" href="/feedback.html?audience=bars">Open support page</a>
+              </div>
+              <form id="venueSupportForm" class="form">
+                <div class="grid grid--two">
+                  <label class="field">Topic
+                    <select name="feedbackType">
+                      <option value="venue_partner_interest">Venue account or partnership</option>
+                      <option value="billing_support">Pricing or billing</option>
+                      <option value="bug">Dashboard issue</option>
+                      <option value="wrong_data">Wrong venue data</option>
+                      <option value="feature_idea">Feature idea</option>
+                      <option value="general_feedback">General support</option>
+                    </select>
+                  </label>
+                  <label class="field">Reply email
+                    <input name="contactEmail" type="email" autocomplete="email" placeholder="Optional email for follow-up" />
+                  </label>
+                </div>
+                <label class="field">Question
+                  <textarea name="message" required maxlength="1100" placeholder="What do you need help with?"></textarea>
+                </label>
+                <button id="venueSupportSubmitButton" class="button button--primary" type="submit">Send to venue support</button>
+              </form>
+              <div id="venueSupportStatus" class="notice" role="status">Support messages are saved into the Pint Path admin support inbox.</div>
+            </article>
+          </section>
         </div>
       </div>
     </section>
@@ -495,6 +533,7 @@
       ["sun", "Sun"],
     ];
     const dayLabelByValue = Object.fromEntries(dayOptions);
+    const openingHoursTimezone = "Australia/Melbourne";
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -525,6 +564,79 @@
 
     function prettyTier(value) {
       return value === "pro" ? "Pro" : value === "plus" ? "Plus" : "Free";
+    }
+
+    function normalizeOpeningTimeValue(value, fallback) {
+      const normalized = normalizeHappyHourTime(value);
+      return /^([01]\d|2[0-3]):[0-5]\d$/.test(normalized) ? normalized : fallback;
+    }
+
+    function getOpeningDaySource(openingHours, dayKey) {
+      const source = openingHours && typeof openingHours === "object" ? openingHours : {};
+      const days = source.days && typeof source.days === "object" ? source.days : source;
+      const value = days?.[dayKey];
+      return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    }
+
+    function renderOpeningHoursEditor(openingHours = {}) {
+      const editor = document.getElementById("openingHoursEditor");
+      const legacyNote = document.getElementById("openingHoursLegacyNote");
+      if (!editor) return;
+
+      const source = openingHours && typeof openingHours === "object" ? openingHours : {};
+      editor.innerHTML = dayOptions.map(([dayKey, label]) => {
+        const day = getOpeningDaySource(source, dayKey);
+        const isOpen = day.open === true || day.isOpen === true || day.closed === false;
+        const openTime = normalizeOpeningTimeValue(day.openTime ?? day.opens ?? day.startTime, "12:00");
+        const closeTime = normalizeOpeningTimeValue(day.closeTime ?? day.closes ?? day.endTime, "23:00");
+        return `
+          <div class="openingHoursRow" data-opening-day="${escapeHtml(dayKey)}">
+            <label class="openingHoursToggle">
+              <input type="checkbox" data-opening-open ${isOpen ? "checked" : ""} />
+              <span>${escapeHtml(label)}</span>
+            </label>
+            <label class="openingHoursTime">
+              <span>Open</span>
+              <input type="time" data-opening-start value="${escapeHtml(openTime)}" ${isOpen ? "" : "disabled"} />
+            </label>
+            <label class="openingHoursTime">
+              <span>Close</span>
+              <input type="time" data-opening-end value="${escapeHtml(closeTime)}" ${isOpen ? "" : "disabled"} />
+            </label>
+          </div>
+        `;
+      }).join("");
+
+      if (legacyNote) {
+        const note = String(source.note || "").trim();
+        legacyNote.textContent = note ? `Previous note: ${note}` : "";
+        legacyNote.classList.toggle("is-hidden", !note);
+      }
+    }
+
+    function syncOpeningHoursRow(row) {
+      const checkbox = row.querySelector("[data-opening-open]");
+      const isOpen = Boolean(checkbox?.checked);
+      row.querySelectorAll("[data-opening-start], [data-opening-end]").forEach((input) => {
+        input.disabled = !isOpen;
+      });
+    }
+
+    function collectOpeningHours() {
+      const days = {};
+      document.querySelectorAll("[data-opening-day]").forEach((row) => {
+        const dayKey = row.dataset.openingDay;
+        if (!dayKey) return;
+        const isOpen = Boolean(row.querySelector("[data-opening-open]")?.checked);
+        const openTime = normalizeOpeningTimeValue(row.querySelector("[data-opening-start]")?.value, "12:00");
+        const closeTime = normalizeOpeningTimeValue(row.querySelector("[data-opening-end]")?.value, "23:00");
+        days[dayKey] = { open: isOpen, openTime, closeTime };
+      });
+      return {
+        format: "weekly",
+        timezone: openingHoursTimezone,
+        days,
+      };
     }
 
     const VENUE_DASHBOARD_PLANS = ["free", "plus", "pro"];
@@ -1033,7 +1145,7 @@
       field(profileForm, "phone").value = profile.phone || "";
       field(profileForm, "website").value = profile.website || "";
       field(profileForm, "instagram").value = profile.instagram || "";
-      field(profileForm, "openingHoursNote").value = profile.openingHours?.note || "";
+      renderOpeningHoursEditor(profile.openingHours || {});
       field(profileForm, "active").checked = Boolean(profile.active);
       renderChecklist(venueTags, tagOptions, profile.venueTags || []);
     }
@@ -2522,6 +2634,9 @@
       const discountRedemptionStatus = document.getElementById("discountRedemptionStatus");
       const freePintRewardForm = document.getElementById("freePintRewardForm");
       const freePintRewardStatus = document.getElementById("freePintRewardStatus");
+      const venueSupportFormElement = document.getElementById("venueSupportForm");
+      const venueSupportStatusElement = document.getElementById("venueSupportStatus");
+      const venueSupportSubmitButton = document.getElementById("venueSupportSubmitButton");
       const urlParams = new URLSearchParams(window.location.search);
       const discountCodeFromQr = urlParams.get("discountCode");
       const freePintCodeFromQr = urlParams.get("freePintCode");
@@ -2541,6 +2656,12 @@
       field(beerForm, "isNewBeer").addEventListener("change", updateBeerCatalogueState);
       [field(happyHourForm, "startTime"), field(happyHourForm, "endTime")].forEach((input) => {
         input.addEventListener("blur", () => normalizeTimeField(input));
+      });
+      document.getElementById("openingHoursEditor")?.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !target.matches("[data-opening-open]")) return;
+        const row = target.closest("[data-opening-day]");
+        if (row) syncOpeningHoursRow(row);
       });
 
       try {
@@ -2617,7 +2738,7 @@
           website: field(profileForm, "website").value || null,
           instagram: field(profileForm, "instagram").value || null,
           description: currentPortal?.profile?.description || null,
-          openingHours: field(profileForm, "openingHoursNote").value ? { note: field(profileForm, "openingHoursNote").value } : {},
+          openingHours: collectOpeningHours(),
           venueTags: checkedValues(venueTags),
           active: field(profileForm, "active").checked,
         };
@@ -2784,6 +2905,44 @@
             await loadPortal(venueId);
           } catch (error) {
             MelbBeerBusiness.setStatus(freePintRewardStatus, error.message || "Could not process Free Pint Reward.", true);
+          }
+        });
+      }
+
+      if (venueSupportFormElement instanceof HTMLFormElement) {
+        venueSupportFormElement.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const venueId = selectedVenueId();
+          const profile = currentPortal?.profile || {};
+          const body = Object.fromEntries(new FormData(venueSupportFormElement).entries());
+          const message = [
+            "Venue dashboard support request.",
+            body.contactEmail ? `Reply email: ${body.contactEmail}` : null,
+            body.message,
+          ].filter(Boolean).join("\n\n").slice(0, 1200);
+          if (venueSupportSubmitButton instanceof HTMLButtonElement) {
+            venueSupportSubmitButton.disabled = true;
+          }
+          MelbBeerBusiness.setStatus(venueSupportStatusElement, "Sending to venue support...");
+          try {
+            const result = await MelbBeerBusiness.apiFetch("/api/business/feedback", {
+              method: "POST",
+              body: JSON.stringify({
+                anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
+                feedbackType: body.feedbackType || "venue_partner_interest",
+                message,
+                venueId: venueId || null,
+                venueName: profile.name || currentPortal?.selectedVenue?.venueName || null,
+              }),
+            });
+            venueSupportFormElement.reset();
+            MelbBeerBusiness.setStatus(venueSupportStatusElement, result.message || "Venue support request saved.");
+          } catch (error) {
+            MelbBeerBusiness.setStatus(venueSupportStatusElement, error.message || "Could not send support request.", true);
+          } finally {
+            if (venueSupportSubmitButton instanceof HTMLButtonElement) {
+              venueSupportSubmitButton.disabled = false;
+            }
           }
         });
       }

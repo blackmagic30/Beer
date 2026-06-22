@@ -261,10 +261,13 @@ describe("account page shell", () => {
     expect(feedback).toContain('id="feedbackForm"');
     expect(feedback).toContain("Tell us what you need, or ask about joining as a venue.");
     expect(feedback).toContain("venue_partner_interest");
-    expect(feedback).toContain('MelbBeerBusiness.renderNav("feedback")');
+    expect(feedback).toContain('MelbBeerBusiness.renderNav(isVenueSupport ? "venue-support" : "feedback")');
+    expect(feedback).toContain("Ask Pint Path about your venue account.");
+    expect(feedback).toContain("Venue support messages are saved into the Pint Path admin support inbox.");
     expect(feedback).toContain('MelbBeerBusiness.apiFetch("/api/business/feedback"');
     expect(feedback.indexOf("Privacy note")).toBeLessThan(feedback.indexOf('id="feedbackForm"'));
     expect(script).toContain('{ key: "feedback", href: "/feedback.html", label: "Contact us" }');
+    expect(script).toContain('{ key: "venue-support", href: "/feedback.html?audience=bars", label: "Support" }');
     expect(script).not.toContain('href="/account.html#feedbackForm"');
     expect(script).not.toContain("fieldTestFeedbackButton");
     expect(script).not.toContain("floatingFeedback");
@@ -458,7 +461,7 @@ describe("account page shell", () => {
     expect(script).toContain("function isVenueManagerContext");
     expect(script).toContain("function isAdminContext");
     expect(script).toContain("subscriptionStatus: account.subscriptionStatus || null");
-    expect(script).toContain('const venueManagerNav = active === "venue-portal" || active === "bar-faq" || isVenueManagerContext()');
+    expect(script).toContain('const venueManagerNav = active === "venue-portal" || active === "bar-faq" || active === "venue-support" || isVenueManagerContext()');
     expect(script).toContain('const adminNav = active === "admin" || isAdminContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
@@ -470,6 +473,7 @@ describe("account page shell", () => {
     expect(script).toContain('{ key: "pricing", href: "/pricing.html", label: "Pricing" }');
     expect(script).toContain('{ key: "faq", href: "/trust.html", label: "FAQ" }');
     expect(script).toContain('{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }');
+    expect(script).toContain('{ key: "venue-support", href: "/feedback.html?audience=bars", label: "Support" }');
     expect(script).not.toContain("const authenticatedLinks");
     expect(html).toContain('id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard');
     expect(html).toContain('href="/submit.html" data-venue-hidden>Submit');
@@ -500,6 +504,7 @@ describe("account page shell", () => {
     expect(nav).toContain('href="/venue-portal.html">Dashboard</a>');
     expect(nav).toContain('href="/pricing.html">Pricing</a>');
     expect(nav).toContain('href="/trust.html?audience=bars">Bar FAQ</a>');
+    expect(nav).toContain('href="/feedback.html?audience=bars">Support</a>');
     expect(nav).not.toContain('href="/account.html">Account</a>');
     expect(nav).not.toContain('href="/submit.html"');
     expect(nav).not.toContain('href="/missions.html"');

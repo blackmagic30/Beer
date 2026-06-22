@@ -431,6 +431,9 @@
       "Non-alcoholic beer",
     ];
 
+    const PUB_GOLF_STOP_MINUTES = 25;
+    const PUB_GOLF_START_BUFFER_MINUTES = 5;
+
     const betaFeatureLabels = {
       "pub-golf": "Pub Golf",
       leaderboard: "Leaderboard",
@@ -493,14 +496,33 @@
       };
     }
 
+    async function ensureAccountGoogleMapsLibraries(maps) {
+      if (maps.importLibrary) {
+        const imports = [];
+        if (typeof maps.DirectionsService !== "function") {
+          imports.push(maps.importLibrary("routes"));
+        }
+        if (!maps.marker?.AdvancedMarkerElement) {
+          imports.push(maps.importLibrary("marker").catch(() => null));
+        }
+        if (imports.length) {
+          await Promise.all(imports);
+        }
+      }
+
+      if (typeof maps.DirectionsService !== "function") {
+        throw new Error("Transit routing is not available for this Google Maps key yet.");
+      }
+      return maps;
+    }
+
     function loadAccountGoogleMaps() {
       if (
         window.google &&
         window.google.maps &&
-        typeof window.google.maps.Map === "function" &&
-        typeof window.google.maps.DirectionsService === "function"
+        typeof window.google.maps.Map === "function"
       ) {
-        return Promise.resolve(window.google.maps);
+        return ensureAccountGoogleMapsLibraries(window.google.maps);
       }
 
       if (state.googleMapsLoader) {
@@ -525,18 +547,23 @@
           key,
           callback: callbackName,
           v: "weekly",
-          libraries: "marker",
+          libraries: "marker,routes",
           loading: "async",
         });
         if (mapId) {
           params.set("map_ids", mapId);
         }
 
-        window[callbackName] = function onAccountGoogleMapsReady() {
+        window[callbackName] = async function onAccountGoogleMapsReady() {
           delete window[callbackName];
           if (window.google?.maps?.Map) {
-            resolve(window.google.maps);
-            return;
+            try {
+              resolve(await ensureAccountGoogleMapsLibraries(window.google.maps));
+              return;
+            } catch (error) {
+              reject(error);
+              return;
+            }
           }
           reject(new Error("Google Maps loaded without map support."));
         };
@@ -1053,6 +1080,16 @@
           <div id="pubGolfRouteMap" class="pubGolfRouteMap" role="img" aria-label="Map showing your Pub Golf route"></div>
           <p id="pubGolfMapStatus" class="helperCopy">Loading walking/public transport route preview...</p>
         </section>
+        <section id="pubGolfLiveItinerary" class="pubGolfLiveItinerary" aria-live="polite">
+          <div class="pubGolfItineraryHeader">
+            <div>
+              <strong>Fastest leave-time plan</strong>
+              <span>Checking walking, buses, trams, and trains for the least waiting around.</span>
+            </div>
+            <span class="pill">No driving</span>
+          </div>
+          <p class="helperCopy">Loading live transit timing...</p>
+        </section>
         <div class="pubGolfRoute">
           ${(result.holes || []).map((hole) => `
             <article class="pubGolfHole ${hole.status === "needs_data" ? "pubGolfHole--missing" : ""}">
@@ -1114,6 +1151,252 @@
       }
       url.searchParams.set("travelmode", mode === "transit" ? "transit" : "walking");
       return url.toString();
+    }
+
+    function formatClock(value) {
+      const date = value instanceof Date ? value : new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return "time unavailable";
+      }
+      return new Intl.DateTimeFormat("en-AU", {
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(date);
+    }
+
+    function formatDurationSeconds(seconds) {
+      const minutes = Math.max(0, Math.round(Number(seconds || 0) / 60));
+      if (minutes < 60) {
+        return `${minutes} min`;
+      }
+      const hours = Math.floor(minutes / 60);
+      const remainder = minutes % 60;
+      return remainder ? `${hours} hr ${remainder} min` : `${hours} hr`;
+    }
+
+    function routeValueDate(value) {
+      if (!value) {
+        return null;
+      }
+      const raw = value.value || value;
+      const date = raw instanceof Date ? raw : new Date(raw);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function straightLineMeters(left, right) {
+      const earthRadiusMeters = 6371000;
+      const lat1 = left.lat * Math.PI / 180;
+      const lat2 = right.lat * Math.PI / 180;
+      const deltaLat = (right.lat - left.lat) * Math.PI / 180;
+      const deltaLng = (right.lng - left.lng) * Math.PI / 180;
+      const a = Math.sin(deltaLat / 2) ** 2 +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+      return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function requestDirections(maps, service, request) {
+      return new Promise((resolve) => {
+        service.route(request, (response, routeStatus) => {
+          if (routeStatus === "OK" && response?.routes?.[0]?.legs?.[0]) {
+            resolve(response);
+            return;
+          }
+          resolve(null);
+        });
+      });
+    }
+
+    function firstTransitStep(leg) {
+      return (leg.steps || []).find((step) => step.travel_mode === "TRANSIT" && step.transit) || null;
+    }
+
+    function transitStepCopy(step) {
+      if (!step?.transit) {
+        return "Public transport";
+      }
+      const details = step.transit;
+      const vehicle = details.line?.vehicle?.name || details.line?.vehicle?.type || "Transit";
+      const line = details.line?.short_name || details.line?.name || "";
+      const fromStop = details.departure_stop?.name;
+      const toStop = details.arrival_stop?.name;
+      const headsign = details.headsign ? ` toward ${details.headsign}` : "";
+      const stops = details.num_stops ? ` · ${details.num_stops} stops` : "";
+      return `${vehicle}${line ? ` ${line}` : ""}${headsign}${fromStop && toStop ? ` · ${fromStop} to ${toStop}` : ""}${stops}`;
+    }
+
+    function routePlanFromResponse(response, mode, requestedStartTime) {
+      const route = response?.routes?.[0];
+      const leg = route?.legs?.[0];
+      if (!route || !leg) {
+        return null;
+      }
+      const durationSeconds = Number(leg.duration?.value || 0);
+      const departureTime = mode === "transit"
+        ? routeValueDate(leg.departure_time) || requestedStartTime
+        : requestedStartTime;
+      const arrivalTime = mode === "transit"
+        ? routeValueDate(leg.arrival_time) || new Date(departureTime.getTime() + durationSeconds * 1000)
+        : new Date(departureTime.getTime() + durationSeconds * 1000);
+      const waitSeconds = Math.max(0, Math.round((departureTime.getTime() - requestedStartTime.getTime()) / 1000));
+      const totalSeconds = Math.max(durationSeconds, Math.round((arrivalTime.getTime() - requestedStartTime.getTime()) / 1000));
+      const transitStep = mode === "transit" ? firstTransitStep(leg) : null;
+      return {
+        mode,
+        route,
+        leg,
+        durationSeconds,
+        waitSeconds,
+        totalSeconds,
+        departureTime,
+        arrivalTime,
+        fareText: route.fare?.text || "",
+        transitCopy: transitStepCopy(transitStep),
+      };
+    }
+
+    function choosePubGolfTravelLeg(walking, transit, requestedMode) {
+      if (requestedMode === "walking") {
+        return walking || transit;
+      }
+      if (!walking) {
+        return transit;
+      }
+      if (!transit) {
+        return walking;
+      }
+      if (requestedMode === "transit") {
+        return walking.totalSeconds <= 12 * 60 && walking.totalSeconds <= transit.totalSeconds + 180
+          ? walking
+          : transit;
+      }
+      if (walking.totalSeconds <= 14 * 60) {
+        return walking;
+      }
+      if (transit.totalSeconds + 240 < walking.totalSeconds) {
+        return transit;
+      }
+      if (walking.totalSeconds <= 20 * 60 && transit.waitSeconds > 7 * 60) {
+        return walking;
+      }
+      return transit.totalSeconds < walking.totalSeconds ? transit : walking;
+    }
+
+    async function planPubGolfLiveLeg(maps, service, from, to, departureTime, requestedMode) {
+      const origin = { lat: from.lat, lng: from.lng };
+      const destination = { lat: to.lat, lng: to.lng };
+      const walkingResponse = await requestDirections(maps, service, {
+        origin,
+        destination,
+        travelMode: maps.TravelMode.WALKING,
+      });
+      const walking = routePlanFromResponse(walkingResponse, "walking", departureTime);
+      const distance = straightLineMeters(from, to);
+      const shouldTryTransit = requestedMode === "transit" ||
+        (requestedMode === "auto" && (!walking || walking.totalSeconds > 14 * 60 || distance > 1200));
+      const transitResponse = shouldTryTransit
+        ? await requestDirections(maps, service, {
+            origin,
+            destination,
+            travelMode: maps.TravelMode.TRANSIT,
+            transitOptions: {
+              departureTime,
+              modes: maps.TransitMode
+                ? [
+                    maps.TransitMode.BUS,
+                    maps.TransitMode.RAIL,
+                    maps.TransitMode.TRAM,
+                  ].filter(Boolean)
+                : undefined,
+              routingPreference: maps.TransitRoutePreference?.LESS_WALKING,
+            },
+          })
+        : null;
+      const transit = routePlanFromResponse(transitResponse, "transit", departureTime);
+      return choosePubGolfTravelLeg(walking, transit, requestedMode);
+    }
+
+    function itineraryPoints(points) {
+      return points.map((point, index) => {
+        if (index === 0) {
+          return { ...point, stopLabel: "Start" };
+        }
+        if (index === points.length - 1) {
+          return { ...point, stopLabel: "Finish" };
+        }
+        return { ...point, stopLabel: `Hole ${index}` };
+      });
+    }
+
+    function renderPubGolfItineraryPlan(legs, startTime, endTime) {
+      const target = $("pubGolfLiveItinerary");
+      if (!target) {
+        return;
+      }
+      if (!legs.length) {
+        target.innerHTML = `
+          <div class="pubGolfItineraryHeader">
+            <div>
+              <strong>Fastest leave-time plan</strong>
+              <span>Not enough matched stops to calculate timing.</span>
+            </div>
+            <span class="pill">No driving</span>
+          </div>
+        `;
+        return;
+      }
+      const transitCount = legs.filter((leg) => leg.mode === "transit").length;
+      const fareText = legs.map((leg) => leg.fareText).filter(Boolean).at(-1);
+      target.innerHTML = `
+        <div class="pubGolfItineraryHeader">
+          <div>
+            <strong>Fastest leave-time plan</strong>
+            <span>Leave ${escapeHtml(formatClock(startTime))} · arrive ${escapeHtml(formatClock(endTime))} · ${escapeHtml(formatDurationSeconds((endTime - startTime) / 1000))}${fareText ? ` · ${escapeHtml(fareText)}` : ""}</span>
+          </div>
+          <span class="pill">${transitCount ? `${transitCount} transit leg${transitCount === 1 ? "" : "s"}` : "Walkable"}</span>
+        </div>
+        <div class="pubGolfItineraryList">
+          ${legs.map((leg, index) => `
+            <article class="pubGolfItineraryLeg pubGolfItineraryLeg--${escapeHtml(leg.mode)}">
+              <span class="pubGolfLegBadge">${leg.mode === "transit" ? "PT" : "Walk"}</span>
+              <div>
+                <strong>${escapeHtml(leg.from.stopLabel)} to ${escapeHtml(leg.to.stopLabel)}</strong>
+                <p>${escapeHtml(leg.from.label)} to ${escapeHtml(leg.to.label)}</p>
+                <small>
+                  Leave ${escapeHtml(formatClock(leg.departureTime))} · arrive ${escapeHtml(formatClock(leg.arrivalTime))} · ${escapeHtml(formatDurationSeconds(leg.totalSeconds))}
+                  ${leg.waitSeconds > 60 ? ` · wait ${escapeHtml(formatDurationSeconds(leg.waitSeconds))}` : ""}
+                </small>
+                ${leg.mode === "transit" ? `<em>${escapeHtml(leg.transitCopy)}</em>` : "<em>Walking leg selected because it is faster or avoids waiting.</em>"}
+                ${index < legs.length - 1 ? `<span class="pubGolfStopBuffer">Plan about ${PUB_GOLF_STOP_MINUTES} min at this stop before the next leg.</span>` : ""}
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    async function renderPubGolfLiveItinerary(maps, service, points, requestedMode) {
+      const target = $("pubGolfLiveItinerary");
+      if (!target) {
+        return;
+      }
+      const stops = itineraryPoints(points);
+      if (stops.length < 2) {
+        return;
+      }
+      let legStartTime = new Date(Date.now() + PUB_GOLF_START_BUFFER_MINUTES * 60 * 1000);
+      const itineraryStartTime = new Date(legStartTime);
+      const legs = [];
+      for (let index = 0; index < stops.length - 1; index += 1) {
+        const from = stops[index];
+        const to = stops[index + 1];
+        const selected = await planPubGolfLiveLeg(maps, service, from, to, legStartTime, requestedMode || "auto");
+        if (!selected) {
+          continue;
+        }
+        legs.push({ ...selected, from, to });
+        legStartTime = new Date(selected.arrivalTime.getTime() + (index < stops.length - 2 ? PUB_GOLF_STOP_MINUTES * 60 * 1000 : 0));
+      }
+      renderPubGolfItineraryPlan(legs, itineraryStartTime, legStartTime);
     }
 
     function createPubGolfMarker(maps, map, point, index) {
@@ -1201,6 +1484,21 @@
       });
       state.pubGolfDirectionsRenderer = renderer;
       const service = new maps.DirectionsService();
+      renderPubGolfLiveItinerary(maps, service, points, result.summary?.travelMode || "auto").catch((error) => {
+        const target = $("pubGolfLiveItinerary");
+        if (target) {
+          target.innerHTML = `
+            <div class="pubGolfItineraryHeader">
+              <div>
+                <strong>Fastest leave-time plan</strong>
+                <span>${escapeHtml(error.message || "Live transit timing is unavailable right now.")}</span>
+              </div>
+              <span class="pill">No driving</span>
+            </div>
+            <p class="helperCopy">Use the Open in Maps button for live public transport timing, and do not drive after drinking.</p>
+          `;
+        }
+      });
       const waypoints = points.slice(1, -1).map((point) => ({
         location: { lat: point.lat, lng: point.lng },
         stopover: true,

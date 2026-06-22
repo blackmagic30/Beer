@@ -420,7 +420,7 @@ function routeLegCopy(distanceMeters: number | null, requestedMode: "auto" | "wa
     return `${distanceKm.toFixed(distanceKm < 1 ? 1 : 1)} km walk`;
   }
   if (requestedMode === "transit" || distanceKm > 2.2) {
-    return `${distanceKm.toFixed(1)} km, public transport or rideshare suggested`;
+    return `${distanceKm.toFixed(1)} km, public transport suggested`;
   }
   return `${distanceKm.toFixed(1)} km, walkable if the group is comfortable`;
 }
@@ -4629,7 +4629,9 @@ export class BusinessService {
 
     return {
       feedback,
-      message: "Thanks. Feedback is saved for admin review.",
+      message: input.feedbackType === "venue_partner_interest"
+        ? "Thanks. Venue support request is saved in the Pint Path support inbox."
+        : "Thanks. Feedback is saved for admin review.",
     };
   }
 

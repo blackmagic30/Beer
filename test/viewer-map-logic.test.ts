@@ -321,6 +321,20 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain('specialId: field(discountRedemptionFormElement, "specialId").value || null');
   });
 
+  it("gives venue managers support and structured opening-hour controls", () => {
+    expect(venuePortalHtml).toContain('data-tab="support"');
+    expect(venuePortalHtml).toContain('data-panel="support"');
+    expect(venuePortalHtml).toContain('id="venueSupportForm"');
+    expect(venuePortalHtml).toContain('MelbBeerBusiness.apiFetch("/api/business/feedback"');
+    expect(venuePortalHtml).toContain('id="openingHoursEditor"');
+    expect(venuePortalHtml).toContain('data-opening-day="${escapeHtml(dayKey)}"');
+    expect(venuePortalHtml).toContain('type="time" data-opening-start');
+    expect(venuePortalHtml).toContain('type="time" data-opening-end');
+    expect(venuePortalHtml).toContain("function collectOpeningHours");
+    expect(venuePortalHtml).toContain('openingHours: collectOpeningHours()');
+    expect(venuePortalHtml).not.toContain('name="openingHoursNote"');
+  });
+
   it("surfaces the premium tiered venue command centre preview", () => {
     expect(venuePortalHtml).toContain('id="premiumVenueDashboard"');
     expect(venuePortalHtml).toContain("function renderPremiumVenueDashboard");

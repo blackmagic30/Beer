@@ -547,7 +547,7 @@ function renderNav(active = "") {
   const activeKey = active === "trust" || active === "bar-faq" ? "faq" : active;
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
   const adminPageNav = active === "admin";
-  const venueManagerNav = active === "venue-portal" || active === "bar-faq" || isVenueManagerContext();
+  const venueManagerNav = active === "venue-portal" || active === "bar-faq" || active === "venue-support" || isVenueManagerContext();
   const adminNav = active === "admin" || isAdminContext();
   const navItems = adminPageNav ? [
     { key: "map", href: "/", label: "Map" },
@@ -560,7 +560,7 @@ function renderNav(active = "") {
     ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
     { key: "pricing", href: "/pricing.html", label: "Pricing" },
     { key: "faq", href: "/trust.html?audience=bars", label: "Bar FAQ" },
-    ...(isFieldTestMode() ? [{ key: "feedback", href: "/feedback.html", label: "Contact us" }] : []),
+    { key: "venue-support", href: "/feedback.html?audience=bars", label: "Support" },
   ] : [
     { key: "map", href: "/", label: "Map" },
     { key: "submit", href: "/submit.html", label: "Submit" },

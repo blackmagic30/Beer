@@ -4941,6 +4941,83 @@
       return isObjectRecord(cleaned.happy_hour) ? cleaned.happy_hour : null;
     }
 
+    function getVenueOpeningHours(row) {
+      const venue = getVenueRecord(row?.venues) || row || {};
+      const openingHours = venue.openingHours || venue.opening_hours || venue.opening_hours_json;
+      if (!isObjectRecord(openingHours)) {
+        return null;
+      }
+      const days = isObjectRecord(openingHours.days) ? openingHours.days : openingHours;
+      return isObjectRecord(days) ? days : null;
+    }
+
+    function getMelbourneNow() {
+      return new Date(new Date().toLocaleString("en-US", { timeZone: "Australia/Melbourne" }));
+    }
+
+    function timeTextToMinutes(value) {
+      if (!value) {
+        return null;
+      }
+
+      const match = String(value).trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+      if (!match) {
+        return null;
+      }
+
+      let hours = Number(match[1]);
+      const minutes = Number(match[2] || 0);
+      const suffix = match[3];
+      if (suffix === "pm" && hours < 12) {
+        hours += 12;
+      }
+      if (suffix === "am" && hours === 12) {
+        hours = 0;
+      }
+      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+        return null;
+      }
+
+      return hours * 60 + minutes;
+    }
+
+    function isVenueOpenNow(row) {
+      const days = getVenueOpeningHours(row);
+      if (!days) {
+        return false;
+      }
+
+      const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+      const melbourneNow = getMelbourneNow();
+      const nowMinutes = melbourneNow.getHours() * 60 + melbourneNow.getMinutes();
+      const todayKey = dayNames[melbourneNow.getDay()];
+      const yesterdayKey = dayNames[(melbourneNow.getDay() + 6) % 7];
+
+      const isOpenForDay = (dayKey, allowOvernightOnly = false) => {
+        const day = isObjectRecord(days[dayKey]) ? days[dayKey] : {};
+        if (day.open !== true && day.isOpen !== true && day.closed !== false) {
+          return false;
+        }
+
+        const startMinutes = timeTextToMinutes(day.openTime || day.opens || day.startTime);
+        const endMinutes = timeTextToMinutes(day.closeTime || day.closes || day.endTime);
+        if (startMinutes == null || endMinutes == null) {
+          return false;
+        }
+
+        const overnight = startMinutes > endMinutes;
+        if (allowOvernightOnly) {
+          return overnight && nowMinutes <= endMinutes;
+        }
+
+        return overnight
+          ? nowMinutes >= startMinutes || nowMinutes <= endMinutes
+          : nowMinutes >= startMinutes && nowMinutes <= endMinutes;
+      };
+
+      return isOpenForDay(todayKey) || isOpenForDay(yesterdayKey, true);
+    }
+
     function hasHappyHourProbe(row) {
       return getMenuCaptureRecord(row).completeness === "happy_hour_probe";
     }
@@ -5315,7 +5392,7 @@
         return false;
       }
 
-      const melbourneNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Australia/Melbourne" }));
+      const melbourneNow = getMelbourneNow();
       const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
       const currentDay = dayNames[melbourneNow.getDay()];
       const dayText = `${details.days || ""} ${details.daysTimes || ""}`.toLowerCase();
@@ -5346,34 +5423,11 @@
         return false;
       }
 
-      const parseTime = (value) => {
-        if (!value) {
-          return null;
-        }
-
-        const match = String(value).trim().toLowerCase().match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
-        if (!match) {
-          return null;
-        }
-
-        let hours = Number(match[1]);
-        const minutes = Number(match[2] || 0);
-        const suffix = match[3];
-
-        if (suffix === "pm" && hours < 12) {
-          hours += 12;
-        }
-        if (suffix === "am" && hours === 12) {
-          hours = 0;
-        }
-
-        return hours * 60 + minutes;
-      };
       const nowMinutes = melbourneNow.getHours() * 60 + melbourneNow.getMinutes();
       const timesFromFreeText = String(details.daysTimes || details.when || "")
         .match(/\d{1,2}(?::\d{2})?\s*(?:am|pm)?/gi) || [];
-      const startMinutes = parseTime(details.start || timesFromFreeText[0]);
-      const endMinutes = parseTime(details.end || timesFromFreeText[1]);
+      const startMinutes = timeTextToMinutes(details.start || timesFromFreeText[0]);
+      const endMinutes = timeTextToMinutes(details.end || timesFromFreeText[1]);
 
       if (startMinutes == null || endMinutes == null) {
         return true;
@@ -6045,6 +6099,10 @@
       }
 
       if (viewState.filters.includes("happy_hour_active_now") && !hasActiveHappyHourNow(row)) {
+        return false;
+      }
+
+      if (viewState.filters.includes("open_now") && !isVenueOpenNow(row)) {
         return false;
       }
 
