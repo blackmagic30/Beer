@@ -198,7 +198,7 @@
                 <label class="field">Venue name
                   <input name="name" required />
                 </label>
-                <label class="field">Suburb
+                <label class="field">Area
                   <input name="suburb" placeholder="e.g. Fitzroy" />
                 </label>
               </div>
@@ -424,11 +424,11 @@
               <div id="analyticsGrid" class="metricGrid"></div>
               <div class="grid grid--two" style="margin-top:16px;">
                 <div>
-                  <h3>Most searched beers in suburb</h3>
+                  <h3>Most searched beers in area</h3>
                   <div id="areaBeerSearches" class="list"></div>
                 </div>
                 <div>
-                  <h3>Most searched styles in suburb</h3>
+                  <h3>Most searched styles in area</h3>
                   <div id="areaStyleSearches" class="list"></div>
                 </div>
               </div>
@@ -1187,7 +1187,7 @@
       `;
     }
 
-    function premiumSignalList(rows, emptyCopy = "Not enough suburb data yet.") {
+    function premiumSignalList(rows, emptyCopy = "Not enough area data yet.") {
       const items = (rows || []).filter(Boolean);
       if (!items.length) {
         return `<div class="premiumListRow"><div><strong>${escapeHtml(emptyCopy)}</strong></div></div>`;
@@ -1203,7 +1203,7 @@
       `).join("");
     }
 
-    function premiumNarrativeList(rows, emptyCopy = "More data will appear here once this suburb reaches the privacy floor.") {
+    function premiumNarrativeList(rows, emptyCopy = "More data will appear here once this area reaches the privacy floor.") {
       const items = (rows || []).filter(Boolean);
       if (!items.length) {
         return `<div class="premiumListRow"><div><strong>${escapeHtml(emptyCopy)}</strong></div></div>`;
@@ -1294,11 +1294,11 @@
               <div class="premiumInsightColumns premiumInsightColumns--compact">
                 <div>
                   <span class="eyebrow">Search vs stock gap</span>
-                  <div class="premiumList">${premiumNarrativeList(mock.searchStockGaps, "No obvious stock gaps from suburb beer searches right now.")}</div>
+                  <div class="premiumList">${premiumNarrativeList(mock.searchStockGaps, "No obvious stock gaps from area beer searches right now.")}</div>
                 </div>
                 <div>
                   <span class="eyebrow">Local trend report</span>
-                  <div class="premiumList">${premiumNarrativeList(mock.localTrendReport, "Trend reporting unlocks once the suburb has enough searches.")}</div>
+                  <div class="premiumList">${premiumNarrativeList(mock.localTrendReport, "Trend reporting unlocks once the area has enough searches.")}</div>
                 </div>
               </div>
             </section>
@@ -1315,10 +1315,10 @@
           return `
             <section class="premiumDashboardCard premiumInsightPanel">
               <span class="eyebrow">Demand signals</span>
-              <h3>Suburb demand, stock and buying signals</h3>
+              <h3>Area demand, stock and buying signals</h3>
               <div class="premiumInsightColumns">
                 <div>
-                  <span class="eyebrow">Top searched beers in ${escapeHtml(mock.area || "your suburb")}</span>
+                  <span class="eyebrow">Top searched beers in ${escapeHtml(mock.area || "your area")}</span>
                   <div class="premiumList">${premiumSignalList(mock.beerDemand)}</div>
                 </div>
                 <div>
@@ -1341,7 +1341,7 @@
               <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.priceFreshness)}</div>
               <div>
                 <span class="eyebrow">Price benchmarking</span>
-                <div class="premiumList">${premiumNarrativeList(mock.priceBenchmarks, "Add more same-size suburb prices to compare against a local median.")}</div>
+                <div class="premiumList">${premiumNarrativeList(mock.priceBenchmarks, "Add more same-size area prices to compare against a local median.")}</div>
               </div>
             </section>
           `;
@@ -1495,7 +1495,7 @@
               <div class="premiumAlertList">${premiumAlertList(mock.alerts)}</div>
             </section>
             ${premiumFeatureGate("free", "app_value_overview", "", premiumLockedCard("App Value Overview", "See redemptions, tracked savings, average spend and app-influenced value.", "pro"))}
-            ${premiumFeatureGate("free", "demand_signals", "", premiumLockedCard("Demand Signals", "See the beers, suburbs and searches creating interest near your venue.", "pro"))}
+            ${premiumFeatureGate("free", "demand_signals", "", premiumLockedCard("Demand Signals", "See the beers, areas and searches creating interest near your venue.", "pro"))}
           </aside>
         </div>
         <section class="premiumUpgradeBanner">
@@ -1563,7 +1563,7 @@
         .map((row) => ({
           label: row.beerName || row.key || "Beer search",
           value: formatCount(row.searchCount || 0),
-          helper: `searched in ${paidIntelligence.area || profile.suburb || "this suburb"}`,
+          helper: `searched in ${paidIntelligence.area || profile.suburb || "this area"}`,
         }));
       const topBeerRows = (topBeerRowsFromIntelligence.length ? topBeerRowsFromIntelligence : (analytics.areaBeerSearches || demandMonth.areaBeerSearches || [])
         .slice(0, 4)
@@ -1644,7 +1644,7 @@
           { label: "Specials intent", value: realSpecialViews, helper: "Special views today" },
         ],
         beerDemand: topBeerRows.length ? topBeerRows : PREMIUM_VENUE_MOCK.beerDemand,
-        area: paidIntelligence.area || profile.suburb || profile.area || "your suburb",
+        area: paidIntelligence.area || profile.suburb || profile.area || "your area",
         topPurchasedBeers,
         searchTimeSignals,
         searchStockGaps: stockGapRows,
@@ -1921,7 +1921,7 @@
       const staffInviteCard = document.getElementById("staffInviteCard");
       const profileReady = Boolean(profile.name && profile.suburb);
       const nextAction = !profileReady
-        ? { label: "Finish profile", tab: "profile", copy: "Add suburb and contact details so users trust the listing." }
+        ? { label: "Finish profile", tab: "profile", copy: "Add area and contact details so users trust the listing." }
         : beers.length < 3
           ? { label: "Add 3 beers", tab: "beers", copy: "Three current tap prices make the venue useful on the map and in beer search." }
             : !happyHours.length
@@ -1932,7 +1932,7 @@
       const mailSubject = encodeURIComponent(`Pint Path staff invite for ${profile.name || "my venue"}`);
       const mailBody = encodeURIComponent([
         `Venue: ${profile.name || ""}`,
-        `Suburb: ${profile.suburb || ""}`,
+        `Area: ${profile.suburb || ""}`,
         "",
         "Please invite this staff member to manage discount redemptions:",
         "Staff email:",
@@ -2598,7 +2598,7 @@
       if (locked) {
         analyticsGate.innerHTML = `
           <h2>Live insights are available on Pro</h2>
-          <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Pro to view privacy-safe suburb analytics and monthly reports.")}</p>
+          <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Pro to view privacy-safe area analytics and monthly reports.")}</p>
           <div class="notice">Free venue accounts can still add beer data and happy-hour data. Pro unlocks reviewed Pint Path specials and live insights.</div>
           <div class="actionRow">
             <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
@@ -2614,12 +2614,12 @@
         ["Beer list views", analytics.beerListViews],
         ["Specials views", analytics.specialsViews],
         ["Marker clicks", analytics.markerClicks],
-        ["Suburb searches", analytics.areaSearches],
+        ["Area searches", analytics.areaSearches],
       ].map(([label, value]) => `<div class="metricCard"><div class="metricValue">${Number(value || 0)}</div><div class="metricLabel">${escapeHtml(label)}</div></div>`).join("");
 
       const renderTrendRows = (rows) => rows?.length
         ? rows.map((row) => `<div class="listItem dataRow"><strong>${escapeHtml(row.key)}</strong><span class="pill">${Number(row.count)} searches</span></div>`).join("")
-        : `<div class="listItem muted">Not enough suburb data yet. Your report will become more useful as more users search nearby.${analytics.privacyThreshold ? ` Minimum threshold: ${Number(analytics.privacyThreshold)} relevant events.` : ""}</div>`;
+        : `<div class="listItem muted">Not enough area data yet. Your report will become more useful as more users search nearby.${analytics.privacyThreshold ? ` Minimum threshold: ${Number(analytics.privacyThreshold)} relevant events.` : ""}</div>`;
 
       areaBeerSearches.innerHTML = renderTrendRows(analytics.areaBeerSearches);
       areaStyleSearches.innerHTML = renderTrendRows(analytics.areaStyleSearches);
@@ -2632,8 +2632,8 @@
       if (locked) {
         reportGate.innerHTML = `
           <h2>Monthly reports are a Pro feature</h2>
-          <p class="muted">Reports summarise your venue lookups, beer-list interest, special views and privacy-safe suburb trends.</p>
-          <div class="notice">Upgrade to Pro to generate and export monthly reports once there is enough suburb data.</div>
+          <p class="muted">Reports summarise your venue lookups, beer-list interest, special views and privacy-safe area trends.</p>
+          <div class="notice">Upgrade to Pro to generate and export monthly reports once there is enough area data.</div>
           <div class="actionRow">
             <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
           </div>

@@ -380,7 +380,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('<a href="/feedback.html">Contact us</a> · <a href="/privacy.html">Privacy</a>');
     expect(html).toContain('class="controlDeck"');
     expect(html).toContain("Find a venue fast");
-    expect(html).toContain('placeholder="Suburb or venue"');
+    expect(html).toContain('placeholder="Area or venue"');
     expect(html).toContain('<select id="beerSearch" class="controlInput beerSelect">');
     expect(html).toContain('<option value="">Beer</option>');
     expect(html).toContain('id="advancedFiltersToggle"');

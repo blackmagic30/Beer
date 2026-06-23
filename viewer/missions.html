@@ -28,7 +28,7 @@
     <section class="panel">
       <div class="missionControlPanel">
         <div class="missionControlGrid">
-          <label class="field missionSearchField">Search street, suburb, venue, or reason
+          <label class="field missionSearchField">Search street, area, venue, or reason
           <input id="suburbFilter" placeholder="Try Brunswick, Chapel St, Rooftop Bar, happy hour…" autocomplete="off" />
           <span class="fieldHint">Search an area when location is off, or use your current location for nearby missions.</span>
           </label>
@@ -36,7 +36,7 @@
           <select id="missionSort">
             <option value="points">Highest points</option>
             <option value="nearby">Nearest missions</option>
-            <option value="saved">My saved suburbs</option>
+            <option value="saved">My saved areas</option>
             <option value="stale">Stale data</option>
             <option value="no_data">No data</option>
             <option value="missing_happy_hour">Missing happy hour</option>
@@ -60,11 +60,11 @@
                 <option value="10">10 km</option>
               </select>
             </label>
-            <span id="missionLocationStatus" class="helperCopy">Location off. Search a suburb, street, or venue instead.</span>
+            <span id="missionLocationStatus" class="helperCopy">Location off. Search an area, street, or venue instead.</span>
           </div>
         </div>
       </div>
-      <p id="missionsHelp" class="helperCopy missionHelp">Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.</p>
+      <p id="missionsHelp" class="helperCopy missionHelp">Tip: try an area like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.</p>
       <div id="missionsList" class="list missionList"></div>
     </section>
 
@@ -195,10 +195,10 @@
       const hiddenCount = Math.max(0, missions.length - visibleMissions.length);
 
       missionsHelp.textContent = query
-        ? `Showing missions matching "${query}". You can search partial suburb names, venue names, or reasons like stale prices and happy hour.`
+        ? `Showing missions matching "${query}". You can search partial area names, venue names, or reasons like stale prices and happy hour.`
         : missionLocation?.source === "area_lookup"
           ? `Showing missions within ${missionRadiusSelect.value} km of ${missionLocation.label}.`
-        : "Tip: try a suburb like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.";
+        : "Tip: try an area like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.";
 
       missionsList.innerHTML = missions.length
         ? visibleMissions.map((mission) => {
@@ -239,7 +239,7 @@
         : `
           <div class="listItem emptyState">
             <strong>No active missions matched "${escapeHtml(query || "that search")}".</strong>
-            Try a shorter suburb or venue name, such as ${suggestedSearches().map((item) => `<strong>${escapeHtml(item)}</strong>`).join(", ") || "<strong>Fitzroy</strong>, <strong>Richmond</strong>, or <strong>South Melbourne</strong>"}.
+            Try a shorter area or venue name, such as ${suggestedSearches().map((item) => `<strong>${escapeHtml(item)}</strong>`).join(", ") || "<strong>Fitzroy</strong>, <strong>Richmond</strong>, or <strong>South Melbourne</strong>"}.
           </div>
         `;
 
@@ -258,7 +258,7 @@
     function updateMissionLocationStatus() {
       clearMissionAreaButton.hidden = !missionLocation;
       if (!missionLocation) {
-        missionLocationStatus.textContent = "Location off. Search a suburb, street, or venue instead.";
+        missionLocationStatus.textContent = "Location off. Search an area, street, or venue instead.";
         useMissionLocationButton.textContent = "Use my location";
         return;
       }
@@ -303,7 +303,7 @@
     async function resolveMissionArea() {
       const query = suburbFilter.value.trim();
       if (query.length < 2) {
-        missionLocationStatus.textContent = "Enter a suburb, street, or venue first.";
+        missionLocationStatus.textContent = "Enter an area, street, or venue first.";
         return;
       }
 
@@ -316,7 +316,7 @@
         if (!data.location) {
           missionLocation = null;
           updateMissionLocationStatus();
-          missionsHelp.textContent = data.message || "We could not find that area yet. Try a nearby suburb, street, or venue.";
+          missionsHelp.textContent = data.message || "We could not find that area yet. Try a nearby area, street, or venue.";
           await loadMissions();
           return;
         }
@@ -339,7 +339,7 @@
       } catch {
         missionLocation = null;
         updateMissionLocationStatus();
-        missionsHelp.textContent = "Area lookup is unavailable right now. You can still search by suburb, venue, or reason.";
+        missionsHelp.textContent = "Area lookup is unavailable right now. You can still search by area, venue, or reason.";
         await loadMissions();
       } finally {
         resolveMissionAreaButton.disabled = false;
@@ -356,7 +356,7 @@
 
     async function enableMissionLocation() {
       if (!navigator.geolocation) {
-        missionLocationStatus.textContent = "Location is unavailable in this browser. Search a suburb or street instead.";
+        missionLocationStatus.textContent = "Location is unavailable in this browser. Search an area or street instead.";
         return;
       }
 
@@ -385,7 +385,7 @@
       } catch {
         missionLocation = null;
         updateMissionLocationStatus();
-        missionLocationStatus.textContent = "Location permission was denied or unavailable. Search a suburb, street, or venue instead.";
+        missionLocationStatus.textContent = "Location permission was denied or unavailable. Search an area, street, or venue instead.";
       } finally {
         useMissionLocationButton.disabled = false;
         updateMissionLocationStatus();

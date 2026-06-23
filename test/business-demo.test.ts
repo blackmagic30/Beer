@@ -4988,7 +4988,7 @@ describe("business demo contribution model", () => {
     expect(proPortal.analytics?.areaBeerSearches.length).toBeGreaterThan(0);
     expect(proPortal.monthlyReport?.data).toBeTruthy();
     expect(proPortal.businessToolkit?.demandSnapshot).toEqual(expect.objectContaining({
-      title: "Suburb demand snapshot",
+      title: "Area demand snapshot",
       privacyFloorMet: true,
       recommendedNextActions: expect.arrayContaining([expect.any(String)]),
     }));

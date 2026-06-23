@@ -16,7 +16,7 @@ describe("missions page", () => {
     const html = missionsHtml();
     const css = businessCss();
 
-    expect(html).toContain("Search street, suburb, venue, or reason");
+    expect(html).toContain("Search street, area, venue, or reason");
     expect(html).toContain('id="useMissionLocationButton"');
     expect(html).toContain('id="resolveMissionAreaButton"');
     expect(html).toContain('id="clearMissionAreaButton"');

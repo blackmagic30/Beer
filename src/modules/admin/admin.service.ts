@@ -494,7 +494,7 @@ export class AdminService {
   }> {
     const normalizedQuery = query.trim().replace(/\s+/g, " ");
     if (normalizedQuery.length < 2) {
-      throw new AppError("Search a venue name, suburb, or address.", 400);
+      throw new AppError("Search a venue name, area, or address.", 400);
     }
 
     if (!this.googlePlacesApiKey) {

@@ -910,7 +910,7 @@ function buildConsumerPremiumToolkit(input: {
         title: "Cheapest-night filters",
         unlocked: hasFullAccess,
         badge: hasFullAccess ? "Active" : "Paid",
-        copy: "Use beer search, cheapest sort, verified-only, under-A$10, nearby, and saved-suburb filters without daily reveal limits.",
+        copy: "Use beer search, cheapest sort, verified-only, under-A$10, nearby, and saved-area filters without daily reveal limits.",
         href: "/index.html",
         ctaLabel: "Find value",
       },
@@ -928,7 +928,7 @@ function buildConsumerPremiumToolkit(input: {
         title: "Saved night shortcuts",
         unlocked: hasFullAccess,
         badge: `${savedCounts.venues + savedCounts.beers + savedCounts.suburbs + savedCounts.nightPlans} saved`,
-        copy: "Keep favourite venues, beers, suburbs, and night-plan ideas synced to your account for faster repeat searches.",
+        copy: "Keep favourite venues, beers, areas, and night-plan ideas synced to your account for faster repeat searches.",
         href: "/account.html?settings=watchlist",
         ctaLabel: "Manage list",
       },
@@ -937,7 +937,7 @@ function buildConsumerPremiumToolkit(input: {
         title: "Personal discovery defaults",
         unlocked: hasFullAccess,
         badge: `${preferredShortcuts} set`,
-        copy: "Save preferred suburbs, beers, and use cases so missions and discovery tools start closer to how you go out.",
+        copy: "Save preferred areas, beers, and use cases so missions and discovery tools start closer to how you go out.",
         href: "/account.html?settings=preferences",
         ctaLabel: "Tune profile",
       },
@@ -1123,7 +1123,7 @@ function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
     discoveryBoost: pro,
     upgradeCopy: analytics
       ? null
-      : "Upgrade to Pro to add Pint Path specials, see privacy-safe suburb analytics, and export generated monthly reports.",
+      : "Upgrade to Pro to add Pint Path specials, see privacy-safe area analytics, and export generated monthly reports.",
   };
 }
 
@@ -1178,7 +1178,7 @@ function buildVenueDemandSnapshot(input: {
   ];
 
   return {
-    title: analytics.privacyFloorMet ? "Suburb demand snapshot" : "Demand snapshot building",
+    title: analytics.privacyFloorMet ? "Area demand snapshot" : "Demand snapshot building",
     privacyFloorMet: analytics.privacyFloorMet,
     privacyThreshold: analytics.privacyThreshold,
     opportunityScore,
@@ -1413,7 +1413,7 @@ function buildPaidVenueIntelligence(input: {
   purchasedBeers: ReturnType<BusinessRepository["listVenueAreaPurchasedBeers"]>;
   priceBenchmarks: ReturnType<BusinessRepository["listVenueAreaPriceBenchmarks"]>;
 }) {
-  const area = input.area?.trim() || "your suburb";
+  const area = input.area?.trim() || "your area";
   const stockKeys = new Set(input.inventoryBeers.map((beer) => normalizeTrackedBeerId(beer.beerName)));
   const topSearchedBeers = input.analytics.privacyFloorMet
     ? input.analytics.areaBeerSearches.map((row) => {
@@ -5536,7 +5536,7 @@ export class BusinessService {
   }> {
     const normalizedQuery = query.trim().replace(/\s+/g, " ");
     if (normalizedQuery.length < 2) {
-      throw new AppError("Search a venue name, suburb, or address.", 400);
+      throw new AppError("Search a venue name, area, or address.", 400);
     }
 
     if (!this.config.GOOGLE_PLACES_API_KEY) {
@@ -5870,7 +5870,7 @@ export class BusinessService {
   }> {
     const normalizedQuery = query.trim().replace(/\s+/g, " ");
     if (normalizedQuery.length < 2) {
-      throw new AppError("Enter a suburb, street, or venue to find nearby missions.", 400);
+      throw new AppError("Enter an area, street, or venue to find nearby missions.", 400);
     }
 
     const googleLocation = await this.resolveMissionAreaWithGoogle(normalizedQuery);
@@ -5891,7 +5891,7 @@ export class BusinessService {
 
     return {
       location: null,
-      message: "We could not find that Melbourne area yet. Try a nearby suburb, street, or venue name.",
+      message: "We could not find that Melbourne area yet. Try a nearby area, street, or venue name.",
     };
   }
 
@@ -6301,7 +6301,7 @@ export class BusinessService {
             ? "Match your tap-list updates to the top privacy-safe beer searches in your area."
             : "Add clearer beer styles and specials so nearby search demand has more useful matches.",
         ]
-      : ["Not enough suburb data yet. Your report will become more useful as more users search nearby."];
+      : ["Not enough area data yet. Your report will become more useful as more users search nearby."];
     const capabilities = getBarTierCapabilities(profile.membershipTier);
     const demandSnapshot = capabilities.analytics
       ? buildVenueDemandSnapshot({ analytics, insights })
@@ -6833,7 +6833,7 @@ export class BusinessService {
                         "Keep your tap list current so nearby search demand has an accurate listing to land on.",
                         "Add happy-hour details if they are missing; users often filter by active specials.",
                       ]
-                    : ["Not enough suburb data yet. Your report will become more useful as more users search nearby."],
+                    : ["Not enough area data yet. Your report will become more useful as more users search nearby."],
                   proRecommendations: capabilities.advancedRecommendations
                     ? getProVenueRecommendations({ analytics, insights })
                     : [],

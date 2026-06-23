@@ -63,7 +63,7 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("A$299");
     expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
     expect(pricingHtml).toContain("No analytics or monthly reports.");
-    expect(pricingHtml).toContain("Suburb-level search and interaction trends.");
+    expect(pricingHtml).toContain("Area-level search and interaction trends.");
     expect(pricingHtml).toContain("Demand snapshots with beer/style opportunities and next actions.");
     expect(pricingHtml).toContain("Staff/customer update link for QR tap-list prompts and fresh venue data.");
     expect(pricingHtml).toContain("Monthly venue reports");

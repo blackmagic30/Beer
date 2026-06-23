@@ -256,11 +256,11 @@
                 <div class="grid grid--two">
                   <label class="field">Start
                     <input name="startLocation" maxlength="160" placeholder="Start address, station, or venue" autocomplete="off" data-pub-golf-location="start" required />
-                    <span class="fieldHint" data-pub-golf-location-status="start">Use a real address, venue, station, or suburb.</span>
+                    <span class="fieldHint" data-pub-golf-location-status="start">Use a real address, venue, station, or area.</span>
                   </label>
                   <label class="field">Finish
                     <input name="finishLocation" maxlength="160" placeholder="Finish address, station, or venue" autocomplete="off" data-pub-golf-location="finish" required />
-                    <span class="fieldHint" data-pub-golf-location-status="finish">Use a real address, venue, station, or suburb.</span>
+                    <span class="fieldHint" data-pub-golf-location-status="finish">Use a real address, venue, station, or area.</span>
                   </label>
                 </div>
                 <label class="field">Route style
@@ -329,7 +329,7 @@
             </label>
             <label class="toggleLine">
               <input name="venueReportInclusionEnabled" type="checkbox" />
-              <span><strong>Include my aggregate activity in venue insights</strong><em>Only privacy-safe suburb/venue buckets above thresholds are used.</em></span>
+              <span><strong>Include my aggregate activity in venue insights</strong><em>Only privacy-safe area/venue buckets above thresholds are used.</em></span>
             </label>
             <label class="toggleLine">
               <input name="productResearchEnabled" type="checkbox" />
@@ -777,7 +777,7 @@
           delete input.dataset.latitude;
           delete input.dataset.longitude;
           delete input.dataset.placeLabel;
-          setPubGolfLocationStatus(input, "Use a real address, venue, station, or suburb.");
+          setPubGolfLocationStatus(input, "Use a real address, venue, station, or area.");
         });
         input.addEventListener("blur", () => {
           resolvePubGolfLocationInput(input, { quiet: true }).catch(() => null);

@@ -101,7 +101,7 @@
             <h2>Add beers to a venue</h2>
             <p class="muted">Manual entries and OCR results merge into the latest reviewed menu capture snapshot.</p>
             <label class="field">Search venues
-              <input id="adminVenueSearch" type="search" placeholder="Venue, suburb, or address" />
+              <input id="adminVenueSearch" type="search" placeholder="Venue, area, or address" />
             </label>
             <label class="field">Choose venue
               <select id="adminVenueSelect" class="adminVenueSelect" size="8"></select>
@@ -129,7 +129,7 @@
             <h2>Add new pub or bar</h2>
             <p class="muted">Search Google Maps first. Details auto-fill, then the venue is selected for beer capture.</p>
             <label class="field">Find on Google Maps
-              <input id="adminGoogleVenueSearch" type="search" autocomplete="off" placeholder="Search venue name, suburb, or address" />
+              <input id="adminGoogleVenueSearch" type="search" autocomplete="off" placeholder="Search venue name, area, or address" />
             </label>
             <div class="actionRow">
               <button id="adminGoogleVenueButton" class="button" type="button">Search Google Maps</button>
@@ -148,7 +148,7 @@
               <input name="address" required placeholder="146 Flinders St, Melbourne VIC 3000" />
             </label>
             <div class="grid grid--two">
-              <label class="field">Suburb
+              <label class="field">Area
                 <input name="suburb" placeholder="Melbourne" />
               </label>
               <label class="field">State
@@ -265,7 +265,7 @@
               <div class="listItem muted">Search for the staff member's Pint Path account.</div>
             </div>
             <label class="field">Venue
-              <input id="managerVenueSearch" type="search" placeholder="Search venue name or suburb" autocomplete="off" />
+              <input id="managerVenueSearch" type="search" placeholder="Search venue name or area" autocomplete="off" />
             </label>
             <select id="managerVenueSelect"></select>
             <input id="managerVenueId" name="venueId" type="hidden" />
@@ -282,7 +282,7 @@
             <label class="field">Venue name
               <input name="venueName" required placeholder="Rooftop Bar" />
             </label>
-            <label class="field">Suburb
+            <label class="field">Area
               <input name="suburb" placeholder="Melbourne" />
             </label>
             <label class="field">Status
@@ -803,7 +803,7 @@
       `).join("");
       demandSignals.innerHTML = [
         `<div class="listItem"><strong>Top searched beers</strong><div class="muted">${formatBucketSummary(data.topSearchedBeers, "No beer searches yet")}</div></div>`,
-        `<div class="listItem"><strong>Top searched suburbs</strong><div class="muted">${formatBucketSummary(data.topSearchedSuburbs, "No suburb searches yet")}</div></div>`,
+        `<div class="listItem"><strong>Top searched areas</strong><div class="muted">${formatBucketSummary(data.topSearchedSuburbs, "No area searches yet")}</div></div>`,
         `<div class="listItem"><strong>Top clicked venues</strong><div class="muted">${formatBucketSummary(data.topClickedVenues, "No venue clicks yet")}</div></div>`,
         `<div class="listItem"><strong>High-demand venues with stale/missing data</strong><div class="muted">${formatBucketSummary(data.highDemandVenuesWithStaleOrMissingData, "No stale demand yet")}</div></div>`,
       ].join("");
@@ -845,7 +845,7 @@
       coverageDashboard.innerHTML = [
         `<div class="listItem"><strong>Venue coverage</strong><div class="muted">${data.venuesWithAtLeastOneVerifiedPrice} verified · ${data.venuesWithThreePlusVerifiedPrices} with 3+ prices · ${data.venuesWithNoData} with no data</div></div>`,
         `<div class="listItem"><strong>Freshness</strong><div class="muted">${data.venuesWithStaleData} stale venues · average price age ${data.averagePriceRecordAgeDays} days · ${data.disputedRecords} disputed records</div></div>`,
-        `<div class="listItem"><strong>Coverage by suburb</strong><div class="muted">${data.coverageBySuburb.length ? data.coverageBySuburb.map((row) => `${row.suburb}: ${row.venuesWithPrices}`).join(" · ") : "No price coverage yet"}</div></div>`,
+        `<div class="listItem"><strong>Coverage by area</strong><div class="muted">${data.coverageBySuburb.length ? data.coverageBySuburb.map((row) => `${row.suburb}: ${row.venuesWithPrices}`).join(" · ") : "No price coverage yet"}</div></div>`,
       ].join("");
     }
 
@@ -1316,7 +1316,7 @@
             </button>
           `;
         }).join("")
-        : '<div class="notice notice--warning">No Google venue matches yet. Try adding the suburb or use manual entry.</div>';
+        : '<div class="notice notice--warning">No Google venue matches yet. Try adding the area or use manual entry.</div>';
 
       adminGoogleVenueResults.querySelectorAll("[data-place-id]").forEach((button) => {
         button.addEventListener("click", () => loadGoogleVenueDetails(button.dataset.placeId));
@@ -2158,7 +2158,7 @@
           <article class="listItem">
             <strong>${escapeHtml(claim.barName)}</strong>
             <span class="pill">${escapeHtml(claim.status)}</span>
-            <div class="muted">${escapeHtml(claim.suburb || "Suburb not supplied")} · ${escapeHtml(claim.requesterName)} · ${escapeHtml(claim.requesterRole)} · ${escapeHtml(claim.contactEmail)}${claim.contactPhone ? ` · ${escapeHtml(claim.contactPhone)}` : ""}</div>
+            <div class="muted">${escapeHtml(claim.suburb || "Area not supplied")} · ${escapeHtml(claim.requesterName)} · ${escapeHtml(claim.requesterRole)} · ${escapeHtml(claim.contactEmail)}${claim.contactPhone ? ` · ${escapeHtml(claim.contactPhone)}` : ""}</div>
             <div class="muted">${escapeHtml(claim.message || claim.address || "No message supplied")}</div>
           </article>
         `).join("")

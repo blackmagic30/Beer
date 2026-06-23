@@ -75,7 +75,7 @@
           </div>
           <div class="grid grid--two submitVenueGrid">
             <label class="field">Search venue
-              <input id="venueSearchInput" type="search" placeholder="Venue, suburb, or street" autocomplete="off" autocapitalize="words" spellcheck="false" />
+              <input id="venueSearchInput" type="search" placeholder="Venue, area, or street" autocomplete="off" autocapitalize="words" spellcheck="false" />
               <datalist id="venueSuggestions"></datalist>
               <div id="venueSuggestionList" class="venueSuggestionList" role="listbox" aria-label="Venue suggestions" hidden></div>
               <span id="venueSearchHelp" class="fieldHint">Type 2 or more characters, then tap a venue.</span>
@@ -98,7 +98,7 @@
               <p class="muted">Search Google Maps and choose the matching bar, pub, restaurant, or nightlife venue.</p>
             </div>
             <label class="field">Find venue on Google Maps
-              <input id="newVenueGoogleSearch" type="search" maxlength="160" placeholder="Venue name, suburb, or street" autocomplete="off" autocapitalize="words" spellcheck="false" />
+              <input id="newVenueGoogleSearch" type="search" maxlength="160" placeholder="Venue name, area, or street" autocomplete="off" autocapitalize="words" spellcheck="false" />
               <span id="newVenueGoogleStatus" class="fieldHint">Results are filtered to venues that make sense for Pint Path.</span>
             </label>
             <div class="actionRow">
@@ -936,7 +936,7 @@
       if (!results.length) {
         newVenueGoogleResults.innerHTML = "";
         newVenueGoogleResults.hidden = true;
-        newVenueGoogleStatus.textContent = "No matching bar/pub/restaurant result found. Try a venue name plus suburb.";
+        newVenueGoogleStatus.textContent = "No matching bar/pub/restaurant result found. Try a venue name plus area.";
         return;
       }
 
@@ -1654,7 +1654,7 @@
         setVenueResults(venueSearchCache.get(cacheKey), currentVenueId);
         venueChoiceHelp.textContent = venues.length
           ? "Tap a result to choose the venue."
-          : "No match yet. Try a shorter venue name, suburb, or street.";
+          : "No match yet. Try a shorter venue name, area, or street.";
         return;
       }
 
@@ -1671,10 +1671,10 @@
       setVenueResults(nextVenues, currentVenueId);
       clearSelectedVenue(venues.length
         ? "Tap a result to choose the venue."
-        : "No match yet. Try a shorter venue name, suburb, or street.");
+        : "No match yet. Try a shorter venue name, area, or street.");
       venueChoiceHelp.textContent = venues.length
         ? "Tap a result to choose the venue."
-        : "No match yet. Try a shorter venue name, suburb, or street.";
+        : "No match yet. Try a shorter venue name, area, or street.";
     }
 
     async function requireSubmitLogin() {

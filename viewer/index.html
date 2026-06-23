@@ -3312,7 +3312,7 @@
       <div>
         <div class="topbar__eyebrow">Melbourne beer map <span class="fieldTestBadge">Beta</span></div>
         <h1>Pint Path</h1>
-        <p class="topbar__subtitle">Find verified beer prices and happy hours across Melbourne. Search by beer, venue, or suburb, then tap a marker for the detail.</p>
+        <p class="topbar__subtitle">Find verified beer prices and happy hours across Melbourne. Search by beer, venue, or area, then tap a marker for the detail.</p>
       </div>
       <span id="accessPill" class="accessPill">Free preview</span>
     </section>
@@ -3345,8 +3345,8 @@
 
       <div id="toolbar">
         <label class="controlGroup controlGroup--suburb" for="venueSearch">
-          <span>Suburb or venue</span>
-          <input id="venueSearch" class="controlInput" type="search" placeholder="Suburb or venue" autocomplete="off" />
+          <span>Area or venue</span>
+          <input id="venueSearch" class="controlInput" type="search" placeholder="Area or venue" autocomplete="off" />
         </label>
 
         <label class="controlGroup controlGroup--beer" for="beerSearch">
@@ -3436,7 +3436,7 @@
           <section class="advancedFilterSection" aria-label="Personal filters">
             <span class="advancedFilterSection__title">Personal</span>
             <div class="filterGroup">
-              <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs" data-premium-filter="true">My saved suburbs</button>
+              <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs" data-premium-filter="true">My saved areas</button>
             </div>
           </section>
         </div>
@@ -4265,7 +4265,7 @@
       }
 
       if (userLocationState.status === "denied") {
-        userLocationState.message = "Location permission was denied. Search a suburb instead.";
+        userLocationState.message = "Location permission was denied. Search an area instead.";
         syncLocationUi();
         return false;
       }
@@ -4301,8 +4301,8 @@
         userLocationState.coords = null;
         setSavedLocationPreference(false);
         userLocationState.message = position.error?.code === 1
-          ? "Location permission was denied. Search a suburb instead."
-          : "Location is unavailable right now. Search a suburb instead.";
+          ? "Location permission was denied. Search an area instead."
+          : "Location is unavailable right now. Search an area instead.";
         syncLocationUi();
         void trackBusinessEvent("location_permission_denied", getLocationEventMetadata({
           reason,
@@ -6838,7 +6838,7 @@
               : viewState.filters.includes("happy_hour_near_me")
                 ? "No active happy hours nearby right now. Try expanding the radius or clearing filters."
                 : viewState.filters.includes("recently_verified_near_me")
-                  ? "No recently verified prices nearby yet. Try expanding the radius or choosing a suburb."
+                  ? "No recently verified prices nearby yet. Try expanding the radius or choosing an area."
                   : "Nothing is visible in this frame yet. Try zooming out, clearing a filter, or panning back toward the venue cluster."}
           </div>
         `;
