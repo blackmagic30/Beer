@@ -2719,6 +2719,17 @@ h3 {
   grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
 }
 
+.premiumInsightColumns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.premiumInsightColumns--compact {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
 .premiumRoomGrid {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
@@ -2729,6 +2740,59 @@ h3 {
 
 .premiumDashboardBottom--inline {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.premiumDashboardInsights {
+  display: grid;
+  gap: 14px;
+}
+
+.premiumDashboardSubnav {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 24px;
+  background: rgba(3, 7, 18, 0.34);
+  scrollbar-width: thin;
+}
+
+.premiumDashboardSubnav button {
+  flex: 0 0 auto;
+  min-height: 42px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  padding: 0 16px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 950;
+  background: rgba(15, 23, 42, 0.62);
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.premiumDashboardSubnav button:hover,
+.premiumDashboardSubnav button:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(34, 211, 238, 0.34);
+  color: var(--text-primary);
+}
+
+.premiumDashboardSubnav button.is-active {
+  border-color: rgba(245, 197, 66, 0.42);
+  color: #06111f;
+  background: linear-gradient(135deg, #f5c542, #22d3ee);
+  box-shadow: 0 14px 34px rgba(245, 197, 66, 0.12);
+}
+
+.premiumInsightPanel {
+  min-height: 260px;
 }
 
 .premiumMiniMetric,
@@ -2782,6 +2846,10 @@ h3 {
 .premiumListRow,
 .premiumCampaignRow {
   display: grid;
+}
+
+.premiumListRow--narrative {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .premiumAlertRow {
@@ -5874,7 +5942,7 @@ h3 {
 
   .premiumPlanSwitcher {
     width: 100%;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-auto-flow: row;
   }
 
@@ -5894,6 +5962,16 @@ h3 {
   .premiumDashboardCard {
     padding: 16px;
     border-radius: 20px;
+  }
+
+  .premiumDashboardSubnav {
+    margin-inline: -2px;
+    border-radius: 20px;
+    scroll-snap-type: x proximity;
+  }
+
+  .premiumDashboardSubnav button {
+    scroll-snap-align: start;
   }
 
   .premiumSnapshotGrid,

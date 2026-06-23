@@ -627,6 +627,8 @@ export const barSpecialSchema = z.object({
   discount: nullableTrimmedStringSchema.default(null),
   startsAt: nullableTrimmedStringSchema.default(null),
   endsAt: nullableTrimmedStringSchema.default(null),
+  startTime: timeSchema,
+  endTime: timeSchema,
   scheduleNote: nullableTrimmedStringSchema.default(null),
   exclusive: z.boolean().default(false),
   active: z.boolean().default(true),

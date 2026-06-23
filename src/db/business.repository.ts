@@ -260,6 +260,8 @@ export interface PublicVenuePriceRecord {
   specialDiscount?: string | null;
   specialStartsAt?: string | null;
   specialEndsAt?: string | null;
+  specialStartTime?: string | null;
+  specialEndTime?: string | null;
   specialScheduleNote?: string | null;
   specialExclusive?: boolean;
   isOnTap: TapStatus;
@@ -441,6 +443,25 @@ export interface AnalyticsBucket {
   label?: string | null;
 }
 
+export interface SearchTimeBucket extends AnalyticsBucket {
+  sort: number;
+}
+
+export interface AreaPurchasedBeerBucket extends AnalyticsBucket {
+  quantity: number;
+  estimatedSavingsCents: number;
+}
+
+export interface VenueAreaPriceBenchmark {
+  beerName: string;
+  serveSize: ServingSize | null;
+  venuePrice: number;
+  localMedian: number;
+  difference: number;
+  sampleSize: number;
+  comparison: "above" | "below" | "at";
+}
+
 export interface BarBeer {
   id: string;
   barId: string;
@@ -480,6 +501,8 @@ export interface BarSpecial {
   discount: string | null;
   startsAt: string | null;
   endsAt: string | null;
+  startTime: string | null;
+  endTime: string | null;
   scheduleNote: string | null;
   exclusive: boolean;
   active: boolean;
@@ -1191,6 +1214,8 @@ interface BarSpecialRow {
   discount: string | null;
   starts_at: string | null;
   ends_at: string | null;
+  start_time: string | null;
+  end_time: string | null;
   schedule_note: string | null;
   exclusive: number;
   active: number;
@@ -1670,6 +1695,107 @@ function normalizeAnalyticsBeerId(value: string | null): string | null {
   return findTrackedBeerByName(value)?.key ?? value;
 }
 
+function normalizeBeerInsightKey(value: string | null | undefined): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return "unknown";
+  }
+
+  return findTrackedBeerByName(trimmed)?.key ?? trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function formatInsightBeerLabel(value: string | null | undefined): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return "Unspecified beer";
+  }
+
+  return findTrackedBeerByName(trimmed)?.name ?? trimmed
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function median(values: number[]): number | null {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) {
+    return null;
+  }
+
+  const midpoint = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[midpoint] ?? null;
+  }
+
+  const left = sorted[midpoint - 1];
+  const right = sorted[midpoint];
+  return left == null || right == null ? null : (left + right) / 2;
+}
+
+function formatHourLabel(hour: number): string {
+  if (hour === 0) {
+    return "12 am";
+  }
+  if (hour === 12) {
+    return "12 pm";
+  }
+  return hour > 12 ? `${hour - 12} pm` : `${hour} am`;
+}
+
+function buildSearchTimeBuckets(rows: Array<{ created_at: string }>, timezone: string): {
+  byDay: SearchTimeBucket[];
+  byHour: SearchTimeBucket[];
+} {
+  const dayFormatter = new Intl.DateTimeFormat("en-AU", {
+    timeZone: timezone || DEFAULT_REPORT_TIMEZONE,
+    weekday: "short",
+  });
+  const hourFormatter = new Intl.DateTimeFormat("en-AU", {
+    timeZone: timezone || DEFAULT_REPORT_TIMEZONE,
+    hour: "2-digit",
+    hourCycle: "h23",
+  });
+  const dayOrder = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayCounts = new Map<string, number>();
+  const hourCounts = new Map<number, number>();
+
+  for (const row of rows) {
+    const date = new Date(row.created_at);
+    if (Number.isNaN(date.getTime())) {
+      continue;
+    }
+
+    const dayLabel = dayFormatter.format(date);
+    dayCounts.set(dayLabel, (dayCounts.get(dayLabel) ?? 0) + 1);
+
+    const hour = Number(hourFormatter.format(date));
+    if (Number.isInteger(hour) && hour >= 0 && hour <= 23) {
+      hourCounts.set(hour, (hourCounts.get(hour) ?? 0) + 1);
+    }
+  }
+
+  return {
+    byDay: Array.from(dayCounts.entries())
+      .map(([label, count]) => ({
+        key: label.toLowerCase(),
+        label,
+        count,
+        sort: dayOrder.indexOf(label),
+      }))
+      .sort((a, b) => b.count - a.count || a.sort - b.sort),
+    byHour: Array.from(hourCounts.entries())
+      .map(([hour, count]) => ({
+        key: String(hour).padStart(2, "0"),
+        label: formatHourLabel(hour),
+        count,
+        sort: hour,
+      }))
+      .sort((a, b) => b.count - a.count || a.sort - b.sort),
+  };
+}
+
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -1946,6 +2072,8 @@ function toBarSpecial(row: BarSpecialRow): BarSpecial {
     discount: row.discount,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
+    startTime: row.start_time,
+    endTime: row.end_time,
     scheduleNote: row.schedule_note,
     exclusive: Boolean(row.exclusive),
     active: Boolean(row.active),
@@ -3438,6 +3566,189 @@ export class BusinessRepository {
     }));
   }
 
+  listVenueAreaPurchasedBeers(input: {
+    area: string | null;
+    startIso?: string | null | undefined;
+    endIso?: string | null | undefined;
+    privacyThreshold?: number | undefined;
+    limit: number;
+  }): AreaPurchasedBeerBucket[] {
+    if (!input.area?.trim()) {
+      return [];
+    }
+    const area = input.area.trim();
+
+    const addDateClauses = (
+      column: "recorded_at" | "redeemed_at",
+      clauses: string[],
+      values: unknown[],
+    ) => {
+      if (input.startIso) {
+        clauses.push(`${column} >= ?`);
+        values.push(input.startIso);
+      }
+      if (input.endIso) {
+        clauses.push(`${column} < ?`);
+        values.push(input.endIso);
+      }
+    };
+
+    const drinkClauses = [
+      "lower(COALESCE(suburb, '')) = lower(?)",
+      "is_alcoholic = 1",
+      "COALESCE(NULLIF(trim(item_name), ''), '') != ''",
+    ];
+    const drinkValues: unknown[] = [area];
+    addDateClauses("recorded_at", drinkClauses, drinkValues);
+
+    const redemptionClauses = [
+      "lower(COALESCE(suburb, '')) = lower(?)",
+      "COALESCE(NULLIF(trim(item_name), ''), '') != ''",
+    ];
+    const redemptionValues: unknown[] = [area];
+    addDateClauses("redeemed_at", redemptionClauses, redemptionValues);
+
+    const drinkRows = this.database
+      .prepare(
+        `SELECT
+           item_name,
+           count(*) AS count,
+           COALESCE(sum(quantity), 0) AS quantity,
+           0 AS estimated_savings_cents
+         FROM pint_point_drink_records
+         WHERE ${drinkClauses.join(" AND ")}
+         GROUP BY item_name`,
+      )
+      .all(...drinkValues) as Array<{
+        item_name: string | null;
+        count: number;
+        quantity: number;
+        estimated_savings_cents: number;
+      }>;
+
+    const redemptionRows = this.database
+      .prepare(
+        `SELECT
+           item_name,
+           count(*) AS count,
+           COALESCE(sum(quantity), 0) AS quantity,
+           COALESCE(sum(estimated_savings_cents), 0) AS estimated_savings_cents
+         FROM discount_redemptions
+         WHERE ${redemptionClauses.join(" AND ")}
+         GROUP BY item_name`,
+      )
+      .all(...redemptionValues) as Array<{
+        item_name: string | null;
+        count: number;
+        quantity: number;
+        estimated_savings_cents: number;
+      }>;
+
+    const buckets = new Map<string, AreaPurchasedBeerBucket>();
+    for (const row of [...drinkRows, ...redemptionRows]) {
+      const key = normalizeBeerInsightKey(row.item_name);
+      const existing = buckets.get(key) ?? {
+        key,
+        label: formatInsightBeerLabel(row.item_name),
+        count: 0,
+        quantity: 0,
+        estimatedSavingsCents: 0,
+      };
+      existing.count += Number(row.count ?? 0);
+      existing.quantity += Number(row.quantity ?? 0);
+      existing.estimatedSavingsCents += Number(row.estimated_savings_cents ?? 0);
+      buckets.set(key, existing);
+    }
+
+    const privacyThreshold = Math.max(1, input.privacyThreshold ?? 5);
+    return Array.from(buckets.values())
+      .filter((bucket) => bucket.quantity >= privacyThreshold || bucket.count >= privacyThreshold)
+      .sort((a, b) => b.quantity - a.quantity || b.count - a.count || a.key.localeCompare(b.key))
+      .slice(0, input.limit);
+  }
+
+  listVenueAreaPriceBenchmarks(input: {
+    venueId: string;
+    area: string | null;
+    limit: number;
+  }): VenueAreaPriceBenchmark[] {
+    if (!input.area?.trim()) {
+      return [];
+    }
+    const area = input.area.trim();
+
+    const venueRows = this.database
+      .prepare(
+        `SELECT beer_name, serve_size, price
+         FROM venue_beers
+         WHERE venue_id = ?
+           AND price IS NOT NULL
+           AND in_stock = 1`,
+      )
+      .all(input.venueId) as Array<{ beer_name: string; serve_size: ServingSize | null; price: number }>;
+
+    if (!venueRows.length) {
+      return [];
+    }
+
+    const areaRows = this.database
+      .prepare(
+        `SELECT vb.beer_name, vb.serve_size, vb.price
+         FROM venue_beers vb
+         JOIN venue_profiles vp ON vp.venue_id = vb.venue_id
+         WHERE lower(COALESCE(vp.suburb, vp.area, '')) = lower(?)
+           AND vp.active = 1
+           AND vb.price IS NOT NULL
+           AND vb.in_stock = 1`,
+      )
+      .all(area) as Array<{ beer_name: string; serve_size: ServingSize | null; price: number }>;
+
+    const pricesByBeerAndServe = new Map<string, number[]>();
+    for (const row of areaRows) {
+      const key = `${normalizeBeerInsightKey(row.beer_name)}::${row.serve_size ?? ""}`;
+      const price = Number(row.price);
+      if (!Number.isFinite(price)) {
+        continue;
+      }
+      const prices = pricesByBeerAndServe.get(key) ?? [];
+      prices.push(price);
+      pricesByBeerAndServe.set(key, prices);
+    }
+
+    const benchmarks: VenueAreaPriceBenchmark[] = [];
+    const seenVenueRows = new Set<string>();
+    for (const row of venueRows) {
+      const beerKey = normalizeBeerInsightKey(row.beer_name);
+      const groupKey = `${beerKey}::${row.serve_size ?? ""}`;
+      if (seenVenueRows.has(groupKey)) {
+        continue;
+      }
+      seenVenueRows.add(groupKey);
+
+      const prices = pricesByBeerAndServe.get(groupKey) ?? [];
+      const localMedian = median(prices);
+      const venuePrice = Number(row.price);
+      if (localMedian == null || prices.length < 2 || !Number.isFinite(venuePrice)) {
+        continue;
+      }
+
+      const difference = Number((venuePrice - localMedian).toFixed(2));
+      benchmarks.push({
+        beerName: formatInsightBeerLabel(row.beer_name),
+        serveSize: row.serve_size,
+        venuePrice,
+        localMedian: Number(localMedian.toFixed(2)),
+        difference,
+        sampleSize: prices.length,
+        comparison: Math.abs(difference) < 0.01 ? "at" : difference > 0 ? "above" : "below",
+      });
+    }
+
+    return benchmarks
+      .sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference) || b.sampleSize - a.sampleSize)
+      .slice(0, input.limit);
+  }
+
   createPintPointDrinkRecord(input: {
     id: string;
     userId: string;
@@ -4836,6 +5147,8 @@ export class BusinessRepository {
         specialDiscount: row.discount,
         specialStartsAt: row.starts_at,
         specialEndsAt: row.ends_at,
+        specialStartTime: row.start_time,
+        specialEndTime: row.end_time,
         specialScheduleNote: row.schedule_note,
         specialExclusive: Boolean(row.exclusive),
         displayKind: "special" as const,
@@ -5705,6 +6018,8 @@ export class BusinessRepository {
     discount: string | null;
     startsAt: string | null;
     endsAt: string | null;
+    startTime: string | null;
+    endTime: string | null;
     scheduleNote: string | null;
     exclusive: boolean;
     active: boolean;
@@ -5713,8 +6028,8 @@ export class BusinessRepository {
     this.database
       .prepare(
         `INSERT INTO venue_specials (
-          id, venue_id, title, description, price, discount, starts_at, ends_at, schedule_note, exclusive, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, venue_id, title, description, price, discount, starts_at, ends_at, start_time, end_time, schedule_note, exclusive, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
           description = excluded.description,
@@ -5722,6 +6037,8 @@ export class BusinessRepository {
           discount = excluded.discount,
           starts_at = excluded.starts_at,
           ends_at = excluded.ends_at,
+          start_time = excluded.start_time,
+          end_time = excluded.end_time,
           schedule_note = excluded.schedule_note,
           exclusive = excluded.exclusive,
           active = excluded.active,
@@ -5737,6 +6054,8 @@ export class BusinessRepository {
         input.discount,
         input.startsAt,
         input.endsAt,
+        input.startTime,
+        input.endTime,
         input.scheduleNote,
         input.exclusive ? 1 : 0,
         input.active ? 1 : 0,
@@ -6032,6 +6351,16 @@ export class BusinessRepository {
       [...areaValues, ...rangeValues],
     );
     const privacyFloorMet = areaSearches >= privacyThreshold;
+    const searchTimeRows = this.database
+      .prepare(
+        `SELECT created_at
+         FROM events
+         WHERE event_type IN ('search_performed', 'beer_search_performed', 'suburb_search_performed')
+           ${eventAreaClause}
+           ${rangeClause}`,
+      )
+      .all(...[...areaValues, ...rangeValues]) as Array<{ created_at: string }>;
+    const searchTimes = buildSearchTimeBuckets(searchTimeRows, input.timezone ?? DEFAULT_REPORT_TIMEZONE);
 
     return {
       barLookups: barEventCount(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"]),
@@ -6048,6 +6377,8 @@ export class BusinessRepository {
       areaSearches,
       areaBeerSearches: privacyFloorMet ? areaBeerSearches : [],
       areaStyleSearches: privacyFloorMet ? areaStyleSearches : [],
+      searchTimesByDay: privacyFloorMet ? searchTimes.byDay : [],
+      searchTimesByHour: privacyFloorMet ? searchTimes.byHour : [],
       privacyFloorMet,
       privacyThreshold,
       timezone: input.timezone ?? DEFAULT_REPORT_TIMEZONE,

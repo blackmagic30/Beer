@@ -340,6 +340,9 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain("Choose start time");
     expect(venuePortalHtml).toContain("Choose ending time");
     expect(venuePortalHtml).toContain("Choose both a start time and ending time for the Pint Path special.");
+    expect(venuePortalHtml).toContain("startTime: specialStartTime");
+    expect(venuePortalHtml).toContain("endTime: specialEndTime");
+    expect(venuePortalHtml).toContain("specialTimeRangeCopy(item)");
   });
 
   it("surfaces the premium tiered venue command centre preview", () => {
@@ -347,6 +350,8 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain("function renderPremiumVenueDashboard");
     expect(venuePortalHtml).toContain("VENUE_DASHBOARD_FEATURES");
     expect(venuePortalHtml).toContain("data-dashboard-plan");
+    expect(venuePortalHtml).toContain("data-dashboard-section");
+    expect(venuePortalHtml).toContain("premiumDashboardSubnav");
     expect(venuePortalHtml).toContain("App Value Overview");
     expect(venuePortalHtml).toContain("Demand Signals");
     expect(venuePortalHtml).toContain("Growth recommendations");
@@ -355,6 +360,7 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain("Price freshness");
     expect(venuePortalHtml).toContain("Specials strategy");
     expect(venuePortalHtml).toContain("premiumLockedCard");
+    expect(venuePortalHtml).not.toContain("Demand score");
   });
 
   it("renders the simplified public header, primary controls, and shared advanced filters", () => {

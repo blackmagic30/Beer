@@ -148,6 +148,9 @@ CREATE INDEX IF NOT EXISTS idx_discount_redemptions_user
 CREATE INDEX IF NOT EXISTS idx_discount_redemptions_venue
   ON discount_redemptions (venue_id, redeemed_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_discount_redemptions_suburb
+  ON discount_redemptions (suburb, redeemed_at DESC);
+
 CREATE TABLE IF NOT EXISTS pint_point_drink_records (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -174,6 +177,9 @@ CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_user
 
 CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_venue
   ON pint_point_drink_records (venue_id, recorded_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_suburb
+  ON pint_point_drink_records (suburb, recorded_at DESC);
 
 CREATE TABLE IF NOT EXISTS free_pint_reward_codes (
   id TEXT PRIMARY KEY,
@@ -778,6 +784,8 @@ CREATE TABLE IF NOT EXISTS venue_specials (
   discount TEXT,
   starts_at TEXT,
   ends_at TEXT,
+  start_time TEXT,
+  end_time TEXT,
   schedule_note TEXT,
   exclusive INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1,

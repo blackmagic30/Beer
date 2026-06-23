@@ -501,6 +501,7 @@
     let currentPortal = null;
     let currentDemandPeriod = "today";
     let dashboardPreviewPlan = null;
+    let premiumDashboardSection = "demand_command_centre";
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
@@ -755,6 +756,20 @@
         "Price coverage",
       ],
     };
+
+    const PREMIUM_DASHBOARD_SECTIONS = [
+      { id: "demand_command_centre", label: "Demand command centre" },
+      { id: "growth_recommendations", label: "Growth recommendations" },
+      { id: "app_value_overview", label: "App value overview" },
+      { id: "demand_signals", label: "Demand signals" },
+      { id: "price_freshness", label: "Price freshness" },
+      { id: "lost_opportunity_risk", label: "Lost opportunity risk" },
+      { id: "customer_interest", label: "Customer interest" },
+      { id: "marketing_performance", label: "Marketing + performance" },
+      { id: "specials_strategy", label: "Specials strategy" },
+      { id: "premium_reports", label: "Reports" },
+      { id: "action_centre", label: "Action centre" },
+    ];
 
     function normalizeDashboardPlan(value) {
       return value === "pro" || value === "plus" ? "pro" : "free";
@@ -1018,17 +1033,7 @@
 
     function buildSpecialScheduleNote() {
       const days = checkedValues(specialDays).map((day) => dayLabelByValue[day] || day);
-      const startTime = normalizeHappyHourTime(field(specialForm, "startTime").value);
-      const endTime = normalizeHappyHourTime(field(specialForm, "endTime").value);
-      const dayCopy = days.length ? days.join(", ") : "Every day";
-      const timeCopy = startTime && endTime
-        ? `${formatFriendlyTime(startTime)}-${formatFriendlyTime(endTime)}`
-        : startTime
-          ? `from ${formatFriendlyTime(startTime)}`
-          : endTime
-            ? `until ${formatFriendlyTime(endTime)}`
-            : "";
-      return [dayCopy, timeCopy].filter(Boolean).join(" · ");
+      return days.length ? days.join(", ") : "Every day";
     }
 
     function setSpecialScheduleFromNote(note = "") {
@@ -1040,8 +1045,23 @@
       const timeMatches = Array.from(String(note || "").matchAll(/\b(\d{1,2}(?::\d{2})?\s?(?:am|pm)|\d{1,2}:\d{2})\b/gi))
         .map((match) => normalizeHappyHourTime(match[1]))
         .filter(Boolean);
-      field(specialForm, "startTime").value = timeMatches[0] ? formatFriendlyTime(timeMatches[0]) : "";
-      field(specialForm, "endTime").value = timeMatches[1] ? formatFriendlyTime(timeMatches[1]) : "";
+      field(specialForm, "startTime").value = timeMatches[0] || "";
+      field(specialForm, "endTime").value = timeMatches[1] || "";
+    }
+
+    function specialTimeRangeCopy(item) {
+      const startTime = normalizeHappyHourTime(item?.startTime || "");
+      const endTime = normalizeHappyHourTime(item?.endTime || "");
+      if (startTime && endTime) {
+        return `${formatFriendlyTime(startTime)}-${formatFriendlyTime(endTime)}`;
+      }
+      if (startTime) {
+        return `from ${formatFriendlyTime(startTime)}`;
+      }
+      if (endTime) {
+        return `until ${formatFriendlyTime(endTime)}`;
+      }
+      return "";
     }
 
     function resetSpecialFormState() {
@@ -1167,14 +1187,34 @@
       `;
     }
 
-    function premiumSignalList(rows) {
-      return rows.map((row) => `
+    function premiumSignalList(rows, emptyCopy = "Not enough suburb data yet.") {
+      const items = (rows || []).filter(Boolean);
+      if (!items.length) {
+        return `<div class="premiumListRow"><div><strong>${escapeHtml(emptyCopy)}</strong></div></div>`;
+      }
+      return items.map((row) => `
         <div class="premiumListRow">
           <div>
             <strong>${escapeHtml(row.label)}</strong>
             <small>${escapeHtml(row.helper || "")}</small>
           </div>
           <span class="pill">${escapeHtml(String(row.value))}</span>
+        </div>
+      `).join("");
+    }
+
+    function premiumNarrativeList(rows, emptyCopy = "More data will appear here once this suburb reaches the privacy floor.") {
+      const items = (rows || []).filter(Boolean);
+      if (!items.length) {
+        return `<div class="premiumListRow"><div><strong>${escapeHtml(emptyCopy)}</strong></div></div>`;
+      }
+      return items.map((item) => `
+        <div class="premiumListRow premiumListRow--narrative">
+          <div>
+            <strong>${escapeHtml(item.copy || item.label || item)}</strong>
+            ${item.helper ? `<small>${escapeHtml(item.helper)}</small>` : ""}
+          </div>
+          ${item.value ? `<span class="pill">${escapeHtml(String(item.value))}</span>` : ""}
         </div>
       `).join("");
     }
@@ -1230,12 +1270,172 @@
       `;
     }
 
+    function premiumDashboardSubnav(activeSection) {
+      return `
+        <nav class="premiumDashboardSubnav" aria-label="Venue insight sections">
+          ${PREMIUM_DASHBOARD_SECTIONS.map((section) => `
+            <button class="${section.id === activeSection ? "is-active" : ""}" type="button" data-dashboard-section="${escapeHtml(section.id)}">${escapeHtml(section.label)}</button>
+          `).join("")}
+        </nav>
+      `;
+    }
+
+    function renderProDashboardSection(mock, sectionId = premiumDashboardSection) {
+      switch (sectionId) {
+        case "growth_recommendations":
+          return `
+            <section class="premiumDashboardCard premiumDashboardCard--ai premiumInsightPanel">
+              <span class="eyebrow">Growth recommendations</span>
+              <h3>Highest-value moves</h3>
+              <p class="muted">Updates whenever this dashboard reloads from current Pint Path signals.</p>
+              <div class="premiumActionList">${mock.aiRecommendations.map((item, index) => `
+                <button class="premiumActionItem" type="button"><span>${index + 1}</span><strong>${escapeHtml(item)}</strong></button>
+              `).join("")}</div>
+              <div class="premiumInsightColumns premiumInsightColumns--compact">
+                <div>
+                  <span class="eyebrow">Search vs stock gap</span>
+                  <div class="premiumList">${premiumNarrativeList(mock.searchStockGaps, "No obvious stock gaps from suburb beer searches right now.")}</div>
+                </div>
+                <div>
+                  <span class="eyebrow">Local trend report</span>
+                  <div class="premiumList">${premiumNarrativeList(mock.localTrendReport, "Trend reporting unlocks once the suburb has enough searches.")}</div>
+                </div>
+              </div>
+            </section>
+          `;
+        case "app_value_overview":
+          return `
+            <section class="premiumDashboardCard premiumDashboardCard--revenue premiumInsightPanel">
+              <span class="eyebrow">App value overview</span>
+              <h3>${formatCurrency(mock.appValueWeek)} app-influenced this week</h3>
+              <div class="premiumProgressList">${premiumProgressRows(mock.appValueBars, formatCurrency)}</div>
+            </section>
+          `;
+        case "demand_signals":
+          return `
+            <section class="premiumDashboardCard premiumInsightPanel">
+              <span class="eyebrow">Demand signals</span>
+              <h3>Suburb demand, stock and buying signals</h3>
+              <div class="premiumInsightColumns">
+                <div>
+                  <span class="eyebrow">Top searched beers in ${escapeHtml(mock.area || "your suburb")}</span>
+                  <div class="premiumList">${premiumSignalList(mock.beerDemand)}</div>
+                </div>
+                <div>
+                  <span class="eyebrow">Top beers bought / redeemed</span>
+                  <div class="premiumList">${premiumSignalList(mock.topPurchasedBeers)}</div>
+                </div>
+                <div>
+                  <span class="eyebrow">Search times</span>
+                  <div class="premiumList">${premiumSignalList(mock.searchTimeSignals)}</div>
+                </div>
+              </div>
+            </section>
+          `;
+        case "price_freshness":
+          return `
+            <section class="premiumDashboardCard premiumInsightPanel">
+              <span class="eyebrow">Price freshness</span>
+              <h3>${formatCount(mock.stalePrices)} row${mock.stalePrices === 1 ? "" : "s"} need a check</h3>
+              <p class="muted">Beer prices count as fresh for 7 days after the last update.</p>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.priceFreshness)}</div>
+              <div>
+                <span class="eyebrow">Price benchmarking</span>
+                <div class="premiumList">${premiumNarrativeList(mock.priceBenchmarks, "Add more same-size suburb prices to compare against a local median.")}</div>
+              </div>
+            </section>
+          `;
+        case "lost_opportunity_risk":
+          return `
+            <section class="premiumDashboardCard premiumDashboardCard--warning premiumInsightPanel">
+              <span class="eyebrow">Lost opportunity risk</span>
+              <h3>Fix what hides you from users</h3>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.risks)}</div>
+            </section>
+          `;
+        case "customer_interest":
+          return `
+            <section class="premiumDashboardCard premiumInsightPanel">
+              <span class="eyebrow">Customer interest</span>
+              <h3>Aggregate and privacy-safe</h3>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.customerInterest)}</div>
+            </section>
+          `;
+        case "marketing_performance":
+          return `
+            <section class="premiumDashboardCard premiumInsightPanel">
+              <span class="eyebrow">Marketing + performance</span>
+              <h3>${formatCount(mock.redemptionsWeek)} redemptions this week</h3>
+              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.marketing)}</div>
+            </section>
+          `;
+        case "specials_strategy":
+          return `
+            <section class="premiumDashboardCard premiumInsightPanel">
+              <span class="eyebrow">Specials strategy</span>
+              <h3>${formatCount(mock.activeSpecials)} active Pint Path specials</h3>
+              <div class="premiumCampaignList">${mock.specialsStrategy.map((special) => `
+                <div class="premiumCampaignRow">
+                  <div>
+                    <strong>${escapeHtml(special.title)}</strong>
+                    <small>${formatCount(special.audience)} views · ${formatCount(special.redemptions)} redemptions · ${escapeHtml(special.value)}</small>
+                  </div>
+                  <button class="button button--small button--primary" type="button" data-jump-tab="specials">Tune special</button>
+                </div>
+              `).join("")}</div>
+            </section>
+          `;
+        case "premium_reports":
+          return `
+            <section class="premiumDashboardCard premiumInsightPanel">
+              <span class="eyebrow">Premium reports</span>
+              <h3>Owner-ready intelligence</h3>
+              <div class="premiumReportGrid">${mock.reports.map((report) => `<button class="button button--small" type="button">${escapeHtml(report)}</button>`).join("")}</div>
+            </section>
+          `;
+        case "action_centre":
+          return premiumActionCentre(mock.proActions);
+        case "demand_command_centre":
+        default:
+          return `
+            <section class="premiumDashboardCard premiumDashboardCard--live premiumInsightPanel">
+              <div class="premiumCardHeader">
+                <span class="eyebrow">Demand command centre</span>
+                <span class="pill pill--premium">Pro</span>
+              </div>
+              <h3>Today on Pint Path</h3>
+              <div class="premiumRoomGrid">
+                ${mock.demandSignals.map((signal) => `
+                  <div class="premiumRoomTile">
+                    <span>${escapeHtml(signal.label)}</span>
+                    <strong>${escapeHtml(String(signal.value))}</strong>
+                    <small>${escapeHtml(signal.helper)}</small>
+                  </div>
+                `).join("")}
+              </div>
+            </section>
+          `;
+      }
+    }
+
     function buildGrowthRecommendations(input) {
       const recommendations = [];
       const topBeer = input.topBeerRows?.[0];
 
       if (topBeer?.label) {
         recommendations.push(`${topBeer.label} is the strongest nearby beer search. Keep its price verified and visible.`);
+      }
+
+      for (const gap of (input.stockGaps || []).slice(0, 2)) {
+        if (gap.copy) {
+          recommendations.push(gap.copy);
+        }
+      }
+
+      for (const trend of (input.localTrendReport || []).slice(0, 2)) {
+        if (trend.copy) {
+          recommendations.push(trend.copy);
+        }
       }
 
       if (input.stalePrices > 0) {
@@ -1309,88 +1509,14 @@
     }
 
     function renderProVenueDashboard(mock) {
+      const activeSection = PREMIUM_DASHBOARD_SECTIONS.some((section) => section.id === premiumDashboardSection)
+        ? premiumDashboardSection
+        : "demand_command_centre";
       return `
-        <div class="premiumDashboardMain premiumDashboardMain--pro">
-          <div class="premiumDashboardColumn premiumDashboardColumn--main">
-            <section class="premiumDashboardCard premiumDashboardCard--live">
-              <div class="premiumCardHeader">
-                <span class="eyebrow">Demand command centre</span>
-                <span class="pill pill--premium">Pro</span>
-              </div>
-              <h3>Today on Pint Path</h3>
-              <div class="premiumRoomGrid">
-                ${mock.demandSignals.map((signal) => `
-                  <div class="premiumRoomTile">
-                    <span>${escapeHtml(signal.label)}</span>
-                    <strong>${escapeHtml(String(signal.value))}</strong>
-                    <small>${escapeHtml(signal.helper)}</small>
-                  </div>
-                `).join("")}
-              </div>
-            </section>
-            <section class="premiumDashboardCard premiumDashboardCard--revenue">
-              <span class="eyebrow">App value overview</span>
-              <h3>${formatCurrency(mock.appValueWeek)} app-influenced this week</h3>
-              <div class="premiumProgressList">${premiumProgressRows(mock.appValueBars, formatCurrency)}</div>
-            </section>
-            <section class="premiumDashboardCard">
-              <span class="eyebrow">Price freshness</span>
-              <h3>${formatCount(mock.stalePrices)} rows need a check</h3>
-              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.priceFreshness)}</div>
-            </section>
-            <section class="premiumDashboardCard">
-              <span class="eyebrow">Premium reports</span>
-              <h3>Owner-ready intelligence</h3>
-              <div class="premiumReportGrid">${mock.reports.map((report) => `<button class="button button--small" type="button">${escapeHtml(report)}</button>`).join("")}</div>
-            </section>
-            <div class="premiumDashboardBottom premiumDashboardBottom--inline">
-              <section class="premiumDashboardCard">
-                <span class="eyebrow">Customer interest</span>
-                <h3>Aggregate and privacy-safe</h3>
-                <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.customerInterest)}</div>
-              </section>
-              <section class="premiumDashboardCard">
-                <span class="eyebrow">Marketing Performance</span>
-                <h3>${formatCount(mock.redemptionsWeek)} redemptions this week</h3>
-                <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.marketing)}</div>
-              </section>
-              ${premiumActionCentre(mock.proActions)}
-            </div>
-          </div>
-          <aside class="premiumDashboardColumn">
-            <section class="premiumDashboardCard premiumDashboardCard--ai">
-              <span class="eyebrow">Growth recommendations</span>
-              <h3>Highest-value moves</h3>
-              <p class="muted">Updates whenever this dashboard reloads from current Pint Path signals.</p>
-              <div class="premiumActionList">${mock.aiRecommendations.map((item, index) => `
-                <button class="premiumActionItem" type="button"><span>${index + 1}</span><strong>${escapeHtml(item)}</strong></button>
-              `).join("")}</div>
-            </section>
-            <section class="premiumDashboardCard">
-              <span class="eyebrow">Demand signals</span>
-              <h3>Top nearby beer intent</h3>
-              <div class="premiumList">${premiumSignalList(mock.beerDemand)}</div>
-            </section>
-            <section class="premiumDashboardCard premiumDashboardCard--warning">
-              <span class="eyebrow">Lost opportunity risk</span>
-              <h3>Fix what hides you from users</h3>
-              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.risks)}</div>
-            </section>
-            <section class="premiumDashboardCard">
-              <span class="eyebrow">Specials strategy</span>
-              <h3>${formatCount(mock.activeSpecials)} active Pint Path specials</h3>
-              <div class="premiumCampaignList">${mock.specialsStrategy.map((special) => `
-                <div class="premiumCampaignRow">
-                  <div>
-                    <strong>${escapeHtml(special.title)}</strong>
-                    <small>${formatCount(special.audience)} views · ${formatCount(special.redemptions)} redemptions · ${escapeHtml(special.value)}</small>
-                  </div>
-                  <button class="button button--small button--primary" type="button" data-jump-tab="specials">Tune special</button>
-                </div>
-              `).join("")}</div>
-            </section>
-          </aside>
-        </div>
+        <section class="premiumDashboardInsights">
+          ${premiumDashboardSubnav(activeSection)}
+          ${renderProDashboardSection(mock, activeSection)}
+        </section>
       `;
     }
 
@@ -1406,12 +1532,23 @@
       const analytics = data.analytics || {};
       const discounts = data.discounts || {};
       const demandDashboard = data.demandDashboard || data.businessToolkit?.demandDashboard || null;
+      const paidIntelligence = data.paidVenueIntelligence || data.businessToolkit?.paidVenueIntelligence || {};
       const demandToday = demandDashboard?.periods?.today || {};
       const demandMonth = demandDashboard?.periods?.month || {};
       const activeSpecials = specials.filter((special) => special.active !== false).length;
       const activeHappyHours = happyHours.filter((item) => item.active !== false).length;
       const onTapRows = beers.filter((beer) => beer.onTap).length;
       const pricedRows = beers.filter((beer) => beer.price != null).length;
+      const priceFreshUntilMs = 7 * 24 * 60 * 60 * 1000;
+      const nowMs = Date.now();
+      const freshPricedRows = beers.filter((beer) => {
+        if (beer.price == null) return false;
+        const updatedAtMs = Date.parse(beer.updatedAt || "");
+        return Number.isFinite(updatedAtMs) && nowMs - updatedAtMs <= priceFreshUntilMs;
+      }).length;
+      const missingPriceRows = Math.max(0, beers.length - pricedRows);
+      const agedPriceRows = Math.max(0, pricedRows - freshPricedRows);
+      const needsFreshnessRows = Math.max(0, beers.length - freshPricedRows);
       const pendingReviews = data.pendingChanges?.length || 0;
       const discountRedemptions = Number(discounts.totalRedemptions || 0);
       const discountSavings = Number(discounts.estimatedSavingsDollars || 0);
@@ -1421,12 +1558,46 @@
       const realBeerIntent = Number(demandToday.beerIntent || analytics.beerListViews || 0);
       const realSpecialViews = Number(demandToday.specialsIntent || analytics.specialsViews || 0);
       const realPriceReveals = Number(analytics.beerListViews || demandToday.beerIntent || 0);
-      const topBeerRows = (analytics.areaBeerSearches || demandMonth.areaBeerSearches || [])
+      const topBeerRowsFromIntelligence = (paidIntelligence.topSearchedBeers || [])
         .slice(0, 4)
-        .map((row) => ({ label: row.key || row.label || "Beer search", value: Number(row.count || 0), helper: "nearby searches" }));
+        .map((row) => ({
+          label: row.beerName || row.key || "Beer search",
+          value: formatCount(row.searchCount || 0),
+          helper: `searched in ${paidIntelligence.area || profile.suburb || "this suburb"}`,
+        }));
+      const topBeerRows = (topBeerRowsFromIntelligence.length ? topBeerRowsFromIntelligence : (analytics.areaBeerSearches || demandMonth.areaBeerSearches || [])
+        .slice(0, 4)
+        .map((row) => ({ label: row.key || row.label || "Beer search", value: formatCount(row.count || 0), helper: "nearby searches" })));
+      const topPurchasedBeers = (paidIntelligence.topPurchasedBeers || [])
+        .slice(0, 4)
+        .map((row) => ({
+          label: row.beerName || row.key || "Beer",
+          value: formatCount(row.purchaseCount || row.eventCount || 0),
+          helper: row.estimatedSavingsDollars ? `${formatCurrency(row.estimatedSavingsDollars)} tracked savings` : "Pint Path logged",
+        }));
+      const searchTimeSignals = [
+        paidIntelligence.peakSearchDay
+          ? { label: "Peak day", value: paidIntelligence.peakSearchDay.label, helper: `${formatCount(paidIntelligence.peakSearchDay.count)} searches` }
+          : null,
+        paidIntelligence.peakSearchHour
+          ? { label: "Peak hour", value: paidIntelligence.peakSearchHour.label, helper: `${formatCount(paidIntelligence.peakSearchHour.count)} searches` }
+          : null,
+      ].filter(Boolean);
+      const stockGapRows = (paidIntelligence.searchStockGaps || []).slice(0, 3).map((row) => ({
+        copy: row.copy,
+        value: `${formatCount(row.searchCount)} searches`,
+      }));
+      const trendRows = (paidIntelligence.localTrendReport || []).slice(0, 4).map((row) => ({
+        copy: row.copy,
+        value: row.direction === "up" ? "Up" : row.direction === "down" ? "Down" : row.direction === "flat" ? "Steady" : "New",
+      }));
+      const benchmarkRows = (paidIntelligence.priceBenchmarks || []).slice(0, 4).map((row) => ({
+        copy: row.copy,
+        value: row.comparison === "at" ? "Median" : `${row.difference > 0 ? "+" : "-"}${formatCurrency(Math.abs(row.difference || 0))}`,
+      }));
       const alerts = [
         beers.length < 3 ? "Add at least 3 beer rows so users can compare you properly." : "",
-        pricedRows < beers.length ? `${formatCount(Math.max(0, beers.length - pricedRows))} beer rows need a current price.` : "",
+        needsFreshnessRows ? `${formatCount(needsFreshnessRows)} beer row${needsFreshnessRows === 1 ? "" : "s"} need a fresh price check.` : "",
         pendingReviews ? `${formatCount(pendingReviews)} changes are waiting for Pint Path admin review.` : "",
         activeSpecials ? "" : "Add one simple Pint Path special to give users a reason to choose you tonight.",
       ].filter(Boolean);
@@ -1460,7 +1631,10 @@
         beerRows: beers.length,
         onTapRows,
         pricedRows,
-        stalePrices: Math.max(0, beers.length - pricedRows),
+        freshPricedRows,
+        missingPriceRows,
+        agedPriceRows,
+        stalePrices: needsFreshnessRows,
         listingQuality: typeof qualityScore === "number" ? qualityScore : PREMIUM_VENUE_MOCK.listingQuality,
         alerts: alerts.length ? alerts : ["No critical data issues right now. Keep prices fresh before peak trading."],
         demandSignals: [
@@ -1470,6 +1644,12 @@
           { label: "Specials intent", value: realSpecialViews, helper: "Special views today" },
         ],
         beerDemand: topBeerRows.length ? topBeerRows : PREMIUM_VENUE_MOCK.beerDemand,
+        area: paidIntelligence.area || profile.suburb || profile.area || "your suburb",
+        topPurchasedBeers,
+        searchTimeSignals,
+        searchStockGaps: stockGapRows,
+        localTrendReport: trendRows,
+        priceBenchmarks: benchmarkRows,
         customerInterest: [
           { label: "Map/detail opens", value: realMapViews, tone: "info" },
           { label: "Venue searches", value: realSearches, tone: "success" },
@@ -1483,13 +1663,13 @@
           { label: "Active specials", value: activeSpecials },
         ],
         priceFreshness: [
-          { label: "Fresh", value: pricedRows, helper: "priced rows" },
-          { label: "Needs check", value: Math.max(0, beers.length - pricedRows), helper: "missing prices" },
+          { label: "Fresh", value: freshPricedRows, helper: "updated in 7 days" },
+          { label: "Needs check", value: needsFreshnessRows, helper: "missing or older than a week" },
+          { label: "Priced", value: pricedRows, helper: `${formatCount(missingPriceRows)} missing` },
           { label: "On tap", value: onTapRows, helper: "current tap rows" },
-          { label: "Happy hours", value: activeHappyHours, helper: "active offers" },
         ],
         risks: [
-          { label: "Missing prices", value: Math.max(0, beers.length - pricedRows), helper: "Users cannot compare these rows" },
+          { label: "Prices need check", value: needsFreshnessRows, helper: `${formatCount(missingPriceRows)} missing · ${formatCount(agedPriceRows)} older than a week` },
           { label: "Pending reviews", value: pendingReviews, helper: "Waiting on Pint Path admin" },
           { label: "No special live", value: activeSpecials ? "No" : "Yes", helper: activeSpecials ? "Specials are visible" : "Add one clear app-only offer" },
           { label: "Low beer coverage", value: beers.length < 3 ? "Yes" : "No", helper: `${formatCount(beers.length)} rows managed` },
@@ -1503,6 +1683,8 @@
           redemptions: discountRedemptions,
           beerIntent: realBeerIntent,
           beerRows: beers.length,
+          stockGaps: stockGapRows,
+          localTrendReport: trendRows,
         }),
       };
       const today = new Intl.DateTimeFormat("en-AU", {
@@ -1519,12 +1701,12 @@
           { label: "Pending review", value: formatCount(mock.pendingReviews), helper: "Waiting on admin", tone: mock.pendingReviews ? "warning" : "success" },
         ],
         pro: [
-          { label: "Demand score", value: `${formatCount(mock.opportunityScore)}%`, helper: "Search + data strength", tone: "premium" },
+          { label: "Price freshness", value: `${formatCount(mock.freshPricedRows)}/${formatCount(mock.beerRows)}`, helper: "Fresh within 7 days", tone: mock.stalePrices ? "warning" : "success" },
+          { label: "App brought in", value: formatCurrency(mock.appValueWeek), helper: "This week", tone: "premium" },
           { label: "Map/detail opens", value: formatCount(mock.mapViewsToday), helper: "Today", tone: "success" },
-          { label: "Avg spend", value: formatOptionalCurrency(mock.averageSpend), helper: "When recorded", tone: "neutral" },
-          { label: "Redemptions", value: formatCount(mock.redemptionsWeek), helper: "Logged by staff", tone: "info" },
-          { label: "Price freshness", value: `${formatCount(mock.pricedRows)}/${formatCount(Math.max(mock.beerRows, 1))}`, helper: "Rows priced", tone: mock.stalePrices ? "warning" : "success" },
-          { label: "Specials", value: formatCount(mock.activeSpecials), helper: "Active Pint Path offers", tone: "premium" },
+          { label: "Staff redemptions", value: formatCount(mock.redemptionsWeek), helper: "Logged by staff", tone: "info" },
+          { label: "Active specials", value: formatCount(mock.activeSpecials), helper: "Pint Path offers", tone: "premium" },
+          { label: "Avg spend", value: formatOptionalCurrency(mock.averageSpend), helper: "After specials", tone: "neutral" },
         ],
       };
 
@@ -2397,7 +2579,7 @@
           <div class="listItem dataRow">
             <div>
               <strong>${escapeHtml(item.title)}</strong>
-              <div class="muted">${item.active ? "Active" : "Inactive"}${item.exclusive ? " · Pro Pint Path special" : ""}${item.price != null ? ` · ${money(item.price)}` : ""}</div>
+              <div class="muted">${[item.active ? "Active" : "Inactive", item.exclusive ? "Pro Pint Path special" : "", item.price != null ? money(item.price) : "", specialTimeRangeCopy(item)].filter(Boolean).map(escapeHtml).join(" · ")}</div>
               ${(item.discount || item.scheduleNote) ? `<p class="helperCopy">${escapeHtml([item.discount, item.scheduleNote].filter(Boolean).join(" · "))}</p>` : ""}
             </div>
             <div class="rowActions">
@@ -2777,6 +2959,8 @@
           discount: field(specialForm, "discount").value || null,
           startsAt: null,
           endsAt: null,
+          startTime: specialStartTime,
+          endTime: specialEndTime,
           scheduleNote: buildSpecialScheduleNote(),
           exclusive: portalCanFeatureSpecials(),
           active: field(specialForm, "active").checked,
@@ -2939,6 +3123,12 @@
           return;
         }
 
+        if (target.dataset.dashboardSection) {
+          premiumDashboardSection = target.dataset.dashboardSection;
+          renderPremiumVenueDashboard(currentPortal);
+          return;
+        }
+
         if (target.dataset.scrollDiscount && discountRedemptionFormElement) {
           jumpToPortalTarget("redemption");
           return;
@@ -3073,6 +3263,8 @@
           field(specialForm, "price").value = item.price ?? "";
           field(specialForm, "discount").value = item.discount || "";
           setSpecialScheduleFromNote(item.scheduleNote || "");
+          field(specialForm, "startTime").value = normalizeHappyHourTime(item.startTime || field(specialForm, "startTime").value) || "";
+          field(specialForm, "endTime").value = normalizeHappyHourTime(item.endTime || field(specialForm, "endTime").value) || "";
           field(specialForm, "active").checked = Boolean(item.active);
           showTab("specials");
           return;

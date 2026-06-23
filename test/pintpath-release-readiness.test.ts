@@ -402,6 +402,8 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       discount: null,
       startsAt: null,
       endsAt: null,
+      startTime: "17:00",
+      endTime: "19:00",
       scheduleNote: null,
       exclusive: false,
       active: true,

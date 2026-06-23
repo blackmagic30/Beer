@@ -27,6 +27,11 @@ const venueAnalyticsEventsColumns = [
   { name: "suburb", definition: "TEXT" },
 ] as const;
 
+const venueSpecialsColumns = [
+  { name: "start_time", definition: "TEXT" },
+  { name: "end_time", definition: "TEXT" },
+] as const;
+
 const authSessionsColumns = [
   { name: "revoked_at", definition: "TEXT" },
   { name: "last_used_at", definition: "TEXT" },
@@ -137,11 +142,17 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE INDEX IF NOT EXISTS idx_discount_redemptions_venue
       ON discount_redemptions (venue_id, redeemed_at DESC);
 
+    CREATE INDEX IF NOT EXISTS idx_discount_redemptions_suburb
+      ON discount_redemptions (suburb, redeemed_at DESC);
+
     CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_user
       ON pint_point_drink_records (user_id, recorded_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_venue
       ON pint_point_drink_records (venue_id, recorded_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_suburb
+      ON pint_point_drink_records (suburb, recorded_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_user
       ON free_pint_reward_codes (user_id, status, expires_at DESC);
@@ -366,6 +377,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   migrateLegacyVenuePartnerTables(database);
   ensureColumns(database, "venue_profiles", venueProfilesColumns);
   ensureColumns(database, "venue_analytics_events", venueAnalyticsEventsColumns);
+  ensureColumns(database, "venue_specials", venueSpecialsColumns);
   ensureColumns(database, "accounts", accountsColumns);
   ensureColumns(database, "profiles", profilesColumns);
   ensureColumns(database, "auth_sessions", authSessionsColumns);

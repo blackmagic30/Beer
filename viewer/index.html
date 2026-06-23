@@ -4981,6 +4981,18 @@
       return hours * 60 + minutes;
     }
 
+    function formatClockLabel(value) {
+      const minutesTotal = timeTextToMinutes(value);
+      if (minutesTotal == null) {
+        return "";
+      }
+      const hours24 = Math.floor(minutesTotal / 60);
+      const minutes = minutesTotal % 60;
+      const suffix = hours24 >= 12 ? "PM" : "AM";
+      const hours12 = hours24 % 12 || 12;
+      return `${hours12}:${String(minutes).padStart(2, "0")} ${suffix}`;
+    }
+
     function isVenueOpenNow(row) {
       const days = getVenueOpeningHours(row);
       if (!days) {
@@ -5200,11 +5212,20 @@
     }
 
     function formatSpecialWindow(special) {
+      const startTime = formatClockLabel(special.startTime);
+      const endTime = formatClockLabel(special.endTime);
+      const timeRange = startTime && endTime
+        ? `${startTime}-${endTime}`
+        : startTime
+          ? `from ${startTime}`
+          : endTime
+            ? `until ${endTime}`
+            : "";
       const dateRange = [formatDateLabel(special.startsAt), formatDateLabel(special.endsAt)]
         .filter(Boolean)
         .join(" to ");
 
-      return [special.scheduleNote, dateRange].filter(Boolean).join(" · ");
+      return [special.scheduleNote, timeRange, dateRange].filter(Boolean).join(" · ");
     }
 
     function renderSpecialPopupMarkup(specials) {
@@ -5335,6 +5356,8 @@
           discount: special.discount || null,
           startsAt: special.starts_at || null,
           endsAt: special.ends_at || null,
+          startTime: special.start_time || null,
+          endTime: special.end_time || null,
           scheduleNote: special.schedule_note || null,
           exclusive: Boolean(special.exclusive),
           sourceType: special.source_type || null,
@@ -5766,6 +5789,8 @@
         discount: record.specialDiscount || null,
         starts_at: record.specialStartsAt || null,
         ends_at: record.specialEndsAt || null,
+        start_time: record.specialStartTime || null,
+        end_time: record.specialEndTime || null,
         schedule_note: record.specialScheduleNote || null,
         exclusive: Boolean(record.specialExclusive),
         active: true,

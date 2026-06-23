@@ -4103,6 +4103,8 @@ describe("business demo contribution model", () => {
       discount: null,
       startsAt: null,
       endsAt: null,
+      startTime: "17:00",
+      endTime: "19:00",
       scheduleNote: null,
       exclusive: true,
       active: true,
@@ -4153,6 +4155,8 @@ describe("business demo contribution model", () => {
       discount: null,
       startsAt: null,
       endsAt: null,
+      startTime: "17:00",
+      endTime: "19:00",
       scheduleNote: "Thursdays from 5pm",
       exclusive: false,
       active: true,
@@ -4501,6 +4505,8 @@ describe("business demo contribution model", () => {
       discount: null,
       startsAt: null,
       endsAt: null,
+      startTime: "17:00",
+      endTime: "19:00",
       scheduleNote: null,
       exclusive: true,
       active: true,
@@ -4824,6 +4830,43 @@ describe("business demo contribution model", () => {
       metadata: { query: "Railway Hotel" },
       createdAt: NOW,
     });
+    for (let index = 0; index < 18; index += 1) {
+      repository.recordVenueAnalyticsEvent({
+        id: `bar-tier-current-style-${index}`,
+        venueId: null,
+        area: "South Melbourne",
+        suburb: "South Melbourne",
+        eventType: "beer_style_search",
+        queryText: "lager",
+        beerName: null,
+        beerStyle: "lager",
+        createdAt: `2026-05-${String(index + 1).padStart(2, "0")}T08:00:00.000Z`,
+      });
+    }
+    for (let index = 0; index < 10; index += 1) {
+      repository.recordEvent({
+        id: `bar-tier-previous-search-${index}`,
+        userId: null,
+        anonymousSessionId: `anon-previous-area-${index}`,
+        eventType: "beer_search_performed",
+        venueId: null,
+        beerId: "lager",
+        suburb: "South Melbourne",
+        metadata: { query: "lager" },
+        createdAt: `2026-04-${String(index + 1).padStart(2, "0")}T08:00:00.000Z`,
+      });
+      repository.recordVenueAnalyticsEvent({
+        id: `bar-tier-previous-style-${index}`,
+        venueId: null,
+        area: "South Melbourne",
+        suburb: "South Melbourne",
+        eventType: "beer_style_search",
+        queryText: "lager",
+        beerName: null,
+        beerStyle: "lager",
+        createdAt: `2026-04-${String(index + 1).padStart(2, "0")}T08:00:00.000Z`,
+      });
+    }
 
     const proProfile = service.upsertBarProfile(admin, "bar-tier-1", {
       name: "Railway Hotel",
@@ -4844,6 +4887,95 @@ describe("business demo contribution model", () => {
     expect(proProfile.profile.premiumBadge).toBe("Pro");
     expect(proProfile.profile.promoted).toBe(true);
     expect(proProfile.profile.featuredSpecialEligible).toBe(true);
+    repository.upsertBarBeer({
+      id: "bar-tier-carlton",
+      barId: "bar-tier-1",
+      beerName: "Carlton Draught",
+      brewery: null,
+      style: "lager",
+      abv: null,
+      serveSize: "pint",
+      price: 13.2,
+      currency: "AUD",
+      onTap: true,
+      inStock: true,
+      notes: null,
+      now: NOW,
+    });
+    service.upsertBarProfile(admin, "bar-tier-local-1", {
+      name: "Local Benchmark One",
+      address: null,
+      suburb: "South Melbourne",
+      area: "South Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      active: true,
+    });
+    repository.upsertBarBeer({
+      id: "bar-tier-local-1-carlton",
+      barId: "bar-tier-local-1",
+      beerName: "Carlton Draught",
+      brewery: null,
+      style: "lager",
+      abv: null,
+      serveSize: "pint",
+      price: 12,
+      currency: "AUD",
+      onTap: true,
+      inStock: true,
+      notes: null,
+      now: NOW,
+    });
+    service.upsertBarProfile(admin, "bar-tier-local-2", {
+      name: "Local Benchmark Two",
+      address: null,
+      suburb: "South Melbourne",
+      area: "South Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      active: true,
+    });
+    repository.upsertBarBeer({
+      id: "bar-tier-local-2-carlton",
+      barId: "bar-tier-local-2",
+      beerName: "Carlton Draught",
+      brewery: null,
+      style: "lager",
+      abv: null,
+      serveSize: "pint",
+      price: 11.8,
+      currency: "AUD",
+      onTap: true,
+      inStock: true,
+      notes: null,
+      now: NOW,
+    });
+    const pintPointUser = createAccount(repository, "bar-tier-pint-point-user");
+    repository.createPintPointDrinkRecord({
+      id: "bar-tier-guinness-purchase",
+      userId: pintPointUser.id,
+      venueId: "bar-tier-1",
+      venueName: "Railway Hotel",
+      suburb: "South Melbourne",
+      itemName: "Guinness",
+      beverageCategory: "alcoholic",
+      quantity: 10,
+      isAlcoholic: true,
+      source: "venue_portal",
+      recordedByUserId: manager.id,
+      recordedAt: NOW,
+      metadata: {},
+    });
 
     const proPortal = service.getVenuePortal(managerAccount, { venueId: "bar-tier-1" });
     expect(proPortal.tier.analyticsLocked).toBe(false);
@@ -4900,9 +5032,48 @@ describe("business demo contribution model", () => {
         expect.stringContaining("Premium map/listing treatment"),
       ]),
     }));
+    expect(proPortal.paidVenueIntelligence).toEqual(expect.objectContaining({
+      area: "South Melbourne",
+      topSearchedBeers: expect.arrayContaining([
+        expect.objectContaining({ key: "lager", searchCount: 10 }),
+      ]),
+      topPurchasedBeers: expect.arrayContaining([
+        expect.objectContaining({ beerName: "Guinness", purchaseCount: 10 }),
+      ]),
+      searchStockGaps: expect.arrayContaining([
+        expect.objectContaining({
+          key: "lager",
+          copy: expect.stringContaining("but your venue does not list it"),
+        }),
+      ]),
+      localTrendReport: expect.arrayContaining([
+        expect.objectContaining({
+          key: "lager",
+          direction: "up",
+        }),
+      ]),
+      priceBenchmarks: expect.arrayContaining([
+        expect.objectContaining({
+          beerName: "Carlton Draught",
+          comparison: "above",
+          difference: 1.2,
+        }),
+      ]),
+    }));
+    expect(proPortal.paidVenueIntelligence?.searchTimesByDay.length).toBeGreaterThan(0);
+    expect(proPortal.paidVenueIntelligence?.searchTimesByHour.length).toBeGreaterThan(0);
     expect(proPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
       proRecommendations: expect.arrayContaining([
         expect.any(String),
+      ]),
+      topBeersBoughtInArea: expect.arrayContaining([
+        expect.objectContaining({ beerName: "Guinness" }),
+      ]),
+      searchVsStockGap: expect.arrayContaining([
+        expect.objectContaining({ key: "lager" }),
+      ]),
+      priceBenchmarks: expect.arrayContaining([
+        expect.objectContaining({ beerName: "Carlton Draught" }),
       ]),
       proGrowthPlan: expect.objectContaining({
         title: "Pro growth studio",
@@ -4923,6 +5094,8 @@ describe("business demo contribution model", () => {
       discount: null,
       startsAt: null,
       endsAt: null,
+      startTime: "17:00",
+      endTime: "19:00",
       scheduleNote: "Friday 5pm-7pm",
       exclusive: true,
       active: true,

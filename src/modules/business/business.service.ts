@@ -979,6 +979,8 @@ function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceReco
     specialDiscount: isSpecial ? null : record.specialDiscount ?? null,
     specialStartsAt: isSpecial ? null : record.specialStartsAt ?? null,
     specialEndsAt: isSpecial ? null : record.specialEndsAt ?? null,
+    specialStartTime: isSpecial ? null : record.specialStartTime ?? null,
+    specialEndTime: isSpecial ? null : record.specialEndTime ?? null,
     specialScheduleNote: isSpecial ? null : record.specialScheduleNote ?? null,
     sourceSubmissionId: null,
     priceRedacted: true,
@@ -1363,6 +1365,159 @@ function buildVenueDemandDashboard(input: {
           "Use the top searched beer signal to choose the next app-only special.",
         ]
       : [],
+  };
+}
+
+function formatBeerInsightName(value: string | null | undefined): string {
+  const tracked = findTrackedBeerByName(value);
+  if (tracked) {
+    return tracked.name;
+  }
+
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return "Unspecified beer";
+  }
+
+  return trimmed
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function percentChange(current: number, previous: number): number | null {
+  if (previous <= 0) {
+    return current > 0 ? null : 0;
+  }
+
+  return Math.round(((current - previous) / previous) * 100);
+}
+
+function trendDirection(change: number | null): "up" | "down" | "flat" | "new" {
+  if (change == null) {
+    return "new";
+  }
+  if (change > 5) {
+    return "up";
+  }
+  if (change < -5) {
+    return "down";
+  }
+  return "flat";
+}
+
+function buildPaidVenueIntelligence(input: {
+  area: string | null;
+  analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
+  previousAnalytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]> | null;
+  inventoryBeers: ReturnType<BusinessRepository["listBarBeers"]>;
+  purchasedBeers: ReturnType<BusinessRepository["listVenueAreaPurchasedBeers"]>;
+  priceBenchmarks: ReturnType<BusinessRepository["listVenueAreaPriceBenchmarks"]>;
+}) {
+  const area = input.area?.trim() || "your suburb";
+  const stockKeys = new Set(input.inventoryBeers.map((beer) => normalizeTrackedBeerId(beer.beerName)));
+  const topSearchedBeers = input.analytics.privacyFloorMet
+    ? input.analytics.areaBeerSearches.map((row) => {
+        const beerName = formatBeerInsightName(row.key);
+        return {
+          key: normalizeTrackedBeerId(row.key),
+          beerName,
+          searchCount: row.count,
+          copy: `${beerName} was searched ${row.count} time${row.count === 1 ? "" : "s"} in ${area}.`,
+        };
+      })
+    : [];
+
+  const topPurchasedBeers = input.purchasedBeers.map((row) => {
+    const beerName = formatBeerInsightName(row.label || row.key);
+    return {
+      key: normalizeTrackedBeerId(row.key),
+      beerName,
+      purchaseCount: row.quantity,
+      eventCount: row.count,
+      estimatedSavingsCents: row.estimatedSavingsCents,
+      estimatedSavingsDollars: Number((row.estimatedSavingsCents / 100).toFixed(2)),
+      copy: `${beerName} was logged ${row.quantity} time${row.quantity === 1 ? "" : "s"} through Pint Path in ${area}.`,
+    };
+  });
+
+  const searchStockGaps = topSearchedBeers
+    .filter((row) => !stockKeys.has(row.key))
+    .map((row) => ({
+      ...row,
+      copy: `${row.beerName} was searched ${row.searchCount} time${row.searchCount === 1 ? "" : "s"} in ${area}, but your venue does not list it.`,
+    }));
+
+  const previousStyleCounts = new Map((input.previousAnalytics?.areaStyleSearches ?? []).map((row) => [row.key, row.count]));
+  const localTrendReport = (input.analytics.privacyFloorMet ? input.analytics.areaStyleSearches : [])
+    .slice(0, 4)
+    .map((row) => {
+      const previous = previousStyleCounts.get(row.key) ?? 0;
+      const change = percentChange(row.count, previous);
+      const direction = trendDirection(change);
+      const label = formatBeerInsightName(row.label || row.key);
+      const copy = direction === "new"
+        ? `${label} searches are newly visible in ${area} this month.`
+        : direction === "flat"
+          ? `${label} searches are steady in ${area}.`
+          : `${label} searches are ${direction} ${Math.abs(change ?? 0)}% in ${area}.`;
+      return {
+        key: row.key,
+        label,
+        count: row.count,
+        previousCount: previous,
+        percentChange: change,
+        direction,
+        copy,
+      };
+    });
+
+  const peakAfterSix = (input.analytics.searchTimesByHour ?? [])
+    .filter((row) => row.sort >= 18)
+    .sort((a, b) => b.count - a.count)[0] ?? null;
+  if (peakAfterSix) {
+    const peakSubject = topSearchedBeers[0]?.beerName ?? localTrendReport[0]?.label ?? "Beer";
+    localTrendReport.push({
+      key: `after_${peakAfterSix.key}`,
+      label: peakSubject,
+      count: peakAfterSix.count,
+      previousCount: 0,
+      percentChange: null,
+      direction: "new",
+      copy: `${peakSubject} searches spike after ${peakAfterSix.label} in ${area}.`,
+    });
+  }
+
+  const priceBenchmarks = input.priceBenchmarks.map((benchmark) => {
+    const differenceAbs = Math.abs(benchmark.difference);
+    const serveCopy = benchmark.serveSize ? `${benchmark.serveSize} ` : "";
+    const comparisonCopy = benchmark.comparison === "at"
+      ? "matches"
+      : benchmark.comparison === "above"
+        ? "is above"
+        : "is below";
+    return {
+      ...benchmark,
+      differenceAbs,
+      copy: benchmark.comparison === "at"
+        ? `Your listed ${serveCopy}price for ${benchmark.beerName} matches the ${area} median.`
+        : `Your listed ${serveCopy}price for ${benchmark.beerName} ${comparisonCopy} the ${area} median by A$${differenceAbs.toFixed(2)}.`,
+    };
+  });
+
+  return {
+    area,
+    privacyFloorMet: input.analytics.privacyFloorMet,
+    privacyThreshold: input.analytics.privacyThreshold,
+    topSearchedBeers,
+    topPurchasedBeers,
+    searchStockGaps,
+    localTrendReport: localTrendReport.slice(0, 5),
+    priceBenchmarks,
+    searchTimesByDay: input.analytics.searchTimesByDay ?? [],
+    searchTimesByHour: input.analytics.searchTimesByHour ?? [],
+    peakSearchDay: input.analytics.searchTimesByDay?.[0] ?? null,
+    peakSearchHour: input.analytics.searchTimesByHour?.[0] ?? null,
+    generatedAt: nowIso(),
   };
 }
 
@@ -2117,6 +2272,8 @@ export class BusinessService {
         discount: stringOrNull(payload.discount),
         startsAt: stringOrNull(payload.startsAt),
         endsAt: stringOrNull(payload.endsAt),
+        startTime: stringOrNull(payload.startTime),
+        endTime: stringOrNull(payload.endTime),
         scheduleNote: stringOrNull(payload.scheduleNote),
         exclusive: capabilities.featuredSpecials && booleanFromUnknown(payload.exclusive, false),
         active: booleanFromUnknown(payload.active, true),
@@ -6537,19 +6694,51 @@ export class BusinessService {
       staleBefore: daysAgoIso(30),
     });
     const profile = this.getOrBuildBarProfile({ barId: selectedVenueId, name: venueName, suburb });
+    const venueArea = profile.suburb ?? suburb ?? profile.area ?? null;
     const capabilities = getBarTierCapabilities(profile.membershipTier, isAdmin);
     const venueInsightPrivacyThreshold = Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE);
-    const reportMonth = getZonedMonthKey(new Date(), this.getReportTimezone());
+    const reportTimezone = this.getReportTimezone();
+    const reportMonth = getZonedMonthKey(new Date(), reportTimezone);
+    const reportMonthRange = monthKeyRange(reportMonth, reportTimezone);
     const analytics = capabilities.analytics
       ? this.repository.getVenueAreaAnalytics({
           venueId: selectedVenueId,
           venueName: profile.name,
-          area: profile.area ?? profile.suburb ?? suburb,
+          area: venueArea,
           month: reportMonth,
-          timezone: this.getReportTimezone(),
+          timezone: reportTimezone,
           privacyThreshold: venueInsightPrivacyThreshold,
         })
       : null;
+    const previousAnalytics = capabilities.analytics
+      ? this.repository.getVenueAreaAnalytics({
+          venueId: selectedVenueId,
+          venueName: profile.name,
+          area: venueArea,
+          month: getPreviousZonedMonthKey(new Date(), reportTimezone),
+          timezone: reportTimezone,
+          privacyThreshold: venueInsightPrivacyThreshold,
+        })
+      : null;
+    const inventoryBeers = this.repository.listBarBeers(selectedVenueId);
+    const inventoryHappyHours = this.repository.listBarHappyHours(selectedVenueId);
+    const inventorySpecials = capabilities.canManageSpecials ? this.repository.listBarSpecials(selectedVenueId) : [];
+    const areaPurchasedBeers = capabilities.analytics
+      ? this.repository.listVenueAreaPurchasedBeers({
+          area: venueArea,
+          startIso: reportMonthRange.startsAt,
+          endIso: reportMonthRange.endsAt,
+          privacyThreshold: venueInsightPrivacyThreshold,
+          limit: 8,
+        })
+      : [];
+    const priceBenchmarks = capabilities.analytics
+      ? this.repository.listVenueAreaPriceBenchmarks({
+          venueId: selectedVenueId,
+          area: venueArea,
+          limit: 8,
+        })
+      : [];
     const insights = this.sanitizeVenueManagerInsights(rawInsights, {
       includeAggregate: capabilities.analytics,
       privacyThreshold: venueInsightPrivacyThreshold,
@@ -6566,7 +6755,7 @@ export class BusinessService {
     const demandDashboard = analytics && capabilities.analytics
       ? buildVenueDemandDashboard({
           tier: profile.membershipTier,
-          area: profile.area ?? profile.suburb ?? suburb,
+          area: venueArea,
           periods: getVenueDemandPeriodRanges(this.getReportTimezone()).map((period) => ({
             key: period.key,
             label: period.label,
@@ -6574,15 +6763,25 @@ export class BusinessService {
             analytics: period.key === "month"
               ? analytics
               : this.repository.getVenueAreaAnalytics({
-                  venueId: selectedVenueId,
-                  venueName: profile.name,
-                  area: profile.area ?? profile.suburb ?? suburb,
+                venueId: selectedVenueId,
+                venueName: profile.name,
+                  area: venueArea,
                   startIso: period.startIso,
                   endIso: period.endIso,
-                  timezone: this.getReportTimezone(),
+                  timezone: reportTimezone,
                   privacyThreshold: venueInsightPrivacyThreshold,
                 }),
           })),
+        })
+      : null;
+    const paidVenueIntelligence = analytics && capabilities.analytics
+      ? buildPaidVenueIntelligence({
+          area: venueArea,
+          analytics,
+          previousAnalytics,
+          inventoryBeers,
+          purchasedBeers: areaPurchasedBeers,
+          priceBenchmarks,
         })
       : null;
     const discountSummary = this.getVenueDiscountSummary({
@@ -6598,8 +6797,8 @@ export class BusinessService {
     });
     const pintPointMonthStats = this.repository.getPintPointStatsForVenue({
       venueId: selectedVenueId,
-      startIso: monthKeyRange(reportMonth, this.getReportTimezone()).startsAt,
-      endIso: monthKeyRange(reportMonth, this.getReportTimezone()).endsAt,
+      startIso: reportMonthRange.startsAt,
+      endIso: reportMonthRange.endsAt,
     });
     const posIntegration = this.getVenuePosIntegration(account, selectedVenueId);
     const monthlyReport = capabilities.monthlyReports
@@ -6622,6 +6821,12 @@ export class BusinessService {
                   topDiscountItems: discountSummary.topItems,
                   mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
                   mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
+                  topBeersBoughtInArea: paidVenueIntelligence?.topPurchasedBeers ?? [],
+                  searchTimesByDay: paidVenueIntelligence?.searchTimesByDay ?? [],
+                  searchTimesByHour: paidVenueIntelligence?.searchTimesByHour ?? [],
+                  searchVsStockGap: paidVenueIntelligence?.searchStockGaps ?? [],
+                  localBeerTrendReport: paidVenueIntelligence?.localTrendReport ?? [],
+                  priceBenchmarks: paidVenueIntelligence?.priceBenchmarks ?? [],
                   demandSnapshot,
                   suggestedActions: analytics.privacyFloorMet
                     ? [
@@ -6679,14 +6884,15 @@ export class BusinessService {
         analyticsLocked: !capabilities.analytics,
       },
       inventory: {
-        beers: this.repository.listBarBeers(selectedVenueId),
-        happyHours: this.repository.listBarHappyHours(selectedVenueId),
-        specials: capabilities.canManageSpecials ? this.repository.listBarSpecials(selectedVenueId) : [],
+        beers: inventoryBeers,
+        happyHours: inventoryHappyHours,
+        specials: inventorySpecials,
       },
       pendingChanges: this.repository.listBarPendingChanges({ barId: selectedVenueId, status: "pending", limit: 100 }),
       insights,
       analytics,
       demandDashboard,
+      paidVenueIntelligence,
       discounts: discountSummary,
       pintPoints: {
         today: pintPointTodayStats,
@@ -6700,6 +6906,7 @@ export class BusinessService {
         demandSnapshot,
         proGrowthPlan,
         demandDashboard,
+        paidVenueIntelligence,
         updateLink,
         qrCopy: "Copy this update link or turn it into a QR code for your venue/tap-list area.",
       },
@@ -7056,6 +7263,8 @@ export class BusinessService {
       discount: input.discount,
       startsAt: input.startsAt,
       endsAt: input.endsAt,
+      startTime: input.startTime,
+      endTime: input.endTime,
       scheduleNote: input.scheduleNote,
       exclusive: input.exclusive,
       active: input.active,
