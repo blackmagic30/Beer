@@ -46,7 +46,7 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300` or shorter for production.
 - `DEMO_BILLING_MODE=false` unless a private beta intentionally enables demo billing with `ALLOW_DEMO_BILLING_IN_PRODUCTION=true`.
 - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`.
-- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, `STRIPE_PLUS_PRICE_ID`, and `STRIPE_PRO_PRICE_ID` are set before enabling paid checkout.
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, and `STRIPE_PRO_PRICE_ID` are set before enabling paid checkout.
 - `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set if OAuth quick login is enabled.
 - `SUPABASE_SERVICE_ROLE_KEY` stays server-side only and is never exposed in public config.
 - Supabase Auth leaked-password protection is enabled.
@@ -95,9 +95,9 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 - Confirm those changes are pending and are not visible in public map/API until admin approval.
 - Confirm another venue manager cannot view or approve the pending change.
 - Confirm Basic venue tier sees analytics upgrade prompts.
-- Confirm Plus/Pro venue tier sees only privacy-safe aggregate analytics above bucket threshold.
-- Confirm `npm run reports:generate -- --month=YYYY-MM --dry-run` creates only Plus/Pro aggregate reports.
-- Confirm assigned Plus/Pro venue managers can export their own report and cannot export another venue's report.
+- Confirm Pro venue tier sees only privacy-safe aggregate analytics above bucket threshold.
+- Confirm `npm run reports:generate -- --month=YYYY-MM --dry-run` creates only Pro aggregate reports.
+- Confirm assigned Pro venue managers can export their own report and cannot export another venue's report.
 - Confirm Stripe signed test webhook updates a subscription and replayed event does not double-process.
 - Confirm invalid/missing Stripe webhook signatures are rejected.
 - Confirm stale Stripe webhook signatures outside the configured five-minute tolerance are rejected.

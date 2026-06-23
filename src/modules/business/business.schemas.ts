@@ -41,15 +41,18 @@ const feedbackTypeSchema = z.enum([
   "billing_support",
 ]);
 const requestTypeSchema = z.enum(["missing_venue", "missing_beer", "verify_venue", "verify_beer_at_venue"]);
-const barMembershipTierSchema = z.enum(["basic", "plus", "pro"]);
+const barMembershipTierSchema = z.preprocess((value) => value === "plus" ? "pro" : value, z.enum(["basic", "pro"]));
 const partnerInterestStatusSchema = z.enum(["open", "contacted", "interested", "partner", "not_interested", "closed"]);
 const venueOutreachStatusSchema = z.enum(["lead", "contacted", "interested", "partner", "not_interested", "closed"]);
 const venueOutreachTierFitSchema = z.preprocess((value) => {
   if (typeof value === "string" && value.trim() === "") {
     return null;
   }
+  if (value === "plus") {
+    return "pro";
+  }
   return value;
-}, z.enum(["basic", "plus", "pro"]).nullable());
+}, z.enum(["basic", "pro"]).nullable());
 const submissionStatusSchema = z.enum([
   "pending",
   "needs_more_evidence",
@@ -765,7 +768,7 @@ export const posDiscountRedemptionSchema = z.object({
 });
 
 export const barTierCheckoutSchema = z.object({
-  tier: z.enum(["plus", "pro"]),
+  tier: z.literal("pro"),
 });
 
 export const barPendingChangeReviewSchema = z.object({

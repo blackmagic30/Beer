@@ -81,7 +81,7 @@ Cannot:
 - Access unassigned venues by URL/API manipulation.
 - Access admin dashboard or admin APIs.
 - Change their own venue membership tier through profile updates.
-- View Plus/Pro analytics or monthly report content.
+- View Pro analytics or monthly report content.
 - See individual user IDs, anonymous session IDs, exact user location, raw user clickstream, account emails, or raw source-photo evidence in portal insight payloads.
 
 Publishing / validation:
@@ -89,29 +89,20 @@ Publishing / validation:
 - High-trust public price records from community submissions still use the admin review flow.
 - Admin should only assign verified venue managers during beta.
 
-## Venue Tier 2: Plus
+## Venue Tier 2: Pro
 
 Can:
 - Everything Basic can do.
 - View privacy-safe suburb-level aggregate analytics and monthly report previews when the bucket threshold is met.
 - See own venue profile/lookups/list views/specials metrics.
-
-Cannot:
-- See competitor-level private data, another venue's reports, individual user clickstream, exact user location, or suppressed low-count suburb demand buckets.
-- Gain Pro display metadata unless upgraded/admin-set.
-
-Privacy threshold:
-- Suburb demand buckets are suppressed below the configured threshold, with venue-manager views using at least 10 events for sensitive demand lists.
-
-## Venue Tier 3: Pro
-
-Can:
-- Everything Plus can do.
 - Store premium public display metadata: highlighted name, `Pro` badge, promoted flag, and featured-special eligibility.
 
 Cannot:
 - Force spammy ranking, paid venue billing behaviour, or public featured placement beyond the current metadata flags.
-- See any additional individual user/private competitor data.
+- See competitor-level private data, another venue's reports, individual user clickstream, exact user location, or suppressed low-count suburb demand buckets.
+
+Privacy threshold:
+- Suburb demand buckets are suppressed below the configured threshold, with venue-manager views using at least 10 events for sensitive demand lists.
 
 ## Admin / Moderator / Approver
 
@@ -156,7 +147,7 @@ Auditability:
 
 Can:
 - Admins can view global reports/dashboards.
-- Assigned Plus/Pro venue managers can view only their own venue metrics and aggregate suburb trends after privacy thresholds.
+- Assigned Pro venue managers can view only their own venue metrics and aggregate suburb trends after privacy thresholds.
 
 Cannot:
 - Normal users or Basic venue managers cannot view paid analytics/monthly report payloads.

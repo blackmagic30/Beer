@@ -41,8 +41,8 @@ export type FeedbackType =
   | "billing_support";
 export type FeedbackPriority = "low" | "normal" | "medium" | "high";
 export type RequestType = "missing_venue" | "missing_beer" | "verify_venue" | "verify_beer_at_venue";
-export type BarMembershipTier = "basic" | "plus" | "pro";
-type StoredBarMembershipTier = BarMembershipTier | "free" | "super_premium";
+export type BarMembershipTier = "basic" | "pro";
+type StoredBarMembershipTier = BarMembershipTier | "free" | "plus" | "super_premium";
 export type AgeVerificationStatus = "not_started" | "pending" | "verified" | "rejected" | "expired";
 export type ConfidenceLabel =
   | "venue_confirmed"
@@ -1709,11 +1709,7 @@ function parsePendingVenueDetails(value: string | null | undefined): PendingVenu
 }
 
 function normalizeBarMembershipTier(value: StoredBarMembershipTier | string | null | undefined): BarMembershipTier {
-  if (value === "plus") {
-    return "plus";
-  }
-
-  if (value === "pro" || value === "super_premium") {
+  if (value === "pro" || value === "plus" || value === "super_premium") {
     return "pro";
   }
 

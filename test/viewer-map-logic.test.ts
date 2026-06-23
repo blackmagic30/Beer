@@ -335,6 +335,13 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).not.toContain('name="openingHoursNote"');
   });
 
+  it("requires an ending time when venues add Pint Path specials", () => {
+    expect(venuePortalHtml).toContain("Ending time");
+    expect(venuePortalHtml).toContain("Choose start time");
+    expect(venuePortalHtml).toContain("Choose ending time");
+    expect(venuePortalHtml).toContain("Choose both a start time and ending time for the Pint Path special.");
+  });
+
   it("surfaces the premium tiered venue command centre preview", () => {
     expect(venuePortalHtml).toContain('id="premiumVenueDashboard"');
     expect(venuePortalHtml).toContain("function renderPremiumVenueDashboard");
@@ -342,9 +349,9 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain("data-dashboard-plan");
     expect(venuePortalHtml).toContain("App Value Overview");
     expect(venuePortalHtml).toContain("Demand Signals");
-    expect(venuePortalHtml).toContain("Growth Recommendations");
+    expect(venuePortalHtml).toContain("Growth recommendations");
     expect(venuePortalHtml).toContain("function buildGrowthRecommendations");
-    expect(venuePortalHtml).toContain("Lost Opportunity Risk");
+    expect(venuePortalHtml).toContain("Lost opportunity risk");
     expect(venuePortalHtml).toContain("Price freshness");
     expect(venuePortalHtml).toContain("Specials strategy");
     expect(venuePortalHtml).toContain("premiumLockedCard");
@@ -474,7 +481,7 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).not.toContain('id="tierGuide"');
     expect(venuePortalHtml).not.toContain("Current plan");
     expect(venuePortalHtml).toContain('data-tab="pending-reviews"');
-    expect(venuePortalHtml).toContain('return value === "pro" ? "Pro" : value === "plus" ? "Plus" : "Free";');
+    expect(venuePortalHtml).toContain('return value === "pro" || value === "plus" ? "Pro" : "Free";');
     expect(venuePortalHtml).toContain("Free venue accounts can add beer data and happy-hour data only.");
     expect(venuePortalHtml).toContain("data-specials-only");
   });

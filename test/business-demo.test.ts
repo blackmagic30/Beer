@@ -79,7 +79,6 @@ function createBusinessService(
     STRIPE_WEBHOOK_SECRET: undefined,
     STRIPE_PRICE_MONTHLY: undefined,
     STRIPE_PRICE_YEARLY: undefined,
-    STRIPE_PLUS_PRICE_ID: undefined,
     STRIPE_PRO_PRICE_ID: undefined,
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: undefined,
     SUPABASE_URL: undefined,
@@ -2469,7 +2468,7 @@ describe("business demo contribution model", () => {
         description: null,
         openingHours: {},
         venueTags: ["pub"],
-        membershipTier: index === 0 ? "pro" : index === 1 ? "plus" : "basic",
+        membershipTier: index < 2 ? "pro" : "basic",
         highlightedName: false,
         premiumBadge: null,
         promoted: false,
@@ -2691,10 +2690,10 @@ describe("business demo contribution model", () => {
       phone: null,
       website: null,
       instagram: null,
-      description: "Affiliated Plus venue.",
+      description: "Affiliated Pro venue.",
       openingHours: {},
       venueTags: [],
-      membershipTier: "plus",
+      membershipTier: "pro",
       active: true,
     });
 
@@ -4107,7 +4106,7 @@ describe("business demo contribution model", () => {
       scheduleNote: null,
       exclusive: true,
       active: true,
-    })).toThrow("Plus or Pro venue tier required");
+    })).toThrow("Pro venue tier required");
 
     service.upsertBarProfile(admin, "bar-1", {
       name: "Corner Hotel",
@@ -4120,23 +4119,10 @@ describe("business demo contribution model", () => {
       description: "Live music venue with a rotating tap list.",
       openingHours: { note: "Mon-Sun midday-late" },
       venueTags: ["has food", "live music"],
-      membershipTier: "plus",
+      membershipTier: "pro",
       active: true,
     });
-    expect(repository.getBarProfile("bar-1")?.membershipTier).toBe("plus");
-
-    expect(() => service.upsertBarSpecial(managerAccount, "bar-1", {
-      id: null,
-      title: "Featured Plus attempt",
-      description: "Plus can add specials, but featured exclusives require Pro.",
-      price: 25,
-      discount: null,
-      startsAt: null,
-      endsAt: null,
-      scheduleNote: "Thursdays from 5pm",
-      exclusive: true,
-      active: true,
-    })).toThrow("Pro venue tier required");
+    expect(repository.getBarProfile("bar-1")?.membershipTier).toBe("pro");
 
     const beer = service.upsertBarBeer(managerAccount, "bar-1", {
       id: null,
@@ -4218,8 +4204,8 @@ describe("business demo contribution model", () => {
     }
 
     const approvedPortal = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
-    expect(approvedPortal.profile.membershipTier).toBe("plus");
-    expect(approvedPortal.profile.highlightedName).toBe(false);
+    expect(approvedPortal.profile.membershipTier).toBe("pro");
+    expect(approvedPortal.profile.highlightedName).toBe(true);
     expect(approvedPortal.inventory.beers).toHaveLength(1);
     expect(approvedPortal.inventory.happyHours).toHaveLength(1);
     expect(approvedPortal.inventory.specials).toHaveLength(1);
@@ -4518,7 +4504,7 @@ describe("business demo contribution model", () => {
       scheduleNote: null,
       exclusive: true,
       active: true,
-    })).toThrow("Plus or Pro venue tier required");
+    })).toThrow("Pro venue tier required");
   });
 
   it("keeps direct venue-portal API writes pending until admin approval", async () => {
@@ -4700,7 +4686,7 @@ describe("business demo contribution model", () => {
       description: "Privacy-safe venue.",
       openingHours: {},
       venueTags: [],
-      membershipTier: "plus",
+      membershipTier: "pro",
       active: true,
     });
     createSubmission(repository, {
@@ -4839,7 +4825,7 @@ describe("business demo contribution model", () => {
       createdAt: NOW,
     });
 
-    const plusProfile = service.upsertBarProfile(admin, "bar-tier-1", {
+    const proProfile = service.upsertBarProfile(admin, "bar-tier-1", {
       name: "Railway Hotel",
       address: null,
       suburb: "South Melbourne",
@@ -4850,29 +4836,33 @@ describe("business demo contribution model", () => {
       description: "Neighbourhood pub.",
       openingHours: {},
       venueTags: [],
-      membershipTier: "plus",
+      membershipTier: "pro",
       active: true,
     });
-    expect(plusProfile.profile.membershipTier).toBe("plus");
+    expect(proProfile.profile.membershipTier).toBe("pro");
+    expect(proProfile.profile.highlightedName).toBe(true);
+    expect(proProfile.profile.premiumBadge).toBe("Pro");
+    expect(proProfile.profile.promoted).toBe(true);
+    expect(proProfile.profile.featuredSpecialEligible).toBe(true);
 
-    const plusPortal = service.getVenuePortal(managerAccount, { venueId: "bar-tier-1" });
-    expect(plusPortal.tier.analyticsLocked).toBe(false);
-    expect(plusPortal.tier.canManageSpecials).toBe(true);
-    expect(plusPortal.tier.featuredSpecials).toBe(false);
-    expect(plusPortal.tier.priorityReview).toBe(false);
-    expect(plusPortal.tier.advancedRecommendations).toBe(false);
-    expect(plusPortal.analytics?.barLookups).toBe(1);
-    expect(plusPortal.analytics?.privacyFloorMet).toBe(true);
-    expect(plusPortal.analytics?.areaBeerSearches.length).toBeGreaterThan(0);
-    expect(plusPortal.monthlyReport?.data).toBeTruthy();
-    expect(plusPortal.businessToolkit?.plusDemandSnapshot).toEqual(expect.objectContaining({
+    const proPortal = service.getVenuePortal(managerAccount, { venueId: "bar-tier-1" });
+    expect(proPortal.tier.analyticsLocked).toBe(false);
+    expect(proPortal.tier.canManageSpecials).toBe(true);
+    expect(proPortal.tier.featuredSpecials).toBe(true);
+    expect(proPortal.tier.priorityReview).toBe(true);
+    expect(proPortal.tier.advancedRecommendations).toBe(true);
+    expect(proPortal.analytics?.barLookups).toBe(1);
+    expect(proPortal.analytics?.privacyFloorMet).toBe(true);
+    expect(proPortal.analytics?.areaBeerSearches.length).toBeGreaterThan(0);
+    expect(proPortal.monthlyReport?.data).toBeTruthy();
+    expect(proPortal.businessToolkit?.demandSnapshot).toEqual(expect.objectContaining({
       title: "Suburb demand snapshot",
       privacyFloorMet: true,
       recommendedNextActions: expect.arrayContaining([expect.any(String)]),
     }));
-    expect(plusPortal.demandDashboard).toEqual(expect.objectContaining({
-      title: "Paid demand snapshot",
-      proActive: false,
+    expect(proPortal.demandDashboard).toEqual(expect.objectContaining({
+      title: "Pro demand cockpit",
+      proActive: true,
       periodOrder: ["today", "week", "month"],
       periods: expect.objectContaining({
         today: expect.objectContaining({
@@ -4888,36 +4878,6 @@ describe("business demo contribution model", () => {
         }),
       }),
     }));
-    expect(plusPortal.businessToolkit?.proGrowthPlan).toBeNull();
-    expect(plusPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
-      plusDemandSnapshot: expect.objectContaining({
-        opportunityScore: expect.any(Number),
-      }),
-    }));
-
-    const proProfile = service.upsertBarProfile(admin, "bar-tier-1", {
-      name: "Railway Hotel",
-      address: null,
-      suburb: "South Melbourne",
-      area: "South Melbourne",
-      phone: null,
-      website: null,
-      instagram: null,
-      description: "Neighbourhood pub.",
-      openingHours: {},
-      venueTags: [],
-      membershipTier: "pro",
-      active: true,
-    });
-    expect(proProfile.profile.highlightedName).toBe(true);
-    expect(proProfile.profile.premiumBadge).toBe("Pro");
-    expect(proProfile.profile.promoted).toBe(true);
-    expect(proProfile.profile.featuredSpecialEligible).toBe(true);
-
-    const proPortal = service.getVenuePortal(managerAccount, { venueId: "bar-tier-1" });
-    expect(proPortal.tier.featuredSpecials).toBe(true);
-    expect(proPortal.tier.priorityReview).toBe(true);
-    expect(proPortal.tier.advancedRecommendations).toBe(true);
     expect(proPortal.businessToolkit?.proGrowthPlan).toEqual(expect.objectContaining({
       title: "Pro growth studio",
       premiumPlacement: expect.objectContaining({
@@ -4926,6 +4886,11 @@ describe("business demo contribution model", () => {
         featuredExclusiveEligible: true,
       }),
       weekendPlaybook: expect.arrayContaining([expect.any(String)]),
+    }));
+    expect(proPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
+      demandSnapshot: expect.objectContaining({
+        opportunityScore: expect.any(Number),
+      }),
     }));
     expect(proPortal.businessToolkit?.demandDashboard).toEqual(expect.objectContaining({
       title: "Pro demand cockpit",
@@ -4974,7 +4939,7 @@ describe("business demo contribution model", () => {
     const service = createBusinessService(repository);
     const admin = createAccount(repository, "priority-review-admin", "admin");
     const proManager = createAccount(repository, "priority-pro-manager");
-    const plusManager = createAccount(repository, "priority-plus-manager");
+    const basicManager = createAccount(repository, "priority-basic-manager");
 
     service.assignVenueManager(admin, {
       userId: proManager.id,
@@ -4983,9 +4948,9 @@ describe("business demo contribution model", () => {
       suburb: "Fitzroy",
     });
     service.assignVenueManager(admin, {
-      userId: plusManager.id,
-      venueId: "priority-plus-bar",
-      venueName: "Priority Plus Bar",
+      userId: basicManager.id,
+      venueId: "priority-basic-bar",
+      venueName: "Priority Basic Bar",
       suburb: "Richmond",
     });
     service.upsertBarProfile(admin, "priority-pro-bar", {
@@ -5002,18 +4967,18 @@ describe("business demo contribution model", () => {
       membershipTier: "pro",
       active: true,
     });
-    service.upsertBarProfile(admin, "priority-plus-bar", {
-      name: "Priority Plus Bar",
+    service.upsertBarProfile(admin, "priority-basic-bar", {
+      name: "Priority Basic Bar",
       address: null,
       suburb: "Richmond",
       area: "Richmond",
       phone: null,
       website: null,
       instagram: null,
-      description: "Plus review queue smoke venue.",
+      description: "Basic review queue smoke venue.",
       openingHours: {},
       venueTags: [],
-      membershipTier: "plus",
+      membershipTier: "basic",
       active: true,
     });
 
@@ -5029,9 +4994,9 @@ describe("business demo contribution model", () => {
       inStock: true,
       notes: null,
     });
-    service.upsertBarBeer(repository.getAccountById(plusManager.id)!, "priority-plus-bar", {
+    service.upsertBarBeer(repository.getAccountById(basicManager.id)!, "priority-basic-bar", {
       id: null,
-      beerName: "Plus Lager",
+      beerName: "Basic Lager",
       brewery: null,
       style: "Lager",
       abv: null,
@@ -5096,7 +5061,7 @@ describe("business demo contribution model", () => {
       description: "A launch-ready venue.",
       openingHours: {},
       venueTags: [],
-      membershipTier: "plus",
+      membershipTier: "pro",
       active: true,
     });
 
@@ -5104,12 +5069,12 @@ describe("business demo contribution model", () => {
 
     expect(venue?.name).toBe("Moonlit Taproom");
     expect(venue?.suburb).toBe("Fitzroy");
-    expect(venue?.membershipTier).toBe("plus");
+    expect(venue?.membershipTier).toBe("pro");
     expect(venue).not.toHaveProperty("stripeCustomerId");
     expect(await service.getPublicVenueById("missing-venue")).toBeNull();
   });
 
-  it("activates Plus and Pro bar tiers through demo checkout without Stripe keys", async () => {
+  it("activates the Pro bar tier through demo checkout without Stripe keys", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const admin = createAccount(repository, "bar-checkout-admin", "admin");
@@ -5123,13 +5088,10 @@ describe("business demo contribution model", () => {
     });
     const managerAccount = repository.getAccountById(manager.id)!;
 
-    const plusCheckout = await service.createBarTierCheckout(managerAccount, "bar-checkout-1", { tier: "plus" });
-    expect(plusCheckout.mode).toBe("demo");
-    expect(plusCheckout.profile.membershipTier).toBe("plus");
-    expect(plusCheckout.tier.analyticsLocked).toBe(false);
-
     const proCheckout = await service.createBarTierCheckout(managerAccount, "bar-checkout-1", { tier: "pro" });
+    expect(proCheckout.mode).toBe("demo");
     expect(proCheckout.profile.membershipTier).toBe("pro");
+    expect(proCheckout.tier.analyticsLocked).toBe(false);
     expect(proCheckout.profile.highlightedName).toBe(true);
     expect(proCheckout.profile.premiumBadge).toBe("Pro");
   });

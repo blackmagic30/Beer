@@ -115,7 +115,6 @@ Keep `DEMO_BILLING_MODE=false` for real launch. Use Stripe test mode first:
 
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
-- `STRIPE_PLUS_PRICE_ID`
 - `STRIPE_PRO_PRICE_ID`
 - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
 
@@ -124,7 +123,7 @@ Before live payments:
 1. Run Stripe CLI webhook forwarding to `/api/business/billing/webhook`.
 2. Confirm missing/invalid signatures are rejected.
 3. Confirm duplicate webhook events do not double-process.
-4. Confirm Plus/Pro venue subscriptions downgrade when cancelled or unpaid.
+4. Confirm Pro venue subscriptions downgrade when cancelled or unpaid.
 5. Confirm the pricing page matches the configured Stripe price IDs.
 6. Confirm production uses live-mode `sk_live_` and `pk_live_` keys. Test-mode `sk_test_`/`pk_test_` keys are staging-only.
 
@@ -152,7 +151,7 @@ Protected export route:
 - `GET /api/business/venue-portal/:venueId/reports/:month/export?format=json`
 - `GET /api/business/venue-portal/:venueId/reports/:month/export?format=csv`
 
-Only verified Plus/Pro venue managers assigned to that venue, or admins, can export the report.
+Only verified Pro venue managers assigned to that venue, or admins, can export the report.
 
 ## Redis
 

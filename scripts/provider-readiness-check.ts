@@ -98,7 +98,6 @@ const checks: ProviderCheck[] = [
   checkRequired("STRIPE_WEBHOOK_SECRET", "Stripe webhook secret", "Forward signed Stripe CLI/webhook events and set STRIPE_WEBHOOK_SECRET."),
   checkRequired("STRIPE_PRICE_MONTHLY", "Stripe paid user monthly price ID", "Create the user monthly recurring price and set STRIPE_PRICE_MONTHLY."),
   checkRequired("STRIPE_PRICE_YEARLY", "Stripe paid user yearly price ID", "Create the user yearly recurring price and set STRIPE_PRICE_YEARLY."),
-  checkRequired("STRIPE_PLUS_PRICE_ID", "Stripe Plus venue price ID", "Create the Plus recurring price and set STRIPE_PLUS_PRICE_ID."),
   checkRequired("STRIPE_PRO_PRICE_ID", "Stripe Pro venue price ID", "Create the Pro recurring price and set STRIPE_PRO_PRICE_ID."),
   checkRequired("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", "Stripe publishable key", "Set NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY so browser checkout can initialise safely."),
   checkRequired("POS_WEBHOOK_SIGNING_SECRET", "POS webhook signing secret", "Generate a unique 32+ character POS_WEBHOOK_SIGNING_SECRET before enabling POS integrations."),

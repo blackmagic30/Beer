@@ -364,10 +364,9 @@
           <section class="tabPanel is-hidden" data-panel="specials">
             <article id="specialsGate" class="panel is-hidden">
               <h2>Pint Path specials are a paid venue feature</h2>
-              <p class="muted">Free venue accounts can add beer data and happy-hour data only. Upgrade to Plus or Pro to add reviewed Pint Path specials.</p>
+              <p class="muted">Free venue accounts can add beer data and happy-hour data only. Upgrade to Pro to add reviewed Pint Path specials.</p>
               <div class="actionRow">
-                <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
-                <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+                <button class="button button--primary" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
               </div>
             </article>
             <div id="specialsEditor" class="grid grid--two">
@@ -393,7 +392,7 @@
                   <label class="field">Start time
                     <select name="startTime"></select>
                   </label>
-                  <label class="field">End time
+                  <label class="field">Ending time
                     <select name="endTime"></select>
                   </label>
                 </div>
@@ -563,7 +562,7 @@
     }
 
     function prettyTier(value) {
-      return value === "pro" ? "Pro" : value === "plus" ? "Plus" : "Free";
+      return value === "pro" || value === "plus" ? "Pro" : "Free";
     }
 
     function normalizeOpeningTimeValue(value, fallback) {
@@ -639,20 +638,9 @@
       };
     }
 
-    const VENUE_DASHBOARD_PLANS = ["free", "plus", "pro"];
+    const VENUE_DASHBOARD_PLANS = ["free", "pro"];
     const VENUE_DASHBOARD_FEATURES = {
       free: ["basic_snapshot", "beer_data_status", "basic_alerts"],
-      plus: [
-        "basic_snapshot",
-        "beer_data_status",
-        "basic_alerts",
-        "app_value_overview",
-        "demand_signals",
-        "specials_performance",
-        "customer_interest",
-        "marketing_performance",
-        "action_centre",
-      ],
       pro: [
         "basic_snapshot",
         "beer_data_status",
@@ -730,7 +718,7 @@
         { label: "Tracked savings", value: "$128" },
         { label: "Best offer", value: "$2 off pints" },
       ],
-      plusActions: [
+      proActions: [
         "Refresh 5 stale beer prices before the weekend.",
         "Keep one clear Pint Path special live for tonight.",
         "Add Guinness if it is currently on tap.",
@@ -769,7 +757,7 @@
     };
 
     function normalizeDashboardPlan(value) {
-      return value === "pro" ? "pro" : value === "plus" ? "plus" : "free";
+      return value === "pro" || value === "plus" ? "pro" : "free";
     }
 
     function hasDashboardFeature(plan, feature) {
@@ -849,17 +837,20 @@
       if (window.happyHourTimeSuggestions) {
         window.happyHourTimeSuggestions.innerHTML = options.join("");
       }
-      const selectOptions = [
-        '<option value="">No time limit</option>',
+      const buildSelectOptions = (placeholder) => [
+        `<option value="">${escapeHtml(placeholder)}</option>`,
         ...options.map((option) => {
           const value = option.match(/<option value="([^"]+)"/)?.[1] || "";
           const label = option.replace(/^.*>(.*)<\/option>$/, "$1");
           return `<option value="${escapeHtml(value)}">${escapeHtml(value)} (${escapeHtml(label)})</option>`;
         }),
       ].join("");
-      [field(specialForm, "startTime"), field(specialForm, "endTime")].forEach((select) => {
+      [
+        [field(specialForm, "startTime"), "Choose start time"],
+        [field(specialForm, "endTime"), "Choose ending time"],
+      ].forEach(([select, placeholder]) => {
         if (select) {
-          select.innerHTML = selectOptions;
+          select.innerHTML = buildSelectOptions(placeholder);
         }
       });
     }
@@ -1160,7 +1151,7 @@
       `;
     }
 
-    function premiumLockedCard(title, description, plan = "plus") {
+    function premiumLockedCard(title, description, plan = "pro") {
       return `
         <article class="premiumLockedCard" aria-label="${escapeHtml(title)} locked preview">
           <div class="premiumLockedCard__lock">Lock</div>
@@ -1303,63 +1294,16 @@
               <h3>Needs attention</h3>
               <div class="premiumAlertList">${premiumAlertList(mock.alerts)}</div>
             </section>
-            ${premiumFeatureGate("free", "app_value_overview", "", premiumLockedCard("App Value Overview", "See redemptions, tracked savings, average spend and app-influenced value.", "plus"))}
-            ${premiumFeatureGate("free", "demand_signals", "", premiumLockedCard("Demand Signals", "See the beers, suburbs and searches creating interest near your venue.", "plus"))}
+            ${premiumFeatureGate("free", "app_value_overview", "", premiumLockedCard("App Value Overview", "See redemptions, tracked savings, average spend and app-influenced value.", "pro"))}
+            ${premiumFeatureGate("free", "demand_signals", "", premiumLockedCard("Demand Signals", "See the beers, suburbs and searches creating interest near your venue.", "pro"))}
           </aside>
         </div>
         <section class="premiumUpgradeBanner">
           <div>
-            <strong>Upgrade to Plus to understand searches, special views and redemption value.</strong>
-            <p>Free stays useful for beer and happy-hour basics. Plus turns the venue portal into a cleaner business tool.</p>
+            <strong>Upgrade to Pro to understand searches, special views and redemption value.</strong>
+            <p>Free stays useful for beer and happy-hour basics. Pro turns the venue portal into a complete business tool.</p>
           </div>
-          <button class="button button--premium" type="button" data-upgrade-tier="plus">Unlock Plus Insights</button>
-        </section>
-      `;
-    }
-
-    function renderPlusVenueDashboard(mock) {
-      return `
-        <div class="premiumDashboardMain">
-          <div class="premiumDashboardColumn premiumDashboardColumn--main">
-            <section class="premiumDashboardCard premiumDashboardCard--revenue">
-              <span class="eyebrow">App value overview</span>
-              <h3>${formatCurrency(mock.appValueWeek)} app-influenced value</h3>
-              <p class="muted">Estimated from Pint Path special redemptions and average spend signals. Average spend is ${formatOptionalCurrency(mock.averageSpend).toLowerCase()}.</p>
-              <div class="premiumProgressList">${premiumProgressRows(mock.appValueBars, formatCurrency)}</div>
-            </section>
-            <section class="premiumDashboardCard">
-              <span class="eyebrow">Demand signals</span>
-              <h3>What people are looking for nearby</h3>
-              <div class="premiumList">${premiumSignalList(mock.beerDemand)}</div>
-            </section>
-            <section class="premiumDashboardCard">
-              <span class="eyebrow">Specials performance</span>
-              <h3>${formatCount(mock.redemptionsWeek)} redemptions this week</h3>
-              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.marketing)}</div>
-            </section>
-          </div>
-          <aside class="premiumDashboardColumn">
-            ${premiumActionCentre(mock.plusActions)}
-            <section class="premiumDashboardCard">
-              <span class="eyebrow">Customer interest</span>
-              <h3>Aggregate intent only</h3>
-              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.customerInterest)}</div>
-            </section>
-            <section class="premiumDashboardCard">
-              <span class="eyebrow">Marketing performance</span>
-              <h3>${formatCount(mock.specialViewsToday)} special views today</h3>
-              <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.marketing)}</div>
-            </section>
-            ${premiumFeatureGate("plus", "growth_recommendations", "", premiumLockedCard("Growth Recommendations", "Turn search demand, stale prices and specials performance into clear next actions.", "pro"))}
-            ${premiumFeatureGate("plus", "lost_opportunity_risk", "", premiumLockedCard("Lost Opportunity Risk", "Spot stale prices, missing beer demand and low-redemption specials before users bounce.", "pro"))}
-          </aside>
-        </div>
-        <section class="premiumUpgradeBanner premiumUpgradeBanner--pro">
-          <div>
-            <strong>Upgrade to Pro for priority visibility, stronger recommendations and premium reports.</strong>
-            <p>Pro is built for venues that want Pint Path demand signals turned into practical actions.</p>
-          </div>
-          <button class="button button--premium" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
+          <button class="button button--premium" type="button" data-upgrade-tier="pro">Unlock Pro insights</button>
         </section>
       `;
     }
@@ -1410,7 +1354,7 @@
                 <h3>${formatCount(mock.redemptionsWeek)} redemptions this week</h3>
                 <div class="premiumMiniGrid">${premiumMiniMetricRows(mock.marketing)}</div>
               </section>
-              ${premiumActionCentre(mock.plusActions)}
+              ${premiumActionCentre(mock.proActions)}
             </div>
           </div>
           <aside class="premiumDashboardColumn">
@@ -1566,20 +1510,12 @@
         day: "numeric",
         month: "long",
       }).format(new Date());
-      const upgradePlan = plan === "free" ? "plus" : plan === "plus" ? "pro" : null;
+      const upgradePlan = plan === "free" ? "pro" : null;
       const kpisByPlan = {
         free: [
           { label: "Map/detail opens", value: formatCount(mock.mapViewsToday), helper: "Today", tone: "info" },
           { label: "Venue searches", value: formatCount(mock.venueSearchesToday), helper: "Exact + nearby", tone: "success" },
           { label: "Beer rows", value: formatCount(mock.beerRows), helper: `${formatCount(mock.pricedRows)} priced`, tone: "neutral" },
-          { label: "Pending review", value: formatCount(mock.pendingReviews), helper: "Waiting on admin", tone: mock.pendingReviews ? "warning" : "success" },
-        ],
-        plus: [
-          { label: "App value today", value: formatCurrency(mock.appValueToday), helper: "Tracked specials", tone: "premium" },
-          { label: "Tracked savings", value: formatCurrency(mock.trackedSavingsWeek), helper: "From redemptions", tone: "success" },
-          { label: "Special views", value: formatCount(mock.specialViewsToday), helper: "Today", tone: "info" },
-          { label: "Redemptions", value: formatCount(mock.redemptionsWeek), helper: "Logged by staff", tone: "warning" },
-          { label: "Avg spend", value: formatOptionalCurrency(mock.averageSpend), helper: "When recorded", tone: "neutral" },
           { label: "Pending review", value: formatCount(mock.pendingReviews), helper: "Waiting on admin", tone: mock.pendingReviews ? "warning" : "success" },
         ],
         pro: [
@@ -1615,7 +1551,7 @@
         <div class="premiumKpiGrid">
           ${kpisByPlan[plan].map(premiumKpiCard).join("")}
         </div>
-        ${plan === "pro" ? renderProVenueDashboard(mock) : plan === "plus" ? renderPlusVenueDashboard(mock) : renderFreeVenueDashboard(mock)}
+        ${plan === "pro" ? renderProVenueDashboard(mock) : renderFreeVenueDashboard(mock)}
       `;
     }
 
@@ -1777,7 +1713,7 @@
         {
           label: "Pint Path specials",
           value: data.tier?.canManageSpecials ? formatCount(activeSpecials) : "Locked",
-          helper: data.tier?.canManageSpecials ? `${formatCount(specials.length)} total offers` : "Plus or Pro venue feature",
+          helper: data.tier?.canManageSpecials ? `${formatCount(specials.length)} total offers` : "Pro venue feature",
           tone: data.tier?.canManageSpecials ? (activeSpecials ? "premium" : "warning") : "info",
         },
       ];
@@ -1806,10 +1742,10 @@
         ? { label: "Finish profile", tab: "profile", copy: "Add suburb and contact details so users trust the listing." }
         : beers.length < 3
           ? { label: "Add 3 beers", tab: "beers", copy: "Three current tap prices make the venue useful on the map and in beer search." }
-          : !happyHours.length
-            ? { label: "Add happy hour", tab: "happy-hours", copy: "Happy hours are one of the fastest ways to get users to choose a venue tonight." }
+            : !happyHours.length
+              ? { label: "Add happy hour", tab: "happy-hours", copy: "Happy hours are one of the fastest ways to get users to choose a venue tonight." }
             : tier.canManageSpecials && !specials.length
-              ? { label: "Add app special", tab: "specials", copy: "Plus and Pro venues can add reviewed Pint Path specials for extra conversion proof." }
+              ? { label: "Add app special", tab: "specials", copy: "Pro venues can add reviewed Pint Path specials for extra conversion proof." }
               : { label: "Keep prices fresh", tab: "price-refresh", copy: "Confirm unchanged prices in one pass, or edit only the rows that changed." };
       const mailSubject = encodeURIComponent(`Pint Path staff invite for ${profile.name || "my venue"}`);
       const mailBody = encodeURIComponent([
@@ -1866,11 +1802,11 @@
           : `
             <div class="venueCardHeader">
               <div class="eyebrow">Upgrade path</div>
-              <span class="pill pill--info">Plus</span>
+              <span class="pill pill--premium">Pro</span>
             </div>
             <h2>Create app-only offers</h2>
-            <p class="muted">Free venues can manage beer and happy-hour data. Plus and Pro add reviewed Pint Path specials.</p>
-            <button class="button button--premium" type="button" data-upgrade-tier="plus">Unlock specials</button>
+            <p class="muted">Free venues can manage beer and happy-hour data. Pro adds reviewed Pint Path specials, insights, and premium discovery.</p>
+            <button class="button button--premium" type="button" data-upgrade-tier="pro">Unlock specials</button>
           `;
       }
 
@@ -1889,7 +1825,11 @@
 
     function renderBusinessToolkit(data) {
       const toolkit = data.businessToolkit || {};
-      const snapshot = toolkit.plusDemandSnapshot || data.monthlyReport?.data?.summary?.plusDemandSnapshot || null;
+      const snapshot = toolkit.demandSnapshot
+        || toolkit.plusDemandSnapshot
+        || data.monthlyReport?.data?.summary?.demandSnapshot
+        || data.monthlyReport?.data?.summary?.plusDemandSnapshot
+        || null;
       const proPlan = toolkit.proGrowthPlan || data.monthlyReport?.data?.summary?.proGrowthPlan || null;
       const updateLink = toolkit.updateLink || data.updateLink || "";
 
@@ -1912,9 +1852,9 @@
         <div class="sectionHeader">
           <div>
             <div class="eyebrow">Commercial toolkit</div>
-            <h2>${isPro ? "Pro growth studio" : "Plus demand snapshot"}</h2>
+            <h2>Pro growth studio</h2>
           </div>
-          <span class="tierBadge ${isPro ? "tierBadge--pro" : "tierBadge--plus"}">${isPro ? "Pro active" : "Plus active"}</span>
+          <span class="tierBadge tierBadge--pro">${isPro ? "Pro active" : "Pro preview"}</span>
         </div>
         <div class="growthSummaryGrid">
           <div class="metricCard metricCard--hero">
@@ -2189,7 +2129,7 @@
         panel.innerHTML = `
           <div class="discountSpecialChoices__empty">
             <strong>No live Pint Path specials yet.</strong>
-            <span>Add a Plus/Pro special first, then staff can choose it here while redeeming user codes.</span>
+            <span>Add a Pro special first, then staff can choose it here while redeeming user codes.</span>
           </div>
         `;
         syncSelectedDiscountSpecial();
@@ -2475,11 +2415,10 @@
       analyticsContent.classList.toggle("is-hidden", locked);
       if (locked) {
         analyticsGate.innerHTML = `
-          <h2>Live insights are available on Plus</h2>
-          <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Plus to view privacy-safe suburb analytics and monthly reports.")}</p>
-          <div class="notice">Free venue accounts can still add beer data and happy-hour data. Plus unlocks reviewed Pint Path specials and live insights.</div>
+          <h2>Live insights are available on Pro</h2>
+          <p class="muted">${escapeHtml(data.tier?.upgradeCopy || "Upgrade to Pro to view privacy-safe suburb analytics and monthly reports.")}</p>
+          <div class="notice">Free venue accounts can still add beer data and happy-hour data. Pro unlocks reviewed Pint Path specials and live insights.</div>
           <div class="actionRow">
-            <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
             <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
           </div>
         `;
@@ -2510,11 +2449,10 @@
       reportContent.classList.toggle("is-hidden", locked);
       if (locked) {
         reportGate.innerHTML = `
-          <h2>Monthly reports are a Plus feature</h2>
+          <h2>Monthly reports are a Pro feature</h2>
           <p class="muted">Reports summarise your venue lookups, beer-list interest, special views and privacy-safe suburb trends.</p>
-          <div class="notice">Upgrade to Plus or Pro to generate and export monthly reports once there is enough suburb data.</div>
+          <div class="notice">Upgrade to Pro to generate and export monthly reports once there is enough suburb data.</div>
           <div class="actionRow">
-            <button class="button button--primary" type="button" data-upgrade-tier="plus">Upgrade to Plus</button>
             <button class="button" type="button" data-upgrade-tier="pro">Upgrade to Pro</button>
           </div>
         `;
@@ -2539,12 +2477,15 @@
           <strong>Suggested actions</strong>
           <ul class="featureList">${suggestedActions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
         </div>
-        ${report.plusDemandSnapshot ? `
+        ${(() => {
+          const snapshot = report.demandSnapshot || report.plusDemandSnapshot;
+          return snapshot ? `
           <div class="listItem" style="margin-top:12px;">
-            <strong>Plus demand snapshot</strong>
-            <ul class="featureList">${(report.plusDemandSnapshot.recommendedNextActions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+            <strong>Demand snapshot</strong>
+            <ul class="featureList">${(snapshot.recommendedNextActions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
           </div>
-        ` : ""}
+        ` : "";
+        })()}
         ${proRecommendations.length ? `
           <div class="listItem reportProPlan">
             <div>
@@ -2819,7 +2760,13 @@
         event.preventDefault();
         if (!selectedVenueId()) return;
         if (!portalCanManageSpecials()) {
-          MelbBeerBusiness.setStatus(specialStatus, "Pint Path specials are available on Plus and Pro venue tiers.", true);
+          MelbBeerBusiness.setStatus(specialStatus, "Pint Path specials are available on Pro venue tiers.", true);
+          return;
+        }
+        const specialStartTime = normalizeHappyHourTime(field(specialForm, "startTime").value);
+        const specialEndTime = normalizeHappyHourTime(field(specialForm, "endTime").value);
+        if (!specialStartTime || !specialEndTime) {
+          MelbBeerBusiness.setStatus(specialStatus, "Choose both a start time and ending time for the Pint Path special.", true);
           return;
         }
         const body = {
@@ -3116,7 +3063,7 @@
         const specialId = target.dataset.editSpecial;
         if (specialId) {
           if (!portalCanManageSpecials()) {
-            MelbBeerBusiness.setStatus(portalAccess, "Pint Path specials are available on Plus and Pro venue tiers.", true);
+            MelbBeerBusiness.setStatus(portalAccess, "Pint Path specials are available on Pro venue tiers.", true);
             return;
           }
           const item = currentPortal.inventory.specials.find((entry) => entry.id === specialId);
@@ -3140,7 +3087,7 @@
           const id = target.dataset[key];
           if (!id) continue;
           if (route === "specials" && !portalCanManageSpecials()) {
-            MelbBeerBusiness.setStatus(portalAccess, "Pint Path specials are available on Plus and Pro venue tiers.", true);
+            MelbBeerBusiness.setStatus(portalAccess, "Pint Path specials are available on Pro venue tiers.", true);
             return;
           }
           try {

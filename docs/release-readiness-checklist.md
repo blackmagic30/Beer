@@ -44,7 +44,7 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 - Venue analytics hide suburb trends until the privacy floor is met.
 - Analytics metadata redacts email, tokens, and precise location keys.
 - Monthly venue reports generate from aggregate events using the Melbourne reporting timezone.
-- Monthly report exports are restricted to verified assigned Plus/Pro venue managers or admins.
+- Monthly report exports are restricted to verified assigned Pro venue managers or admins.
 - Report delivery can be mocked for tests without sending real email.
 - Supabase migrations keep source-evidence storage private and do not introduce `public.bars`.
 - Public HTML smoke checks cover key pages and retired Twilio/ElevenLabs leakage.
@@ -72,4 +72,4 @@ These are launch-critical but require provider/staging verification:
 - Confirm another user cannot see that raw submission/evidence.
 - Approve the submission as admin and confirm the normalized price appears on the map.
 - Assign a venue manager, submit a venue edit, confirm it stays pending, approve it, then confirm it publishes.
-- Verify Plus/Pro venue analytics remain aggregate-only and hide low-count buckets.
+- Verify Pro venue analytics remain aggregate-only and hide low-count buckets.

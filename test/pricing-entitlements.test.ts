@@ -55,15 +55,16 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Venue tools use the same secure Pint Path login.");
     expect(pricingHtml).toContain("Bars do not need a separate login.");
     expect(pricingHtml).toContain("Free");
-    expect(pricingHtml).toContain("Plus");
     expect(pricingHtml).toContain("Pro");
     expect(pricingHtml).toContain("A$0");
-    expect(pricingHtml).toContain("A$149");
+    expect(pricingHtml).not.toContain("A$149");
+    expect(pricingHtml).not.toContain(">Plus<");
+    expect(pricingHtml).not.toContain("STRIPE_PLUS_PRICE_ID");
     expect(pricingHtml).toContain("A$299");
     expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
     expect(pricingHtml).toContain("No analytics or monthly reports.");
     expect(pricingHtml).toContain("Suburb-level search and interaction trends.");
-    expect(pricingHtml).toContain("Plus demand snapshot with beer/style opportunities and next actions.");
+    expect(pricingHtml).toContain("Demand snapshots with beer/style opportunities and next actions.");
     expect(pricingHtml).toContain("Staff/customer update link for QR tap-list prompts and fresh venue data.");
     expect(pricingHtml).toContain("Monthly venue reports");
     expect(pricingHtml).toContain("CSV and JSON report exports");
@@ -87,10 +88,12 @@ describe("premium pricing and entitlements", () => {
     expect(readme).toContain("value rings");
     expect(readme).toContain("saved night shortcuts");
     expect(readme).toContain("discount-pass access");
-    expect(readme).toContain("Plus demand snapshots");
+    expect(readme).toContain("demand snapshots");
     expect(readme).toContain("Pro growth studio");
+    expect(readme).not.toContain("STRIPE_PLUS_PRICE_ID");
     expect(envExample).toContain("STRIPE_PRICE_MONTHLY=price_monthly_499_aud");
     expect(envExample).toContain("STRIPE_PRICE_YEARLY=price_yearly_50_aud");
+    expect(envExample).not.toContain("STRIPE_PLUS_PRICE_ID");
 
     const combined = [appSource, pricingHtml, readme, envExample].join("\n");
     expect(combined).not.toContain("A$1.99");
@@ -105,7 +108,7 @@ describe("premium pricing and entitlements", () => {
     const readme = readRepoFile("README.md");
 
     expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
-    expect(pricingHtml).toContain("Add normal reviewed Pint Path specials.");
+    expect(pricingHtml).toContain("Add reviewed Pint Path specials.");
     expect(pricingHtml).toContain("Premium Pint Path special treatment after review.");
     expect(mapHtml).toContain("Unlock full access to view times, specials, and discount details.");
     expect(mapHtml).toContain("Unlock full access to view the days, times, specials, and discount details.");

@@ -354,14 +354,8 @@ function normalizeVenueTiers(database: BetterSqlite3.Database): void {
      WHERE membership_tier = 'free';
 
     UPDATE venue_profiles
-       SET membership_tier = 'plus'
-     WHERE membership_tier = 'pro'
-       AND highlighted_name = 0
-       AND promoted = 0;
-
-    UPDATE venue_profiles
        SET membership_tier = 'pro'
-     WHERE membership_tier = 'super_premium';
+     WHERE membership_tier IN ('plus', 'super_premium');
   `);
 }
 

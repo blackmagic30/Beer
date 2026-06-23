@@ -300,7 +300,6 @@
                 <select name="tierFit">
                   <option value="">Not sure yet</option>
                   <option value="basic">Free/basic</option>
-                  <option value="plus">Plus</option>
                   <option value="pro">Pro</option>
                 </select>
               </label>
@@ -325,7 +324,7 @@
           <div class="sectionHeader">
             <div>
               <h2>Outreach pipeline</h2>
-              <p class="muted">Lightweight CRM notes for bars that may want Plus, Pro, or manager access.</p>
+              <p class="muted">Lightweight CRM notes for bars that may want Pro or manager access.</p>
             </div>
           </div>
           <div id="venueOutreachList" class="list"></div>
@@ -727,7 +726,6 @@
     function suggestedTierForLead(lead) {
       const score = getLeadScore(lead);
       if (score >= 72 || Number(lead.requests || 0) >= 3) return "pro";
-      if (score >= 36 || lead.dataFreshness === "stale_or_missing") return "plus";
       return "basic";
     }
 
@@ -738,16 +736,14 @@
       if (lead.dataFreshness === "stale_or_missing") {
         return "High intent but weak data. Pitch a quick setup call to make their listing accurate before competitors look better.";
       }
-      return "Healthy discovery signal. Pitch Plus visibility first, then Pro if they want Pint Path specials.";
+      return "Healthy discovery signal. Pitch Pro if they want Pint Path specials, reporting, and premium discovery.";
     }
 
     function suggestedNextActionForLead(lead) {
       const tier = suggestedTierForLead(lead);
       return tier === "pro"
         ? "Offer Pro demo and Pint Path special setup"
-        : tier === "plus"
-          ? "Send Plus visibility pitch"
-          : "Invite manager to claim venue dashboard";
+        : "Invite manager to claim venue dashboard";
     }
 
     function leadDatasetAttributes(lead, tier, pitch, nextAction) {
@@ -917,7 +913,7 @@
           const hasManager = assignedVenueIds.has(lead.venueId);
           const checklist = leadChecklistItems(lead, outreach, hasManager);
           const attrs = leadDatasetAttributes(lead, tier, pitch, nextAction);
-          const tone = tier === "pro" ? "premium" : tier === "plus" ? "info" : "success";
+          const tone = tier === "pro" ? "premium" : "success";
           return `
             <article class="pitchReadinessCard pitchReadinessCard--${escapeHtml(tone)}">
               <div class="adminCrmLead__header">

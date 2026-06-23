@@ -97,7 +97,7 @@ function renderPublicVenuePage(venue: Awaited<ReturnType<BusinessService["getPub
   const canonicalUrl = absoluteUrl(`/venues/${encodeURIComponent(venue.id)}`);
   const mapUrl = absoluteUrl(`/?venueId=${encodeURIComponent(venue.id)}&venueName=${encodeURIComponent(venue.name)}`);
   const portalUrl = absoluteUrl(`/venue-portal?venueId=${encodeURIComponent(venue.id)}`);
-  const tier = venue.membershipTier === "pro" ? "Pro" : venue.membershipTier === "plus" ? "Plus" : "Free";
+  const tier = venue.membershipTier === "pro" ? "Pro" : "Free";
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "BarOrPub",

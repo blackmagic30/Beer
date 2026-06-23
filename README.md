@@ -104,7 +104,7 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 
 Business demo pages:
 
-- `/pricing.html`: venue pricing for Free, Plus A$149, and Pro A$299 bar plans.
+- `/pricing.html`: venue pricing for Free and Pro A$299 bar plans.
 - `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, privacy preferences, requests, session controls, and submission status.
 - `/missions.html`: Needs Data mission board with sorting, quick-win guidance, and points.
 - `/submit.html`: venue data submission with manual rows and photo/source queue.
@@ -137,8 +137,7 @@ Venue partner demo layer:
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
 - Free/Basic venue accounts can add beer data and happy-hour data only; Pint Path specials, venue analytics, and monthly reports stay locked.
-- Plus A$149 unlocks normal reviewed Pint Path specials, privacy-safe suburb-level analytics, Plus demand snapshots with beer/style opportunities, a staff/customer venue update link for QR prompts, and protected monthly report generation/export in CSV or JSON. Venue-tier checkout reuses the existing Stripe/demo billing flow when `STRIPE_PLUS_PRICE_ID` is configured with a Stripe `price_...` ID.
-- Pro A$299 adds visible premium placement: gold/violet map and listing treatment, featured Pint Path exclusive specials after review, priority admin review ordering for venue updates, a Pro growth studio with premium-placement readiness and weekend playbooks, Pro-only monthly growth recommendations, and a transparent Best Match discovery boost that does not fake popularity or override cheapest/nearest sorting. Configure `STRIPE_PRO_PRICE_ID` with the Pro Stripe `price_...` ID.
+- Pro A$299 unlocks reviewed Pint Path specials, privacy-safe suburb-level analytics, demand snapshots with beer/style opportunities, a staff/customer venue update link for QR prompts, protected monthly report generation/export in CSV or JSON, gold/violet map and listing treatment, featured Pint Path exclusive specials after review, priority admin review ordering for venue updates, a Pro growth studio with premium-placement readiness and weekend playbooks, Pro growth recommendations, and a transparent Best Match discovery boost that does not fake popularity or override cheapest/nearest sorting. Configure `STRIPE_PRO_PRICE_ID` with the Pro Stripe `price_...` ID.
 - Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
 - Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, private source evidence, or another venue’s private data.
 - The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.
@@ -233,7 +232,6 @@ STRIPE_SECRET_KEY=sk_test_or_live_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_499_aud
 STRIPE_PRICE_YEARLY=price_yearly_50_aud
-STRIPE_PLUS_PRICE_ID=price_venue_plus_aud
 STRIPE_PRO_PRICE_ID=price_venue_pro_aud
 ```
 
@@ -313,7 +311,6 @@ STRIPE_SECRET_KEY=sk_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_PRICE_MONTHLY=price_monthly_499_aud
 STRIPE_PRICE_YEARLY=price_yearly_50_aud
-STRIPE_PLUS_PRICE_ID=price_venue_plus_aud
 STRIPE_PRO_PRICE_ID=price_venue_pro_aud
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_xxx
 ```
@@ -358,7 +355,6 @@ What each one does:
 - `STRIPE_WEBHOOK_SECRET`: Stripe endpoint secret used to verify subscription webhooks.
 - `STRIPE_PRICE_MONTHLY`: Stripe price ID for the A$4.99/month plan.
 - `STRIPE_PRICE_YEARLY`: Stripe price ID for the A$50/year plan.
-- `STRIPE_PLUS_PRICE_ID`: Stripe price ID for the paid Plus venue analytics tier.
 - `STRIPE_PRO_PRICE_ID`: Stripe price ID for the premium Pro venue tier.
 - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`: browser publishable key placeholder for future embedded Stripe UI.
 

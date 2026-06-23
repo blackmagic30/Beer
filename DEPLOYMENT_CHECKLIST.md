@@ -85,7 +85,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 ## 4. Stripe Modes
 
 - Demo billing: works without Stripe keys, but production blocks it unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true`.
-- Stripe test mode: set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, `STRIPE_PLUS_PRICE_ID`, `STRIPE_PRO_PRICE_ID`, and `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
+- Stripe test mode: set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, `STRIPE_PRO_PRICE_ID`, and `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
 - No billing: keep `DEMO_BILLING_MODE=false` and leave Stripe keys empty; free limits, admin overrides, and contributor unlocks still work.
 - Do not process live payments until Stripe Checkout and webhook forwarding have been tested with Stripe CLI.
 - Stripe webhooks must reject missing/invalid signatures when `DEMO_BILLING_MODE=false`; smoke-test this before enabling paid checkout.
@@ -133,9 +133,9 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Open `/for-bars` and confirm it redirects to `/venue-portal` without exposing a public claim form.
 - Assign a venue manager in admin, log in as that user, and confirm `/venue-portal` only shows the assigned venue.
 - Confirm the venue portal can save profile details, beer/on-tap rows, happy hours, and deals/specials for the assigned venue only.
-- Confirm a Basic venue tier sees analytics/monthly report upgrade prompts, and Plus/Pro tiers can see aggregate-only suburb analytics once the privacy threshold is met.
-- Run `npm run reports:generate -- --month=YYYY-MM --dry-run` and confirm only active Plus/Pro venue reports are generated.
-- Export a Plus/Pro venue report from `/api/business/venue-portal/:venueId/reports/:month/export?format=json` as the assigned venue manager and confirm another manager gets `403`.
+- Confirm a Basic venue tier sees analytics/monthly report upgrade prompts, and Pro tiers can see aggregate-only suburb analytics once the privacy threshold is met.
+- Run `npm run reports:generate -- --month=YYYY-MM --dry-run` and confirm only active Pro venue reports are generated.
+- Export a Pro venue report from `/api/business/venue-portal/:venueId/reports/:month/export?format=json` as the assigned venue manager and confirm another manager gets `403`.
 - Confirm authenticated non-admin users cannot submit public claim requests and only see the invite-only venue portal message.
 - Submit a venue-manager update and confirm it remains pending review.
 - Check the main pages on a phone-width screen.

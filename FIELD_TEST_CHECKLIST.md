@@ -91,8 +91,8 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 - Log in as the venue manager and open `/venue-portal`.
 - Confirm only the assigned venue is visible.
 - Confirm the Overview, Profile, Beers / stock, Happy hours, Deals & specials, Analytics, and Monthly report tabs load.
-- As a Basic venue account, confirm profile, beers, happy hours, and specials can be edited, while analytics/monthly reports show a Plus upgrade prompt.
-- Ask admin to set the venue tier to Plus or Pro for a demo, then confirm aggregate suburb-level analytics and monthly report preview appear once the privacy threshold is met.
+- As a Basic venue account, confirm profile, beers, and happy hours can be edited, while specials, analytics, and monthly reports show a Pro upgrade prompt.
+- Ask admin to set the venue tier to Pro for a demo, then confirm aggregate suburb-level analytics and monthly report preview appear once the privacy threshold is met.
 - Confirm Pro shows premium display metadata in the returned profile, without changing public ranking behaviour.
 - As a verified user with no assigned venue, open `/venue-portal` and confirm it shows invite-only access rather than a claim form.
 - Confirm listing quality, wrong-price reports, requests, and update link are visible.

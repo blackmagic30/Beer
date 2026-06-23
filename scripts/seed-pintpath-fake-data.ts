@@ -13,7 +13,7 @@ const BAR_COUNT = Number(process.env.PINTPATH_FAKE_BAR_COUNT ?? 48);
 const OWNER_COUNT = Number(process.env.PINTPATH_FAKE_OWNER_COUNT ?? 12);
 const ANALYTICS_PRIVACY_FLOOR = Number(process.env.ANALYTICS_MIN_BUCKET_SIZE ?? 5);
 
-type Tier = "basic" | "plus" | "pro";
+type Tier = "basic" | "pro";
 
 interface FakeVenue {
   id: string;
@@ -222,7 +222,7 @@ function buildVenues(): FakeVenue[] {
   const venueWords = ["Arms", "Hotel", "Taproom", "Cellar", "Social", "House", "Roof", "Club", "Lounge", "Yard"];
   const venues: FakeVenue[] = [];
   for (let index = 0; index < BAR_COUNT; index += 1) {
-    const tier: Tier = index % 10 === 0 || index % 13 === 0 ? "pro" : index % 4 === 0 || index % 7 === 0 ? "plus" : "basic";
+    const tier: Tier = index % 4 === 0 || index % 7 === 0 || index % 10 === 0 || index % 13 === 0 ? "pro" : "basic";
     const suburb = suburbs[index % suburbs.length]!;
     const category = categories[index % categories.length]!;
     const claimed = index < Math.floor(BAR_COUNT * 0.75);
@@ -340,7 +340,7 @@ function insertVenues(database: BetterSqlite3.Database, venues: FakeVenue[], now
       JSON.stringify(tags),
       venue.tier,
       venue.tier === "pro" ? 1 : 0,
-      venue.tier === "pro" ? "Pro" : venue.tier === "plus" ? "Plus" : null,
+      venue.tier === "pro" ? "Pro" : null,
       venue.tier === "pro" ? 1 : 0,
       venue.tier === "pro" ? 1 : 0,
       venue.tier === "basic" ? null : "active_test",
@@ -385,12 +385,12 @@ function insertVenues(database: BetterSqlite3.Database, venues: FakeVenue[], now
       insertSpecial.run(
         `${TEST_PREFIX}:special:${String(index + 1).padStart(3, "0")}`,
         venue.id,
-        venue.tier === "pro" ? "Pro featured pint path special" : "Plus happy-hour feature",
-        "Synthetic Plus/Pro special for report and portal testing.",
-        venue.tier === "pro" ? 9 : 10,
-        venue.tier === "pro" ? "Featured" : "Plus",
-        "Visible only because this fake venue is Plus/Pro.",
-        venue.tier === "pro" ? 1 : 0,
+        "Pro featured pint path special",
+        "Synthetic Pro special for report and portal testing.",
+        9,
+        "Featured",
+        "Visible only because this fake venue is Pro.",
+        1,
         now,
         now,
       );
@@ -403,7 +403,7 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
   const activeVenues = venues.filter((venue) => venue.active);
   const venueWeights = activeVenues.map((venue, index) => ({
     value: venue,
-    weight: (venue.tier === "pro" ? 2.4 : venue.tier === "plus" ? 1.55 : 1) * (index < 8 ? 1.8 : 1),
+    weight: (venue.tier === "pro" ? 2.4 : 1) * (index < 8 ? 1.8 : 1),
   }));
   const insertEvent = database.prepare(`
     INSERT INTO events (
@@ -718,7 +718,6 @@ database.close();
 const normalUserCount = users.filter((user) => user.role === "user").length;
 const ownerCount = users.filter((user) => user.role === "venue_manager").length;
 const claimedBars = venues.filter((venue) => venue.ownerId).length;
-const plusBars = venues.filter((venue) => venue.tier === "plus").length;
 const proBars = venues.filter((venue) => venue.tier === "pro").length;
 
 console.log(JSON.stringify({
@@ -731,7 +730,6 @@ console.log(JSON.stringify({
   fakeBars: venues.length,
   claimedBars,
   unclaimedBars: venues.length - claimedBars,
-  plusBars,
   proBars,
   fakeInteractions: generatedEvents,
   generatedReports,

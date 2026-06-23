@@ -139,7 +139,6 @@ const envSchema = z.object({
   STRIPE_WEBHOOK_SECRET: optionalStringFromEnv,
   STRIPE_PRICE_MONTHLY: optionalStringFromEnv,
   STRIPE_PRICE_YEARLY: optionalStringFromEnv,
-  STRIPE_PLUS_PRICE_ID: optionalStringFromEnv,
   STRIPE_PRO_PRICE_ID: optionalStringFromEnv,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalStringFromEnv,
 });

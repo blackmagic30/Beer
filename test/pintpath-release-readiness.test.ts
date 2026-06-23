@@ -78,7 +78,6 @@ function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessS
     STRIPE_WEBHOOK_SECRET: undefined,
     STRIPE_PRICE_MONTHLY: undefined,
     STRIPE_PRICE_YEARLY: undefined,
-    STRIPE_PLUS_PRICE_ID: undefined,
     STRIPE_PRO_PRICE_ID: undefined,
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: undefined,
     SUPABASE_URL: undefined,
@@ -406,7 +405,7 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       scheduleNote: null,
       exclusive: false,
       active: true,
-    })).toThrow("Plus or Pro venue tier required");
+    })).toThrow("Pro venue tier required");
     expect(harness.service.getVenuePortal(updatedManagerA, { venueId: "venue-a" }).inventory.specials)
       .toEqual([]);
 
@@ -468,19 +467,19 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
   it("gates venue analytics by tier and hides suburb trends until the privacy floor is met", () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
     const admin = signup(harness, "admin@pintpath.test").account;
-    const manager = signup(harness, "plus-manager@pintpath.test").account;
+    const manager = signup(harness, "pro-manager@pintpath.test").account;
 
     harness.service.assignVenueManager(admin, {
       userId: manager.id,
-      venueId: "venue-plus",
-      venueName: "Plus Venue",
+      venueId: "venue-pro",
+      venueName: "Pro Venue",
       suburb: "Fitzroy",
     });
-    harness.service.upsertBarProfile(admin, "venue-plus", venueProfileInput({
-      name: "Plus Venue",
+    harness.service.upsertBarProfile(admin, "venue-pro", venueProfileInput({
+      name: "Pro Venue",
       suburb: "Fitzroy",
       area: "Fitzroy",
-      membershipTier: "plus",
+      membershipTier: "pro",
     }));
     const updatedManager = harness.repository.getAccountById(manager.id)!;
 
@@ -509,7 +508,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       createdAt: NOW,
     });
 
-    const belowFloorPortal = harness.service.getVenuePortal(updatedManager, { venueId: "venue-plus" });
+    const belowFloorPortal = harness.service.getVenuePortal(updatedManager, { venueId: "venue-pro" });
     expect(belowFloorPortal.tier?.analyticsLocked).toBe(false);
     expect(belowFloorPortal.analytics?.privacyFloorMet).toBe(false);
     expect(belowFloorPortal.analytics?.areaStyleSearches).toEqual([]);
@@ -540,7 +539,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       });
     }
 
-    const atFloorPortal = harness.service.getVenuePortal(updatedManager, { venueId: "venue-plus" });
+    const atFloorPortal = harness.service.getVenuePortal(updatedManager, { venueId: "venue-pro" });
     expect(atFloorPortal.analytics?.privacyFloorMet).toBe(true);
     expect(atFloorPortal.monthlyReport?.data).toBeTruthy();
     expect(atFloorPortal.analytics?.areaStyleSearches).toEqual([{ key: "lager", count: 11 }]);
@@ -568,7 +567,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       name: "Monthly Venue",
       suburb: "Richmond",
       area: "Richmond",
-      membershipTier: "plus",
+      membershipTier: "pro",
     }));
     const ownerAccount = harness.repository.getAccountById(owner.id)!;
     const otherOwnerAccount = harness.repository.getAccountById(otherOwner.id)!;

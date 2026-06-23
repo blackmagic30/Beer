@@ -1095,15 +1095,15 @@ function booleanFromUnknown(value: unknown, fallback: boolean): boolean {
 function tierFlags(tier: BarMembershipTier) {
   return {
     highlightedName: tier === "pro",
-    premiumBadge: tier === "pro" ? "Pro" : tier === "plus" ? "Plus" : null,
+    premiumBadge: tier === "pro" ? "Pro" : null,
     promoted: tier === "pro",
     featuredSpecialEligible: tier === "pro",
   };
 }
 
 function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
-  const analytics = admin || tier === "plus" || tier === "pro";
-  const canManageSpecials = admin || tier === "plus" || tier === "pro";
+  const analytics = admin || tier === "pro";
+  const canManageSpecials = admin || tier === "pro";
   const pro = tier === "pro";
   return {
     tier,
@@ -1121,7 +1121,7 @@ function getBarTierCapabilities(tier: BarMembershipTier, admin = false) {
     discoveryBoost: pro,
     upgradeCopy: analytics
       ? null
-      : "Upgrade to Plus to add Pint Path specials, see privacy-safe suburb analytics, and export generated monthly reports.",
+      : "Upgrade to Pro to add Pint Path specials, see privacy-safe suburb analytics, and export generated monthly reports.",
   };
 }
 
@@ -1141,7 +1141,7 @@ interface CommercialVenueInsights {
   }>;
 }
 
-function buildPlusVenueDemandSnapshot(input: {
+function buildVenueDemandSnapshot(input: {
   analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
   insights: CommercialVenueInsights;
 }) {
@@ -1496,7 +1496,6 @@ export class BusinessService {
       | "STRIPE_WEBHOOK_SECRET"
       | "STRIPE_PRICE_MONTHLY"
       | "STRIPE_PRICE_YEARLY"
-      | "STRIPE_PLUS_PRICE_ID"
       | "STRIPE_PRO_PRICE_ID"
       | "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
       | "SUPABASE_URL"
@@ -1772,7 +1771,7 @@ export class BusinessService {
 
     const membershipTier = this.repository.getBarProfile(venueId)?.membershipTier ?? "basic";
     if (!getBarTierCapabilities(membershipTier).canManageSpecials) {
-      throw new AppError("Plus or Pro venue tier required to manage Pint Path specials.", 403);
+      throw new AppError("Pro venue tier required to manage Pint Path specials.", 403);
     }
   }
 
@@ -2013,7 +2012,7 @@ export class BusinessService {
       if (change.changeType === "special") {
         const membershipTier = this.repository.getBarProfile(change.barId)?.membershipTier ?? "basic";
         if (!getBarTierCapabilities(membershipTier).canManageSpecials) {
-          throw new AppError("Plus or Pro venue tier required to publish Pint Path specials.", 403);
+          throw new AppError("Pro venue tier required to publish Pint Path specials.", 403);
         }
         this.repository.deleteBarSpecial({ id: change.targetId, barId: change.barId });
         return;
@@ -2102,7 +2101,7 @@ export class BusinessService {
       const membershipTier = this.repository.getBarProfile(change.barId)?.membershipTier ?? "basic";
       const capabilities = getBarTierCapabilities(membershipTier);
       if (!capabilities.canManageSpecials) {
-        throw new AppError("Plus or Pro venue tier required to publish Pint Path specials.", 403);
+        throw new AppError("Pro venue tier required to publish Pint Path specials.", 403);
       }
       this.ensureBarProfile({
         barId: change.barId,
@@ -2824,7 +2823,7 @@ export class BusinessService {
     finish: { latitude: number | null; longitude: number | null } | null,
     mode: "auto" | "walking" | "transit",
   ): number {
-    const tierScore = candidate.membershipTier === "pro" ? -150 : candidate.membershipTier === "plus" ? -70 : 0;
+    const tierScore = candidate.membershipTier === "pro" ? -150 : 0;
     if (!hasCoordinates(candidate)) {
       return 900_000 + tierScore;
     }
@@ -3481,7 +3480,7 @@ export class BusinessService {
     const capabilities = getBarTierCapabilities(tier, this.isAdmin(account));
 
     if (!capabilities.canManageSpecials) {
-      throw new AppError("Free Pint Rewards can only be redeemed at affiliated Plus or Pro Pint Path venues.", 403);
+      throw new AppError("Free Pint Rewards can only be redeemed at affiliated Pro Pint Path venues.", 403);
     }
 
     const now = nowIso();
@@ -6147,8 +6146,8 @@ export class BusinessService {
         ]
       : ["Not enough suburb data yet. Your report will become more useful as more users search nearby."];
     const capabilities = getBarTierCapabilities(profile.membershipTier);
-    const plusDemandSnapshot = capabilities.analytics
-      ? buildPlusVenueDemandSnapshot({ analytics, insights })
+    const demandSnapshot = capabilities.analytics
+      ? buildVenueDemandSnapshot({ analytics, insights })
       : null;
     const proRecommendations = capabilities.advancedRecommendations
       ? getProVenueRecommendations({ analytics, insights })
@@ -6199,7 +6198,7 @@ export class BusinessService {
         openWrongPriceReports: insights.wrongPriceReports.filter((report) => report.status === "open").length,
         openVenueRequests: insights.requests.filter((request) => request.status === "open").length,
         suggestedActions,
-        plusDemandSnapshot,
+        demandSnapshot,
         proRecommendations,
         proGrowthPlan,
         discoveryPlacement: capabilities.discoveryBoost
@@ -6258,8 +6257,8 @@ export class BusinessService {
       generatedCount: reports.length,
       skippedReason: reports.length === 0
         ? input.venueId
-          ? "No active Plus/Pro venue matched that venue ID."
-          : "No active Plus/Pro venues are reportable yet."
+          ? "No active Pro venue matched that venue ID."
+          : "No active Pro venues are reportable yet."
         : null,
       reports: reports.map((report) => sanitizeMonthlyReport(report as MonthlyBarReport) ?? report),
     };
@@ -6445,7 +6444,7 @@ export class BusinessService {
     const profile = this.repository.getBarProfile(venueId);
     const capabilities = getBarTierCapabilities(profile?.membershipTier ?? "basic", this.isAdmin(account));
     if (!capabilities.monthlyReports) {
-      throw new AppError("Plus or Pro venue tier required to export monthly reports.", 403);
+      throw new AppError("Pro venue tier required to export monthly reports.", 403);
     }
 
     const report = sanitizeMonthlyReport(
@@ -6558,8 +6557,8 @@ export class BusinessService {
     const savedMonthlyReport = capabilities.monthlyReports
       ? sanitizeMonthlyReport(this.repository.getVenueMonthlyReport({ venueId: selectedVenueId, month: reportMonth }))
       : null;
-    const plusDemandSnapshot = analytics && capabilities.analytics
-      ? buildPlusVenueDemandSnapshot({ analytics, insights })
+    const demandSnapshot = analytics && capabilities.analytics
+      ? buildVenueDemandSnapshot({ analytics, insights })
       : null;
     const proGrowthPlan = analytics && capabilities.advancedRecommendations
       ? buildProVenueGrowthPlan({ analytics, insights })
@@ -6623,7 +6622,7 @@ export class BusinessService {
                   topDiscountItems: discountSummary.topItems,
                   mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
                   mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
-                  plusDemandSnapshot,
+                  demandSnapshot,
                   suggestedActions: analytics.privacyFloorMet
                     ? [
                         "Keep your tap list current so nearby search demand has an accurate listing to land on.",
@@ -6698,7 +6697,7 @@ export class BusinessService {
       posIntegration,
       monthlyReport,
       businessToolkit: {
-        plusDemandSnapshot,
+        demandSnapshot,
         proGrowthPlan,
         demandDashboard,
         updateLink,
@@ -7630,7 +7629,7 @@ export class BusinessService {
       name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
       suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
     });
-    const priceId = input.tier === "plus" ? this.config.STRIPE_PLUS_PRICE_ID : this.config.STRIPE_PRO_PRICE_ID;
+    const priceId = this.config.STRIPE_PRO_PRICE_ID;
     const flags = tierFlags(input.tier);
 
     this.trackEvent(account, {
@@ -7666,7 +7665,7 @@ export class BusinessService {
           ...tierCapabilities,
           analyticsLocked: !tierCapabilities.analytics,
         },
-        message: `${input.tier === "plus" ? "Plus" : "Pro"} demo tier activated for this venue.`,
+        message: "Pro demo tier activated for this venue.",
       };
     }
 
@@ -7838,13 +7837,16 @@ export class BusinessService {
       const metadata = object.metadata as Record<string, string> | undefined;
       const billingContext = metadata?.billing_context;
       const barId = metadata?.venue_id;
-      const barMembershipTier = metadata?.venue_membership_tier as BarMembershipTier | undefined;
+      const rawBarMembershipTier = metadata?.venue_membership_tier;
+      const barMembershipTier: BarMembershipTier | null = rawBarMembershipTier === "pro" || rawBarMembershipTier === "plus"
+        ? "pro"
+        : null;
       const subscriptionId = typeof object.subscription === "string" ? object.subscription : null;
       const userId = metadata?.user_id;
       const subscriptionStatus = metadata?.subscription_status as SubscriptionStatus | undefined;
       const customer = typeof object.customer === "string" ? object.customer : null;
 
-      if ((billingContext === "venue" || billingContext === "bar") && barId && (barMembershipTier === "plus" || barMembershipTier === "pro")) {
+      if ((billingContext === "venue" || billingContext === "bar") && barId && barMembershipTier) {
         const flags = tierFlags(barMembershipTier);
         this.repository.updateBarSubscription({
           barId,

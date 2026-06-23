@@ -5968,12 +5968,8 @@
         "",
       ).toLowerCase();
 
-      if (tierValue === "pro" || tierValue === "super_premium") {
+      if (tierValue === "pro" || tierValue === "plus" || tierValue === "super_premium") {
         return "pro";
-      }
-
-      if (tierValue === "plus") {
-        return "plus";
       }
 
       return "free";
@@ -5991,10 +5987,6 @@
         return "Pro";
       }
 
-      if (tier === "plus") {
-        return "Plus";
-      }
-
       return "Free";
     }
 
@@ -6009,14 +6001,6 @@
         };
       }
 
-      if (tier === "plus") {
-        return {
-          tier,
-          label: getVenueTierLabel(rowOrVenue),
-          copy: "Upgraded listing",
-        };
-      }
-
       return {
         tier,
         label: "Free",
@@ -6027,7 +6011,6 @@
     function getVenueDiscoverySortBoost(rowOrVenue) {
       const tier = getVenueTier(rowOrVenue);
       if (tier === "pro") return -0.35;
-      if (tier === "plus") return -0.12;
       return 0;
     }
 
@@ -6045,15 +6028,6 @@
           strokeWeight: Math.max(visual.strokeWeight + 1.2, 4),
           scale: visual.scale + 1.8,
           fillOpacity: Math.min(visual.fillOpacity + 0.05, 1),
-        };
-      }
-
-      if (tier === "plus") {
-        return {
-          ...visual,
-          strokeColor: "#22d3ee",
-          strokeWeight: Math.max(visual.strokeWeight + 0.8, 3.4),
-          scale: visual.scale + 0.9,
         };
       }
 
@@ -6508,7 +6482,6 @@
         ],
         items: [
           ["neutral", "Has venue data", "Blue markers have captured beer prices, happy-hour info, or venue-supplied details."],
-          ["plus", "Plus venue", "Cyan/violet ring means the venue has upgraded visibility."],
           ["pro", "Pro venue", "Gold/violet ring means the venue has premium discovery treatment."],
           ["needs", "Needs data", "Muted grey markers are mapped venues that still need beer prices or happy-hour details."],
           ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
@@ -6690,8 +6663,7 @@
       pinEl.className = [
         "advancedMapPin",
         options.className,
-        options.tier === "plus" ? "advancedMapPin--plus" : "",
-        options.tier === "pro" ? "advancedMapPin--pro" : "",
+        options.tier === "pro" || options.tier === "plus" ? "advancedMapPin--pro" : "",
         visual?.priceRingColor ? "advancedMapPin--priced" : "",
         options.variant === "cluster" ? "advancedMapPin--cluster" : "",
         options.variant === "user" ? "advancedMapPin--user" : "",
@@ -6945,7 +6917,7 @@
         address: String(value.address || "").trim(),
         latitude: coords?.lat ?? null,
         longitude: coords?.lng ?? null,
-        tier: ["free", "plus", "pro"].includes(String(value.tier || "")) ? String(value.tier) : "free",
+        tier: String(value.tier || "") === "pro" || String(value.tier || "") === "plus" ? "pro" : "free",
         updatedAt: String(value.updatedAt || new Date().toISOString()),
       };
     }
@@ -7103,7 +7075,7 @@
         <div class="mapPersonalItem">
           <button class="mapPersonalItem__button" type="button" data-open-stored-venue="${escapeHtml(venue.id)}" data-source="${escapeHtml(actionName)}">
             <strong>${escapeHtml(actionName === "night_plan" ? `${index + 1}. ${venue.name}` : venue.name)}</strong>
-            <span>${escapeHtml([venue.suburb, venue.tier === "pro" ? "Pro" : venue.tier === "plus" ? "Plus" : null].filter(Boolean).join(" · "))}</span>
+            <span>${escapeHtml([venue.suburb, venue.tier === "pro" ? "Pro" : null].filter(Boolean).join(" · "))}</span>
           </button>
           ${includeRemove ? `<button class="mapPersonalItem__remove" type="button" data-remove-${escapeHtml(actionName)}="${escapeHtml(venue.id)}" aria-label="Remove ${escapeHtml(venue.name)}">×</button>` : ""}
         </div>
@@ -7865,9 +7837,7 @@
               `;
               const listingEyebrow = tierMeta.tier === "pro"
                 ? "Pro venue listing"
-                : tierMeta.tier === "plus"
-                  ? "Plus venue listing"
-                  : hasVenueManagedData
+                : hasVenueManagedData
                     ? "Venue-supplied listing"
                     : "Melbourne venue";
               const metaBadges = [
