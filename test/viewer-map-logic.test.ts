@@ -209,6 +209,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("createAdvancedMapMarker");
     expect(html).toContain("advancedMapPin");
     expect(html).toContain("advancedMapPin--priced");
+    expect(html).toContain("advancedMapPin--pro");
+    expect(html).toContain("const isProVenueMarker");
+    expect(html).toContain('? "PRO"');
     expect(html).toContain("--pin-price-ring");
     expect(html).toContain("getVisibleBeerPriceTier");
     expect(html).toContain("venueRail__card--price-");
@@ -219,6 +222,11 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('loading: "async"');
     expect(html).toContain("EFFECTIVE_GOOGLE_MAPS_MAP_ID");
     expect(html).toContain("useConfiguredGoogleMapsMapId");
+    expect(html).toContain("PINT_PATH_BASE_MAP_STYLES");
+    expect(html).toContain('featureType: "poi.business"');
+    expect(html).toContain('featureType: "transit.station.bus"');
+    expect(html).toContain('featureType: "transit.station.rail"');
+    expect(html).toContain("mapOptions.styles = PINT_PATH_BASE_MAP_STYLES");
     expect(html).toContain('gestureHandling: "cooperative"');
     expect(html).toContain("zoomControl: false");
     expect(html).toContain("clickableIcons: false");
@@ -241,6 +249,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("beerPopup__beerRow--unavailable");
     expect(html).toContain("beerPopup__beerRow--package");
     expect(html).toContain("beerPopup__beerRow--locked");
+    expect(html).toContain("function isBeerPriceHiddenForViewer");
+    expect(html).toContain("function canReportBeerPrice");
+    expect(html).toContain("const reportButtonMarkup = canReportBeerPrice(beer, markerId)");
     expect(html).toContain("beerPopup__summaryGrid");
     expect(html).toContain("Venue-supplied listing");
     expect(html).toContain("I’m here · submit price");
@@ -339,6 +350,9 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain("Ending time");
     expect(venuePortalHtml).toContain("Choose start time");
     expect(venuePortalHtml).toContain("Choose ending time");
+    expect(venuePortalHtml).toContain("specialScheduleDays");
+    expect(venuePortalHtml).toContain("specialScheduleTime");
+    expect(venuePortalHtml).toContain("for (let hour = 0; hour <= 23; hour += 1)");
     expect(venuePortalHtml).toContain("Choose both a start time and ending time for the Pint Path special.");
     expect(venuePortalHtml).toContain("startTime: specialStartTime");
     expect(venuePortalHtml).toContain("endTime: specialEndTime");

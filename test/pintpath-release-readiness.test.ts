@@ -689,6 +689,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     const admin = signup(harness, "admin@pintpath.test");
     const owner = signup(harness, "http-report-owner@pintpath.test");
     const otherOwner = signup(harness, "http-report-other-owner@pintpath.test");
+    const basicOwner = signup(harness, "http-report-basic-owner@pintpath.test");
 
     harness.service.assignVenueManager(admin.account, {
       userId: owner.account.id,
@@ -701,6 +702,12 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       venueId: "venue-http-other",
       venueName: "Other HTTP Report Venue",
       suburb: "Carlton",
+    });
+    harness.service.assignVenueManager(admin.account, {
+      userId: basicOwner.account.id,
+      venueId: "venue-http-basic",
+      venueName: "HTTP Basic Venue",
+      suburb: "Richmond",
     });
     harness.service.upsertBarProfile(admin.account, "venue-http-report", venueProfileInput({
       name: "HTTP Report Venue",
@@ -748,6 +755,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       });
       expect(generated.response.status).toBe(200);
       expect((generated.json?.data as { generatedCount: number }).generatedCount).toBe(1);
+      expect(JSON.stringify(generated.json)).not.toContain("venue-http-basic");
 
       const delivered = await requestJson(baseUrl, "/api/business/admin/reports/monthly/deliver", {
         method: "POST",
@@ -764,6 +772,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         }),
       ]);
       expect(JSON.stringify(deliveries)).not.toContain(otherOwner.account.email);
+      expect(JSON.stringify(deliveries)).not.toContain(basicOwner.account.email);
 
       const ownerExport = await fetch(`${baseUrl}/api/business/venue-portal/venue-http-report/reports/2026-05/export?format=json`, {
         headers: { authorization: `Bearer ${owner.token}` },
@@ -786,6 +795,13 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         headers: { authorization: `Bearer ${otherOwner.token}` },
       });
       expect(crossOwnerExport.status).toBe(403);
+
+      const basicOwnerExport = await fetch(`${baseUrl}/api/business/venue-portal/venue-http-basic/reports/2026-05/export?format=json`, {
+        headers: { authorization: `Bearer ${basicOwner.token}` },
+      });
+      expect(basicOwnerExport.status).toBe(403);
+      const basicError = await basicOwnerExport.json() as { error?: { message?: string } };
+      expect(basicError.error?.message).toContain("Pro venue tier required");
     });
   });
 });

@@ -5705,7 +5705,7 @@ export class BusinessRepository {
   }
 
   listReportableBarProfiles(input: { venueId?: string | null | undefined; limit: number }): BarProfile[] {
-    const clauses = ["active = 1", "membership_tier IN ('plus', 'pro')"];
+    const clauses = ["active = 1", "membership_tier = 'pro'"];
     const values: unknown[] = [];
 
     if (input.venueId) {

@@ -122,21 +122,9 @@
                 </div>
                 <span class="pill">Server validated</span>
               </div>
-              <form id="discountRedemptionForm" class="form">
+              <form id="discountRedemptionForm" class="form redemptionStaffForm">
                 <input name="specialId" type="hidden" />
                 <input name="estimatedSavingsDollars" type="hidden" value="0" />
-                <div class="discountQuickPanel">
-                  <div>
-                    <span class="eyebrow">Common app discount</span>
-                    <div class="actionRow actionRow--compact">
-                      <button class="button button--small" type="button" data-savings-dollars="0">$0</button>
-                      <button class="button button--small" type="button" data-savings-dollars="1">$1 off</button>
-                      <button class="button button--small" type="button" data-savings-dollars="2">$2 off</button>
-                    </div>
-                  </div>
-                </div>
-                <div id="discountSpecialChoices" class="discountSpecialChoices"></div>
-                <div id="selectedDiscountSpecial" class="selectedDiscountSpecial" hidden></div>
                 <div class="grid grid--two">
                   <label class="field">User code
                     <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="ABC123" required />
@@ -150,9 +138,18 @@
                 <label class="field">Quantity
                   <input name="quantity" type="number" min="1" max="20" value="1" />
                 </label>
-                <label class="field">Notes
-                  <textarea name="notes" placeholder="Optional staff note"></textarea>
-                </label>
+                <div class="redemptionSelectionStack">
+                  <div class="discountQuickPanel">
+                    <span class="eyebrow">Common app discount</span>
+                    <div class="actionRow actionRow--compact">
+                      <button class="button button--small" type="button" data-savings-dollars="0">$0</button>
+                      <button class="button button--small" type="button" data-savings-dollars="1">$1 off</button>
+                      <button class="button button--small" type="button" data-savings-dollars="2">$2 off</button>
+                    </div>
+                  </div>
+                  <div id="discountSpecialChoices" class="discountSpecialChoices"></div>
+                  <div id="selectedDiscountSpecial" class="selectedDiscountSpecial" hidden></div>
+                </div>
                 <button class="button button--primary" type="submit">Redeem code</button>
               </form>
               <div id="discountRedemptionStatus" class="notice" role="status" hidden></div>
@@ -385,14 +382,14 @@
                   </label>
                 </div>
                 <div class="specialScheduleGrid">
-                  <div>
+                  <div class="specialScheduleDays">
                     <div class="field" style="margin-bottom:8px;">Days</div>
                     <div id="specialDays" class="dayChecklist"></div>
                   </div>
-                  <label class="field">Start time
+                  <label class="field specialScheduleTime">Start time
                     <select name="startTime"></select>
                   </label>
-                  <label class="field">Ending time
+                  <label class="field specialScheduleTime">Ending time
                     <select name="endTime"></select>
                   </label>
                 </div>
@@ -843,7 +840,7 @@
 
     function renderTimeSuggestions() {
       const options = [];
-      for (let hour = 10; hour <= 23; hour += 1) {
+      for (let hour = 0; hour <= 23; hour += 1) {
         for (const minute of [0, 30]) {
           const normalized = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
           options.push(`<option value="${formatFriendlyTime(normalized)}">${normalized}</option>`);
@@ -2219,6 +2216,11 @@
       if (!panel || !form) return;
       syncDiscountSavingsButtons();
       const specialId = field(form, "specialId").value;
+      document.querySelectorAll(".discountSpecialChoice").forEach((button) => {
+        const isSelected = button.dataset.discountSpecialId === specialId && Boolean(specialId);
+        button.classList.toggle("is-selected", isSelected);
+        button.setAttribute("aria-pressed", isSelected ? "true" : "false");
+      });
       if (!specialId) {
         panel.hidden = true;
         panel.innerHTML = "";
@@ -2332,6 +2334,7 @@
               <button
                 class="discountSpecialChoice"
                 type="button"
+                aria-pressed="false"
                 data-discount-special-id="${escapeHtml(special.id)}"
                 data-discount-item="${escapeHtml(special.title || "Pint Path special")}"
                 data-savings-dollars="${escapeHtml(savings)}"
@@ -2985,7 +2988,7 @@
             itemName: field(discountRedemptionFormElement, "itemName").value || null,
             quantity: Number(field(discountRedemptionFormElement, "quantity").value || 1),
             estimatedSavingsCents: Math.round(Math.max(0, savingsDollars) * 100),
-            notes: field(discountRedemptionFormElement, "notes").value || null,
+            notes: null,
           };
           try {
             const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/discount-redemptions`, {
@@ -3141,7 +3144,7 @@
             field(discountRedemptionFormElement, "estimatedSavingsDollars").value = target.dataset.savingsDollars;
           }
           syncSelectedDiscountSpecial();
-          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem || "Pint Path special"} selected.`);
+          discountRedemptionStatus.hidden = true;
           return;
         }
 
@@ -3161,14 +3164,14 @@
         if (target.dataset.savingsDollars && discountRedemptionFormElement) {
           field(discountRedemptionFormElement, "estimatedSavingsDollars").value = target.dataset.savingsDollars;
           syncSelectedDiscountSpecial();
-          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${formatCurrency(target.dataset.savingsDollars)} discount selected.`);
+          discountRedemptionStatus.hidden = true;
           return;
         }
 
         if (target.dataset.discountItem && discountRedemptionFormElement) {
           field(discountRedemptionFormElement, "itemName").value = target.dataset.discountItem;
           syncSelectedDiscountSpecial();
-          MelbBeerBusiness.setStatus(discountRedemptionStatus, `${target.dataset.discountItem} selected.`);
+          discountRedemptionStatus.hidden = true;
           return;
         }
 

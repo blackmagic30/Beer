@@ -944,11 +944,22 @@
     }
 
     .advancedMapPin--pro {
+      --pin-bg: linear-gradient(135deg, #f5c542 0%, #d946ef 52%, #38bdf8 100%);
+      --pin-border: #fde68a;
+      --pin-color: #07111f;
       box-shadow:
-        0 0 0 1px rgba(245, 197, 66, 0.34),
-        0 0 24px rgba(245, 197, 66, 0.28),
-        0 0 38px rgba(139, 92, 246, 0.14),
-        0 14px 32px rgba(0, 0, 0, 0.36);
+        0 0 0 2px rgba(245, 197, 66, 0.42),
+        0 0 22px rgba(245, 197, 66, 0.36),
+        0 0 42px rgba(217, 70, 239, 0.18),
+        0 0 58px rgba(56, 189, 248, 0.12),
+        0 16px 36px rgba(0, 0, 0, 0.4);
+      filter: saturate(1.12);
+    }
+
+    .advancedMapPin--pro .advancedMapPin__glyph {
+      color: #07111f;
+      font-size: 0.84em;
+      text-shadow: 0 1px 10px rgba(255, 255, 255, 0.5);
     }
 
     .advancedMapPin--cluster {
@@ -3559,6 +3570,18 @@
       west: 112,
       east: 154.5,
     });
+    const PINT_PATH_BASE_MAP_STYLES = Object.freeze([
+      { featureType: "poi.business", stylers: [{ visibility: "off" }] },
+      { featureType: "poi.attraction", stylers: [{ visibility: "off" }] },
+      { featureType: "poi.government", stylers: [{ visibility: "off" }] },
+      { featureType: "poi.medical", stylers: [{ visibility: "off" }] },
+      { featureType: "poi.place_of_worship", stylers: [{ visibility: "off" }] },
+      { featureType: "poi.school", stylers: [{ visibility: "off" }] },
+      { featureType: "poi.sports_complex", stylers: [{ visibility: "off" }] },
+      { featureType: "transit.station", stylers: [{ visibility: "on" }] },
+      { featureType: "transit.station.bus", stylers: [{ visibility: "on" }] },
+      { featureType: "transit.station.rail", stylers: [{ visibility: "on" }] },
+    ]);
     const GOOGLE_MAPS_KEY =
       params.get("googleMapsKey") ||
       window.localStorage.getItem("googleMapsKey") ||
@@ -4350,8 +4373,16 @@
       return Boolean(beer?.freePreviewIncluded || canShowExactPrices(markerId));
     }
 
+    function isBeerPriceHiddenForViewer(beer, markerId) {
+      return Boolean(hasRedactedPrice(beer) || (hasNumericPrice(beer) && !canShowBeerPrice(beer, markerId)));
+    }
+
+    function canReportBeerPrice(beer, markerId) {
+      return Boolean(beer && !isBeerPriceHiddenForViewer(beer, markerId));
+    }
+
     function getDisplayBeerPriceText(beer, markerId) {
-      if (!hasNumericPrice(beer) || canShowBeerPrice(beer, markerId)) {
+      if (!isBeerPriceHiddenForViewer(beer, markerId)) {
         return beer.priceText;
       }
 
@@ -5517,7 +5548,7 @@
     }
 
     function getBeerDisplayState(beer, markerId) {
-      if (hasRedactedPrice(beer) || (hasNumericPrice(beer) && !canShowBeerPrice(beer, markerId))) {
+      if (isBeerPriceHiddenForViewer(beer, markerId)) {
         return "locked";
       }
 
@@ -5535,7 +5566,7 @@
     }
 
     function getVisibleBeerPriceTier(beer, markerId) {
-      if (hasRedactedPrice(beer) || !hasNumericPrice(beer) || !canShowBeerPrice(beer, markerId)) {
+      if (isBeerPriceHiddenForViewer(beer, markerId) || !hasNumericPrice(beer)) {
         return null;
       }
 
@@ -5602,7 +5633,7 @@
 
     function getPriceStateBadgeStyle(beer, markerId) {
       const visual = window.MelbBeerMapLogic.getMarkerVisual(beer, {
-        locked: hasRedactedPrice(beer) || (hasNumericPrice(beer) && !canShowBeerPrice(beer, markerId)),
+        locked: isBeerPriceHiddenForViewer(beer, markerId),
       });
 
       return [
@@ -6072,7 +6103,7 @@
       }
 
       return window.MelbBeerMapLogic.getMarkerVisual(beer, {
-        locked: hasRedactedPrice(beer) || (hasNumericPrice(beer) && !canShowBeerPrice(beer, markerId)),
+        locked: isBeerPriceHiddenForViewer(beer, markerId),
       });
     }
 
@@ -6683,20 +6714,29 @@
       const glyphEl = document.createElement("span");
       const markerScale = Number(visual?.scale || 12);
       const size = options.size || Math.max(24, Math.min(46, Math.round(markerScale * 2.25)));
-      const glyph = String(options.glyphText ?? visual?.labelText ?? "");
+      const isProVenueMarker = options.tier === "pro" && options.variant !== "cluster" && options.variant !== "user";
+      const defaultGlyph = String(options.glyphText ?? visual?.labelText ?? "");
+      const glyph = isProVenueMarker && (!defaultGlyph || defaultGlyph === "✓" || defaultGlyph === "?")
+        ? "PRO"
+        : defaultGlyph;
 
       pinEl.className = [
         "advancedMapPin",
         options.className,
-        options.tier === "pro" || options.tier === "plus" ? "advancedMapPin--pro" : "",
+        isProVenueMarker ? "advancedMapPin--pro" : "",
         visual?.priceRingColor ? "advancedMapPin--priced" : "",
         options.variant === "cluster" ? "advancedMapPin--cluster" : "",
         options.variant === "user" ? "advancedMapPin--user" : "",
         options.selected ? "is-selected" : "",
       ].filter(Boolean).join(" ");
-      pinEl.style.setProperty("--pin-bg", visual?.fillColor || "#2563eb");
-      pinEl.style.setProperty("--pin-border", options.selected ? "#f5c542" : visual?.strokeColor || "#bfdbfe");
-      pinEl.style.setProperty("--pin-color", visual?.labelColor || "#ffffff");
+      pinEl.style.setProperty(
+        "--pin-bg",
+        isProVenueMarker && !visual?.priceRingColor
+          ? "linear-gradient(135deg, #f5c542 0%, #d946ef 52%, #38bdf8 100%)"
+          : visual?.fillColor || "#2563eb",
+      );
+      pinEl.style.setProperty("--pin-border", options.selected ? "#fef3c7" : isProVenueMarker ? "#f5c542" : visual?.strokeColor || "#bfdbfe");
+      pinEl.style.setProperty("--pin-color", isProVenueMarker && !visual?.priceRingColor ? "#07111f" : visual?.labelColor || "#ffffff");
       pinEl.style.setProperty("--pin-price-ring", visual?.priceRingColor || "transparent");
       pinEl.style.setProperty("--pin-size", `${size}px`);
       pinEl.setAttribute("aria-hidden", "true");
@@ -7478,7 +7518,7 @@
           throw new Error("Google Maps marker library did not expose AdvancedMarkerElement");
         }
         const mapElement = document.getElementById("map");
-        const map = new google.maps.Map(mapElement, {
+        const mapOptions = {
           center: { lat: -37.8136, lng: 144.9631 },
           zoom: MAP_DEFAULT_ZOOM,
           gestureHandling: "cooperative",
@@ -7489,7 +7529,11 @@
           fullscreenControl: true,
           clickableIcons: false,
           mapId: EFFECTIVE_GOOGLE_MAPS_MAP_ID,
-        });
+        };
+        if (!EFFECTIVE_GOOGLE_MAPS_MAP_ID) {
+          mapOptions.styles = PINT_PATH_BASE_MAP_STYLES;
+        }
+        const map = new google.maps.Map(mapElement, mapOptions);
         googleMapInstance = map;
         installCommandScrollZoomAssist(map, mapElement);
 
@@ -7937,7 +7981,22 @@
                 </div>
               ` : "";
               const beerMarkup = liveBeerItems.length > 0
-                ? liveBeerItems.map((beer) => `
+                ? liveBeerItems.map((beer) => {
+                  const reportButtonMarkup = canReportBeerPrice(beer, markerId)
+                    ? `
+                    <button
+                      class="beerPopup__link"
+                      type="button"
+                      data-report-price="1"
+                      data-venue-id="${escapeHtml(item.venue_id || venue.id || "")}"
+                      data-venue-name="${venueName}"
+                      data-price-record-id="${escapeHtml(beer.priceRecordId || "")}"
+                      data-beer-name="${escapeHtml(beer.label)}"
+                    >Report wrong price</button>
+                  `
+                    : "";
+
+                  return `
                 <div class="beerPopup__beerRow ${escapeHtml(getBeerRowClass(beer, markerId))}">
                   <div style="display:flex; flex-direction:column; gap:4px;">
                     <span class="beerPopup__beerName">${escapeHtml(beer.label)}</span>
@@ -7949,18 +8008,11 @@
                   </div>
                   <div class="beerPopup__beerActions">
                     <span class="beerPopup__beerPrice ${escapeHtml(getBeerPriceClass(beer, markerId))}">${escapeHtml(getDisplayBeerPriceText(beer, markerId))}</span>
-                    <button
-                      class="beerPopup__link"
-                      type="button"
-                      data-report-price="1"
-                      data-venue-id="${escapeHtml(item.venue_id || venue.id || "")}"
-                      data-venue-name="${venueName}"
-                      data-price-record-id="${escapeHtml(beer.priceRecordId || "")}"
-                      data-beer-name="${escapeHtml(beer.label)}"
-                    >Report wrong price</button>
+                    ${reportButtonMarkup}
                   </div>
                 </div>
-              `).join("")
+              `;
+                }).join("")
                 : `
                 <div class="beerPopup__empty">
                   No verified beer prices yet. Submit a menu photo or three beer rows to help fill this venue.

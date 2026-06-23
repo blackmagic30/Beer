@@ -4473,8 +4473,10 @@ describe("business demo contribution model", () => {
 
     const freePortal = service.getVenuePortal(managerAccount, { venueId: "free-bar-1" });
     expect(freePortal.tier.canManageSpecials).toBe(false);
+    expect(freePortal.tier.monthlyReports).toBe(false);
     expect(freePortal.tier.analyticsLocked).toBe(true);
     expect(freePortal.analytics).toBeNull();
+    expect(freePortal.monthlyReport).toBeNull();
 
     expect(service.upsertBarBeer(managerAccount, "free-bar-1", {
       id: null,
@@ -4510,6 +4512,9 @@ describe("business demo contribution model", () => {
       scheduleNote: null,
       exclusive: true,
       active: true,
+    })).toThrow("Pro venue tier required");
+    expect(() => service.exportVenueMonthlyReport(managerAccount, "free-bar-1", "2026-05", {
+      format: "json",
     })).toThrow("Pro venue tier required");
   });
 
