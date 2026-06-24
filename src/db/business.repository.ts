@@ -58,6 +58,7 @@ export interface BusinessAccount {
   email: string;
   passwordHash: string;
   displayName: string | null;
+  displayNameKey: string | null;
   avatarUrl: string | null;
   authProvider: string;
   supabaseUserId: string | null;
@@ -102,6 +103,7 @@ export interface PublicProfile {
   publicAccountId: string | null;
   email: string | null;
   displayName: string | null;
+  displayNameKey: string | null;
   username: string | null;
   avatarUrl: string | null;
   role: AccountRole;
@@ -772,6 +774,7 @@ interface AccountRow {
   email: string;
   password_hash: string;
   display_name: string | null;
+  display_name_key: string | null;
   avatar_url: string | null;
   auth_provider: string;
   supabase_user_id: string | null;
@@ -804,6 +807,7 @@ interface ProfileRow {
   public_account_id: string | null;
   email: string | null;
   display_name: string | null;
+  display_name_key: string | null;
   username: string | null;
   avatar_url: string | null;
   role: AccountRole;
@@ -1350,6 +1354,7 @@ function toAccount(row: AccountRow): BusinessAccount {
     email: row.email,
     passwordHash: row.password_hash,
     displayName: row.display_name,
+    displayNameKey: row.display_name_key,
     avatarUrl: row.avatar_url,
     authProvider: row.auth_provider,
     supabaseUserId: row.supabase_user_id,
@@ -1398,6 +1403,7 @@ function toProfile(row: ProfileRow): PublicProfile {
     publicAccountId: row.public_account_id,
     email: row.email,
     displayName: row.display_name,
+    displayNameKey: row.display_name_key,
     username: row.username,
     avatarUrl: row.avatar_url,
     role: row.role,
@@ -2209,6 +2215,7 @@ export class BusinessRepository {
     subscriptionStatus: SubscriptionStatus;
     now: string;
     displayName?: string | null | undefined;
+    displayNameKey?: string | null | undefined;
     avatarUrl?: string | null | undefined;
     authProvider?: string | undefined;
     supabaseUserId?: string | null | undefined;
@@ -2225,11 +2232,11 @@ export class BusinessRepository {
       this.database
         .prepare(
           `INSERT INTO accounts (
-            id, public_account_id, email, password_hash, display_name, avatar_url, auth_provider, supabase_user_id,
+            id, public_account_id, email, password_hash, display_name, display_name_key, avatar_url, auth_provider, supabase_user_id,
             email_verified_at, mfa_level, mfa_verified_at, role, subscription_status,
             terms_accepted_at, privacy_accepted_at, terms_version, privacy_version,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
@@ -2237,6 +2244,7 @@ export class BusinessRepository {
           input.email,
           input.passwordHash,
           input.displayName ?? null,
+          input.displayNameKey ?? null,
           input.avatarUrl ?? null,
           input.authProvider ?? "local",
           input.supabaseUserId ?? null,
@@ -2258,6 +2266,7 @@ export class BusinessRepository {
         publicAccountId,
         email: input.email,
         displayName: input.displayName ?? null,
+        displayNameKey: input.displayNameKey ?? null,
         username: null,
         avatarUrl: input.avatarUrl ?? null,
         role: input.role,
@@ -2277,6 +2286,7 @@ export class BusinessRepository {
     publicAccountId?: string | null | undefined;
     email: string | null;
     displayName: string | null;
+    displayNameKey?: string | null | undefined;
     username: string | null;
     avatarUrl: string | null;
     role: AccountRole;
@@ -2288,13 +2298,14 @@ export class BusinessRepository {
     this.database
       .prepare(
         `INSERT INTO profiles (
-          id, public_account_id, email, display_name, username, avatar_url, role, account_status,
+          id, public_account_id, email, display_name, display_name_key, username, avatar_url, role, account_status,
           age_verification_status, is_over_18_verified, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           public_account_id = COALESCE(excluded.public_account_id, profiles.public_account_id),
           email = excluded.email,
           display_name = excluded.display_name,
+          display_name_key = excluded.display_name_key,
           avatar_url = excluded.avatar_url,
           role = excluded.role,
           account_status = excluded.account_status,
@@ -2307,6 +2318,7 @@ export class BusinessRepository {
         input.publicAccountId ?? null,
         input.email,
         input.displayName,
+        input.displayNameKey ?? null,
         input.username,
         input.avatarUrl,
         input.role,
@@ -2340,6 +2352,13 @@ export class BusinessRepository {
     const row = this.database
       .prepare("SELECT * FROM accounts WHERE supabase_user_id = ? OR id = ? LIMIT 1")
       .get(supabaseUserId, supabaseUserId) as AccountRow | undefined;
+    return row ? toAccount(row) : null;
+  }
+
+  getAccountByDisplayNameKey(displayNameKey: string): BusinessAccount | null {
+    const row = this.database
+      .prepare("SELECT * FROM accounts WHERE display_name_key = ? LIMIT 1")
+      .get(displayNameKey) as AccountRow | undefined;
     return row ? toAccount(row) : null;
   }
 
@@ -2398,6 +2417,7 @@ export class BusinessRepository {
     supabaseUserId: string;
     authProvider: string;
     displayName: string | null;
+    displayNameKey?: string | null | undefined;
     avatarUrl: string | null;
     emailVerifiedAt: string | null;
     mfaLevel: string;
@@ -2411,6 +2431,7 @@ export class BusinessRepository {
            SET supabase_user_id = ?,
                auth_provider = ?,
                display_name = ?,
+               display_name_key = ?,
                avatar_url = ?,
                email_verified_at = COALESCE(?, email_verified_at),
                mfa_level = ?,
@@ -2422,6 +2443,7 @@ export class BusinessRepository {
           input.supabaseUserId,
           input.authProvider,
           input.displayName,
+          input.displayNameKey ?? null,
           input.avatarUrl,
           input.emailVerifiedAt,
           input.mfaLevel,
@@ -2436,6 +2458,7 @@ export class BusinessRepository {
           publicAccountId: account.publicAccountId,
           email: account.email,
           displayName: input.displayName,
+          displayNameKey: input.displayNameKey ?? null,
           username: null,
           avatarUrl: input.avatarUrl,
           role: account.role,
@@ -2449,16 +2472,17 @@ export class BusinessRepository {
     return this.getAccountById(input.userId)!;
   }
 
-  updateAccountDisplayName(input: { userId: string; displayName: string | null; now: string }): BusinessAccount {
+  updateAccountDisplayName(input: { userId: string; displayName: string | null; displayNameKey?: string | null | undefined; now: string }): BusinessAccount {
     this.database.transaction(() => {
       this.database
         .prepare(
           `UPDATE accounts
            SET display_name = ?,
+               display_name_key = ?,
                updated_at = ?
            WHERE id = ?`,
         )
-        .run(input.displayName, input.now, input.userId);
+        .run(input.displayName, input.displayNameKey ?? null, input.now, input.userId);
 
       const account = this.getAccountById(input.userId);
       if (account) {
@@ -2467,6 +2491,7 @@ export class BusinessRepository {
           publicAccountId: account.publicAccountId,
           email: account.email,
           displayName: input.displayName,
+          displayNameKey: input.displayNameKey ?? null,
           username: null,
           avatarUrl: account.avatarUrl,
           role: account.role,

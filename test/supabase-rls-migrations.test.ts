@@ -151,4 +151,15 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).toContain("discount_redemptions_select_own");
     expect(sql).not.toContain("roles = '{public}'");
   });
+
+  it("keeps public display names unique and guarded by community rules", () => {
+    const sql = migration("20260624083128_unique_public_display_names.sql");
+
+    expect(sql).toContain("add column if not exists display_name_key");
+    expect(sql).toContain("profiles_display_name_key_key");
+    expect(sql).toContain("private.guard_public_display_name()");
+    expect(sql).toContain("That display name is already taken.");
+    expect(sql).toContain("Choose a display name that follows the community rules.");
+    expect(sql).toContain("revoke all on function private.guard_public_display_name() from public");
+  });
 });

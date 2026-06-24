@@ -94,7 +94,7 @@
               </label>
               <label class="field">Display name <span class="muted">(optional)</span>
                 <input name="displayName" maxlength="28" autocomplete="nickname" placeholder="Shown on leaderboards" />
-                <span class="fieldHint">No slurs, impersonation, URLs, or abusive names.</span>
+                <span class="nameRuleHint"><span class="nameRuleIcon" aria-hidden="true">!</span> Unique public name. No disrespectful, racist, hateful, rude, URL, or impersonation names.</span>
               </label>
               <label class="field passwordField">Password
                 <span class="passwordInputWrap">
@@ -164,14 +164,6 @@
                 <span class="pill">Rotates per session</span>
               </div>
               <button id="refreshDiscountPassButton" class="button button--primary" type="button">Generate special code</button>
-              <div id="discountPassResult" class="discountPassResult is-hidden" hidden>
-                <div>
-                  <span class="metricLabel">Current code</span>
-                  <div id="discountPassCode" class="discountCode">------</div>
-                  <p id="discountPassExpires" class="helperCopy"></p>
-                </div>
-                <img id="discountPassQr" class="discountPassQr" alt="Pint Path special QR code" />
-              </div>
               <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special.</p>
             </article>
 
@@ -217,7 +209,7 @@
             <form id="displayNameForm" class="displayNameForm">
               <label class="field">Leaderboard display name
                 <input name="displayName" maxlength="28" placeholder="Pick a public name" autocomplete="nickname" />
-                <span class="fieldHint">Shown on monthly leaderboards. Community-rule names only; emails stay private.</span>
+                <span class="nameRuleHint"><span class="nameRuleIcon" aria-hidden="true">!</span> Must be unique. No disrespectful, racist, hateful, rude, URL, or impersonation names.</span>
               </label>
               <button class="button" type="submit">Save name</button>
             </form>
@@ -233,12 +225,15 @@
                 <h2 id="betaFeatureTitle">BetaTesting</h2>
                 <p class="muted">Choose one beta field at a time so the tools stay clean on phones.</p>
               </div>
-              <div class="betaFeatureMenu">
-                <button id="betaFeatureMenuButton" class="button button--premium" type="button" aria-haspopup="true" aria-expanded="false">Pub Golf</button>
-                <div class="betaFeatureDropdown" role="menu" aria-label="BetaTesting fields">
-                  <button type="button" role="menuitem" data-beta-feature-target="pub-golf">Pub Golf</button>
-                  <button type="button" role="menuitem" data-beta-feature-target="leaderboard">Leaderboard</button>
-                  <button type="button" role="menuitem" data-beta-feature-target="pint-points">Pint Point Wallet</button>
+              <div class="betaFeaturePicker">
+                <span class="betaFeatureHint">Click here to show other beta testing features.</span>
+                <div class="betaFeatureMenu">
+                  <button id="betaFeatureMenuButton" class="button button--premium" type="button" aria-haspopup="true" aria-expanded="false">Pub Golf</button>
+                  <div class="betaFeatureDropdown" role="menu" aria-label="BetaTesting fields">
+                    <button type="button" role="menuitem" data-beta-feature-target="pub-golf">Pub Golf</button>
+                    <button type="button" role="menuitem" data-beta-feature-target="leaderboard">Leaderboard</button>
+                    <button type="button" role="menuitem" data-beta-feature-target="pint-points">Pint Point Wallet</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -388,6 +383,27 @@
       </section>
 
     </section>
+
+    <div id="discountPassModal" class="discountPassModal" role="dialog" aria-modal="true" aria-labelledby="discountPassModalTitle" hidden>
+      <button class="discountPassModalBackdrop" type="button" data-close-discount-pass-modal aria-label="Close Pint Path special code"></button>
+      <section class="discountPassModalPanel" aria-describedby="discountPassModalDescription">
+        <button id="discountPassModalClose" class="discountPassModalClose" type="button" aria-label="Close Pint Path special code" data-close-discount-pass-modal>X</button>
+        <div class="discountPassModalHeader">
+          <div>
+            <span class="eyebrow">Current code</span>
+            <h2 id="discountPassModalTitle">Pint Path special</h2>
+            <p id="discountPassModalDescription" class="muted">Show this screen to venue staff when redeeming a Pint Path special.</p>
+          </div>
+        </div>
+        <div class="discountPassModalBody">
+          <div>
+            <div id="discountPassCode" class="discountCode">------</div>
+            <p id="discountPassExpires" class="helperCopy"></p>
+          </div>
+          <img id="discountPassQr" class="discountPassQr" alt="Pint Path special QR code" />
+        </div>
+      </section>
+    </div>
 
     <p class="footerCopy">18+ only. Community data is verified where possible. Prices may change, venues may refuse service under RSA obligations, and availability is not guaranteed. <a href="/terms.html">Terms</a> · <a href="/privacy.html">Privacy</a></p>
   </main>
@@ -668,6 +684,7 @@
 
     function showLoggedOut(message = "Enter your details to continue.", isError = false) {
       MelbBeerBusiness.setAccountContext(null);
+      closeDiscountPassModal({ quiet: true });
       $("loggedOutView").hidden = false;
       $("accountDashboard").hidden = true;
       $("accountDashboard").classList.add("is-hidden");
@@ -1547,10 +1564,77 @@
       return /@privaterelay\.appleid\.com$/i.test(String(email || "").trim());
     }
 
+    const displayNameDenyPatterns = [
+      /\b(?:admin|moderator|staff|support|pint\s*path|pintpath)\b/i,
+      /\b(?:n[i1!]+g+(?:e|a|3)?r?|c[o0]on|g[o0]{2}k|ch[i1!]+nk|p[a4]k[i1!]|r[a4]ghead|sp[i1!]c|k[i1!]ke)\b/i,
+      /\b(?:f[a4]g+(?:ot)?|tr[a4]nny|dyke|h[o0]m[o0])\b/i,
+      /\b(?:ret[a4]rd|sp[a4]stic|mongoloid)\b/i,
+      /\b(?:wh[o0]re|sl[uü]t|c[uü]nt|b[i1!]tch)\b/i,
+      /(?:https?:\/\/|www\.|@)/i,
+    ];
+
+    function validateDisplayNameClient(value) {
+      const displayName = String(value || "").trim().replace(/\s+/g, " ");
+      if (!displayName) {
+        return null;
+      }
+      if (displayName.length < 2 || displayName.length > 28) {
+        throw new Error("Display name must be 2-28 characters.");
+      }
+      if (!/^[A-Za-z0-9][A-Za-z0-9 ._'’-]*[A-Za-z0-9]$/.test(displayName)) {
+        throw new Error("Display name can use letters, numbers, spaces, dots, apostrophes, underscores, and hyphens.");
+      }
+      const normalized = displayName
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+      if (displayNameDenyPatterns.some((pattern) => pattern.test(displayName) || pattern.test(normalized))) {
+        throw new Error("Choose a respectful display name. Pint Path does not allow racist, hateful, rude, impersonating, or abusive names.");
+      }
+      return displayName;
+    }
+
+    function closeDiscountPassModal(options = {}) {
+      const modal = $("discountPassModal");
+      if (!modal) {
+        return;
+      }
+      modal.hidden = true;
+      document.body.classList.remove("discountPassModalOpen");
+      if (!options.quiet) {
+        $("refreshDiscountPassButton")?.focus();
+      }
+    }
+
+    function openDiscountPassModal() {
+      const modal = $("discountPassModal");
+      if (!modal) {
+        return;
+      }
+      modal.hidden = false;
+      document.body.classList.add("discountPassModalOpen");
+      $("discountPassModalClose")?.focus();
+    }
+
     function renderAccountEmail(account) {
       const email = String(account?.email || "").trim();
+      const displayName = String(account?.displayName || "").trim();
       const emailEl = $("accountEmail");
       const helperEl = $("accountEmailHelper");
+      const privateRelay = isApplePrivateRelayEmail(email);
+      if (displayName) {
+        emailEl.textContent = displayName;
+        emailEl.title = email ? `${displayName} - ${email}` : displayName;
+        helperEl.textContent = privateRelay
+          ? "Apple is forwarding Pint Path emails through Hide My Email."
+          : email;
+        helperEl.hidden = !email;
+        return;
+      }
+
       if (!email) {
         emailEl.textContent = "Signed in";
         emailEl.removeAttribute("title");
@@ -1559,7 +1643,7 @@
         return;
       }
 
-      if (isApplePrivateRelayEmail(email)) {
+      if (privateRelay) {
         emailEl.textContent = "Apple private email";
         emailEl.title = email;
         helperEl.textContent = "Apple is forwarding Pint Path emails through Hide My Email.";
@@ -1610,11 +1694,7 @@
         discountPassButton.disabled = !result.discounts?.eligible;
         discountPassButton.textContent = result.discounts?.eligible ? "Generate special code" : "Premium/contributor only";
       }
-      const discountPassResult = $("discountPassResult");
-      if (discountPassResult) {
-        discountPassResult.hidden = true;
-        discountPassResult.classList.add("is-hidden");
-      }
+      closeDiscountPassModal({ quiet: true });
 
       $("confirmAgeButton").style.display = account.ageConfirmedAt ? "none" : "inline-flex";
 
@@ -1747,6 +1827,9 @@
         }
         if (isSignup && (!body.ageConfirmed || !body.termsAccepted || !body.privacyAccepted)) {
           throw new Error("Confirm you are 18+ and accept the Terms and Privacy Policy to create an account.");
+        }
+        if (isSignup) {
+          body.displayName = validateDisplayNameClient(body.displayName);
         }
         delete body.confirmPassword;
 
@@ -1892,6 +1975,14 @@
       document.querySelectorAll("[data-settings-target]").forEach((button) => {
         button.addEventListener("click", () => showAccountSettingsPanel(button.dataset.settingsTarget));
       });
+      document.querySelectorAll("[data-close-discount-pass-modal]").forEach((button) => {
+        button.addEventListener("click", () => closeDiscountPassModal());
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !$("discountPassModal").hidden) {
+          closeDiscountPassModal();
+        }
+      });
       showAccountSettingsPanel(requestedSettingsPanel());
       $("signupForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
       $("loginForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
@@ -1937,10 +2028,11 @@
         const form = $("displayNameForm");
         const button = form.querySelector('button[type="submit"]');
         try {
+          const displayName = validateDisplayNameClient(form.displayName.value);
           setLoading(button, true, "Saving...");
           await MelbBeerBusiness.apiFetch("/api/business/account/display-name", {
             method: "POST",
-            body: JSON.stringify({ displayName: form.displayName.value }),
+            body: JSON.stringify({ displayName }),
           });
           const result = await refreshAccount();
           MelbBeerBusiness.setStatus($("dashboardStatus"), result?.account?.displayName ? "Display name saved for the leaderboard." : "Display name cleared.");
@@ -1960,9 +2052,8 @@
           });
           $("discountPassCode").textContent = pass.code;
           $("discountPassQr").src = pass.qrDataUrl;
-          $("discountPassResult").hidden = false;
-          $("discountPassResult").classList.remove("is-hidden");
           $("discountPassExpires").textContent = `Expires ${MelbBeerBusiness.formatDate(pass.expiresAt)}. Refresh the page or sign in again for a new session code.`;
+          openDiscountPassModal();
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Pint Path special code generated. Only show it to venue staff when redeeming a special.");
         } catch (error) {
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not generate a Pint Path special code.", true);

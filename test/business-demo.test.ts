@@ -2363,10 +2363,15 @@ describe("business demo contribution model", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const user = createAccount(repository, "display-name-user");
+    const otherUser = createAccount(repository, "display-name-other");
 
     const updated = service.updateDisplayName(user, { displayName: "Tap Legend" });
     expect(updated.account.displayName).toBe("Tap Legend");
     expect(repository.getProfileById(user.id)?.displayName).toBe("Tap Legend");
+    expect(repository.getAccountByDisplayNameKey("tap legend")?.id).toBe(user.id);
+
+    expect(() => service.updateDisplayName(otherUser, { displayName: "Tap   Legend" }))
+      .toThrow("already taken");
 
     expect(() => service.updateDisplayName(user, { displayName: "PintPath Admin" }))
       .toThrow("community rules");

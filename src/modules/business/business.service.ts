@@ -370,6 +370,23 @@ function validatePublicDisplayName(value: string | null | undefined): string | n
   return displayName;
 }
 
+function publicDisplayNameKey(value: string | null | undefined): string | null {
+  const displayName = normalizePublicDisplayName(value);
+  if (!displayName) {
+    return null;
+  }
+
+  const key = displayName
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  return key || null;
+}
+
 function safeProviderDisplayName(value: string | null): string | null {
   try {
     return validatePublicDisplayName(value);
@@ -1680,6 +1697,34 @@ export class BusinessService {
     };
   }
 
+  private assertDisplayNameAvailable(displayName: string | null, currentUserId: string | null = null): string | null {
+    const displayNameKey = publicDisplayNameKey(displayName);
+    if (!displayNameKey) {
+      return null;
+    }
+
+    const existing = this.repository.getAccountByDisplayNameKey(displayNameKey);
+    if (existing && existing.id !== currentUserId) {
+      throw new AppError("That display name is already taken. Choose another leaderboard name.", 409);
+    }
+
+    return displayNameKey;
+  }
+
+  private providerDisplayNameIfAvailable(displayName: string | null, currentUserId: string | null = null): { displayName: string | null; displayNameKey: string | null } {
+    const displayNameKey = publicDisplayNameKey(displayName);
+    if (!displayName || !displayNameKey) {
+      return { displayName: null, displayNameKey: null };
+    }
+
+    const existing = this.repository.getAccountByDisplayNameKey(displayNameKey);
+    if (existing && existing.id !== currentUserId) {
+      return { displayName: null, displayNameKey: null };
+    }
+
+    return { displayName, displayNameKey };
+  }
+
   private auditSecurity(input: {
     actor?: BusinessAccount | null | undefined;
     action: string;
@@ -2302,11 +2347,13 @@ export class BusinessService {
     const now = nowIso();
     const adminEmails = this.getAdminEmailAllowlist();
     const displayName = validatePublicDisplayName(input.displayName);
+    const displayNameKey = this.assertDisplayNameAvailable(displayName);
     const account = this.repository.createAccount({
       id: crypto.randomUUID(),
       email,
       passwordHash: hashPassword(input.password),
       displayName,
+      displayNameKey,
       role: adminEmails.has(email) ? "admin" : "user",
       subscriptionStatus: adminEmails.has(email) ? "admin" : "free",
       termsAcceptedAt: now,
@@ -2417,11 +2464,13 @@ export class BusinessService {
 
     if (!account) {
       const adminEmails = this.getAdminEmailAllowlist();
+      const providerIdentity = this.providerDisplayNameIfAvailable(displayName);
       account = this.repository.createAccount({
         id: supabaseUser.id,
         email,
         passwordHash: "supabase-auth",
-        displayName,
+        displayName: providerIdentity.displayName,
+        displayNameKey: providerIdentity.displayNameKey,
         avatarUrl,
         authProvider: "supabase",
         supabaseUserId: supabaseUser.id,
@@ -2445,11 +2494,13 @@ export class BusinessService {
       });
     } else if (!account.supabaseUserId || account.authProvider !== "supabase" || (!account.displayName && displayName) || account.avatarUrl !== avatarUrl) {
       const nextDisplayName = account.displayName ?? displayName;
+      const providerIdentity = this.providerDisplayNameIfAvailable(nextDisplayName, account.id);
       account = this.repository.linkSupabaseAccount({
         userId: account.id,
         supabaseUserId: supabaseUser.id,
         authProvider: "supabase",
-        displayName: nextDisplayName,
+        displayName: providerIdentity.displayName,
+        displayNameKey: providerIdentity.displayNameKey,
         avatarUrl,
         emailVerifiedAt,
         mfaLevel: mfaClaims.mfaLevel,
@@ -2537,9 +2588,11 @@ export class BusinessService {
 
   updateDisplayName(account: BusinessAccount, input: DisplayNameUpdateInput) {
     const displayName = validatePublicDisplayName(input.displayName);
+    const displayNameKey = this.assertDisplayNameAvailable(displayName, account.id);
     const updated = this.repository.updateAccountDisplayName({
       userId: account.id,
       displayName,
+      displayNameKey,
       now: nowIso(),
     });
     this.recordUserActivity({

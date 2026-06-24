@@ -3725,14 +3725,14 @@ h3 {
 
 .accountHighlightsGrid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.78fr) minmax(520px, 1.62fr);
+  grid-template-columns: minmax(260px, 0.82fr) minmax(560px, 1.92fr);
   gap: clamp(14px, 1.8vw, 20px);
   align-items: stretch;
 }
 
 .accountSpecialIdentityGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.46fr);
+  grid-template-columns: minmax(0, 1.38fr) minmax(280px, 0.72fr);
   gap: clamp(14px, 1.8vw, 20px);
   align-items: stretch;
   min-width: 0;
@@ -3787,7 +3787,7 @@ h3 {
 }
 
 .accountHeroMetric {
-  min-height: clamp(230px, 26vw, 310px);
+  min-height: clamp(250px, 24vw, 330px);
 }
 
 .accountHeroMetric--savings {
@@ -3871,6 +3871,7 @@ h3 {
   align-content: start;
   display: grid;
   gap: 12px;
+  min-width: 0;
   border-color: rgba(139, 92, 246, 0.28);
   background:
     radial-gradient(circle at 18% 0%, rgba(139, 92, 246, 0.18), transparent 42%),
@@ -3879,9 +3880,13 @@ h3 {
 }
 
 .accountIdentityCard--compact strong {
-  font-size: clamp(0.98rem, 1.7vw, 1.18rem);
+  max-width: 100%;
+  overflow: hidden;
+  font-size: clamp(0.82rem, 1.18vw, 1.12rem);
   line-height: 1.22;
-  word-break: break-word;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 .accountEmailHelper {
@@ -3985,6 +3990,95 @@ h3 {
   background: #fff;
   padding: 10px;
   object-fit: contain;
+}
+
+body.discountPassModalOpen {
+  overflow: hidden;
+}
+
+.discountPassModal[hidden] {
+  display: none !important;
+}
+
+.discountPassModal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: clamp(16px, 4vw, 40px);
+}
+
+.discountPassModalBackdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background:
+    radial-gradient(circle at 50% 12%, rgba(34, 211, 238, 0.16), transparent 34%),
+    rgba(3, 7, 18, 0.72);
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+}
+
+.discountPassModalPanel {
+  position: relative;
+  width: min(640px, 100%);
+  border: 1px solid rgba(245, 197, 66, 0.34);
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(245, 197, 66, 0.18), transparent 40%),
+    radial-gradient(circle at 92% 16%, rgba(217, 70, 239, 0.16), transparent 38%),
+    radial-gradient(circle at 72% 100%, rgba(34, 211, 238, 0.14), transparent 42%),
+    rgba(8, 13, 25, 0.96);
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.58), var(--shadow-premium);
+  padding: clamp(22px, 3.8vw, 34px);
+}
+
+.discountPassModalClose {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid rgba(34, 211, 238, 0.26);
+  border-radius: 50%;
+  background: rgba(3, 7, 18, 0.58);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 1.15rem;
+  font-weight: 950;
+}
+
+.discountPassModalHeader {
+  display: grid;
+  gap: 8px;
+  padding-right: 50px;
+}
+
+.discountPassModalHeader h2,
+.discountPassModalHeader p {
+  margin: 0;
+}
+
+.discountPassModalBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: clamp(18px, 4vw, 28px);
+  margin-top: 22px;
+}
+
+.discountPassModal .discountCode {
+  font-size: clamp(3.4rem, 10vw, 6.6rem);
+  line-height: 0.96;
+}
+
+.discountPassModal .discountPassQr {
+  width: clamp(152px, 24vw, 214px);
+  height: clamp(152px, 24vw, 214px);
+  border-radius: 26px;
 }
 
 .legalPage .hero {
@@ -4798,6 +4892,30 @@ h3 {
   margin: 0;
 }
 
+.nameRuleHint {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.nameRuleIcon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid rgba(245, 197, 66, 0.36);
+  border-radius: 50%;
+  background: rgba(245, 197, 66, 0.1);
+  color: var(--gold);
+  font-size: 0.7rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
 .betaTestingPanel,
 .pubGolfPanel {
   border-color: rgba(245, 197, 66, 0.18);
@@ -4822,6 +4940,21 @@ h3 {
 .betaTestingHeader h2,
 .betaTestingHeader p {
   margin: 0;
+}
+
+.betaFeaturePicker {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
+.betaFeatureHint {
+  max-width: 240px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: right;
 }
 
 .betaFeatureMenu {
@@ -6267,6 +6400,15 @@ h3 {
     grid-template-columns: 1fr;
   }
 
+  .betaFeaturePicker {
+    justify-items: start;
+  }
+
+  .betaFeatureHint {
+    max-width: none;
+    text-align: left;
+  }
+
   .betaFeatureMenu {
     justify-self: stretch;
     min-width: 0;
@@ -6289,6 +6431,15 @@ h3 {
   .betaFeatureDropdown button {
     min-height: 44px;
     padding: 8px;
+    text-align: center;
+  }
+
+  .discountPassModalBody {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .discountPassModal .discountCode {
     text-align: center;
   }
 
@@ -6899,11 +7050,10 @@ h3 {
   }
 
   .accountIdentityCard--compact strong {
-    display: -webkit-box;
+    font-size: clamp(0.72rem, 3.1vw, 0.9rem);
     overflow: hidden;
-    font-size: 0.84rem;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .accountIdentityCard--compact .button {
@@ -6934,6 +7084,10 @@ h3 {
     transform: none;
   }
 
+  .betaFeatureHint {
+    font-size: 0.72rem;
+  }
+
   .betaFeatureMenu:hover .betaFeatureDropdown,
   .betaFeatureMenu:focus-within .betaFeatureDropdown,
   .betaFeatureMenu.is-open .betaFeatureDropdown {
@@ -6943,6 +7097,24 @@ h3 {
 
   .pubGolfRouteMap {
     min-height: 300px;
+  }
+
+  .discountPassModal {
+    align-items: end;
+    padding: 12px;
+  }
+
+  .discountPassModalPanel {
+    border-radius: 24px;
+    padding: 20px;
+  }
+
+  .discountPassModalHeader {
+    padding-right: 44px;
+  }
+
+  .discountPassModal .discountCode {
+    font-size: clamp(3rem, 18vw, 4.8rem);
   }
 
   .pubGolfItineraryLeg {

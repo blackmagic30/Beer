@@ -42,6 +42,7 @@ const authSessionsColumns = [
 const accountsColumns = [
   { name: "public_account_id", definition: "TEXT" },
   { name: "display_name", definition: "TEXT" },
+  { name: "display_name_key", definition: "TEXT" },
   { name: "avatar_url", definition: "TEXT" },
   { name: "auth_provider", definition: "TEXT NOT NULL DEFAULT 'local'" },
   { name: "supabase_user_id", definition: "TEXT" },
@@ -58,6 +59,7 @@ const accountsColumns = [
 
 const profilesColumns = [
   { name: "public_account_id", definition: "TEXT" },
+  { name: "display_name_key", definition: "TEXT" },
 ] as const;
 
 const submissionColumns = [
@@ -124,8 +126,16 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_public_account
       ON accounts (public_account_id);
 
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_display_name_key
+      ON accounts (display_name_key)
+      WHERE display_name_key IS NOT NULL;
+
     CREATE INDEX IF NOT EXISTS idx_profiles_public_account
       ON profiles (public_account_id);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_display_name_key
+      ON profiles (display_name_key)
+      WHERE display_name_key IS NOT NULL;
 
     CREATE INDEX IF NOT EXISTS idx_accounts_email_verified
       ON accounts (email_verified_at, updated_at DESC);
@@ -231,6 +241,63 @@ function backfillPublicAccountIds(database: BetterSqlite3.Database): void {
       updateAccount.run(publicAccountId, row.id);
       updateProfile.run(publicAccountId, row.id);
     }
+  });
+
+  backfill();
+}
+
+function normalizeDisplayNameKey(value: string | null): string | null {
+  const key = (value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  return key || null;
+}
+
+function backfillDisplayNameKeys(database: BetterSqlite3.Database): void {
+  const rows = database
+    .prepare("SELECT id, display_name FROM accounts ORDER BY updated_at DESC, created_at DESC, id")
+    .all() as Array<{ id: string; display_name: string | null }>;
+  const usedKeys = new Set<string>();
+  const nextKeys = new Map<string, string | null>();
+
+  for (const row of rows) {
+    const key = normalizeDisplayNameKey(row.display_name);
+    if (!key || usedKeys.has(key)) {
+      nextKeys.set(row.id, null);
+      continue;
+    }
+
+    usedKeys.add(key);
+    nextKeys.set(row.id, key);
+  }
+
+  const updateAccount = database.prepare("UPDATE accounts SET display_name_key = ? WHERE id = ?");
+  const updateProfile = database.prepare("UPDATE profiles SET display_name_key = ? WHERE id = ?");
+  const syncProfiles = database.prepare(`
+    UPDATE profiles
+       SET display_name_key = (
+         SELECT accounts.display_name_key
+           FROM accounts
+          WHERE accounts.id = profiles.id
+       )
+     WHERE EXISTS (
+       SELECT 1
+         FROM accounts
+        WHERE accounts.id = profiles.id
+     )
+  `);
+
+  const backfill = database.transaction(() => {
+    for (const [id, key] of nextKeys) {
+      updateAccount.run(key, id);
+      updateProfile.run(key, id);
+    }
+    syncProfiles.run();
   });
 
   backfill();
@@ -386,6 +453,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
   normalizeVenueTiers(database);
   backfillPublicAccountIds(database);
+  backfillDisplayNameKeys(database);
   ensureIndexes(database);
 }
 
