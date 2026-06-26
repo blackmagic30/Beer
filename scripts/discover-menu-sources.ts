@@ -41,10 +41,41 @@ const DEFAULT_LIMIT = 1000;
 const DEFAULT_MAX_LINKS_PER_VENUE = 8;
 const DEFAULT_CONCURRENCY = 4;
 const DEFAULT_MAX_SECONDARY_LINKS_PER_SOURCE = 4;
+const DEFAULT_MAX_PROBE_URLS_PER_SITE = 8;
+const MAX_SITEMAP_URLS_PER_SITE = 14;
+const MAX_SITEMAP_FILES_PER_SITE = 6;
 
 const execFileAsync = promisify(execFile);
 
+const COMMON_MENU_PATHS = [
+  "/menu",
+  "/menus",
+  "/drinks",
+  "/drink",
+  "/drinks-menu",
+  "/food-drinks",
+  "/food-and-drinks",
+  "/eat-drink",
+  "/eat-and-drink",
+  "/bar-menu",
+  "/beer",
+  "/wine",
+  "/cocktails",
+  "/happy-hour",
+  "/specials",
+  "/whats-on",
+] as const;
+
 type SourceKind = "menu_page" | "menu_image" | "menu_pdf" | "homepage_menu_signal";
+type DiscoveryMethod =
+  | "homepage"
+  | "homepage_link"
+  | "json_ld"
+  | "sitemap"
+  | "common_path_probe"
+  | "nested_asset"
+  | "css_asset"
+  | "trusted_external_menu_host";
 
 interface VenueCandidate {
   id: string;
@@ -68,6 +99,7 @@ interface MenuSourceCandidate {
   officialWebsite: string;
   sourceUrl: string;
   sourceKind: SourceKind;
+  discoveryMethod: DiscoveryMethod;
   confidence: number;
   canQueueOcr: boolean;
   freshness: "within_last_year" | "older_than_year" | "unknown";
@@ -260,6 +292,7 @@ function candidatesToCsv(candidates: MenuSourceCandidate[]): string {
     "venueAddress",
     "venueArea",
     "sourceKind",
+    "discoveryMethod",
     "confidence",
     "canQueueOcr",
     "sourceUrl",
@@ -279,6 +312,7 @@ function candidatesToCsv(candidates: MenuSourceCandidate[]): string {
     candidate.venueAddress,
     candidate.venueSuburb,
     candidate.sourceKind,
+    candidate.discoveryMethod,
     candidate.confidence,
     candidate.canQueueOcr,
     candidate.sourceUrl,
@@ -837,6 +871,40 @@ function extractSrcSetUrls(value: string, baseUrl: string): string[] {
     });
 }
 
+function looksLikeUrlReference(value: string | null | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  return /^(?:https?:)?\/\//i.test(value) || value.startsWith("/") || /\.(?:pdf|png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(value);
+}
+
+function extractJsonLdLinks(html: string, baseUrl: string): Array<{ url: string; text: string }> {
+  const links: Array<{ url: string; text: string }> = [];
+  const pattern = /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(html))) {
+    const raw = decodeHtml(match[1] ?? "").trim();
+    if (!raw) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      for (const value of flattenJsonStrings(parsed)) {
+        if (looksLikeUrlReference(value)) {
+          addUrlLink(links, value, baseUrl, "json ld menu url");
+        }
+      }
+    } catch {
+      for (const urlMatch of raw.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
+        addUrlLink(links, urlMatch[0], baseUrl, "json ld menu url");
+      }
+    }
+  }
+
+  return links;
+}
+
 function addUrlLink(
   links: Array<{ url: string; text: string }>,
   rawUrl: string | null | undefined,
@@ -861,6 +929,7 @@ function extractLinks(html: string, baseUrl: string): Array<{ url: string; text:
   const links: Array<{ url: string; text: string }> = [];
   const anchorPattern = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   const mediaPattern = /<(?:img|source)\b[^>]*>/gi;
+  const embeddedLinkPattern = /<(?:meta|link|iframe|embed|object)\b[^>]*>/gi;
   const cssUrlPattern = /url\((["']?)([^"')]+)\1\)/gi;
   let match: RegExpExecArray | null;
 
@@ -895,9 +964,36 @@ function extractLinks(html: string, baseUrl: string): Array<{ url: string; text:
     }
   }
 
+  while ((match = embeddedLinkPattern.exec(html))) {
+    const tag = match[0] ?? "";
+    const text = [
+      getAttributeValue(tag, "rel"),
+      getAttributeValue(tag, "property"),
+      getAttributeValue(tag, "name"),
+      getAttributeValue(tag, "type"),
+      getAttributeValue(tag, "title"),
+      getAttributeValue(tag, "aria-label"),
+      getAttributeValue(tag, "class"),
+      getAttributeValue(tag, "id"),
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    for (const attribute of ["href", "src", "data"]) {
+      addUrlLink(links, getAttributeValue(tag, attribute), baseUrl, text);
+    }
+
+    const content = getAttributeValue(tag, "content");
+    if (looksLikeUrlReference(content)) {
+      addUrlLink(links, content, baseUrl, text);
+    }
+  }
+
   while ((match = cssUrlPattern.exec(html))) {
     addUrlLink(links, match[2], baseUrl, "css image");
   }
+
+  links.push(...extractJsonLdLinks(html, baseUrl));
 
   return links;
 }
@@ -914,17 +1010,141 @@ function sameOrigin(a: string, b: string): boolean {
   }
 }
 
+function hostMatches(hostname: string, suffixes: string[]): boolean {
+  const host = hostname.toLowerCase();
+  return suffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
+function isTrustedExternalMenuHost(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname;
+    return hostMatches(hostname, [
+      "mryum.com",
+      "mr-yum.com",
+      "meandu.app",
+      "meandu.com",
+      "bopple.app",
+      "bopple.com",
+      "nowbookit.com",
+      "sevenrooms.com",
+      "untappd.com",
+      "wixstatic.com",
+      "squarespace-cdn.com",
+      "shopifycdn.net",
+      "cdn.shopify.com",
+      "cloudfront.net",
+      "amazonaws.com",
+    ]);
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedMenuSourceUrl(officialWebsite: string, sourceUrl: string, text: string): boolean {
+  if (sameOrigin(officialWebsite, sourceUrl)) {
+    return true;
+  }
+
+  const signalText = `${text} ${sourceUrl}`;
+  if ((isPdfUrl(sourceUrl) || isLikelyMenuImageCandidate(sourceUrl, text)) && isTrustedExternalMenuHost(sourceUrl)) {
+    return true;
+  }
+
+  return isTrustedExternalMenuHost(sourceUrl) && isMenuTerm(signalText);
+}
+
+function shouldSuppressDiscoveryFetchError(linkText: string, errorMessage: string): boolean {
+  if (!/\b(common menu path probe|sitemap menu url)\b/i.test(linkText)) {
+    return false;
+  }
+  return /^HTTP (?:403|404|410)\b/i.test(errorMessage);
+}
+
+function sourceHasMenuSignal(linkText: string, sourceUrl: string): boolean {
+  const humanLinkText = linkText
+    .replace(/\bcommon menu path probe\b/gi, "")
+    .replace(/\bsitemap menu url\b/gi, "")
+    .replace(/\bjson ld menu url\b/gi, "")
+    .replace(/\bmenu page asset\b/gi, "")
+    .replace(/\bcss image\b/gi, "")
+    .trim();
+  return isMenuTerm(`${humanLinkText} ${sourceUrl}`);
+}
+
+function isLowIntentMenuSourceUrl(sourceUrl: string): boolean {
+  try {
+    const pathname = new URL(sourceUrl).pathname.toLowerCase();
+    if (/\b(?:happy|special|drink|drinks|menu|food|beer|wine|cocktail|eat-drink|eat-and-drink)\b/i.test(pathname)) {
+      return false;
+    }
+    return /\/(?:about|history|faqs?|contact|privacy|terms|careers?|jobs?|blog|news)(?:\/|$)/i.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
+function discoveryMethodFromLinkText(
+  linkText: string,
+  officialWebsite: string,
+  sourceUrl: string,
+): DiscoveryMethod {
+  if (linkText === "homepage") {
+    return "homepage";
+  }
+  if (/\bsitemap menu url\b/i.test(linkText)) {
+    return "sitemap";
+  }
+  if (/\bcommon menu path probe\b/i.test(linkText)) {
+    return "common_path_probe";
+  }
+  if (/\bjson ld menu url\b/i.test(linkText)) {
+    return "json_ld";
+  }
+  if (/\bmenu page asset\b/i.test(linkText)) {
+    return "nested_asset";
+  }
+  if (/\bcss image\b/i.test(linkText)) {
+    return "css_asset";
+  }
+  if (!sameOrigin(officialWebsite, sourceUrl) && isTrustedExternalMenuHost(sourceUrl)) {
+    return "trusted_external_menu_host";
+  }
+  return "homepage_link";
+}
+
 function canonicalDiscoveryUrl(value: string): string {
   try {
     const url = new URL(value);
+    url.protocol = "https:";
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./i, "");
+    url.port = "";
     url.hash = "";
     if (url.pathname !== "/") {
       url.pathname = url.pathname.replace(/\/+$/g, "");
     }
+    url.pathname = url.pathname.replace(/\/index\.html?$/i, "");
     return url.toString();
   } catch {
     return value;
   }
+}
+
+function addUniqueDiscoveryLink(
+  links: Array<{ url: string; text: string }>,
+  seenUrls: Set<string>,
+  link: { url: string; text: string },
+  officialWebsite: string,
+): boolean {
+  const canonicalUrl = canonicalDiscoveryUrl(link.url);
+  if (seenUrls.has(canonicalUrl) || isExcludedMenuSourceUrl(link.url, link.text)) {
+    return false;
+  }
+  if (!isAllowedMenuSourceUrl(officialWebsite, link.url, link.text)) {
+    return false;
+  }
+  seenUrls.add(canonicalUrl);
+  links.push(link);
+  return true;
 }
 
 function venueNameSignals(venue: VenueCandidate, text: string): string[] {
@@ -1127,18 +1347,27 @@ function isLikelyFoodOrMerchPrice(line: string, priceIndex: number): boolean {
   const context = priceContext(line, priceIndex);
   const nearPrice = line.slice(Math.max(0, priceIndex - 45), Math.min(line.length, priceIndex + 55));
   const immediatelyAfterPrice = line.slice(priceIndex, Math.min(line.length, priceIndex + 40));
-  if (/\b(pizza|pie|gravy|sauce|steak|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|gift card|voucher)\b/i.test(immediatelyAfterPrice)) {
+  if (/\b(prawn cocktail|shrimp cocktail|seafood cocktail|oyster shooter|calamari|garlic prawns)\b/i.test(context)) {
+    return true;
+  }
+  if (/\b(pizza|pie|gravy|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|gift card|voucher)\b/i.test(immediatelyAfterPrice)) {
     return true;
   }
 
   const foodNearPrice =
-    /\b(pizza|pie|gravy|sauce|steak|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
+    /\b(pizza|pie|gravy|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
       nearPrice,
     );
   const drinkNearPrice =
     /\b(pint|schooner|pot|jug|tap|draught|draft|can|bottle|cocktail|wine|spritz|margarita|happy\s?hour|beer\s+(?:special|deal|price))\b/i.test(
       nearPrice,
     );
+  const mealWithDrinkBundle =
+    foodNearPrice &&
+    /\b(served with|with fries|with chips|with a glass|glass of house wine|paired with|includes)\b/i.test(context);
+  if (mealWithDrinkBundle) {
+    return true;
+  }
   if (foodNearPrice && !drinkNearPrice) {
     return true;
   }
@@ -1151,7 +1380,7 @@ function isLikelyFoodOrMerchPrice(line: string, priceIndex: number): boolean {
     return false;
   }
 
-  return /\b(pizza|pie|gravy|sauce|steak|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
+  return /\b(pizza|pie|gravy|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
     context,
   );
 }
@@ -1282,13 +1511,28 @@ function scoreSource(input: {
 }): MenuSourceCandidate | null {
   const signals: string[] = [];
   let confidence = 0;
+  const hasStrongDrinkText = hasDrinkPriceSignals(input.text) || /\b(beer|drinks?|cocktails?|wine|tap\s?list|happy\s?hour)\b/i.test(input.text);
+  const isGeneratedDiscoveryLink = /\b(common menu path probe|sitemap menu url)\b/i.test(input.linkText);
+  const discoveryMethod = discoveryMethodFromLinkText(input.linkText, input.officialWebsite, input.sourceUrl);
+  const trustedExternalMenuHost = !sameOrigin(input.officialWebsite, input.sourceUrl) && isTrustedExternalMenuHost(input.sourceUrl);
+  const hasMenuLinkSignal = sourceHasMenuSignal(input.linkText, input.sourceUrl);
+
+  if (isGeneratedDiscoveryLink && input.sourceKind === "menu_page" && !hasStrongDrinkText) {
+    return null;
+  }
+  if (input.sourceKind === "menu_page" && isLowIntentMenuSourceUrl(input.sourceUrl) && !hasMenuLinkSignal) {
+    return null;
+  }
 
   if (sameOrigin(input.officialWebsite, input.sourceUrl)) {
     signals.push("same official host");
     confidence += 0.35;
+  } else if (trustedExternalMenuHost) {
+    signals.push("trusted external menu host");
+    confidence += 0.2;
   }
 
-  if (isMenuTerm(input.sourceUrl) || isMenuTerm(input.linkText)) {
+  if (hasMenuLinkSignal) {
     signals.push("menu link");
     confidence += 0.25;
   }
@@ -1296,7 +1540,7 @@ function scoreSource(input: {
   if (hasDrinkPriceSignals(input.text)) {
     signals.push("drink price text");
     confidence += 0.25;
-  } else if (/\b(beer|drinks?|cocktails?|wine|tap\s?list|happy\s?hour)\b/i.test(input.text)) {
+  } else if (hasStrongDrinkText) {
     signals.push("drink menu text");
     confidence += 0.12;
   }
@@ -1329,6 +1573,7 @@ function scoreSource(input: {
     officialWebsite: input.officialWebsite,
     sourceUrl: input.sourceUrl,
     sourceKind: input.sourceKind,
+    discoveryMethod,
     confidence,
     canQueueOcr: input.sourceKind === "menu_image",
     freshness: freshness.freshness,
@@ -1336,10 +1581,10 @@ function scoreSource(input: {
     signals,
     reviewNote:
       input.sourceKind === "menu_image"
-        ? "Direct venue-owned menu image candidate. Queue OCR only after checking it belongs to this venue."
+        ? "Direct menu image candidate. Queue OCR only after checking it belongs to this venue."
         : input.sourceKind === "menu_pdf"
-          ? "Venue-owned PDF menu candidate. Text extraction is best-effort; review source before using any prices."
-          : "Venue-owned menu source candidate. Text extraction is best-effort; review source before using any prices.",
+          ? "PDF menu candidate. Text extraction is best-effort; review source before using any prices."
+          : "Menu source candidate. Text extraction is best-effort; review source before using any prices.",
     ocr: null,
     textExtraction: null,
   };
@@ -1356,11 +1601,11 @@ async function fetchTextForCandidate(url: string): Promise<{ contentType: string
   const buffer = Buffer.from(arrayBuffer);
   const limited = buffer.subarray(0, Math.min(buffer.length, MAX_HTML_BYTES));
 
-  if (contentType.toLowerCase().startsWith("image/")) {
+  if (contentType.toLowerCase().startsWith("image/") || isImageUrl(url)) {
     return { contentType, text: "" };
   }
 
-  if (contentType.toLowerCase().includes("pdf")) {
+  if (contentType.toLowerCase().includes("pdf") || isPdfUrl(url)) {
     if (buffer.length > MAX_PDF_BYTES) {
       throw new Error(`PDF is too large for discovery extraction (${Math.round(buffer.length / 1024 / 1024)} MB)`);
     }
@@ -1511,20 +1756,131 @@ function attachTextExtraction(candidate: MenuSourceCandidate, sourceText: string
   }
 }
 
+function siteRoot(officialWebsite: string): string | null {
+  try {
+    return new URL("/", officialWebsite).toString();
+  } catch {
+    return null;
+  }
+}
+
+function buildCommonMenuProbeLinks(
+  officialWebsite: string,
+  seenUrls: Set<string>,
+  limit: number,
+): Array<{ url: string; text: string }> {
+  const root = siteRoot(officialWebsite);
+  if (!root) {
+    return [];
+  }
+
+  const links: Array<{ url: string; text: string }> = [];
+  for (const pathname of COMMON_MENU_PATHS) {
+    if (links.length >= limit) {
+      break;
+    }
+    const url = new URL(pathname, root).toString();
+    addUniqueDiscoveryLink(links, seenUrls, { url, text: "common menu path probe" }, officialWebsite);
+  }
+  return links;
+}
+
+function extractSitemapUrls(xml: string, baseUrl: string): string[] {
+  const urls: string[] = [];
+  const locPattern = /<loc\b[^>]*>([\s\S]*?)<\/loc>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = locPattern.exec(xml))) {
+    const raw = decodeHtml(stripHtml(match[1] ?? "")).trim();
+    if (!raw) {
+      continue;
+    }
+    try {
+      const url = new URL(raw, baseUrl);
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        urls.push(url.toString());
+      }
+    } catch {
+      // Ignore malformed sitemap entries.
+    }
+  }
+  return urls;
+}
+
+function isLikelySitemapUrl(url: string): boolean {
+  return /(?:sitemap|post-sitemap|page-sitemap|wp-sitemap).*\.(?:xml|xml\.gz)(?:[?#].*)?$/i.test(url);
+}
+
+async function fetchSitemapText(url: string): Promise<string> {
+  const fetched = await fetchTextForCandidate(url);
+  return fetched.text;
+}
+
+async function discoverSitemapMenuLinks(
+  officialWebsite: string,
+  seenUrls: Set<string>,
+  limit: number,
+): Promise<Array<{ url: string; text: string }>> {
+  const root = siteRoot(officialWebsite);
+  if (!root) {
+    return [];
+  }
+
+  const sitemapQueue = [new URL("/sitemap.xml", root).toString(), new URL("/sitemap_index.xml", root).toString()];
+  const visitedSitemaps = new Set<string>();
+  const links: Array<{ url: string; text: string }> = [];
+
+  while (sitemapQueue.length > 0 && visitedSitemaps.size < MAX_SITEMAP_FILES_PER_SITE && links.length < limit) {
+    const sitemapUrl = sitemapQueue.shift();
+    if (!sitemapUrl || visitedSitemaps.has(canonicalDiscoveryUrl(sitemapUrl))) {
+      continue;
+    }
+    visitedSitemaps.add(canonicalDiscoveryUrl(sitemapUrl));
+
+    let sitemapText = "";
+    try {
+      sitemapText = await fetchSitemapText(sitemapUrl);
+    } catch {
+      continue;
+    }
+
+    for (const url of extractSitemapUrls(sitemapText, sitemapUrl)) {
+      if (!sameOrigin(officialWebsite, url)) {
+        continue;
+      }
+      if (isLikelySitemapUrl(url) && visitedSitemaps.size + sitemapQueue.length < MAX_SITEMAP_FILES_PER_SITE) {
+        sitemapQueue.push(url);
+        continue;
+      }
+      const text = "sitemap menu url";
+      if (sourceHasMenuSignal(text, url) || isPdfUrl(url) || isLikelyMenuImageCandidate(url, text)) {
+        addUniqueDiscoveryLink(links, seenUrls, { url, text }, officialWebsite);
+        if (links.length >= limit) {
+          break;
+        }
+      }
+    }
+  }
+
+  return links;
+}
+
 function nestedMenuAssetLinks(html: string, pageUrl: string, officialWebsite: string, limit: number): Array<{ url: string; text: string }> {
   const seen = new Set<string>();
   return extractLinks(html, pageUrl)
-    .filter((link) => sameOrigin(officialWebsite, link.url))
     .map((link) => ({
       ...link,
       text: `${link.text} menu page asset`.trim(),
     }))
     .filter((link) => {
-      if (seen.has(link.url) || isExcludedMenuSourceUrl(link.url, link.text)) {
+      const canonicalUrl = canonicalDiscoveryUrl(link.url);
+      if (seen.has(canonicalUrl) || isExcludedMenuSourceUrl(link.url, link.text)) {
         return false;
       }
-      seen.add(link.url);
-      return isPdfUrl(link.url) || isLikelyMenuImageCandidate(link.url, link.text) || isMenuTerm(`${link.text} ${link.url}`);
+      if (!isAllowedMenuSourceUrl(officialWebsite, link.url, link.text)) {
+        return false;
+      }
+      seen.add(canonicalUrl);
+      return isPdfUrl(link.url) || isLikelyMenuImageCandidate(link.url, link.text) || sourceHasMenuSignal(link.text, link.url);
     })
     .slice(0, limit);
 }
@@ -1571,6 +1927,7 @@ async function discoverSourcesForVenue(
   const candidates: MenuSourceCandidate[] = [];
   const errors: Array<{ url: string; error: string }> = [];
   const seenUrls = new Set<string>();
+  seenUrls.add(canonicalDiscoveryUrl(officialWebsite));
 
   try {
     const homepage = await fetchTextForCandidate(officialWebsite);
@@ -1590,26 +1947,33 @@ async function discoverSourcesForVenue(
       }
     }
 
-    const links = extractLinks(homepage.text, officialWebsite)
-      .filter((link) => sameOrigin(officialWebsite, link.url))
+    const links: Array<{ url: string; text: string }> = [];
+    for (const link of extractLinks(homepage.text, officialWebsite)) {
+      if (links.length >= maxLinksPerVenue) {
+        break;
+      }
+      const menuSignal = sourceHasMenuSignal(link.text, link.url);
+      if (menuSignal || isPdfUrl(link.url) || isLikelyMenuImageCandidate(link.url, link.text)) {
+        addUniqueDiscoveryLink(links, seenUrls, link, officialWebsite);
+      }
+    }
+
+    const sitemapLinks = await discoverSitemapMenuLinks(officialWebsite, seenUrls, MAX_SITEMAP_URLS_PER_SITE);
+    links.push(...sitemapLinks);
+
+    const probeLinks = buildCommonMenuProbeLinks(officialWebsite, seenUrls, DEFAULT_MAX_PROBE_URLS_PER_SITE);
+    links.push(...probeLinks);
+
+    const filteredLinks = links
       .filter((link) => {
-        const menuSignal = isMenuTerm(`${link.text} ${link.url}`);
+        const menuSignal = sourceHasMenuSignal(link.text, link.url);
         if (isExcludedMenuSourceUrl(link.url, link.text)) {
           return false;
         }
         return menuSignal || isPdfUrl(link.url) || isLikelyMenuImageCandidate(link.url, link.text);
-      })
-      .filter((link) => {
-        const canonicalUrl = canonicalDiscoveryUrl(link.url);
-        if (seenUrls.has(canonicalUrl)) {
-          return false;
-        }
-        seenUrls.add(canonicalUrl);
-        return true;
-      })
-      .slice(0, maxLinksPerVenue);
+      });
 
-    for (const link of links) {
+    for (const link of filteredLinks) {
       try {
         const fetched = await fetchTextForCandidate(link.url);
         const { candidate, childLinks } = await buildCandidateFromFetchedSource({
@@ -1646,7 +2010,10 @@ async function discoverSourcesForVenue(
           }
         }
       } catch (error) {
-        errors.push({ url: link.url, error: error instanceof Error ? error.message : "Unknown fetch error" });
+        const errorMessage = error instanceof Error ? error.message : "Unknown fetch error";
+        if (!shouldSuppressDiscoveryFetchError(link.text, errorMessage)) {
+          errors.push({ url: link.url, error: errorMessage });
+        }
       }
     }
   } catch (error) {
