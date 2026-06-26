@@ -14,7 +14,7 @@ import { initializeDatabaseSchema } from "../src/db/database.js";
 import { errorHandler } from "../src/middleware/error-handler.js";
 import { authSignupSchema, barHappyHourSchema, createSubmissionSchema, normalizeHappyHourTime } from "../src/modules/business/business.schemas.js";
 import { createBusinessRouter } from "../src/modules/business/business.routes.js";
-import { BusinessService, canAccessAgeGatedRewards } from "../src/modules/business/business.service.js";
+import { BusinessService, canAccessAgeGatedRewards, sanitizePostgrestIlikeTerm } from "../src/modules/business/business.service.js";
 
 const NOW = "2026-05-04T08:00:00.000Z";
 const MONTH_KEY = "2026-05";
@@ -2379,6 +2379,26 @@ describe("business demo contribution model", () => {
       .toThrow("community rules");
   });
 
+  it("rejects SQL-looking public display names before they reach leaderboard storage", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "display-name-injection-user");
+
+    expect(() => service.updateDisplayName(user, { displayName: "Rob');--" }))
+      .toThrow("Display name can use letters");
+
+    const updated = service.updateDisplayName(user, { displayName: "Safe Pint Tester" });
+    expect(updated.account.displayName).toBe("Safe Pint Tester");
+    expect(repository.getAccountById(user.id)?.displayName).toBe("Safe Pint Tester");
+  });
+
+  it("sanitizes venue search text before building Supabase filter strings", () => {
+    expect(sanitizePostgrestIlikeTerm("Half Moon%),id.not.is.null")).toBe("Half Moon id not is null");
+    expect(sanitizePostgrestIlikeTerm("Robert'); DROP TABLE venues;--")).toBe("Robert DROP TABLE venues --");
+    expect(sanitizePostgrestIlikeTerm("  Carlton   Draught · Brighton, VIC  ")).toBe("Carlton Draught Brighton VIC");
+    expect(sanitizePostgrestIlikeTerm("x".repeat(120))).toHaveLength(80);
+  });
+
   it("lets admins finalize monthly leaderboard prizes into private account vouchers", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
@@ -3986,6 +4006,25 @@ describe("business demo contribution model", () => {
 
     const revoked = service.revokeVenueManager(admin, { userId: manager.id, venueId: "venue-1" });
     expect(revoked.assignment.status).toBe("revoked");
+  });
+
+  it("treats admin account search text as literal text instead of executable query syntax", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "account-search-admin", "admin");
+    const target = createAccount(repository, "account-search-target");
+    createAccount(repository, "account-search-decoy");
+
+    expect(service.searchAccountsForAdmin(admin, { q: "' OR 1=1 --", limit: 25 }).accounts).toEqual([]);
+    expect(service.searchAccountsForAdmin(admin, { q: "%' OR role = 'admin", limit: 25 }).accounts).toEqual([]);
+
+    const normalSearch = service.searchAccountsForAdmin(admin, { q: "account-search-target", limit: 25 });
+    expect(normalSearch.accounts).toEqual([
+      expect.objectContaining({
+        id: target.id,
+        email: "account-search-target@example.com",
+      }),
+    ]);
   });
 
   it("requires a verified account before bar portal or claim access", () => {

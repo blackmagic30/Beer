@@ -206,13 +206,6 @@
                 <a class="button" href="/missions.html">Find missions</a>
               </div>
             </div>
-            <form id="displayNameForm" class="displayNameForm">
-              <label class="field">Leaderboard display name
-                <input name="displayName" maxlength="28" placeholder="Pick a public name" autocomplete="nickname" />
-                <span class="nameRuleHint"><span class="nameRuleIcon" aria-hidden="true">!</span> Must be unique. No disrespectful, racist, hateful, rude, URL, or impersonation names.</span>
-              </label>
-              <button class="button" type="submit">Save name</button>
-            </form>
             <div id="accountStatsGrid" class="statsGrid accountStatsGrid"></div>
           </section>
         </div>
@@ -280,6 +273,13 @@
                 </div>
                 <span id="betaCampaignBadge" class="pill pill--premium">Monthly</span>
               </div>
+              <form id="displayNameForm" class="displayNameForm">
+                <label class="field">Leaderboard display name
+                  <input name="displayName" maxlength="28" placeholder="Pick a public name" autocomplete="nickname" />
+                  <span class="nameRuleHint"><span class="nameRuleIcon" aria-hidden="true">!</span> Must be unique. No disrespectful, racist, hateful, rude, URL, or impersonation names.</span>
+                </label>
+                <button class="button" type="submit">Save name</button>
+              </form>
               <div id="leaderboardPodium" class="leaderboardPodium"></div>
               <div id="leaderboardList" class="betaLeaderboardList"></div>
               <div id="rewardVoucherList" class="rewardVoucherList"></div>
@@ -340,29 +340,35 @@
 
         <div id="settingsSupportPanel" class="settingsPanel" data-settings-panel="support" role="tabpanel" hidden>
           <div class="grid grid--two accountSupportGrid">
-            <form id="dataRequestForm" class="panel form">
-              <h2>Privacy, support, and appeals</h2>
-              <p class="muted">Create a tracked request for export, deletion, correction, moderation appeals, security reports, or billing help.</p>
-              <div class="quickPrivacyActions">
-                <button id="downloadAccountDataButton" class="button" type="button">Download my data</button>
-                <button id="requestAccountDeletionButton" class="button button--danger" type="button">Request deletion review</button>
+            <form id="dataRequestForm" class="panel form accountSupportPanel">
+              <div class="accountSupportIntro">
+                <div>
+                  <h2>Privacy, support, and appeals</h2>
+                  <p class="muted">Create a tracked request for export, deletion, correction, moderation appeals, security reports, or billing help.</p>
+                </div>
+                <div class="quickPrivacyActions">
+                  <button id="downloadAccountDataButton" class="button" type="button">Download my data</button>
+                  <button id="requestAccountDeletionButton" class="button button--danger" type="button">Request deletion review</button>
+                </div>
               </div>
-              <label class="field">Request type
-                <select name="feedbackType">
-                  <option value="data_export_request">Export my account data</option>
-                  <option value="account_deletion_request">Delete my account</option>
-                  <option value="privacy_request">Correct or limit my data</option>
-                  <option value="moderation_appeal">Appeal a strike, ban, or rejected submission</option>
-                  <option value="security_report">Report a security issue</option>
-                  <option value="abuse_report">Report abuse or fake submissions</option>
-                  <option value="billing_support">Billing or subscription support</option>
-                  <option value="venue_partner_interest">Bar wants to join or manage a venue</option>
-                </select>
-              </label>
-              <label class="field">Details
-                <textarea name="message" required maxlength="1200" placeholder="Tell us what you need. Do not include passwords, card numbers, ID documents, or private keys."></textarea>
-              </label>
-              <button class="button button--primary" type="submit">Send request</button>
+              <div class="accountSupportFields">
+                <label class="field">Request type
+                  <select name="feedbackType">
+                    <option value="data_export_request">Export my account data</option>
+                    <option value="account_deletion_request">Delete my account</option>
+                    <option value="privacy_request">Correct or limit my data</option>
+                    <option value="moderation_appeal">Appeal a strike, ban, or rejected submission</option>
+                    <option value="security_report">Report a security issue</option>
+                    <option value="abuse_report">Report abuse or fake submissions</option>
+                    <option value="billing_support">Billing or subscription support</option>
+                    <option value="venue_partner_interest">Bar wants to join or manage a venue</option>
+                  </select>
+                </label>
+                <label class="field">Details
+                  <textarea name="message" required maxlength="1200" placeholder="Tell us what you need. Do not include passwords, card numbers, ID documents, or private keys."></textarea>
+                </label>
+                <button class="button button--primary" type="submit">Send request</button>
+              </div>
             </form>
           </div>
         </div>
@@ -1009,6 +1015,33 @@
       });
     }
 
+    function leaderboardAccountId(entry) {
+      return String(entry?.accountId || entry?.publicAccountId || "").trim();
+    }
+
+    function isCurrentLeaderboardEntry(entry, me) {
+      const entryId = leaderboardAccountId(entry);
+      const meId = leaderboardAccountId(me);
+      return Boolean(entryId && meId && entryId === meId);
+    }
+
+    function leaderboardDisplayName(entry) {
+      return String(entry?.displayName || entry?.accountId || "Contributor");
+    }
+
+    function leaderboardPlaceLabel(rank) {
+      if (Number(rank) === 1) {
+        return "First place";
+      }
+      if (Number(rank) === 2) {
+        return "Second place";
+      }
+      if (Number(rank) === 3) {
+        return "Third place";
+      }
+      return `Rank ${rank}`;
+    }
+
     function renderBetaTestingPanel(result) {
       const beta = result.betaTesting || {};
       const enabled = Boolean(beta.enabled);
@@ -1029,33 +1062,59 @@
       const campaign = beta.leaderboard?.campaign || {};
       const monthCopy = campaign.monthKey ? campaign.monthKey.replace("-", " ") : "This month";
       $("betaCampaignBadge").textContent = `${monthCopy} · ${campaign.status || "active"}`;
-      const podium = beta.leaderboard?.podium || [];
-      $("leaderboardPodium").innerHTML = podium.length
-        ? podium.map((entry) => `
-          <article class="podiumCard podiumCard--rank${entry.rank}">
-            <div class="podiumRank">${entry.rank}</div>
-            <strong>${escapeHtml(entry.displayName || entry.accountId)}</strong>
-            <span>${escapeHtml(entry.prizeLabel || "Prize")}</span>
-            <small>${escapeHtml(formatPoints(entry.points))} pts · ${escapeHtml(entry.approvedSubmissions)} verified</small>
-          </article>
-        `).join("")
-        : `<div class="emptyState"><strong>No monthly leaders yet.</strong><span>Approved contributions will appear here.</span></div>`;
-
+      const podium = [...(beta.leaderboard?.podium || [])].sort((left, right) => Number(left.rank) - Number(right.rank));
       const entries = beta.leaderboard?.entries || [];
       const me = beta.leaderboard?.me || null;
+      $("leaderboardPodium").innerHTML = podium.length
+        ? podium.map((entry) => {
+          const isMe = isCurrentLeaderboardEntry(entry, me);
+          return `
+          <article class="podiumCard podiumCard--rank${escapeHtml(entry.rank)}${isMe ? " podiumCard--me" : ""}" aria-label="${escapeHtml(leaderboardPlaceLabel(entry.rank))}">
+            <div class="podiumMedal" aria-hidden="true">${escapeHtml(entry.rank)}</div>
+            <div class="podiumIdentity">
+              <span class="podiumPlace">${escapeHtml(leaderboardPlaceLabel(entry.rank))}</span>
+              <strong>${escapeHtml(leaderboardDisplayName(entry))}</strong>
+            </div>
+            <div class="podiumPrize">${escapeHtml(entry.prizeLabel || "Prize")}</div>
+            <small>${escapeHtml(formatPoints(entry.points))} pts · ${escapeHtml(entry.approvedSubmissions)} verified${isMe ? " · You" : ""}</small>
+          </article>
+        `;
+        }).join("")
+        : `<div class="emptyState"><strong>No monthly leaders yet.</strong><span>Approved contributions will appear here.</span></div>`;
+
+      const leaderboardRows = entries.filter((entry) => Number(entry.rank) >= 4 && Number(entry.rank) <= 50);
+      const meInPodium = podium.some((entry) => isCurrentLeaderboardEntry(entry, me));
+      const meInRows = leaderboardRows.some((entry) => isCurrentLeaderboardEntry(entry, me));
+      const meOutsideRows = me && !meInPodium && !meInRows ? me : null;
       $("leaderboardList").innerHTML = `
         <div class="betaLeaderboardMeta">
           <strong>${escapeHtml(campaign.title || "Monthly contributor leaderboard")}</strong>
           <span>${escapeHtml([campaign.firstPlaceLabel, campaign.secondPlaceLabel, campaign.thirdPlaceLabel].filter(Boolean).join(" · "))}</span>
           ${me ? `<em>Your rank: #${escapeHtml(me.rank)} · ${escapeHtml(formatPoints(me.points))} pts</em>` : "<em>Your approved points will rank after review.</em>"}
         </div>
-        ${entries.slice(0, 10).map((entry) => `
-          <div class="betaLeaderboardRow">
+        <div class="betaLeaderboardListHeader">
+          <span>Ranks 4-50</span>
+          <em>Podium winners stay above.</em>
+        </div>
+        ${leaderboardRows.length
+          ? leaderboardRows.map((entry) => {
+            const isMe = isCurrentLeaderboardEntry(entry, me);
+            return `
+          <div class="betaLeaderboardRow${isMe ? " betaLeaderboardRow--me" : ""}">
             <span>#${escapeHtml(entry.rank)}</span>
-            <strong>${escapeHtml(entry.displayName || entry.accountId)}</strong>
+            <strong>${escapeHtml(leaderboardDisplayName(entry))}${isMe ? ' <small>You</small>' : ""}</strong>
             <em>${escapeHtml(formatPoints(entry.points))} pts</em>
           </div>
-        `).join("")}
+        `;
+          }).join("")
+          : `<div class="betaLeaderboardEmpty">Ranks 4-50 will fill in as more approved points land this month.</div>`}
+        ${meOutsideRows ? `
+          <div class="betaLeaderboardRow betaLeaderboardRow--me betaLeaderboardRow--outside">
+            <span>#${escapeHtml(meOutsideRows.rank)}</span>
+            <strong>${escapeHtml(leaderboardDisplayName(meOutsideRows))} <small>Your position</small></strong>
+            <em>${escapeHtml(formatPoints(meOutsideRows.points))} pts</em>
+          </div>
+        ` : ""}
       `;
       const vouchers = result.rewards?.vouchers || [];
       $("rewardVoucherList").innerHTML = vouchers.length

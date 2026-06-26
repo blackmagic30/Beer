@@ -4870,6 +4870,34 @@ body.discountPassModalOpen {
 
 .accountSupportGrid {
   align-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.accountSupportPanel {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.82fr) minmax(360px, 1.18fr);
+  gap: clamp(18px, 3vw, 32px);
+  max-width: none;
+  width: 100%;
+}
+
+.accountSupportIntro,
+.accountSupportFields {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.accountSupportIntro {
+  align-content: start;
+}
+
+.accountSupportPanel h2 {
+  margin-bottom: 10px;
+}
+
+.accountSupportFields .button {
+  width: 100%;
 }
 
 .accountStatsActions {
@@ -5035,38 +5063,100 @@ body.discountPassModalOpen {
 
 .leaderboardPodium {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 0.9fr);
-  gap: 12px;
+  grid-template-areas: "second first third";
+  grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.12fr) minmax(0, 0.88fr);
+  gap: 16px;
   align-items: end;
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .podiumCard {
+  position: relative;
   display: grid;
-  gap: 8px;
-  min-height: 170px;
+  gap: 10px;
+  min-height: 188px;
+  overflow: hidden;
+  isolation: isolate;
   border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 22px;
+  border-radius: 26px;
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025)),
     rgba(3, 7, 18, 0.32);
-  padding: 16px;
+  padding: 18px;
   box-shadow: var(--soft-shadow);
 }
 
+.podiumCard::before {
+  content: "";
+  position: absolute;
+  inset: -40% -25% auto;
+  z-index: -1;
+  height: 78%;
+  opacity: 0.65;
+  filter: blur(24px);
+  transform: rotate(-8deg);
+}
+
 .podiumCard--rank1 {
-  min-height: 210px;
-  border-color: rgba(245, 197, 66, 0.44);
+  grid-area: first;
+  min-height: 248px;
+  transform: translateY(-10px);
+  border-color: rgba(245, 197, 66, 0.58);
   background:
-    radial-gradient(circle at 35% 0%, rgba(245, 197, 66, 0.2), transparent 44%),
-    linear-gradient(145deg, rgba(245, 197, 66, 0.1), rgba(34, 211, 238, 0.04)),
+    radial-gradient(circle at 35% 0%, rgba(245, 197, 66, 0.3), transparent 48%),
+    linear-gradient(145deg, rgba(245, 197, 66, 0.15), rgba(34, 211, 238, 0.05)),
     rgba(15, 23, 42, 0.82);
-  box-shadow: var(--shadow-premium), var(--soft-shadow);
+  box-shadow:
+    0 0 34px rgba(245, 197, 66, 0.2),
+    0 0 62px rgba(217, 70, 239, 0.1),
+    var(--soft-shadow);
 }
 
 .podiumCard--rank2 {
-  order: -1;
-  border-color: rgba(34, 211, 238, 0.3);
+  grid-area: second;
+  min-height: 218px;
+  transform: translateY(12px);
+  border-color: rgba(226, 232, 240, 0.44);
+  background:
+    radial-gradient(circle at 30% 0%, rgba(226, 232, 240, 0.18), transparent 46%),
+    linear-gradient(145deg, rgba(148, 163, 184, 0.12), rgba(34, 211, 238, 0.04)),
+    rgba(15, 23, 42, 0.78);
+  box-shadow:
+    0 0 26px rgba(226, 232, 240, 0.14),
+    0 0 42px rgba(34, 211, 238, 0.08),
+    var(--soft-shadow);
+}
+
+.podiumCard--rank3 {
+  grid-area: third;
+  min-height: 198px;
+  transform: translateY(28px);
+  border-color: rgba(205, 127, 50, 0.5);
+  background:
+    radial-gradient(circle at 30% 0%, rgba(205, 127, 50, 0.2), transparent 45%),
+    linear-gradient(145deg, rgba(205, 127, 50, 0.11), rgba(217, 70, 239, 0.04)),
+    rgba(15, 23, 42, 0.76);
+  box-shadow:
+    0 0 24px rgba(205, 127, 50, 0.14),
+    0 0 38px rgba(245, 197, 66, 0.07),
+    var(--soft-shadow);
+}
+
+.podiumCard--rank1::before {
+  background: linear-gradient(135deg, rgba(245, 197, 66, 0.6), rgba(217, 70, 239, 0.24), transparent);
+}
+
+.podiumCard--rank2::before {
+  background: linear-gradient(135deg, rgba(226, 232, 240, 0.42), rgba(34, 211, 238, 0.2), transparent);
+}
+
+.podiumCard--rank3::before {
+  background: linear-gradient(135deg, rgba(205, 127, 50, 0.45), rgba(245, 197, 66, 0.14), transparent);
+}
+
+.podiumCard--me {
+  outline: 2px solid rgba(34, 211, 238, 0.42);
+  outline-offset: 3px;
 }
 
 .podiumRank {
@@ -5081,16 +5171,63 @@ body.discountPassModalOpen {
   font-weight: 950;
 }
 
+.podiumMedal {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-family: var(--display-font);
+  font-size: 1.35rem;
+  font-weight: 950;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.podiumCard--rank1 .podiumMedal {
+  background: linear-gradient(135deg, #fff6c7, #f5c542 48%, #b7791f);
+  color: #271600;
+  box-shadow: 0 0 22px rgba(245, 197, 66, 0.32);
+}
+
+.podiumCard--rank2 .podiumMedal {
+  background: linear-gradient(135deg, #f8fafc, #94a3b8 58%, #475569);
+  color: #07111f;
+  box-shadow: 0 0 18px rgba(226, 232, 240, 0.22);
+}
+
+.podiumCard--rank3 .podiumMedal {
+  background: linear-gradient(135deg, #fed7aa, #cd7f32 55%, #7c2d12);
+  color: #1f0c02;
+  box-shadow: 0 0 18px rgba(205, 127, 50, 0.22);
+}
+
+.podiumIdentity {
+  display: grid;
+  gap: 5px;
+}
+
+.podiumPlace {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .podiumCard strong {
   color: var(--text-primary);
-  font-size: 1.15rem;
+  font-size: clamp(1.05rem, 1.7vw, 1.36rem);
+  line-height: 1.1;
   overflow-wrap: anywhere;
 }
 
-.podiumCard span {
+.podiumPrize {
   color: var(--gold);
   font-family: var(--display-font);
-  font-size: clamp(1.7rem, 4vw, 2.4rem);
+  font-size: clamp(1.9rem, 4.6vw, 2.7rem);
   font-weight: 950;
   line-height: 1;
 }
@@ -5124,6 +5261,25 @@ body.discountPassModalOpen {
   gap: 4px;
 }
 
+.betaLeaderboardListHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.betaLeaderboardListHeader em {
+  color: rgba(203, 213, 225, 0.72);
+  font-style: normal;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .betaLeaderboardMeta span,
 .betaLeaderboardMeta em,
 .pubGolfSummary span {
@@ -5137,6 +5293,13 @@ body.discountPassModalOpen {
   grid-template-columns: 54px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.betaLeaderboardRow:hover {
+  transform: translateY(-1px);
+  border-color: rgba(34, 211, 238, 0.24);
+  background: rgba(15, 23, 42, 0.44);
 }
 
 .betaLeaderboardRow span,
@@ -5148,6 +5311,41 @@ body.discountPassModalOpen {
 
 .betaLeaderboardRow strong {
   overflow-wrap: anywhere;
+}
+
+.betaLeaderboardRow strong small {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.12);
+  color: #a5f3fc;
+  padding: 2px 8px;
+  font-size: 0.68rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.betaLeaderboardRow--me {
+  border-color: rgba(34, 211, 238, 0.5);
+  background:
+    radial-gradient(circle at 0% 50%, rgba(34, 211, 238, 0.2), transparent 38%),
+    rgba(8, 17, 32, 0.62);
+  box-shadow: 0 0 24px rgba(34, 211, 238, 0.12);
+}
+
+.betaLeaderboardRow--outside {
+  margin-top: 8px;
+  border-style: dashed;
+}
+
+.betaLeaderboardEmpty {
+  border: 1px dashed rgba(148, 163, 184, 0.22);
+  border-radius: 18px;
+  color: var(--text-muted);
+  padding: 14px;
+  font-weight: 850;
 }
 
 .rewardVoucherCard {
@@ -6218,6 +6416,19 @@ body.discountPassModalOpen {
     grid-template-columns: 1fr;
   }
 
+  .accountSupportPanel {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .accountSupportPanel h2 {
+    font-size: 1.35rem;
+  }
+
+  .quickPrivacyActions .button {
+    flex: 1 1 220px;
+  }
+
   .accountStatsProgressCard {
     grid-column: 1;
   }
@@ -6542,15 +6753,28 @@ body.discountPassModalOpen {
 
   .leaderboardPodium {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "first"
+      "second"
+      "third";
+    gap: 12px;
   }
 
   .podiumCard,
-  .podiumCard--rank1 {
+  .podiumCard--rank1,
+  .podiumCard--rank2,
+  .podiumCard--rank3 {
     min-height: auto;
+    transform: none;
   }
 
   .podiumCard--rank2 {
     order: 0;
+  }
+
+  .betaLeaderboardListHeader {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .pubGolfDrinkGrid {

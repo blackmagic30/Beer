@@ -387,6 +387,16 @@ function publicDisplayNameKey(value: string | null | undefined): string | null {
   return key || null;
 }
 
+export function sanitizePostgrestIlikeTerm(value: string | null | undefined): string {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9 &-]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
 function safeProviderDisplayName(value: string | null): string | null {
   try {
     return validatePublicDisplayName(value);
@@ -3897,7 +3907,7 @@ export class BusinessService {
     const monthKey = getZonedMonthKey(new Date(dashboardNow), timezone);
     const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, dashboardNow);
     const leaderboardRank = this.repository.getLeaderboardRank({ userId: account.id, period: "month", now: dashboardNow, monthKey });
-    const leaderboardEntries = this.repository.listLeaderboard({ period: "month", limit: 25, now: dashboardNow, monthKey });
+    const leaderboardEntries = this.repository.listLeaderboard({ period: "month", limit: 50, now: dashboardNow, monthKey });
     const discountStats = this.repository.getDiscountRedemptionStats(account.id);
     const recentDiscountRedemptions = this.repository.listDiscountRedemptionsForUser(account.id, 10);
     const rewardVouchers = this.repository.listAccountRewardVouchers(account.id, 10);
@@ -5323,7 +5333,7 @@ export class BusinessService {
     if (query && query.trim().length > 0) {
       const labelStem = query.trim().split("·")[0] ?? "";
       const searchQuery = (labelStem.split(",")[0] ?? "").trim();
-      const safeQuery = searchQuery.replace(/[%,()]/g, " ").replace(/\s+/g, " ").trim();
+      const safeQuery = sanitizePostgrestIlikeTerm(searchQuery);
       if (safeQuery) {
         request = request.or(`name.ilike.%${safeQuery}%,suburb.ilike.%${safeQuery}%,address.ilike.%${safeQuery}%`);
       }

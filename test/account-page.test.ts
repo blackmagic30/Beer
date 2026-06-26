@@ -166,8 +166,14 @@ describe("account page shell", () => {
     expect(html).toContain('id="betaTestingNavButton"');
     expect(html).toContain("Click here to show other beta testing features.");
     expect(html).toContain('id="leaderboardPodium"');
+    expect(html.indexOf('id="settingsStatsPanel"')).toBeLessThan(html.indexOf('id="betaFeatureLeaderboard"'));
+    expect(html.indexOf('id="displayNameForm"')).toBeGreaterThan(html.indexOf('id="betaFeatureLeaderboard"'));
+    expect(html.indexOf('id="displayNameForm"')).toBeLessThan(html.indexOf('id="leaderboardPodium"'));
     expect(html).toContain('id="rewardVoucherList"');
     expect(html).toContain('id="pubGolfForm"');
+    expect(html).toContain("Ranks 4-50");
+    expect(html).toContain("betaLeaderboardRow--me");
+    expect(html).toContain("betaLeaderboardRow--outside");
     expect(html).toContain("Venue added to the public map");
     expect(html).toContain("submissionPendingNotice");
     expect(html).toContain('id="authStatus" class="notice" role="status" hidden></div>');
@@ -290,6 +296,9 @@ describe("account page shell", () => {
     expect(html).toContain('data-settings-target="privacy"');
     expect(html).toContain('data-settings-target="support"');
     expect(html).toContain('data-settings-target="security"');
+    expect(html).toContain('class="panel form accountSupportPanel"');
+    expect(html).toContain('class="accountSupportIntro"');
+    expect(html).toContain('class="accountSupportFields"');
     expect(html).not.toContain("Suggested missions");
     expect(html).not.toContain('id="suggestedMissions"');
     expect(html).not.toContain("function missionSubmitHref");
@@ -361,6 +370,10 @@ describe("account page shell", () => {
     expect(css).toContain(".betaFeatureHint");
     expect(css).toContain(".betaTestingPanel");
     expect(css).toContain(".leaderboardPodium");
+    expect(css).toContain(".podiumCard--rank3");
+    expect(css).toContain(".betaLeaderboardRow--me");
+    expect(css).toContain(".accountSupportPanel");
+    expect(css).toContain(".accountSupportFields");
     expect(css).toContain(".rewardVoucherCard");
     expect(css).toContain(".pubGolfDrinkGrid");
   });
