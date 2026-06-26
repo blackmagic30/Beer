@@ -35,6 +35,7 @@ const MAX_HTML_BYTES = 1_500_000;
 const MAX_IMAGE_BYTES = 8_000_000;
 const MAX_PDF_BYTES = 20_000_000;
 const MAX_TEXT_EXTRACTION_CHARS = 80_000;
+const MAX_JSON_SCRIPT_CHARS = 500_000;
 const MAX_ROWS_PER_TEXT_SOURCE = 30;
 const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_LIMIT = 1000;
@@ -44,8 +45,14 @@ const DEFAULT_MAX_SECONDARY_LINKS_PER_SOURCE = 4;
 const DEFAULT_MAX_PROBE_URLS_PER_SITE = 8;
 const MAX_SITEMAP_URLS_PER_SITE = 14;
 const MAX_SITEMAP_FILES_PER_SITE = 6;
+const MAX_ROBOTS_SITEMAPS_PER_SITE = 4;
+const DEFAULT_MAX_WORDPRESS_LINKS_PER_SITE = 8;
+const FETCH_RETRY_ATTEMPTS = 2;
+const FETCH_RETRY_DELAY_MS = 450;
 
 const execFileAsync = promisify(execFile);
+const textFetchCache = new Map<string, Promise<{ contentType: string; text: string }>>();
+const imageDataUrlCache = new Map<string, Promise<string>>();
 
 const COMMON_MENU_PATHS = [
   "/menu",
@@ -71,11 +78,16 @@ type DiscoveryMethod =
   | "homepage"
   | "homepage_link"
   | "json_ld"
+  | "embedded_json"
   | "sitemap"
+  | "robots_sitemap"
+  | "wordpress_rest"
   | "common_path_probe"
   | "nested_asset"
   | "css_asset"
+  | "quoted_asset"
   | "trusted_external_menu_host";
+type SourceOrigin = "official_host" | "trusted_external_menu_host";
 
 interface VenueCandidate {
   id: string;
@@ -98,6 +110,9 @@ interface MenuSourceCandidate {
   venueSuburb: string | null;
   officialWebsite: string;
   sourceUrl: string;
+  canonicalSourceUrl: string;
+  sourceDomain: string;
+  sourceOrigin: SourceOrigin;
   sourceKind: SourceKind;
   discoveryMethod: DiscoveryMethod;
   confidence: number;
@@ -152,6 +167,9 @@ interface DiscoveryReport {
     venuesWithOfficialWebsite: number;
     venuesResolvedWithGooglePlaces: number;
     sourceCandidates: number;
+    sourcesWithExtractedRows: number;
+    discoveryMethodCounts: Partial<Record<DiscoveryMethod, number>>;
+    sourceKindCounts: Partial<Record<SourceKind, number>>;
     directImageCandidates: number;
     textExtractionCandidatesAttempted: number;
     textExtractionCandidatesSucceeded: number;
@@ -164,6 +182,7 @@ interface DiscoveryReport {
     queuedForOcr: number;
     skippedWithoutWebsite: number;
     fetchErrors: number;
+    fetchCacheEntries: number;
   };
   skippedWithoutWebsite: Array<Pick<VenueCandidate, "id" | "name" | "address" | "suburb" | "source">>;
   candidates: MenuSourceCandidate[];
@@ -293,9 +312,12 @@ function candidatesToCsv(candidates: MenuSourceCandidate[]): string {
     "venueArea",
     "sourceKind",
     "discoveryMethod",
+    "sourceOrigin",
+    "sourceDomain",
     "confidence",
     "canQueueOcr",
     "sourceUrl",
+    "canonicalSourceUrl",
     "officialWebsite",
     "freshness",
     "signals",
@@ -313,9 +335,12 @@ function candidatesToCsv(candidates: MenuSourceCandidate[]): string {
     candidate.venueSuburb,
     candidate.sourceKind,
     candidate.discoveryMethod,
+    candidate.sourceOrigin,
+    candidate.sourceDomain,
     candidate.confidence,
     candidate.canQueueOcr,
     candidate.sourceUrl,
+    candidate.canonicalSourceUrl,
     candidate.officialWebsite,
     candidate.freshness,
     candidate.signals.join("; "),
@@ -680,21 +705,45 @@ async function resolveWebsiteWithGooglePlaces(venue: VenueCandidate): Promise<st
   return normalizeWebsite(match?.websiteUri);
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableFetchStatus(status: number): boolean {
+  return [408, 425, 429, 500, 502, 503, 504].includes(status);
+}
+
 async function withTimeoutFetch(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    return await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "Accept": "text/html,application/xhtml+xml,application/pdf,image/*;q=0.9,*/*;q=0.5",
-        "User-Agent": "PintPathMenuDiscovery/1.0 (+https://pintpath.au)",
-      },
-      redirect: "follow",
-    });
-  } finally {
-    clearTimeout(timeout);
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= FETCH_RETRY_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "Accept": "text/html,application/xhtml+xml,application/xml,text/xml,text/plain,application/json,application/pdf,image/*;q=0.9,*/*;q=0.5",
+          "User-Agent": "PintPathMenuDiscovery/1.0 (+https://pintpath.au)",
+        },
+        redirect: "follow",
+      });
+      if (attempt < FETCH_RETRY_ATTEMPTS && isRetryableFetchStatus(response.status)) {
+        await delay(FETCH_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= FETCH_RETRY_ATTEMPTS) {
+        break;
+      }
+      await delay(FETCH_RETRY_DELAY_MS * attempt);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+
+  throw lastError instanceof Error ? lastError : new Error("Fetch failed");
 }
 
 function isImageUrl(url: string): boolean {
@@ -705,19 +754,35 @@ function isPdfUrl(url: string): boolean {
   return /\.pdf(\?.*)?$/i.test(url);
 }
 
+function isBogusAssetReference(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname.toLowerCase();
+    return (
+      /^\/\.(?:png|jpe?g|webp|gif|pdf)$/i.test(pathname) ||
+      /\/(?:undefined|null|false|true)\.(?:png|jpe?g|webp|gif|pdf)$/i.test(pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isMenuTerm(value: string): boolean {
   return /\b(menu|menus|drinks?|beverages?|beer|wine|cocktails?|tap\s?list|happy\s?hour|specials?)\b/i.test(value);
 }
 
 function isExcludedMenuSourceUrl(url: string, text: string): boolean {
+  if (isBogusAssetReference(url)) {
+    return true;
+  }
   const haystack = `${url} ${text}`.replace(/[-_]+/g, " ");
-  return /\b(masterclass|gift cards?|careers?|jobs?|functions?|weddings?|events packages?|private dining|reservations?|bookings?|accommodation|rooms?|stay|hotel rooms?)\b/i.test(
+  return /\b(masterclass|gift cards?|careers?|jobs?|functions?|weddings?|events packages?|private dining|reservations?|bookings?|accommodation|rooms?|stay|hotel rooms?|privacy|terms|accessibility|newsletter|login|cart|checkout|delivery|gallery|press)\b/i.test(
     haystack,
   );
 }
 
 function isLikelyMenuImageCandidate(url: string, text: string): boolean {
-  if (!isImageUrl(url)) {
+  if (!isImageUrl(url) || isBogusAssetReference(url)) {
     return false;
   }
 
@@ -739,9 +804,19 @@ function isLikelyMenuImageCandidate(url: string, text: string): boolean {
 }
 
 function hasDrinkPriceSignals(text: string): boolean {
+  const hasDrinkText =
+    /\b(beer|pint|tap|draught|draft|guinness|carlton|stone\s*&\s*wood|lager|ale|stout|wine|cocktail|happy\s?hour|schooner|pot|jug)\b/i.test(
+      text,
+    );
+  if (!hasDrinkText) {
+    return false;
+  }
+
   return (
-    /\b(beer|pint|tap|draught|draft|guinness|carlton|stone\s*&\s*wood|lager|ale|stout|wine|cocktail|happy\s?hour)\b/i.test(text) &&
-    /(?:\$|A\$|AUD\s*)\s*\d{1,3}(?:\.\d{1,2})?/.test(text)
+    /(?:\$|A\$|AUD\s*)\s*\d{1,3}(?:\.\d{1,2})?/.test(text) ||
+    /\b(?:pint|schooner|pot|jug|tap|draught|draft|beer|lager|ale|stout|ipa|xpa|cider|cocktail|wine)\b[^\n$]{0,80}\b\d{1,2}(?:\.\d{1,2})?\b/i.test(
+      text,
+    )
   );
 }
 
@@ -905,6 +980,74 @@ function extractJsonLdLinks(html: string, baseUrl: string): Array<{ url: string;
   return links;
 }
 
+function normalizeEscapedUrlReference(value: string): string {
+  return decodeHtml(value)
+    .replace(/\\u0026/gi, "&")
+    .replace(/\\u003d/gi, "=")
+    .replace(/\\u002f/gi, "/")
+    .replace(/\\\//g, "/")
+    .trim();
+}
+
+function maybeAddMenuAssetReference(
+  links: Array<{ url: string; text: string }>,
+  rawValue: string,
+  baseUrl: string,
+  text: string,
+): void {
+  const normalized = normalizeEscapedUrlReference(rawValue);
+  if (!normalized || normalized.startsWith("//")) {
+    return;
+  }
+  if (!looksLikeUrlReference(normalized)) {
+    return;
+  }
+  if (!isMenuTerm(normalized) && !isPdfUrl(normalized) && !isImageUrl(normalized)) {
+    return;
+  }
+  addUrlLink(links, normalized, baseUrl, text);
+}
+
+function extractEmbeddedJsonMenuLinks(html: string, baseUrl: string): Array<{ url: string; text: string }> {
+  const links: Array<{ url: string; text: string }> = [];
+  const pattern = /<script\b(?=[^>]*(?:type=["']application\/json["']|id=["']__NEXT_DATA__["']))[^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(html))) {
+    const raw = decodeHtml(match[1] ?? "").trim().slice(0, MAX_JSON_SCRIPT_CHARS);
+    if (!raw) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      for (const value of flattenJsonStrings(parsed)) {
+        maybeAddMenuAssetReference(links, value, baseUrl, "embedded json menu asset");
+      }
+    } catch {
+      const quotedUrlPattern = /["'`]((?:https?:\\?\/\\?\/|\/)[^"'`<>{}\s]{3,})["'`]/gi;
+      let urlMatch: RegExpExecArray | null;
+      while ((urlMatch = quotedUrlPattern.exec(raw))) {
+        maybeAddMenuAssetReference(links, urlMatch[1] ?? "", baseUrl, "embedded json menu asset");
+      }
+    }
+  }
+
+  return links;
+}
+
+function extractQuotedMenuLinks(html: string, baseUrl: string): Array<{ url: string; text: string }> {
+  const links: Array<{ url: string; text: string }> = [];
+  const quotedUrlPattern = /["'`]((?:https?:\\?\/\\?\/|\/)[^"'`<>{}\s]{3,})["'`]/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = quotedUrlPattern.exec(html))) {
+    maybeAddMenuAssetReference(links, match[1] ?? "", baseUrl, "quoted url menu asset");
+  }
+
+  return links;
+}
+
 function addUrlLink(
   links: Array<{ url: string; text: string }>,
   rawUrl: string | null | undefined,
@@ -994,6 +1137,8 @@ function extractLinks(html: string, baseUrl: string): Array<{ url: string; text:
   }
 
   links.push(...extractJsonLdLinks(html, baseUrl));
+  links.push(...extractEmbeddedJsonMenuLinks(html, baseUrl));
+  links.push(...extractQuotedMenuLinks(html, baseUrl));
 
   return links;
 }
@@ -1025,8 +1170,13 @@ function isTrustedExternalMenuHost(url: string): boolean {
       "meandu.com",
       "bopple.app",
       "bopple.com",
+      "hungryhungry.com",
       "nowbookit.com",
+      "opentable.com",
+      "quandoo.com.au",
+      "resdiary.com",
       "sevenrooms.com",
+      "square.site",
       "untappd.com",
       "wixstatic.com",
       "squarespace-cdn.com",
@@ -1054,7 +1204,7 @@ function isAllowedMenuSourceUrl(officialWebsite: string, sourceUrl: string, text
 }
 
 function shouldSuppressDiscoveryFetchError(linkText: string, errorMessage: string): boolean {
-  if (!/\b(common menu path probe|sitemap menu url)\b/i.test(linkText)) {
+  if (!/\b(common menu path probe|sitemap menu url|robots sitemap menu url|wordpress rest menu url)\b/i.test(linkText)) {
     return false;
   }
   return /^HTTP (?:403|404|410)\b/i.test(errorMessage);
@@ -1063,7 +1213,11 @@ function shouldSuppressDiscoveryFetchError(linkText: string, errorMessage: strin
 function sourceHasMenuSignal(linkText: string, sourceUrl: string): boolean {
   const humanLinkText = linkText
     .replace(/\bcommon menu path probe\b/gi, "")
+    .replace(/\brobots sitemap menu url\b/gi, "")
     .replace(/\bsitemap menu url\b/gi, "")
+    .replace(/\bwordpress rest menu url\b/gi, "")
+    .replace(/\bquoted url menu asset\b/gi, "")
+    .replace(/\bembedded json menu asset\b/gi, "")
     .replace(/\bjson ld menu url\b/gi, "")
     .replace(/\bmenu page asset\b/gi, "")
     .replace(/\bcss image\b/gi, "")
@@ -1091,8 +1245,14 @@ function discoveryMethodFromLinkText(
   if (linkText === "homepage") {
     return "homepage";
   }
+  if (/\brobots sitemap menu url\b/i.test(linkText)) {
+    return "robots_sitemap";
+  }
   if (/\bsitemap menu url\b/i.test(linkText)) {
     return "sitemap";
+  }
+  if (/\bwordpress rest menu url\b/i.test(linkText)) {
+    return "wordpress_rest";
   }
   if (/\bcommon menu path probe\b/i.test(linkText)) {
     return "common_path_probe";
@@ -1100,11 +1260,17 @@ function discoveryMethodFromLinkText(
   if (/\bjson ld menu url\b/i.test(linkText)) {
     return "json_ld";
   }
+  if (/\bembedded json menu asset\b/i.test(linkText)) {
+    return "embedded_json";
+  }
   if (/\bmenu page asset\b/i.test(linkText)) {
     return "nested_asset";
   }
   if (/\bcss image\b/i.test(linkText)) {
     return "css_asset";
+  }
+  if (/\bquoted url menu asset\b/i.test(linkText)) {
+    return "quoted_asset";
   }
   if (!sameOrigin(officialWebsite, sourceUrl) && isTrustedExternalMenuHost(sourceUrl)) {
     return "trusted_external_menu_host";
@@ -1119,6 +1285,12 @@ function canonicalDiscoveryUrl(value: string): string {
     url.hostname = url.hostname.toLowerCase().replace(/^www\./i, "");
     url.port = "";
     url.hash = "";
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (/^(?:utm_|fbclid$|gclid$|gbraid$|wbraid$|mc_cid$|mc_eid$|igshid$)/i.test(key)) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.searchParams.sort();
     if (url.pathname !== "/") {
       url.pathname = url.pathname.replace(/\/+$/g, "");
     }
@@ -1127,6 +1299,18 @@ function canonicalDiscoveryUrl(value: string): string {
   } catch {
     return value;
   }
+}
+
+function sourceDomainFor(value: string): string {
+  try {
+    return new URL(value).hostname.toLowerCase().replace(/^www\./i, "");
+  } catch {
+    return "";
+  }
+}
+
+function sourceOriginFor(officialWebsite: string, sourceUrl: string): SourceOrigin {
+  return sameOrigin(officialWebsite, sourceUrl) ? "official_host" : "trusted_external_menu_host";
 }
 
 function addUniqueDiscoveryLink(
@@ -1191,16 +1375,17 @@ function decodePdfLiteralString(value: string): string {
 
 function decodePdfTextLikeContent(value: string): string {
   const chunks: string[] = [];
+  const boundedValue = value.slice(0, MAX_TEXT_EXTRACTION_CHARS * 4);
   const literalPattern = /\((?:\\.|[^\\)]){2,}\)/g;
   const hexPattern = /<([0-9a-fA-F\s]{4,})>/g;
   let match: RegExpExecArray | null;
 
-  while ((match = literalPattern.exec(value))) {
+  while ((match = literalPattern.exec(boundedValue))) {
     const raw = match[0]?.slice(1, -1) ?? "";
     chunks.push(decodePdfLiteralString(raw));
   }
 
-  while ((match = hexPattern.exec(value))) {
+  while ((match = hexPattern.exec(boundedValue))) {
     const hex = (match[1] ?? "").replace(/\s+/g, "");
     if (!hex || hex.length % 2 !== 0) {
       continue;
@@ -1215,7 +1400,7 @@ function decodePdfTextLikeContent(value: string): string {
     }
   }
 
-  chunks.push(value.replace(/[^\x09\x0a\x0d\x20-\x7e]+/g, " "));
+  chunks.push(boundedValue.replace(/[^\x09\x0a\x0d\x20-\x7e]+/g, " "));
   return chunks
     .join("\n")
     .replace(/[ \t]{2,}/g, " ")
@@ -1250,21 +1435,26 @@ function extractPdfTextFallback(buffer: Buffer): string {
   const streamPattern = /stream\r?\n?([\s\S]*?)\r?\n?endstream/g;
   let match: RegExpExecArray | null;
   let streamCount = 0;
+  let capturedChars = chunks[0]?.length ?? 0;
 
-  while ((match = streamPattern.exec(latin)) && streamCount < 80) {
+  while ((match = streamPattern.exec(latin)) && streamCount < 80 && capturedChars < MAX_TEXT_EXTRACTION_CHARS * 4) {
     streamCount += 1;
     const rawStream = trimPdfStreamBuffer(Buffer.from(match[1] ?? "", "latin1"));
     const dictionary = latin.slice(Math.max(0, match.index - 3000), match.index);
+    let nextChunk = "";
     if (/\/FlateDecode\b/i.test(dictionary)) {
       try {
         const inflated = zlib.inflateSync(rawStream);
-        chunks.push(inflated.toString("latin1"));
-        continue;
+        nextChunk = inflated.toString("latin1");
       } catch {
-        // Fall back to raw stream text below.
+        nextChunk = rawStream.toString("latin1");
       }
+    } else {
+      nextChunk = rawStream.toString("latin1");
     }
-    chunks.push(rawStream.toString("latin1"));
+    const remaining = MAX_TEXT_EXTRACTION_CHARS * 4 - capturedChars;
+    chunks.push(nextChunk.slice(0, remaining));
+    capturedChars += Math.min(nextChunk.length, remaining);
   }
 
   return decodePdfTextLikeContent(chunks.join("\n")).slice(0, MAX_TEXT_EXTRACTION_CHARS);
@@ -1350,12 +1540,15 @@ function isLikelyFoodOrMerchPrice(line: string, priceIndex: number): boolean {
   if (/\b(prawn cocktail|shrimp cocktail|seafood cocktail|oyster shooter|calamari|garlic prawns)\b/i.test(context)) {
     return true;
   }
-  if (/\b(pizza|pie|gravy|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|gift card|voucher)\b/i.test(immediatelyAfterPrice)) {
+  if (/\b(red wine jus|white wine jus|jus|aioli|mayo|gravy|dipping sauce|sauce)\b/i.test(context)) {
+    return true;
+  }
+  if (/\b(pizza|pie|gravy|jus|aioli|mayo|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|gift card|voucher)\b/i.test(immediatelyAfterPrice)) {
     return true;
   }
 
   const foodNearPrice =
-    /\b(pizza|pie|gravy|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
+    /\b(pizza|pie|gravy|jus|aioli|mayo|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
       nearPrice,
     );
   const drinkNearPrice =
@@ -1380,9 +1573,110 @@ function isLikelyFoodOrMerchPrice(line: string, priceIndex: number): boolean {
     return false;
   }
 
-  return /\b(pizza|pie|gravy|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
+  return /\b(pizza|pie|gravy|jus|aioli|mayo|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
     context,
   );
+}
+
+interface TextPriceMatch {
+  index: number;
+  priceNumeric: number;
+  priceText: string;
+  hadCurrency: boolean;
+}
+
+function hasDrinkExtractionTerm(line: string): boolean {
+  return /\b(beer|pint|tap|draught|draft|lager|ale|ipa|xpa|stout|porter|pilsner|cider|guinness|carlton|stone|wood|wine|cocktail|happy\s?hour|schooner|pot|jug|can|bottle)\b/i.test(
+    line,
+  );
+}
+
+function formatCurrencyPrice(value: number): string {
+  return `$${value.toFixed(value % 1 === 0 ? 0 : 2)}`;
+}
+
+function overlapsExistingSpan(start: number, end: number, spans: Array<{ start: number; end: number }>): boolean {
+  return spans.some((span) => start < span.end && end > span.start);
+}
+
+function isBarePriceTokenAllowed(line: string, start: number, end: number, value: number): boolean {
+  if (value < 2 || value > 80) {
+    return false;
+  }
+
+  const before = line.slice(Math.max(0, start - 2), start);
+  const after = line.slice(end, Math.min(line.length, end + 14));
+  if (/[.$:#]$/.test(before) || /^[:.%A-Za-z]/.test(after) || /^[-/]\d/.test(after) || /^-\s*(?:hour|hours?|hrs?)\b/i.test(after) || /-\s*$/.test(before)) {
+    return false;
+  }
+  if (/^\s*(?:am|pm|hrs?|hours?|mins?|minutes?|kg|g|ml|l\b|oz|people|guests|days?|for\b|off\b|%)/i.test(after)) {
+    return false;
+  }
+  if (/\b(?:19|20)\d{2}\b/.test(line.slice(Math.max(0, start - 8), Math.min(line.length, end + 8)))) {
+    return false;
+  }
+
+  const context = priceContext(line, start);
+  return /\b(pint|schooner|pot|jug|tap|draught|draft|can|bottle|cocktail|wine|spritz|margarita|beer|lager|ale|stout|ipa|xpa|cider)\b/i.test(
+    context,
+  );
+}
+
+function extractPriceMatchesFromLine(line: string): TextPriceMatch[] {
+  const matches: TextPriceMatch[] = [];
+  const currencySpans: Array<{ start: number; end: number }> = [];
+  const currencyPattern = /(?:A\$|AUD\s*|\$)\s*(\d{1,3}(?:\.\d{1,2})?)/gi;
+  let currencyMatch: RegExpExecArray | null;
+
+  while ((currencyMatch = currencyPattern.exec(line))) {
+    const numericRaw = currencyMatch[1];
+    if (!numericRaw) {
+      continue;
+    }
+    const priceNumeric = Number(numericRaw);
+    if (!Number.isFinite(priceNumeric) || priceNumeric <= 0 || priceNumeric > 200) {
+      continue;
+    }
+    const start = currencyMatch.index;
+    const end = currencyMatch.index + currencyMatch[0].length;
+    currencySpans.push({ start, end });
+    matches.push({
+      index: start,
+      priceNumeric,
+      priceText: formatCurrencyPrice(priceNumeric),
+      hadCurrency: true,
+    });
+  }
+
+  if (!hasDrinkExtractionTerm(line)) {
+    return matches;
+  }
+
+  const barePattern = /(?:^|[^\w$])(\d{1,2}(?:\.\d{1,2})?)(?!\d)/gi;
+  let bareMatch: RegExpExecArray | null;
+  while ((bareMatch = barePattern.exec(line))) {
+    const numericRaw = bareMatch[1];
+    if (!numericRaw) {
+      continue;
+    }
+    const start = bareMatch.index + bareMatch[0].indexOf(numericRaw);
+    const end = start + numericRaw.length;
+    if (overlapsExistingSpan(start, end, currencySpans)) {
+      continue;
+    }
+    const priceNumeric = Number(numericRaw);
+    if (!Number.isFinite(priceNumeric) || !isBarePriceTokenAllowed(line, start, end, priceNumeric)) {
+      continue;
+    }
+    matches.push({
+      index: start,
+      priceNumeric,
+      priceText: formatCurrencyPrice(priceNumeric),
+      hadCurrency: false,
+    });
+  }
+
+  return matches.sort((a, b) => a.index - b.index);
 }
 
 function splitTextIntoExtractionLines(text: string): string[] {
@@ -1401,36 +1695,31 @@ function splitTextIntoExtractionLines(text: string): string[] {
       }
       return trimmed.match(/.{1,220}(?:\s|$)/g)?.map((chunk) => chunk.trim()).filter(Boolean) ?? [];
     })
-    .filter((line) => /(?:\$|A\$|AUD\s*)\s*\d{1,3}(?:\.\d{1,2})?/.test(line));
+    .filter((line) => extractPriceMatchesFromLine(line).length > 0);
 }
 
 function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
   const rows: MenuImageOcrBeer[] = [];
   const seen = new Set<string>();
-  const pricePattern = /(?:A\$|AUD\s*|\$)\s*(\d{1,3}(?:\.\d{1,2})?)/gi;
 
   for (const line of splitTextIntoExtractionLines(text)) {
     const lower = line.toLowerCase();
-    if (
-      !/\b(beer|pint|tap|draught|draft|lager|ale|ipa|stout|porter|pilsner|cider|guinness|carlton|stone|wood|wine|cocktail|happy\s?hour|schooner|pot|jug)\b/i.test(
-        lower,
-      )
-    ) {
+    if (!hasDrinkExtractionTerm(lower)) {
       continue;
     }
 
-    let match: RegExpExecArray | null;
-    pricePattern.lastIndex = 0;
-    while ((match = pricePattern.exec(line)) && rows.length < MAX_ROWS_PER_TEXT_SOURCE) {
-      const priceNumeric = Number(match[1]);
-      if (!Number.isFinite(priceNumeric) || priceNumeric <= 0 || priceNumeric > 200) {
-        continue;
+    const priceMatches = extractPriceMatchesFromLine(line);
+    const lineNameServingKeys = new Set<string>();
+    for (const match of priceMatches) {
+      if (rows.length >= MAX_ROWS_PER_TEXT_SOURCE) {
+        break;
       }
       if (isLikelyFoodOrMerchPrice(line, match.index)) {
         continue;
       }
 
-      const trackedBeer = findTrackedBeerInText(line);
+      const localPriceContext = priceContext(line, match.index);
+      const trackedBeer = findTrackedBeerInText(localPriceContext);
       const genericName = trackedBeer ? null : inferGenericDrinkName(line, match.index);
       const name = canonicalizeTrackedBeerName(trackedBeer ?? genericName ?? "");
       if (!name || name.length < 3) {
@@ -1438,13 +1727,19 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
       }
 
       const availabilityStatus = inferAvailabilityStatus(line);
+      const servingNote = inferServingNote(line);
+      const lineNameServingKey = `${normalizeLooseText(name)}|${availabilityStatus}|${normalizeLooseText(servingNote ?? "")}`;
+      if (priceMatches.length > 1 && lineNameServingKeys.has(lineNameServingKey)) {
+        continue;
+      }
+      lineNameServingKeys.add(lineNameServingKey);
       const notes = [
-        inferServingNote(line),
+        servingNote,
         line.length <= 180 ? `Source line: ${line}` : `Source line: ${line.slice(0, 177)}...`,
       ]
         .filter(Boolean)
         .join(" | ");
-      const key = `${normalizeLooseText(name)}|${priceNumeric}|${availabilityStatus}|${normalizeLooseText(notes)}`;
+      const key = `${normalizeLooseText(name)}|${match.priceNumeric}|${availabilityStatus}|${normalizeLooseText(notes)}`;
       if (seen.has(key)) {
         continue;
       }
@@ -1452,11 +1747,11 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
 
       rows.push({
         name,
-        priceNumeric,
-        priceText: `$${priceNumeric.toFixed(priceNumeric % 1 === 0 ? 0 : 2)}`,
+        priceNumeric: match.priceNumeric,
+        priceText: match.priceText,
         availabilityStatus,
         notes,
-        confidence: trackedBeer ? 0.82 : 0.62,
+        confidence: trackedBeer ? (match.hadCurrency ? 0.82 : 0.76) : (match.hadCurrency ? 0.62 : 0.55),
       });
     }
   }
@@ -1512,7 +1807,7 @@ function scoreSource(input: {
   const signals: string[] = [];
   let confidence = 0;
   const hasStrongDrinkText = hasDrinkPriceSignals(input.text) || /\b(beer|drinks?|cocktails?|wine|tap\s?list|happy\s?hour)\b/i.test(input.text);
-  const isGeneratedDiscoveryLink = /\b(common menu path probe|sitemap menu url)\b/i.test(input.linkText);
+  const isGeneratedDiscoveryLink = /\b(common menu path probe|sitemap menu url|robots sitemap menu url|wordpress rest menu url|quoted url menu asset|embedded json menu asset)\b/i.test(input.linkText);
   const discoveryMethod = discoveryMethodFromLinkText(input.linkText, input.officialWebsite, input.sourceUrl);
   const trustedExternalMenuHost = !sameOrigin(input.officialWebsite, input.sourceUrl) && isTrustedExternalMenuHost(input.sourceUrl);
   const hasMenuLinkSignal = sourceHasMenuSignal(input.linkText, input.sourceUrl);
@@ -1572,6 +1867,9 @@ function scoreSource(input: {
     venueSuburb: input.venue.suburb,
     officialWebsite: input.officialWebsite,
     sourceUrl: input.sourceUrl,
+    canonicalSourceUrl: canonicalDiscoveryUrl(input.sourceUrl),
+    sourceDomain: sourceDomainFor(input.sourceUrl),
+    sourceOrigin: sourceOriginFor(input.officialWebsite, input.sourceUrl),
     sourceKind: input.sourceKind,
     discoveryMethod,
     confidence,
@@ -1590,48 +1888,107 @@ function scoreSource(input: {
   };
 }
 
-async function fetchTextForCandidate(url: string): Promise<{ contentType: string; text: string }> {
+function contentLengthBytes(response: Response): number | null {
+  const value = response.headers.get("content-length");
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function maxBytesForResponse(url: string, contentType: string): number {
+  const lowerContentType = contentType.toLowerCase();
+  if (lowerContentType.startsWith("image/") || isImageUrl(url)) {
+    return MAX_IMAGE_BYTES;
+  }
+  if (lowerContentType.includes("pdf") || isPdfUrl(url)) {
+    return MAX_PDF_BYTES;
+  }
+  return MAX_HTML_BYTES;
+}
+
+function assertResponseSizeAllowed(url: string, contentType: string, bytes: number | null): void {
+  if (bytes == null) {
+    return;
+  }
+  const maxBytes = maxBytesForResponse(url, contentType);
+  if (bytes > maxBytes) {
+    throw new Error(`Source is too large for discovery extraction (${Math.round(bytes / 1024 / 1024)} MB)`);
+  }
+}
+
+async function fetchTextForCandidateUncached(url: string): Promise<{ contentType: string; text: string }> {
   const response = await withTimeoutFetch(url);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
 
   const contentType = response.headers.get("content-type") ?? "";
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  const limited = buffer.subarray(0, Math.min(buffer.length, MAX_HTML_BYTES));
+  assertResponseSizeAllowed(url, contentType, contentLengthBytes(response));
 
   if (contentType.toLowerCase().startsWith("image/") || isImageUrl(url)) {
     return { contentType, text: "" };
   }
 
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  assertResponseSizeAllowed(url, contentType, buffer.length);
+
   if (contentType.toLowerCase().includes("pdf") || isPdfUrl(url)) {
-    if (buffer.length > MAX_PDF_BYTES) {
-      throw new Error(`PDF is too large for discovery extraction (${Math.round(buffer.length / 1024 / 1024)} MB)`);
-    }
     return { contentType, text: await extractPdfText(buffer) };
   }
 
+  const limited = buffer.subarray(0, Math.min(buffer.length, MAX_HTML_BYTES));
   return { contentType, text: limited.toString("utf8") };
 }
 
-async function fetchImageDataUrlForOcr(sourceUrl: string): Promise<string> {
+async function fetchTextForCandidate(url: string): Promise<{ contentType: string; text: string }> {
+  const cacheKey = canonicalDiscoveryUrl(url);
+  const cached = textFetchCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const request = fetchTextForCandidateUncached(url).catch((error) => {
+    textFetchCache.delete(cacheKey);
+    throw error;
+  });
+  textFetchCache.set(cacheKey, request);
+  return request;
+}
+
+async function fetchImageDataUrlForOcrUncached(sourceUrl: string): Promise<string> {
   const response = await withTimeoutFetch(sourceUrl);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
 
   const contentType = response.headers.get("content-type") ?? "";
+  assertResponseSizeAllowed(sourceUrl, contentType, contentLengthBytes(response));
   if (!contentType.toLowerCase().startsWith("image/")) {
     throw new Error(`Expected image content, got ${contentType || "unknown content type"}`);
   }
 
   const buffer = Buffer.from(await response.arrayBuffer());
-  if (buffer.length > MAX_IMAGE_BYTES) {
-    throw new Error(`Image is too large for discovery OCR (${Math.round(buffer.length / 1024 / 1024)} MB)`);
-  }
+  assertResponseSizeAllowed(sourceUrl, contentType, buffer.length);
 
   return `data:${contentType};base64,${buffer.toString("base64")}`;
+}
+
+async function fetchImageDataUrlForOcr(sourceUrl: string): Promise<string> {
+  const cacheKey = canonicalDiscoveryUrl(sourceUrl);
+  const cached = imageDataUrlCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const request = fetchImageDataUrlForOcrUncached(sourceUrl).catch((error) => {
+    imageDataUrlCache.delete(cacheKey);
+    throw error;
+  });
+  imageDataUrlCache.set(cacheKey, request);
+  return request;
 }
 
 async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: OpenAI | null): Promise<MenuImageOcrResult | null> {
@@ -1815,17 +2172,13 @@ async function fetchSitemapText(url: string): Promise<string> {
   return fetched.text;
 }
 
-async function discoverSitemapMenuLinks(
+async function discoverSitemapQueueMenuLinks(
   officialWebsite: string,
   seenUrls: Set<string>,
+  sitemapQueue: string[],
   limit: number,
+  linkText: string,
 ): Promise<Array<{ url: string; text: string }>> {
-  const root = siteRoot(officialWebsite);
-  if (!root) {
-    return [];
-  }
-
-  const sitemapQueue = [new URL("/sitemap.xml", root).toString(), new URL("/sitemap_index.xml", root).toString()];
   const visitedSitemaps = new Set<string>();
   const links: Array<{ url: string; text: string }> = [];
 
@@ -1851,13 +2204,132 @@ async function discoverSitemapMenuLinks(
         sitemapQueue.push(url);
         continue;
       }
-      const text = "sitemap menu url";
-      if (sourceHasMenuSignal(text, url) || isPdfUrl(url) || isLikelyMenuImageCandidate(url, text)) {
-        addUniqueDiscoveryLink(links, seenUrls, { url, text }, officialWebsite);
+      if (sourceHasMenuSignal(linkText, url) || isPdfUrl(url) || isLikelyMenuImageCandidate(url, linkText)) {
+        addUniqueDiscoveryLink(links, seenUrls, { url, text: linkText }, officialWebsite);
         if (links.length >= limit) {
           break;
         }
       }
+    }
+  }
+
+  return links;
+}
+
+async function discoverSitemapMenuLinks(
+  officialWebsite: string,
+  seenUrls: Set<string>,
+  limit: number,
+): Promise<Array<{ url: string; text: string }>> {
+  const root = siteRoot(officialWebsite);
+  if (!root) {
+    return [];
+  }
+
+  return discoverSitemapQueueMenuLinks(
+    officialWebsite,
+    seenUrls,
+    [new URL("/sitemap.xml", root).toString(), new URL("/sitemap_index.xml", root).toString()],
+    limit,
+    "sitemap menu url",
+  );
+}
+
+function extractRobotsSitemapUrls(text: string, baseUrl: string): string[] {
+  const urls: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^\s*sitemap\s*:\s*(\S+)/i);
+    if (!match?.[1]) {
+      continue;
+    }
+    try {
+      const url = new URL(match[1], baseUrl);
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        urls.push(url.toString());
+      }
+    } catch {
+      // Ignore malformed robots sitemap hints.
+    }
+  }
+  return Array.from(new Set(urls.map(canonicalDiscoveryUrl))).slice(0, MAX_ROBOTS_SITEMAPS_PER_SITE);
+}
+
+async function discoverRobotsSitemapMenuLinks(
+  officialWebsite: string,
+  seenUrls: Set<string>,
+  limit: number,
+): Promise<Array<{ url: string; text: string }>> {
+  const root = siteRoot(officialWebsite);
+  if (!root) {
+    return [];
+  }
+
+  try {
+    const robots = await fetchTextForCandidate(new URL("/robots.txt", root).toString());
+    const sitemapUrls = extractRobotsSitemapUrls(robots.text, root).filter((url) => sameOrigin(officialWebsite, url));
+    if (sitemapUrls.length === 0) {
+      return [];
+    }
+    return discoverSitemapQueueMenuLinks(officialWebsite, seenUrls, sitemapUrls, limit, "robots sitemap menu url");
+  } catch {
+    return [];
+  }
+}
+
+async function discoverWordPressRestMenuLinks(
+  officialWebsite: string,
+  seenUrls: Set<string>,
+  limit: number,
+): Promise<Array<{ url: string; text: string }>> {
+  const root = siteRoot(officialWebsite);
+  if (!root) {
+    return [];
+  }
+
+  const links: Array<{ url: string; text: string }> = [];
+  const searchTerms = ["menu", "drinks", "beer", "happy hour"];
+  for (const term of searchTerms) {
+    if (links.length >= limit) {
+      break;
+    }
+
+    const restUrl = new URL("/wp-json/wp/v2/search", root);
+    restUrl.searchParams.set("search", term);
+    restUrl.searchParams.set("per_page", "10");
+    restUrl.searchParams.set("_fields", "url,title,type,subtype");
+
+    let text = "";
+    try {
+      text = (await fetchTextForCandidate(restUrl.toString())).text;
+    } catch {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      continue;
+    }
+
+    if (!Array.isArray(parsed)) {
+      continue;
+    }
+
+    for (const record of parsed) {
+      if (links.length >= limit || !record || typeof record !== "object") {
+        continue;
+      }
+      const item = record as Record<string, unknown>;
+      const url = typeof item.url === "string" ? item.url : "";
+      const title = typeof item.title === "string" ? item.title : "";
+      if (!url || !sameOrigin(officialWebsite, url)) {
+        continue;
+      }
+      if (!sourceHasMenuSignal(`wordpress rest menu url ${title}`, url) && !isPdfUrl(url)) {
+        continue;
+      }
+      addUniqueDiscoveryLink(links, seenUrls, { url, text: `wordpress rest menu url ${title}`.trim() }, officialWebsite);
     }
   }
 
@@ -1915,6 +2387,30 @@ async function buildCandidateFromFetchedSource(input: {
   return { candidate, childLinks };
 }
 
+function candidateRankScore(candidate: MenuSourceCandidate): number {
+  const extractedRows = candidate.textExtraction?.rows.length ?? candidate.ocr?.beers.length ?? 0;
+  const sourceKindScore =
+    candidate.sourceKind === "menu_pdf" ? 12 : candidate.sourceKind === "menu_image" ? 10 : candidate.sourceKind === "homepage_menu_signal" ? 4 : 8;
+  const freshnessScore = candidate.freshness === "within_last_year" ? 8 : candidate.freshness === "unknown" ? 3 : 0;
+  const originScore = candidate.sourceOrigin === "official_host" ? 8 : 4;
+  return extractedRows * 40 + candidate.confidence * 25 + sourceKindScore + freshnessScore + originScore;
+}
+
+function dedupeAndRankCandidates(candidates: MenuSourceCandidate[]): MenuSourceCandidate[] {
+  const bestByUrl = new Map<string, MenuSourceCandidate>();
+  for (const candidate of candidates) {
+    const key = candidate.canonicalSourceUrl || canonicalDiscoveryUrl(candidate.sourceUrl);
+    const existing = bestByUrl.get(key);
+    if (!existing || candidateRankScore(candidate) > candidateRankScore(existing)) {
+      bestByUrl.set(key, candidate);
+    }
+  }
+
+  return Array.from(bestByUrl.values()).sort(
+    (a, b) => candidateRankScore(b) - candidateRankScore(a) || b.confidence - a.confidence || a.sourceUrl.localeCompare(b.sourceUrl),
+  );
+}
+
 async function discoverSourcesForVenue(
   venue: VenueCandidate,
   maxLinksPerVenue: number,
@@ -1960,6 +2456,12 @@ async function discoverSourcesForVenue(
 
     const sitemapLinks = await discoverSitemapMenuLinks(officialWebsite, seenUrls, MAX_SITEMAP_URLS_PER_SITE);
     links.push(...sitemapLinks);
+
+    const robotsSitemapLinks = await discoverRobotsSitemapMenuLinks(officialWebsite, seenUrls, MAX_SITEMAP_URLS_PER_SITE);
+    links.push(...robotsSitemapLinks);
+
+    const wordpressRestLinks = await discoverWordPressRestMenuLinks(officialWebsite, seenUrls, DEFAULT_MAX_WORDPRESS_LINKS_PER_SITE);
+    links.push(...wordpressRestLinks);
 
     const probeLinks = buildCommonMenuProbeLinks(officialWebsite, seenUrls, DEFAULT_MAX_PROBE_URLS_PER_SITE);
     links.push(...probeLinks);
@@ -2020,7 +2522,7 @@ async function discoverSourcesForVenue(
     errors.push({ url: officialWebsite, error: error instanceof Error ? error.message : "Unknown fetch error" });
   }
 
-  return { candidates, errors };
+  return { candidates: dedupeAndRankCandidates(candidates), errors };
 }
 
 async function maybeQueueDirectImage(candidate: MenuSourceCandidate): Promise<boolean> {
@@ -2104,6 +2606,9 @@ async function main(): Promise<void> {
       venuesWithOfficialWebsite: venues.filter((venue) => Boolean(venue.website)).length,
       venuesResolvedWithGooglePlaces: resolvedWithGooglePlaces,
       sourceCandidates: 0,
+      sourcesWithExtractedRows: 0,
+      discoveryMethodCounts: {},
+      sourceKindCounts: {},
       directImageCandidates: 0,
       textExtractionCandidatesAttempted: 0,
       textExtractionCandidatesSucceeded: 0,
@@ -2116,6 +2621,7 @@ async function main(): Promise<void> {
       queuedForOcr: 0,
       skippedWithoutWebsite: 0,
       fetchErrors: 0,
+      fetchCacheEntries: 0,
     },
     skippedWithoutWebsite: [],
     candidates: [],
@@ -2162,6 +2668,13 @@ async function main(): Promise<void> {
     report.totals.venuesScanned += 1;
     for (const candidate of result.candidates) {
       report.candidates.push(candidate);
+      report.totals.discoveryMethodCounts[candidate.discoveryMethod] =
+        (report.totals.discoveryMethodCounts[candidate.discoveryMethod] ?? 0) + 1;
+      report.totals.sourceKindCounts[candidate.sourceKind] =
+        (report.totals.sourceKindCounts[candidate.sourceKind] ?? 0) + 1;
+      if ((candidate.textExtraction?.rows.length ?? 0) > 0 || (candidate.ocr?.beers.length ?? 0) > 0) {
+        report.totals.sourcesWithExtractedRows += 1;
+      }
       if (candidate.textExtraction) {
         report.totals.textExtractionCandidatesAttempted += 1;
         if (!candidate.textExtraction.error) {
@@ -2205,8 +2718,12 @@ async function main(): Promise<void> {
 
   report.candidates.sort((a, b) => b.confidence - a.confidence || a.venueName.localeCompare(b.venueName));
   report.totals.sourceCandidates = report.candidates.length;
+  report.totals.sourcesWithExtractedRows = report.candidates.filter(
+    (candidate) => (candidate.textExtraction?.rows.length ?? 0) > 0 || (candidate.ocr?.beers.length ?? 0) > 0,
+  ).length;
   report.totals.skippedWithoutWebsite = report.skippedWithoutWebsite.length;
   report.totals.fetchErrors = report.errors.length;
+  report.totals.fetchCacheEntries = textFetchCache.size + imageDataUrlCache.size;
 
   const runsDir = ensureRunsDir();
   const outputPath = path.join(runsDir, `menu-source-discovery-${timestampForFile()}.json`);
@@ -2229,7 +2746,7 @@ async function main(): Promise<void> {
     console.info("Top candidates:");
     for (const candidate of report.candidates.slice(0, 10)) {
       console.info(
-        `- ${candidate.venueName} [${candidate.sourceKind}, ${candidate.confidence}] ${candidate.sourceUrl}`,
+        `- ${candidate.venueName} [${candidate.sourceKind}/${candidate.discoveryMethod}, ${candidate.confidence}] ${candidate.sourceUrl}`,
       );
     }
   }
