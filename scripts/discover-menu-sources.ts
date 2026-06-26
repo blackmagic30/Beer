@@ -1,0 +1,1255 @@
+import "dotenv/config";
+
+import fs from "node:fs";
+import path from "node:path";
+
+import Database from "better-sqlite3";
+import { createClient } from "@supabase/supabase-js";
+import OpenAI from "openai";
+
+import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../src/constants/beers.js";
+import {
+  normalizeVenueKey,
+  shouldImportBarOrPubPlace,
+  type GooglePlaceCandidate,
+} from "../src/lib/venue-directory.js";
+
+const GOOGLE_TEXT_SEARCH_API_URL = "https://places.googleapis.com/v1/places:searchText";
+const GOOGLE_FIELD_MASK = [
+  "places.id",
+  "places.displayName",
+  "places.formattedAddress",
+  "places.addressComponents",
+  "places.location",
+  "places.websiteUri",
+  "places.businessStatus",
+  "places.primaryType",
+  "places.types",
+].join(",");
+
+const MAX_HTML_BYTES = 1_500_000;
+const MAX_IMAGE_BYTES = 8_000_000;
+const REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_LIMIT = 1000;
+const DEFAULT_MAX_LINKS_PER_VENUE = 8;
+const DEFAULT_CONCURRENCY = 4;
+
+type SourceKind = "menu_page" | "menu_image" | "menu_pdf" | "homepage_menu_signal";
+
+interface VenueCandidate {
+  id: string;
+  name: string;
+  address: string | null;
+  suburb: string | null;
+  state: string | null;
+  postcode: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  website: string | null;
+  source: string;
+  googlePlaceId: string | null;
+}
+
+interface MenuSourceCandidate {
+  venueId: string;
+  venueName: string;
+  venueAddress: string | null;
+  venueSuburb: string | null;
+  officialWebsite: string;
+  sourceUrl: string;
+  sourceKind: SourceKind;
+  confidence: number;
+  canQueueOcr: boolean;
+  freshness: "within_last_year" | "older_than_year" | "unknown";
+  publishedAt: string | null;
+  signals: string[];
+  reviewNote: string;
+  ocr: MenuImageOcrResult | null;
+}
+
+interface MenuImageOcrBeer {
+  name: string;
+  priceNumeric: number | null;
+  priceText: string | null;
+  availabilityStatus: "on_tap" | "package_only" | "unavailable" | "unknown";
+  notes: string | null;
+  confidence: number | null;
+}
+
+interface MenuImageOcrResult {
+  attemptedAt: string;
+  venueNameGuess: string | null;
+  capturedNotes: string | null;
+  overallConfidence: number | null;
+  beers: MenuImageOcrBeer[];
+  error: string | null;
+}
+
+interface DiscoveryReport {
+  generatedAt: string;
+  safety: {
+    googleReviewPhotos: "skipped";
+    autoPublish: false;
+    ocrQueued: boolean;
+    note: string;
+  };
+  totals: {
+    venuesLoaded: number;
+    venuesScanned: number;
+    venuesWithOfficialWebsite: number;
+    venuesResolvedWithGooglePlaces: number;
+    sourceCandidates: number;
+    directImageCandidates: number;
+    ocrImageCandidatesAttempted: number;
+    ocrImageCandidatesSucceeded: number;
+    ocrBeerRowsExtracted: number;
+    queuedForOcr: number;
+    skippedWithoutWebsite: number;
+    fetchErrors: number;
+  };
+  skippedWithoutWebsite: Array<Pick<VenueCandidate, "id" | "name" | "address" | "suburb" | "source">>;
+  candidates: MenuSourceCandidate[];
+  errors: Array<{ venueId: string; venueName: string; url: string; error: string }>;
+}
+
+function getArg(name: string, fallback?: string): string | undefined {
+  const prefix = `--${name}=`;
+  const match = process.argv.slice(2).find((arg) => arg.startsWith(prefix));
+  return match ? match.slice(prefix.length) : fallback;
+}
+
+function hasFlag(name: string): boolean {
+  return process.argv.slice(2).includes(`--${name}`);
+}
+
+function numberArg(name: string, fallback: number): number {
+  const raw = getArg(name);
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function envFlag(name: string): boolean {
+  return ["1", "true", "yes", "on"].includes((process.env[name] ?? "").trim().toLowerCase());
+}
+
+function parseJsonResponse(text: string): unknown {
+  const trimmed = text.trim();
+  const withoutFence = trimmed
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "");
+
+  return JSON.parse(withoutFence);
+}
+
+function normalizeConfidence(value: unknown, fallback: number | null = null): number | null {
+  if (value == null || value === "") {
+    return fallback;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+
+  return Math.min(1, Math.max(0, numeric));
+}
+
+function normalizeOcrBeer(value: unknown): MenuImageOcrBeer | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const name = typeof record.name === "string" ? canonicalizeTrackedBeerName(record.name.trim()) : "";
+  if (!name) {
+    return null;
+  }
+
+  const availabilityStatus =
+    typeof record.availability_status === "string" &&
+    ["on_tap", "package_only", "unavailable", "unknown"].includes(record.availability_status)
+      ? (record.availability_status as MenuImageOcrBeer["availabilityStatus"])
+      : "unknown";
+
+  return {
+    name,
+    priceNumeric:
+      record.price_numeric == null || Number.isNaN(Number(record.price_numeric))
+        ? null
+        : Number(record.price_numeric),
+    priceText: typeof record.price_text === "string" && record.price_text.trim() ? record.price_text.trim() : null,
+    availabilityStatus,
+    notes: typeof record.notes === "string" && record.notes.trim() ? record.notes.trim() : null,
+    confidence: normalizeConfidence(record.confidence, null),
+  };
+}
+
+async function mapLimit<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function runWorker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      const item = items[currentIndex];
+      if (item === undefined) {
+        continue;
+      }
+      results[currentIndex] = await worker(item, currentIndex);
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
+}
+
+function ensureRunsDir(): string {
+  const runsDir = path.resolve(process.cwd(), "data/runs");
+  fs.mkdirSync(runsDir, { recursive: true });
+  return runsDir;
+}
+
+function timestampForFile(): string {
+  return new Date().toISOString().replaceAll(":", "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function csvCell(value: unknown): string {
+  const text = String(value ?? "");
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function candidatesToCsv(candidates: MenuSourceCandidate[]): string {
+  const headers = [
+    "venueName",
+    "venueAddress",
+    "venueArea",
+    "sourceKind",
+    "confidence",
+    "canQueueOcr",
+    "sourceUrl",
+    "officialWebsite",
+    "freshness",
+    "signals",
+    "ocrBeerCount",
+    "ocrError",
+    "reviewNote",
+  ];
+  const rows = candidates.map((candidate) => [
+    candidate.venueName,
+    candidate.venueAddress,
+    candidate.venueSuburb,
+    candidate.sourceKind,
+    candidate.confidence,
+    candidate.canQueueOcr,
+    candidate.sourceUrl,
+    candidate.officialWebsite,
+    candidate.freshness,
+    candidate.signals.join("; "),
+    candidate.ocr?.beers.length ?? 0,
+    candidate.ocr?.error ?? "",
+    candidate.reviewNote,
+  ]);
+
+  return [
+    headers.map(csvCell).join(","),
+    ...rows.map((row) => row.map(csvCell).join(",")),
+  ].join("\n");
+}
+
+function isHttpUrl(value: string | null | undefined): value is string {
+  if (!value) {
+    return false;
+  }
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeWebsite(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return isHttpUrl(withProtocol) ? withProtocol : null;
+}
+
+function normalizeString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeNumber(value: unknown): number | null {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function venueKey(venue: Pick<VenueCandidate, "name" | "address" | "suburb">): string {
+  return [
+    normalizeVenueKey(venue.name),
+    normalizeVenueKey(venue.address),
+    normalizeVenueKey(venue.suburb),
+  ]
+    .filter(Boolean)
+    .join("|");
+}
+
+function mergeVenues(venues: VenueCandidate[]): VenueCandidate[] {
+  const merged = new Map<string, VenueCandidate>();
+
+  for (const venue of venues) {
+    const key = venue.id || venueKey(venue);
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, venue);
+      continue;
+    }
+
+    merged.set(key, {
+      ...existing,
+      address: existing.address ?? venue.address,
+      suburb: existing.suburb ?? venue.suburb,
+      state: existing.state ?? venue.state,
+      postcode: existing.postcode ?? venue.postcode,
+      latitude: existing.latitude ?? venue.latitude,
+      longitude: existing.longitude ?? venue.longitude,
+      website: existing.website ?? venue.website,
+      googlePlaceId: existing.googlePlaceId ?? venue.googlePlaceId,
+      source: existing.source.includes(venue.source) ? existing.source : `${existing.source},${venue.source}`,
+    });
+  }
+
+  return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function loadSupabaseVenues(limit: number): Promise<VenueCandidate[]> {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) {
+    return [];
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseKey, {
+    auth: { persistSession: false },
+  });
+  const venues: VenueCandidate[] = [];
+  const pageSize = 500;
+  let includeWebsite = true;
+
+  for (let offset = 0; offset < limit; offset += pageSize) {
+    const selectWithWebsite =
+      "id, google_place_id, name, address, suburb, state, postcode, latitude, longitude, website";
+    const selectWithoutWebsite =
+      "id, google_place_id, name, address, suburb, state, postcode, latitude, longitude";
+    const { data, error } = await supabase
+      .from("venues")
+      .select(includeWebsite ? selectWithWebsite : selectWithoutWebsite)
+      .range(offset, Math.min(offset + pageSize - 1, limit - 1));
+
+    if (error && includeWebsite && /website/i.test(error.message)) {
+      includeWebsite = false;
+      offset -= pageSize;
+      continue;
+    }
+
+    if (error) {
+      throw new Error(`Failed to load Supabase venues: ${error.message}`);
+    }
+
+    const rows = (Array.isArray(data) ? data : []) as unknown[];
+    for (const row of rows as Array<Record<string, unknown>>) {
+      const id = normalizeString(row.id);
+      const name = normalizeString(row.name);
+      if (!id || !name) {
+        continue;
+      }
+      venues.push({
+        id,
+        name,
+        address: normalizeString(row.address),
+        suburb: normalizeString(row.suburb),
+        state: normalizeString(row.state),
+        postcode: normalizeString(row.postcode),
+        latitude: normalizeNumber(row.latitude),
+        longitude: normalizeNumber(row.longitude),
+        website: normalizeWebsite(normalizeString(row.website)),
+        source: "supabase:venues",
+        googlePlaceId: normalizeString(row.google_place_id),
+      });
+    }
+
+    if (rows.length < pageSize || venues.length >= limit) {
+      break;
+    }
+  }
+
+  return venues.slice(0, limit);
+}
+
+function tableExists(db: Database.Database, tableName: string): boolean {
+  const row = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName) as { name: string } | undefined;
+  return Boolean(row);
+}
+
+function tableColumns(db: Database.Database, tableName: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return new Set(rows.map((row) => row.name));
+}
+
+function sqlColumn(columns: Set<string>, name: string, alias = name): string {
+  return columns.has(name) ? `${name} AS ${alias}` : `NULL AS ${alias}`;
+}
+
+function loadSqliteVenues(limit: number): VenueCandidate[] {
+  const dbPaths = [
+    process.env.DATABASE_PATH,
+    "data/pint-path.sqlite",
+    "data/melb-beer-bot.sqlite",
+    "data/melb-beer-bot.db",
+    "data/app.db",
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => path.resolve(process.cwd(), value));
+
+  const venues: VenueCandidate[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const dbPath of dbPaths) {
+    if (seenPaths.has(dbPath) || !fs.existsSync(dbPath)) {
+      continue;
+    }
+    seenPaths.add(dbPath);
+
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      if (!tableExists(db, "venue_profiles")) {
+        continue;
+      }
+
+      const columns = tableColumns(db, "venue_profiles");
+      const rows = db
+        .prepare(
+          `SELECT
+            ${sqlColumn(columns, "id")},
+            ${sqlColumn(columns, "name")},
+            ${sqlColumn(columns, "address")},
+            ${sqlColumn(columns, "suburb")},
+            ${sqlColumn(columns, "state")},
+            ${sqlColumn(columns, "postcode")},
+            ${sqlColumn(columns, "latitude")},
+            ${sqlColumn(columns, "longitude")},
+            ${sqlColumn(columns, "website")},
+            ${sqlColumn(columns, "google_place_id", "googlePlaceId")}
+           FROM venue_profiles
+           WHERE name IS NOT NULL
+           LIMIT ?`,
+        )
+        .all(limit) as Array<Record<string, unknown>>;
+
+      for (const row of rows) {
+        const id = normalizeString(row.id);
+        const name = normalizeString(row.name);
+        if (!id || !name) {
+          continue;
+        }
+        venues.push({
+          id,
+          name,
+          address: normalizeString(row.address),
+          suburb: normalizeString(row.suburb),
+          state: normalizeString(row.state),
+          postcode: normalizeString(row.postcode),
+          latitude: normalizeNumber(row.latitude),
+          longitude: normalizeNumber(row.longitude),
+          website: normalizeWebsite(normalizeString(row.website)),
+          source: `sqlite:${path.basename(dbPath)}`,
+          googlePlaceId: normalizeString(row.googlePlaceId),
+        });
+      }
+    } finally {
+      db.close();
+    }
+  }
+
+  return venues;
+}
+
+function loadArtifactVenues(limit: number): VenueCandidate[] {
+  const artifactPaths = [
+    "data/venue-call-review.json",
+    "data/south-melbourne-call-review.json",
+    "data/runs/venue-call-batch-state.json",
+  ];
+  const venues: VenueCandidate[] = [];
+
+  for (const artifactPath of artifactPaths) {
+    const absolutePath = path.resolve(process.cwd(), artifactPath);
+    if (!fs.existsSync(absolutePath)) {
+      continue;
+    }
+
+    const parsed = JSON.parse(fs.readFileSync(absolutePath, "utf8")) as unknown;
+    const rows = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object" && "venues" in parsed && Array.isArray((parsed as { venues: unknown }).venues)
+        ? (parsed as { venues: unknown[] }).venues
+        : [];
+
+    for (const item of rows) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const row = item as Record<string, unknown>;
+      const name = normalizeString(row.venueName) ?? normalizeString(row.name);
+      if (!name) {
+        continue;
+      }
+      const id = normalizeString(row.venueId) ?? normalizeString(row.id) ?? normalizeVenueKey(`${name}-${normalizeString(row.suburb) ?? ""}`);
+      venues.push({
+        id,
+        name,
+        address: normalizeString(row.address),
+        suburb: normalizeString(row.suburb),
+        state: normalizeString(row.state),
+        postcode: normalizeString(row.postcode),
+        latitude: normalizeNumber(row.latitude),
+        longitude: normalizeNumber(row.longitude),
+        website: normalizeWebsite(normalizeString(row.website)),
+        source: `artifact:${artifactPath}`,
+        googlePlaceId: normalizeString(row.googlePlaceId),
+      });
+    }
+  }
+
+  return venues.slice(0, limit);
+}
+
+function getAddressComponent(place: GooglePlaceCandidate, type: string): string | null {
+  const component = (place.addressComponents ?? []).find((item) => item.types?.includes(type));
+  return component?.longText ?? component?.shortText ?? null;
+}
+
+function looksLikeSameVenue(venue: VenueCandidate, place: GooglePlaceCandidate): boolean {
+  const placeName = place.displayName?.text ?? "";
+  const placeAddress = place.formattedAddress ?? "";
+  const venueName = normalizeVenueKey(venue.name);
+  const candidateName = normalizeVenueKey(placeName);
+
+  if (!venueName || !candidateName) {
+    return false;
+  }
+
+  if (candidateName === venueName || candidateName.includes(venueName) || venueName.includes(candidateName)) {
+    return true;
+  }
+
+  const nameTokens = venueName.split(/\s+/).filter((token) => token.length >= 4);
+  const matchedTokens = nameTokens.filter((token) => candidateName.includes(token)).length;
+  const suburb = normalizeVenueKey(venue.suburb);
+  const address = normalizeVenueKey(venue.address);
+  const placeAddressKey = normalizeVenueKey(placeAddress);
+
+  return (
+    matchedTokens >= Math.min(2, nameTokens.length) &&
+    Boolean((suburb && placeAddressKey.includes(suburb)) || (address && placeAddressKey.includes(address.split(/\s+/)[0] ?? "")))
+  );
+}
+
+async function resolveWebsiteWithGooglePlaces(venue: VenueCandidate): Promise<string | null> {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY ?? process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+
+  const textQuery = [venue.name, venue.address, venue.suburb, "Melbourne"].filter(Boolean).join(" ");
+  const response = await fetch(GOOGLE_TEXT_SEARCH_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": GOOGLE_FIELD_MASK,
+    },
+    body: JSON.stringify({
+      textQuery,
+      pageSize: 5,
+      locationBias: venue.latitude && venue.longitude
+        ? {
+            circle: {
+              center: { latitude: venue.latitude, longitude: venue.longitude },
+              radius: 1500,
+            },
+          }
+        : undefined,
+    }),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as { places?: GooglePlaceCandidate[] };
+  const places = payload.places ?? [];
+  const match = places.find((place) => looksLikeSameVenue(venue, place) && shouldImportBarOrPubPlace(place));
+  return normalizeWebsite(match?.websiteUri);
+}
+
+async function withTimeoutFetch(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "Accept": "text/html,application/xhtml+xml,application/pdf,image/*;q=0.9,*/*;q=0.5",
+        "User-Agent": "PintPathMenuDiscovery/1.0 (+https://pintpath.au)",
+      },
+      redirect: "follow",
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isImageUrl(url: string): boolean {
+  return /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(url);
+}
+
+function isPdfUrl(url: string): boolean {
+  return /\.pdf(\?.*)?$/i.test(url);
+}
+
+function isMenuTerm(value: string): boolean {
+  return /\b(menu|menus|drinks?|beverages?|beer|wine|cocktails?|tap\s?list|happy\s?hour|specials?)\b/i.test(value);
+}
+
+function isExcludedMenuSourceUrl(url: string, text: string): boolean {
+  const haystack = `${url} ${text}`.replace(/[-_]+/g, " ");
+  return /\b(masterclass|gift cards?|careers?|jobs?|functions?|weddings?|events packages?|private dining|reservations?|bookings?|accommodation|rooms?|stay|hotel rooms?)\b/i.test(
+    haystack,
+  );
+}
+
+function isLikelyMenuImageCandidate(url: string, text: string): boolean {
+  if (!isImageUrl(url)) {
+    return false;
+  }
+
+  const haystack = `${url} ${text}`.replace(/[-_]+/g, " ");
+  const positive =
+    /\b(menu|menus|food menu|drink menu|drinks menu|beverage menu|beer menu|wine menu|cocktail menu|tap list|happy hour|specials?|poster)\b/i.test(
+      haystack,
+    );
+  const negative =
+    /\b(logo|brand|banner|hero|venue|slider|home page|mobile menu|mockup|where to buy|buy now|beer taps?|beer tanks?|pouring|private dining|shareboards?|product|thumbnail)\b/i.test(
+      haystack,
+    );
+
+  return positive && !negative;
+}
+
+function hasDrinkPriceSignals(text: string): boolean {
+  return (
+    /\b(beer|pint|tap|draught|draft|guinness|carlton|stone\s*&\s*wood|lager|ale|stout|wine|cocktail|happy\s?hour)\b/i.test(text) &&
+    /(?:\$|A\$|AUD\s*)\s*\d{1,3}(?:\.\d{1,2})?/.test(text)
+  );
+}
+
+function inferFreshness(text: string): { freshness: MenuSourceCandidate["freshness"]; publishedAt: string | null } {
+  const match = text.match(/(?:datePublished|dateModified|updated|published)["':\s]+(\d{4}-\d{2}-\d{2})/i);
+  if (!match?.[1]) {
+    return { freshness: "unknown", publishedAt: null };
+  }
+
+  const publishedAt = match[1];
+  const publishedTime = new Date(publishedAt).getTime();
+  if (!Number.isFinite(publishedTime)) {
+    return { freshness: "unknown", publishedAt: null };
+  }
+
+  const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
+  return {
+    freshness: publishedTime >= oneYearAgo ? "within_last_year" : "older_than_year",
+    publishedAt,
+  };
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function extractLinks(html: string, baseUrl: string): Array<{ url: string; text: string }> {
+  const links: Array<{ url: string; text: string }> = [];
+  const anchorPattern = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const imgPattern = /<img\b[^>]*src=["']([^"']+)["'][^>]*(?:alt=["']([^"']*)["'])?[^>]*>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = anchorPattern.exec(html))) {
+    const href = match[1];
+    if (!href) {
+      continue;
+    }
+    try {
+      const url = new URL(decodeHtml(href), baseUrl);
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        links.push({ url: url.toString(), text: stripHtml(match[2] ?? "") });
+      }
+    } catch {
+      // Ignore malformed links.
+    }
+  }
+
+  while ((match = imgPattern.exec(html))) {
+    const src = match[1];
+    if (!src) {
+      continue;
+    }
+    try {
+      const url = new URL(decodeHtml(src), baseUrl);
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        links.push({ url: url.toString(), text: decodeHtml(match[2] ?? "") });
+      }
+    } catch {
+      // Ignore malformed image links.
+    }
+  }
+
+  return links;
+}
+
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    const urlA = new URL(a);
+    const urlB = new URL(b);
+    const hostA = urlA.hostname.replace(/^www\./i, "");
+    const hostB = urlB.hostname.replace(/^www\./i, "");
+    return hostA === hostB;
+  } catch {
+    return false;
+  }
+}
+
+function venueNameSignals(venue: VenueCandidate, text: string): string[] {
+  const normalizedText = normalizeVenueKey(text);
+  const tokens = normalizeVenueKey(venue.name)
+    .split(/\s+/)
+    .filter((token) => token.length >= 4 && !["hotel", "venue", "restaurant", "bar", "pub"].includes(token));
+  const matches = tokens.filter((token) => normalizedText.includes(token));
+  if (venue.suburb && normalizedText.includes(normalizeVenueKey(venue.suburb))) {
+    matches.push(`area:${venue.suburb}`);
+  }
+  return Array.from(new Set(matches));
+}
+
+function classifySource(url: string, contentType: string): SourceKind {
+  const lowerContentType = contentType.toLowerCase();
+  if (lowerContentType.startsWith("image/") || isImageUrl(url)) {
+    return "menu_image";
+  }
+  if (lowerContentType.includes("pdf") || isPdfUrl(url)) {
+    return "menu_pdf";
+  }
+  return "menu_page";
+}
+
+function scoreSource(input: {
+  venue: VenueCandidate;
+  officialWebsite: string;
+  sourceUrl: string;
+  sourceKind: SourceKind;
+  text: string;
+  linkText: string;
+}): MenuSourceCandidate | null {
+  const signals: string[] = [];
+  let confidence = 0;
+
+  if (sameOrigin(input.officialWebsite, input.sourceUrl)) {
+    signals.push("same official host");
+    confidence += 0.35;
+  }
+
+  if (isMenuTerm(input.sourceUrl) || isMenuTerm(input.linkText)) {
+    signals.push("menu link");
+    confidence += 0.25;
+  }
+
+  if (hasDrinkPriceSignals(input.text)) {
+    signals.push("drink price text");
+    confidence += 0.25;
+  } else if (/\b(beer|drinks?|cocktails?|wine|tap\s?list|happy\s?hour)\b/i.test(input.text)) {
+    signals.push("drink menu text");
+    confidence += 0.12;
+  }
+
+  const venueSignals = venueNameSignals(input.venue, `${input.linkText} ${input.text} ${input.sourceUrl}`);
+  if (venueSignals.length > 0) {
+    signals.push(`venue match: ${venueSignals.join(", ")}`);
+    confidence += 0.15;
+  }
+
+  if (input.sourceKind === "menu_image") {
+    if (!isLikelyMenuImageCandidate(input.sourceUrl, input.linkText)) {
+      return null;
+    }
+    signals.push("direct image OCR eligible");
+    confidence += 0.12;
+  }
+
+  confidence = Math.min(1, Number(confidence.toFixed(2)));
+  if (confidence < 0.48) {
+    return null;
+  }
+
+  const freshness = inferFreshness(input.text);
+  return {
+    venueId: input.venue.id,
+    venueName: input.venue.name,
+    venueAddress: input.venue.address,
+    venueSuburb: input.venue.suburb,
+    officialWebsite: input.officialWebsite,
+    sourceUrl: input.sourceUrl,
+    sourceKind: input.sourceKind,
+    confidence,
+    canQueueOcr: input.sourceKind === "menu_image",
+    freshness: freshness.freshness,
+    publishedAt: freshness.publishedAt,
+    signals,
+    reviewNote:
+      input.sourceKind === "menu_image"
+        ? "Direct venue-owned menu image candidate. Queue OCR only after checking it belongs to this venue."
+        : "Venue-owned menu source candidate. Review page/PDF first; current OCR queue accepts direct images.",
+    ocr: null,
+  };
+}
+
+async function fetchTextForCandidate(url: string): Promise<{ contentType: string; text: string }> {
+  const response = await withTimeoutFetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const limited = buffer.subarray(0, Math.min(buffer.length, MAX_HTML_BYTES));
+
+  if (contentType.toLowerCase().startsWith("image/")) {
+    return { contentType, text: "" };
+  }
+
+  if (contentType.toLowerCase().includes("pdf")) {
+    return { contentType, text: url };
+  }
+
+  return { contentType, text: limited.toString("utf8") };
+}
+
+async function fetchImageDataUrlForOcr(sourceUrl: string): Promise<string> {
+  const response = await withTimeoutFetch(sourceUrl);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("image/")) {
+    throw new Error(`Expected image content, got ${contentType || "unknown content type"}`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    throw new Error(`Image is too large for discovery OCR (${Math.round(buffer.length / 1024 / 1024)} MB)`);
+  }
+
+  return `data:${contentType};base64,${buffer.toString("base64")}`;
+}
+
+async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: OpenAI | null): Promise<MenuImageOcrResult | null> {
+  if (!envFlag("MENU_DISCOVERY_OCR_IMAGES")) {
+    return null;
+  }
+
+  if (!openai || candidate.sourceKind !== "menu_image") {
+    return null;
+  }
+
+  const attemptedAt = new Date().toISOString();
+  try {
+    const imageDataUrl = await fetchImageDataUrlForOcr(candidate.sourceUrl);
+    const prompt = [
+      "Extract useful beer, beer special, happy-hour, or drink-price information from this pub or bar menu image.",
+      "Return JSON only.",
+      "Schema:",
+      "{",
+      '  "venue_name_guess": string | null,',
+      '  "captured_notes": string | null,',
+      '  "overall_confidence": number | null,',
+      '  "beers": [',
+      "    {",
+      '      "name": string,',
+      '      "price_numeric": number | null,',
+      '      "price_text": string | null,',
+      '      "availability_status": "on_tap" | "package_only" | "unavailable" | "unknown",',
+      '      "notes": string | null,',
+      '      "confidence": number | null',
+      "    }",
+      "  ]",
+      "}",
+      "Only include rows that are readable and useful for a pub beer map or Pint Path special review.",
+      `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${VIEWER_TRACKED_BEERS.map((beer) => beer.name).join(", ")}.`,
+      "If tap format is not clear, use availability_status 'unknown'.",
+      `Venue hint: ${candidate.venueName}`,
+      `Source URL: ${candidate.sourceUrl}`,
+    ].join("\n");
+
+    const response = await openai.responses.create({
+      model: "gpt-4.1-mini",
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt },
+            { type: "input_image", image_url: imageDataUrl, detail: "auto" },
+          ],
+        },
+      ],
+    });
+
+    if (!response.output_text || !response.output_text.trim()) {
+      throw new Error("OCR returned an empty response");
+    }
+
+    const parsed = parseJsonResponse(response.output_text);
+    const record = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+    const beers = Array.isArray(record.beers)
+      ? record.beers.map(normalizeOcrBeer).filter((beer): beer is MenuImageOcrBeer => Boolean(beer))
+      : [];
+
+    return {
+      attemptedAt,
+      venueNameGuess: typeof record.venue_name_guess === "string" && record.venue_name_guess.trim()
+        ? record.venue_name_guess.trim()
+        : null,
+      capturedNotes: typeof record.captured_notes === "string" && record.captured_notes.trim()
+        ? record.captured_notes.trim()
+        : null,
+      overallConfidence: normalizeConfidence(record.overall_confidence, beers.length > 0 ? 0.7 : null),
+      beers,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      attemptedAt,
+      venueNameGuess: null,
+      capturedNotes: null,
+      overallConfidence: null,
+      beers: [],
+      error: error instanceof Error ? error.message : "Unknown OCR error",
+    };
+  }
+}
+
+async function discoverSourcesForVenue(
+  venue: VenueCandidate,
+  maxLinksPerVenue: number,
+): Promise<{ candidates: MenuSourceCandidate[]; errors: Array<{ url: string; error: string }> }> {
+  const officialWebsite = normalizeWebsite(venue.website);
+  if (!officialWebsite) {
+    return { candidates: [], errors: [] };
+  }
+
+  const candidates: MenuSourceCandidate[] = [];
+  const errors: Array<{ url: string; error: string }> = [];
+  const seenUrls = new Set<string>();
+
+  try {
+    const homepage = await fetchTextForCandidate(officialWebsite);
+    const homepageText = stripHtml(homepage.text);
+    if (hasDrinkPriceSignals(homepageText) || /\b(menu|drinks?|happy\s?hour)\b/i.test(homepageText)) {
+      const candidate = scoreSource({
+        venue,
+        officialWebsite,
+        sourceUrl: officialWebsite,
+        sourceKind: "homepage_menu_signal",
+        text: homepageText,
+        linkText: "homepage",
+      });
+      if (candidate) {
+        candidates.push(candidate);
+      }
+    }
+
+    const links = extractLinks(homepage.text, officialWebsite)
+      .filter((link) => sameOrigin(officialWebsite, link.url))
+      .filter((link) => {
+        const menuSignal = isMenuTerm(`${link.text} ${link.url}`);
+        if (isExcludedMenuSourceUrl(link.url, link.text)) {
+          return false;
+        }
+        return menuSignal || (isPdfUrl(link.url) && menuSignal);
+      })
+      .filter((link) => {
+        if (seenUrls.has(link.url)) {
+          return false;
+        }
+        seenUrls.add(link.url);
+        return true;
+      })
+      .slice(0, maxLinksPerVenue);
+
+    for (const link of links) {
+      try {
+        const fetched = await fetchTextForCandidate(link.url);
+        const sourceKind = classifySource(link.url, fetched.contentType);
+        const text = sourceKind === "menu_page" ? stripHtml(fetched.text) : `${link.text} ${link.url}`;
+        const candidate = scoreSource({
+          venue,
+          officialWebsite,
+          sourceUrl: link.url,
+          sourceKind,
+          text,
+          linkText: link.text,
+        });
+        if (candidate) {
+          candidates.push(candidate);
+        }
+      } catch (error) {
+        errors.push({ url: link.url, error: error instanceof Error ? error.message : "Unknown fetch error" });
+      }
+    }
+  } catch (error) {
+    errors.push({ url: officialWebsite, error: error instanceof Error ? error.message : "Unknown fetch error" });
+  }
+
+  return { candidates, errors };
+}
+
+async function maybeQueueDirectImage(candidate: MenuSourceCandidate): Promise<boolean> {
+  if (!envFlag("MENU_DISCOVERY_QUEUE_OCR") || !envFlag("ALLOW_MENU_DISCOVERY_QUEUE")) {
+    return false;
+  }
+
+  if (!candidate.canQueueOcr) {
+    return false;
+  }
+
+  const baseUrl = process.env.MENU_DISCOVERY_ADMIN_BASE_URL ?? process.env.PUBLIC_BASE_URL ?? "http://localhost:3000";
+  const adminBearer = process.env.MENU_DISCOVERY_ADMIN_BEARER ?? process.env.ADMIN_BEARER_TOKEN;
+  if (!adminBearer) {
+    throw new Error("MENU_DISCOVERY_QUEUE_OCR is enabled, but MENU_DISCOVERY_ADMIN_BEARER is missing.");
+  }
+
+  const response = await fetch(new URL("/api/admin/ingestions/queue", baseUrl), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: adminBearer.startsWith("Bearer ") ? adminBearer : `Bearer ${adminBearer}`,
+    },
+    body: JSON.stringify({
+      venueId: candidate.venueId,
+      sourceType: "source_image_url",
+      sourceUrl: candidate.sourceUrl,
+      note: `Menu discovery candidate from official website. Confidence ${candidate.confidence}. Signals: ${candidate.signals.join("; ")}`,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Queue OCR failed with HTTP ${response.status}`);
+  }
+
+  return true;
+}
+
+async function main(): Promise<void> {
+  const limit = numberArg("limit", DEFAULT_LIMIT);
+  const maxLinksPerVenue = numberArg("max-links-per-venue", DEFAULT_MAX_LINKS_PER_VENUE);
+  const concurrency = numberArg("concurrency", Number(process.env.MENU_DISCOVERY_CONCURRENCY ?? DEFAULT_CONCURRENCY));
+  const resolvePlaces = hasFlag("resolve-places") || envFlag("MENU_DISCOVERY_RESOLVE_PLACES");
+  const ocrEnabled = envFlag("MENU_DISCOVERY_OCR_IMAGES");
+  const openai = ocrEnabled && process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+
+  const venues = mergeVenues([
+    ...(await loadSupabaseVenues(limit)),
+    ...loadSqliteVenues(limit),
+    ...loadArtifactVenues(limit),
+  ]).slice(0, limit);
+
+  let resolvedWithGooglePlaces = 0;
+  if (resolvePlaces) {
+    const missingWebsiteVenues = venues.filter((venue) => !venue.website);
+    const resolved = await mapLimit(missingWebsiteVenues, concurrency, async (venue) => {
+      const resolvedWebsite = await resolveWebsiteWithGooglePlaces(venue);
+      if (!resolvedWebsite) {
+        return false;
+      }
+
+      venue.website = resolvedWebsite;
+      venue.source = `${venue.source},google_places_text_search`;
+      return true;
+    });
+    resolvedWithGooglePlaces = resolved.filter(Boolean).length;
+  }
+
+  const report: DiscoveryReport = {
+    generatedAt: new Date().toISOString(),
+    safety: {
+      googleReviewPhotos: "skipped",
+      autoPublish: false,
+      ocrQueued: envFlag("MENU_DISCOVERY_QUEUE_OCR") && envFlag("ALLOW_MENU_DISCOVERY_QUEUE"),
+      note:
+        "Google review photos are not bulk-ingested. This job uses official venue websites/menu sources and writes candidates for admin review before any publish action.",
+    },
+    totals: {
+      venuesLoaded: venues.length,
+      venuesScanned: 0,
+      venuesWithOfficialWebsite: venues.filter((venue) => Boolean(venue.website)).length,
+      venuesResolvedWithGooglePlaces: resolvedWithGooglePlaces,
+      sourceCandidates: 0,
+      directImageCandidates: 0,
+      ocrImageCandidatesAttempted: 0,
+      ocrImageCandidatesSucceeded: 0,
+      ocrBeerRowsExtracted: 0,
+      queuedForOcr: 0,
+      skippedWithoutWebsite: 0,
+      fetchErrors: 0,
+    },
+    skippedWithoutWebsite: [],
+    candidates: [],
+    errors: [],
+  };
+
+  const scanResults = await mapLimit(venues, concurrency, async (venue) => {
+    if (!venue.website) {
+      return {
+        venue,
+        skipped: {
+          id: venue.id,
+          name: venue.name,
+          address: venue.address,
+          suburb: venue.suburb,
+          source: venue.source,
+        },
+        candidates: [] as MenuSourceCandidate[],
+        errors: [] as Array<{ venueId: string; venueName: string; url: string; error: string }>,
+      };
+    }
+
+    const discovered = await discoverSourcesForVenue(venue, maxLinksPerVenue);
+    return {
+      venue,
+      skipped: null,
+      candidates: discovered.candidates,
+      errors: discovered.errors.map((error) => ({
+        id: venue.id,
+        name: venue.name,
+        venueId: venue.id,
+        venueName: venue.name,
+        url: error.url,
+        error: error.error,
+      })),
+    };
+  });
+
+  for (const result of scanResults) {
+    if (result.skipped) {
+      report.skippedWithoutWebsite.push(result.skipped);
+      continue;
+    }
+    report.totals.venuesScanned += 1;
+    for (const candidate of result.candidates) {
+      report.candidates.push(candidate);
+      if (candidate.canQueueOcr) {
+        report.totals.directImageCandidates += 1;
+        const ocr = await maybeExtractImageOcr(candidate, openai);
+        if (ocr) {
+          candidate.ocr = ocr;
+          report.totals.ocrImageCandidatesAttempted += 1;
+          if (!ocr.error) {
+            report.totals.ocrImageCandidatesSucceeded += 1;
+          }
+          report.totals.ocrBeerRowsExtracted += ocr.beers.length;
+        }
+        try {
+          if (await maybeQueueDirectImage(candidate)) {
+            report.totals.queuedForOcr += 1;
+          }
+        } catch (error) {
+          report.errors.push({
+            venueId: result.venue.id,
+            venueName: result.venue.name,
+            url: candidate.sourceUrl,
+            error: error instanceof Error ? error.message : "Unknown queue error",
+          });
+        }
+      }
+    }
+
+    report.errors.push(...result.errors);
+  }
+
+  report.candidates.sort((a, b) => b.confidence - a.confidence || a.venueName.localeCompare(b.venueName));
+  report.totals.sourceCandidates = report.candidates.length;
+  report.totals.skippedWithoutWebsite = report.skippedWithoutWebsite.length;
+  report.totals.fetchErrors = report.errors.length;
+
+  const runsDir = ensureRunsDir();
+  const outputPath = path.join(runsDir, `menu-source-discovery-${timestampForFile()}.json`);
+  fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`);
+
+  const latestPath = path.join(runsDir, "menu-source-discovery-latest.json");
+  fs.writeFileSync(latestPath, `${JSON.stringify(report, null, 2)}\n`);
+
+  const csvOutputPath = outputPath.replace(/\.json$/i, ".csv");
+  fs.writeFileSync(csvOutputPath, `${candidatesToCsv(report.candidates)}\n`);
+
+  const latestCsvPath = path.join(runsDir, "menu-source-discovery-latest.csv");
+  fs.writeFileSync(latestCsvPath, `${candidatesToCsv(report.candidates)}\n`);
+
+  console.info("Menu source discovery complete");
+  console.info(`Output: ${outputPath}`);
+  console.info(`CSV: ${csvOutputPath}`);
+  console.info(JSON.stringify(report.totals, null, 2));
+  if (report.candidates.length > 0) {
+    console.info("Top candidates:");
+    for (const candidate of report.candidates.slice(0, 10)) {
+      console.info(
+        `- ${candidate.venueName} [${candidate.sourceKind}, ${candidate.confidence}] ${candidate.sourceUrl}`,
+      );
+    }
+  }
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exitCode = 1;
+});
