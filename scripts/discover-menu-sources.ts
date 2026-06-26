@@ -1,7 +1,11 @@
 import "dotenv/config";
 
+import { execFile } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+import zlib from "node:zlib";
 
 import Database from "better-sqlite3";
 import { createClient } from "@supabase/supabase-js";
@@ -29,10 +33,16 @@ const GOOGLE_FIELD_MASK = [
 
 const MAX_HTML_BYTES = 1_500_000;
 const MAX_IMAGE_BYTES = 8_000_000;
+const MAX_PDF_BYTES = 20_000_000;
+const MAX_TEXT_EXTRACTION_CHARS = 80_000;
+const MAX_ROWS_PER_TEXT_SOURCE = 30;
 const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_LIMIT = 1000;
 const DEFAULT_MAX_LINKS_PER_VENUE = 8;
 const DEFAULT_CONCURRENCY = 4;
+const DEFAULT_MAX_SECONDARY_LINKS_PER_SOURCE = 4;
+
+const execFileAsync = promisify(execFile);
 
 type SourceKind = "menu_page" | "menu_image" | "menu_pdf" | "homepage_menu_signal";
 
@@ -65,6 +75,7 @@ interface MenuSourceCandidate {
   signals: string[];
   reviewNote: string;
   ocr: MenuImageOcrResult | null;
+  textExtraction: MenuTextExtractionResult | null;
 }
 
 interface MenuImageOcrBeer {
@@ -85,6 +96,16 @@ interface MenuImageOcrResult {
   error: string | null;
 }
 
+type TextExtractionMethod = "html_text" | "pdf_text";
+
+interface MenuTextExtractionResult {
+  attemptedAt: string;
+  method: TextExtractionMethod;
+  rows: MenuImageOcrBeer[];
+  notes: string[];
+  error: string | null;
+}
+
 interface DiscoveryReport {
   generatedAt: string;
   safety: {
@@ -100,6 +121,11 @@ interface DiscoveryReport {
     venuesResolvedWithGooglePlaces: number;
     sourceCandidates: number;
     directImageCandidates: number;
+    textExtractionCandidatesAttempted: number;
+    textExtractionCandidatesSucceeded: number;
+    textBeerRowsExtracted: number;
+    pdfCandidatesParsed: number;
+    htmlCandidatesParsed: number;
     ocrImageCandidatesAttempted: number;
     ocrImageCandidatesSucceeded: number;
     ocrBeerRowsExtracted: number;
@@ -242,6 +268,10 @@ function candidatesToCsv(candidates: MenuSourceCandidate[]): string {
     "signals",
     "ocrBeerCount",
     "ocrError",
+    "textExtractionMethod",
+    "textExtractionBeerCount",
+    "textExtractionError",
+    "textExtractionPreview",
     "reviewNote",
   ];
   const rows = candidates.map((candidate) => [
@@ -257,6 +287,13 @@ function candidatesToCsv(candidates: MenuSourceCandidate[]): string {
     candidate.signals.join("; "),
     candidate.ocr?.beers.length ?? 0,
     candidate.ocr?.error ?? "",
+    candidate.textExtraction?.method ?? "",
+    candidate.textExtraction?.rows.length ?? 0,
+    candidate.textExtraction?.error ?? "",
+    candidate.textExtraction?.rows
+      .slice(0, 5)
+      .map((row) => `${row.name}${row.priceText ? ` ${row.priceText}` : ""}`)
+      .join("; ") ?? "",
     candidate.reviewNote,
   ]);
 
@@ -651,6 +688,10 @@ function isLikelyMenuImageCandidate(url: string, text: string): boolean {
   }
 
   const haystack = `${url} ${text}`.replace(/[-_]+/g, " ");
+  if (/\b(menu page asset|json ld menu image)\b/i.test(text)) {
+    return true;
+  }
+
   const positive =
     /\b(menu|menus|food menu|drink menu|drinks menu|beverage menu|beer menu|wine menu|cocktail menu|tap list|happy hour|specials?|poster)\b/i.test(
       haystack,
@@ -700,6 +741,13 @@ function stripHtml(html: string): string {
 
 function decodeHtml(value: string): string {
   return value
+    .replace(/&nbsp;/g, " ")
+    .replace(/&ndash;/g, "-")
+    .replace(/&mdash;/g, "-")
+    .replace(/&middot;/g, " ")
+    .replace(/&bull;/g, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
@@ -707,10 +755,113 @@ function decodeHtml(value: string): string {
     .replace(/&gt;/g, ">");
 }
 
+function htmlToPlainText(html: string): string {
+  return decodeHtml(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|li|tr|td|th|h[1-6]|section|article|table)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function flattenJsonStrings(value: unknown, output: string[] = []): string[] {
+  if (typeof value === "string") {
+    if (value.trim()) {
+      output.push(value.trim());
+    }
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      flattenJsonStrings(item, output);
+    }
+    return output;
+  }
+
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) {
+      flattenJsonStrings(item, output);
+    }
+  }
+
+  return output;
+}
+
+function extractJsonLdText(html: string): string {
+  const chunks: string[] = [];
+  const pattern = /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(html))) {
+    const raw = decodeHtml(match[1] ?? "").trim();
+    if (!raw) {
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      chunks.push(...flattenJsonStrings(parsed));
+    } catch {
+      chunks.push(raw.replace(/[{}[\]",:]+/g, " "));
+    }
+  }
+
+  return chunks.join("\n");
+}
+
+function textForExtraction(input: string): string {
+  return input.replace(/\r/g, "\n").replace(/\n{3,}/g, "\n\n").slice(0, MAX_TEXT_EXTRACTION_CHARS);
+}
+
+function getAttributeValue(tag: string, attribute: string): string | null {
+  const pattern = new RegExp(`${attribute}\\s*=\\s*["']([^"']+)["']`, "i");
+  return decodeHtml(tag.match(pattern)?.[1] ?? "").trim() || null;
+}
+
+function extractSrcSetUrls(value: string, baseUrl: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim().split(/\s+/)[0])
+    .filter((url): url is string => Boolean(url))
+    .flatMap((url) => {
+      try {
+        const parsed = new URL(decodeHtml(url), baseUrl);
+        return parsed.protocol === "http:" || parsed.protocol === "https:" ? [parsed.toString()] : [];
+      } catch {
+        return [];
+      }
+    });
+}
+
+function addUrlLink(
+  links: Array<{ url: string; text: string }>,
+  rawUrl: string | null | undefined,
+  baseUrl: string,
+  text: string,
+): void {
+  if (!rawUrl) {
+    return;
+  }
+
+  try {
+    const url = new URL(decodeHtml(rawUrl), baseUrl);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      links.push({ url: url.toString(), text: decodeHtml(text) });
+    }
+  } catch {
+    // Ignore malformed links.
+  }
+}
+
 function extractLinks(html: string, baseUrl: string): Array<{ url: string; text: string }> {
   const links: Array<{ url: string; text: string }> = [];
   const anchorPattern = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  const imgPattern = /<img\b[^>]*src=["']([^"']+)["'][^>]*(?:alt=["']([^"']*)["'])?[^>]*>/gi;
+  const mediaPattern = /<(?:img|source)\b[^>]*>/gi;
+  const cssUrlPattern = /url\((["']?)([^"')]+)\1\)/gi;
   let match: RegExpExecArray | null;
 
   while ((match = anchorPattern.exec(html))) {
@@ -718,29 +869,34 @@ function extractLinks(html: string, baseUrl: string): Array<{ url: string; text:
     if (!href) {
       continue;
     }
-    try {
-      const url = new URL(decodeHtml(href), baseUrl);
-      if (url.protocol === "http:" || url.protocol === "https:") {
-        links.push({ url: url.toString(), text: stripHtml(match[2] ?? "") });
+    addUrlLink(links, href, baseUrl, stripHtml(match[2] ?? ""));
+  }
+
+  while ((match = mediaPattern.exec(html))) {
+    const tag = match[0] ?? "";
+    const text = [
+      getAttributeValue(tag, "alt"),
+      getAttributeValue(tag, "title"),
+      getAttributeValue(tag, "aria-label"),
+      getAttributeValue(tag, "class"),
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    for (const attribute of ["src", "data-src", "data-lazy-src", "data-original", "data-image", "data-bg"]) {
+      addUrlLink(links, getAttributeValue(tag, attribute), baseUrl, text);
+    }
+
+    const srcset = getAttributeValue(tag, "srcset") ?? getAttributeValue(tag, "data-srcset");
+    if (srcset) {
+      for (const srcsetUrl of extractSrcSetUrls(srcset, baseUrl)) {
+        links.push({ url: srcsetUrl, text });
       }
-    } catch {
-      // Ignore malformed links.
     }
   }
 
-  while ((match = imgPattern.exec(html))) {
-    const src = match[1];
-    if (!src) {
-      continue;
-    }
-    try {
-      const url = new URL(decodeHtml(src), baseUrl);
-      if (url.protocol === "http:" || url.protocol === "https:") {
-        links.push({ url: url.toString(), text: decodeHtml(match[2] ?? "") });
-      }
-    } catch {
-      // Ignore malformed image links.
-    }
+  while ((match = cssUrlPattern.exec(html))) {
+    addUrlLink(links, match[2], baseUrl, "css image");
   }
 
   return links;
@@ -758,6 +914,19 @@ function sameOrigin(a: string, b: string): boolean {
   }
 }
 
+function canonicalDiscoveryUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    if (url.pathname !== "/") {
+      url.pathname = url.pathname.replace(/\/+$/g, "");
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
 function venueNameSignals(venue: VenueCandidate, text: string): string[] {
   const normalizedText = normalizeVenueKey(text);
   const tokens = normalizeVenueKey(venue.name)
@@ -768,6 +937,328 @@ function venueNameSignals(venue: VenueCandidate, text: string): string[] {
     matches.push(`area:${venue.suburb}`);
   }
   return Array.from(new Set(matches));
+}
+
+function trimPdfStreamBuffer(buffer: Buffer): Buffer {
+  let start = 0;
+  let end = buffer.length;
+  while (start < end && (buffer[start] === 0x0a || buffer[start] === 0x0d)) {
+    start += 1;
+  }
+  while (end > start && (buffer[end - 1] === 0x0a || buffer[end - 1] === 0x0d)) {
+    end -= 1;
+  }
+  return buffer.subarray(start, end);
+}
+
+function decodePdfLiteralString(value: string): string {
+  return value
+    .replace(/\\([nrtbf()\\])/g, (_match, escaped: string) => {
+      const replacements: Record<string, string> = {
+        n: "\n",
+        r: "\r",
+        t: "\t",
+        b: "\b",
+        f: "\f",
+        "(": "(",
+        ")": ")",
+        "\\": "\\",
+      };
+      return replacements[escaped] ?? escaped;
+    })
+    .replace(/\\([0-7]{1,3})/g, (_match, octal: string) => String.fromCharCode(Number.parseInt(octal, 8)));
+}
+
+function decodePdfTextLikeContent(value: string): string {
+  const chunks: string[] = [];
+  const literalPattern = /\((?:\\.|[^\\)]){2,}\)/g;
+  const hexPattern = /<([0-9a-fA-F\s]{4,})>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = literalPattern.exec(value))) {
+    const raw = match[0]?.slice(1, -1) ?? "";
+    chunks.push(decodePdfLiteralString(raw));
+  }
+
+  while ((match = hexPattern.exec(value))) {
+    const hex = (match[1] ?? "").replace(/\s+/g, "");
+    if (!hex || hex.length % 2 !== 0) {
+      continue;
+    }
+    try {
+      const decoded = Buffer.from(hex, "hex").toString("utf8");
+      if (/[A-Za-z]{3}/.test(decoded)) {
+        chunks.push(decoded);
+      }
+    } catch {
+      // Ignore malformed PDF hex strings.
+    }
+  }
+
+  chunks.push(value.replace(/[^\x09\x0a\x0d\x20-\x7e]+/g, " "));
+  return chunks
+    .join("\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function extractPdfTextWithPdftotext(buffer: Buffer): Promise<string> {
+  const tempPath = path.join(os.tmpdir(), `pintpath-menu-${process.pid}-${Date.now()}.pdf`);
+  fs.writeFileSync(tempPath, buffer);
+  try {
+    const { stdout } = await execFileAsync("pdftotext", ["-layout", tempPath, "-"], {
+      encoding: "utf8",
+      maxBuffer: MAX_TEXT_EXTRACTION_CHARS * 4,
+      timeout: 15_000,
+    });
+    return stdout.trim();
+  } catch {
+    return "";
+  } finally {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // Best effort cleanup only.
+    }
+  }
+}
+
+function extractPdfTextFallback(buffer: Buffer): string {
+  const latin = buffer.toString("latin1");
+  const chunks: string[] = [latin.slice(0, MAX_TEXT_EXTRACTION_CHARS)];
+  const streamPattern = /stream\r?\n?([\s\S]*?)\r?\n?endstream/g;
+  let match: RegExpExecArray | null;
+  let streamCount = 0;
+
+  while ((match = streamPattern.exec(latin)) && streamCount < 80) {
+    streamCount += 1;
+    const rawStream = trimPdfStreamBuffer(Buffer.from(match[1] ?? "", "latin1"));
+    const dictionary = latin.slice(Math.max(0, match.index - 3000), match.index);
+    if (/\/FlateDecode\b/i.test(dictionary)) {
+      try {
+        const inflated = zlib.inflateSync(rawStream);
+        chunks.push(inflated.toString("latin1"));
+        continue;
+      } catch {
+        // Fall back to raw stream text below.
+      }
+    }
+    chunks.push(rawStream.toString("latin1"));
+  }
+
+  return decodePdfTextLikeContent(chunks.join("\n")).slice(0, MAX_TEXT_EXTRACTION_CHARS);
+}
+
+async function extractPdfText(buffer: Buffer): Promise<string> {
+  const preferred = await extractPdfTextWithPdftotext(buffer);
+  const fallback = extractPdfTextFallback(buffer);
+  return textForExtraction([preferred, fallback].filter(Boolean).join("\n"));
+}
+
+function normalizeLooseText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findTrackedBeerInText(value: string): string | null {
+  const normalized = normalizeLooseText(value);
+  const aliases = VIEWER_TRACKED_BEERS.flatMap((beer) =>
+    [beer.name, ...beer.aliases].map((alias) => ({
+      canonical: beer.name,
+      normalizedAlias: normalizeLooseText(alias),
+    })),
+  )
+    .filter((item) => item.normalizedAlias.length >= 3)
+    .sort((a, b) => b.normalizedAlias.length - a.normalizedAlias.length);
+
+  return aliases.find((item) => new RegExp(`(?:^|\\s)${escapeRegExp(item.normalizedAlias)}(?:\\s|$)`).test(normalized))?.canonical ?? null;
+}
+
+function inferGenericDrinkName(line: string, priceIndex: number): string | null {
+  const beforePrice = line.slice(0, Math.max(0, priceIndex)).replace(/\s+/g, " ").trim();
+  const afterPrice = line.slice(priceIndex).replace(/\s+/g, " ").trim();
+  const genericMatch = `${beforePrice} ${afterPrice}`.match(
+    /\b(guinness|lager|pale ale|pacific ale|ipa|xpa|stout|porter|pilsner|draught|draft|cider|ginger beer|red wine|white wine|sparkling wine|rose|ros[eé]|margarita|spritz|cocktail)\b/i,
+  );
+  if (genericMatch?.[1]) {
+    const maybeName = beforePrice
+      .split(/(?:\||•|·| - | – | — |:)/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .pop();
+    if (maybeName && maybeName.length >= 3 && maybeName.length <= 80 && /[A-Za-z]/.test(maybeName)) {
+      return maybeName.replace(/\b\d{1,3}(?:\.\d{1,2})?\b/g, "").trim();
+    }
+    return genericMatch[1].replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  return null;
+}
+
+function inferAvailabilityStatus(line: string): MenuImageOcrBeer["availabilityStatus"] {
+  if (/\b(can|cans|bottle|bottles|bucket|pack|takeaway)\b/i.test(line)) {
+    return "package_only";
+  }
+  if (/\b(tap|draught|draft|pint|schooner|pot|jug|500\s?ml|425\s?ml|285\s?ml)\b/i.test(line)) {
+    return "on_tap";
+  }
+  return "unknown";
+}
+
+function inferServingNote(line: string): string | null {
+  const match = line.match(/\b(pint|schooner|pot|jug|can|bottle|bucket|500\s?ml|425\s?ml|285\s?ml|570\s?ml)\b/i);
+  return match?.[1] ? `Serving hint: ${match[1]}` : null;
+}
+
+function priceContext(line: string, priceIndex: number): string {
+  return line.slice(Math.max(0, priceIndex - 90), Math.min(line.length, priceIndex + 90));
+}
+
+function isLikelyFoodOrMerchPrice(line: string, priceIndex: number): boolean {
+  const context = priceContext(line, priceIndex);
+  const nearPrice = line.slice(Math.max(0, priceIndex - 45), Math.min(line.length, priceIndex + 55));
+  const immediatelyAfterPrice = line.slice(priceIndex, Math.min(line.length, priceIndex + 40));
+  if (/\b(pizza|pie|gravy|sauce|steak|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|gift card|voucher)\b/i.test(immediatelyAfterPrice)) {
+    return true;
+  }
+
+  const foodNearPrice =
+    /\b(pizza|pie|gravy|sauce|steak|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
+      nearPrice,
+    );
+  const drinkNearPrice =
+    /\b(pint|schooner|pot|jug|tap|draught|draft|can|bottle|cocktail|wine|spritz|margarita|happy\s?hour|beer\s+(?:special|deal|price))\b/i.test(
+      nearPrice,
+    );
+  if (foodNearPrice && !drinkNearPrice) {
+    return true;
+  }
+
+  const hasStrongDrinkFormat =
+    /\b(pint|schooner|pot|jug|tap|draught|draft|can|bottle|cocktail|wine|spritz|margarita|happy\s?hour|beer\s+(?:special|deal|price))\b/i.test(
+      context,
+    );
+  if (hasStrongDrinkFormat) {
+    return false;
+  }
+
+  return /\b(pizza|pie|gravy|sauce|steak|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
+    context,
+  );
+}
+
+function splitTextIntoExtractionLines(text: string): string[] {
+  const normalized = text
+    .replace(/\r/g, "\n")
+    .replace(/[•·]/g, "\n")
+    .replace(/\s+\|\s+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ");
+
+  return normalized
+    .split(/\n|(?<=\d)\s{2,}|(?<=[.!?])\s+(?=[A-Z])/)
+    .flatMap((line) => {
+      const trimmed = line.trim();
+      if (trimmed.length <= 240) {
+        return trimmed ? [trimmed] : [];
+      }
+      return trimmed.match(/.{1,220}(?:\s|$)/g)?.map((chunk) => chunk.trim()).filter(Boolean) ?? [];
+    })
+    .filter((line) => /(?:\$|A\$|AUD\s*)\s*\d{1,3}(?:\.\d{1,2})?/.test(line));
+}
+
+function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
+  const rows: MenuImageOcrBeer[] = [];
+  const seen = new Set<string>();
+  const pricePattern = /(?:A\$|AUD\s*|\$)\s*(\d{1,3}(?:\.\d{1,2})?)/gi;
+
+  for (const line of splitTextIntoExtractionLines(text)) {
+    const lower = line.toLowerCase();
+    if (
+      !/\b(beer|pint|tap|draught|draft|lager|ale|ipa|stout|porter|pilsner|cider|guinness|carlton|stone|wood|wine|cocktail|happy\s?hour|schooner|pot|jug)\b/i.test(
+        lower,
+      )
+    ) {
+      continue;
+    }
+
+    let match: RegExpExecArray | null;
+    pricePattern.lastIndex = 0;
+    while ((match = pricePattern.exec(line)) && rows.length < MAX_ROWS_PER_TEXT_SOURCE) {
+      const priceNumeric = Number(match[1]);
+      if (!Number.isFinite(priceNumeric) || priceNumeric <= 0 || priceNumeric > 200) {
+        continue;
+      }
+      if (isLikelyFoodOrMerchPrice(line, match.index)) {
+        continue;
+      }
+
+      const trackedBeer = findTrackedBeerInText(line);
+      const genericName = trackedBeer ? null : inferGenericDrinkName(line, match.index);
+      const name = canonicalizeTrackedBeerName(trackedBeer ?? genericName ?? "");
+      if (!name || name.length < 3) {
+        continue;
+      }
+
+      const availabilityStatus = inferAvailabilityStatus(line);
+      const notes = [
+        inferServingNote(line),
+        line.length <= 180 ? `Source line: ${line}` : `Source line: ${line.slice(0, 177)}...`,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+      const key = `${normalizeLooseText(name)}|${priceNumeric}|${availabilityStatus}|${normalizeLooseText(notes)}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+
+      rows.push({
+        name,
+        priceNumeric,
+        priceText: `$${priceNumeric.toFixed(priceNumeric % 1 === 0 ? 0 : 2)}`,
+        availabilityStatus,
+        notes,
+        confidence: trackedBeer ? 0.82 : 0.62,
+      });
+    }
+  }
+
+  return rows;
+}
+
+function buildTextExtraction(method: TextExtractionMethod, text: string): MenuTextExtractionResult | null {
+  const sourceText = textForExtraction(text);
+  if (!sourceText || !hasDrinkPriceSignals(sourceText)) {
+    return null;
+  }
+
+  const rows = extractBeerRowsFromText(sourceText);
+  if (rows.length === 0) {
+    return {
+      attemptedAt: new Date().toISOString(),
+      method,
+      rows,
+      notes: ["Drink-price text was present, but no confident beer rows were extracted."],
+      error: null,
+    };
+  }
+
+  return {
+    attemptedAt: new Date().toISOString(),
+    method,
+    rows,
+    notes: [`Extracted ${rows.length} row${rows.length === 1 ? "" : "s"} from ${method.replace("_", " ")}.`],
+    error: null,
+  };
 }
 
 function classifySource(url: string, contentType: string): SourceKind {
@@ -846,8 +1337,11 @@ function scoreSource(input: {
     reviewNote:
       input.sourceKind === "menu_image"
         ? "Direct venue-owned menu image candidate. Queue OCR only after checking it belongs to this venue."
-        : "Venue-owned menu source candidate. Review page/PDF first; current OCR queue accepts direct images.",
+        : input.sourceKind === "menu_pdf"
+          ? "Venue-owned PDF menu candidate. Text extraction is best-effort; review source before using any prices."
+          : "Venue-owned menu source candidate. Text extraction is best-effort; review source before using any prices.",
     ocr: null,
+    textExtraction: null,
   };
 }
 
@@ -867,7 +1361,10 @@ async function fetchTextForCandidate(url: string): Promise<{ contentType: string
   }
 
   if (contentType.toLowerCase().includes("pdf")) {
-    return { contentType, text: url };
+    if (buffer.length > MAX_PDF_BYTES) {
+      throw new Error(`PDF is too large for discovery extraction (${Math.round(buffer.length / 1024 / 1024)} MB)`);
+    }
+    return { contentType, text: await extractPdfText(buffer) };
   }
 
   return { contentType, text: limited.toString("utf8") };
@@ -979,6 +1476,89 @@ async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: Open
   }
 }
 
+function sourceTextForScoring(sourceKind: SourceKind, fetchedText: string, linkText: string, sourceUrl: string): string {
+  if (sourceKind === "menu_page" || sourceKind === "homepage_menu_signal") {
+    return `${htmlToPlainText(fetchedText)}\n${extractJsonLdText(fetchedText)}`;
+  }
+
+  if (sourceKind === "menu_pdf") {
+    return fetchedText;
+  }
+
+  return `${linkText} ${sourceUrl}`;
+}
+
+function textExtractionMethodForSource(sourceKind: SourceKind): TextExtractionMethod | null {
+  if (sourceKind === "menu_pdf") {
+    return "pdf_text";
+  }
+  if (sourceKind === "menu_page" || sourceKind === "homepage_menu_signal") {
+    return "html_text";
+  }
+  return null;
+}
+
+function attachTextExtraction(candidate: MenuSourceCandidate, sourceText: string): void {
+  const method = textExtractionMethodForSource(candidate.sourceKind);
+  if (!method) {
+    return;
+  }
+
+  candidate.textExtraction = buildTextExtraction(method, sourceText);
+  if (candidate.textExtraction?.rows.length) {
+    candidate.signals.push(`${method.replace("_", " ")} rows`);
+    candidate.confidence = Math.min(1, Number((candidate.confidence + 0.08).toFixed(2)));
+  }
+}
+
+function nestedMenuAssetLinks(html: string, pageUrl: string, officialWebsite: string, limit: number): Array<{ url: string; text: string }> {
+  const seen = new Set<string>();
+  return extractLinks(html, pageUrl)
+    .filter((link) => sameOrigin(officialWebsite, link.url))
+    .map((link) => ({
+      ...link,
+      text: `${link.text} menu page asset`.trim(),
+    }))
+    .filter((link) => {
+      if (seen.has(link.url) || isExcludedMenuSourceUrl(link.url, link.text)) {
+        return false;
+      }
+      seen.add(link.url);
+      return isPdfUrl(link.url) || isLikelyMenuImageCandidate(link.url, link.text) || isMenuTerm(`${link.text} ${link.url}`);
+    })
+    .slice(0, limit);
+}
+
+async function buildCandidateFromFetchedSource(input: {
+  venue: VenueCandidate;
+  officialWebsite: string;
+  sourceUrl: string;
+  fetched: { contentType: string; text: string };
+  linkText: string;
+}): Promise<{ candidate: MenuSourceCandidate | null; childLinks: Array<{ url: string; text: string }> }> {
+  const sourceKind = classifySource(input.sourceUrl, input.fetched.contentType);
+  const scoringText = sourceTextForScoring(sourceKind, input.fetched.text, input.linkText, input.sourceUrl);
+  const candidate = scoreSource({
+    venue: input.venue,
+    officialWebsite: input.officialWebsite,
+    sourceUrl: input.sourceUrl,
+    sourceKind,
+    text: scoringText,
+    linkText: input.linkText,
+  });
+
+  if (candidate) {
+    attachTextExtraction(candidate, scoringText);
+  }
+
+  const childLinks =
+    sourceKind === "menu_page"
+      ? nestedMenuAssetLinks(input.fetched.text, input.sourceUrl, input.officialWebsite, DEFAULT_MAX_SECONDARY_LINKS_PER_SOURCE)
+      : [];
+
+  return { candidate, childLinks };
+}
+
 async function discoverSourcesForVenue(
   venue: VenueCandidate,
   maxLinksPerVenue: number,
@@ -994,7 +1574,7 @@ async function discoverSourcesForVenue(
 
   try {
     const homepage = await fetchTextForCandidate(officialWebsite);
-    const homepageText = stripHtml(homepage.text);
+    const homepageText = `${htmlToPlainText(homepage.text)}\n${extractJsonLdText(homepage.text)}`;
     if (hasDrinkPriceSignals(homepageText) || /\b(menu|drinks?|happy\s?hour)\b/i.test(homepageText)) {
       const candidate = scoreSource({
         venue,
@@ -1005,6 +1585,7 @@ async function discoverSourcesForVenue(
         linkText: "homepage",
       });
       if (candidate) {
+        attachTextExtraction(candidate, homepageText);
         candidates.push(candidate);
       }
     }
@@ -1016,13 +1597,14 @@ async function discoverSourcesForVenue(
         if (isExcludedMenuSourceUrl(link.url, link.text)) {
           return false;
         }
-        return menuSignal || (isPdfUrl(link.url) && menuSignal);
+        return menuSignal || isPdfUrl(link.url) || isLikelyMenuImageCandidate(link.url, link.text);
       })
       .filter((link) => {
-        if (seenUrls.has(link.url)) {
+        const canonicalUrl = canonicalDiscoveryUrl(link.url);
+        if (seenUrls.has(canonicalUrl)) {
           return false;
         }
-        seenUrls.add(link.url);
+        seenUrls.add(canonicalUrl);
         return true;
       })
       .slice(0, maxLinksPerVenue);
@@ -1030,18 +1612,38 @@ async function discoverSourcesForVenue(
     for (const link of links) {
       try {
         const fetched = await fetchTextForCandidate(link.url);
-        const sourceKind = classifySource(link.url, fetched.contentType);
-        const text = sourceKind === "menu_page" ? stripHtml(fetched.text) : `${link.text} ${link.url}`;
-        const candidate = scoreSource({
+        const { candidate, childLinks } = await buildCandidateFromFetchedSource({
           venue,
           officialWebsite,
           sourceUrl: link.url,
-          sourceKind,
-          text,
+          fetched,
           linkText: link.text,
         });
         if (candidate) {
           candidates.push(candidate);
+        }
+
+        for (const childLink of childLinks) {
+          const canonicalChildUrl = canonicalDiscoveryUrl(childLink.url);
+          if (seenUrls.has(canonicalChildUrl)) {
+            continue;
+          }
+          seenUrls.add(canonicalChildUrl);
+          try {
+            const childFetched = await fetchTextForCandidate(childLink.url);
+            const child = await buildCandidateFromFetchedSource({
+              venue,
+              officialWebsite,
+              sourceUrl: childLink.url,
+              fetched: childFetched,
+              linkText: childLink.text,
+            });
+            if (child.candidate) {
+              candidates.push(child.candidate);
+            }
+          } catch (error) {
+            errors.push({ url: childLink.url, error: error instanceof Error ? error.message : "Unknown fetch error" });
+          }
         }
       } catch (error) {
         errors.push({ url: link.url, error: error instanceof Error ? error.message : "Unknown fetch error" });
@@ -1136,6 +1738,11 @@ async function main(): Promise<void> {
       venuesResolvedWithGooglePlaces: resolvedWithGooglePlaces,
       sourceCandidates: 0,
       directImageCandidates: 0,
+      textExtractionCandidatesAttempted: 0,
+      textExtractionCandidatesSucceeded: 0,
+      textBeerRowsExtracted: 0,
+      pdfCandidatesParsed: 0,
+      htmlCandidatesParsed: 0,
       ocrImageCandidatesAttempted: 0,
       ocrImageCandidatesSucceeded: 0,
       ocrBeerRowsExtracted: 0,
@@ -1188,6 +1795,18 @@ async function main(): Promise<void> {
     report.totals.venuesScanned += 1;
     for (const candidate of result.candidates) {
       report.candidates.push(candidate);
+      if (candidate.textExtraction) {
+        report.totals.textExtractionCandidatesAttempted += 1;
+        if (!candidate.textExtraction.error) {
+          report.totals.textExtractionCandidatesSucceeded += 1;
+        }
+        report.totals.textBeerRowsExtracted += candidate.textExtraction.rows.length;
+        if (candidate.textExtraction.method === "pdf_text") {
+          report.totals.pdfCandidatesParsed += 1;
+        } else if (candidate.textExtraction.method === "html_text") {
+          report.totals.htmlCandidatesParsed += 1;
+        }
+      }
       if (candidate.canQueueOcr) {
         report.totals.directImageCandidates += 1;
         const ocr = await maybeExtractImageOcr(candidate, openai);
