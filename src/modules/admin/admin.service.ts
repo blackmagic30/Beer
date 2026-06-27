@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type BetterSqlite3 from "better-sqlite3";
 
 import type { AdminIngestionQueueRepository } from "../../db/admin-ingestion-queue.repository.js";
 import type {
@@ -7,7 +8,12 @@ import type {
   AdminIngestionQueueRecord,
   AdminIngestionStatus,
 } from "../../db/models.js";
-import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../../constants/beers.js";
+import {
+  VIEWER_TRACKED_BEERS,
+  canonicalizeTrackedBeerName,
+  findTrackedBeerByName,
+  normalizeBeerSearchKey,
+} from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { redactSecrets } from "../../lib/redact.js";
@@ -289,6 +295,7 @@ export class AdminService {
     private readonly menuCaptureTable = "venue_menu_captures",
     openaiApiKey?: string,
     private readonly googlePlacesApiKey?: string,
+    private readonly priceRecordDatabase?: BetterSqlite3.Database,
   ) {
     if (supabaseUrl && supabaseServiceRoleKey) {
       this.supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
@@ -682,6 +689,79 @@ export class AdminService {
     };
   }
 
+  private publishIngestionPriceRecords(input: {
+    ingestionId: string;
+    venue: VenueRow;
+    savedAt: string;
+    beers: AdminBeerInput[];
+  }): number {
+    if (!this.priceRecordDatabase) {
+      return 0;
+    }
+
+    const now = input.savedAt;
+    const upsertPriceRecord = this.priceRecordDatabase.prepare(
+      `INSERT INTO venue_price_records (
+        id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size,
+        price, is_happy_hour_price, happy_hour_details, is_on_tap, confidence,
+        source_type, source_submission_id, last_verified_at, created_at, updated_at
+      ) VALUES (
+        @id, @venueId, @venueName, @suburb, @beerName, @normalizedBeerId, @servingSize,
+        @price, 0, NULL, @isOnTap, 'photo_verified',
+        'source_ingestion', NULL, @lastVerifiedAt, @createdAt, @updatedAt
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        venue_name = excluded.venue_name,
+        suburb = excluded.suburb,
+        beer_name = excluded.beer_name,
+        normalized_beer_id = excluded.normalized_beer_id,
+        serving_size = excluded.serving_size,
+        price = excluded.price,
+        is_on_tap = excluded.is_on_tap,
+        confidence = excluded.confidence,
+        source_type = excluded.source_type,
+        last_verified_at = excluded.last_verified_at,
+        updated_at = excluded.updated_at`,
+    );
+
+    const publish = this.priceRecordDatabase.transaction(() => {
+      let published = 0;
+      input.beers.forEach((beer, index) => {
+        if (!Number.isFinite(beer.priceNumeric ?? Number.NaN) || beer.priceNumeric == null) {
+          return;
+        }
+
+        const beerName = canonicalizeTrackedBeerName(beer.name);
+        const trackedBeer = findTrackedBeerByName(beerName);
+        const isOnTap = beer.availableOnTap === true
+          ? "yes"
+          : beer.availableOnTap === false || beer.availabilityStatus === "unavailable"
+            ? "no"
+            : "unknown";
+
+        upsertPriceRecord.run({
+          id: `source-ingestion:${input.ingestionId}:${index}`,
+          venueId: input.venue.id,
+          venueName: input.venue.name,
+          suburb: input.venue.suburb,
+          beerName,
+          normalizedBeerId: trackedBeer?.key ?? normalizeBeerSearchKey(beerName),
+          servingSize: beer.servingSize,
+          price: beer.priceNumeric,
+          isOnTap,
+          lastVerifiedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+        published += 1;
+      });
+
+      return published;
+    });
+
+    return publish();
+  }
+
   private async fetchImageDataUrlFromSourceUrl(sourceUrl: string): Promise<string> {
     let url: URL;
 
@@ -976,6 +1056,7 @@ export class AdminService {
     venue: VenueRow;
     savedAt: string;
     beerCount: number;
+    mapPriceRecordCount: number;
   }> {
     const repository = this.getIngestionQueue();
     const queueItem = repository.getById(ingestionId);
@@ -1000,6 +1081,12 @@ export class AdminService {
       note: noteParts.length > 0 ? noteParts.join("\n") : null,
       beers: input.beers,
     });
+    const priceRecordCount = this.publishIngestionPriceRecords({
+      ingestionId,
+      venue: result.venue,
+      savedAt: result.savedAt,
+      beers: input.beers,
+    });
 
     repository.markPublished(
       ingestionId,
@@ -1016,6 +1103,7 @@ export class AdminService {
       venue: result.venue,
       savedAt: result.savedAt,
       beerCount: result.beerCount,
+      mapPriceRecordCount: priceRecordCount,
     };
   }
 
