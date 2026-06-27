@@ -1818,7 +1818,7 @@
 
     async function loadAdminIngestionQueue() {
       try {
-        const params = new URLSearchParams({ limit: "25" });
+        const params = new URLSearchParams({ limit: "200" });
         if (adminIngestionStatus.value) {
           params.set("status", adminIngestionStatus.value);
         }
