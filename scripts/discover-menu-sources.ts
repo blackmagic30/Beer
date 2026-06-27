@@ -1506,12 +1506,44 @@ function inferGenericDrinkName(line: string, priceIndex: number): string | null 
       .filter(Boolean)
       .pop();
     if (maybeName && maybeName.length >= 3 && maybeName.length <= 80 && /[A-Za-z]/.test(maybeName)) {
-      return maybeName.replace(/\b\d{1,3}(?:\.\d{1,2})?\b/g, "").trim();
+      return maybeName
+        .replace(/\b\d{1,3}(?:\.\d{1,2})?\b/g, "")
+        .replace(/[\s([{:;,/\\-]+$/g, "")
+        .trim();
     }
     return genericMatch[1].replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
 
   return null;
+}
+
+function isUsableExtractedDrinkName(name: string, trackedBeer: string | null): boolean {
+  const trimmed = name.trim();
+  const loose = normalizeLooseText(trimmed);
+  if (!trimmed || !loose || !/[a-z]/i.test(trimmed)) {
+    return false;
+  }
+  if (!trackedBeer && (trimmed.length > 70 || loose.split(/\s+/).length > 9)) {
+    return false;
+  }
+  if (/[[\]{}\\]/.test(trimmed)) {
+    return false;
+  }
+  if (
+    /\b(?:we offer|with over|rotating selection|across|generally|increase quantity|decrease quantity|add to cart|sold out|years?|source line|served with|from \d{1,2}(?:am|pm)|happy hour from)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return false;
+  }
+
+  const letterCount = (trimmed.match(/[A-Za-z]/g) ?? []).length;
+  const punctuationCount = (trimmed.match(/[^A-Za-z0-9\s&'.-]/g) ?? []).length;
+  if (!trackedBeer && punctuationCount > Math.max(2, letterCount / 5)) {
+    return false;
+  }
+
+  return true;
 }
 
 function inferAvailabilityStatus(line: string): MenuImageOcrBeer["availabilityStatus"] {
@@ -1603,6 +1635,9 @@ function isBarePriceTokenAllowed(line: string, start: number, end: number, value
   if (value < 2 || value > 80) {
     return false;
   }
+  if (value < 5 && !/\b(happy\s?hour|special|pot|middy|sample|taster|schooner)\b/i.test(priceContext(line, start))) {
+    return false;
+  }
 
   const before = line.slice(Math.max(0, start - 2), start);
   const after = line.slice(end, Math.min(line.length, end + 14));
@@ -1612,7 +1647,13 @@ function isBarePriceTokenAllowed(line: string, start: number, end: number, value
   if (/^\s*(?:am|pm|hrs?|hours?|mins?|minutes?|kg|g|ml|l\b|oz|people|guests|days?|for\b|off\b|%)/i.test(after)) {
     return false;
   }
+  if (/^\s*beers?\s+on\s+tap\b/i.test(after)) {
+    return false;
+  }
   if (/\b(?:19|20)\d{2}\b/.test(line.slice(Math.max(0, start - 8), Math.min(line.length, end + 8)))) {
+    return false;
+  }
+  if (/\b(?:years?|founded|established|opened|serving locals|bar scene)\b/i.test(priceContext(line, start))) {
     return false;
   }
 
@@ -1620,6 +1661,38 @@ function isBarePriceTokenAllowed(line: string, start: number, end: number, value
   return /\b(pint|schooner|pot|jug|tap|draught|draft|can|bottle|cocktail|wine|spritz|margarita|beer|lager|ale|stout|ipa|xpa|cider)\b/i.test(
     context,
   );
+}
+
+function isPlausibleDrinkPrice(line: string, match: TextPriceMatch): boolean {
+  if (match.priceNumeric <= 0 || match.priceNumeric > 40) {
+    return false;
+  }
+  if (!match.hadCurrency && match.priceNumeric > 30) {
+    return false;
+  }
+  if (match.priceNumeric > 28 && /\b(can|cans|bottle|bottles|375\s?ml|355\s?ml|330\s?ml|carton|case|pack)\b/i.test(line)) {
+    return false;
+  }
+  if (/\b(?:million|billion)\s+(?:venue|fitout|renovation|development|project)\b/i.test(line)) {
+    return false;
+  }
+  if (/\bwith\s+over\s+\d{1,2}\s+beers?\s+on\s+tap\b/i.test(line)) {
+    return false;
+  }
+  return true;
+}
+
+function isUsableExtractionLine(line: string): boolean {
+  if (/(?:\\[()])|(?:\]\s*TJ\b)|(?:\)\s*Tj\b)/i.test(line)) {
+    return false;
+  }
+  if (/\b(?:urlSlug|qtyInStock|allowMultiplePurchase|mightHavePaymentPlan|published|productId)\b/i.test(line)) {
+    return false;
+  }
+  if (/\b(?:increase quantity|decrease quantity|add to cart|checkout|subtotal)\b/i.test(line)) {
+    return false;
+  }
+  return true;
 }
 
 function extractPriceMatchesFromLine(line: string): TextPriceMatch[] {
@@ -1704,7 +1777,7 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
 
   for (const line of splitTextIntoExtractionLines(text)) {
     const lower = line.toLowerCase();
-    if (!hasDrinkExtractionTerm(lower)) {
+    if (!hasDrinkExtractionTerm(lower) || !isUsableExtractionLine(line)) {
       continue;
     }
 
@@ -1714,6 +1787,9 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
       if (rows.length >= MAX_ROWS_PER_TEXT_SOURCE) {
         break;
       }
+      if (!isPlausibleDrinkPrice(line, match)) {
+        continue;
+      }
       if (isLikelyFoodOrMerchPrice(line, match.index)) {
         continue;
       }
@@ -1722,7 +1798,7 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
       const trackedBeer = findTrackedBeerInText(localPriceContext);
       const genericName = trackedBeer ? null : inferGenericDrinkName(line, match.index);
       const name = canonicalizeTrackedBeerName(trackedBeer ?? genericName ?? "");
-      if (!name || name.length < 3) {
+      if (!name || name.length < 3 || !isUsableExtractedDrinkName(name, trackedBeer)) {
         continue;
       }
 
