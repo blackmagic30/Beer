@@ -1490,6 +1490,130 @@ h3 {
   margin: 0;
 }
 
+.adminDashboardHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+  gap: 18px;
+  align-items: center;
+  border-color: rgba(245, 197, 66, 0.18);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(34, 211, 238, 0.18), transparent 36%),
+    radial-gradient(circle at 92% 18%, rgba(245, 197, 66, 0.13), transparent 32%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.018)),
+    rgba(7, 10, 18, 0.72);
+}
+
+.adminDashboardHero h2 {
+  font-size: clamp(30px, 5vw, 54px);
+  margin-bottom: 8px;
+}
+
+.adminDashboardHero__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.adminDashboardHero__actions .button {
+  min-height: 48px;
+}
+
+.adminDashboardTaskGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.adminDashboardTaskCard {
+  display: grid;
+  gap: 9px;
+  min-height: 156px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 42%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+    rgba(7, 10, 18, 0.58);
+  color: var(--text);
+  cursor: pointer;
+  padding: 16px;
+  text-align: left;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.adminDashboardTaskCard:hover,
+.adminDashboardTaskCard:focus-visible {
+  border-color: rgba(34, 211, 238, 0.34);
+  box-shadow: 0 18px 38px rgba(34, 211, 238, 0.08);
+  outline: none;
+  transform: translateY(-2px);
+}
+
+.adminDashboardTaskCard strong {
+  font-size: clamp(24px, 3vw, 34px);
+  line-height: 1.06;
+}
+
+.adminDashboardTaskCard em {
+  color: var(--muted);
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.adminDashboardTaskCard--premium {
+  border-color: rgba(245, 197, 66, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(245, 197, 66, 0.06), 0 16px 34px rgba(245, 197, 66, 0.07);
+}
+
+.adminDashboardTaskCard--warning {
+  border-color: rgba(250, 204, 21, 0.3);
+}
+
+.adminDashboardTaskCard--success {
+  border-color: rgba(34, 197, 94, 0.24);
+}
+
+.adminDashboardSplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.85fr);
+  gap: 16px;
+}
+
+.adminDashboardPanel {
+  min-width: 0;
+}
+
+.adminDashboardPitchList {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.adminDashboardPitchCard {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(245, 197, 66, 0.18);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(245, 197, 66, 0.12), transparent 36%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.048), rgba(255, 255, 255, 0.016)),
+    rgba(3, 7, 18, 0.42);
+  padding: 14px;
+}
+
+.adminDashboardPitchCard h3 {
+  margin: 5px 0 0;
+  font-size: 1.16rem;
+}
+
+.adminDashboardPitchCard p {
+  margin: 0;
+}
+
 .adminCommandGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1572,6 +1696,10 @@ h3 {
 
 .adminGrid--two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.adminGrid--sourceReview {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .adminGrid > *,
@@ -1785,6 +1913,62 @@ h3 {
   margin-top: 4px;
 }
 
+.adminSourceQueuePanel {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.adminSourceQueuePanel > h2,
+.adminSourceQueuePanel > p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.adminSourceQueuePanel .field {
+  margin: 0;
+}
+
+.adminSourceQueuePanel .field:nth-of-type(1) {
+  grid-column: span 3;
+}
+
+.adminSourceQueuePanel .field:nth-of-type(2) {
+  grid-column: span 5;
+}
+
+.adminSourceQueuePanel .field:nth-of-type(3) {
+  grid-column: span 4;
+}
+
+.adminSourceQueuePanel .field:nth-of-type(4) {
+  grid-column: span 8;
+}
+
+.adminSourceQueuePanel > .button {
+  grid-column: span 4;
+  min-height: 52px;
+}
+
+.adminSourceQueuePanel > .notice {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.adminSourceReviewPanel {
+  overflow: hidden;
+}
+
+.adminSourceReviewPanel > .sectionHeader {
+  align-items: start;
+  margin-bottom: 14px;
+}
+
+#adminIngestionQueue {
+  gap: 16px;
+}
+
 .adminBeerRows,
 .adminQueueBeerRows {
   display: grid;
@@ -1828,7 +2012,7 @@ h3 {
 
 .adminIngestionItem {
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 
 .adminIngestionItem__header {
@@ -1839,10 +2023,18 @@ h3 {
   flex-wrap: wrap;
 }
 
+.adminIngestionItem__header > div {
+  min-width: min(100%, 420px);
+}
+
+.adminIngestionItem__header .muted {
+  overflow-wrap: anywhere;
+}
+
 .adminSourceReviewLayout {
   display: grid;
-  grid-template-columns: minmax(220px, 0.78fr) minmax(0, 1.22fr);
-  gap: 14px;
+  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1.52fr);
+  gap: 16px;
   align-items: start;
 }
 
@@ -1860,6 +2052,7 @@ h3 {
 .adminSourceEvidence {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .adminSourceEvidence__imageLink {
@@ -1880,6 +2073,7 @@ h3 {
 .adminSourceEvidence__empty {
   min-height: 126px;
   overflow-wrap: anywhere;
+  word-break: break-word;
   border: 1px dashed rgba(255, 255, 255, 0.15);
   border-radius: 16px;
   color: var(--muted);
@@ -1893,11 +2087,17 @@ h3 {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .adminSourceRows {
   display: grid;
   gap: 12px;
+  min-width: 0;
+}
+
+.adminSourceRows .sectionHeader {
+  align-items: start;
 }
 
 .adminCrmCard,
@@ -6916,9 +7116,42 @@ body.discountPassModalOpen {
   }
 
   .adminCommandGrid,
+  .adminDashboardHero,
+  .adminDashboardSplit,
+  .adminDashboardTaskGrid,
+  .adminDashboardPitchList,
   .adminSourceReviewLayout,
   .pitchReadinessGrid {
     grid-template-columns: 1fr;
+  }
+
+  .adminDashboardHero {
+    gap: 14px;
+  }
+
+  .adminDashboardHero__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .adminDashboardTaskCard {
+    min-height: auto;
+    padding: 14px;
+  }
+
+  .adminSourceQueuePanel {
+    grid-template-columns: 1fr;
+  }
+
+  .adminSourceQueuePanel > h2,
+  .adminSourceQueuePanel > p,
+  .adminSourceQueuePanel .field,
+  .adminSourceQueuePanel .field:nth-of-type(1),
+  .adminSourceQueuePanel .field:nth-of-type(2),
+  .adminSourceQueuePanel .field:nth-of-type(3),
+  .adminSourceQueuePanel .field:nth-of-type(4),
+  .adminSourceQueuePanel > .button,
+  .adminSourceQueuePanel > .notice {
+    grid-column: 1;
   }
 
   .adminCommandCard {

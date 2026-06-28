@@ -1713,6 +1713,16 @@ function normalizeBeerInsightKey(value: string | null | undefined): string {
     .replace(/^_+|_+$/g, "");
 }
 
+function normalizePartnerLeadKeyPart(value: string | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function formatInsightBeerLabel(value: string | null | undefined): string {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) {
@@ -7152,6 +7162,7 @@ export class BusinessRepository {
   }
 
   getPotentialPartnerLeads(input: { staleBefore: string; limit: number }) {
+    const queryLimit = Math.max(input.limit * 4, input.limit);
     const rows = this.database
       .prepare(
         `SELECT e.venue_id,
@@ -7180,7 +7191,7 @@ export class BusinessRepository {
          ORDER BY (venue_clicks + searches_nearby + requests) DESC
          LIMIT ?`,
       )
-      .all(input.limit) as Array<{
+      .all(queryLimit) as Array<{
         venue_id: string;
         venue_name: string;
         suburb: string;
@@ -7192,7 +7203,53 @@ export class BusinessRepository {
         confidence: string;
       }>;
 
-    return rows.map((row) => {
+    const mergedRows = new Map<string, {
+      venue_id: string;
+      venue_name: string;
+      suburb: string;
+      map_views: number;
+      venue_clicks: number;
+      searches_nearby: number;
+      requests: number;
+      last_verified_at: string | null;
+      confidence: string;
+    }>();
+
+    for (const row of rows) {
+      const venueName = row.venue_name || row.venue_id;
+      const suburb = row.suburb || "Melbourne";
+      const hasHumanReadableName = normalizePartnerLeadKeyPart(venueName) !== normalizePartnerLeadKeyPart(row.venue_id);
+      const key = hasHumanReadableName
+        ? `${normalizePartnerLeadKeyPart(venueName)}|${normalizePartnerLeadKeyPart(suburb)}`
+        : `id:${row.venue_id}`;
+      const existing = mergedRows.get(key);
+      if (!existing) {
+        mergedRows.set(key, { ...row, venue_name: venueName, suburb });
+        continue;
+      }
+
+      existing.map_views += row.map_views;
+      existing.venue_clicks += row.venue_clicks;
+      existing.searches_nearby += row.searches_nearby;
+      existing.requests += row.requests;
+      if (!existing.last_verified_at || (row.last_verified_at && row.last_verified_at > existing.last_verified_at)) {
+        existing.last_verified_at = row.last_verified_at;
+      }
+      if (existing.confidence !== "disputed" && row.confidence === "disputed") {
+        existing.confidence = "disputed";
+      } else if (existing.confidence === "missing" && row.confidence !== "missing") {
+        existing.confidence = row.confidence;
+      }
+    }
+
+    return [...mergedRows.values()]
+      .sort((a, b) => {
+        const bScore = b.venue_clicks + b.searches_nearby + b.requests;
+        const aScore = a.venue_clicks + a.searches_nearby + a.requests;
+        return bScore - aScore;
+      })
+      .slice(0, input.limit)
+      .map((row) => {
       const stale = !row.last_verified_at || row.last_verified_at < input.staleBefore || row.confidence === "disputed";
       const suggestedReason = row.requests > 0
         ? "users requested this"

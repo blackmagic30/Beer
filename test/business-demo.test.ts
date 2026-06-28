@@ -3891,6 +3891,57 @@ describe("business demo contribution model", () => {
     }));
   });
 
+  it("deduplicates partner leads that use venue aliases for the same venue", () => {
+    const { repository } = createRepository();
+
+    repository.recordEvent({
+      id: "event-half-uuid-detail",
+      userId: null,
+      anonymousSessionId: "anon-half-uuid",
+      eventType: "venue_detail_opened",
+      venueId: "b9714e3b-fece-4f0e-a04b-534c3e57519d",
+      beerId: null,
+      suburb: "Brighton",
+      metadata: { venueName: "Half Moon" },
+      createdAt: NOW,
+    });
+    repository.recordEvent({
+      id: "event-half-uuid-card",
+      userId: null,
+      anonymousSessionId: "anon-half-uuid",
+      eventType: "venue_card_viewed",
+      venueId: "b9714e3b-fece-4f0e-a04b-534c3e57519d",
+      beerId: null,
+      suburb: "Brighton",
+      metadata: { venueName: "Half Moon" },
+      createdAt: NOW,
+    });
+    repository.recordEvent({
+      id: "event-half-slug-search",
+      userId: null,
+      anonymousSessionId: "anon-half-slug",
+      eventType: "beer_search_performed",
+      venueId: "half-moon-brighton",
+      beerId: "guinness",
+      suburb: "Brighton",
+      metadata: { venueName: "Half Moon" },
+      createdAt: NOW,
+    });
+
+    const leads = repository.getPotentialPartnerLeads({
+      staleBefore: "2026-02-04T00:00:00.000Z",
+      limit: 5,
+    });
+
+    const halfMoonLeads = leads.filter((lead) => lead.venueName === "Half Moon" && lead.suburb === "Brighton");
+    expect(halfMoonLeads).toHaveLength(1);
+    expect(halfMoonLeads[0]).toEqual(expect.objectContaining({
+      venueId: "b9714e3b-fece-4f0e-a04b-534c3e57519d",
+      venueClicks: 2,
+      searchesNearby: 1,
+    }));
+  });
+
   it("supports venue partner interest, manager assignments, and assigned-venue portal access", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
