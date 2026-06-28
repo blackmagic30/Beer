@@ -1396,9 +1396,6 @@ h3 {
 }
 
 .adminJumpNav {
-  position: sticky;
-  top: 86px;
-  z-index: 8;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1957,7 +1954,8 @@ h3 {
 }
 
 .adminSourceReviewPanel {
-  overflow: hidden;
+  max-width: 100%;
+  overflow: visible;
 }
 
 .adminSourceReviewPanel > .sectionHeader {
@@ -1967,6 +1965,7 @@ h3 {
 
 #adminIngestionQueue {
   gap: 16px;
+  min-width: 0;
 }
 
 .adminBeerRows,
@@ -2013,6 +2012,9 @@ h3 {
 .adminIngestionItem {
   display: grid;
   gap: 16px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
 }
 
 .adminIngestionItem__header {
@@ -2033,7 +2035,7 @@ h3 {
 
 .adminSourceReviewLayout {
   display: grid;
-  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1.52fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -2053,6 +2055,11 @@ h3 {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.adminSourceRows {
+  min-width: 0;
+  overflow: visible;
 }
 
 .adminSourceEvidence__imageLink {
@@ -7164,7 +7171,6 @@ body.discountPassModalOpen {
   }
 
   .adminJumpNav {
-    top: 66px;
     flex-wrap: nowrap;
     overflow-x: auto;
     border-radius: 18px;
