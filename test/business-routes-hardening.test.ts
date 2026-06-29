@@ -26,4 +26,18 @@ describe("business route hardening", () => {
       'router.post("/demo/seed", adminWriteLimiter',
     ].forEach((route) => expect(source).toContain(route));
   });
+
+  it("does not let caller-controlled anonymous session ids or auth headers split rate limit buckets", () => {
+    const source = routesSource();
+    const identityFunction = source.slice(
+      source.indexOf("function rateLimitIdentity"),
+      source.indexOf("const priceReadLimiter"),
+    );
+
+    expect(identityFunction).not.toContain("anonymousSessionId");
+    expect(identityFunction).not.toContain("authorization");
+    expect(identityFunction).not.toContain("getAuthorization");
+    expect(identityFunction).not.toContain("req.query");
+    expect(identityFunction).not.toContain("req.body");
+  });
 });

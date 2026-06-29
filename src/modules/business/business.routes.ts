@@ -1,5 +1,3 @@
-import crypto from "node:crypto";
-
 import { Router, type Request } from "express";
 
 import { success } from "../../lib/http.js";
@@ -88,23 +86,8 @@ function requireAdmin(req: Request, businessService: BusinessService) {
   return businessService.requireAdmin(getAuthorization(req), getRequestContext(req));
 }
 
-function stableIdentityPart(value: string): string {
-  return value ? crypto.createHash("sha256").update(value).digest("hex").slice(0, 24) : "";
-}
-
 function rateLimitIdentity(req: Request): string {
-  const authorization = getAuthorization(req) ?? "";
-  const anonymousSessionId =
-    typeof req.query.anonymousSessionId === "string"
-      ? req.query.anonymousSessionId
-      : typeof req.body?.anonymousSessionId === "string"
-        ? req.body.anonymousSessionId
-        : "";
-  return [
-    req.ip ?? req.socket.remoteAddress ?? "unknown-ip",
-    stableIdentityPart(authorization),
-    stableIdentityPart(anonymousSessionId),
-  ].join(":");
+  return req.ip ?? req.socket.remoteAddress ?? "unknown-ip";
 }
 
 const priceReadLimiter = createRateLimiter({
