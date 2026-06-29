@@ -1,0 +1,13 @@
+# Copy to local.properties for local-only overrides. Do not commit real secrets.
+
+# Android Studio normally manages sdk.dir automatically.
+# sdk.dir=/Users/you/Library/Android/sdk
+
+# Existing BeerMap/Pint Path backend.
+PINT_PATH_API_BASE_URL=https://pintpath.au
+
+# Optional public Supabase Auth config for future native OAuth.
+# Never put service-role keys in Android config.
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+

@@ -13,6 +13,12 @@ const files = Array.from(new Set(gitFilesOutput
   .map((file) => file.trim())
   .filter(Boolean)));
 
+for (const ignoredLocalConfig of ["viewer/config.js"]) {
+  if (fs.existsSync(ignoredLocalConfig) && !files.includes(ignoredLocalConfig)) {
+    files.push(ignoredLocalConfig);
+  }
+}
+
 const SKIP_FILE = /(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|dist|coverage|node_modules)\b/;
 const BINARY_FILE = /\.(?:png|jpe?g|gif|webp|heic|heif|ico|pdf|woff2?|ttf|eot|zip|gz|sqlite3?|db)$/i;
 const PLACEHOLDER = /(?:your_|example|placeholder|dummy|fake|test[_-]?fixture|xxx|xxxx|optional_|changeme|not[_-]?set|price_|pk_test_xxx|sk_test_xxx|whsec_xxx|ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)/i;

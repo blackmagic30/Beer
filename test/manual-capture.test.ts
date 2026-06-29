@@ -6,7 +6,7 @@ import {
   extractBeerEntriesFromCleaned,
   toBeerKey,
 } from "../src/modules/admin/manual-capture.js";
-import { AdminService } from "../src/modules/admin/admin.service.js";
+import { AdminService, buildCrawlerFeedback } from "../src/modules/admin/admin.service.js";
 
 describe("manual capture helpers", () => {
   it("normalizes beer keys safely", () => {
@@ -154,5 +154,59 @@ describe("manual capture helpers", () => {
       googlePlacesReason: "missing_google_places_api_key",
       queueEnabled: false,
     });
+  });
+
+  it("turns source review decisions into crawler feedback scores", () => {
+    const extractedBeer = {
+      name: "Stomping Ground Pale Ale",
+      servingSize: "pint" as const,
+      priceNumeric: 13,
+      priceText: "$13",
+      availabilityStatus: "on_tap" as const,
+      availableOnTap: true,
+      availablePackageOnly: false,
+      unavailableReason: null,
+      confidence: 0.76,
+      needsReview: true,
+      notes: "OCR row",
+    };
+    const reviewedBeer = {
+      name: "Stomping Ground Pale Ale",
+      servingSize: "pint" as const,
+      priceNumeric: 14,
+      priceText: "$14",
+      availabilityStatus: "on_tap" as const,
+      availableOnTap: true,
+      availablePackageOnly: false,
+      unavailableReason: null,
+      needsReview: false,
+    };
+
+    expect(buildCrawlerFeedback({
+      outcome: "published",
+      extractedBeers: [extractedBeer],
+      reviewBeers: [reviewedBeer],
+      note: "Corrected price",
+      generatedAt: "2026-06-29T10:00:00.000Z",
+    })).toEqual(expect.objectContaining({
+      rewardScore: 85,
+      acceptedRowCount: 1,
+      extractedRowCount: 1,
+      correctedRowCount: 1,
+      cleanRowCount: 1,
+      signals: expect.arrayContaining(["1/1 rows accepted", "1 manual correction"]),
+    }));
+
+    expect(buildCrawlerFeedback({
+      outcome: "rejected",
+      extractedBeers: [extractedBeer],
+      note: "Wrong venue",
+      generatedAt: "2026-06-29T10:05:00.000Z",
+    })).toEqual(expect.objectContaining({
+      rewardScore: -70,
+      acceptedRowCount: 0,
+      rejectedRowCount: 1,
+      signals: expect.arrayContaining(["1 row rejected", "Reviewer note: Wrong venue"]),
+    }));
   });
 });

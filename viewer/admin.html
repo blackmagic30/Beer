@@ -36,6 +36,25 @@
         <button class="adminTabButton" type="button" data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false">Analytics</button>
       </nav>
 
+      <div class="adminUtilityBar">
+        <div class="adminUtilityBar__status">
+          <span class="eyebrow">Admin status</span>
+          <strong id="adminActiveSectionLabel">Dashboard</strong>
+          <span id="adminLoadSummary">Loading admin tools...</span>
+        </div>
+        <div class="adminUtilityBar__actions">
+          <button class="button button--small" type="button" data-admin-jump="dashboard" data-admin-jump-target="#adminDashboard">Dashboard</button>
+          <button id="refreshAdminPageButton" class="button button--small button--primary" type="button">Refresh</button>
+        </div>
+      </div>
+
+      <div id="adminFocusRail" class="adminFocusRail" aria-label="Admin snapshot">
+        <div class="adminFocusRail__item">
+          <span>Loading</span>
+          <strong>...</strong>
+        </div>
+      </div>
+
       <section id="adminDashboard" class="adminSection adminSection--priority adminDashboard" data-admin-tab-panel="dashboard" role="tabpanel" hidden>
         <div class="panel adminDashboardHero adminPanelSpan">
           <div>
@@ -388,10 +407,13 @@
           <div class="sectionHeader">
             <div>
               <h2>Outreach pipeline</h2>
-              <p class="muted">Lightweight CRM notes for bars that may want Pro or manager access.</p>
+              <p class="muted">Demand-ranked venue outreach, follow-ups, and partner onboarding in one place.</p>
             </div>
           </div>
-          <div id="venueOutreachList" class="list"></div>
+          <div id="outreachPipelineSummary" class="outreachPipelineSummary"></div>
+          <div id="outreachPipelineBoard" class="outreachPipelineBoard"></div>
+          <h3 class="adminSubheading">Saved outreach notes</h3>
+          <div id="venueOutreachList" class="list outreachSavedList"></div>
         </div>
       </section>
 
@@ -614,6 +636,14 @@
     let latestAdminDashboardPayload = null;
     let reviewDecisionState = null;
     const ADMIN_TAB_KEYS = ["dashboard", "review", "capture", "partners", "leaderboard", "analytics"];
+    const ADMIN_TAB_LABELS = {
+      dashboard: "Dashboard",
+      review: "Review",
+      capture: "Data capture",
+      partners: "Partners",
+      leaderboard: "Prizes",
+      analytics: "Analytics",
+    };
     const REVIEW_REASON_OPTIONS = {
       approved: [
         "Clean evidence and venue match",
@@ -656,6 +686,53 @@
         "Image or URL is not usable",
       ],
     };
+    const OUTREACH_STAGES = [
+      {
+        id: "lead",
+        label: "Lead",
+        goal: "Qualify the signal and save the first pitch angle.",
+        empty: "New demand-ranked venue leads will land here.",
+        advanceLabel: "Mark contacted",
+        advanceTo: "contacted",
+      },
+      {
+        id: "contacted",
+        label: "Contacted",
+        goal: "Follow up quickly while the venue signal is warm.",
+        empty: "Contacted venues waiting on a reply will show here.",
+        advanceLabel: "Mark interested",
+        advanceTo: "interested",
+      },
+      {
+        id: "interested",
+        label: "Interested",
+        goal: "Book the setup call, confirm tier fit, and remove blockers.",
+        empty: "Warm opportunities will show here after a venue replies.",
+        advanceLabel: "Mark partner",
+        advanceTo: "partner",
+      },
+      {
+        id: "partner",
+        label: "Partner",
+        goal: "Assign manager access and keep the first report/action alive.",
+        empty: "Converted venue partners will show here.",
+      },
+      {
+        id: "not_interested",
+        label: "Nurture",
+        goal: "Respect the no, keep the reason, and revisit only with new signal.",
+        empty: "Venues parked for later will show here.",
+        advanceLabel: "Close",
+        advanceTo: "closed",
+      },
+      {
+        id: "closed",
+        label: "Closed",
+        goal: "Archive completed or disqualified outreach.",
+        empty: "Closed outreach will show here.",
+      },
+    ];
+    const OUTREACH_STAGE_BY_ID = new Map(OUTREACH_STAGES.map((stage) => [stage.id, stage]));
 
     function requestedAdminTab() {
       const params = new URLSearchParams(window.location.search);
@@ -687,6 +764,11 @@
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
       });
+
+      const activeLabel = document.getElementById("adminActiveSectionLabel");
+      if (activeLabel) {
+        activeLabel.textContent = ADMIN_TAB_LABELS[activeTarget] || "Dashboard";
+      }
     }
 
     function adminJumpTo(target, selector) {
@@ -707,6 +789,13 @@
           adminJumpTo(button.dataset.adminJump, button.dataset.adminJumpTarget);
         });
       });
+    }
+
+    function updateAdminLoadSummary(message) {
+      const summary = document.getElementById("adminLoadSummary");
+      if (summary) {
+        summary.textContent = message;
+      }
     }
 
     function reasonOptionsHtml(options) {
@@ -845,6 +934,276 @@
       ];
     }
 
+    function outreachStageForStatus(status) {
+      return OUTREACH_STAGE_BY_ID.get(String(status || "lead")) || OUTREACH_STAGE_BY_ID.get("lead");
+    }
+
+    function outreachStatusLabel(status) {
+      return outreachStageForStatus(status)?.label || "Lead";
+    }
+
+    function todayDateInputValue() {
+      const now = new Date();
+      const localDate = new Date(now.getTime() - (now.getTimezoneOffset() * 60000));
+      return localDate.toISOString().slice(0, 10);
+    }
+
+    function daysSinceDate(value) {
+      if (!value) return null;
+      const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return null;
+      return Math.max(0, Math.floor((Date.now() - date.getTime()) / 86400000));
+    }
+
+    function fallbackOutreachScore(item) {
+      if (item.status === "partner") return 100;
+      if (item.status === "interested") return 82;
+      if (item.status === "contacted") return 64;
+      if (item.tierFit === "pro") return 72;
+      return 48;
+    }
+
+    function outreachFollowUpState(item) {
+      const stage = outreachStageForStatus(item.status);
+      if (item.isLeadSignal) return { label: "Save lead", tone: "warning", due: true };
+      if (stage.id === "partner") return { label: "Onboarding", tone: "success", due: false };
+      if (stage.id === "closed") return { label: "Archived", tone: "info", due: false };
+      if (stage.id === "not_interested") return { label: "Parked", tone: "info", due: false };
+
+      const days = daysSinceDate(item.lastContactedAt);
+      if (days == null) return { label: "Contact next", tone: "warning", due: true };
+      if (stage.id === "interested" && days >= 2) return { label: `${days}d follow-up`, tone: "warning", due: true };
+      if (stage.id === "contacted" && days >= 3) return { label: `${days}d follow-up`, tone: "warning", due: true };
+      if (stage.id === "lead" && days >= 7) return { label: `${days}d stale`, tone: "warning", due: true };
+      return { label: `Touched ${days}d ago`, tone: "success", due: false };
+    }
+
+    function outreachDatasetAttributes(item) {
+      return [
+        `data-venue-id="${escapeHtml(item.venueId || "")}"`,
+        `data-venue-name="${escapeHtml(item.venueName || "")}"`,
+        `data-suburb="${escapeHtml(item.suburb || "")}"`,
+        `data-status="${escapeHtml(item.status || "lead")}"`,
+        `data-tier-fit="${escapeHtml(item.tierFit || "")}"`,
+        `data-next-action="${escapeHtml(item.nextAction || "")}"`,
+        `data-last-contacted-at="${escapeHtml(item.lastContactedAt || "")}"`,
+        `data-contact-name="${escapeHtml(item.contactName || "")}"`,
+        `data-notes="${escapeHtml(item.notes || "")}"`,
+      ].join(" ");
+    }
+
+    function stageDefaultNextAction(status, item = {}) {
+      const tierPrefix = item.tierFit === "pro" ? "Pro" : "manager";
+      const defaults = {
+        lead: "Qualify demand, check listing freshness, and choose the pitch angle",
+        contacted: "Follow up with the owner or manager in 3 days",
+        interested: `Book ${tierPrefix} setup and confirm who needs access`,
+        partner: "Assign manager access and schedule the first monthly report review",
+        not_interested: "Park respectfully; revisit only after a fresh user demand signal",
+        closed: "Closed. Keep the notes for future context",
+      };
+      return defaults[status] || defaults.lead;
+    }
+
+    function nextActionForStageTransition(item, nextStatus) {
+      const current = String(item.nextAction || "").trim();
+      const currentDefault = stageDefaultNextAction(item.status, item);
+      if (current && current !== currentDefault) {
+        return current;
+      }
+      return stageDefaultNextAction(nextStatus, item);
+    }
+
+    function buildOutreachPipelineItems(outreach = [], leads = []) {
+      const outreachByVenue = new Map(outreach.map((item) => [item.venueId, item]));
+      const leadByVenue = new Map(leads.map((lead) => [lead.venueId, lead]));
+      const savedItems = outreach.map((item) => {
+        const lead = leadByVenue.get(item.venueId);
+        return {
+          ...item,
+          isLeadSignal: false,
+          leadScore: lead ? getLeadScore(lead) : fallbackOutreachScore(item),
+          venueClicks: lead?.venueClicks || 0,
+          searchesNearby: lead?.searchesNearby || 0,
+          requests: lead?.requests || 0,
+          dataFreshness: lead?.dataFreshness || null,
+          suggestedReason: lead?.suggestedReason || null,
+        };
+      });
+      const leadSignals = leads
+        .filter((lead) => !outreachByVenue.has(lead.venueId))
+        .sort((a, b) => getLeadScore(b) - getLeadScore(a))
+        .slice(0, 8)
+        .map((lead) => ({
+          venueId: lead.venueId,
+          venueName: lead.venueName,
+          suburb: lead.suburb,
+          status: "lead",
+          tierFit: suggestedTierForLead(lead),
+          nextAction: suggestedNextActionForLead(lead),
+          lastContactedAt: "",
+          contactName: "",
+          notes: suggestedPitchForLead(lead),
+          isLeadSignal: true,
+          leadScore: getLeadScore(lead),
+          venueClicks: lead.venueClicks || 0,
+          searchesNearby: lead.searchesNearby || 0,
+          requests: lead.requests || 0,
+          dataFreshness: lead.dataFreshness || null,
+          suggestedReason: lead.suggestedReason || null,
+        }));
+      return [...savedItems, ...leadSignals];
+    }
+
+    function outreachPipelineCard(item) {
+      const stage = outreachStageForStatus(item.status);
+      const followUp = outreachFollowUpState(item);
+      const attrs = outreachDatasetAttributes(item);
+      const score = Number(item.leadScore || 0);
+      const cardTone = item.isLeadSignal || followUp.due ? "warning" : score >= 72 ? "premium" : stage.id === "partner" ? "success" : "info";
+      const demandMeta = [
+        `${item.venueClicks || 0} clicks`,
+        `${item.searchesNearby || 0} nearby searches`,
+        `${item.requests || 0} requests`,
+      ].join(" · ");
+      const stageAction = !item.isLeadSignal && stage.advanceTo
+        ? `<button class="button button--small button--primary" type="button" data-outreach-stage="${escapeHtml(stage.advanceTo)}" ${attrs}>${escapeHtml(stage.advanceLabel)}</button>`
+        : "";
+      const nurtureAction = !item.isLeadSignal && !["partner", "not_interested", "closed"].includes(stage.id)
+        ? `<button class="button button--small" type="button" data-outreach-stage="not_interested" ${attrs}>Nurture</button>`
+        : "";
+      const primaryAction = item.isLeadSignal
+        ? `<button class="button button--small button--primary" type="button" data-start-outreach ${attrs}>Start outreach</button>`
+        : `<button class="button button--small" type="button" data-edit-outreach ${attrs}>Edit</button>`;
+
+      return `
+        <article class="outreachPipelineCard outreachPipelineCard--${escapeHtml(cardTone)}">
+          <div class="adminCrmLead__header">
+            <div>
+              <strong>${escapeHtml(item.venueName || "Venue")}</strong>
+              <div class="muted">${escapeHtml(item.suburb || "Melbourne")} · ${escapeHtml(demandMeta)}</div>
+            </div>
+            <span class="pill pill--${escapeHtml(followUp.tone)}">${escapeHtml(followUp.label)}</span>
+          </div>
+          <div class="adminCrmLead__meta">
+            <span class="pill ${score >= 72 ? "pill--premium" : ""}">${score || "—"}/100</span>
+            <span class="pill">${escapeHtml(String(item.tierFit || "basic").toUpperCase())}</span>
+            ${item.isLeadSignal ? '<span class="pill pill--warning">Demand signal</span>' : `<span class="pill">${escapeHtml(outreachStatusLabel(item.status))}</span>`}
+          </div>
+          <div class="outreachPipelineCard__next">${escapeHtml(item.nextAction || stageDefaultNextAction(stage.id, item))}</div>
+          <div class="muted">${escapeHtml(item.notes || item.suggestedReason || stage.goal)}</div>
+          <div class="actionRow actionRow--compact outreachPipelineCard__actions">
+            ${primaryAction}
+            ${stageAction}
+            ${nurtureAction}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderOutreachPipeline(data) {
+      const outreach = Array.isArray(data.outreach) ? data.outreach : [];
+      const leads = Array.isArray(data.leads) ? data.leads : [];
+      const items = buildOutreachPipelineItems(outreach, leads);
+      const savedItems = items.filter((item) => !item.isLeadSignal);
+      const openItems = savedItems.filter((item) => !["closed", "not_interested"].includes(outreachStageForStatus(item.status).id));
+      const dueFollowUps = savedItems.filter((item) => outreachFollowUpState(item).due).length;
+      const hotSignals = items.filter((item) => Number(item.leadScore || 0) >= 72 && outreachStageForStatus(item.status).id !== "closed").length;
+      const partners = savedItems.filter((item) => outreachStageForStatus(item.status).id === "partner").length;
+
+      outreachPipelineSummary.innerHTML = [
+        { label: "Open", value: openItems.length },
+        { label: "Hot signals", value: hotSignals },
+        { label: "Due", value: dueFollowUps },
+        { label: "Partners", value: partners },
+      ].map((item) => `
+        <div class="outreachPipelineSummary__item">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(item.value)}</strong>
+        </div>
+      `).join("");
+
+      outreachPipelineBoard.innerHTML = OUTREACH_STAGES.map((stage) => {
+        const stageItems = items
+          .filter((item) => outreachStageForStatus(item.status).id === stage.id)
+          .sort((a, b) => Number(b.leadScore || 0) - Number(a.leadScore || 0));
+        return `
+          <section class="outreachPipelineLane outreachPipelineLane--${escapeHtml(stage.id)}" aria-label="${escapeHtml(stage.label)} outreach">
+            <div class="outreachPipelineLane__header">
+              <div>
+                <strong>${escapeHtml(stage.label)}</strong>
+                <span>${escapeHtml(stage.goal)}</span>
+              </div>
+              <span class="pill">${stageItems.length}</span>
+            </div>
+            <div class="outreachPipelineLane__cards">
+              ${stageItems.length
+                ? stageItems.map((item) => outreachPipelineCard(item)).join("")
+                : `<div class="emptyState">${escapeHtml(stage.empty)}</div>`}
+            </div>
+          </section>
+        `;
+      }).join("");
+
+      wireOutreachActions(outreachPipelineBoard);
+    }
+
+    function prefillOutreachFromSaved(item) {
+      outreachForm.elements.venueId.value = item.venueId || "";
+      outreachForm.elements.venueName.value = item.venueName || "";
+      outreachForm.elements.suburb.value = item.suburb || "";
+      outreachForm.elements.status.value = item.status || "lead";
+      outreachForm.elements.tierFit.value = item.tierFit || "";
+      outreachForm.elements.lastContactedAt.value = item.lastContactedAt || "";
+      outreachForm.elements.nextAction.value = item.nextAction || "";
+      outreachForm.elements.contactName.value = item.contactName || "";
+      outreachForm.elements.notes.value = item.notes || "";
+      adminJumpTo("partners", "#outreachForm");
+      MelbBeerBusiness.setStatus(statusEl, "Outreach note loaded into the form.");
+    }
+
+    async function updateOutreachStage(item, nextStatus, button = null) {
+      if (!item?.venueId || !item?.venueName || !nextStatus) return;
+      const touchDate = ["contacted", "interested"].includes(nextStatus);
+      const body = {
+        venueId: item.venueId,
+        venueName: item.venueName,
+        suburb: item.suburb || null,
+        status: nextStatus,
+        tierFit: item.tierFit || null,
+        nextAction: nextActionForStageTransition(item, nextStatus),
+        lastContactedAt: touchDate ? todayDateInputValue() : item.lastContactedAt || null,
+        contactName: item.contactName || null,
+        notes: item.notes || null,
+      };
+
+      try {
+        if (button) button.disabled = true;
+        await MelbBeerBusiness.apiFetch("/api/business/admin/venue-outreach", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        MelbBeerBusiness.setStatus(statusEl, `${body.venueName} moved to ${outreachStatusLabel(nextStatus)}.`);
+        await loadAdmin();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message || "Could not update outreach stage.", true);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    function wireOutreachActions(root) {
+      root.querySelectorAll("[data-start-outreach]").forEach((button) => {
+        button.addEventListener("click", () => prefillOutreachFromLead(button.dataset));
+      });
+      root.querySelectorAll("[data-edit-outreach]").forEach((button) => {
+        button.addEventListener("click", () => prefillOutreachFromSaved(button.dataset));
+      });
+      root.querySelectorAll("[data-outreach-stage]").forEach((button) => {
+        button.addEventListener("click", () => updateOutreachStage(button.dataset, button.dataset.outreachStage, button));
+      });
+    }
+
     function renderKpis(data) {
       const metrics = data.metrics;
       headlineMetrics.innerHTML = [
@@ -950,6 +1309,88 @@
       };
     }
 
+    function adminFocusItemHtml(item) {
+      return `
+        <button class="adminFocusRail__item adminFocusRail__item--${escapeHtml(item.tone || "info")}" type="button" data-admin-jump="${escapeHtml(item.target)}" data-admin-jump-target="${escapeHtml(item.selector)}">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(item.value)}</strong>
+          <em>${escapeHtml(item.copy)}</em>
+        </button>
+      `;
+    }
+
+    function renderAdminFocusRail(payload = null) {
+      const rail = document.getElementById("adminFocusRail");
+      const data = payload || latestAdminDashboardPayload;
+      if (!rail) {
+        return;
+      }
+
+      if (!data) {
+        rail.innerHTML = `
+          <div class="adminFocusRail__item">
+            <span>Loading</span>
+            <strong>...</strong>
+            <em>Admin counts will appear here.</em>
+          </div>
+        `;
+        return;
+      }
+
+      const counts = queueCountsFromPayload(data);
+      const leadCount = Array.isArray(data.leads?.leads) ? data.leads.leads.length : 0;
+      const openOutreach = Array.isArray(data.venuePartners?.outreach)
+        ? data.venuePartners.outreach.filter((item) => !["closed", "not_interested"].includes(String(item.status || "lead"))).length
+        : 0;
+      const campaign = data.leaderboardPrizes?.campaign || data.leaderboardPrizes?.leaderboard?.campaign || {};
+      const totalTrust = counts.wrongPriceReports + counts.contactMessages + counts.venueRequests;
+      const items = [
+        {
+          label: "Review",
+          value: counts.submissions,
+          copy: counts.newVenues ? `${counts.newVenues} new venue` : "pending submissions",
+          target: "review",
+          selector: "#pendingSubmissions",
+          tone: counts.submissions ? "premium" : "success",
+        },
+        {
+          label: "Sources",
+          value: counts.sourcePending,
+          copy: adminDataToolsStatus.queueEnabled ? "OCR queue" : "queue config",
+          target: "review",
+          selector: "#adminIngestionQueue",
+          tone: counts.sourcePending ? "warning" : "success",
+        },
+        {
+          label: "Trust",
+          value: totalTrust,
+          copy: "reports and requests",
+          target: "review",
+          selector: "#reviewQueues",
+          tone: totalTrust ? "warning" : "success",
+        },
+        {
+          label: "Pitch",
+          value: leadCount,
+          copy: `${openOutreach} open outreach`,
+          target: "partners",
+          selector: "#pitchReadinessPanel",
+          tone: leadCount ? "premium" : "info",
+        },
+        {
+          label: "Prizes",
+          value: campaign.status || "active",
+          copy: campaign.monthKey || "current month",
+          target: "leaderboard",
+          selector: "#leaderboardPrizeForm",
+          tone: campaign.status === "finalized" ? "success" : "info",
+        },
+      ];
+
+      rail.innerHTML = items.map(adminFocusItemHtml).join("");
+      wireAdminJumpActions(rail);
+    }
+
     function dashboardTaskCardHtml(task) {
       return `
         <button class="adminDashboardTaskCard adminDashboardTaskCard--${escapeHtml(task.tone || "info")}" type="button" data-admin-jump="${escapeHtml(task.target)}" data-admin-jump-target="${escapeHtml(task.selector)}">
@@ -1029,6 +1470,7 @@
       }
 
       const counts = queueCountsFromPayload(data);
+      renderAdminFocusRail(data);
       const metrics = data.todayKpis?.metrics || {};
       const topLead = topPitchLeads(data.leads)[0];
       const totalSearchesToday = Number(metrics.totalVenueSearches || 0) + Number(metrics.totalBeerSearches || 0);
@@ -1330,7 +1772,9 @@
       outreachForm.elements.suburb.value = lead.suburb || "";
       outreachForm.elements.status.value = "lead";
       outreachForm.elements.tierFit.value = lead.tierFit || "";
+      outreachForm.elements.lastContactedAt.value = "";
       outreachForm.elements.nextAction.value = lead.nextAction || "";
+      outreachForm.elements.contactName.value = "";
       outreachForm.elements.notes.value = lead.notes || "";
       adminJumpTo("partners", "#outreachForm");
       MelbBeerBusiness.setStatus(statusEl, "Partner lead copied into the outreach form.");
@@ -2098,6 +2542,7 @@
         loadAdminVenues(),
         loadAdminIngestionQueue(),
       ]);
+      renderAdminFocusRail();
     }
 
     function confidencePill(confidence) {
@@ -2109,23 +2554,86 @@
       return `<span class="pill ${tone}">${percent}% confidence</span>`;
     }
 
+    function formatSourceType(value) {
+      return String(value || "source")
+        .replaceAll("_", " ")
+        .replace(/\b\w/g, (match) => match.toUpperCase());
+    }
+
+    function shortSourceLabel(value) {
+      if (!value) {
+        return "No source";
+      }
+      try {
+        const url = new URL(value);
+        const path = url.pathname.replace(/\/$/, "").split("/").filter(Boolean).pop();
+        return path ? `${url.hostname} / ${path}` : url.hostname;
+      } catch {
+        return value.length > 90 ? `${value.slice(0, 87)}...` : value;
+      }
+    }
+
+    function crawlerFeedbackPill(feedback) {
+      if (!feedback) {
+        return '<span class="pill">Learning pending</span>';
+      }
+      const score = Number(feedback.rewardScore || 0);
+      const tone = score >= 70 ? "pill--success" : score >= 0 ? "pill--warning" : "pill--danger";
+      return `<span class="pill ${tone}">Crawler ${score >= 0 ? "+" : ""}${score}</span>`;
+    }
+
+    function renderCrawlerDetails(item, beers) {
+      const feedback = item.crawlerFeedback;
+      const extractedCount = Array.isArray(item.extractedBeers) ? item.extractedBeers.length : beers.length;
+      const signals = feedback?.signals?.length
+        ? feedback.signals
+        : [
+          `${beers.length}/${Math.max(1, extractedCount)} rows in review`,
+          item.capturedNotes || item.note || "No crawler note saved",
+        ];
+      return `
+        <details class="adminCrawlerDetails">
+          <summary>
+            <span>Crawler details</span>
+            <span>${feedback ? `Reward ${feedback.rewardScore >= 0 ? "+" : ""}${escapeHtml(feedback.rewardScore)}` : "Saves on review"}</span>
+          </summary>
+          <div class="adminCrawlerDetails__body">
+            <div class="adminCrawlerDetails__grid">
+              <span><strong>${escapeHtml(extractedCount)}</strong> extracted</span>
+              <span><strong>${escapeHtml(beers.length)}</strong> showing</span>
+              <span><strong>${escapeHtml(formatSourceType(item.sourceType))}</strong> source</span>
+            </div>
+            ${item.venueNameGuess ? `<div class="muted">OCR venue: ${escapeHtml(item.venueNameGuess)}</div>` : ""}
+            <ul class="adminCrawlerDetails__signals">
+              ${signals.slice(0, 4).map((signal) => `<li>${escapeHtml(signal)}</li>`).join("")}
+            </ul>
+          </div>
+        </details>
+      `;
+    }
+
     function renderSourceEvidence(item) {
       const source = item.imageDataUrl || item.sourceUrl;
-      const sourceLabel = item.imageDataUrl ? "Uploaded image" : item.sourceUrl ? "Source URL" : "No image source";
+      const sourceLabel = item.imageDataUrl ? "Uploaded image" : item.sourceUrl ? "Source URL" : "No source";
       const canPreviewImage = source && (/^data:image\//i.test(source) || /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(source));
       return `
-        <aside class="adminSourceEvidence">
-          <div class="eyebrow">Evidence</div>
-          <strong>${escapeHtml(sourceLabel)}</strong>
+        <aside class="adminSourceEvidence adminSourceEvidence--compact">
+          <div class="adminSourceEvidence__top">
+            <div>
+              <span class="eyebrow">Evidence</span>
+              <strong>${escapeHtml(sourceLabel)}</strong>
+            </div>
+            ${source ? `<a href="${escapeHtml(source)}" target="_blank" rel="noopener" class="button button--small adminSourceEvidence__open">Open</a>` : ""}
+          </div>
           ${canPreviewImage ? `
             <a href="${escapeHtml(source)}" target="_blank" rel="noopener" class="adminSourceEvidence__imageLink" aria-label="Open source image">
               <img src="${escapeHtml(source)}" alt="Menu source for ${escapeHtml(item.venueName)}" />
             </a>
           ` : `
-            <div class="adminSourceEvidence__empty">${source ? escapeHtml(source) : "No preview available for this source."}</div>
+            <div class="adminSourceEvidence__empty">${escapeHtml(shortSourceLabel(source))}</div>
           `}
           <div class="adminSourceEvidence__meta">
-            <span>${escapeHtml(item.sourceType)}</span>
+            <span>${escapeHtml(formatSourceType(item.sourceType))}</span>
             <span>${escapeHtml(MelbBeerBusiness.formatDate(item.createdAt))}</span>
             ${item.venueNameGuess ? `<span>OCR venue: ${escapeHtml(item.venueNameGuess)}</span>` : ""}
           </div>
@@ -2137,37 +2645,48 @@
       window.__adminIngestionQueueItems = Array.isArray(items) ? items : [];
       renderAdminTodayQueue();
       renderAdminDashboard();
+      renderAdminFocusRail();
       adminIngestionQueue.innerHTML = items.length
         ? items.map((item) => {
           const beers = item.reviewBeers || item.extractedBeers || [];
+          const extractedCount = Array.isArray(item.extractedBeers) ? item.extractedBeers.length : beers.length;
+          const note = item.capturedNotes || item.note || "No source notes";
           return `
             <article class="listItem adminIngestionItem" data-ingestion-id="${escapeHtml(item.id)}">
-              <div class="adminIngestionItem__header">
-                <div>
-                  <strong>${escapeHtml(item.venueName)}</strong>
-                  <div class="muted">${escapeHtml(item.sourceType)} · ${escapeHtml(item.status)} · ${escapeHtml(MelbBeerBusiness.formatDate(item.createdAt))}</div>
-                  <div class="muted">${escapeHtml(item.capturedNotes || item.note || "No source notes")}</div>
+              <div class="adminIngestionItem__header adminIngestionItem__header--compact">
+                <div class="adminIngestionItem__titleBlock">
+                  <div class="adminIngestionItem__titleLine">
+                    <strong>${escapeHtml(item.venueName)}</strong>
+                    <span>${escapeHtml(formatSourceType(item.sourceType))} · ${escapeHtml(item.status)} · ${escapeHtml(MelbBeerBusiness.formatDate(item.createdAt))}</span>
+                  </div>
+                  <div class="adminIngestionItem__compactNote">${escapeHtml(note)}</div>
                 </div>
-                ${confidencePill(item.overallConfidence)}
+                <div class="adminReviewCard__badges">
+                  ${confidencePill(item.overallConfidence)}
+                  <span class="pill">${beers.length}/${Math.max(1, extractedCount)} rows</span>
+                  ${crawlerFeedbackPill(item.crawlerFeedback)}
+                </div>
               </div>
+              ${renderCrawlerDetails(item, beers)}
               <div class="adminSourceReviewLayout">
                 ${renderSourceEvidence(item)}
-                <section class="adminSourceRows">
-                  <div class="sectionHeader">
+                <section class="adminSourceRows adminSourceRows--compact">
+                  <div class="sectionHeader adminSourceRows__header">
                     <div>
-                      <h3>Extracted rows</h3>
-                      <p class="muted">Edit only the rows you are comfortable publishing.</p>
+                      <h3>Rows</h3>
+                      <p class="muted">Keep clean rows, delete noise, then publish.</p>
                     </div>
                     <span class="pill">${beers.length} row${beers.length === 1 ? "" : "s"}</span>
                   </div>
                   <div class="adminQueueBeerRows" data-ingestion-beers="${escapeHtml(item.id)}"></div>
-                  <label class="field" style="margin-top:12px;">Review note
-                    <textarea data-ingestion-note rows="2" placeholder="Optional publish or rejection note"></textarea>
+                  <label class="field adminIngestionReviewNote">Review note
+                    <textarea data-ingestion-note rows="2" placeholder="Correction note or rejection reason"></textarea>
                   </label>
                 </section>
               </div>
               ${item.status === "pending_review" ? `
-                <div class="actionRow adminReviewActionBar" style="margin-top:10px;">
+                <div class="actionRow adminReviewActionBar">
+                  <span class="adminCrawlerRewardHint">Crawler reward updates when this review is saved.</span>
                   <button class="button button--small button--primary" type="button" data-publish-ingestion>Publish rows</button>
                   <button class="button button--small button--danger" type="button" data-reject-ingestion>Reject source</button>
                 </div>
@@ -2398,6 +2917,7 @@
     }
 
     function renderVenuePartners(data) {
+      renderOutreachPipeline(data);
       const statuses = ["contacted", "interested", "partner", "not_interested", "closed"];
       venueInterestRequests.innerHTML = data.interests.length
         ? data.interests.map((interest) => `
@@ -2469,9 +2989,14 @@
               ${item.nextAction ? `<span class="pill">Next: ${escapeHtml(item.nextAction)}</span>` : ""}
             </div>
             <div class="muted">${escapeHtml(item.notes || "No outreach notes yet.")}</div>
+            <div class="actionRow actionRow--compact">
+              <button class="button button--small" type="button" data-edit-outreach ${outreachDatasetAttributes(item)}>Edit</button>
+              ${outreachStageForStatus(item.status).advanceTo ? `<button class="button button--small button--primary" type="button" data-outreach-stage="${escapeHtml(outreachStageForStatus(item.status).advanceTo)}" ${outreachDatasetAttributes(item)}>${escapeHtml(outreachStageForStatus(item.status).advanceLabel)}</button>` : ""}
+            </div>
           </article>
         `).join("")
         : '<div class="listItem muted">No outreach notes saved yet. Use a partner lead or save the form above.</div>';
+      wireOutreachActions(venueOutreachList);
 
       const pendingChanges = data.pendingChanges || [];
       pendingBarChanges.innerHTML = pendingChanges.length
@@ -2653,7 +3178,28 @@
       }
     }
 
+    async function refreshAdminPage() {
+      const button = document.getElementById("refreshAdminPageButton");
+      try {
+        if (button) {
+          button.disabled = true;
+          button.textContent = "Refreshing...";
+        }
+        updateAdminLoadSummary("Refreshing admin data...");
+        await loadAdmin();
+      } catch (error) {
+        updateAdminLoadSummary("Refresh failed.");
+        MelbBeerBusiness.setStatus(statusEl, error.message || "Admin refresh failed.", true);
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = "Refresh";
+        }
+      }
+    }
+
     async function loadAdmin() {
+      updateAdminLoadSummary("Loading admin data...");
       const submissions = await MelbBeerBusiness.apiFetch("/api/business/submissions?status=pending&limit=100");
       const prioritySubmissions = [...(submissions.submissions || [])]
         .sort((a, b) => getSubmissionPriority(b) - getSubmissionPriority(a));
@@ -2739,6 +3285,7 @@
       });
       await loadAdminDataTools();
       adminContentEl.hidden = false;
+      updateAdminLoadSummary(`Loaded ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       MelbBeerBusiness.setStatus(statusEl, "Admin tools loaded.");
     }
 
@@ -2750,6 +3297,7 @@
       adminContentEl = document.getElementById("adminContent");
       reviewDecisionCancel.addEventListener("click", closeReviewDecision);
       reviewDecisionConfirm.addEventListener("click", confirmReviewDecision);
+      refreshAdminPageButton.addEventListener("click", refreshAdminPage);
       reviewDecisionDialog.addEventListener("cancel", () => {
         reviewDecisionState = null;
       });
@@ -2757,6 +3305,8 @@
         button.addEventListener("click", () => showAdminTab(button.dataset.adminTabTarget));
       });
       showAdminTab(requestedAdminTab());
+      wireAdminJumpActions(adminContentEl);
+      renderAdminFocusRail();
       rangeSelect.addEventListener("change", loadAdmin);
       managerAssignForm.addEventListener("submit", handleManagerAssign);
       managerUserSearch.addEventListener("input", scheduleManagerAccountSearch);
@@ -2796,6 +3346,7 @@
         await loadAdmin();
       } catch (error) {
         adminContentEl.hidden = true;
+        updateAdminLoadSummary("Admin data failed to load.");
         MelbBeerBusiness.setStatus(statusEl, error.message, true);
       }
     });

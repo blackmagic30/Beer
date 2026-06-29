@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="beermap_ink">#121820</color>
+    <color name="beermap_amber">#F78529</color>
+    <color name="beermap_honey">#FFC44D</color>
+    <color name="beermap_sky">#2E9EE0</color>
+    <color name="beermap_leaf">#298C59</color>
+</resources>
+

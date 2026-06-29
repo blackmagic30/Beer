@@ -26,6 +26,19 @@ export interface AdminIngestionBeerRecord {
   notes: string | null;
 }
 
+export interface AdminIngestionCrawlerFeedback {
+  outcome: "published" | "rejected";
+  rewardScore: number;
+  acceptedRowCount: number;
+  extractedRowCount: number;
+  rejectedRowCount: number;
+  correctedRowCount: number;
+  cleanRowCount: number;
+  note: string | null;
+  generatedAt: string;
+  signals: string[];
+}
+
 export interface AdminIngestionQueueRecord {
   id: string;
   venueId: string;
@@ -40,6 +53,7 @@ export interface AdminIngestionQueueRecord {
   overallConfidence: number | null;
   extractedBeers: AdminIngestionBeerRecord[];
   reviewBeers: AdminIngestionBeerRecord[] | null;
+  crawlerFeedback: AdminIngestionCrawlerFeedback | null;
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;

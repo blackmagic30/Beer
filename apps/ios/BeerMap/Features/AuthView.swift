@@ -1,0 +1,92 @@
+import SwiftUI
+
+struct AuthView: View {
+    @EnvironmentObject private var model: BeerMapAppModel
+    @State private var mode: AuthMode = .login
+    @State private var email = ""
+    @State private var password = ""
+    @State private var displayName = ""
+    @State private var ageConfirmed = true
+    @State private var termsAccepted = true
+    @State private var privacyAccepted = true
+
+    enum AuthMode: String, CaseIterable, Identifiable {
+        case login = "Sign in"
+        case signup = "Create account"
+
+        var id: String { rawValue }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            SectionHeader(
+                eyebrow: "BeerMap account",
+                title: mode == .login ? "Welcome back" : "Create your contributor account",
+                subtitle: "Use the same account, access rules, and venue assignments as the website."
+            )
+
+            Picker("Mode", selection: $mode) {
+                ForEach(AuthMode.allCases) { item in
+                    Text(item.rawValue).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            VStack(spacing: 12) {
+                TextField("Email", text: $email)
+                    .keyboardType(.emailAddress)
+                    .textContentType(.emailAddress)
+                    .readableForm()
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Email address")
+
+                SecureField("Password", text: $password)
+                    .textContentType(mode == .login ? .password : .newPassword)
+                    .readableForm()
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Password")
+
+                if mode == .signup {
+                    TextField("Display name, optional", text: $displayName)
+                        .textContentType(.nickname)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Display name")
+
+                    Toggle("I confirm I am 18 or older", isOn: $ageConfirmed)
+                    Toggle("I accept the Terms", isOn: $termsAccepted)
+                    Toggle("I accept the Privacy Policy", isOn: $privacyAccepted)
+                }
+            }
+            .beerMapCard()
+
+            PrimaryButton(
+                title: mode == .login ? "Sign in" : "Create account",
+                systemImage: mode == .login ? "arrow.right.circle.fill" : "person.badge.plus.fill",
+                isLoading: model.isLoading
+            ) {
+                Task {
+                    if mode == .login {
+                        await model.login(email: email, password: password)
+                    } else if ageConfirmed && termsAccepted && privacyAccepted {
+                        await model.signup(email: email, password: password, displayName: displayName)
+                    } else {
+                        model.errorMessage = "Confirm 18+ and accept the Terms and Privacy Policy before creating an account."
+                    }
+                }
+            }
+            .disabled(email.isEmpty || password.isEmpty)
+
+            if let providers = model.config?.supabaseOauthProviders, !providers.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Google and Apple sign-in are configured on the web backend.", systemImage: "link.badge.plus")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Native OAuth needs final app bundle IDs, redirect URLs, and provider console entries before release. Email/password uses the existing backend today.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .beerMapCard()
+            }
+        }
+    }
+}
+

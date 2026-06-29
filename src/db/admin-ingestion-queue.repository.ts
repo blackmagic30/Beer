@@ -4,6 +4,7 @@ import type BetterSqlite3 from "better-sqlite3";
 
 import type {
   AdminIngestionBeerRecord,
+  AdminIngestionCrawlerFeedback,
   AdminIngestionQueueRecord,
   AdminIngestionSourceType,
   AdminIngestionStatus,
@@ -23,6 +24,7 @@ interface RawAdminIngestionQueueRecord {
   overallConfidence: number | null;
   extractedBeersJson: string;
   reviewBeersJson: string | null;
+  crawlerFeedbackJson: string | null;
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
@@ -53,6 +55,22 @@ function parseBeerRecords(value: string | null): AdminIngestionBeerRecord[] | nu
   try {
     const parsed = JSON.parse(value) as unknown;
     return Array.isArray(parsed) ? (parsed as AdminIngestionBeerRecord[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCrawlerFeedback(value: string | null): AdminIngestionCrawlerFeedback | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as AdminIngestionCrawlerFeedback;
   } catch {
     return null;
   }
@@ -139,6 +157,7 @@ export class AdminIngestionQueueRepository {
           overall_confidence AS overallConfidence,
           extracted_beers_json AS extractedBeersJson,
           review_beers_json AS reviewBeersJson,
+          crawler_feedback_json AS crawlerFeedbackJson,
           error_message AS errorMessage,
           created_at AS createdAt,
           updated_at AS updatedAt,
@@ -171,6 +190,7 @@ export class AdminIngestionQueueRepository {
                 overall_confidence AS overallConfidence,
                 extracted_beers_json AS extractedBeersJson,
                 review_beers_json AS reviewBeersJson,
+                crawler_feedback_json AS crawlerFeedbackJson,
                 error_message AS errorMessage,
                 created_at AS createdAt,
                 updated_at AS updatedAt,
@@ -198,6 +218,7 @@ export class AdminIngestionQueueRepository {
                 overall_confidence AS overallConfidence,
                 extracted_beers_json AS extractedBeersJson,
                 review_beers_json AS reviewBeersJson,
+                crawler_feedback_json AS crawlerFeedbackJson,
                 error_message AS errorMessage,
                 created_at AS createdAt,
                 updated_at AS updatedAt,
@@ -213,12 +234,20 @@ export class AdminIngestionQueueRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
-  markPublished(id: string, reviewBeers: AdminIngestionBeerRecord[], updatedAt: string): void {
+  markPublished(
+    id: string,
+    reviewBeers: AdminIngestionBeerRecord[],
+    note: string | null,
+    crawlerFeedback: AdminIngestionCrawlerFeedback,
+    updatedAt: string,
+  ): void {
     this.db
       .prepare(
         `UPDATE admin_ingestion_queue
          SET status = 'published',
              review_beers_json = @reviewBeersJson,
+             crawler_feedback_json = @crawlerFeedbackJson,
+             note = COALESCE(@note, note),
              updated_at = @updatedAt,
              published_at = @updatedAt
          WHERE id = @id`,
@@ -226,16 +255,24 @@ export class AdminIngestionQueueRepository {
       .run({
         id,
         reviewBeersJson: JSON.stringify(reviewBeers),
+        crawlerFeedbackJson: JSON.stringify(crawlerFeedback),
+        note,
         updatedAt,
       });
   }
 
-  markRejected(id: string, note: string | null, updatedAt: string): void {
+  markRejected(
+    id: string,
+    note: string | null,
+    crawlerFeedback: AdminIngestionCrawlerFeedback,
+    updatedAt: string,
+  ): void {
     this.db
       .prepare(
         `UPDATE admin_ingestion_queue
          SET status = 'rejected',
              note = COALESCE(@note, note),
+             crawler_feedback_json = @crawlerFeedbackJson,
              updated_at = @updatedAt,
              rejected_at = @updatedAt
          WHERE id = @id`,
@@ -243,6 +280,7 @@ export class AdminIngestionQueueRepository {
       .run({
         id,
         note,
+        crawlerFeedbackJson: JSON.stringify(crawlerFeedback),
         updatedAt,
       });
   }
@@ -262,6 +300,7 @@ export class AdminIngestionQueueRepository {
       overallConfidence: row.overallConfidence,
       extractedBeers: parseBeerRecords(row.extractedBeersJson) ?? [],
       reviewBeers: parseBeerRecords(row.reviewBeersJson),
+      crawlerFeedback: parseCrawlerFeedback(row.crawlerFeedbackJson),
       errorMessage: row.errorMessage,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,

@@ -85,6 +85,10 @@ const venuePartnerOutreachColumns = [
   { name: "last_contacted_at", definition: "TEXT" },
 ] as const;
 
+const adminIngestionQueueColumns = [
+  { name: "crawler_feedback_json", definition: "TEXT" },
+] as const;
+
 const PUBLIC_ACCOUNT_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function ensureColumns(
@@ -451,6 +455,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "submissions", submissionColumns);
   ensureColumns(database, "feedback", feedbackColumns);
   ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
+  ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
   normalizeVenueTiers(database);
   backfillPublicAccountIds(database);
   backfillDisplayNameKeys(database);

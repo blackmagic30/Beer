@@ -5162,10 +5162,33 @@ describe("business demo contribution model", () => {
     }));
     expect(proPortal.paidVenueIntelligence?.searchTimesByDay.length).toBeGreaterThan(0);
     expect(proPortal.paidVenueIntelligence?.searchTimesByHour.length).toBeGreaterThan(0);
+    expect(proPortal.dailySpecialsPlanner).toEqual(expect.objectContaining({
+      title: "AI specials planner",
+      area: "South Melbourne",
+      summaryDate: "2026-05-04",
+      sourcePeriod: "today",
+      privacyFloorMet: true,
+      popularWindows: expect.arrayContaining([
+        expect.objectContaining({ label: "6 pm-8 pm", startTime: "18:00", endTime: "20:00" }),
+      ]),
+      quietWindows: expect.arrayContaining([
+        expect.objectContaining({ label: "12 pm-2 pm", startTime: "12:00", endTime: "14:00" }),
+      ]),
+      recommendations: expect.arrayContaining([
+        expect.objectContaining({
+          title: "Fill the 12 pm-2 pm lull",
+          type: "foot_traffic",
+        }),
+      ]),
+    }));
+    expect(proPortal.businessToolkit?.dailySpecialsPlanner).toEqual(proPortal.dailySpecialsPlanner);
     expect(proPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
       proRecommendations: expect.arrayContaining([
         expect.any(String),
       ]),
+      dailySpecialsPlanner: expect.objectContaining({
+        title: "AI specials planner",
+      }),
       topBeersBoughtInArea: expect.arrayContaining([
         expect.objectContaining({ beerName: "Guinness" }),
       ]),

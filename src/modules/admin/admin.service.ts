@@ -5,6 +5,7 @@ import type BetterSqlite3 from "better-sqlite3";
 import type { AdminIngestionQueueRepository } from "../../db/admin-ingestion-queue.repository.js";
 import type {
   AdminIngestionBeerRecord,
+  AdminIngestionCrawlerFeedback,
   AdminIngestionQueueRecord,
   AdminIngestionStatus,
 } from "../../db/models.js";
@@ -231,6 +232,118 @@ function toAdminBeerInput(beer: AdminIngestionBeerRecord): AdminBeerInput {
     availablePackageOnly: beer.availablePackageOnly,
     unavailableReason: beer.unavailableReason,
     needsReview: beer.needsReview,
+  };
+}
+
+function clampRewardScore(value: number): number {
+  return Math.min(100, Math.max(-100, Math.round(value)));
+}
+
+function normalizeFeedbackText(value: string | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function normalizeFeedbackNumber(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(Number(value))) {
+    return null;
+  }
+  return Number(Number(value).toFixed(2));
+}
+
+function reviewBeerDiffersFromExtraction(
+  reviewBeer: AdminBeerInput,
+  extractedBeer: AdminIngestionBeerRecord,
+): boolean {
+  return (
+    normalizeFeedbackText(reviewBeer.name) !== normalizeFeedbackText(extractedBeer.name) ||
+    normalizeFeedbackNumber(reviewBeer.priceNumeric) !== normalizeFeedbackNumber(extractedBeer.priceNumeric) ||
+    normalizeFeedbackText(reviewBeer.priceText) !== normalizeFeedbackText(extractedBeer.priceText) ||
+    reviewBeer.availabilityStatus !== extractedBeer.availabilityStatus ||
+    reviewBeer.availableOnTap !== extractedBeer.availableOnTap ||
+    reviewBeer.availablePackageOnly !== extractedBeer.availablePackageOnly ||
+    reviewBeer.unavailableReason !== extractedBeer.unavailableReason ||
+    reviewBeer.needsReview !== extractedBeer.needsReview
+  );
+}
+
+function countCorrectedReviewRows(
+  reviewBeers: AdminBeerInput[],
+  extractedBeers: AdminIngestionBeerRecord[],
+): number {
+  const matchedIndexes = new Set<number>();
+  let corrected = 0;
+
+  reviewBeers.forEach((reviewBeer, reviewIndex) => {
+    let extractedIndex = extractedBeers.findIndex((extractedBeer, index) =>
+      !matchedIndexes.has(index) &&
+      normalizeFeedbackText(extractedBeer.name) === normalizeFeedbackText(reviewBeer.name),
+    );
+
+    if (extractedIndex < 0 && reviewIndex < extractedBeers.length && !matchedIndexes.has(reviewIndex)) {
+      extractedIndex = reviewIndex;
+    }
+
+    if (extractedIndex < 0) {
+      corrected += 1;
+      return;
+    }
+
+    matchedIndexes.add(extractedIndex);
+    if (reviewBeerDiffersFromExtraction(reviewBeer, extractedBeers[extractedIndex]!)) {
+      corrected += 1;
+    }
+  });
+
+  return corrected;
+}
+
+export function buildCrawlerFeedback(input: {
+  outcome: AdminIngestionCrawlerFeedback["outcome"];
+  extractedBeers: AdminIngestionBeerRecord[];
+  reviewBeers?: AdminBeerInput[];
+  note: string | null;
+  generatedAt: string;
+}): AdminIngestionCrawlerFeedback {
+  const extractedRowCount = input.extractedBeers.length;
+  const reviewBeers = input.reviewBeers ?? [];
+  const acceptedRowCount = input.outcome === "published" ? reviewBeers.length : 0;
+  const rejectedRowCount = Math.max(0, extractedRowCount - acceptedRowCount);
+  const correctedRowCount =
+    input.outcome === "published" ? countCorrectedReviewRows(reviewBeers, input.extractedBeers) : 0;
+  const cleanRowCount =
+    input.outcome === "published"
+      ? reviewBeers.filter((beer) => !beer.needsReview).length
+      : 0;
+  const acceptedRatio = extractedRowCount > 0 ? acceptedRowCount / extractedRowCount : acceptedRowCount > 0 ? 1 : 0;
+  const cleanRatio = acceptedRowCount > 0 ? cleanRowCount / acceptedRowCount : 0;
+  const correctionRate = acceptedRowCount > 0 ? correctedRowCount / acceptedRowCount : 0;
+  const rewardScore =
+    input.outcome === "published"
+      ? clampRewardScore(10 + acceptedRatio * 70 + cleanRatio * 20 - correctionRate * 15)
+      : clampRewardScore(extractedRowCount > 0 ? -70 : -25);
+  const signals = [
+    input.outcome === "published"
+      ? `${acceptedRowCount}/${Math.max(1, extractedRowCount)} rows accepted`
+      : `${extractedRowCount} row${extractedRowCount === 1 ? "" : "s"} rejected`,
+    correctedRowCount > 0 ? `${correctedRowCount} manual correction${correctedRowCount === 1 ? "" : "s"}` : "No row corrections",
+    cleanRowCount > 0 ? `${cleanRowCount} clean row${cleanRowCount === 1 ? "" : "s"}` : null,
+    input.note ? `Reviewer note: ${input.note}` : null,
+  ].filter((signal): signal is string => Boolean(signal));
+
+  return {
+    outcome: input.outcome,
+    rewardScore,
+    acceptedRowCount,
+    extractedRowCount,
+    rejectedRowCount,
+    correctedRowCount,
+    cleanRowCount,
+    note: input.note,
+    generatedAt: input.generatedAt,
+    signals,
   };
 }
 
@@ -1087,6 +1200,13 @@ export class AdminService {
       savedAt: result.savedAt,
       beers: input.beers,
     });
+    const crawlerFeedback = buildCrawlerFeedback({
+      outcome: "published",
+      extractedBeers: queueItem.extractedBeers,
+      reviewBeers: input.beers,
+      note: input.note,
+      generatedAt: result.savedAt,
+    });
 
     repository.markPublished(
       ingestionId,
@@ -1095,6 +1215,8 @@ export class AdminService {
         confidence: 1,
         notes: null,
       })),
+      input.note,
+      crawlerFeedback,
       result.savedAt,
     );
 
@@ -1119,7 +1241,15 @@ export class AdminService {
       throw new AppError("This source ingestion item is no longer pending review.", 409);
     }
 
-    repository.markRejected(ingestionId, input.note, new Date().toISOString());
+    const rejectedAt = new Date().toISOString();
+    const crawlerFeedback = buildCrawlerFeedback({
+      outcome: "rejected",
+      extractedBeers: queueItem.extractedBeers,
+      note: input.note,
+      generatedAt: rejectedAt,
+    });
+
+    repository.markRejected(ingestionId, input.note, crawlerFeedback, rejectedAt);
     return {
       queueItem: repository.getById(ingestionId)!,
     };

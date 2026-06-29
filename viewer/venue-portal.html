@@ -59,7 +59,7 @@
             <button class="tabButton" type="button" data-tab="profile">Profile</button>
             <button class="tabButton" type="button" data-tab="beers">Beers / stock</button>
             <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
-            <button class="tabButton" type="button" data-tab="specials" data-specials-only>Pint Path specials</button>
+            <button class="tabButton" type="button" data-tab="specials" data-specials-only>AI specials planner</button>
             <button class="tabButton" type="button" data-tab="pending-reviews">Pending reviews</button>
             <button class="tabButton" type="button" data-tab="report">Monthly report</button>
             <button class="tabButton" type="button" data-tab="support">Support</button>
@@ -359,6 +359,7 @@
           </section>
 
           <section class="tabPanel is-hidden" data-panel="specials">
+            <article id="specialsPlanner" class="specialsPlanner panel is-hidden"></article>
             <article id="specialsGate" class="panel is-hidden">
               <h2>Pint Path specials are a paid venue feature</h2>
               <p class="muted">Free venue accounts can add beer data and happy-hour data only. Upgrade to Pro to add reviewed Pint Path specials.</p>
@@ -1137,6 +1138,7 @@
       renderPriceRefreshPanel(beers);
       renderHappyHours(happyHours);
       renderSpecials(specials);
+      renderSpecialsPlanner(data);
       renderPremiumVenueDashboard(data);
       renderDiscountOps(data);
       renderDiscountSpecialChoices(data);
@@ -2576,6 +2578,147 @@
         : '<div class="emptyState"><strong>No happy hours yet.</strong><br />Add a happy hour to help nearby users find your best times to visit.</div>';
     }
 
+    function renderSpecialsPlanner(data) {
+      const panel = document.getElementById("specialsPlanner");
+      if (!panel) return;
+
+      const canSpecials = portalCanManageSpecials(data);
+      const planner = data.dailySpecialsPlanner
+        || data.businessToolkit?.dailySpecialsPlanner
+        || data.monthlyReport?.data?.summary?.dailySpecialsPlanner
+        || null;
+      panel.classList.toggle("is-hidden", !canSpecials);
+      if (!canSpecials) {
+        panel.innerHTML = "";
+        return;
+      }
+
+      if (!planner) {
+        panel.innerHTML = `
+          <div class="sectionHeader">
+            <div>
+              <div class="eyebrow">AI specials planner</div>
+              <h2>Daily summary is building</h2>
+              <p class="muted">Pint Path will show popular and quieter local search windows once enough privacy-safe area data is available.</p>
+            </div>
+            <span class="pill pill--premium">Daily</span>
+          </div>
+        `;
+        return;
+      }
+
+      const demandSignals = planner.demandSignals || [];
+      const recommendations = planner.recommendations || [];
+      const localSignals = planner.localSearchSignals || [];
+      const popularWindows = planner.popularWindows || [];
+      const quietWindows = planner.quietWindows || [];
+      const sourceCopy = planner.sourcePeriod === "today"
+        ? "Today"
+        : planner.sourcePeriod === "this_month"
+          ? "Current month fallback"
+          : "Building";
+      const renderPlannerWindowRows = (rows, emptyCopy) => rows.length
+        ? rows.map((row) => `
+          <div class="specialsPlannerWindow">
+            <div>
+              <strong>${escapeHtml(row.label)}</strong>
+              <small>${escapeHtml(row.helper || "")}</small>
+            </div>
+            <span class="pill">${formatCount(row.count)} searches</span>
+          </div>
+        `).join("")
+        : `<div class="specialsPlannerWindow"><div><strong>${escapeHtml(emptyCopy)}</strong><small>${escapeHtml(planner.confidenceCopy || "")}</small></div></div>`;
+
+      panel.innerHTML = `
+        <div class="specialsPlanner__hero">
+          <div>
+            <div class="eyebrow">AI specials planner</div>
+            <h2>Daily summary for ${escapeHtml(planner.area || "your area")}</h2>
+            <p>${escapeHtml(planner.summary || "Use local Pint Path search signals to choose the next venue special.")}</p>
+            <div class="specialsPlanner__meta">
+              <span>${escapeHtml(planner.summaryDate || "")}</span>
+              <span>${escapeHtml(sourceCopy)}</span>
+              <span>${escapeHtml(planner.confidenceCopy || "")}</span>
+            </div>
+          </div>
+          <span class="pill pill--premium">AI powered</span>
+        </div>
+        <div class="specialsPlannerSignalGrid">
+          ${demandSignals.map((signal) => `
+            <article class="specialsPlannerSignal">
+              <span>${escapeHtml(signal.label)}</span>
+              <strong>${escapeHtml(String(signal.value))}</strong>
+              <small>${escapeHtml(signal.helper || "")}</small>
+            </article>
+          `).join("")}
+        </div>
+        <div class="specialsPlannerColumns">
+          <section>
+            <div class="eyebrow">Most popular times</div>
+            <div class="specialsPlannerWindowList">${renderPlannerWindowRows(popularWindows, "Popular windows will appear after more local searches.")}</div>
+          </section>
+          <section>
+            <div class="eyebrow">Least popular times</div>
+            <div class="specialsPlannerWindowList">${renderPlannerWindowRows(quietWindows, "Quiet windows will appear after more local searches.")}</div>
+          </section>
+        </div>
+        <div class="specialsPlannerColumns">
+          <section>
+            <div class="eyebrow">Recommended specials</div>
+            <div class="specialsPlannerRecommendationList">
+              ${recommendations.length ? recommendations.map((recommendation, index) => `
+                <article class="specialsPlannerRecommendation">
+                  <div>
+                    <strong>${escapeHtml(recommendation.title)}</strong>
+                    <p>${escapeHtml(recommendation.offerIdea || recommendation.action || "")}</p>
+                    <small>${escapeHtml(recommendation.reason || "")}</small>
+                  </div>
+                  <button class="button button--small button--primary" type="button" data-special-planner-index="${index}">Use this</button>
+                </article>
+              `).join("") : '<div class="specialsPlannerWindow"><div><strong>No special recommendation yet.</strong><small>Keep the offer simple while local signals build.</small></div></div>'}
+            </div>
+          </section>
+          <section>
+            <div class="eyebrow">Suburb search signals</div>
+            <div class="specialsPlannerWindowList">
+              ${localSignals.length ? localSignals.map((signal) => `
+                <div class="specialsPlannerWindow">
+                  <div>
+                    <strong>${escapeHtml(signal.label)}</strong>
+                    <small>${escapeHtml(signal.helper || "")}</small>
+                  </div>
+                  <span class="pill">${formatCount(signal.value)} searches</span>
+                </div>
+              `).join("") : '<div class="specialsPlannerWindow"><div><strong>No privacy-safe suburb signals yet.</strong><small>Search terms appear only after aggregate thresholds are met.</small></div></div>'}
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function applySpecialPlannerRecommendation(index) {
+      const planner = currentPortal?.dailySpecialsPlanner
+        || currentPortal?.businessToolkit?.dailySpecialsPlanner
+        || currentPortal?.monthlyReport?.data?.summary?.dailySpecialsPlanner
+        || null;
+      const recommendation = planner?.recommendations?.[index];
+      if (!recommendation || !portalCanManageSpecials()) return;
+
+      const title = String(recommendation.title || "Pint Path special")
+        .replace(/^Fill the /i, "")
+        .replace(/^Convert the /i, "")
+        .slice(0, 140);
+      field(specialForm, "id").value = "";
+      field(specialForm, "title").value = title || "Pint Path special";
+      field(specialForm, "price").value = "";
+      field(specialForm, "discount").value = String(recommendation.offerIdea || recommendation.action || "App-only Pint Path special").slice(0, 220);
+      field(specialForm, "startTime").value = normalizeHappyHourTime(recommendation.startTime || "") || "16:00";
+      field(specialForm, "endTime").value = normalizeHappyHourTime(recommendation.endTime || "") || "18:00";
+      field(specialForm, "active").checked = true;
+      MelbBeerBusiness.setStatus(specialStatus, "Planner recommendation loaded. Review the title, days, and discount before saving.");
+      specialForm.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     function renderSpecials(specials) {
       specialList.innerHTML = specials.length
         ? specials.map((item) => `
@@ -3129,6 +3272,11 @@
         if (target.dataset.dashboardSection) {
           premiumDashboardSection = target.dataset.dashboardSection;
           renderPremiumVenueDashboard(currentPortal);
+          return;
+        }
+
+        if (target.dataset.specialPlannerIndex) {
+          applySpecialPlannerRecommendation(Number(target.dataset.specialPlannerIndex));
           return;
         }
 

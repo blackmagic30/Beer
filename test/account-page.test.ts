@@ -483,6 +483,8 @@ describe("account page shell", () => {
     expect(script).toContain("function isVenueManagerContext");
     expect(script).toContain("function isAdminContext");
     expect(script).toContain("subscriptionStatus: account.subscriptionStatus || null");
+    expect(script).not.toContain("email: account.email || null");
+    expect(script).not.toContain("email: session?.user?.email");
     expect(script).toContain('const venueManagerNav = active === "venue-portal" || active === "bar-faq" || active === "venue-support" || isVenueManagerContext()');
     expect(script).toContain('const adminNav = active === "admin" || isAdminContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
@@ -569,6 +571,10 @@ describe("account page shell", () => {
     ];
     const requiredAdminControls = [
       'id="adminTodayQueue"',
+      'id="adminActiveSectionLabel"',
+      'id="adminLoadSummary"',
+      'id="refreshAdminPageButton"',
+      'id="adminFocusRail"',
       'id="adminHealthPanel"',
       'id="pendingSubmissions"',
       'id="pendingBarChanges"',
@@ -584,6 +590,8 @@ describe("account page shell", () => {
       'id="outreachForm"',
       'id="pitchReadinessPanel"',
       'id="pitchReadinessList"',
+      'id="outreachPipelineSummary"',
+      'id="outreachPipelineBoard"',
       'id="venueOutreachList"',
       'id="leaderboardPrizeForm"',
       'id="adminLeaderboardPodium"',
@@ -609,15 +617,22 @@ describe("account page shell", () => {
     expect(html).toContain('data-admin-tab-panel="leaderboard" role="tabpanel" hidden');
     expect(html).toContain('data-admin-tab-panel="analytics" role="tabpanel" hidden');
     expect(html).toContain("function showAdminTab");
+    expect(html).toContain("function renderAdminFocusRail");
+    expect(html).toContain("function refreshAdminPage");
     expect(html).toContain("function openReviewDecision");
     expect(html).toContain("function promptSubmissionReview");
     expect(html).toContain("function promptQueuedIngestionReview");
+    expect(html).toContain("function renderCrawlerDetails");
+    expect(html).toContain("function crawlerFeedbackPill");
     expect(html).toContain("function prefillOutreachFromLead");
+    expect(html).toContain("function renderOutreachPipeline");
+    expect(html).toContain("function updateOutreachStage");
     expect(html).toContain("function renderPitchReadiness");
     expect(html).toContain("function renderAdminLeaderboardPrizes");
     expect(html).toContain("function handleLeaderboardPrizeFinalize");
     expect(html).toContain("function openLeadCapture");
     expect(html).toContain('class="adminSourceReviewLayout"');
+    expect(html).toContain('class="adminCrawlerRewardHint"');
     expect(html).toContain('data-prefill-lead');
     expect(html).toContain('data-prep-pitch');
     expect(html).toContain('data-capture-lead');
@@ -633,15 +648,23 @@ describe("account page shell", () => {
     });
     requiredAdminControls.forEach((control) => expect(html).toContain(control));
     expect(css).toContain(".adminWorkbench");
+    expect(css).toContain(".adminUtilityBar");
+    expect(css).toContain(".adminFocusRail");
     expect(css).toContain(".adminSection");
     expect(css).toContain(".adminJumpNav");
     expect(css).toContain(".adminTabButton");
     expect(css).toContain(".adminGrid--two");
     expect(css).toContain(".adminCommandCard");
     expect(css).toContain(".adminReviewActionBar");
+    expect(css).toContain(".adminCrawlerDetails");
+    expect(css).toContain(".adminCrawlerRewardHint");
     expect(css).toContain(".adminSourceReviewLayout");
+    expect(css).toContain(".adminQueueBeerRows .adminBeerRow");
     expect(css).toContain(".pitchReadinessGrid");
     expect(css).toContain(".pitchReadinessChecklist");
+    expect(css).toContain(".outreachPipelineBoard");
+    expect(css).toContain(".outreachPipelineLane");
+    expect(css).toContain(".outreachPipelineCard");
     expect(css).toContain(".reviewDecisionDialog");
   });
 

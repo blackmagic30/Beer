@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS admin_ingestion_queue (
   overall_confidence REAL,
   extracted_beers_json TEXT NOT NULL DEFAULT '[]',
   review_beers_json TEXT,
+  crawler_feedback_json TEXT,
   error_message TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,

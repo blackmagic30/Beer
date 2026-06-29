@@ -1432,6 +1432,8 @@ function trendDirection(change: number | null): "up" | "down" | "flat" | "new" {
   return "flat";
 }
 
+const SPECIALS_PLANNER_HOURS = Array.from({ length: 12 }, (_value, index) => index + 12);
+
 function buildPaidVenueIntelligence(input: {
   area: string | null;
   analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
@@ -1545,6 +1547,208 @@ function buildPaidVenueIntelligence(input: {
     peakSearchDay: input.analytics.searchTimesByDay?.[0] ?? null,
     peakSearchHour: input.analytics.searchTimesByHour?.[0] ?? null,
     generatedAt: nowIso(),
+  };
+}
+
+function formatPlannerHour(hour: number): string {
+  const normalized = ((hour % 24) + 24) % 24;
+  if (normalized === 0) {
+    return "12 am";
+  }
+  if (normalized === 12) {
+    return "12 pm";
+  }
+  return normalized > 12 ? `${normalized - 12} pm` : `${normalized} am`;
+}
+
+function formatPlannerTime(hour: number): string {
+  return `${String(((hour % 24) + 24) % 24).padStart(2, "0")}:00`;
+}
+
+function getZonedDateKey(date: Date, timezone: string): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-AU", {
+    timeZone: timezone || DEFAULT_REPORT_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date).map((part) => [part.type, part.value]));
+
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function buildSpecialsPlannerWindows(analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>) {
+  const countsByHour = new Map<number, number>();
+  for (const row of analytics.searchTimesByHour ?? []) {
+    const hour = Number(row.sort ?? row.key);
+    if (Number.isInteger(hour) && hour >= 0 && hour <= 23) {
+      countsByHour.set(hour, (countsByHour.get(hour) ?? 0) + row.count);
+    }
+  }
+
+  const windows = SPECIALS_PLANNER_HOURS.slice(0, -1).map((startHour) => {
+    const endHour = startHour + 2;
+    const count = (countsByHour.get(startHour) ?? 0) + (countsByHour.get(startHour + 1) ?? 0);
+    return {
+      label: `${formatPlannerHour(startHour)}-${formatPlannerHour(endHour)}`,
+      startTime: formatPlannerTime(startHour),
+      endTime: formatPlannerTime(endHour),
+      count,
+      sort: startHour,
+    };
+  });
+  const maxCount = Math.max(0, ...windows.map((window) => window.count));
+
+  return {
+    popular: windows
+      .filter((window) => window.count > 0)
+      .sort((left, right) => right.count - left.count || left.sort - right.sort)
+      .slice(0, 3)
+      .map((window) => ({
+        ...window,
+        helper: `${window.count} local search${window.count === 1 ? "" : "es"} touched this window.`,
+        confidence: window.count >= analytics.privacyThreshold ? "high" : "directional",
+      })),
+    quiet: windows
+      .filter((window) => maxCount === 0 || window.count < maxCount)
+      .sort((left, right) => left.count - right.count || left.sort - right.sort)
+      .slice(0, 3)
+      .map((window) => ({
+        ...window,
+        helper: window.count > 0
+          ? `${window.count} local search${window.count === 1 ? "" : "es"} touched this quieter window.`
+          : "No local searches in this window yet.",
+        confidence: window.count >= analytics.privacyThreshold ? "high" : "directional",
+      })),
+  };
+}
+
+function buildDailySpecialsPlanner(input: {
+  venueName: string;
+  area: string | null;
+  timezone: string;
+  todayAnalytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
+  monthAnalytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>;
+  paidVenueIntelligence: ReturnType<typeof buildPaidVenueIntelligence> | null;
+  activeSpecialCount: number;
+}) {
+  const area = input.area?.trim() || "your local area";
+  const sourceAnalytics = input.todayAnalytics.privacyFloorMet
+    ? input.todayAnalytics
+    : input.monthAnalytics.privacyFloorMet
+      ? input.monthAnalytics
+      : input.todayAnalytics;
+  const sourcePeriod = input.todayAnalytics.privacyFloorMet
+    ? "today"
+    : input.monthAnalytics.privacyFloorMet
+      ? "this_month"
+      : "building";
+  const windows = sourceAnalytics.privacyFloorMet
+    ? buildSpecialsPlannerWindows(sourceAnalytics)
+    : { popular: [], quiet: [] };
+  const topSearchedBeers = input.paidVenueIntelligence?.topSearchedBeers?.length
+    ? input.paidVenueIntelligence.topSearchedBeers
+    : sourceAnalytics.areaBeerSearches.map((row) => ({
+        key: normalizeTrackedBeerId(row.key),
+        beerName: formatBeerInsightName(row.label || row.key),
+        searchCount: row.count,
+      }));
+  const topBeer = topSearchedBeers[0] ?? null;
+  const topStyle = sourceAnalytics.areaStyleSearches[0] ?? null;
+  const popularWindow = windows.popular[0] ?? null;
+  const quietWindow = windows.quiet[0] ?? null;
+  const confidenceCopy = sourcePeriod === "today"
+    ? "Using today's suburb search pattern."
+    : sourcePeriod === "this_month"
+      ? "Today is still building, so this uses the current month suburb pattern."
+      : `Waiting for at least ${sourceAnalytics.privacyThreshold} local searches before showing exact time windows.`;
+  const focusBeer = topBeer?.beerName ?? (topStyle ? formatBeerInsightName(topStyle.label || topStyle.key) : "selected taps");
+  const recommendations = sourceAnalytics.privacyFloorMet
+    ? [
+        quietWindow
+          ? {
+              title: `Fill the ${quietWindow.label} lull`,
+              type: "foot_traffic",
+              window: quietWindow.label,
+              startTime: quietWindow.startTime,
+              endTime: quietWindow.endTime,
+              offerIdea: `Run a simple ${focusBeer} or selected-tap special in this lower-demand window.`,
+              reason: `${quietWindow.label} is the least popular visible Pint Path search window for ${area}.`,
+              action: "Use a clear time-boxed offer to pull in earlier foot traffic before peak demand.",
+            }
+          : null,
+        popularWindow
+          ? {
+              title: `Convert the ${popularWindow.label} peak`,
+              type: "conversion",
+              window: popularWindow.label,
+              startTime: popularWindow.startTime,
+              endTime: popularWindow.endTime,
+              offerIdea: `Keep a headline ${focusBeer} offer visible while users are actively searching.`,
+              reason: `${popularWindow.label} is the strongest visible Pint Path search window around ${area}.`,
+              action: "Keep prices, stock, and staff redemption flow fresh so demand turns into visits.",
+            }
+          : null,
+        topBeer
+          ? {
+              title: `Match ${topBeer.beerName} demand`,
+              type: "local_search_match",
+              window: quietWindow?.label ?? popularWindow?.label ?? "Tonight",
+              startTime: quietWindow?.startTime ?? popularWindow?.startTime ?? null,
+              endTime: quietWindow?.endTime ?? popularWindow?.endTime ?? null,
+              offerIdea: `Feature ${topBeer.beerName} in one Pint Path special if it is on tap or a close substitute is available.`,
+              reason: `${topBeer.beerName} is the top suburb beer search signal for ${area}.`,
+              action: "Use the local search term in the special title so users recognise the match.",
+            }
+          : null,
+      ].filter((item): item is NonNullable<typeof item> => Boolean(item))
+    : [
+        {
+          title: "Start with a flexible off-peak special",
+          type: "building",
+          window: "Tonight",
+          startTime: null,
+          endTime: null,
+          offerIdea: "Run one easy staff-friendly offer, such as selected taps or a house pint special.",
+          reason: `Pint Path is still collecting enough ${area} searches for a privacy-safe daily time split.`,
+          action: "Keep the special simple while the daily summary builds.",
+        },
+      ];
+
+  return {
+    title: "AI specials planner",
+    venueName: input.venueName,
+    area,
+    summaryDate: getZonedDateKey(new Date(), input.timezone),
+    sourcePeriod,
+    generatedAt: nowIso(),
+    privacyFloorMet: sourceAnalytics.privacyFloorMet,
+    privacyThreshold: sourceAnalytics.privacyThreshold,
+    activeSpecialCount: input.activeSpecialCount,
+    confidenceCopy,
+    summary: sourceAnalytics.privacyFloorMet && popularWindow && quietWindow
+      ? `${area} Pint Path users are most active around ${popularWindow.label}. The quietest visible window is ${quietWindow.label}, so use a focused special there to lift foot traffic.`
+      : `Pint Path is building a daily ${area} summary. Keep one simple special live until enough local search activity clears the privacy floor.`,
+    demandSignals: [
+      { label: "Area searches", value: sourceAnalytics.areaSearches, helper: sourcePeriod === "today" ? "Today" : "Current month" },
+      { label: "Popular window", value: popularWindow?.label ?? "Building", helper: popularWindow?.helper ?? confidenceCopy },
+      { label: "Least popular window", value: quietWindow?.label ?? "Building", helper: quietWindow?.helper ?? confidenceCopy },
+      { label: "Active specials", value: input.activeSpecialCount, helper: "Live Pint Path offers" },
+    ],
+    popularWindows: windows.popular,
+    quietWindows: windows.quiet,
+    localSearchSignals: [
+      ...topSearchedBeers.slice(0, 3).map((row) => ({
+        label: row.beerName,
+        value: row.searchCount,
+        helper: `${area} beer search`,
+      })),
+      ...sourceAnalytics.areaStyleSearches.slice(0, 2).map((row) => ({
+        label: formatBeerInsightName(row.label || row.key),
+        value: row.count,
+        helper: `${area} style search`,
+      })),
+    ],
+    recommendations: recommendations.slice(0, 3),
   };
 }
 
@@ -6721,6 +6925,7 @@ export class BusinessService {
         monthlyReport: null,
         businessToolkit: null,
         demandDashboard: null,
+        dailySpecialsPlanner: null,
         updateLink: null,
         claimRequests: [],
         message: "Venue management is invite-only during beta. Ask the Pint Path admin to assign your account to a venue.",
@@ -6738,6 +6943,7 @@ export class BusinessService {
         updateLink: null,
         businessToolkit: null,
         demandDashboard: null,
+        dailySpecialsPlanner: null,
         privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
       };
     }
@@ -6763,12 +6969,24 @@ export class BusinessService {
     const reportTimezone = this.getReportTimezone();
     const reportMonth = getZonedMonthKey(new Date(), reportTimezone);
     const reportMonthRange = monthKeyRange(reportMonth, reportTimezone);
+    const todayRange = getZonedDayRangeIso(new Date(), reportTimezone);
     const analytics = capabilities.analytics
       ? this.repository.getVenueAreaAnalytics({
           venueId: selectedVenueId,
           venueName: profile.name,
           area: venueArea,
           month: reportMonth,
+          timezone: reportTimezone,
+          privacyThreshold: venueInsightPrivacyThreshold,
+        })
+      : null;
+    const dailyAnalytics = capabilities.analytics
+      ? this.repository.getVenueAreaAnalytics({
+          venueId: selectedVenueId,
+          venueName: profile.name,
+          area: venueArea,
+          startIso: todayRange.startIso,
+          endIso: todayRange.endIso,
           timezone: reportTimezone,
           privacyThreshold: venueInsightPrivacyThreshold,
         })
@@ -6847,12 +7065,22 @@ export class BusinessService {
           priceBenchmarks,
         })
       : null;
+    const dailySpecialsPlanner = analytics && dailyAnalytics && capabilities.analytics
+      ? buildDailySpecialsPlanner({
+          venueName: profile.name,
+          area: venueArea,
+          timezone: reportTimezone,
+          todayAnalytics: dailyAnalytics,
+          monthAnalytics: analytics,
+          paidVenueIntelligence,
+          activeSpecialCount: inventorySpecials.filter((special) => special.active !== false).length,
+        })
+      : null;
     const discountSummary = this.getVenueDiscountSummary({
       venueId: selectedVenueId,
       includeRecent: true,
       recentLimit: 10,
     });
-    const todayRange = getZonedDayRangeIso(new Date(), this.getReportTimezone());
     const pintPointTodayStats = this.repository.getPintPointStatsForVenue({
       venueId: selectedVenueId,
       startIso: todayRange.startIso,
@@ -6891,6 +7119,7 @@ export class BusinessService {
                   localBeerTrendReport: paidVenueIntelligence?.localTrendReport ?? [],
                   priceBenchmarks: paidVenueIntelligence?.priceBenchmarks ?? [],
                   demandSnapshot,
+                  dailySpecialsPlanner,
                   suggestedActions: analytics.privacyFloorMet
                     ? [
                         "Keep your tap list current so nearby search demand has an accurate listing to land on.",
@@ -6956,6 +7185,7 @@ export class BusinessService {
       analytics,
       demandDashboard,
       paidVenueIntelligence,
+      dailySpecialsPlanner,
       discounts: discountSummary,
       pintPoints: {
         today: pintPointTodayStats,
@@ -6970,6 +7200,7 @@ export class BusinessService {
         proGrowthPlan,
         demandDashboard,
         paidVenueIntelligence,
+        dailySpecialsPlanner,
         updateLink,
         qrCopy: "Copy this update link or turn it into a QR code for your venue/tap-list area.",
       },

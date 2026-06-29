@@ -1396,6 +1396,9 @@ h3 {
 }
 
 .adminJumpNav {
+  position: sticky;
+  top: 10px;
+  z-index: 20;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1407,6 +1410,124 @@ h3 {
     rgba(7, 10, 18, 0.9);
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
   padding: 10px;
+}
+
+.adminUtilityBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.014)),
+    rgba(3, 7, 18, 0.56);
+  padding: 12px 14px;
+}
+
+.adminUtilityBar__status {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.adminUtilityBar__status strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 1rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adminUtilityBar__status span:last-child {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.adminUtilityBar__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.adminFocusRail {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.adminFocusRail__item {
+  appearance: none;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  min-height: 84px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 16px;
+  background: rgba(3, 7, 18, 0.36);
+  color: inherit;
+  cursor: default;
+  padding: 11px 12px;
+  text-align: left;
+}
+
+button.adminFocusRail__item {
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
+}
+
+button.adminFocusRail__item:hover,
+button.adminFocusRail__item:focus-visible {
+  border-color: rgba(34, 211, 238, 0.32);
+  background: rgba(15, 23, 42, 0.56);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.adminFocusRail__item span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.2;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adminFocusRail__item strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 1.25rem;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adminFocusRail__item em {
+  overflow: hidden;
+  color: rgba(203, 213, 225, 0.72);
+  font-size: 0.76rem;
+  font-style: normal;
+  font-weight: 720;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adminFocusRail__item--premium {
+  border-color: rgba(245, 197, 66, 0.24);
+}
+
+.adminFocusRail__item--warning {
+  border-color: rgba(250, 204, 21, 0.24);
+}
+
+.adminFocusRail__item--success {
+  border-color: rgba(34, 197, 94, 0.2);
 }
 
 .adminTabButton {
@@ -1452,6 +1573,23 @@ h3 {
     rgba(13, 18, 32, 0.62);
   box-shadow: 0 22px 56px rgba(0, 0, 0, 0.26);
   padding: 18px;
+}
+
+.adminSection .panel,
+.adminSection .listItem,
+.adminSection .metricCard {
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+}
+
+.adminSection .panel {
+  border-radius: 20px;
+}
+
+.adminSection .listItem.muted,
+.adminSection .emptyState {
+  border: 1px dashed rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.28);
+  box-shadow: none;
 }
 
 .adminSection.is-active {
@@ -1501,7 +1639,7 @@ h3 {
 }
 
 .adminDashboardHero h2 {
-  font-size: clamp(30px, 5vw, 54px);
+  font-size: clamp(26px, 3vw, 38px);
   margin-bottom: 8px;
 }
 
@@ -1524,11 +1662,10 @@ h3 {
 .adminDashboardTaskCard {
   display: grid;
   gap: 9px;
-  min-height: 156px;
+  min-height: 128px;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 22px;
+  border-radius: 18px;
   background:
-    radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 42%),
     linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
     rgba(7, 10, 18, 0.58);
   color: var(--text);
@@ -1547,7 +1684,7 @@ h3 {
 }
 
 .adminDashboardTaskCard strong {
-  font-size: clamp(24px, 3vw, 34px);
+  font-size: clamp(20px, 2.4vw, 28px);
   line-height: 1.06;
 }
 
@@ -1683,7 +1820,18 @@ h3 {
 }
 
 .adminReviewActionBar {
-  align-items: stretch;
+  align-items: center;
+  gap: 8px;
+  margin-top: 0;
+  padding-top: 2px;
+}
+
+.adminCrawlerRewardHint {
+  flex: 1 1 220px;
+  color: rgba(203, 213, 225, 0.72);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
 }
 
 .adminGrid {
@@ -1790,6 +1938,213 @@ h3 {
 .pitchReadinessChecklist li.is-ready::before {
   background: rgba(34, 197, 94, 0.9);
   box-shadow: 0 0 12px rgba(34, 197, 94, 0.2);
+}
+
+.outreachPipelineSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.outreachPipelineSummary__item {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  background: rgba(3, 7, 18, 0.24);
+  padding: 10px 12px;
+}
+
+.outreachPipelineSummary__item span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.outreachPipelineSummary__item strong {
+  color: var(--text-primary);
+  font-family: var(--display-font);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.outreachPipelineBoard {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+  overflow: visible;
+  padding: 0;
+}
+
+.outreachPipelineLane {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  min-width: 0;
+  min-height: 255px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  background: rgba(3, 7, 18, 0.2);
+  padding: 12px;
+}
+
+.outreachPipelineLane__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.outreachPipelineLane__header > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.outreachPipelineLane__header strong {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  line-height: 1.15;
+}
+
+.outreachPipelineLane__header span:not(.pill) {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.outreachPipelineLane__cards {
+  display: grid;
+  gap: 9px;
+  align-content: start;
+  max-height: 450px;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-color: rgba(56, 189, 248, 0.42) transparent;
+  scrollbar-width: thin;
+}
+
+.outreachPipelineCard {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.13);
+  border-radius: 12px;
+  background: rgba(11, 17, 31, 0.56);
+  padding: 11px;
+}
+
+.outreachPipelineCard .adminCrmLead__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.outreachPipelineCard .adminCrmLead__header strong {
+  display: block;
+  overflow: hidden;
+  font-size: 0.94rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outreachPipelineCard .adminCrmLead__header .muted,
+.outreachPipelineCard > .muted {
+  color: rgba(203, 213, 225, 0.76);
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.42;
+}
+
+.outreachPipelineCard .adminCrmLead__meta {
+  gap: 5px;
+}
+
+.outreachPipelineCard .pill,
+.outreachPipelineLane__header .pill {
+  align-items: center;
+  padding: 3px 7px;
+  font-size: 0.64rem;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.outreachPipelineCard--premium {
+  border-color: rgba(245, 197, 66, 0.3);
+  background: rgba(24, 22, 16, 0.48);
+}
+
+.outreachPipelineCard--success {
+  border-color: rgba(34, 197, 94, 0.24);
+}
+
+.outreachPipelineCard--warning {
+  border-color: rgba(250, 204, 21, 0.26);
+}
+
+.outreachPipelineCard--info {
+  border-color: rgba(56, 189, 248, 0.22);
+}
+
+.outreachPipelineCard__next {
+  color: var(--text-secondary);
+  font-size: 0.79rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.outreachPipelineCard__actions {
+  align-items: stretch;
+}
+
+.outreachPipelineCard .button--small {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+}
+
+.outreachPipelineLane .emptyState {
+  display: flex;
+  align-items: center;
+  min-height: 76px;
+  border: 1px dashed rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.32);
+  color: rgba(203, 213, 225, 0.68);
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.45;
+  padding: 12px;
+}
+
+.outreachSavedList {
+  margin-top: 10px;
+}
+
+@media (max-width: 1180px) {
+  .adminFocusRail {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .outreachPipelineSummary,
+  .outreachPipelineBoard {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .adminMetricBlock,
@@ -1964,7 +2319,7 @@ h3 {
 }
 
 #adminIngestionQueue {
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -2011,7 +2366,7 @@ h3 {
 
 .adminIngestionItem {
   display: grid;
-  gap: 16px;
+  gap: 10px;
   max-width: 100%;
   min-width: 0;
   overflow: visible;
@@ -2021,8 +2376,15 @@ h3 {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: flex-start;
+  align-items: center;
   flex-wrap: wrap;
+}
+
+.adminIngestionItem__header--compact {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.28);
+  padding: 9px 10px;
 }
 
 .adminIngestionItem__header > div {
@@ -2033,10 +2395,121 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.adminIngestionItem__titleBlock {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.adminIngestionItem__titleLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.adminIngestionItem__titleLine strong {
+  color: var(--text-primary);
+  font-size: 0.98rem;
+  line-height: 1.15;
+}
+
+.adminIngestionItem__titleLine span {
+  color: rgba(203, 213, 225, 0.74);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.adminIngestionItem__compactNote {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgba(203, 213, 225, 0.78);
+  font-size: 0.8rem;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.adminCrawlerDetails {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.11);
+  border-radius: 14px;
+  background: rgba(3, 7, 18, 0.24);
+}
+
+.adminCrawlerDetails summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  list-style: none;
+  padding: 8px 10px;
+}
+
+.adminCrawlerDetails summary::-webkit-details-marker {
+  display: none;
+}
+
+.adminCrawlerDetails summary span:last-child {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.adminCrawlerDetails__body {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid rgba(148, 163, 184, 0.09);
+  padding: 9px 10px 10px;
+}
+
+.adminCrawlerDetails__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.adminCrawlerDetails__grid span {
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.28);
+  color: rgba(203, 213, 225, 0.78);
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 6px 8px;
+}
+
+.adminCrawlerDetails__grid strong {
+  color: var(--text-primary);
+  font-size: 0.86rem;
+}
+
+.adminCrawlerDetails__signals {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.adminCrawlerDetails__signals li {
+  color: rgba(203, 213, 225, 0.76);
+  font-size: 0.76rem;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .adminSourceReviewLayout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  gap: 10px;
   align-items: start;
 }
 
@@ -2044,17 +2517,44 @@ h3 {
 .adminSourceRows,
 .adminCrmCard {
   border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 18px;
+  border-radius: 14px;
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.044), rgba(255, 255, 255, 0.014)),
     rgba(3, 7, 18, 0.32);
-  padding: 13px;
+  padding: 10px;
 }
 
 .adminSourceEvidence {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
+}
+
+.adminSourceEvidence__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.adminSourceEvidence__top > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.adminSourceEvidence__top strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adminSourceEvidence__open {
+  flex: 0 0 auto;
 }
 
 .adminSourceRows {
@@ -2073,38 +2573,182 @@ h3 {
 .adminSourceEvidence__imageLink img {
   display: block;
   width: 100%;
-  max-height: 380px;
+  max-height: 180px;
   object-fit: contain;
 }
 
 .adminSourceEvidence__empty {
-  min-height: 126px;
+  min-height: auto;
+  max-height: 54px;
+  overflow: hidden;
   overflow-wrap: anywhere;
   word-break: break-word;
-  border: 1px dashed rgba(255, 255, 255, 0.15);
-  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
   color: var(--muted);
-  line-height: 1.45;
-  padding: 12px;
+  font-size: 0.78rem;
+  font-weight: 720;
+  line-height: 1.35;
+  padding: 8px 10px;
 }
 
 .adminSourceEvidence__meta {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
   overflow-wrap: anywhere;
 }
 
+.adminSourceEvidence__meta span {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.34);
+  padding: 3px 7px;
+}
+
 .adminSourceRows {
   display: grid;
-  gap: 12px;
+  gap: 9px;
   min-width: 0;
 }
 
 .adminSourceRows .sectionHeader {
-  align-items: start;
+  align-items: center;
+}
+
+.adminSourceRows__header h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.adminSourceRows__header p {
+  margin-top: 2px;
+  font-size: 0.78rem;
+}
+
+.adminIngestionReviewNote {
+  margin-top: 0;
+}
+
+.adminIngestionReviewNote textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+
+.adminQueueBeerRows {
+  gap: 8px;
+}
+
+.adminQueueBeerRows .adminBeerRow {
+  grid-template-columns:
+    minmax(160px, 1.5fr)
+    minmax(74px, 0.48fr)
+    minmax(108px, 0.82fr)
+    minmax(118px, 0.82fr)
+    minmax(104px, 0.72fr)
+    auto;
+  gap: 7px;
+  align-items: end;
+  border-radius: 13px;
+  background: rgba(3, 7, 18, 0.42);
+  padding: 8px;
+}
+
+.adminQueueBeerRows .adminBeerRow .field {
+  gap: 4px;
+  color: rgba(203, 213, 225, 0.78);
+  font-size: 0.67rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.adminQueueBeerRows .adminBeerRow .field:nth-of-type(1) {
+  grid-column: 1;
+}
+
+.adminQueueBeerRows .adminBeerRow .field:nth-of-type(2) {
+  grid-column: 2;
+}
+
+.adminQueueBeerRows .adminBeerRow .field:nth-of-type(3) {
+  grid-column: 3;
+}
+
+.adminQueueBeerRows .adminBeerRow .field:nth-of-type(4) {
+  grid-column: 4;
+}
+
+.adminQueueBeerRows .adminBeerRow .field:nth-of-type(5) {
+  grid-column: 5;
+}
+
+.adminQueueBeerRows .adminBeerRow .field input,
+.adminQueueBeerRows .adminBeerRow .field select {
+  min-height: 34px;
+  border-radius: 10px;
+  padding: 7px 8px;
+  font-size: 0.78rem;
+}
+
+.adminQueueBeerRows .adminBeerRow__meta {
+  grid-column: 1 / 6;
+  grid-row: 2;
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+
+.adminQueueBeerRows .adminBeerRow > .button {
+  grid-column: 6;
+  grid-row: 1 / span 2;
+  align-self: center;
+  justify-self: end;
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 0.74rem;
+}
+
+@media (max-width: 1180px) {
+  .adminQueueBeerRows .adminBeerRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .adminQueueBeerRows .adminBeerRow .field:nth-of-type(1),
+  .adminQueueBeerRows .adminBeerRow .field:nth-of-type(2),
+  .adminQueueBeerRows .adminBeerRow .field:nth-of-type(3),
+  .adminQueueBeerRows .adminBeerRow .field:nth-of-type(4),
+  .adminQueueBeerRows .adminBeerRow .field:nth-of-type(5),
+  .adminQueueBeerRows .adminBeerRow__meta,
+  .adminQueueBeerRows .adminBeerRow > .button {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .adminQueueBeerRows .adminBeerRow__meta {
+    grid-column: 1 / -1;
+  }
+
+  .adminQueueBeerRows .adminBeerRow > .button {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .adminCrawlerDetails__grid,
+  .adminQueueBeerRows .adminBeerRow {
+    grid-template-columns: 1fr;
+  }
+
+  .adminQueueBeerRows .adminBeerRow__meta,
+  .adminQueueBeerRows .adminBeerRow > .button {
+    grid-column: 1;
+  }
+
+  .adminQueueBeerRows .adminBeerRow > .button {
+    justify-self: stretch;
+  }
 }
 
 .adminCrmCard,
@@ -3282,6 +3926,142 @@ h3 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.specialsPlanner {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 18px;
+  border-color: rgba(245, 197, 66, 0.28);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(245, 197, 66, 0.13), transparent 34%),
+    radial-gradient(circle at 96% 10%, rgba(34, 211, 238, 0.11), transparent 34%),
+    rgba(13, 18, 32, 0.88);
+}
+
+.specialsPlanner__hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.specialsPlanner__hero h2 {
+  margin: 4px 0 0;
+  font-size: clamp(26px, 3vw, 42px);
+  line-height: 1.02;
+}
+
+.specialsPlanner__hero p {
+  max-width: 920px;
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-weight: 780;
+  line-height: 1.5;
+}
+
+.specialsPlanner__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.specialsPlanner__meta span,
+.specialsPlannerSignal span {
+  color: #d9dfeb;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.specialsPlanner__meta span {
+  min-height: 30px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: rgba(3, 7, 18, 0.28);
+}
+
+.specialsPlannerSignalGrid,
+.specialsPlannerColumns {
+  display: grid;
+  gap: 12px;
+}
+
+.specialsPlannerSignalGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.specialsPlannerColumns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.specialsPlannerSignal,
+.specialsPlannerWindow,
+.specialsPlannerRecommendation {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.02)),
+    rgba(15, 23, 42, 0.7);
+}
+
+.specialsPlannerSignal {
+  display: grid;
+  align-content: space-between;
+  min-height: 118px;
+  padding: 14px;
+}
+
+.specialsPlannerSignal strong {
+  color: var(--text-primary);
+  font-family: var(--display-font);
+  font-size: clamp(24px, 3vw, 38px);
+  line-height: 0.95;
+  overflow-wrap: anywhere;
+}
+
+.specialsPlannerSignal small,
+.specialsPlannerWindow small,
+.specialsPlannerRecommendation small {
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.specialsPlannerWindowList,
+.specialsPlannerRecommendationList {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.specialsPlannerWindow,
+.specialsPlannerRecommendation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 13px;
+}
+
+.specialsPlannerWindow strong,
+.specialsPlannerRecommendation strong {
+  display: block;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.specialsPlannerRecommendation {
+  border-color: rgba(245, 197, 66, 0.22);
+}
+
+.specialsPlannerRecommendation p {
+  margin: 6px 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
 }
 
 .venueDemandPanel {
@@ -6478,6 +7258,10 @@ body.discountPassModalOpen {
   .premiumUpgradeBanner,
   .premiumListRow,
   .premiumCampaignRow,
+  .specialsPlanner__hero,
+  .specialsPlannerColumns,
+  .specialsPlannerWindow,
+  .specialsPlannerRecommendation,
   .venueCommandCenter,
   .venueDemandPanel__header,
   .venueDemandPanel__body,
@@ -6565,10 +7349,19 @@ body.discountPassModalOpen {
   }
 
   .venueCommandCenter__actions,
+  .specialsPlannerSignalGrid,
   .venueDemandMetrics,
   .venuePulseGrid,
   .venueActionGrid {
     grid-template-columns: 1fr;
+  }
+
+  .specialsPlanner {
+    padding: 16px;
+  }
+
+  .specialsPlannerRecommendation .button {
+    width: 100%;
   }
 
   .venueDemandPanel {
@@ -7122,13 +7915,36 @@ body.discountPassModalOpen {
     gap: 14px;
   }
 
+  .adminUtilityBar {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .adminUtilityBar__actions {
+    justify-content: stretch;
+  }
+
+  .adminUtilityBar__actions .button {
+    flex: 1 1 0;
+  }
+
+  .adminFocusRail {
+    grid-template-columns: 1fr;
+  }
+
+  .adminFocusRail__item {
+    min-height: auto;
+  }
+
   .adminCommandGrid,
   .adminDashboardHero,
   .adminDashboardSplit,
   .adminDashboardTaskGrid,
   .adminDashboardPitchList,
   .adminSourceReviewLayout,
-  .pitchReadinessGrid {
+  .pitchReadinessGrid,
+  .outreachPipelineBoard {
     grid-template-columns: 1fr;
   }
 
@@ -7168,6 +7984,23 @@ body.discountPassModalOpen {
   .pitchReadinessCard {
     border-radius: 18px;
     padding: 12px;
+  }
+
+  .outreachPipelineSummary {
+    grid-template-columns: 1fr;
+  }
+
+  .outreachPipelineBoard {
+    overflow-x: visible;
+  }
+
+  .outreachPipelineLane {
+    min-width: 0;
+    min-height: auto;
+  }
+
+  .outreachPipelineLane__cards {
+    max-height: none;
   }
 
   .adminJumpNav {

@@ -31,7 +31,6 @@ function setAccountContext(account) {
     id: account.id || null,
     role: account.role || null,
     status: account.status || null,
-    email: account.email || null,
     subscriptionStatus: account.subscriptionStatus || null,
   }));
 }
@@ -299,8 +298,7 @@ function getSupabaseClient() {
       window.__melbBeerSupabaseClient.auth.onAuthStateChange((event, session) => {
         console.debug("[Pint Path auth]", {
           event,
-          userId: session?.user?.id || null,
-          email: session?.user?.email || null,
+          hasSession: Boolean(session?.user?.id),
         });
       });
     }

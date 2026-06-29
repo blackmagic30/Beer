@@ -6,7 +6,11 @@ import { randomUUID } from "node:crypto";
 
 import Database from "better-sqlite3";
 
-import type { AdminIngestionBeerRecord, BeerAvailabilityStatus } from "../src/db/models.js";
+import type {
+  AdminIngestionBeerRecord,
+  AdminIngestionCrawlerFeedback,
+  BeerAvailabilityStatus,
+} from "../src/db/models.js";
 
 type SourceKind = "menu_page" | "menu_image" | "menu_pdf" | "homepage_menu_signal";
 type SourceOrigin = "official_host" | "trusted_external_menu_host";
@@ -71,6 +75,12 @@ interface MenuCrawlerReport {
   generatedAt: string;
   totals?: Record<string, unknown>;
   candidates: MenuCrawlerCandidate[];
+}
+
+interface CrawlerFeedbackScores {
+  bySourceUrl: Map<string, number>;
+  byDomain: Map<string, number>;
+  count: number;
 }
 
 function getArg(name: string, fallback?: string): string | undefined {
@@ -224,6 +234,94 @@ function ensureQueueTable(db: Database.Database): void {
   }
 }
 
+function tableHasColumn(db: Database.Database, tableName: string, columnName: string): boolean {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return columns.some((column) => column.name === columnName);
+}
+
+function sourceDomain(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+function parseCrawlerFeedback(value: string | null): AdminIngestionCrawlerFeedback | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as Partial<AdminIngestionCrawlerFeedback> | null;
+    return parsed && typeof parsed.rewardScore === "number" && Number.isFinite(parsed.rewardScore)
+      ? (parsed as AdminIngestionCrawlerFeedback)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadCrawlerFeedbackScores(db: Database.Database): CrawlerFeedbackScores {
+  if (!tableHasColumn(db, "admin_ingestion_queue", "crawler_feedback_json")) {
+    return { bySourceUrl: new Map(), byDomain: new Map(), count: 0 };
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT source_url AS sourceUrl, crawler_feedback_json AS crawlerFeedbackJson
+         FROM admin_ingestion_queue
+        WHERE crawler_feedback_json IS NOT NULL
+          AND trim(crawler_feedback_json) != ''`,
+    )
+    .all() as Array<{ sourceUrl: string | null; crawlerFeedbackJson: string | null }>;
+  const bySourceUrl = new Map<string, number>();
+  const domainTotals = new Map<string, { total: number; count: number }>();
+  let count = 0;
+
+  for (const row of rows) {
+    const feedback = parseCrawlerFeedback(row.crawlerFeedbackJson);
+    if (!feedback) {
+      continue;
+    }
+
+    count += 1;
+    if (row.sourceUrl) {
+      bySourceUrl.set(row.sourceUrl, feedback.rewardScore);
+    }
+
+    const domain = sourceDomain(row.sourceUrl);
+    if (domain) {
+      const current = domainTotals.get(domain) ?? { total: 0, count: 0 };
+      current.total += feedback.rewardScore;
+      current.count += 1;
+      domainTotals.set(domain, current);
+    }
+  }
+
+  return {
+    bySourceUrl,
+    byDomain: new Map(
+      Array.from(domainTotals.entries()).map(([domain, value]) => [domain, value.total / value.count]),
+    ),
+    count,
+  };
+}
+
+function feedbackScoreFor(candidate: MenuCrawlerCandidate, scores: CrawlerFeedbackScores): number {
+  const exactScore =
+    scores.bySourceUrl.get(candidate.canonicalSourceUrl) ??
+    scores.bySourceUrl.get(candidate.sourceUrl);
+  if (typeof exactScore === "number" && Number.isFinite(exactScore)) {
+    return exactScore;
+  }
+
+  const domain = candidate.sourceDomain || sourceDomain(candidate.sourceUrl);
+  return domain ? scores.byDomain.get(domain) ?? 0 : 0;
+}
+
 const inputPath = resolvePath(getArg("file", "data/runs/menu-source-discovery-latest.json")!);
 const databasePath = resolvePath(getArg("database", process.env.DATABASE_PATH ?? "data/pint-path.sqlite")!);
 const dryRun = hasFlag("dry-run");
@@ -237,6 +335,7 @@ const candidates = rawReport.candidates.filter((candidate) => sourceRows(candida
 const db = new Database(databasePath);
 
 ensureQueueTable(db);
+const crawlerFeedbackScores = loadCrawlerFeedbackScores(db);
 
 const duplicateQuery = db.prepare(
   `SELECT id
@@ -316,8 +415,14 @@ const queueCandidates = candidates
     return false;
   })
   .sort((left, right) => {
-    const leftScore = left.rows.length * 10 + left.candidate.confidence;
-    const rightScore = right.rows.length * 10 + right.candidate.confidence;
+    const leftScore =
+      left.rows.length * 10 +
+      left.candidate.confidence +
+      feedbackScoreFor(left.candidate, crawlerFeedbackScores) / 10;
+    const rightScore =
+      right.rows.length * 10 +
+      right.candidate.confidence +
+      feedbackScoreFor(right.candidate, crawlerFeedbackScores) / 10;
     return rightScore - leftScore;
   });
 
@@ -374,6 +479,7 @@ console.log(
       queueItems: inserted,
       queuedRows,
       queuedVenues: queuedVenues.size,
+      crawlerFeedbackSignals: crawlerFeedbackScores.count,
       skippedDuplicate,
       skippedExternal,
       skippedNoUsableRows,

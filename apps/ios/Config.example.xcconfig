@@ -1,0 +1,15 @@
+// Copy this file to Config.xcconfig locally if you want to override defaults.
+// Do not commit real secrets. The mobile app must never contain service-role keys.
+
+PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.beermap
+DEVELOPMENT_TEAM =
+
+// Use the existing hosted or local BeerMap/Pint Path backend.
+// Local simulator example: http:/$()/127.0.0.1:3000
+PINT_PATH_API_BASE_URL = https:/$()/pintpath.au
+
+// Optional: public Supabase Auth config for future native Google/Apple OAuth.
+// Email/password login works through the existing Express API without these.
+SUPABASE_URL =
+SUPABASE_ANON_KEY =
+
