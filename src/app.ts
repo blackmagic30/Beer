@@ -348,7 +348,7 @@ export function createApp() {
     if (req.path === "/health" || req.path === "/" || req.path === "/config.js") {
       logger.info("Inbound request", {
         method: req.method,
-        path: req.originalUrl,
+        path: req.path,
       });
     }
     next();

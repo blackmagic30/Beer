@@ -5,6 +5,10 @@ import { failure } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
 import { redactSecrets } from "../lib/redact.js";
 
+function safeRequestPath(req: Request): string {
+  return req.path || req.originalUrl?.split("?")[0] || "";
+}
+
 export function errorHandler(error: unknown, req: Request, res: Response, _next: NextFunction): void {
   const fallbackError = new AppError("Internal server error", 500, undefined, false);
   const appError = isAppError(error) ? error : fallbackError;
@@ -13,7 +17,7 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
 
   const logMeta = {
     method: req.method,
-    path: req.originalUrl,
+    path: safeRequestPath(req),
     statusCode: appError.statusCode,
     error: error instanceof Error ? redactSecrets(error.message) : "Unknown error",
     details: redactSecrets(appError.details),
