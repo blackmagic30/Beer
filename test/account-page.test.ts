@@ -631,10 +631,17 @@ describe("account page shell", () => {
     expect(html).toContain("function promptQueuedIngestionReview");
     expect(html).toContain("function renderCrawlerDetails");
     expect(html).toContain("function crawlerFeedbackPill");
+    expect(html).toContain("function copyTextToClipboard");
+    expect(html).toContain('data-source-url-value');
+    expect(html).toContain('data-copy-source-url');
     expect(html).toContain("ADMIN_INGESTION_PAGE_SIZE = 12");
     expect(html).toContain("offset: String(adminIngestionOffset)");
     expect(html).toContain("showing ${pageStart}-${pageEnd} of ${adminIngestionTotal}");
     expect(html).toContain("function moveAdminIngestionPage");
+    expect(html).toContain('<option value="pending_review">Pending</option>');
+    expect(html).toContain('params.set("status", adminIngestionStatus.value);');
+    expect(html).toContain('MelbBeerBusiness.setStatus(statusEl, "Source ingestion published.");');
+    expect(html).toContain('await loadAdminIngestionQueue();');
     expect(html).toContain("Load next 12");
     expect(html).toContain("function prefillOutreachFromLead");
     expect(html).toContain("function renderOutreachPipeline");
@@ -671,6 +678,9 @@ describe("account page shell", () => {
     expect(css).toContain(".adminCrawlerDetails");
     expect(css).toContain(".adminCrawlerRewardHint");
     expect(css).toContain(".adminSourceReviewLayout");
+    expect(css).toContain(".adminSourceEvidence__urlField");
+    expect(css).toContain(".adminSourceEvidence__urlInput");
+    expect(css).toContain(".adminSourceEvidence__actions");
     expect(css).toContain(".adminQueueBeerRows .adminBeerRow");
     expect(css).toContain(".adminIngestionPager");
     expect(css).toContain(".pitchReadinessGrid");

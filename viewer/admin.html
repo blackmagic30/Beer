@@ -2735,6 +2735,33 @@
       }
     }
 
+    async function copyTextToClipboard(value) {
+      const text = String(value || "");
+      if (!text) {
+        throw new Error("No source URL to copy.");
+      }
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return;
+        } catch {
+          // Fall back to the older selection path below.
+        }
+      }
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.setAttribute("readonly", "");
+      textArea.style.position = "fixed";
+      textArea.style.left = "-9999px";
+      document.body.appendChild(textArea);
+      textArea.select();
+      const copied = typeof document.execCommand === "function" && document.execCommand("copy");
+      document.body.removeChild(textArea);
+      if (!copied) {
+        throw new Error("Clipboard copy failed.");
+      }
+    }
+
     function crawlerFeedbackPill(feedback) {
       if (!feedback) {
         return '<span class="pill">Learning pending</span>';
@@ -2778,6 +2805,7 @@
       const source = item.imageDataUrl || item.sourceUrl;
       const sourceLabel = item.imageDataUrl ? "Uploaded image" : item.sourceUrl ? "Source URL" : "No source";
       const canPreviewImage = source && (/^data:image\//i.test(source) || /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(source));
+      const copyableSourceUrl = item.sourceUrl ? String(item.sourceUrl) : "";
       return `
         <aside class="adminSourceEvidence adminSourceEvidence--compact">
           <div class="adminSourceEvidence__top">
@@ -2794,6 +2822,15 @@
           ` : `
             <div class="adminSourceEvidence__empty">${escapeHtml(shortSourceLabel(source))}</div>
           `}
+          ${copyableSourceUrl ? `
+            <label class="adminSourceEvidence__urlField">
+              <span>Source URL</span>
+              <input class="adminSourceEvidence__urlInput" data-source-url-value type="text" readonly value="${escapeHtml(copyableSourceUrl)}" aria-label="Full source URL for ${escapeHtml(item.venueName)}" />
+            </label>
+            <div class="adminSourceEvidence__actions">
+              <button class="button button--small" type="button" data-copy-source-url>Copy URL</button>
+            </div>
+          ` : ""}
           <div class="adminSourceEvidence__meta">
             <span>${escapeHtml(formatSourceType(item.sourceType))}</span>
             <span>${escapeHtml(MelbBeerBusiness.formatDate(item.createdAt))}</span>
@@ -2908,6 +2945,28 @@
           if (details.open) {
             hydrateBeerRows(article, index);
           }
+        });
+      });
+      adminIngestionQueue.querySelectorAll("[data-source-url-value]").forEach((input) => {
+        input.addEventListener("focus", () => input.select());
+        input.addEventListener("click", () => input.select());
+      });
+      adminIngestionQueue.querySelectorAll("[data-copy-source-url]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const sourceInput = button.closest(".adminSourceEvidence")?.querySelector("[data-source-url-value]");
+          const sourceUrl = sourceInput?.value || "";
+          const defaultCopy = button.textContent || "Copy URL";
+          sourceInput?.focus();
+          sourceInput?.select();
+          try {
+            await copyTextToClipboard(sourceUrl);
+            button.textContent = "Copied";
+          } catch {
+            button.textContent = "Select URL";
+          }
+          window.setTimeout(() => {
+            button.textContent = defaultCopy;
+          }, 1600);
         });
       });
       adminIngestionQueue.querySelectorAll("[data-publish-ingestion]").forEach((button) => {

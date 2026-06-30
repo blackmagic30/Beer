@@ -2,8 +2,10 @@ import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
+import { BusinessRepository } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
 import type { AdminIngestionStatus } from "../src/db/models.js";
+import { AdminService } from "../src/modules/admin/admin.service.js";
 
 let database: BetterSqlite3.Database | null = null;
 
@@ -54,6 +56,56 @@ function queueSource(repository: AdminIngestionQueueRepository, index: number, s
   return item;
 }
 
+function attachFakeSupabase(service: AdminService, venueId: string) {
+  const insertedCaptures: unknown[] = [];
+  const venue = {
+    id: venueId,
+    name: "Venue 1",
+    address: "1 Test St",
+    suburb: "Melbourne",
+    state: "VIC",
+    postcode: "3000",
+    phone: null,
+    website: null,
+    latitude: -37.8136,
+    longitude: 144.9631,
+  };
+
+  (service as unknown as { supabase: unknown }).supabase = {
+    from(tableName: string) {
+      if (tableName === "venues") {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: async () => ({ data: venue, error: null }),
+            }),
+          }),
+        };
+      }
+
+      if (tableName === "venue_menu_captures") {
+        return {
+          select: () => ({
+            eq: () => ({
+              order: () => ({
+                limit: async () => ({ data: [], error: null }),
+              }),
+            }),
+          }),
+          insert: async (row: unknown) => {
+            insertedCaptures.push(row);
+            return { error: null };
+          },
+        };
+      }
+
+      throw new Error(`Unexpected Supabase table ${tableName}`);
+    },
+  };
+
+  return { insertedCaptures };
+}
+
 describe("AdminIngestionQueueRepository", () => {
   it("returns paged ingestion rows with accurate status counts", () => {
     const repository = createRepository();
@@ -79,6 +131,66 @@ describe("AdminIngestionQueueRepository", () => {
       "Venue 7",
       "Venue 6",
       "Venue 5",
+    ]);
+  });
+
+  it("publishes approved source ingestion rows to live map records and removes them from pending review", async () => {
+    const repository = createRepository();
+    const businessRepository = new BusinessRepository(database!);
+    const queueItem = queueSource(repository, 1);
+    const service = new AdminService(
+      repository,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      undefined,
+      undefined,
+      database!,
+    );
+    const { insertedCaptures } = attachFakeSupabase(service, queueItem.venueId);
+
+    const result = await service.publishQueuedIngestion(queueItem.id, {
+      beers: [
+        {
+          name: "Carlton Draught",
+          servingSize: "pint",
+          priceNumeric: 13.5,
+          priceText: "$13.50",
+          availabilityStatus: "on_tap",
+          availableOnTap: true,
+          availablePackageOnly: false,
+          unavailableReason: null,
+          needsReview: false,
+        },
+      ],
+      note: "Verified against source image.",
+    });
+
+    expect(result.queueItem.status).toBe("published");
+    expect(result.beerCount).toBe(1);
+    expect(result.mapPriceRecordCount).toBe(1);
+    expect(insertedCaptures).toHaveLength(1);
+    expect(repository.getById(queueItem.id)).toEqual(expect.objectContaining({
+      status: "published",
+      publishedAt: expect.any(String),
+    }));
+    expect(repository.count("pending_review")).toBe(0);
+    expect(repository.list("pending_review", 10, 0).map((item) => item.id)).not.toContain(queueItem.id);
+    expect(repository.list("published", 10, 0).map((item) => item.id)).toContain(queueItem.id);
+
+    expect(businessRepository.listLatestPriceRecords(10, queueItem.venueId)).toEqual([
+      expect.objectContaining({
+        id: `source-ingestion:${queueItem.id}:0`,
+        venueId: queueItem.venueId,
+        venueName: "Venue 1",
+        beerName: "Carlton Draught",
+        servingSize: "pint",
+        price: 13.5,
+        isOnTap: "yes",
+        confidence: "photo_verified",
+        sourceType: "source_ingestion",
+        sourceSubmissionId: null,
+      }),
     ]);
   });
 });
