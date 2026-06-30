@@ -7269,18 +7269,33 @@
       searchThisAreaButtonEl.hidden = true;
       renderMapFailure(`${message} Venue list mode is still available below.`);
 
-      const { allVenueRows, venueRows } = await loadBusinessVenueRows();
-      analyticsVenueRows = allVenueRows;
-      applySharedSearchParams();
-      beerOptionRows = venueRows;
-      buildBeerSuggestionList(beerOptionRows);
-      renderTrackedBeerChips();
-
       overlayPanelState = {
         list: true,
         legend: !mobileOverlayQuery.matches,
       };
       syncOverlayPanels();
+      venueRailTitleEl.textContent = "Loading venue list";
+      venueRailCountEl.textContent = "Loading";
+      venueRailSubtitleEl.textContent = "Map tiles are unavailable, so Pint Path is loading the venue list instead.";
+      venueRailBodyEl.innerHTML = '<div class="venueRail__empty">Loading real venues...</div>';
+
+      let allVenueRows = [];
+      let venueRows = [];
+      try {
+        ({ allVenueRows, venueRows } = await loadBusinessVenueRows());
+      } catch (error) {
+        renderMapFailure(`${message} Venue list mode could not load venue data. Refresh to try again.`);
+        venueRailTitleEl.textContent = "Venue list unavailable";
+        venueRailCountEl.textContent = "Offline";
+        venueRailSubtitleEl.textContent = "The map and fallback list are unavailable right now.";
+        venueRailBodyEl.innerHTML = '<div class="venueRail__empty">Venue data could not load. Refresh to try again.</div>';
+        return;
+      }
+      analyticsVenueRows = allVenueRows;
+      applySharedSearchParams();
+      beerOptionRows = venueRows;
+      buildBeerSuggestionList(beerOptionRows);
+      renderTrackedBeerChips();
 
       let listModeRecords = [];
       const renderFallbackRecords = () => {

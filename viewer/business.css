@@ -2327,6 +2327,24 @@ button.adminFocusRail__item:focus-visible {
   margin-bottom: 12px;
 }
 
+.adminIngestionPager {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.adminIngestionPager .muted {
+  flex: 1;
+  min-width: 120px;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
 .adminBeerRows,
 .adminQueueBeerRows {
   display: grid;
@@ -8785,5 +8803,18 @@ body.discountPassModalOpen {
   .venueDailyActions__header .button {
     width: 100%;
     justify-content: center;
+  }
+
+  .adminIngestionPager {
+    flex-wrap: wrap;
+  }
+
+  .adminIngestionPager .button {
+    flex: 1 1 130px;
+  }
+
+  .adminIngestionPager .muted {
+    order: -1;
+    flex-basis: 100%;
   }
 }

@@ -171,7 +171,7 @@ export class AdminIngestionQueueRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
-  list(status?: AdminIngestionStatus, limit = 50): AdminIngestionQueueRecord[] {
+  list(status?: AdminIngestionStatus, limit = 50, offset = 0): AdminIngestionQueueRecord[] {
     const rows = (
       status
         ? this.db
@@ -199,9 +199,10 @@ export class AdminIngestionQueueRepository {
                FROM admin_ingestion_queue
                WHERE status = ?
                ORDER BY created_at DESC
-               LIMIT ?`,
+               LIMIT ?
+               OFFSET ?`,
             )
-            .all(status, limit)
+            .all(status, limit, offset)
         : this.db
             .prepare(
               `SELECT
@@ -226,12 +227,23 @@ export class AdminIngestionQueueRepository {
                 rejected_at AS rejectedAt
                FROM admin_ingestion_queue
                ORDER BY created_at DESC
-               LIMIT ?`,
+               LIMIT ?
+               OFFSET ?`,
             )
-            .all(limit)
+            .all(limit, offset)
     ) as RawAdminIngestionQueueRecord[];
 
     return rows.map((row) => this.mapRow(row));
+  }
+
+  count(status?: AdminIngestionStatus): number {
+    const row = (
+      status
+        ? this.db.prepare("SELECT COUNT(*) AS total FROM admin_ingestion_queue WHERE status = ?").get(status)
+        : this.db.prepare("SELECT COUNT(*) AS total FROM admin_ingestion_queue").get()
+    ) as { total: number } | undefined;
+
+    return Number(row?.total || 0);
   }
 
   markPublished(

@@ -1157,8 +1157,12 @@ export class AdminService {
     return queueItem;
   }
 
-  listQueuedIngestions(status?: AdminIngestionStatus, limit = 50): AdminIngestionQueueRecord[] {
-    return this.getIngestionQueue().list(status, limit);
+  listQueuedIngestions(status?: AdminIngestionStatus, limit = 50, offset = 0): AdminIngestionQueueRecord[] {
+    return this.getIngestionQueue().list(status, limit, offset);
+  }
+
+  countQueuedIngestions(status?: AdminIngestionStatus): number {
+    return this.getIngestionQueue().count(status);
   }
 
   async publishQueuedIngestion(

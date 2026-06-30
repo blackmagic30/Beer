@@ -561,6 +561,16 @@
       return numeric > 0 ? formatCurrency(numeric) : fallback;
     }
 
+    function hasTrackedAppValue(value) {
+      return Number(value || 0) > 0;
+    }
+
+    function formatAppValueHeadline(value) {
+      return hasTrackedAppValue(value)
+        ? `${formatCurrency(value)} app-influenced this week`
+        : "No app redemptions logged yet";
+    }
+
     function prettyTier(value) {
       return value === "pro" || value === "plus" ? "Pro" : "Free";
     }
@@ -1308,7 +1318,7 @@
           return `
             <section class="premiumDashboardCard premiumDashboardCard--revenue premiumInsightPanel">
               <span class="eyebrow">App value overview</span>
-              <h3>${formatCurrency(mock.appValueWeek)} app-influenced this week</h3>
+              <h3>${escapeHtml(formatAppValueHeadline(mock.appValueWeek))}</h3>
               <div class="premiumProgressList">${premiumProgressRows(mock.appValueBars, formatCurrency)}</div>
             </section>
           `;
@@ -1703,7 +1713,12 @@
         ],
         pro: [
           { label: "Price freshness", value: `${formatCount(mock.freshPricedRows)}/${formatCount(mock.beerRows)}`, helper: "Fresh within 7 days", tone: mock.stalePrices ? "warning" : "success" },
-          { label: "App brought in", value: formatCurrency(mock.appValueWeek), helper: "This week", tone: "premium" },
+          {
+            label: "App brought in",
+            value: hasTrackedAppValue(mock.appValueWeek) ? formatCurrency(mock.appValueWeek) : "No redemptions yet",
+            helper: hasTrackedAppValue(mock.appValueWeek) ? "This week" : "Record codes in staff mode",
+            tone: hasTrackedAppValue(mock.appValueWeek) ? "premium" : "neutral",
+          },
           { label: "Map/detail opens", value: formatCount(mock.mapViewsToday), helper: "Today", tone: "success" },
           { label: "Staff redemptions", value: formatCount(mock.redemptionsWeek), helper: "Logged by staff", tone: "info" },
           { label: "Active specials", value: formatCount(mock.activeSpecials), helper: "Pint Path offers", tone: "premium" },
@@ -1773,8 +1788,15 @@
       const fallbackActions = [
         { label: "Open staff mode", tab: "redemption", copy: "Redeem Pint Path codes and record approved offers." },
         { label: "Monthly report", tab: "report", copy: "Check the venue-safe summary for this month." },
+        { label: "Invite staff", tab: "support", copy: "Give the team the right portal steps before the next shift." },
+        { label: "Check profile", tab: "profile", copy: "Confirm contact, suburb, website, and opening basics still look right." },
       ];
-      const visibleActions = actions.length ? actions : fallbackActions;
+      const visibleActions = [...actions];
+      fallbackActions.forEach((action) => {
+        if (visibleActions.length < 4 && !visibleActions.some((item) => item.tab === action.tab)) {
+          visibleActions.push(action);
+        }
+      });
       const stats = [
         { label: "Beer rows", value: formatCount(beers.length), tone: beers.length >= 3 ? "success" : "warning" },
         { label: "Price checks", value: staleOrMissingPrices ? `${formatCount(staleOrMissingPrices)} due` : "Fresh", tone: staleOrMissingPrices ? "warning" : "success" },

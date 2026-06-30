@@ -584,6 +584,10 @@ describe("account page shell", () => {
       'id="adminCreateVenueForm"',
       'id="adminSourceQueueForm"',
       'id="adminIngestionQueue"',
+      'id="adminIngestionPager"',
+      'id="adminIngestionPrevPage"',
+      'id="adminIngestionPageStatus"',
+      'id="adminIngestionNextPage"',
       'id="venueInterestRequests"',
       'id="venueManagerAssignments"',
       'id="managerAssignForm"',
@@ -624,6 +628,11 @@ describe("account page shell", () => {
     expect(html).toContain("function promptQueuedIngestionReview");
     expect(html).toContain("function renderCrawlerDetails");
     expect(html).toContain("function crawlerFeedbackPill");
+    expect(html).toContain("ADMIN_INGESTION_PAGE_SIZE = 12");
+    expect(html).toContain("offset: String(adminIngestionOffset)");
+    expect(html).toContain("showing ${pageStart}-${pageEnd} of ${adminIngestionTotal}");
+    expect(html).toContain("function moveAdminIngestionPage");
+    expect(html).toContain("Load next 12");
     expect(html).toContain("function prefillOutreachFromLead");
     expect(html).toContain("function renderOutreachPipeline");
     expect(html).toContain("function updateOutreachStage");
@@ -660,6 +669,7 @@ describe("account page shell", () => {
     expect(css).toContain(".adminCrawlerRewardHint");
     expect(css).toContain(".adminSourceReviewLayout");
     expect(css).toContain(".adminQueueBeerRows .adminBeerRow");
+    expect(css).toContain(".adminIngestionPager");
     expect(css).toContain(".pitchReadinessGrid");
     expect(css).toContain(".pitchReadinessChecklist");
     expect(css).toContain(".outreachPipelineBoard");

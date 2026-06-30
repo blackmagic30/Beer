@@ -239,6 +239,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("const MAP_OVERLAYS_ENABLED = true");
     expect(html).toContain("renderVenueListFallback");
     expect(html).toContain("loadBusinessVenueRows");
+    expect(html).toContain("Loading venue list");
+    expect(html).toContain("Map tiles are unavailable, so Pint Path is loading the venue list instead.");
+    expect(html).toContain("Venue list unavailable");
     expect(html).toContain('markerType: "list_fallback"');
     expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
     expect(html).not.toContain("new google.maps.Marker");
@@ -367,6 +370,12 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain('id="venueDailyActions"');
     expect(venuePortalHtml).toContain("function renderVenueDailyActions");
     expect(venuePortalHtml).toContain("function renderPremiumVenueDashboard");
+    expect(venuePortalHtml).toContain("formatAppValueHeadline");
+    expect(venuePortalHtml).toContain("No app redemptions logged yet");
+    expect(venuePortalHtml).toContain("No redemptions yet");
+    expect(venuePortalHtml).toContain("Record codes in staff mode");
+    expect(venuePortalHtml).toContain("Invite staff");
+    expect(venuePortalHtml).toContain("visibleActions.length < 4");
     expect(venuePortalHtml).toContain("VENUE_DASHBOARD_FEATURES");
     expect(venuePortalHtml).not.toContain("premiumPlanSwitcher");
     expect(venuePortalHtml).not.toContain("Avg spend");

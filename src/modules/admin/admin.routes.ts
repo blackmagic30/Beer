@@ -36,6 +36,19 @@ function parseIngestionStatus(value: unknown): AdminIngestionStatus | undefined 
   }
 }
 
+function parseBoundedInteger(value: unknown, fallback: number, max: number): number {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(parsed, 0), max);
+}
+
 export function createAdminRouter(adminService: AdminService, businessService: BusinessService): Router {
   const router = Router();
 
@@ -72,12 +85,11 @@ export function createAdminRouter(adminService: AdminService, businessService: B
   router.get("/ingestions", async (req, res, next) => {
     try {
       const status = parseIngestionStatus(req.query.status);
-      const limit =
-        typeof req.query.limit === "string" && Number.isFinite(Number(req.query.limit))
-          ? Number(req.query.limit)
-          : 50;
-      const items = adminService.listQueuedIngestions(status, limit);
-      res.json(success({ items }));
+      const limit = parseBoundedInteger(req.query.limit, 50, 100);
+      const offset = parseBoundedInteger(req.query.offset, 0, 10_000);
+      const items = adminService.listQueuedIngestions(status, limit, offset);
+      const total = adminService.countQueuedIngestions(status);
+      res.json(success({ items, total, limit, offset }));
     } catch (error) {
       next(error);
     }
