@@ -3680,6 +3680,7 @@
     let beerOptionRows = [];
     let pendingBeerSearchValue = "";
     let googleMapInstance = null;
+    let focusVenueMarker = () => {};
     const userLocationState = {
       status: "idle",
       coords: null,
@@ -3703,7 +3704,7 @@
       canUseVerifiedOnly: false,
     };
     const revealedVenueIds = new Set(readJsonArray(PRICE_REVEAL_STORAGE_KEY));
-    const MAP_OVERLAYS_ENABLED = false;
+    const MAP_OVERLAYS_ENABLED = true;
     const MAP_OVERLAY_STORAGE_KEY = "melbBeerMapOverlayState";
     const mobileOverlayQuery = window.matchMedia("(max-width: 900px)");
     const TRACKED_BEER_BY_KEY = new Map();
@@ -5959,6 +5960,90 @@
       };
     }
 
+    async function loadBusinessVenueRows() {
+      const rows = [];
+      const allVenues = await fetchBusinessViewerVenues();
+      let businessPriceRecords = [];
+
+      try {
+        const priceRecordResponse = await fetchBusinessPriceRecords();
+        businessPriceRecords = Array.isArray(priceRecordResponse.records) ? priceRecordResponse.records : [];
+        if (priceRecordResponse.access) {
+          businessAccess = {
+            ...businessAccess,
+            ...priceRecordResponse.access,
+          };
+          syncBusinessAccessUi();
+        }
+      } catch (error) {
+        console.warn("Approved submission price records unavailable", error);
+      }
+
+      const latestRowsByVenue = new Map();
+      const latestBeerRowsByVenue = new Map();
+      const latestHappyHourRowsByVenue = new Map();
+      const businessPriceRecordsByVenue = new Map();
+      const businessPriceRecordsByIdentity = new Map();
+
+      businessPriceRecords.forEach((record) => {
+        if (record.venueId) {
+          const venueRecords = businessPriceRecordsByVenue.get(record.venueId) || [];
+          venueRecords.push(record);
+          businessPriceRecordsByVenue.set(record.venueId, venueRecords);
+        }
+
+        const identityKey = getVenueIdentityKey(record.venueName, record.suburb);
+        if (identityKey) {
+          const identityRecords = businessPriceRecordsByIdentity.get(identityKey) || [];
+          identityRecords.push(record);
+          businessPriceRecordsByIdentity.set(identityKey, identityRecords);
+        }
+      });
+
+      rows.forEach((item) => {
+        const venue = getVenueRecord(item.venues);
+        const venueId = item.venue_id || venue?.id;
+
+        if (!venueId) {
+          return;
+        }
+
+        setLatestRow(latestRowsByVenue, venueId, item);
+
+        if (hasCapturedBeerData(item)) {
+          setLatestRow(latestBeerRowsByVenue, venueId, item);
+        }
+
+        if (hasHappyHourData(item)) {
+          setLatestRow(latestHappyHourRowsByVenue, venueId, item);
+        }
+      });
+
+      const allVenueRows = allVenues
+        .filter((venue) => Boolean(getMappableVenueLatLng(venue)))
+        .map((venue) => {
+          const mergedRow = buildMergedVenueRow(
+            venue,
+            latestRowsByVenue.get(venue.id),
+            latestBeerRowsByVenue.get(venue.id),
+            latestHappyHourRowsByVenue.get(venue.id),
+          );
+          const identityKey = getVenueIdentityKey(venue.name, venue.suburb);
+          const venueRecords = mergeUniquePriceRecords(
+            businessPriceRecordsByVenue.get(venue.id) || [],
+            identityKey ? businessPriceRecordsByIdentity.get(identityKey) || [] : [],
+          );
+          return mergeBusinessPriceRecords(mergedRow, venueRecords);
+        });
+      const venueRows = allVenueRows.filter((item) => (
+        hasCapturedBeerData(item) ||
+        hasHappyHourData(item) ||
+        isUserSubmittedVenue(item)
+      ));
+
+      return { allVenueRows, venueRows };
+    }
+
     function getMatchingBeerItems(row, beerQuery, onTapOnly = false) {
       const beerQueryKey = toSearchKey(beerQuery);
 
@@ -6844,7 +6929,9 @@
               ? `${viewState.beerQuery} nearby`
               : viewState.scope === "needs_data"
                 ? "Venues to fill next"
-                : "On this part of the map";
+                : mapForRail
+                  ? "On this part of the map"
+                  : "Venue list mode";
       venueRailCountEl.textContent = `${visibleRecords.length} visible`;
       venueRailSubtitleEl.textContent = viewState.filters.includes("best_options")
         ? "Trusted nearby options prioritise active happy hours, verified prices, freshness, and distance."
@@ -6854,6 +6941,8 @@
             ? "Fresh verified prices nearby. Unknown prices are excluded from this price-based view."
             : viewState.beerQuery
               ? "The shortlist below follows your beer search and updates as you move around the map."
+              : !mapForRail
+                ? "Map tiles are unavailable, but the real venue list still works. Tap a venue to open details."
               : hasUserLocation()
                 ? "Tap a venue below to jump to its marker. Distances are approximate."
                 : "Tap a venue below to jump straight to its marker and open the venue card.";
@@ -6924,7 +7013,7 @@
 
           void openVenueDetail();
 
-          setActiveMarker(record.marker);
+          focusVenueMarker(record.marker);
           try {
             const markerPosition = getMarkerPosition(record.marker);
             if (markerPosition && mapForRail && typeof mapForRail.panTo === "function") {
@@ -6940,6 +7029,305 @@
           }
         });
       });
+    }
+
+    function getListModeVenueContent(record) {
+      const row = record.row;
+      const venue = record.venue || getVenueRecord(row.venues) || {};
+      const viewState = getViewState();
+      const markerId = record.id;
+      const beerItems = getDisplayBeerItems(row, viewState);
+      const happyHourDetails = getHappyHourDetails(row);
+      const specials = getSpecialItems(row);
+      const tierMeta = getVenueTierMeta(row);
+      const venueName = venue.name || row.venue_name || "Unknown venue";
+      const address = formatAddress(venue) || "Address unavailable";
+      const submitUrl = getVenueSubmitUrl(record, "single_beer_price");
+      const updateUrl = getVenueSubmitUrl(record, "menu_photo");
+      const directionsUrl = getVenueDirectionsUrl(record);
+      const detailVenueId = getRecordVenueId(record);
+      const isSavedVenue = savedVenueIds.has(detailVenueId);
+      const isPlannedVenue = nightPlanVenues.some((savedVenue) => savedVenue.id === detailVenueId);
+      const knownPriceCount = beerItems.filter(hasNumericPrice).length;
+      const onTapCount = beerItems.filter((beer) => beer.availabilityLabel === "On tap").length;
+      const newestVerifiedLabel = getNewestVerifiedDateLabel(beerItems, row.saved_at || row.created_at);
+      const happyHourBrief = getHappyHourBrief(happyHourDetails);
+      const summaryBadges = [
+        venue.suburb || row.suburb || "Melbourne",
+        `${beerItems.length} beer${beerItems.length === 1 ? "" : "s"}`,
+        knownPriceCount ? `${knownPriceCount} priced` : "Needs prices",
+        happyHourDetails?.exists ? "Happy hour listed" : null,
+      ].filter(Boolean).map((value) => `<span class="beerPopup__metaBadge">${escapeHtml(value)}</span>`).join("");
+      const beerMarkup = beerItems.length
+        ? beerItems.slice(0, 8).map((beer) => `
+          <div class="beerPopup__beerRow ${escapeHtml(getBeerRowClass(beer, markerId))}">
+            <div style="display:flex; flex-direction:column; gap:4px;">
+              <span class="beerPopup__beerName">${escapeHtml(beer.label)}</span>
+              <span class="beerPopup__beerServing">${escapeHtml(getBeerServingCopy(beer))}</span>
+              <span class="beerPopup__beerMeta" style="background:${beer.availabilityTone.background}; color:${beer.availabilityTone.color};">
+                ${escapeHtml(beer.availabilityLabel)}
+              </span>
+              <span class="beerPopup__beerQuality">${escapeHtml(getBeerQualityCopy(beer))}</span>
+            </div>
+            <div class="beerPopup__beerActions">
+              <span class="beerPopup__beerPrice ${escapeHtml(getBeerPriceClass(beer, markerId))}">${escapeHtml(getDisplayBeerPriceText(beer, markerId))}</span>
+            </div>
+          </div>
+        `).join("")
+        : `
+          <div class="beerPopup__empty">
+            No verified beer rows yet. Submit a price or menu photo if you are at this venue.
+          </div>
+        `;
+      const happyHourMarkup = happyHourDetails ? renderHappyHourPopupMarkup(happyHourDetails) : "";
+      const specialMarkup = renderSpecialPopupMarkup(specials);
+
+      return `
+        <div class="beerPopup beerPopup--tier-${escapeHtml(tierMeta.tier)}">
+          <div class="beerPopup__head">
+            <div class="beerPopup__eyebrow">List mode venue</div>
+            <div class="beerPopup__title">${escapeHtml(venueName)}</div>
+            <div class="beerPopup__address">${escapeHtml(address)}</div>
+            <div class="beerPopup__metaStrip">
+              <span class="beerPopup__metaBadge beerPopup__metaBadge--tier beerPopup__metaBadge--${escapeHtml(tierMeta.tier)}">
+                ${escapeHtml(tierMeta.label)} · ${escapeHtml(tierMeta.copy)}
+              </span>
+              ${summaryBadges}
+            </div>
+          </div>
+          <div class="beerPopup__simpleSummary">
+            <div class="beerPopup__simpleLine">
+              <strong>${escapeHtml(happyHourBrief || (knownPriceCount ? `${knownPriceCount} known price${knownPriceCount === 1 ? "" : "s"}` : "Needs a price check"))}</strong>
+              <span>${escapeHtml(newestVerifiedLabel ? `Verified ${newestVerifiedLabel}` : "Map tiles are unavailable, but venue data loaded.")}</span>
+            </div>
+            <div class="beerPopup__simpleLine">
+              <strong>${escapeHtml(`${onTapCount} on tap`)}</strong>
+              <span>${escapeHtml(specials.length ? `${specials.length} active special${specials.length === 1 ? "" : "s"}` : "No active special listed")}</span>
+            </div>
+          </div>
+          <div class="beerPopup__section">
+            <div class="beerPopup__sectionHeader">
+              <span>Beer list</span>
+              <span class="beerPopup__sectionCount">${escapeHtml(beerItems.length ? `${beerItems.length} item${beerItems.length === 1 ? "" : "s"}` : "Needs data")}</span>
+            </div>
+            ${beerMarkup}
+          </div>
+          ${happyHourMarkup}
+          ${specialMarkup}
+          <div class="beerPopup__quickActions">
+            <button class="beerPopup__button beerPopup__button--primary" type="button" data-venue-action="save" aria-pressed="${isSavedVenue ? "true" : "false"}">${escapeHtml(isSavedVenue ? "Saved" : "Save venue")}</button>
+            <a class="beerPopup__button" href="${escapeHtml(directionsUrl)}" target="_blank" rel="noopener" data-venue-action="directions">Directions</a>
+            <a class="beerPopup__button beerPopup__button--primary" href="${escapeHtml(submitUrl)}">I’m here · submit price</a>
+          </div>
+          <div class="beerPopup__secondaryActions">
+            <button class="beerPopup__button" type="button" data-venue-action="share">Share</button>
+            <button class="beerPopup__button" type="button" data-venue-action="plan" aria-pressed="${isPlannedVenue ? "true" : "false"}">${escapeHtml(isPlannedVenue ? "In night plan" : "Add to night plan")}</button>
+            <a class="beerPopup__button" href="${escapeHtml(updateUrl)}">Upload menu photo</a>
+          </div>
+          <div class="beerPopup__footer">List mode active · prices may change. Check with the venue before ordering.</div>
+        </div>
+      `;
+    }
+
+    function createListModeVenueRecord(row) {
+      const venue = getVenueRecord(row.venues) || {};
+      const coords = getVenueLatLng(row) || {};
+      const markerId = getVenueMarkerId(row, venue, coords.lat || "", coords.lng || "");
+      const record = {
+        id: markerId,
+        row,
+        venue,
+        marker: null,
+        featuredBeer: getFeaturedBeer(row, getViewState()),
+      };
+      record.getContent = () => getListModeVenueContent(record);
+      record.content = record.getContent();
+      return record;
+    }
+
+    function bindVenueListFallbackControls(renderFallbackRecords) {
+      if (window.__pintPathListModeControlsBound) {
+        return;
+      }
+      window.__pintPathListModeControlsBound = true;
+
+      advancedFiltersToggleEl.addEventListener("click", () => {
+        if (advancedFiltersToggleEl.hidden || advancedFiltersToggleEl.disabled) {
+          return;
+        }
+        const isOpening = advancedFiltersPanelEl.hidden;
+        advancedFiltersPanelEl.hidden = !isOpening;
+        advancedFiltersToggleEl.setAttribute("aria-expanded", isOpening ? "true" : "false");
+      });
+
+      advancedFiltersApplyEl.addEventListener("click", () => {
+        advancedFiltersPanelEl.hidden = true;
+        advancedFiltersToggleEl.setAttribute("aria-expanded", "false");
+        renderFallbackRecords();
+      });
+
+      useLocationButtonEl.addEventListener("click", async () => {
+        if (hasUserLocation()) {
+          disableUserLocation("use_location_button_off");
+          renderFallbackRecords();
+          return;
+        }
+        const granted = await requestUserLocation("use_location_button_list_mode");
+        if (granted) {
+          renderFallbackRecords();
+        }
+      });
+
+      const updateNearbyRadiusFromFallback = () => {
+        const radiusKm = setNearbyRadius(nearMeRadiusSelectEl.value);
+        userLocationState.message = hasUserLocation()
+          ? `Location on · showing approximate distances within ${formatRadiusLabel(radiusKm)}.`
+          : "Choose a radius, then tap Use my location to show nearby venues.";
+        syncLocationUi();
+        renderFallbackRecords();
+      };
+      nearMeRadiusSelectEl.addEventListener("input", updateNearbyRadiusFromFallback);
+      nearMeRadiusSelectEl.addEventListener("change", updateNearbyRadiusFromFallback);
+
+      venueSearchEl.addEventListener("input", renderFallbackRecords);
+      beerSearchEl.addEventListener("input", renderFallbackRecords);
+      beerSearchEl.addEventListener("change", renderFallbackRecords);
+      onTapOnlyEl.addEventListener("change", renderFallbackRecords);
+      clearFiltersEl.addEventListener("click", () => {
+        venueSearchEl.value = "";
+        beerSearchEl.value = "";
+        onTapOnlyEl.checked = false;
+        activeScope = "all";
+        activeFilterChips.clear();
+        renderFallbackRecords();
+      });
+
+      areaChipEls.forEach((chipEl) => {
+        chipEl.addEventListener("click", () => {
+          venueSearchEl.value = chipEl.dataset.areaChip || "";
+          renderFallbackRecords();
+        });
+      });
+
+      scopeChipEls.forEach((chipEl) => {
+        chipEl.addEventListener("click", () => {
+          activeScope = chipEl.dataset.scope || "all";
+          beerSearchEl.value = "";
+          onTapOnlyEl.checked = false;
+          renderFallbackRecords();
+        });
+      });
+
+      highValueChipEls.forEach((chipEl) => {
+        chipEl.addEventListener("click", async () => {
+          const filter = chipEl.dataset.filterChip;
+          if (!filter) {
+            return;
+          }
+          if (isAdvancedFilterLocked(filter)) {
+            showAdvancedFilterUnlockPrompt();
+            return;
+          }
+          if (isNearMeFilter(filter) && !hasUserLocation()) {
+            const granted = await requestUserLocation(`${filter}_list_mode`);
+            if (!granted) {
+              return;
+            }
+          }
+          if (activeFilterChips.has(filter)) {
+            activeFilterChips.delete(filter);
+          } else {
+            activeFilterChips.add(filter);
+          }
+          if (filter === "nearest" || filter === "happy_hour_near_me" || filter === "recently_verified_near_me") {
+            venueRailSortMode = activeFilterChips.has(filter) ? "nearest" : "smart";
+          }
+          renderFallbackRecords();
+        });
+      });
+
+      beerChipEls.forEach((chipEl) => {
+        chipEl.addEventListener("click", () => {
+          const chipBeer = chipEl.dataset.beerChip || "";
+          const chipBeerKey = toSearchKey(chipBeer);
+          const currentBeerKey = toSearchKey(beerSearchEl.value);
+          if (chipBeerKey && chipBeerKey === currentBeerKey) {
+            beerSearchEl.value = "";
+            onTapOnlyEl.checked = false;
+          } else {
+            beerSearchEl.value = chipBeer;
+            activeScope = "all";
+          }
+          renderFallbackRecords();
+        });
+      });
+    }
+
+    async function renderVenueListFallback(message) {
+      googleMapInstance = null;
+      focusVenueMarker = () => {};
+      searchThisAreaButtonEl.hidden = true;
+      renderMapFailure(`${message} Venue list mode is still available below.`);
+
+      const { allVenueRows, venueRows } = await loadBusinessVenueRows();
+      analyticsVenueRows = allVenueRows;
+      applySharedSearchParams();
+      beerOptionRows = venueRows;
+      buildBeerSuggestionList(beerOptionRows);
+      renderTrackedBeerChips();
+
+      overlayPanelState = {
+        list: true,
+        legend: !mobileOverlayQuery.matches,
+      };
+      syncOverlayPanels();
+
+      let listModeRecords = [];
+      const renderFallbackRecords = () => {
+        const viewState = getViewState();
+        const filteredRows = allVenueRows.filter((item) => rowMatchesView(item, viewState));
+        listModeRecords = filteredRows.map(createListModeVenueRecord);
+        syncStatusPills(filteredRows, viewState);
+        renderLegend(filteredRows, viewState);
+        renderVenueRail(listModeRecords, viewState);
+        window.__pintPathMapMarkerDebug = {
+          markerType: "list_fallback",
+          venueMarkerCount: 0,
+          listVenueCount: listModeRecords.length,
+          clustered: false,
+          usesAdvancedMarkerElement: false,
+        };
+
+        if (initialSharedVenueId && !initialSharedVenueOpened) {
+          const sharedRecord = listModeRecords.find((record) => getRecordVenueId(record) === initialSharedVenueId || record.id === initialSharedVenueId);
+          if (sharedRecord) {
+            initialSharedVenueOpened = true;
+            void openVenueDetailOverlay(sharedRecord, "shared_link_list_mode");
+          }
+        }
+      };
+
+      window.__melbBeerMapRefreshVisibleRail = renderFallbackRecords;
+      window.__melbBeerMapAfterLocationChange = renderFallbackRecords;
+      window.__openStoredVenue = async (venueId, source = "stored_panel") => {
+        const record = listModeRecords.find((item) => getRecordVenueId(item) === venueId || item.id === venueId);
+        if (!record) {
+          showToast("That venue is not visible with the current filters. Clear filters or search for it.");
+          return;
+        }
+        await openVenueDetailOverlay(record, source || "stored_panel");
+        trackVenueAnalytics("venue_card_viewed", record, source || "stored_panel", {
+          interactionType: "personal_panel_list_mode",
+        });
+      };
+
+      bindVenueListFallbackControls(renderFallbackRecords);
+      renderFallbackRecords();
+      void trackBusinessEvent("map_viewed", getAnalyticsContext({
+        source: "map_list_fallback",
+        totalVenueCount: allVenueRows.length,
+        venueDataCount: venueRows.length,
+      }));
     }
 
     function formatAddress(venue) {
@@ -7537,87 +7925,7 @@
         googleMapInstance = map;
         installCommandScrollZoomAssist(map, mapElement);
 
-        let rows = [];
-        let allVenues = [];
-
-        allVenues = await fetchBusinessViewerVenues();
-
-        let businessPriceRecords = [];
-        try {
-          const priceRecordResponse = await fetchBusinessPriceRecords();
-          businessPriceRecords = priceRecordResponse.records;
-          if (priceRecordResponse.access) {
-            businessAccess = {
-              ...businessAccess,
-              ...priceRecordResponse.access,
-            };
-            syncBusinessAccessUi();
-          }
-        } catch (error) {
-          console.warn("Approved submission price records unavailable", error);
-        }
-
-        const latestRowsByVenue = new Map();
-        const latestBeerRowsByVenue = new Map();
-        const latestHappyHourRowsByVenue = new Map();
-        const businessPriceRecordsByVenue = new Map();
-        const businessPriceRecordsByIdentity = new Map();
-
-        businessPriceRecords.forEach((record) => {
-          if (record.venueId) {
-            const venueRecords = businessPriceRecordsByVenue.get(record.venueId) || [];
-            venueRecords.push(record);
-            businessPriceRecordsByVenue.set(record.venueId, venueRecords);
-          }
-
-          const identityKey = getVenueIdentityKey(record.venueName, record.suburb);
-          if (identityKey) {
-            const identityRecords = businessPriceRecordsByIdentity.get(identityKey) || [];
-            identityRecords.push(record);
-            businessPriceRecordsByIdentity.set(identityKey, identityRecords);
-          }
-        });
-
-        rows.forEach((item) => {
-          const venue = getVenueRecord(item.venues);
-          const venueId = item.venue_id || venue?.id;
-
-          if (!venueId) {
-            return;
-          }
-
-          setLatestRow(latestRowsByVenue, venueId, item);
-
-          if (hasCapturedBeerData(item)) {
-            setLatestRow(latestBeerRowsByVenue, venueId, item);
-          }
-
-          if (hasHappyHourData(item)) {
-            setLatestRow(latestHappyHourRowsByVenue, venueId, item);
-          }
-        });
-
-        const allVenueRows = allVenues
-          .filter((venue) => Boolean(getMappableVenueLatLng(venue)))
-          .map((venue) => {
-            const mergedRow = buildMergedVenueRow(
-              venue,
-              latestRowsByVenue.get(venue.id),
-              latestBeerRowsByVenue.get(venue.id),
-              latestHappyHourRowsByVenue.get(venue.id),
-            );
-            const identityKey = getVenueIdentityKey(venue.name, venue.suburb);
-            const venueRecords = mergeUniquePriceRecords(
-              businessPriceRecordsByVenue.get(venue.id) || [],
-              identityKey ? businessPriceRecordsByIdentity.get(identityKey) || [] : [],
-            );
-            return mergeBusinessPriceRecords(mergedRow, venueRecords);
-          });
-        const venueRows = allVenueRows.filter((item) => (
-          hasCapturedBeerData(item) ||
-          hasHappyHourData(item) ||
-          isUserSubmittedVenue(item)
-        ));
+        const { allVenueRows, venueRows } = await loadBusinessVenueRows();
         analyticsVenueRows = allVenueRows;
         applySharedSearchParams();
         void trackBusinessEvent("map_viewed", getAnalyticsContext({
@@ -7785,6 +8093,8 @@
             setMarkerZIndex(marker, 1_000_100 + Number(marker.__baseZIndex || 0));
           }
         }
+
+        focusVenueMarker = setActiveMarker;
 
         window.__openStoredVenue = async (venueId, source = "stored_panel") => {
           const record = markerRecords.find((item) => getRecordVenueId(item) === venueId || item.id === venueId);
@@ -8461,6 +8771,13 @@
         }
       } catch (error) {
         fail("Viewer failed", error);
+        const message = error instanceof Error ? error.message : "Viewer failed before the map could load.";
+        try {
+          await renderVenueListFallback(message);
+        } catch (fallbackError) {
+          fail("Viewer list fallback failed", fallbackError);
+          renderMapFailure(`${message} Venue list mode could not load.`);
+        }
       }
     }
 

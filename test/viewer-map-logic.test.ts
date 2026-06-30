@@ -201,7 +201,7 @@ describe("viewer map UI wiring", () => {
   const html = fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
   const venuePortalHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/venue-portal.html"), "utf8");
 
-  it("renders advanced markers without visible map legend/list overlays", () => {
+  it("renders advanced markers with visible map panels and list-mode fallback", () => {
     expect(html).toContain("renderer: clusterRenderer");
     expect(html).toContain("getClusterVisual(count)");
     expect(html).toContain("const viewState = getViewState();");
@@ -236,7 +236,10 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("PINT_PATH_VENUE_COORDINATE_BOUNDS");
     expect(html).toContain("getMappableVenueLatLng");
     expect(html).not.toContain('id="mapZoomControls"');
-    expect(html).toContain("const MAP_OVERLAYS_ENABLED = false");
+    expect(html).toContain("const MAP_OVERLAYS_ENABLED = true");
+    expect(html).toContain("renderVenueListFallback");
+    expect(html).toContain("loadBusinessVenueRows");
+    expect(html).toContain('markerType: "list_fallback"');
     expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
     expect(html).not.toContain("new google.maps.Marker");
     expect(html).not.toContain("Blue markers have no captured beer prices yet.");
@@ -268,7 +271,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('id="shareSearchButton"');
     expect(html).toContain('id="searchThisAreaButton"');
     expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
-    expect(html).toContain("MAP_OVERLAYS_ENABLED = false");
+    expect(html).toContain("MAP_OVERLAYS_ENABLED = true");
     expect(html).not.toContain('id="recentlyViewedPanel"');
     expect(html).not.toContain('id="recentlyViewedTitle"');
     expect(html).toContain('id="nightPlanPanel"');
@@ -361,9 +364,12 @@ describe("viewer map UI wiring", () => {
 
   it("surfaces the premium tiered venue command centre preview", () => {
     expect(venuePortalHtml).toContain('id="premiumVenueDashboard"');
+    expect(venuePortalHtml).toContain('id="venueDailyActions"');
+    expect(venuePortalHtml).toContain("function renderVenueDailyActions");
     expect(venuePortalHtml).toContain("function renderPremiumVenueDashboard");
     expect(venuePortalHtml).toContain("VENUE_DASHBOARD_FEATURES");
-    expect(venuePortalHtml).toContain("data-dashboard-plan");
+    expect(venuePortalHtml).not.toContain("premiumPlanSwitcher");
+    expect(venuePortalHtml).not.toContain("Avg spend");
     expect(venuePortalHtml).toContain("data-dashboard-section");
     expect(venuePortalHtml).toContain("premiumDashboardSubnav");
     expect(venuePortalHtml).toContain("App Value Overview");

@@ -146,6 +146,8 @@
           <button id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta" type="button" data-settings-target="beta-testing" aria-controls="settingsBetaTestingPanel" aria-selected="false" hidden>BetaTesting</button>
         </nav>
 
+        <section id="accountQuickStart" class="accountQuickStart panel" aria-label="Recommended next actions"></section>
+
         <section class="accountHighlightsGrid" aria-label="Account highlights">
           <article class="metricCard accountHeroMetric accountHeroMetric--savings">
             <div class="eyebrow">Total saved</div>
@@ -1716,12 +1718,78 @@
       helperEl.textContent = "";
     }
 
+    function renderAccountQuickStart(result) {
+      const container = $("accountQuickStart");
+      if (!container) {
+        return;
+      }
+
+      const account = result.account || {};
+      const access = result.access || {};
+      const submissions = Array.isArray(result.recentSubmissions) ? result.recentSubmissions : [];
+      const stats = result.stats || {};
+      const pendingCount = Number(stats.pendingCount ?? stats.pending ?? submissions.filter((submission) =>
+        ["pending", "needs_more_info"].includes(String(submission.status || "").toLowerCase()),
+      ).length);
+      const totalUploads = Number(stats.totalUploads ?? stats.total_uploads ?? result.totalUploads ?? submissions.length ?? 0);
+      const pintPoints = result.pintPoints || {};
+      const hasRewardReady = Boolean(pintPoints.rewardAvailable);
+      const hasSpecialAccess = Boolean(result.discounts?.eligible);
+      const needsAge = !account.ageConfirmedAt;
+      const action = hasRewardReady
+        ? { label: "Open reward wallet", target: "beta-testing", href: null }
+        : pendingCount > 0
+          ? { label: "View submissions", target: "submissions", href: null }
+          : totalUploads > 0
+            ? { label: "Find missions", target: null, href: "/missions.html" }
+            : { label: "Submit a price", target: null, href: "/submit.html" };
+      const secondaryAction = access.hasFullAccess
+        ? { label: "Open map", href: "/" }
+        : { label: "Unlock more map detail", href: "/pricing.html" };
+      const privacyAction = { label: "Privacy controls", target: "privacy", href: null };
+      const actionMarkup = [action, secondaryAction, privacyAction].map((item) => {
+        if (item.target) {
+          return `<button class="button" type="button" data-settings-target="${escapeHtml(item.target)}">${escapeHtml(item.label)}</button>`;
+        }
+        return `<a class="button" href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a>`;
+      }).join("");
+      const statusItems = [
+        access.hasFullAccess ? "Full map access active" : "Core map preview active",
+        totalUploads ? `${totalUploads} upload${totalUploads === 1 ? "" : "s"} linked` : "No submissions yet",
+        pendingCount ? `${pendingCount} pending review` : "No pending reviews",
+        hasSpecialAccess ? "Venue specials enabled" : "Venue specials locked",
+      ];
+
+      $("accountDashboard").classList.toggle("accountDashboard--free", !access.hasFullAccess && !hasSpecialAccess);
+      $("accountDashboard").classList.toggle("accountDashboard--rewardEligible", hasSpecialAccess || hasRewardReady);
+      container.innerHTML = `
+        <div class="accountQuickStart__copy">
+          <div class="eyebrow">Start here</div>
+          <h2>${escapeHtml(hasRewardReady ? "Your Free Pint Reward is ready" : pendingCount ? "Your submissions are in review" : "Make the map more useful")}</h2>
+          <p class="muted">${escapeHtml(hasRewardReady
+            ? "Open your wallet only when staff are ready to confirm the redemption."
+            : pendingCount
+              ? "Track review status, then add another useful price or happy-hour update when you are out."
+              : "Find a venue, submit a current beer price, or pick a mission. Rewards stay out of the way until you can use them.")}</p>
+          ${needsAge ? '<p class="notice notice--warning accountQuickStart__notice">Confirm you are 18+ before redeeming venue specials or future alcohol rewards.</p>' : ""}
+        </div>
+        <div class="accountQuickStart__actions">${actionMarkup}</div>
+        <div class="accountQuickStart__status">
+          ${statusItems.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+        </div>
+      `;
+      container.querySelectorAll("[data-settings-target]").forEach((button) => {
+        button.addEventListener("click", () => showAccountSettingsPanel(button.dataset.settingsTarget));
+      });
+    }
+
     function renderDashboard(result) {
       state.accountData = result;
       MelbBeerBusiness.setAccountContext(result.account);
       showDashboard();
       const account = result.account;
       renderAccountEmail(account);
+      renderAccountQuickStart(result);
       const planBadge = subscriptionBadge(account);
       $("accessBadgeRow").innerHTML = [
         accessBadge(planBadge.label, planBadge.tone),

@@ -5163,7 +5163,7 @@ describe("business demo contribution model", () => {
     expect(proPortal.paidVenueIntelligence?.searchTimesByDay.length).toBeGreaterThan(0);
     expect(proPortal.paidVenueIntelligence?.searchTimesByHour.length).toBeGreaterThan(0);
     expect(proPortal.dailySpecialsPlanner).toEqual(expect.objectContaining({
-      title: "AI specials planner",
+      title: "Specials planner",
       area: "South Melbourne",
       summaryDate: "2026-05-04",
       sourcePeriod: "today",
@@ -5187,7 +5187,7 @@ describe("business demo contribution model", () => {
         expect.any(String),
       ]),
       dailySpecialsPlanner: expect.objectContaining({
-        title: "AI specials planner",
+        title: "Specials planner",
       }),
       topBeersBoughtInArea: expect.arrayContaining([
         expect.objectContaining({ beerName: "Guinness" }),

@@ -154,7 +154,7 @@
           <div class="sectionHeader">
             <div>
               <h2>Source ingestion review</h2>
-              <p class="muted">Review OCR output, publish clean rows, or reject noisy sources.</p>
+              <p class="muted">Work one source at a time. The queue loads a focused batch so review stays fast and mistakes stay visible.</p>
             </div>
             <label class="field compactField">Status
               <select id="adminIngestionStatus">
@@ -165,6 +165,7 @@
               </select>
             </label>
           </div>
+          <div id="adminIngestionQueueSummary" class="notice adminQueueSummary">Loading the highest-priority source candidates...</div>
           <div id="adminIngestionQueue" class="list"></div>
         </div>
 
@@ -2298,6 +2299,7 @@
 
     function renderAdminVenueOptions() {
       const searchValue = adminVenueSearch.value.trim().toLowerCase();
+      const optionLimit = searchValue ? 60 : 25;
       const filteredVenues = adminVenues
         .filter((venue) => {
           if (!searchValue) return true;
@@ -2305,7 +2307,15 @@
             .filter(Boolean)
             .some((value) => String(value).toLowerCase().includes(searchValue));
         })
-        .slice(0, 250);
+        .slice(0, optionLimit);
+      if (selectedAdminVenueId && !filteredVenues.some((venue) => venue.id === selectedAdminVenueId)) {
+        const selectedVenue = adminVenues.find((venue) => venue.id === selectedAdminVenueId);
+        if (selectedVenue && (!searchValue || [selectedVenue.name, selectedVenue.suburb, selectedVenue.address]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(searchValue)))) {
+          filteredVenues.unshift(selectedVenue);
+        }
+      }
 
       if (!filteredVenues.some((venue) => venue.id === selectedAdminVenueId)) {
         selectedAdminVenueId = filteredVenues[0]?.id || null;
@@ -2431,6 +2441,7 @@
     function renderManagerVenueOptions() {
       if (!managerVenueSelect) return;
       const searchValue = managerVenueSearch.value.trim().toLowerCase();
+      const optionLimit = searchValue ? 50 : 20;
       const filteredVenues = adminVenues
         .filter((venue) => {
           if (!searchValue) return true;
@@ -2438,7 +2449,15 @@
             .filter(Boolean)
             .some((value) => String(value).toLowerCase().includes(searchValue));
         })
-        .slice(0, 100);
+        .slice(0, optionLimit);
+      if (selectedManagerVenueId && !filteredVenues.some((venue) => venue.id === selectedManagerVenueId)) {
+        const selectedVenue = adminVenues.find((venue) => venue.id === selectedManagerVenueId);
+        if (selectedVenue && (!searchValue || [selectedVenue.name, selectedVenue.suburb, selectedVenue.address]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(searchValue)))) {
+          filteredVenues.unshift(selectedVenue);
+        }
+      }
 
       if (!filteredVenues.some((venue) => venue.id === selectedManagerVenueId)) {
         selectedManagerVenueId = filteredVenues[0]?.id || null;
@@ -2525,13 +2544,14 @@
 
     async function loadAdminIngestionQueue() {
       try {
-        const params = new URLSearchParams({ limit: "200" });
+        const params = new URLSearchParams({ limit: "12" });
         if (adminIngestionStatus.value) {
           params.set("status", adminIngestionStatus.value);
         }
         const result = await MelbBeerBusiness.apiFetch(`/api/admin/ingestions?${params.toString()}`);
         renderAdminIngestionQueue(result.items || []);
       } catch (error) {
+        document.getElementById("adminIngestionQueueSummary").textContent = "Source review is unavailable.";
         adminIngestionQueue.innerHTML = `<div class="listItem muted">${escapeHtml(error.message || "Source queue unavailable.")}</div>`;
       }
     }
@@ -2646,8 +2666,16 @@
       renderAdminTodayQueue();
       renderAdminDashboard();
       renderAdminFocusRail();
-      adminIngestionQueue.innerHTML = items.length
-        ? items.map((item) => {
+      const visibleItems = window.__adminIngestionQueueItems.slice(0, 12);
+      const queueSummary = document.getElementById("adminIngestionQueueSummary");
+      if (queueSummary) {
+        const statusLabel = adminIngestionStatus.value ? adminIngestionStatus.options[adminIngestionStatus.selectedIndex]?.textContent || "Filtered" : "All";
+        queueSummary.textContent = visibleItems.length
+          ? `${statusLabel} source review: showing ${visibleItems.length} focused candidate${visibleItems.length === 1 ? "" : "s"}. Open one card, keep clean rows, then publish or reject.`
+          : `${statusLabel} source review: no items need attention for this filter.`;
+      }
+      adminIngestionQueue.innerHTML = visibleItems.length
+        ? visibleItems.map((item, index) => {
           const beers = item.reviewBeers || item.extractedBeers || [];
           const extractedCount = Array.isArray(item.extractedBeers) ? item.extractedBeers.length : beers.length;
           const note = item.capturedNotes || item.note || "No source notes";
@@ -2668,38 +2696,60 @@
                 </div>
               </div>
               ${renderCrawlerDetails(item, beers)}
-              <div class="adminSourceReviewLayout">
-                ${renderSourceEvidence(item)}
-                <section class="adminSourceRows adminSourceRows--compact">
-                  <div class="sectionHeader adminSourceRows__header">
-                    <div>
-                      <h3>Rows</h3>
-                      <p class="muted">Keep clean rows, delete noise, then publish.</p>
+              <details class="adminIngestionReviewDetails" ${index === 0 ? "open" : ""}>
+                <summary>
+                  <span>${index === 0 ? "Review current source" : "Open source review"}</span>
+                  <span>${beers.length} row${beers.length === 1 ? "" : "s"}</span>
+                </summary>
+                <div class="adminSourceReviewLayout">
+                  ${renderSourceEvidence(item)}
+                  <section class="adminSourceRows adminSourceRows--compact">
+                    <div class="sectionHeader adminSourceRows__header">
+                      <div>
+                        <h3>Rows</h3>
+                        <p class="muted">Keep clean rows, delete noise, then publish.</p>
+                      </div>
+                      <span class="pill">${beers.length} row${beers.length === 1 ? "" : "s"}</span>
                     </div>
-                    <span class="pill">${beers.length} row${beers.length === 1 ? "" : "s"}</span>
-                  </div>
-                  <div class="adminQueueBeerRows" data-ingestion-beers="${escapeHtml(item.id)}"></div>
-                  <label class="field adminIngestionReviewNote">Review note
-                    <textarea data-ingestion-note rows="2" placeholder="Correction note or rejection reason"></textarea>
-                  </label>
-                </section>
-              </div>
-              ${item.status === "pending_review" ? `
-                <div class="actionRow adminReviewActionBar">
-                  <span class="adminCrawlerRewardHint">Crawler reward updates when this review is saved.</span>
-                  <button class="button button--small button--primary" type="button" data-publish-ingestion>Publish rows</button>
-                  <button class="button button--small button--danger" type="button" data-reject-ingestion>Reject source</button>
+                    <div class="adminQueueBeerRows" data-ingestion-beers="${escapeHtml(item.id)}"></div>
+                    <label class="field adminIngestionReviewNote">Review note
+                      <textarea data-ingestion-note rows="2" placeholder="Correction note or rejection reason"></textarea>
+                    </label>
+                  </section>
                 </div>
-              ` : ""}
+                ${item.status === "pending_review" ? `
+                  <div class="actionRow adminReviewActionBar">
+                    <span class="adminCrawlerRewardHint">Crawler reward updates when this review is saved.</span>
+                    <button class="button button--small button--primary" type="button" data-publish-ingestion>Publish rows</button>
+                    <button class="button button--small button--danger" type="button" data-reject-ingestion>Reject source</button>
+                  </div>
+                ` : ""}
+              </details>
             </article>
           `;
         }).join("")
         : '<div class="listItem muted">No source ingestion items for this filter.</div>';
 
-      adminIngestionQueue.querySelectorAll(".adminIngestionItem").forEach((article, index) => {
-        const beers = items[index]?.reviewBeers || items[index]?.extractedBeers || [];
+      const hydrateBeerRows = (article, index) => {
         const rowsContainer = article.querySelector(".adminQueueBeerRows");
+        if (!rowsContainer || rowsContainer.dataset.rowsHydrated === "true") {
+          return;
+        }
+        const beers = visibleItems[index]?.reviewBeers || visibleItems[index]?.extractedBeers || [];
         setBeerRows(rowsContainer, beers);
+        rowsContainer.dataset.rowsHydrated = "true";
+      };
+
+      adminIngestionQueue.querySelectorAll(".adminIngestionItem").forEach((article, index) => {
+        const details = article.querySelector(".adminIngestionReviewDetails");
+        if (details?.open) {
+          hydrateBeerRows(article, index);
+        }
+        details?.addEventListener("toggle", () => {
+          if (details.open) {
+            hydrateBeerRows(article, index);
+          }
+        });
       });
       adminIngestionQueue.querySelectorAll("[data-publish-ingestion]").forEach((button) => {
         button.addEventListener("click", () => promptQueuedIngestionReview(button.closest(".adminIngestionItem"), "publish"));

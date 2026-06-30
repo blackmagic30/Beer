@@ -59,7 +59,7 @@
             <button class="tabButton" type="button" data-tab="profile">Profile</button>
             <button class="tabButton" type="button" data-tab="beers">Beers / stock</button>
             <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
-            <button class="tabButton" type="button" data-tab="specials" data-specials-only>AI specials planner</button>
+            <button class="tabButton" type="button" data-tab="specials" data-specials-only>Specials planner</button>
             <button class="tabButton" type="button" data-tab="pending-reviews">Pending reviews</button>
             <button class="tabButton" type="button" data-tab="report">Monthly report</button>
             <button class="tabButton" type="button" data-tab="support">Support</button>
@@ -69,6 +69,7 @@
 
         <div class="dashboardMain">
           <section class="tabPanel" data-panel="overview">
+            <article id="venueDailyActions" class="venueDailyActions"></article>
             <article id="premiumVenueDashboard" class="premiumVenueDashboard"></article>
           </section>
 
@@ -499,7 +500,7 @@
     let currentPortal = null;
     let currentDemandPeriod = "today";
     let dashboardPreviewPlan = null;
-    let premiumDashboardSection = "demand_command_centre";
+    let premiumDashboardSection = "action_centre";
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
@@ -756,8 +757,9 @@
     };
 
     const PREMIUM_DASHBOARD_SECTIONS = [
-      { id: "demand_command_centre", label: "Demand command centre" },
+      { id: "action_centre", label: "Action centre" },
       { id: "growth_recommendations", label: "Growth recommendations" },
+      { id: "demand_command_centre", label: "Demand cockpit" },
       { id: "app_value_overview", label: "App value overview" },
       { id: "demand_signals", label: "Demand signals" },
       { id: "price_freshness", label: "Price freshness" },
@@ -766,7 +768,6 @@
       { id: "marketing_performance", label: "Marketing + performance" },
       { id: "specials_strategy", label: "Specials strategy" },
       { id: "premium_reports", label: "Reports" },
-      { id: "action_centre", label: "Action centre" },
     ];
 
     function normalizeDashboardPlan(value) {
@@ -1139,6 +1140,7 @@
       renderHappyHours(happyHours);
       renderSpecials(specials);
       renderSpecialsPlanner(data);
+      renderVenueDailyActions(data);
       renderPremiumVenueDashboard(data);
       renderDiscountOps(data);
       renderDiscountSpecialChoices(data);
@@ -1705,7 +1707,7 @@
           { label: "Map/detail opens", value: formatCount(mock.mapViewsToday), helper: "Today", tone: "success" },
           { label: "Staff redemptions", value: formatCount(mock.redemptionsWeek), helper: "Logged by staff", tone: "info" },
           { label: "Active specials", value: formatCount(mock.activeSpecials), helper: "Pint Path offers", tone: "premium" },
-          { label: "Avg spend", value: formatOptionalCurrency(mock.averageSpend), helper: "After specials", tone: "neutral" },
+          { label: "Listing quality", value: `${formatCount(mock.listingQuality)}%`, helper: "Profile and data readiness", tone: mock.listingQuality >= 80 ? "success" : "warning" },
         ],
       };
 
@@ -1718,11 +1720,6 @@
             <p>${escapeHtml(today)} · ${escapeHtml(mock.type)} · ${escapeHtml(mock.location)}</p>
           </div>
           <div class="premiumDashboardHeader__tools">
-            <div class="premiumPlanSwitcher" role="group" aria-label="Preview venue dashboard plan">
-              ${VENUE_DASHBOARD_PLANS.map((item) => `
-                <button class="${item === plan ? "is-active" : ""}" type="button" data-dashboard-plan="${escapeHtml(item)}">${escapeHtml(prettyTier(item))}</button>
-              `).join("")}
-            </div>
             <span class="premiumPlanBadge premiumPlanBadge--${escapeHtml(plan)}">${escapeHtml(prettyTier(plan))}</span>
             ${upgradePlan ? `<button class="button button--premium" type="button" data-upgrade-tier="${escapeHtml(upgradePlan)}">Upgrade to ${escapeHtml(prettyTier(upgradePlan))}</button>` : ""}
             <button class="button" type="button" data-jump-tab="specials">Manage specials</button>
@@ -1733,6 +1730,82 @@
           ${kpisByPlan[plan].map(premiumKpiCard).join("")}
         </div>
         ${plan === "pro" ? renderProVenueDashboard(mock) : renderFreeVenueDashboard(mock)}
+      `;
+    }
+
+    function renderVenueDailyActions(data) {
+      const container = document.getElementById("venueDailyActions");
+      if (!container) return;
+
+      const profile = data.profile || {};
+      const beers = data.inventory?.beers || [];
+      const happyHours = data.inventory?.happyHours || [];
+      const specials = data.inventory?.specials || [];
+      const pendingCount = data.pendingChanges?.length || 0;
+      const quality = data.insights?.listingQuality || {};
+      const activeSpecials = specials.filter((special) => special.active !== false).length;
+      const freshPriceCutoffMs = Date.now() - (7 * 24 * 60 * 60 * 1000);
+      const staleOrMissingPrices = beers.filter((beer) => {
+        if (beer.price == null) return true;
+        const updatedAtMs = Date.parse(beer.updatedAt || "");
+        return !Number.isFinite(updatedAtMs) || updatedAtMs < freshPriceCutoffMs;
+      }).length;
+      const hasProfileBasics = Boolean(profile.name && profile.suburb);
+      const actions = [
+        !hasProfileBasics
+          ? { label: "Finish profile", tab: "profile", copy: "Venue name, suburb, contact details, and opening basics." }
+          : null,
+        beers.length < 3
+          ? { label: "Add beer rows", tab: "beers", copy: "Add at least three current tap prices for a useful listing." }
+          : staleOrMissingPrices
+            ? { label: "Keep prices fresh", tab: "price-refresh", copy: `${formatCount(staleOrMissingPrices)} beer row${staleOrMissingPrices === 1 ? "" : "s"} need a price check.` }
+            : null,
+        happyHours.length
+          ? null
+          : { label: "Add happy hour", tab: "happy-hours", copy: "Happy-hour details help users choose you tonight." },
+        data.tier?.canManageSpecials && !activeSpecials
+          ? { label: "Create special", tab: "specials", copy: "Add one clear Pint Path offer staff can redeem." }
+          : null,
+        pendingCount
+          ? { label: "Review pending", tab: "pending-reviews", copy: `${formatCount(pendingCount)} change${pendingCount === 1 ? "" : "s"} waiting for admin review.` }
+          : null,
+      ].filter(Boolean).slice(0, 4);
+      const fallbackActions = [
+        { label: "Open staff mode", tab: "redemption", copy: "Redeem Pint Path codes and record approved offers." },
+        { label: "Monthly report", tab: "report", copy: "Check the venue-safe summary for this month." },
+      ];
+      const visibleActions = actions.length ? actions : fallbackActions;
+      const stats = [
+        { label: "Beer rows", value: formatCount(beers.length), tone: beers.length >= 3 ? "success" : "warning" },
+        { label: "Price checks", value: staleOrMissingPrices ? `${formatCount(staleOrMissingPrices)} due` : "Fresh", tone: staleOrMissingPrices ? "warning" : "success" },
+        { label: "Specials", value: activeSpecials ? formatCount(activeSpecials) : "None", tone: activeSpecials ? "premium" : "warning" },
+        { label: "Quality", value: typeof quality.score === "number" ? `${formatCount(quality.score)}%` : "--", tone: quality.score >= 80 ? "success" : "info" },
+      ];
+
+      container.innerHTML = `
+        <div class="venueDailyActions__header">
+          <div>
+            <div class="eyebrow">Today’s venue work</div>
+            <h2>${escapeHtml(profile.name || "Venue dashboard")}</h2>
+          </div>
+          <button class="button button--primary" type="button" data-jump-tab="${escapeHtml(visibleActions[0].tab)}">${escapeHtml(visibleActions[0].label)}</button>
+        </div>
+        <div class="venueDailyActions__grid">
+          ${visibleActions.map((action) => `
+            <button class="venueDailyAction" type="button" data-jump-tab="${escapeHtml(action.tab)}">
+              <strong>${escapeHtml(action.label)}</strong>
+              <span>${escapeHtml(action.copy)}</span>
+            </button>
+          `).join("")}
+        </div>
+        <div class="venueDailyActions__stats">
+          ${stats.map((item) => `
+            <span class="venueDailyActions__stat venueDailyActions__stat--${escapeHtml(item.tone)}">
+              <strong>${escapeHtml(item.value)}</strong>
+              <em>${escapeHtml(item.label)}</em>
+            </span>
+          `).join("")}
+        </div>
       `;
     }
 
@@ -2597,7 +2670,7 @@
         panel.innerHTML = `
           <div class="sectionHeader">
             <div>
-              <div class="eyebrow">AI specials planner</div>
+              <div class="eyebrow">Specials planner</div>
               <h2>Daily summary is building</h2>
               <p class="muted">Pint Path will show popular and quieter local search windows once enough privacy-safe area data is available.</p>
             </div>
@@ -2632,7 +2705,7 @@
       panel.innerHTML = `
         <div class="specialsPlanner__hero">
           <div>
-            <div class="eyebrow">AI specials planner</div>
+            <div class="eyebrow">Specials planner</div>
             <h2>Daily summary for ${escapeHtml(planner.area || "your area")}</h2>
             <p>${escapeHtml(planner.summary || "Use local Pint Path search signals to choose the next venue special.")}</p>
             <div class="specialsPlanner__meta">
@@ -2641,7 +2714,7 @@
               <span>${escapeHtml(planner.confidenceCopy || "")}</span>
             </div>
           </div>
-          <span class="pill pill--premium">AI powered</span>
+          <span class="pill pill--premium">Demand signals</span>
         </div>
         <div class="specialsPlannerSignalGrid">
           ${demandSignals.map((signal) => `

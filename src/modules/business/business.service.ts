@@ -1715,7 +1715,7 @@ function buildDailySpecialsPlanner(input: {
       ];
 
   return {
-    title: "AI specials planner",
+    title: "Specials planner",
     venueName: input.venueName,
     area,
     summaryDate: getZonedDateKey(new Date(), input.timezone),
