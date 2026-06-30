@@ -1,6 +1,6 @@
 import type BetterSqlite3 from "better-sqlite3";
 
-import { BEER_CATALOG } from "../constants/beer-catalog.js";
+import { BEER_CATALOG, type BeerCatalogItem } from "../constants/beer-catalog.js";
 import { canonicalizeTrackedBeerName, findTrackedBeerByName, normalizeBeerSearchKey } from "../constants/beers.js";
 
 export type BeerCatalogStatus = "active" | "pending_review";
@@ -25,6 +25,11 @@ interface BeerCatalogRow {
   abv: number | null;
   status: BeerCatalogStatus;
   source: string;
+}
+
+interface BeerCatalogAliasRow {
+  beer_key: string;
+  alias: string;
 }
 
 function cleanBeerDisplayName(value: string): string {
@@ -204,6 +209,57 @@ export class BeerCatalogRepository {
           source = excluded.source`,
       )
       .run(aliasKey, input.beerKey, alias, input.source, input.now);
+  }
+
+  listForViewer(limit = 500): BeerCatalogItem[] {
+    const rows = this.db
+      .prepare(
+        `SELECT key, name, brewery, style, abv, status, source
+           FROM beer_catalog_items
+          WHERE status IN ('active', 'pending_review')
+          ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, name COLLATE NOCASE ASC
+          LIMIT ?`,
+      )
+      .all(limit) as BeerCatalogRow[];
+
+    if (!rows.length) {
+      return BEER_CATALOG.slice(0, limit);
+    }
+
+    const aliasesByBeerKey = new Map<string, string[]>();
+    const aliasRows = this.db
+      .prepare(
+        `SELECT beer_key, alias
+           FROM beer_catalog_aliases
+          WHERE beer_key IN (${rows.map(() => "?").join(", ")})
+          ORDER BY alias COLLATE NOCASE ASC`,
+      )
+      .all(...rows.map((row) => row.key)) as BeerCatalogAliasRow[];
+
+    aliasRows.forEach((row) => {
+      const aliases = aliasesByBeerKey.get(row.beer_key) ?? [];
+      aliases.push(row.alias);
+      aliasesByBeerKey.set(row.beer_key, aliases);
+    });
+
+    return rows.map((row) => {
+      const aliasSet = new Set([row.key, row.name, ...(aliasesByBeerKey.get(row.key) ?? [])]);
+      const item: BeerCatalogItem = {
+        key: row.key,
+        name: row.name,
+        aliases: Array.from(aliasSet).filter(Boolean),
+      };
+      if (row.brewery) {
+        item.brewery = row.brewery;
+      }
+      if (row.style) {
+        item.style = row.style;
+      }
+      if (row.abv != null) {
+        item.abv = row.abv;
+      }
+      return item;
+    });
   }
 }
 

@@ -5777,7 +5777,7 @@
     }
 
     function getBusinessBeerKey(record) {
-      const normalized = toSearchKey(record.beerName || record.normalizedBeerId || record.id);
+      const normalized = toSearchKey(record.normalizedBeerId || record.beerName || record.id);
       return normalized ? normalized.replace(/\s+/g, "_") : `business_${String(record.id || "unknown").replace(/[^a-z0-9]+/gi, "_")}`;
     }
 
@@ -5801,6 +5801,7 @@
         source_type: record.sourceType,
         source_submission_id: record.sourceSubmissionId,
         price_record_id: record.id,
+        normalized_beer_id: record.normalizedBeerId || null,
         source_venue_id: record.venueId,
         last_verified_at: record.lastVerifiedAt,
         needs_review: false,
@@ -6052,9 +6053,32 @@
       }
 
       return getBeerItems(row)
-        .filter((beer) => toSearchKey(beer.label).includes(beerQueryKey))
+        .filter((beer) => beerMatchesSearchQuery(beer, beerQueryKey))
         .filter((beer) => !onTapOnly || beer.availableOnTap === true)
         .sort((left, right) => getBeerPriority(right) - getBeerPriority(left));
+    }
+
+    function getBeerSearchCandidates(beer) {
+      const candidates = [
+        beer.label,
+        beer.normalized_beer_id,
+        beer.normalizedBeerId,
+        beer.id,
+      ].filter(Boolean);
+      const trackedBeer = getTrackedBeerMeta(beer.label) || getTrackedBeerMeta(beer.normalized_beer_id || beer.normalizedBeerId);
+
+      if (trackedBeer) {
+        candidates.push(trackedBeer.key, trackedBeer.name, ...(trackedBeer.aliases || []));
+      }
+
+      return candidates;
+    }
+
+    function beerMatchesSearchQuery(beer, queryKey) {
+      return getBeerSearchCandidates(beer).some((candidate) => {
+        const candidateKey = toSearchKey(candidate);
+        return candidateKey && (candidateKey.includes(queryKey) || queryKey.includes(candidateKey));
+      });
     }
 
     function getPriceRelevantBeerItems(row, viewState) {

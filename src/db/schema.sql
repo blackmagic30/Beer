@@ -774,6 +774,7 @@ CREATE TABLE IF NOT EXISTS venue_beers (
   id TEXT PRIMARY KEY,
   venue_id TEXT NOT NULL REFERENCES venue_profiles(venue_id) ON DELETE CASCADE,
   beer_name TEXT NOT NULL,
+  normalized_beer_id TEXT,
   brewery TEXT,
   style TEXT,
   abv REAL,

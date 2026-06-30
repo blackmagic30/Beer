@@ -239,6 +239,10 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("const MAP_OVERLAYS_ENABLED = true");
     expect(html).toContain("renderVenueListFallback");
     expect(html).toContain("loadBusinessVenueRows");
+    expect(html).toContain("function getBeerSearchCandidates");
+    expect(html).toContain("function beerMatchesSearchQuery");
+    expect(html).toContain("record.normalizedBeerId || record.beerName || record.id");
+    expect(html).toContain("normalized_beer_id: record.normalizedBeerId || null");
     expect(html).toContain("Loading venue list");
     expect(html).toContain("Map tiles are unavailable, so Pint Path is loading the venue list instead.");
     expect(html).toContain("Venue list unavailable");

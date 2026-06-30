@@ -10,6 +10,7 @@ import express from "express";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BusinessRepository, type BarPendingChange, type SubmissionType, type SubscriptionStatus } from "../src/db/business.repository.js";
+import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
 import { errorHandler } from "../src/middleware/error-handler.js";
 import { authSignupSchema, barHappyHourSchema, createSubmissionSchema, normalizeHappyHourTime } from "../src/modules/business/business.schemas.js";
@@ -29,6 +30,7 @@ const WEBP_DATA_URL = `data:image/webp;base64,${Buffer.from("RIFF0000WEBPVP8 ", 
 
 let openDatabases: BetterSqlite3.Database[] = [];
 let evidenceStorageDirs: string[] = [];
+const repositoryDatabases = new WeakMap<BusinessRepository, BetterSqlite3.Database>();
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -37,13 +39,15 @@ beforeEach(() => {
 
 function createRepository() {
   const database = new BetterSqlite3(":memory:");
-  const schemaPath = path.resolve(process.cwd(), "src/db/schema.sql");
-  database.exec(fs.readFileSync(schemaPath, "utf8"));
+  initializeDatabaseSchema(database);
   openDatabases.push(database);
+
+  const repository = new BusinessRepository(database);
+  repositoryDatabases.set(repository, database);
 
   return {
     database,
-    repository: new BusinessRepository(database),
+    repository,
   };
 }
 
@@ -89,7 +93,7 @@ function createBusinessService(
     GOOGLE_MAPS_API_KEY: undefined,
     GOOGLE_PLACES_API_KEY: undefined,
     ...overrides,
-  });
+  }, new BeerCatalogRepository(repositoryDatabases.get(repository)!));
 }
 
 function createAccount(repository: BusinessRepository, id: string, role: "user" | "admin" = "user") {
@@ -3029,6 +3033,91 @@ describe("business demo contribution model", () => {
     ]);
   });
 
+  it("standardises submitted beer names and adds new beers to the system catalogue", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "catalog-submit-user");
+
+    const aliasSubmission = service.createSubmission(user, createSubmissionSchema.parse({
+      venueId: "catalog-venue-1",
+      venueName: "Catalog Bar",
+      suburb: "Melbourne",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoUrl: null,
+      sourcePhotoDataUrl: null,
+      notes: null,
+      items: [{
+        beerName: "Carlton Draft",
+        servingSize: "pint",
+        price: 13,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    }));
+    const aliasItem = repository.getSubmissionById(aliasSubmission.submission.id)!.items[0]!;
+    expect(aliasItem.beerName).toBe("Carlton Draught");
+    expect(aliasItem.normalizedBeerId).toBe("carlton_draft");
+
+    const firstUnknown = service.createSubmission(user, createSubmissionSchema.parse({
+      venueId: "catalog-venue-2",
+      venueName: "Local Taproom",
+      suburb: "Fitzroy",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoUrl: null,
+      sourcePhotoDataUrl: null,
+      notes: null,
+      items: [{
+        beerName: "Very Local Hazy Pint",
+        servingSize: "pint",
+        price: 15,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    }));
+    const unknownItem = repository.getSubmissionById(firstUnknown.submission.id)!.items[0]!;
+    expect(unknownItem).toEqual(expect.objectContaining({
+      beerName: "Very Local Hazy Pint",
+      normalizedBeerId: "very_local_hazy_pint",
+    }));
+    expect(database.prepare("SELECT key, name, status FROM beer_catalog_items WHERE key = ?").get("very_local_hazy_pint")).toEqual(expect.objectContaining({
+      key: "very_local_hazy_pint",
+      name: "Very Local Hazy Pint",
+      status: "pending_review",
+    }));
+
+    const secondUnknown = service.createSubmission(user, createSubmissionSchema.parse({
+      venueId: "catalog-venue-3",
+      venueName: "Second Taproom",
+      suburb: "Collingwood",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoUrl: null,
+      sourcePhotoDataUrl: null,
+      notes: null,
+      items: [{
+        beerName: "very local hazy pint",
+        servingSize: "pint",
+        price: 16,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    }));
+    expect(repository.getSubmissionById(secondUnknown.submission.id)!.items[0]).toEqual(expect.objectContaining({
+      beerName: "Very Local Hazy Pint",
+      normalizedBeerId: "very_local_hazy_pint",
+    }));
+    expect(service.getPublicConfig().trackedBeers).toContainEqual(expect.objectContaining({
+      key: "very_local_hazy_pint",
+      name: "Very Local Hazy Pint",
+      aliases: expect.arrayContaining(["Very Local Hazy Pint"]),
+    }));
+  });
+
   it("increments fraud strikes and suspends reward earning after three fraud flags", () => {
     const { repository } = createRepository();
     const user = createAccount(repository, "fraud-user");
@@ -4076,6 +4165,70 @@ describe("business demo contribution model", () => {
         email: "account-search-target@example.com",
       }),
     ]);
+  });
+
+  it("standardises venue inventory beer rows before they are saved or reviewed", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "inventory-admin", "admin");
+    const manager = createAccount(repository, "inventory-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "inventory-venue",
+      venueName: "Inventory Bar",
+      suburb: "Brunswick",
+    });
+    service.upsertBarProfile(admin, "inventory-venue", {
+      name: "Inventory Bar",
+      address: "1 Test St",
+      suburb: "Brunswick",
+      area: "Brunswick",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "pro",
+      active: true,
+    });
+
+    const adminBeer = service.upsertBarBeer(admin, "inventory-venue", {
+      id: null,
+      beerName: "stone and wood",
+      brewery: null,
+      style: null,
+      abv: null,
+      serveSize: "pint",
+      price: 14,
+      onTap: true,
+      inStock: true,
+      notes: null,
+    }).beer;
+    expect(adminBeer).toEqual(expect.objectContaining({
+      beerName: "Stone & Wood Pacific Ale",
+      normalizedBeerId: "stone_and_wood_pacific_ale",
+      brewery: "Stone & Wood",
+      style: "Pacific ale",
+    }));
+
+    const pending = pendingBarChangeFrom(service.upsertBarBeer(repository.getAccountById(manager.id)!, "inventory-venue", {
+      id: null,
+      beerName: "Very Local Hazy Pint",
+      brewery: null,
+      style: null,
+      abv: null,
+      serveSize: "pint",
+      price: 15,
+      onTap: true,
+      inStock: true,
+      notes: null,
+    }));
+    expect(pending.payload).toEqual(expect.objectContaining({
+      beerName: "Very Local Hazy Pint",
+      normalizedBeerId: "very_local_hazy_pint",
+    }));
   });
 
   it("requires a verified account before bar portal or claim access", () => {

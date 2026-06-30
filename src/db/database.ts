@@ -5,7 +5,8 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 
 import { env } from "../config/env.js";
-import { syncStaticBeerCatalog } from "./beer-catalog.repository.js";
+import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
+import { normalizeBeerSearchKey } from "../constants/beers.js";
 
 function resolveSchemaPath(): string | URL {
   const bundledSchemaPath = new URL("./schema.sql", import.meta.url);
@@ -90,7 +91,22 @@ const adminIngestionQueueColumns = [
   { name: "crawler_feedback_json", definition: "TEXT" },
 ] as const;
 
+const venueBeersColumns = [
+  { name: "normalized_beer_id", definition: "TEXT" },
+] as const;
+
 const PUBLIC_ACCOUNT_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const GENERIC_NON_BEER_KEYS = new Set([
+  "happy_hour",
+  "happy_hour_special",
+  "happy_hour_specials",
+  "venue_special",
+  "venue_specials",
+  "pint_path_special",
+  "pint_path_specials",
+  "special",
+  "specials",
+]);
 
 function ensureColumns(
   database: BetterSqlite3.Database,
@@ -144,6 +160,9 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_accounts_email_verified
       ON accounts (email_verified_at, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_venue_beers_normalized
+      ON venue_beers (normalized_beer_id, updated_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_account_discount_passes_user
       ON account_discount_passes (user_id, status, expires_at DESC);
@@ -336,11 +355,11 @@ function migrateLegacyVenuePartnerTables(database: BetterSqlite3.Database): void
   if (tableExists(database, "bar_beers")) {
     database.exec(`
       INSERT OR IGNORE INTO venue_beers (
-        id, venue_id, beer_name, brewery, style, abv, serve_size, price, currency,
+        id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size, price, currency,
         on_tap, in_stock, notes, created_at, updated_at
       )
       SELECT
-        id, bar_id, beer_name, brewery, style, abv, serve_size, price, currency,
+        id, bar_id, beer_name, NULL, brewery, style, abv, serve_size, price, currency,
         on_tap, in_stock, notes, created_at, updated_at
       FROM bar_beers;
     `);
@@ -442,6 +461,65 @@ function normalizeVenueTiers(database: BetterSqlite3.Database): void {
   `);
 }
 
+function shouldCatalogBeerName(value: string | null | undefined, isHappyHour = false): boolean {
+  const key = normalizeBeerSearchKey(value);
+  if (!key) {
+    return false;
+  }
+
+  return !(isHappyHour && GENERIC_NON_BEER_KEYS.has(key));
+}
+
+function backfillBeerNames(database: BetterSqlite3.Database): void {
+  const repository = new BeerCatalogRepository(database);
+  const now = new Date().toISOString();
+  const backfillTable = (input: {
+    source: string;
+    selectSql: string;
+    updateSql: string;
+  }) => {
+    const rows = database.prepare(input.selectSql).all() as Array<{
+      id: string;
+      beer_name: string;
+      is_happy_hour_price?: number | null;
+    }>;
+    const update = database.prepare(input.updateSql);
+
+    const backfill = database.transaction(() => {
+      for (const row of rows) {
+        if (!shouldCatalogBeerName(row.beer_name, Boolean(row.is_happy_hour_price))) {
+          continue;
+        }
+
+        const resolved = repository.resolveBeerName({
+          name: row.beer_name,
+          source: input.source,
+          now,
+        });
+        update.run(resolved.name, resolved.key, row.id);
+      }
+    });
+
+    backfill();
+  };
+
+  backfillTable({
+    source: "legacy_submission_backfill",
+    selectSql: "SELECT id, beer_name, is_happy_hour_price FROM submission_items WHERE trim(beer_name) != ''",
+    updateSql: "UPDATE submission_items SET beer_name = ?, normalized_beer_id = ? WHERE id = ?",
+  });
+  backfillTable({
+    source: "legacy_price_record_backfill",
+    selectSql: "SELECT id, beer_name, is_happy_hour_price FROM venue_price_records WHERE trim(beer_name) != ''",
+    updateSql: "UPDATE venue_price_records SET beer_name = ?, normalized_beer_id = ?, updated_at = updated_at WHERE id = ?",
+  });
+  backfillTable({
+    source: "legacy_venue_inventory_backfill",
+    selectSql: "SELECT id, beer_name, 0 AS is_happy_hour_price FROM venue_beers WHERE trim(beer_name) != ''",
+    updateSql: "UPDATE venue_beers SET beer_name = ?, normalized_beer_id = ?, updated_at = updated_at WHERE id = ?",
+  });
+}
+
 export function initializeDatabaseSchema(database: BetterSqlite3.Database): void {
   const schema = fs.readFileSync(resolveSchemaPath(), "utf8");
 
@@ -457,7 +535,9 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "feedback", feedbackColumns);
   ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
   ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
+  ensureColumns(database, "venue_beers", venueBeersColumns);
   syncStaticBeerCatalog(database);
+  backfillBeerNames(database);
   normalizeVenueTiers(database);
   backfillPublicAccountIds(database);
   backfillDisplayNameKeys(database);

@@ -6,7 +6,6 @@ import type { Request, RequestHandler } from "express";
 
 import { env } from "./config/env.js";
 import { PREMIUM_PRICING } from "./config/business-rules.js";
-import { VIEWER_TRACKED_BEERS } from "./constants/beers.js";
 import { AppError } from "./lib/errors.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
@@ -30,6 +29,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   const [
     { createDatabase },
     { AdminIngestionQueueRepository },
+    { BeerCatalogRepository },
     { BusinessRepository },
     { createAdminRouter },
     { AdminService },
@@ -38,6 +38,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
   ] = await Promise.all([
     import("./db/database.js"),
     import("./db/admin-ingestion-queue.repository.js"),
+    import("./db/beer-catalog.repository.js"),
     import("./db/business.repository.js"),
     import("./modules/admin/admin.routes.js"),
     import("./modules/admin/admin.service.js"),
@@ -47,6 +48,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
 
   const database = createDatabase();
   const adminIngestionQueueRepository = new AdminIngestionQueueRepository(database);
+  const beerCatalogRepository = new BeerCatalogRepository(database);
   const businessRepository = new BusinessRepository(database);
   const adminService = new AdminService(
     adminIngestionQueueRepository,
@@ -57,7 +59,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
     database,
   );
-  const businessService = new BusinessService(businessRepository, env);
+  const businessService = new BusinessService(businessRepository, env, beerCatalogRepository);
   businessService.logStartupSummary();
 
   console.info("Backend services initialized.");
@@ -379,37 +381,43 @@ export function createApp() {
     }
   });
 
-  app.get("/config.js", (_req, res) => {
-    const viewerConfig = {
-      // The public viewer uses server-gated API routes for venue and price data.
-      // Supabase anon config is exposed only for OAuth login; exact price access stays server-gated.
-      googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
-      googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
-      publicBaseUrl: env.PUBLIC_BASE_URL,
-      supabaseUrl: env.SUPABASE_URL ?? "",
-      supabaseAnonKey: env.SUPABASE_ANON_KEY ?? "",
-      supabaseOauthProviders: env.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
-      trackedBeers: VIEWER_TRACKED_BEERS,
-      business: {
-        freePriceRevealsPerDay: env.FREE_PRICE_REVEALS_PER_DAY,
+  app.get("/config.js", async (_req, res, next) => {
+    try {
+      const { businessService } = await getLazyRouters();
+      const publicConfig = businessService.getPublicConfig();
+      const viewerConfig = {
+        // The public viewer uses server-gated API routes for venue and price data.
+        // Supabase anon config is exposed only for OAuth login; exact price access stays server-gated.
+        googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
+        googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
         publicBaseUrl: env.PUBLIC_BASE_URL,
-        contributorUnlockPoints: env.CONTRIBUTOR_UNLOCK_POINTS,
-        contributorUnlockDays: env.CONTRIBUTOR_UNLOCK_DAYS,
-        demoBillingMode: env.DEMO_BILLING_MODE,
-        fieldTestMode: env.FIELD_TEST_MODE,
-        pricing: {
-          monthly: PREMIUM_PRICING.monthlyLabel,
-          yearly: PREMIUM_PRICING.yearlyLabel,
+        supabaseUrl: env.SUPABASE_URL ?? "",
+        supabaseAnonKey: env.SUPABASE_ANON_KEY ?? "",
+        supabaseOauthProviders: env.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
+        trackedBeers: publicConfig.trackedBeers,
+        business: {
+          freePriceRevealsPerDay: env.FREE_PRICE_REVEALS_PER_DAY,
+          publicBaseUrl: env.PUBLIC_BASE_URL,
+          contributorUnlockPoints: env.CONTRIBUTOR_UNLOCK_POINTS,
+          contributorUnlockDays: env.CONTRIBUTOR_UNLOCK_DAYS,
+          demoBillingMode: env.DEMO_BILLING_MODE,
+          fieldTestMode: env.FIELD_TEST_MODE,
+          pricing: {
+            monthly: PREMIUM_PRICING.monthlyLabel,
+            yearly: PREMIUM_PRICING.yearlyLabel,
+          },
         },
-      },
-    };
+      };
 
-    res
-      .type("application/javascript")
-      .setHeader("Cache-Control", "no-store")
-      .send(
-      `window.MELB_BEER_BOT_VIEWER_CONFIG = ${JSON.stringify(viewerConfig, null, 2)};\n`,
-    );
+      res
+        .type("application/javascript")
+        .setHeader("Cache-Control", "no-store")
+        .send(
+          `window.MELB_BEER_BOT_VIEWER_CONFIG = ${JSON.stringify(viewerConfig, null, 2)};\n`,
+        );
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.use("/api/business", createLazyMount((routers) => routers.businessRouter));

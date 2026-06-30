@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import BetterSqlite3 from "better-sqlite3";
 
+import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
+import { initializeDatabaseSchema } from "../src/db/database.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
 
 describe("admin Google Places venue lookup", () => {
@@ -179,5 +182,70 @@ describe("admin Google Places venue lookup", () => {
       statusCode: 502,
       message: "Menu OCR provider failed. Try a clearer or smaller photo, or enter the beer rows manually.",
     });
+  });
+
+  it("uses the live beer catalogue when prompting menu OCR", async () => {
+    const database = new BetterSqlite3(":memory:");
+
+    try {
+      initializeDatabaseSchema(database);
+      new BeerCatalogRepository(database).resolveBeerName({
+        name: "Very Local Hazy Pint",
+        source: "test_dynamic_catalog",
+        now: "2026-06-30T00:00:00.000Z",
+      });
+
+      const service = new AdminService(
+        undefined,
+        undefined,
+        undefined,
+        "venue_menu_captures",
+        "test-openai-key",
+        undefined,
+        database,
+      );
+      let prompt = "";
+      const create = vi.fn(async (request: {
+        input: Array<{ content: Array<{ type: string; text?: string }> }>;
+      }) => {
+        prompt = request.input[0]?.content.find((part) => part.type === "input_text")?.text ?? "";
+        return {
+          output_text: JSON.stringify({
+            venue_name_guess: null,
+            captured_notes: null,
+            overall_confidence: 0.9,
+            beers: [{
+              name: "Very Local Hazy Pint",
+              price_numeric: 15,
+              price_text: "$15",
+              availability_status: "on_tap",
+              available_on_tap: true,
+              available_package_only: false,
+              unavailable_reason: null,
+              notes: null,
+              confidence: 0.92,
+            }],
+          }),
+        };
+      });
+      (service as unknown as {
+        openai: { responses: { create: typeof create } };
+      }).openai = {
+        responses: { create },
+      };
+
+      const result = await service.ocrMenuPhoto({
+        venueNameHint: "Test Venue",
+        imageDataUrl: "data:image/jpeg;base64,AAAA",
+      });
+
+      expect(prompt).toContain("Very Local Hazy Pint");
+      expect(result.beers[0]).toEqual(expect.objectContaining({
+        name: "Very Local Hazy Pint",
+        needsReview: true,
+      }));
+    } finally {
+      database.close();
+    }
   });
 });

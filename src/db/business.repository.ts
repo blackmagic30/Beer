@@ -468,6 +468,7 @@ export interface BarBeer {
   id: string;
   barId: string;
   beerName: string;
+  normalizedBeerId: string | null;
   brewery: string | null;
   style: string | null;
   abv: number | null;
@@ -1183,6 +1184,7 @@ interface BarBeerRow {
   id: string;
   venue_id: string;
   beer_name: string;
+  normalized_beer_id: string | null;
   brewery: string | null;
   style: string | null;
   abv: number | null;
@@ -2049,6 +2051,7 @@ function toBarBeer(row: BarBeerRow): BarBeer {
     id: row.id,
     barId: row.venue_id,
     beerName: row.beer_name,
+    normalizedBeerId: row.normalized_beer_id,
     brewery: row.brewery,
     style: row.style,
     abv: row.abv,
@@ -4512,11 +4515,12 @@ export class BusinessRepository {
     );
     const insertVenueBeer = this.database.prepare(
       `INSERT INTO venue_beers (
-        id, venue_id, beer_name, brewery, style, abv, serve_size, price, currency,
+        id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size, price, currency,
         on_tap, in_stock, notes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         beer_name = excluded.beer_name,
+        normalized_beer_id = excluded.normalized_beer_id,
         serve_size = excluded.serve_size,
         price = excluded.price,
         on_tap = excluded.on_tap,
@@ -4551,6 +4555,7 @@ export class BusinessRepository {
           `${current.submission.id}:venue-beer:${item.id}`,
           current.submission.venueId,
           item.beerName,
+          item.normalizedBeerId,
           null,
           null,
           null,
@@ -5126,7 +5131,7 @@ export class BusinessRepository {
         venueAddress: row.profile_address,
         suburb: row.profile_suburb,
         beerName: row.beer_name,
-        normalizedBeerId: null,
+        normalizedBeerId: row.normalized_beer_id,
         servingSize: row.serve_size || "other",
         price: row.price,
         isHappyHourPrice: false,
@@ -5906,6 +5911,7 @@ export class BusinessRepository {
     id: string;
     barId: string;
     beerName: string;
+    normalizedBeerId?: string | null;
     brewery: string | null;
     style: string | null;
     abv: number | null;
@@ -5920,10 +5926,11 @@ export class BusinessRepository {
     this.database
       .prepare(
         `INSERT INTO venue_beers (
-          id, venue_id, beer_name, brewery, style, abv, serve_size, price, currency, on_tap, in_stock, notes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size, price, currency, on_tap, in_stock, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           beer_name = excluded.beer_name,
+          normalized_beer_id = excluded.normalized_beer_id,
           brewery = excluded.brewery,
           style = excluded.style,
           abv = excluded.abv,
@@ -5940,6 +5947,7 @@ export class BusinessRepository {
         input.id,
         input.barId,
         input.beerName,
+        input.normalizedBeerId ?? null,
         input.brewery,
         input.style,
         input.abv,

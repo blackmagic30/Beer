@@ -34,6 +34,7 @@ import {
   type SourceEvidenceObject,
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
+import { BeerCatalogRepository, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
 import { SUPPORTED_BEERS, VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, findTrackedBeerByName, normalizeBeerSearchKey } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
@@ -501,6 +502,27 @@ function normalizeBeerId(value: string): string {
 
 function normalizeTrackedBeerId(value: string): string {
   return findTrackedBeerByName(value)?.key ?? normalizeBeerId(value);
+}
+
+const GENERIC_NON_BEER_KEYS = new Set([
+  "happy_hour",
+  "happy_hour_special",
+  "happy_hour_specials",
+  "venue_special",
+  "venue_specials",
+  "pint_path_special",
+  "pint_path_specials",
+  "special",
+  "specials",
+]);
+
+function shouldCatalogBeerName(value: string | null | undefined, isHappyHour = false): boolean {
+  const normalized = normalizeBeerSearchKey(value);
+  if (!normalized) {
+    return false;
+  }
+
+  return !(isHappyHour && GENERIC_NON_BEER_KEYS.has(normalized));
 }
 
 function hashToken(token: string): string {
@@ -1892,6 +1914,7 @@ export class BusinessService {
       | "GOOGLE_MAPS_API_KEY"
       | "GOOGLE_PLACES_API_KEY"
     >,
+    private readonly beerCatalogRepository?: BeerCatalogRepository,
   ) {
     const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
     if (config.SUPABASE_URL && supabaseServerKey) {
@@ -1902,6 +1925,95 @@ export class BusinessService {
         },
       });
     }
+  }
+
+  private getTrackedBeerCatalogForViewer() {
+    return this.beerCatalogRepository?.listForViewer() ?? VIEWER_TRACKED_BEERS;
+  }
+
+  private resolveSystemBeer(input: {
+    name: string;
+    source: string;
+    now: string;
+    createIfMissing?: boolean;
+  }): ResolvedBeerCatalogItem {
+    if (this.beerCatalogRepository) {
+      return this.beerCatalogRepository.resolveBeerName(input);
+    }
+
+    const beerName = canonicalizeTrackedBeerName(input.name);
+    const trackedBeer = findTrackedBeerByName(beerName);
+    return {
+      key: trackedBeer?.key ?? normalizeTrackedBeerId(beerName),
+      name: trackedBeer?.name ?? beerName,
+      brewery: trackedBeer?.brewery ?? null,
+      style: trackedBeer?.style ?? null,
+      abv: trackedBeer?.abv ?? null,
+      status: trackedBeer ? "active" : "pending_review",
+      source: trackedBeer ? "system_catalog" : input.source,
+      created: false,
+      matchedExisting: Boolean(trackedBeer),
+    };
+  }
+
+  private standardizeBeerReference(input: {
+    name: string;
+    source: string;
+    now: string;
+    isHappyHour?: boolean;
+    createIfMissing?: boolean;
+  }): {
+    key: string | null;
+    name: string;
+    brewery: string | null;
+    style: string | null;
+    abv: number | null;
+  } {
+    const fallbackName = canonicalizeTrackedBeerName(input.name);
+    if (!shouldCatalogBeerName(fallbackName, input.isHappyHour === true)) {
+      return {
+        key: null,
+        name: fallbackName,
+        brewery: null,
+        style: null,
+        abv: null,
+      };
+    }
+
+    const resolveInput = {
+      name: fallbackName,
+      source: input.source,
+      now: input.now,
+    } as { name: string; source: string; now: string; createIfMissing?: boolean };
+    if (input.createIfMissing !== undefined) {
+      resolveInput.createIfMissing = input.createIfMissing;
+    }
+    const resolved = this.resolveSystemBeer(resolveInput);
+
+    return {
+      key: resolved.key,
+      name: resolved.name,
+      brewery: resolved.brewery,
+      style: resolved.style,
+      abv: resolved.abv,
+    };
+  }
+
+  private standardizeBarBeerInput(input: BarBeerInput, source: string, now: string): BarBeerInput & { normalizedBeerId: string | null } {
+    const resolved = this.standardizeBeerReference({
+      name: input.beerName,
+      source,
+      now,
+    });
+
+    return {
+      ...input,
+      beerName: resolved.name,
+      normalizedBeerId: resolved.key,
+      brewery: input.brewery || resolved.brewery,
+      style: input.style || resolved.style,
+      abv: input.abv ?? resolved.abv,
+    };
   }
 
   private getRequestHashes(context?: SessionRequestContext | undefined) {
@@ -2015,7 +2127,7 @@ export class BusinessService {
         partnerVenueCredit: "disabled",
         copy: "Partner venue credit is coming soon and is not active in this demo.",
       },
-      trackedBeers: VIEWER_TRACKED_BEERS,
+      trackedBeers: this.getTrackedBeerCatalogForViewer(),
     };
   }
 
@@ -2340,7 +2452,9 @@ export class BusinessService {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
       venueId: input.venueId,
-      beerId: input.changeType === "beer" ? normalizeTrackedBeerId(String(input.payload.beerName ?? input.targetId ?? "")) : null,
+      beerId: input.changeType === "beer"
+        ? stringOrNull(input.payload.normalizedBeerId) ?? normalizeTrackedBeerId(String(input.payload.beerName ?? input.targetId ?? ""))
+        : null,
       suburb: input.suburb ?? null,
       metadata: {
         section: input.changeType,
@@ -2464,6 +2578,18 @@ export class BusinessService {
     if (change.changeType === "beer") {
       const payload = change.payload;
       const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
+      const beerInput = this.standardizeBarBeerInput({
+        id: targetId,
+        beerName: stringOrNull(payload.beerName) ?? "Unnamed beer",
+        brewery: stringOrNull(payload.brewery),
+        style: stringOrNull(payload.style),
+        abv: numberOrNull(payload.abv),
+        serveSize: stringOrNull(payload.serveSize) as ServingSize | null,
+        price: numberOrNull(payload.price),
+        onTap: booleanFromUnknown(payload.onTap, false),
+        inStock: booleanFromUnknown(payload.inStock, true),
+        notes: stringOrNull(payload.notes),
+      }, "approved_venue_inventory_change", now);
       this.ensureBarProfile({
         barId: change.barId,
         name: this.repository.getBarProfile(change.barId)?.name ?? change.barId,
@@ -2472,16 +2598,17 @@ export class BusinessService {
       this.repository.upsertBarBeer({
         id: targetId,
         barId: change.barId,
-        beerName: stringOrNull(payload.beerName) ?? "Unnamed beer",
-        brewery: stringOrNull(payload.brewery),
-        style: stringOrNull(payload.style),
-        abv: numberOrNull(payload.abv),
-        serveSize: stringOrNull(payload.serveSize) as ServingSize | null,
-        price: numberOrNull(payload.price),
+        beerName: beerInput.beerName,
+        normalizedBeerId: beerInput.normalizedBeerId,
+        brewery: beerInput.brewery,
+        style: beerInput.style,
+        abv: beerInput.abv,
+        serveSize: beerInput.serveSize,
+        price: beerInput.price,
         currency: "AUD",
-        onTap: booleanFromUnknown(payload.onTap, false),
-        inStock: booleanFromUnknown(payload.inStock, true),
-        notes: stringOrNull(payload.notes),
+        onTap: beerInput.onTap,
+        inStock: beerInput.inStock,
+        notes: beerInput.notes,
         now,
       });
       return;
@@ -4527,6 +4654,19 @@ export class BusinessService {
           pointsEligibleByLocation: false,
           pointsEligibilityReason: "venue_manager_not_reward_eligible",
         };
+    const standardizedItems = input.items.map((item) => {
+      const beer = this.standardizeBeerReference({
+        name: item.beerName,
+        source: item.isHappyHourPrice ? "happy_hour_submission" : "user_submission",
+        now,
+        isHappyHour: item.isHappyHourPrice,
+      });
+      return {
+        ...item,
+        beerName: beer.name,
+        normalizedBeerId: beer.key,
+      };
+    });
     const submission = this.repository.createSubmission({
       id: crypto.randomUUID(),
       clientSubmissionId: input.clientSubmissionId,
@@ -4541,20 +4681,17 @@ export class BusinessService {
       now,
       ...locationEligibility,
       pendingVenue,
-      items: input.items.map((item) => {
-        const beerName = canonicalizeTrackedBeerName(item.beerName);
-        return {
-          id: crypto.randomUUID(),
-          beerName,
-          normalizedBeerId: normalizeTrackedBeerId(beerName),
-          servingSize: item.servingSize,
-          price: item.price,
-          isHappyHourPrice: item.isHappyHourPrice,
-          happyHourDetails: item.happyHourDetails,
-          isOnTap: item.isOnTap,
-          confidence: sourcePhotoUrl ? 0.72 : 0.52,
-        };
-      }),
+      items: standardizedItems.map((item) => ({
+        id: crypto.randomUUID(),
+        beerName: item.beerName,
+        normalizedBeerId: item.normalizedBeerId,
+        servingSize: item.servingSize,
+        price: item.price,
+        isHappyHourPrice: item.isHappyHourPrice,
+        happyHourDetails: item.happyHourDetails,
+        isOnTap: item.isOnTap,
+        confidence: sourcePhotoUrl ? 0.72 : 0.52,
+      })),
     });
     const publishedVenueImmediately = this.shouldPublishSubmittedVenueImmediately(pendingVenue);
 
@@ -4568,12 +4705,12 @@ export class BusinessService {
       });
     }
 
-    const firstItemBeerName = input.items[0] ? canonicalizeTrackedBeerName(input.items[0].beerName) : null;
+    const firstItem = standardizedItems[0] ?? null;
     this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "submission_completed",
       venueId: submission.venueId,
-      beerId: firstItemBeerName ? normalizeTrackedBeerId(firstItemBeerName) : null,
+      beerId: firstItem?.normalizedBeerId ?? (firstItem?.beerName ? normalizeTrackedBeerId(firstItem.beerName) : null),
       suburb: submission.suburb,
       metadata: {
         submissionId: submission.id,
@@ -7354,15 +7491,22 @@ export class BusinessService {
       throw new AppError("Beer row belongs to another venue.", 403);
     }
 
+    const now = nowIso();
+    const beerInput = this.standardizeBarBeerInput(
+      input,
+      this.isAdmin(account) ? "venue_inventory_admin" : "venue_inventory_pending",
+      now,
+    );
+
     if (!this.isAdmin(account)) {
-      const targetId = input.id ?? crypto.randomUUID();
+      const targetId = beerInput.id ?? crypto.randomUUID();
       return this.createPendingBarChange({
         account,
         venueId,
         changeType: "beer",
         action: "upsert",
         targetId,
-        payload: { ...input, id: targetId },
+        payload: { ...beerInput, id: targetId },
         suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
       });
     }
@@ -7373,19 +7517,20 @@ export class BusinessService {
       suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
     });
     const beer = this.repository.upsertBarBeer({
-      id: input.id ?? crypto.randomUUID(),
+      id: beerInput.id ?? crypto.randomUUID(),
       barId: venueId,
-      beerName: input.beerName,
-      brewery: input.brewery,
-      style: input.style,
-      abv: input.abv,
-      serveSize: input.serveSize,
-      price: input.price,
+      beerName: beerInput.beerName,
+      normalizedBeerId: beerInput.normalizedBeerId,
+      brewery: beerInput.brewery,
+      style: beerInput.style,
+      abv: beerInput.abv,
+      serveSize: beerInput.serveSize,
+      price: beerInput.price,
       currency: "AUD",
-      onTap: input.onTap,
-      inStock: input.inStock,
-      notes: input.notes,
-      now: nowIso(),
+      onTap: beerInput.onTap,
+      inStock: beerInput.inStock,
+      notes: beerInput.notes,
+      now,
     });
 
     this.trackEvent(account, {

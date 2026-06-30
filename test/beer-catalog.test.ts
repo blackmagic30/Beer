@@ -120,6 +120,11 @@ describe("Pint Path beer catalogue", () => {
         created: false,
         matchedExisting: true,
       }));
+      expect(repository.listForViewer()).toContainEqual(expect.objectContaining({
+        key: "very_local_hazy_pint",
+        name: "Very Local Hazy Pint",
+        aliases: expect.arrayContaining(["Very Local Hazy Pint"]),
+      }));
     } finally {
       database.close();
     }
