@@ -5,6 +5,7 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 
 import { env } from "../config/env.js";
+import { syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 
 function resolveSchemaPath(): string | URL {
   const bundledSchemaPath = new URL("./schema.sql", import.meta.url);
@@ -456,6 +457,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "feedback", feedbackColumns);
   ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
   ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
+  syncStaticBeerCatalog(database);
   normalizeVenueTiers(database);
   backfillPublicAccountIds(database);
   backfillDisplayNameKeys(database);

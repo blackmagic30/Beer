@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 
 import Database from "better-sqlite3";
 
+import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
 import type {
   AdminIngestionBeerRecord,
   AdminIngestionCrawlerFeedback,
@@ -147,13 +148,31 @@ function mapAvailability(row: ExtractedBeerRow): Pick<
   return { availableOnTap: null, availablePackageOnly: false, unavailableReason: null };
 }
 
-function mapBeerRow(row: ExtractedBeerRow): AdminIngestionBeerRecord {
+function mapBeerRow(input: {
+  row: ExtractedBeerRow;
+  beerCatalogRepository: BeerCatalogRepository | null;
+  now: string;
+}): AdminIngestionBeerRecord {
+  const row = input.row;
   const priceText = cleanText(row.priceText, 40);
   const priceNumeric = Number.isFinite(row.priceNumeric ?? Number.NaN) ? Number(row.priceNumeric) : null;
   const availability = mapAvailability(row);
+  const rawName = cleanText(row.name, 120) ?? "Unknown beer";
+  const resolvedBeer = input.beerCatalogRepository?.resolveBeerName({
+    name: rawName,
+    source: "menu_crawler_import",
+    now: input.now,
+    createIfMissing: true,
+  });
+  const systemNote =
+    resolvedBeer?.created
+      ? `Added to system beer catalog as pending review: ${resolvedBeer.name}.`
+      : resolvedBeer?.status === "pending_review"
+        ? `System beer catalog review needed: ${resolvedBeer.name}.`
+        : null;
 
   return {
-    name: cleanText(row.name, 120) ?? "Unknown beer",
+    name: resolvedBeer?.name ?? rawName,
     servingSize: "pint",
     priceNumeric,
     priceText: priceText ?? (priceNumeric == null ? null : `$${priceNumeric.toFixed(2)}`),
@@ -161,7 +180,7 @@ function mapBeerRow(row: ExtractedBeerRow): AdminIngestionBeerRecord {
     ...availability,
     confidence: clampConfidence(row.confidence),
     needsReview: true,
-    notes: cleanText(row.notes, 360),
+    notes: [cleanText(row.notes, 260), systemNote].filter(Boolean).join(" ") || null,
   };
 }
 
@@ -231,6 +250,15 @@ function ensureQueueTable(db: Database.Database): void {
     .get();
   if (!table) {
     throw new Error("admin_ingestion_queue table was not found. Start the app once so the database schema is initialized.");
+  }
+}
+
+function ensureBeerCatalogTables(db: Database.Database): void {
+  const table = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'beer_catalog_items'")
+    .get();
+  if (!table) {
+    throw new Error("beer_catalog_items table was not found. Start the app once so the database schema is initialized.");
   }
 }
 
@@ -335,7 +363,10 @@ const candidates = rawReport.candidates.filter((candidate) => sourceRows(candida
 const db = new Database(databasePath);
 
 ensureQueueTable(db);
+ensureBeerCatalogTables(db);
 const crawlerFeedbackScores = loadCrawlerFeedbackScores(db);
+const importStartedAt = new Date().toISOString();
+const beerCatalogRepository = dryRun ? null : new BeerCatalogRepository(db);
 
 const duplicateQuery = db.prepare(
   `SELECT id
@@ -389,8 +420,6 @@ let skippedNoUsableRows = 0;
 let skippedByLimit = 0;
 let queuedRows = 0;
 const queuedVenues = new Set<string>();
-
-const importStartedAt = new Date().toISOString();
 const queueCandidates = candidates
   .filter((candidate) => {
     if (includeExternal || candidate.sourceOrigin === "official_host") {
@@ -403,7 +432,7 @@ const queueCandidates = candidates
     const rows = dedupeRows(
       sourceRows(candidate)
         .filter((row) => isUsableRow(row, includePackageOnly, maxPrice))
-        .map(mapBeerRow),
+        .map((row) => mapBeerRow({ row, beerCatalogRepository, now: importStartedAt })),
     );
     return { candidate, rows };
   })

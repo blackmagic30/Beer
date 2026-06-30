@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import BetterSqlite3 from "better-sqlite3";
 
+import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
+import { initializeDatabaseSchema } from "../src/db/database.js";
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, findTrackedBeerByName, normalizeBeerSearchKey } from "../src/constants/beers.js";
 
 describe("Pint Path beer catalogue", () => {
@@ -63,5 +66,62 @@ describe("Pint Path beer catalogue", () => {
     }
 
     expect(collisions).toEqual([]);
+  });
+
+  it("seeds the system beer registry and resolves static aliases", () => {
+    const database = new BetterSqlite3(":memory:");
+    try {
+      initializeDatabaseSchema(database);
+      const repository = new BeerCatalogRepository(database);
+
+      expect(repository.resolveBeerName({
+        name: "Carlton Draft",
+        source: "test",
+        now: "2026-06-30T00:00:00.000Z",
+      })).toEqual(expect.objectContaining({
+        key: "carlton_draft",
+        name: "Carlton Draught",
+        status: "active",
+        created: false,
+        matchedExisting: true,
+      }));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("adds unknown crawler beers as pending system beer candidates", () => {
+    const database = new BetterSqlite3(":memory:");
+    try {
+      initializeDatabaseSchema(database);
+      const repository = new BeerCatalogRepository(database);
+
+      const created = repository.resolveBeerName({
+        name: "Very Local Hazy Pint",
+        source: "menu_crawler_import",
+        now: "2026-06-30T00:00:00.000Z",
+      });
+      const matched = repository.resolveBeerName({
+        name: "very local hazy pint",
+        source: "source_ingestion_review",
+        now: "2026-06-30T00:10:00.000Z",
+      });
+
+      expect(created).toEqual(expect.objectContaining({
+        key: "very_local_hazy_pint",
+        name: "Very Local Hazy Pint",
+        status: "pending_review",
+        created: true,
+      }));
+      expect(matched).toEqual(expect.objectContaining({
+        key: "very_local_hazy_pint",
+        name: "Very Local Hazy Pint",
+        status: "pending_review",
+        created: false,
+        matchedExisting: true,
+      }));
+    } finally {
+      database.close();
+    }
   });
 });

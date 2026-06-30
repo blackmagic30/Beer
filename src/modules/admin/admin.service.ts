@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type BetterSqlite3 from "better-sqlite3";
 
 import type { AdminIngestionQueueRepository } from "../../db/admin-ingestion-queue.repository.js";
+import { BeerCatalogRepository, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
 import type {
   AdminIngestionBeerRecord,
   AdminIngestionCrawlerFeedback,
@@ -400,6 +401,7 @@ function hasVenueAdminPlaceSignal(place: GooglePlaceCandidate): boolean {
 export class AdminService {
   private readonly supabase?: SupabaseClient;
   private readonly openai?: OpenAI;
+  private readonly beerCatalogRepository?: BeerCatalogRepository;
 
   constructor(
     private readonly ingestionQueueRepository: AdminIngestionQueueRepository | undefined,
@@ -423,6 +425,10 @@ export class AdminService {
       this.openai = new OpenAI({
         apiKey: openaiApiKey,
       });
+    }
+
+    if (priceRecordDatabase) {
+      this.beerCatalogRepository = new BeerCatalogRepository(priceRecordDatabase);
     }
   }
 
@@ -757,6 +763,82 @@ export class AdminService {
     return row ? (row as ExistingVenueMenuCaptureSnapshot) : null;
   }
 
+  private resolveSystemBeer(input: {
+    name: string;
+    source: string;
+    now: string;
+    createIfMissing?: boolean;
+  }): ResolvedBeerCatalogItem {
+    if (this.beerCatalogRepository) {
+      return this.beerCatalogRepository.resolveBeerName(input);
+    }
+
+    const beerName = canonicalizeTrackedBeerName(input.name);
+    const trackedBeer = findTrackedBeerByName(beerName);
+    return {
+      key: trackedBeer?.key ?? normalizeBeerSearchKey(beerName),
+      name: trackedBeer?.name ?? beerName,
+      brewery: trackedBeer?.brewery ?? null,
+      style: trackedBeer?.style ?? null,
+      abv: trackedBeer?.abv ?? null,
+      status: trackedBeer ? "active" : "pending_review",
+      source: trackedBeer ? "system_catalog" : input.source,
+      created: false,
+      matchedExisting: Boolean(trackedBeer),
+    };
+  }
+
+  private standardizeAdminBeerInputs(
+    beers: AdminBeerInput[],
+    source: string,
+    now: string,
+    createIfMissing = true,
+  ): AdminBeerInput[] {
+    return beers.map((beer) => {
+      const resolved = this.resolveSystemBeer({
+        name: beer.name,
+        source,
+        now,
+        createIfMissing,
+      });
+
+      return {
+        ...beer,
+        name: resolved.name,
+        needsReview: beer.needsReview || resolved.status === "pending_review" || resolved.created,
+      };
+    });
+  }
+
+  private standardizeIngestionBeerRecords(
+    beers: AdminIngestionBeerRecord[],
+    source: string,
+    now: string,
+    createIfMissing = true,
+  ): AdminIngestionBeerRecord[] {
+    return beers.map((beer) => {
+      const resolved = this.resolveSystemBeer({
+        name: beer.name,
+        source,
+        now,
+        createIfMissing,
+      });
+      const systemNote =
+        resolved.created
+          ? `Added to system beer catalog as pending review: ${resolved.name}.`
+          : resolved.status === "pending_review" && !resolved.matchedExisting
+            ? `System beer catalog review needed: ${resolved.name}.`
+            : null;
+
+      return {
+        ...beer,
+        name: resolved.name,
+        needsReview: beer.needsReview || resolved.status === "pending_review" || resolved.created,
+        notes: [beer.notes, systemNote].filter(Boolean).join(" ") || null,
+      };
+    });
+  }
+
   private async persistManualCapture(input: AdminManualCaptureInput): Promise<{
     venue: VenueRow;
     savedAt: string;
@@ -766,11 +848,12 @@ export class AdminService {
     const venue = await this.getVenueById(input.venueId);
     const latest = await this.getLatestVenueMenuCapture(input.venueId);
     const savedAt = new Date().toISOString();
+    const beers = this.standardizeAdminBeerInputs(input.beers, input.source, savedAt);
 
     const row = buildManualVenueCaptureRow({
       venue,
       latestCapture: latest,
-      beers: input.beers,
+      beers,
       source: input.source,
       note: input.note,
       savedAt,
@@ -792,13 +875,13 @@ export class AdminService {
       venueId: venue.id,
       venueName: venue.name,
       source: input.source,
-      beerCount: input.beers.length,
+      beerCount: beers.length,
     });
 
     return {
       venue,
       savedAt,
-      beerCount: input.beers.length,
+      beerCount: beers.length,
     };
   }
 
@@ -844,8 +927,11 @@ export class AdminService {
           return;
         }
 
-        const beerName = canonicalizeTrackedBeerName(beer.name);
-        const trackedBeer = findTrackedBeerByName(beerName);
+        const resolvedBeer = this.resolveSystemBeer({
+          name: beer.name,
+          source: "source_ingestion_price_record",
+          now,
+        });
         const isOnTap = beer.availableOnTap === true
           ? "yes"
           : beer.availableOnTap === false || beer.availabilityStatus === "unavailable"
@@ -857,8 +943,8 @@ export class AdminService {
           venueId: input.venue.id,
           venueName: input.venue.name,
           suburb: input.venue.suburb,
-          beerName,
-          normalizedBeerId: trackedBeer?.key ?? normalizeBeerSearchKey(beerName),
+          beerName: resolvedBeer.name,
+          normalizedBeerId: resolvedBeer.key,
           servingSize: beer.servingSize,
           price: beer.priceNumeric,
           isOnTap,
@@ -989,7 +1075,7 @@ export class AdminService {
     }
 
     const parsed = normalizeOcrResponse(parsedPayload);
-    const beers = parsed.beers.map((beer) => {
+    const rawBeers = parsed.beers.map((beer) => {
       const normalized = buildManualBeerEntry({
         name: beer.name,
         servingSize: "pint",
@@ -1020,6 +1106,12 @@ export class AdminService {
         notes: beer.notes,
       } satisfies AdminIngestionBeerRecord;
     });
+    const beers = this.standardizeIngestionBeerRecords(
+      rawBeers,
+      "menu_photo_ocr_preview",
+      new Date().toISOString(),
+      false,
+    );
 
     return {
       venueNameGuess: parsed.venue_name_guess,
@@ -1131,6 +1223,11 @@ export class AdminService {
       venueNameHint: venue.name,
       imageDataUrl,
     });
+    const extractedBeers = this.standardizeIngestionBeerRecords(
+      extracted.beers,
+      "source_ingestion_crawler",
+      new Date().toISOString(),
+    );
 
     const queueItem = repository.create({
       venueId: venue.id,
@@ -1143,7 +1240,7 @@ export class AdminService {
       venueNameGuess: extracted.venueNameGuess,
       capturedNotes: extracted.capturedNotes,
       overallConfidence: extracted.overallConfidence,
-      extractedBeers: extracted.beers,
+      extractedBeers,
       errorMessage: null,
     });
 
@@ -1186,6 +1283,11 @@ export class AdminService {
       throw new AppError("This source ingestion item is no longer pending review.", 409);
     }
 
+    const reviewedBeers = this.standardizeAdminBeerInputs(
+      input.beers,
+      "source_ingestion_review",
+      new Date().toISOString(),
+    );
     const noteParts = [
       queueItem.note,
       queueItem.capturedNotes,
@@ -1196,25 +1298,25 @@ export class AdminService {
       venueId: queueItem.venueId,
       source: "source_ingestion",
       note: noteParts.length > 0 ? noteParts.join("\n") : null,
-      beers: input.beers,
+      beers: reviewedBeers,
     });
     const priceRecordCount = this.publishIngestionPriceRecords({
       ingestionId,
       venue: result.venue,
       savedAt: result.savedAt,
-      beers: input.beers,
+      beers: reviewedBeers,
     });
     const crawlerFeedback = buildCrawlerFeedback({
       outcome: "published",
       extractedBeers: queueItem.extractedBeers,
-      reviewBeers: input.beers,
+      reviewBeers: reviewedBeers,
       note: input.note,
       generatedAt: result.savedAt,
     });
 
     repository.markPublished(
       ingestionId,
-      input.beers.map((beer) => ({
+      reviewedBeers.map((beer) => ({
         ...beer,
         confidence: 1,
         notes: null,

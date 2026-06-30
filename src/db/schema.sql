@@ -29,6 +29,37 @@ CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_status_created
 CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_venue_status
   ON admin_ingestion_queue (venue_id, status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS beer_catalog_items (
+  key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  brewery TEXT,
+  style TEXT,
+  abv REAL,
+  status TEXT NOT NULL DEFAULT 'active',
+  source TEXT NOT NULL DEFAULT 'system_catalog',
+  review_note TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_beer_catalog_items_status
+  ON beer_catalog_items (status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_beer_catalog_items_name
+  ON beer_catalog_items (name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS beer_catalog_aliases (
+  alias_key TEXT PRIMARY KEY,
+  beer_key TEXT NOT NULL,
+  alias TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'system_catalog',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (beer_key) REFERENCES beer_catalog_items(key) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_beer_catalog_aliases_beer
+  ON beer_catalog_aliases (beer_key);
+
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   public_account_id TEXT UNIQUE,
