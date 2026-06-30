@@ -6,9 +6,9 @@ struct AuthView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var displayName = ""
-    @State private var ageConfirmed = true
-    @State private var termsAccepted = true
-    @State private var privacyAccepted = true
+    @State private var ageConfirmed = false
+    @State private var termsAccepted = false
+    @State private var privacyAccepted = false
 
     enum AuthMode: String, CaseIterable, Identifiable {
         case login = "Sign in"
@@ -22,7 +22,8 @@ struct AuthView: View {
             SectionHeader(
                 eyebrow: "BeerMap account",
                 title: mode == .login ? "Welcome back" : "Create your contributor account",
-                subtitle: "Use the same account, access rules, and venue assignments as the website."
+                subtitle: "Use the same account, access rules, and venue assignments as the website.",
+                systemImage: mode == .login ? "person.crop.circle.fill" : "person.badge.plus.fill"
             )
 
             Picker("Mode", selection: $mode) {
@@ -33,28 +34,43 @@ struct AuthView: View {
             .pickerStyle(.segmented)
 
             VStack(spacing: 12) {
-                TextField("Email", text: $email)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.emailAddress)
-                    .readableForm()
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Email address")
+                FormFieldShell(label: "Email address", systemImage: "envelope.fill") {
+                    TextField("Email", text: $email)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
+                        .readableForm()
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Email address")
+                }
 
-                SecureField("Password", text: $password)
-                    .textContentType(mode == .login ? .password : .newPassword)
-                    .readableForm()
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Password")
+                FormFieldShell(label: "Password", systemImage: "lock.fill") {
+                    SecureField("Password", text: $password)
+                        .textContentType(mode == .login ? .password : .newPassword)
+                        .readableForm()
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Password")
+                }
 
                 if mode == .signup {
-                    TextField("Display name, optional", text: $displayName)
-                        .textContentType(.nickname)
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("Display name")
+                    FormFieldShell(label: "Profile", systemImage: "person.text.rectangle.fill") {
+                        TextField("Display name, optional", text: $displayName)
+                            .textContentType(.nickname)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Display name")
+                    }
 
-                    Toggle("I confirm I am 18 or older", isOn: $ageConfirmed)
-                    Toggle("I accept the Terms", isOn: $termsAccepted)
-                    Toggle("I accept the Privacy Policy", isOn: $privacyAccepted)
+                    VStack(spacing: 10) {
+                        Toggle("I confirm I am 18 or older", isOn: $ageConfirmed)
+                        Toggle("I accept the Terms", isOn: $termsAccepted)
+                        Toggle("I accept the Privacy Policy", isOn: $privacyAccepted)
+                    }
+                    .padding(12)
+                    .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    StatusBanner(
+                        message: "BeerMap uses the same safety, privacy, and account rules as the website.",
+                        systemImage: "checkmark.shield.fill"
+                    )
                 }
             }
             .beerMapCard()
@@ -89,4 +105,3 @@ struct AuthView: View {
         }
     }
 }
-

@@ -21,6 +21,13 @@ struct RootView: View {
                 }
 
                 NavigationStack {
+                    ContributeView()
+                }
+                .tabItem {
+                    Label("Add", systemImage: "square.and.arrow.up.fill")
+                }
+
+                NavigationStack {
                     VenuePortalView()
                 }
                 .tabItem {
@@ -59,4 +66,3 @@ struct RootView: View {
         }
     }
 }
-

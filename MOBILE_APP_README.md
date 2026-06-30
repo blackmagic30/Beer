@@ -1,107 +1,136 @@
 # BeerMap Native Mobile Apps
 
-This branch adds native iOS and Android app projects for the existing BeerMap/Pint Path backend without changing the website.
+This repository already contains native mobile apps for the existing BeerMap/Pint Path backend. Continue these projects; do not create duplicate mobile app folders.
 
-## What Was Added
+## Projects
 
-- `apps/ios`: SwiftUI iPhone app with an Xcode project.
-- `apps/android`: Kotlin + Jetpack Compose Android app with a Gradle project.
-- `MOBILE_APP_IMPLEMENTATION_PLAN.md`: implementation plan written before app code.
-- `MOBILE_APP_STORE_CHECKLIST.md`: App Store and Play Store readiness checklist.
+- iOS: `apps/ios`
+  - Swift + SwiftUI
+  - Xcode project: `apps/ios/BeerMap.xcodeproj`
+  - Session token stored in Keychain
+- Android: `apps/android`
+  - Kotlin + Jetpack Compose + Material 3
+  - Gradle project: `apps/android/settings.gradle.kts`
+  - Session token stored in app-private preferences
+
+The mobile apps are not React Native, Expo, Capacitor, Cordova, or WebView wrappers.
 
 ## Source Of Truth
 
-The website and Express API remain the source of truth. Both native apps call the existing `/api/business/*` endpoints:
+The website and Express API remain the source of truth. Native apps call the existing `/api/business/*` endpoints and do not read or write private Supabase tables directly.
 
-- Config: `/api/business/config`
-- Auth: `/api/business/auth/signup`, `/api/business/auth/login`, `/api/business/auth/logout`
-- Account: `/api/business/account`, privacy settings, deletion request, saved items
-- Public discovery: `/api/business/venues`, `/api/business/price-records`, `/api/business/missions`
-- Venue management: `/api/business/venue-portal`, profile, beers, happy hours, specials
-- Analytics and support: `/api/business/events`, `/api/business/feedback`
+Current native API coverage includes:
 
-The apps do not read/write private Supabase tables directly and do not include service-role keys.
+- Config: `GET /api/business/config`
+- Auth: `POST /api/business/auth/signup`, `POST /api/business/auth/login`, `POST /api/business/auth/logout`
+- Account: `GET /api/business/account`, privacy settings, deletion request, saved items
+- Public discovery: `GET /api/business/venues`, `GET /api/business/price-records`, `GET /api/business/missions`
+- Contributions: `POST /api/business/submissions`, wrong-price reports, venue/beer requests
+- Venue management: `GET /api/business/venue-portal`, profile, beers/stock, happy hours, Pro specials/deals
+- Analytics and support: `POST /api/business/events`, `POST /api/business/feedback`
 
-## Folder Structure
+Supabase Auth is still a backend/web OAuth bridge. Native Google/Apple OAuth is intentionally documented as future setup work because it needs final bundle IDs, redirect/deep-link URLs, and provider console configuration. Email/password auth works through the existing Express API.
 
-```text
-apps/
-  ios/
-    BeerMap.xcodeproj
-    BeerMap/
-      App/
-      Features/
-      Components/
-      Services/
-      Models/
-      Theme/
-      Assets.xcassets/
-    Config.example.xcconfig
-  android/
-    settings.gradle.kts
-    build.gradle.kts
-    app/
-      build.gradle.kts
-      src/main/java/au/pintpath/beermap/
-      src/main/res/
-    local.properties.example
+## Current Native Screens
+
+- Discover: venue search/list, detail price reveal, save venue.
+- Account: login, signup, account stats, privacy controls, deletion request, logout.
+- Add: reviewed beer-price submissions, wrong-price reports, missing venue/beer requests, mission list.
+- Bars: invite-only venue dashboard, profile/contact info, beer stock, happy hours, specials/deals, reports/analytics summary.
+- Settings: backend config visibility, support message, responsible-use notes.
+
+## UI System
+
+The current native apps use a small shared component layer on each platform for app-store-ready polish:
+
+- iOS: `apps/ios/BeerMap/Theme/AppTheme.swift` and `apps/ios/BeerMap/Components/ReusableViews.swift`
+- Android: `apps/android/app/src/main/java/au/pintpath/beermap/ui/theme/Theme.kt` and `apps/android/app/src/main/java/au/pintpath/beermap/ui/components/Components.kt`
+
+Continue polishing through those components first so buttons, cards, form fields, empty states, banners, loading states, and owner workflow sections stay consistent across screens.
+
+## Configuration
+
+No service-role keys or private provider secrets belong in mobile config.
+
+Required for normal hosted testing:
+
+- `PINT_PATH_API_BASE_URL=https://pintpath.au`
+
+Optional public OAuth placeholders for future native OAuth:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+
+iOS local override:
+
+1. Copy `apps/ios/Config.example.xcconfig` to `apps/ios/Config.xcconfig`.
+2. Set `PINT_PATH_API_BASE_URL`.
+3. Attach it to the BeerMap target if you need local overrides.
+
+iOS examples:
+
+```xcconfig
+PINT_PATH_API_BASE_URL = https:/$()/pintpath.au
+PINT_PATH_API_BASE_URL = http:/$()/127.0.0.1:3000
 ```
 
-## iOS Run Instructions
+Android local override:
 
-1. Open `apps/ios/BeerMap.xcodeproj` in Xcode.
-2. Select the `BeerMap` scheme.
-3. Choose an iPhone simulator.
-4. Run.
+1. Copy `apps/android/local.properties.example` to `apps/android/local.properties`.
+2. Set `PINT_PATH_API_BASE_URL`.
 
-The app defaults to `https://pintpath.au`. For local development, copy `apps/ios/Config.example.xcconfig` to `Config.xcconfig`, set `PINT_PATH_API_BASE_URL`, and attach it to the target in Xcode build settings.
-
-## Android Run Instructions
-
-1. Install Android Studio.
-2. Open the `apps/android` folder.
-3. Let Android Studio install/select the Android SDK and JDK.
-4. Copy `apps/android/local.properties.example` to `local.properties` only for local overrides.
-5. Run on an emulator or Android phone.
-
-For a backend running on your Mac at port 3000, set:
+Android examples:
 
 ```properties
+PINT_PATH_API_BASE_URL=https://pintpath.au
 PINT_PATH_API_BASE_URL=http://10.0.2.2:3000
 ```
 
-## Testing Main Flows
+`10.0.2.2` is the Android emulator route to the Mac host.
 
-1. Start the existing backend with its normal environment.
-2. Open the native app.
-3. Confirm public venue discovery loads.
-4. Sign up or log in with the existing account flow.
-5. Confirm account dashboard/privacy controls load.
-6. Use an assigned venue-manager account to open the bar dashboard.
-7. Save a profile, beer row, happy hour, or Pro special and verify the existing website still shows the expected backend state.
+## Run iOS
 
-## Release Builds
+1. Install full Xcode, not only Command Line Tools.
+2. Open `apps/ios/BeerMap.xcodeproj`.
+3. Select the `BeerMap` scheme.
+4. Choose an iPhone simulator.
+5. Run.
 
-iOS:
+Command-line build, once Xcode is selected:
 
-- Configure signing team and bundle ID.
-- Archive from Xcode.
-- Upload through Xcode Organizer or Transporter.
+```bash
+xcodebuild -project apps/ios/BeerMap.xcodeproj -scheme BeerMap -destination 'platform=iOS Simulator,name=iPhone 15' build
+```
 
-Android:
+## Run Android
 
-- Configure signing in Android Studio.
-- Build an Android App Bundle with `./gradlew bundleRelease`.
-- Upload the `.aab` to Play Console.
+1. Install Android Studio with a JDK and Android SDK.
+2. Open `apps/android`.
+3. Let Android Studio sync Gradle.
+4. Run on an emulator or Android phone.
 
-## Intentionally Not Touched
+Command-line build:
 
-The mobile work intentionally does not modify:
+```bash
+cd apps/android
+./gradlew assembleDebug
+```
 
-- `viewer/`
-- `src/`
-- `supabase/`
-- existing website routes/styles
-- database schema/migrations
-- existing tests
+## Known Unfinished Items
 
+- Native Google/Apple OAuth.
+- Native map with pins/clustering/nearby behavior.
+- Native camera/photo evidence upload.
+- Native one-time location proof.
+- Billing/customer portal.
+- Discount pass, Pint Points, Free Pint Rewards, and POS flows.
+- Monthly report CSV/JSON download/share handling.
+- Admin review/beer catalog/admin dashboards.
+- Mobile CI and native UI tests.
+- Android encrypted token storage upgrade before public release.
+
+## Store Prep
+
+See `MOBILE_APP_STORE_CHECKLIST.md`.
+
+Before public release, complete signing, final bundle/package IDs, screenshots, app links/deep links, privacy/data-safety disclosures, reviewer accounts, responsible-alcohol review notes, and native OAuth provider setup if OAuth is enabled.

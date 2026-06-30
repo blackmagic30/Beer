@@ -8,6 +8,9 @@ android {
     namespace = "au.pintpath.beermap"
     compileSdk = 35
 
+    fun String.toBuildConfigString(): String =
+        "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
     defaultConfig {
         applicationId = "au.pintpath.beermap"
         minSdk = 26
@@ -19,9 +22,9 @@ android {
         val supabaseUrl = (project.findProperty("SUPABASE_URL") as String?) ?: ""
         val supabaseAnonKey = (project.findProperty("SUPABASE_ANON_KEY") as String?) ?: ""
 
-        buildConfigField("String", "PINT_PATH_API_BASE_URL", "\"$apiBaseUrl\"")
-        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
-        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
+        buildConfigField("String", "PINT_PATH_API_BASE_URL", apiBaseUrl.toBuildConfigString())
+        buildConfigField("String", "SUPABASE_URL", supabaseUrl.toBuildConfigString())
+        buildConfigField("String", "SUPABASE_ANON_KEY", supabaseAnonKey.toBuildConfigString())
     }
 
     buildFeatures {
@@ -47,4 +50,3 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
-

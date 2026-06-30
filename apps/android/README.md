@@ -1,6 +1,6 @@
 # BeerMap Android
 
-Native Android app for the existing BeerMap/Pint Path backend, built with Kotlin, Jetpack Compose, Material 3, and Gradle.
+Native Android app for the existing BeerMap/Pint Path backend, built with Kotlin, Jetpack Compose, Material 3, and Gradle. Continue this app in place; do not create a duplicate Android project.
 
 ## Open In Android Studio
 
@@ -42,6 +42,19 @@ The app calls the same Express API as the website:
 - `POST /api/business/venue-portal/:venueId/beers`
 - `POST /api/business/venue-portal/:venueId/happy-hours`
 - `POST /api/business/venue-portal/:venueId/specials`
+- `POST /api/business/submissions`
+- `POST /api/business/wrong-price-reports`
+- `POST /api/business/requests`
 - `POST /api/business/events`
 
 The Android app stores the Pint Path bearer token in private app preferences. It does not read or write private Supabase tables directly.
+
+## Native Screens
+
+- Discover
+- Account
+- Add
+- Bars
+- Settings
+
+The Add tab covers reviewed beer-price submissions, wrong-price reports, missing venue/beer requests, and mission browsing. Photo evidence, one-time location proof, native OAuth, billing, and reward/POS flows are not wired yet.

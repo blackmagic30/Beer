@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -31,10 +32,10 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -45,6 +46,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,6 +54,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -72,6 +75,9 @@ import au.pintpath.beermap.data.SessionStore
 import au.pintpath.beermap.data.Venue
 import au.pintpath.beermap.ui.components.AppCard
 import au.pintpath.beermap.ui.components.EmptyState
+import au.pintpath.beermap.ui.components.FeatureCard
+import au.pintpath.beermap.ui.components.FormField
+import au.pintpath.beermap.ui.components.LoadingView
 import au.pintpath.beermap.ui.components.MetricCard
 import au.pintpath.beermap.ui.components.PrimaryAction
 import au.pintpath.beermap.ui.components.SecondaryAction
@@ -182,6 +188,50 @@ class BeerMapState(context: Context) {
         refreshAccount()
     }
 
+    suspend fun submitPriceUpdate(
+        venueId: String,
+        beerName: String,
+        servingSize: String,
+        priceText: String,
+        notes: String
+    ) = busy {
+        val current = token ?: error("Sign in before submitting venue data.")
+        val venue = venues.firstOrNull { it.id == venueId } ?: error("Choose a venue before submitting.")
+        val trimmedBeer = beerName.trim()
+        if (trimmedBeer.isBlank()) error("Add the beer name before submitting.")
+        val price = priceText.replace("$", "").trim().toDoubleOrNull()
+            ?: error("Add a valid observed price.")
+        api.submitPriceUpdate(venue, trimmedBeer, servingSize, price, notes.blankToNull(), current)
+        message = "Price update sent for review."
+        track("submission_completed", venue.id, venue.suburb)
+        refreshAccount()
+    }
+
+    suspend fun reportWrongPrice(venueId: String, beerName: String, notes: String) = busy {
+        val venue = venues.firstOrNull { it.id == venueId } ?: error("Choose a venue before reporting.")
+        api.reportWrongPrice(venue, beerName.blankToNull(), notes.blankToNull(), anonymousSessionId, token)
+        message = "Wrong-price report sent."
+        track("wrong_price_reported", venue.id, venue.suburb)
+    }
+
+    suspend fun requestMissing(requestType: String, venueName: String, beerName: String, suburb: String, notes: String) = busy {
+        val trimmedVenue = venueName.trim()
+        val trimmedBeer = beerName.trim()
+        if (requestType == "missing_beer" && trimmedBeer.isBlank()) error("Add the beer name before sending the request.")
+        if (requestType != "missing_beer" && trimmedVenue.isBlank()) error("Add the venue name before sending the request.")
+        api.requestMissing(
+            requestType = requestType,
+            venueName = trimmedVenue.blankToNull(),
+            beerName = trimmedBeer.blankToNull(),
+            suburb = suburb.blankToNull(),
+            notes = notes.blankToNull(),
+            anonymousSessionId = anonymousSessionId,
+            token = token
+        )
+        message = if (requestType == "missing_beer") "Beer request sent." else "Venue request sent."
+        track(if (requestType == "missing_beer") "beer_requested" else "venue_requested", suburb = suburb.blankToNull())
+    }
+
     suspend fun refreshPortal(venueId: String? = null) {
         val current = token ?: return
         runCatching { portal = api.portal(current, venueId) }
@@ -245,6 +295,7 @@ class BeerMapState(context: Context) {
 private enum class AppTab(val label: String) {
     Discover("Discover"),
     Account("Account"),
+    Contribute("Add"),
     Bars("Bars"),
     Settings("Settings")
 }
@@ -266,25 +317,31 @@ fun BeerMapApp() {
                 NavigationBarItem(
                     selected = tab == AppTab.Discover,
                     onClick = { tab = AppTab.Discover },
-                    icon = { Icon(Icons.Filled.Map, contentDescription = null) },
+                    icon = { Icon(Icons.Filled.Map, contentDescription = AppTab.Discover.label) },
                     label = { Text(AppTab.Discover.label) }
                 )
                 NavigationBarItem(
                     selected = tab == AppTab.Account,
                     onClick = { tab = AppTab.Account },
-                    icon = { Icon(Icons.Filled.AccountCircle, contentDescription = null) },
+                    icon = { Icon(Icons.Filled.AccountCircle, contentDescription = AppTab.Account.label) },
                     label = { Text(AppTab.Account.label) }
+                )
+                NavigationBarItem(
+                    selected = tab == AppTab.Contribute,
+                    onClick = { tab = AppTab.Contribute },
+                    icon = { Icon(Icons.Filled.Add, contentDescription = AppTab.Contribute.label) },
+                    label = { Text(AppTab.Contribute.label) }
                 )
                 NavigationBarItem(
                     selected = tab == AppTab.Bars,
                     onClick = { tab = AppTab.Bars },
-                    icon = { Icon(Icons.Filled.Storefront, contentDescription = null) },
+                    icon = { Icon(Icons.Filled.Storefront, contentDescription = AppTab.Bars.label) },
                     label = { Text(AppTab.Bars.label) }
                 )
                 NavigationBarItem(
                     selected = tab == AppTab.Settings,
                     onClick = { tab = AppTab.Settings },
-                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = AppTab.Settings.label) },
                     label = { Text(AppTab.Settings.label) }
                 )
             }
@@ -292,10 +349,7 @@ fun BeerMapApp() {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (state.loading) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    CircularProgressIndicator(Modifier.padding(top = 2.dp))
-                    Text("Updating BeerMap", style = MaterialTheme.typography.bodyMedium)
-                }
+                LoadingView("Updating BeerMap")
             }
             state.error?.let { StatusBanner(it, isError = true) }
             state.message?.let { StatusBanner(it) }
@@ -303,6 +357,7 @@ fun BeerMapApp() {
             when (tab) {
                 AppTab.Discover -> DiscoverScreen(state, scope)
                 AppTab.Account -> AccountScreen(state, scope)
+                AppTab.Contribute -> ContributeScreen(state, scope)
                 AppTab.Bars -> VenuePortalScreen(state, scope)
                 AppTab.Settings -> SettingsScreen(state, scope)
             }
@@ -321,11 +376,12 @@ private fun DiscoverScreen(state: BeerMapState, scope: CoroutineScope) {
                         SectionHeader(
                             eyebrow = "BeerMap",
                             title = "Find the right bar faster",
-                            subtitle = "Melbourne beer prices, happy hours, and venue updates using the same server-gated data as the website."
+                            subtitle = "Melbourne beer prices, happy hours, and venue updates using the same server-gated data as the website.",
+                            icon = Icons.Filled.LocalBar
                         )
                     }
-                    Icon(Icons.Filled.LocalBar, contentDescription = null, tint = Amber)
                 }
+                FeatureCard("Fast venue checks", "Search, save, and reveal server-gated price rows without leaving the app.", Icons.Filled.Search, Sky)
             }
         }
         item {
@@ -359,7 +415,7 @@ private fun DiscoverScreen(state: BeerMapState, scope: CoroutineScope) {
             }
         }
         if (state.venues.isEmpty()) {
-            item { EmptyState("No venues loaded", "Refresh or check the backend connection.") }
+            item { EmptyState("No venues loaded", "Refresh or check the backend connection.", Icons.Filled.Map) }
         } else {
             items(state.venues, key = { it.id }) { venue ->
                 VenueCard(
@@ -375,9 +431,9 @@ private fun DiscoverScreen(state: BeerMapState, scope: CoroutineScope) {
 @Composable
 private fun VenueDetailCard(state: BeerMapState, scope: CoroutineScope, venue: Venue) {
     AppCard {
-        SectionHeader("Venue", venue.name, venue.address ?: venue.location)
+        SectionHeader("Venue", venue.name, venue.address ?: venue.location, Icons.Filled.Business)
         if (state.selectedPrices.isEmpty()) {
-            EmptyState("No price rows yet", "This venue needs a trusted update.", Icons.Filled.Lock)
+            EmptyState("No price rows yet", "This venue needs a trusted update.", Icons.Filled.Lock, framed = false)
         } else {
             state.selectedPrices.forEach { record ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -390,14 +446,261 @@ private fun VenueDetailCard(state: BeerMapState, scope: CoroutineScope, venue: V
                 Divider()
             }
         }
-        SecondaryAction("Refresh prices") {
+        SecondaryAction("Refresh prices", icon = Icons.Filled.Refresh) {
             scope.launch { state.revealPrices(venue) }
         }
     }
 }
 
 @Composable
+private fun ContributeScreen(state: BeerMapState, scope: CoroutineScope) {
+    var mode by remember { mutableStateOf("Submit") }
+    var selectedVenueId by remember { mutableStateOf("") }
+    var beerName by remember { mutableStateOf("") }
+    var price by remember { mutableStateOf("") }
+    var serving by remember { mutableStateOf("pint") }
+    var notes by remember { mutableStateOf("") }
+    var requestKind by remember { mutableStateOf("missing_venue") }
+    var requestVenue by remember { mutableStateOf("") }
+    var requestBeer by remember { mutableStateOf("") }
+    var requestSuburb by remember { mutableStateOf("") }
+    var requestNotes by remember { mutableStateOf("") }
+
+    LaunchedEffect(state.venues) {
+        if (selectedVenueId.isBlank() || state.venues.none { it.id == selectedVenueId }) {
+            selectedVenueId = state.venues.firstOrNull()?.id.orEmpty()
+        }
+    }
+
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item {
+            AppCard {
+                SectionHeader(
+                    eyebrow = "Contribute",
+                    title = "Keep BeerMap current",
+                    subtitle = "Send updates through the same reviewed backend workflow as the website.",
+                    icon = Icons.Filled.Add
+                )
+            }
+        }
+        item {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(listOf("Submit", "Report", "Request", "Missions")) { label ->
+                    FilterChip(selected = mode == label, onClick = { mode = label }, label = { Text(label) })
+                }
+            }
+        }
+        item {
+            when (mode) {
+                "Report" -> ReportWrongPriceCard(state, scope, selectedVenueId, { selectedVenueId = it }, beerName, { beerName = it }, notes, { notes = it })
+                "Request" -> MissingRequestCard(
+                    state = state,
+                    scope = scope,
+                    requestKind = requestKind,
+                    onRequestKind = { requestKind = it },
+                    venueName = requestVenue,
+                    onVenueName = { requestVenue = it },
+                    beerName = requestBeer,
+                    onBeerName = { requestBeer = it },
+                    suburb = requestSuburb,
+                    onSuburb = { requestSuburb = it },
+                    notes = requestNotes,
+                    onNotes = { requestNotes = it }
+                )
+                "Missions" -> MissionsCard(state)
+                else -> SubmitPriceCard(
+                    state = state,
+                    scope = scope,
+                    selectedVenueId = selectedVenueId,
+                    onVenueSelected = { selectedVenueId = it },
+                    beerName = beerName,
+                    onBeerName = { beerName = it },
+                    price = price,
+                    onPrice = { price = it },
+                    serving = serving,
+                    onServing = { serving = it },
+                    notes = notes,
+                    onNotes = { notes = it }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubmitPriceCard(
+    state: BeerMapState,
+    scope: CoroutineScope,
+    selectedVenueId: String,
+    onVenueSelected: (String) -> Unit,
+    beerName: String,
+    onBeerName: (String) -> Unit,
+    price: String,
+    onPrice: (String) -> Unit,
+    serving: String,
+    onServing: (String) -> Unit,
+    notes: String,
+    onNotes: (String) -> Unit
+) {
+    AppCard {
+        SectionHeader(
+            eyebrow = "Price update",
+            title = "Submit an observed beer price",
+            subtitle = if (state.signedIn) "Submissions stay pending until reviewed." else "Sign in first so the update can be attached to your account.",
+            icon = Icons.Filled.LocalBar
+        )
+        VenueChoiceChips(state.venues, selectedVenueId, onVenueSelected)
+        OutlinedTextField(beerName, onBeerName, label = { Text("Beer name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(price, onPrice, label = { Text("Observed price") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(listOf("pint", "pot", "schooner", "jug", "bottle", "can", "other")) { size ->
+                FilterChip(selected = serving == size, onClick = { onServing(size) }, label = { Text(size.replaceFirstChar { it.uppercase() }) })
+            }
+        }
+        OutlinedTextField(notes, onNotes, label = { Text("Notes, optional") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+        PrimaryAction("Send for review", state.signedIn && selectedVenueId.isNotBlank() && beerName.isNotBlank() && price.isNotBlank(), Icons.Filled.Add) {
+            scope.launch { state.submitPriceUpdate(selectedVenueId, beerName, serving, price, notes) }
+        }
+        StatusBanner("Photo evidence and saved upload-location proof are still website-only in this native pass.")
+    }
+}
+
+@Composable
+private fun ReportWrongPriceCard(
+    state: BeerMapState,
+    scope: CoroutineScope,
+    selectedVenueId: String,
+    onVenueSelected: (String) -> Unit,
+    beerName: String,
+    onBeerName: (String) -> Unit,
+    notes: String,
+    onNotes: (String) -> Unit
+) {
+    AppCard {
+        SectionHeader("Correction", "Report wrong venue data", "Use this when a displayed price, beer, or happy-hour detail looks off.", Icons.Filled.Refresh)
+        VenueChoiceChips(state.venues, selectedVenueId, onVenueSelected)
+        OutlinedTextField(beerName, onBeerName, label = { Text("Beer or item, optional") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(notes, onNotes, label = { Text("What should admin know?") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+        PrimaryAction("Send report", selectedVenueId.isNotBlank() && notes.trim().length >= 3, Icons.Filled.Refresh) {
+            scope.launch { state.reportWrongPrice(selectedVenueId, beerName, notes) }
+        }
+    }
+}
+
+@Composable
+private fun MissingRequestCard(
+    state: BeerMapState,
+    scope: CoroutineScope,
+    requestKind: String,
+    onRequestKind: (String) -> Unit,
+    venueName: String,
+    onVenueName: (String) -> Unit,
+    beerName: String,
+    onBeerName: (String) -> Unit,
+    suburb: String,
+    onSuburb: (String) -> Unit,
+    notes: String,
+    onNotes: (String) -> Unit
+) {
+    AppCard {
+        SectionHeader("Request", "Ask Pint Path to add something", "Missing venue and missing beer requests use the same queue as the website.", Icons.Filled.Storefront)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = requestKind == "missing_venue", onClick = { onRequestKind("missing_venue") }, label = { Text("Venue") })
+            FilterChip(selected = requestKind == "missing_beer", onClick = { onRequestKind("missing_beer") }, label = { Text("Beer") })
+        }
+        if (requestKind == "missing_beer") {
+            OutlinedTextField(beerName, onBeerName, label = { Text("Beer name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(venueName, onVenueName, label = { Text("Venue name, optional") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        } else {
+            OutlinedTextField(venueName, onVenueName, label = { Text("Venue name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        }
+        OutlinedTextField(suburb, onSuburb, label = { Text("Suburb, optional") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(notes, onNotes, label = { Text("Notes, optional") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+        PrimaryAction("Send request", if (requestKind == "missing_beer") beerName.isNotBlank() else venueName.isNotBlank(), Icons.Filled.Add) {
+            scope.launch { state.requestMissing(requestKind, venueName, beerName, suburb, notes) }
+        }
+    }
+}
+
+@Composable
+private fun MissionsCard(state: BeerMapState) {
+    AppCard {
+        SectionHeader("Missions", "Venues needing data", "These are pulled from the existing mission endpoint.", Icons.Filled.Star)
+        if (state.missions.isEmpty()) {
+            EmptyState("No missions loaded yet", "Refresh discovery or check the backend connection.", Icons.Filled.Star, framed = false)
+        } else {
+            state.missions.take(12).forEach { mission ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(mission.venueName, fontWeight = FontWeight.Bold)
+                    Text(listOfNotNull(mission.suburb, mission.reason).joinToString(" - "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    mission.points?.let { Text("${it.roundLabel()} pts", color = Amber, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium) }
+                }
+                Divider()
+            }
+        }
+    }
+}
+
+@Composable
+private fun VenueChoiceChips(venues: List<Venue>, selectedVenueId: String, onSelected: (String) -> Unit) {
+    if (venues.isEmpty()) {
+        StatusBanner("No venues loaded yet. Refresh discovery before sending venue-specific updates.", isError = true)
+        return
+    }
+
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(venues.take(12), key = { it.id }) { venue ->
+            AssistChip(
+                onClick = { onSelected(venue.id) },
+                label = { Text(if (venue.id == selectedVenueId) "${venue.name} (selected)" else venue.name) }
+            )
+        }
+    }
+}
+
+@Composable
 private fun AccountScreen(state: BeerMapState, scope: CoroutineScope) {
+    var confirmLogout by remember { mutableStateOf(false) }
+    var confirmDeletion by remember { mutableStateOf(false) }
+
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("Log out of BeerMap?") },
+            text = { Text("Your saved session will be removed from this device. You can sign back in any time.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLogout = false
+                    scope.launch { state.logout() }
+                }) {
+                    Text("Log out")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmLogout = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (confirmDeletion) {
+        AlertDialog(
+            onDismissRequest = { confirmDeletion = false },
+            title = { Text("Request account deletion review?") },
+            text = { Text("BeerMap will create the same manual deletion review used by the website. Legal, security, billing, and moderation records may be retained when required.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeletion = false
+                    scope.launch { state.requestDeletion() }
+                }) {
+                    Text("Request review")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeletion = false }) { Text("Cancel") }
+            }
+        )
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -409,7 +712,7 @@ private fun AccountScreen(state: BeerMapState, scope: CoroutineScope) {
         if (!state.signedIn || dashboard == null) {
             AuthCard(state, scope)
         } else {
-            SectionHeader("Account", dashboard.account.displayName ?: dashboard.account.email, "Contribution progress, privacy, and session controls.")
+            SectionHeader("Account", dashboard.account.displayName ?: dashboard.account.email, "Contribution progress, privacy, and session controls.", Icons.Filled.AccountCircle)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f)) {
                     MetricCard("Monthly points", dashboard.account.contributionPointsCurrentMonth?.roundLabel() ?: "0", Icons.Filled.Star, Amber)
@@ -428,9 +731,9 @@ private fun AccountScreen(state: BeerMapState, scope: CoroutineScope) {
             }
             PrivacyCard(state, scope, dashboard.privacySettings)
             AppCard {
-                SecondaryAction("Refresh account") { scope.launch { state.refreshAccount() } }
-                SecondaryAction("Request account deletion review") { scope.launch { state.requestDeletion() } }
-                PrimaryAction("Log out") { scope.launch { state.logout() } }
+                SecondaryAction("Refresh account", icon = Icons.Filled.Refresh) { scope.launch { state.refreshAccount() } }
+                SecondaryAction("Request account deletion review", icon = Icons.Filled.Lock) { confirmDeletion = true }
+                PrimaryAction("Log out", icon = Icons.Filled.AccountCircle) { confirmLogout = true }
             }
         }
     }
@@ -442,25 +745,25 @@ private fun AuthCard(state: BeerMapState, scope: CoroutineScope) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var displayName by remember { mutableStateOf("") }
-    var age by remember { mutableStateOf(true) }
-    var terms by remember { mutableStateOf(true) }
-    var privacy by remember { mutableStateOf(true) }
+    var age by remember { mutableStateOf(false) }
+    var terms by remember { mutableStateOf(false) }
+    var privacy by remember { mutableStateOf(false) }
 
     AppCard {
-        SectionHeader("BeerMap account", if (createAccount) "Create account" else "Welcome back", "Use the same account and venue assignments as the website.")
+        SectionHeader("BeerMap account", if (createAccount) "Create account" else "Welcome back", "Use the same account and venue assignments as the website.", Icons.Filled.AccountCircle)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = !createAccount, onClick = { createAccount = false }, label = { Text("Sign in") })
             FilterChip(selected = createAccount, onClick = { createAccount = true }, label = { Text("Create") })
         }
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        FormField("Email", Icons.Filled.AccountCircle, email, { email = it })
         OutlinedTextField(password, { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
         if (createAccount) {
-            OutlinedTextField(displayName, { displayName = it }, label = { Text("Display name, optional") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            FormField("Display name, optional", Icons.Filled.AccountCircle, displayName, { displayName = it })
             CheckRow("I confirm I am 18 or older", age) { age = it }
             CheckRow("I accept the Terms", terms) { terms = it }
             CheckRow("I accept the Privacy Policy", privacy) { privacy = it }
         }
-        PrimaryAction(if (createAccount) "Create account" else "Sign in", email.isNotBlank() && password.isNotBlank()) {
+        PrimaryAction(if (createAccount) "Create account" else "Sign in", email.isNotBlank() && password.isNotBlank(), Icons.Filled.AccountCircle) {
             scope.launch {
                 if (createAccount) {
                     if (age && terms && privacy) state.signup(email, password, displayName) else state.error = "Confirm 18+ and accept the Terms and Privacy Policy."
@@ -475,9 +778,9 @@ private fun AuthCard(state: BeerMapState, scope: CoroutineScope) {
 
 @Composable
 private fun CheckRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = checked, onCheckedChange = onChecked)
-        Text(label, modifier = Modifier.padding(top = 12.dp))
+        Text(label)
     }
 }
 
@@ -489,12 +792,12 @@ private fun PrivacyCard(state: BeerMapState, scope: CoroutineScope, settings: Pr
     var emails by remember(settings) { mutableStateOf(settings?.emailUpdatesEnabled ?: false) }
 
     AppCard {
-        SectionHeader("Privacy", "Data controls", "Optional analytics and venue-report inclusion match the website.")
+        SectionHeader("Privacy", "Data controls", "Optional analytics and venue-report inclusion match the website.", Icons.Filled.Lock)
         CheckRow("Optional analytics", optional) { optional = it }
         CheckRow("Include my activity in aggregate venue reports", reports) { reports = it }
         CheckRow("Product research contact", research) { research = it }
         CheckRow("Email product updates", emails) { emails = it }
-        PrimaryAction("Save privacy settings") {
+        PrimaryAction("Save privacy settings", icon = Icons.Filled.Lock) {
             scope.launch { state.savePrivacy(PrivacySettings(optional, reports, research, emails)) }
         }
     }
@@ -515,11 +818,11 @@ private fun VenuePortalScreen(state: BeerMapState, scope: CoroutineScope) {
         } else {
             item {
                 AppCard {
-                    SectionHeader(portal.tier?.tierLabel ?: portal.profile?.membershipTier ?: "Venue", portal.selectedVenue?.venueName ?: "Venue dashboard", portal.privacyCopy)
+                    SectionHeader(portal.tier?.tierLabel ?: portal.profile?.membershipTier ?: "Venue", portal.selectedVenue?.venueName ?: "Venue dashboard", portal.privacyCopy, Icons.Filled.Storefront)
                     portal.message?.let { StatusBanner(it) }
                     if (portal.assignments.size > 1) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            portal.assignments.take(3).forEach { assignment ->
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(portal.assignments.take(8), key = { it.venueId }) { assignment ->
                                 AssistChip(onClick = { scope.launch { state.refreshPortal(assignment.venueId) } }, label = { Text(assignment.venueName) })
                             }
                         }
@@ -527,8 +830,8 @@ private fun VenuePortalScreen(state: BeerMapState, scope: CoroutineScope) {
                 }
             }
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    listOf("Dashboard", "Profile", "Beers", "Happy", "Specials", "Reports").forEach { label ->
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf("Dashboard", "Profile", "Beers", "Happy", "Specials", "Reports")) { label ->
                         FilterChip(selected = section == label, onClick = { section = label }, label = { Text(label) })
                     }
                 }
@@ -560,7 +863,7 @@ private fun PortalDashboardCard(portal: PortalData) {
         }
         portal.analytics?.let {
             AppCard {
-                SectionHeader("Analytics", if (it.privacyFloorMet) "Demand snapshot" else "Demand snapshot building", "Aggregate venue insights only.")
+                SectionHeader("Analytics", if (it.privacyFloorMet) "Demand snapshot" else "Demand snapshot building", "Aggregate venue insights only.", Icons.Filled.Analytics)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f)) { MetricCard("Lookups", it.barLookups.toString(), Icons.Filled.Search, Sky) }
                     Column(Modifier.weight(1f)) { MetricCard("Beer views", it.beerListViews.toString(), Icons.Filled.Analytics, Leaf) }
@@ -577,17 +880,19 @@ private fun ProfileEditor(state: BeerMapState, scope: CoroutineScope, profile: B
     var suburb by remember(profile) { mutableStateOf(profile?.suburb.orEmpty()) }
     var phone by remember(profile) { mutableStateOf(profile?.phone.orEmpty()) }
     var website by remember(profile) { mutableStateOf(profile?.website.orEmpty()) }
+    var instagram by remember(profile) { mutableStateOf(profile?.instagram.orEmpty()) }
     var description by remember(profile) { mutableStateOf(profile?.description.orEmpty()) }
 
     AppCard {
-        SectionHeader("Profile", "Bar profile", "Keep public venue details accurate.")
-        OutlinedTextField(name, { name = it }, label = { Text("Venue name") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(address, { address = it }, label = { Text("Address") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(suburb, { suburb = it }, label = { Text("Suburb") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(phone, { phone = it }, label = { Text("Phone") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(website, { website = it }, label = { Text("Website") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(description, { description = it }, label = { Text("Description") }, modifier = Modifier.fillMaxWidth(), minLines = 3)
-        PrimaryAction("Save profile", name.isNotBlank()) {
+        SectionHeader("Profile", "Bar profile", "Keep public venue details accurate.", Icons.Filled.Business)
+        FormField("Venue name", Icons.Filled.Business, name, { name = it })
+        FormField("Address", Icons.Filled.Map, address, { address = it })
+        FormField("Suburb", Icons.Filled.Map, suburb, { suburb = it })
+        FormField("Phone", Icons.Filled.AccountCircle, phone, { phone = it })
+        FormField("Website", Icons.Filled.Search, website, { website = it })
+        FormField("Instagram URL", Icons.Filled.Tag, instagram, { instagram = it })
+        FormField("Description", Icons.Filled.Settings, description, { description = it }, minLines = 3, singleLine = false)
+        PrimaryAction("Save profile", name.isNotBlank(), Icons.Filled.Business) {
             val next = BarProfile(
                 name = name,
                 address = address.blankToNull(),
@@ -595,7 +900,7 @@ private fun ProfileEditor(state: BeerMapState, scope: CoroutineScope, profile: B
                 area = profile?.area,
                 phone = phone.blankToNull(),
                 website = website.blankToNull(),
-                instagram = profile?.instagram,
+                instagram = instagram.blankToNull(),
                 description = description.blankToNull(),
                 membershipTier = profile?.membershipTier,
                 active = profile?.active ?: true
@@ -613,22 +918,27 @@ private fun BeerEditor(state: BeerMapState, scope: CoroutineScope, beers: List<B
     var price by remember { mutableStateOf("") }
 
     AppCard {
-        SectionHeader("Stock", "Beers and prices", "Venue updates stay server-reviewed where required.")
-        beers.take(8).forEach {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column(Modifier.weight(1f)) {
-                    Text(it.beerName, fontWeight = FontWeight.Bold)
-                    Text(listOfNotNull(it.style, it.serveSize, if (it.onTap) "On tap" else null).joinToString(" · "), style = MaterialTheme.typography.labelMedium)
+        SectionHeader("Stock", "Beers and prices", "Venue updates stay server-reviewed where required.", Icons.Filled.LocalBar)
+        if (beers.isEmpty()) {
+            EmptyState("No beer rows yet", "Add the beers staff want visible first. You can expand stock detail after the first save.", Icons.Filled.LocalBar, framed = false)
+        } else {
+            beers.take(8).forEach {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.weight(1f)) {
+                        Text(it.beerName, fontWeight = FontWeight.Bold)
+                        Text(listOfNotNull(it.style, it.serveSize, if (it.onTap) "On tap" else null).joinToString(" · "), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(it.price?.let { value -> "$" + "%.2f".format(value) } ?: "", fontWeight = FontWeight.Bold)
                 }
-                Text(it.price?.let { value -> "$" + "%.2f".format(value) } ?: "")
+                Divider()
             }
         }
         Divider()
-        OutlinedTextField(beerName, { beerName = it }, label = { Text("Beer name") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(brewery, { brewery = it }, label = { Text("Brewery") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(style, { style = it }, label = { Text("Style") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(price, { price = it }, label = { Text("Price") }, modifier = Modifier.fillMaxWidth())
-        PrimaryAction("Save beer row", beerName.isNotBlank()) {
+        FormField("Beer name", Icons.Filled.LocalBar, beerName, { beerName = it })
+        FormField("Brewery", Icons.Filled.Business, brewery, { brewery = it })
+        FormField("Style", Icons.Filled.Tag, style, { style = it })
+        FormField("Price", Icons.Filled.LocalBar, price, { price = it })
+        PrimaryAction("Save beer row", beerName.isNotBlank(), Icons.Filled.Add) {
             val beer = BarBeer(null, beerName, brewery.blankToNull(), style.blankToNull(), "pint", price.toDoubleOrNull(), onTap = true, inStock = true, notes = null)
             scope.launch { state.saveBeer(beer) }
         }
@@ -646,20 +956,24 @@ private fun HappyHourEditor(state: BeerMapState, scope: CoroutineScope, happyHou
     var saturday by remember { mutableStateOf(false) }
 
     AppCard {
-        SectionHeader("Happy hours", "Current specials", "Use native time pickers for staff-friendly updates.")
-        happyHours.take(6).forEach {
-            Text("${it.title} · ${it.daysOfWeek.joinToString(", ")} · ${it.startTime}-${it.endTime}", fontWeight = FontWeight.SemiBold)
+        SectionHeader("Happy hours", "Current specials", "Use native time pickers for staff-friendly updates.", Icons.Filled.Timer)
+        if (happyHours.isEmpty()) {
+            EmptyState("No happy hours yet", "Add the recurring windows your team wants customers to find quickly.", Icons.Filled.Timer, framed = false)
+        } else {
+            happyHours.take(6).forEach {
+                FeatureCard(it.title, "${it.daysOfWeek.joinToString(", ")} - ${it.startTime}-${it.endTime}", Icons.Filled.Timer, Leaf)
+            }
         }
         Divider()
-        OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(description, { description = it }, label = { Text("Description") }, modifier = Modifier.fillMaxWidth(), minLines = 3)
+        FormField("Title", Icons.Filled.Timer, title, { title = it })
+        FormField("Description", Icons.Filled.Settings, description, { description = it }, minLines = 3, singleLine = false)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { showTimePicker(context, start) { start = it } }) { Text("Starts $start") }
             Button(onClick = { showTimePicker(context, end) { end = it } }) { Text("Ends $end") }
         }
         CheckRow("Friday", friday) { friday = it }
         CheckRow("Saturday", saturday) { saturday = it }
-        PrimaryAction("Save happy hour", title.isNotBlank() && description.isNotBlank() && (friday || saturday)) {
+        PrimaryAction("Save happy hour", title.isNotBlank() && description.isNotBlank() && (friday || saturday), Icons.Filled.Timer) {
             val days = buildList {
                 if (friday) add("fri")
                 if (saturday) add("sat")
@@ -680,22 +994,26 @@ private fun SpecialEditor(state: BeerMapState, scope: CoroutineScope, specials: 
     var end by remember { mutableStateOf("21:00") }
 
     AppCard {
-        SectionHeader("Specials", "Pint Path specials", if (canManage) "Pro venues can submit reviewed specials." else "Upgrade to Pro to add reviewed specials.")
+        SectionHeader("Specials", "Pint Path specials", if (canManage) "Pro venues can submit reviewed specials." else "Upgrade to Pro to add reviewed specials.", Icons.Filled.Tag)
         if (!canManage) StatusBanner("Free venues can manage beers and happy hours. Pro unlocks reviewed specials.")
-        specials.take(6).forEach {
-            Text("${it.title} · ${it.discount.orEmpty()} · ${it.startTime}-${it.endTime}", fontWeight = FontWeight.SemiBold)
+        if (specials.isEmpty()) {
+            EmptyState(if (canManage) "No specials yet" else "Specials are locked", if (canManage) "Add a reviewed Pint Path special for peak service windows." else "Pro unlocks reviewed Pint Path specials for this venue.", Icons.Filled.Tag, framed = false)
+        } else {
+            specials.take(6).forEach {
+                FeatureCard(it.title, "${it.discount.orEmpty()} - ${it.startTime}-${it.endTime}", Icons.Filled.Tag, Plum)
+            }
         }
         if (canManage) {
             Divider()
-            OutlinedTextField(title, { title = it }, label = { Text("Special title") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(description, { description = it }, label = { Text("Description") }, modifier = Modifier.fillMaxWidth(), minLines = 3)
-            OutlinedTextField(discount, { discount = it }, label = { Text("Discount copy") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(price, { price = it }, label = { Text("Price, optional") }, modifier = Modifier.fillMaxWidth())
+            FormField("Special title", Icons.Filled.Tag, title, { title = it })
+            FormField("Description", Icons.Filled.Settings, description, { description = it }, minLines = 3, singleLine = false)
+            FormField("Discount copy", Icons.Filled.Tag, discount, { discount = it })
+            FormField("Price, optional", Icons.Filled.LocalBar, price, { price = it })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { showTimePicker(context, start) { start = it } }) { Text("Starts $start") }
                 Button(onClick = { showTimePicker(context, end) { end = it } }) { Text("Ends $end") }
             }
-            PrimaryAction("Save special", title.isNotBlank() && description.isNotBlank()) {
+            PrimaryAction("Save special", title.isNotBlank() && description.isNotBlank(), Icons.Filled.Tag) {
                 scope.launch {
                     state.saveSpecial(BarSpecial(null, title, description, price.toDoubleOrNull(), discount.blankToNull(), start, end, exclusive = true, active = true))
                 }
@@ -707,7 +1025,7 @@ private fun SpecialEditor(state: BeerMapState, scope: CoroutineScope, specials: 
 @Composable
 private fun ReportsCard(portal: PortalData) {
     AppCard {
-        SectionHeader("Reports", if (portal.tier?.monthlyReports == true) "Monthly report" else "Reports locked", portal.tier?.upgradeCopy)
+        SectionHeader("Reports", if (portal.tier?.monthlyReports == true) "Monthly report" else "Reports locked", portal.tier?.upgradeCopy, Icons.Filled.Analytics)
         if (portal.tier?.monthlyReports == true) {
             MetricCard("Privacy floor", if (portal.analytics?.privacyFloorMet == true) "Met" else "Building", Icons.Filled.Lock, Leaf)
             Text("CSV and JSON exports use the existing backend route and can be wired to Android share/download handling before release.", style = MaterialTheme.typography.bodyMedium)
@@ -728,15 +1046,15 @@ private fun SettingsScreen(state: BeerMapState, scope: CoroutineScope) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         AppCard {
-            SectionHeader("Configuration", "Backend connection", "The native app reuses the existing BeerMap/Pint Path API and data.")
+            SectionHeader("Configuration", "Backend connection", "The native app reuses the existing BeerMap/Pint Path API and data.", Icons.Filled.Settings)
             Text("API base URL: ${BuildConfig.PINT_PATH_API_BASE_URL}", style = MaterialTheme.typography.bodyMedium)
             Text("Supabase native OAuth: ${if (BuildConfig.SUPABASE_URL.isBlank()) "Not configured" else "Public config present"}", style = MaterialTheme.typography.bodyMedium)
             Text("Field-test mode: ${if (state.config.optBoolean("fieldTestMode", false)) "On" else "Off"}", style = MaterialTheme.typography.bodyMedium)
         }
         AppCard {
-            SectionHeader("Support", "Need help?", "Use this for privacy, billing, venue account, or moderation support.")
-            OutlinedTextField(support, { support = it }, label = { Text("Message") }, minLines = 4, modifier = Modifier.fillMaxWidth())
-            PrimaryAction("Send support note", support.trim().length >= 3) {
+            SectionHeader("Support", "Need help?", "Use this for privacy, billing, venue account, or moderation support.", Icons.Filled.AccountCircle)
+            FormField("Message", Icons.Filled.Settings, support, { support = it }, minLines = 4, singleLine = false)
+            PrimaryAction("Send support note", support.trim().length >= 3, Icons.Filled.Add) {
                 scope.launch {
                     state.sendFeedback(support)
                     support = ""
@@ -744,10 +1062,10 @@ private fun SettingsScreen(state: BeerMapState, scope: CoroutineScope) {
             }
         }
         AppCard {
-            SectionHeader("Safety", "Responsible use", "BeerMap is 18+ only. Prices and availability can change, and venues may refuse service under RSA obligations.")
-            Text("Location is opt-in and one-time where used.")
-            Text("Venue reports use aggregate privacy-safe analytics.")
-            Text("Private source evidence is handled by the backend.")
+            SectionHeader("Safety", "Responsible use", "BeerMap is 18+ only. Prices and availability can change, and venues may refuse service under RSA obligations.", Icons.Filled.Lock)
+            FeatureCard("Opt-in location", "Location is one-time where used.", Icons.Filled.Map, Sky)
+            FeatureCard("Private reports", "Venue reports use aggregate privacy-safe analytics.", Icons.Filled.Analytics, Leaf)
+            FeatureCard("Source evidence", "Private source evidence is handled by the backend.", Icons.Filled.Lock, Amber)
         }
     }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 struct AccountView: View {
     @EnvironmentObject private var model: BeerMapAppModel
     @State private var showDeleteConfirmation = false
+    @State private var showLogoutConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -15,10 +16,22 @@ struct AccountView: View {
             }
             .padding()
         }
-        .background(BeerMapTheme.background)
+        .beerMapScreen()
         .navigationTitle("Account")
         .refreshable {
             await model.refreshAccount()
+        }
+        .confirmationDialog(
+            "Log out of BeerMap?",
+            isPresented: $showLogoutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Log out", role: .destructive) {
+                Task { await model.logout() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your saved session will be removed from this device. You can sign back in any time.")
         }
         .confirmationDialog(
             "Request account deletion review?",
@@ -40,7 +53,8 @@ struct AccountView: View {
                 SectionHeader(
                     eyebrow: dashboard.account.subscriptionStatus ?? "Free",
                     title: dashboard.account.displayName ?? dashboard.account.email,
-                    subtitle: "Manage access, contribution progress, privacy, and session controls."
+                    subtitle: "Manage access, contribution progress, privacy, and session controls.",
+                    systemImage: "person.crop.circle.fill"
                 )
                 HStack {
                     Label(dashboard.account.emailVerifiedAt == nil ? "Email pending" : "Email verified", systemImage: "envelope.badge.shield.half.filled")
@@ -100,32 +114,28 @@ struct AccountView: View {
                     }
                 }
                 .beerMapCard()
+            } else {
+                EmptyStateView(
+                    title: "No recent submissions",
+                    message: "Your reviewed price updates and venue reports will appear here after you contribute.",
+                    systemImage: "tray",
+                    isFramed: false
+                )
+                .beerMapCard()
             }
 
             VStack(spacing: 10) {
-                Button {
+                SecondaryButton(title: "Refresh account", systemImage: "arrow.clockwise") {
                     Task { await model.refreshAccount() }
-                } label: {
-                    Label("Refresh account", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
 
-                Button(role: .destructive) {
+                SecondaryButton(title: "Request account deletion", systemImage: "person.crop.circle.badge.xmark", isDestructive: true) {
                     showDeleteConfirmation = true
-                } label: {
-                    Label("Request account deletion", systemImage: "person.crop.circle.badge.xmark")
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
 
-                Button {
-                    Task { await model.logout() }
-                } label: {
-                    Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
-                        .frame(maxWidth: .infinity)
+                PrimaryButton(title: "Log out", systemImage: "rectangle.portrait.and.arrow.right", isLoading: model.isLoading) {
+                    showLogoutConfirmation = true
                 }
-                .buttonStyle(.borderedProminent)
             }
             .beerMapCard()
         }
@@ -170,7 +180,8 @@ struct PrivacySettingsCard: View {
             SectionHeader(
                 eyebrow: "Privacy",
                 title: "Data controls",
-                subtitle: "Optional analytics and venue insight inclusion match the website account controls."
+                subtitle: "Optional analytics and venue insight inclusion match the website account controls.",
+                systemImage: "lock.shield.fill"
             )
 
             Toggle("Optional analytics", isOn: $optionalAnalytics)
@@ -192,4 +203,3 @@ struct PrivacySettingsCard: View {
         .beerMapCard()
     }
 }
-

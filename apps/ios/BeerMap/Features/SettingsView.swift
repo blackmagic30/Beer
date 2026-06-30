@@ -11,7 +11,8 @@ struct SettingsView: View {
                     SectionHeader(
                         eyebrow: "Configuration",
                         title: "Backend connection",
-                        subtitle: "The native app reuses the existing BeerMap/Pint Path API and data."
+                        subtitle: "The native app reuses the existing BeerMap/Pint Path API and data.",
+                        systemImage: "server.rack"
                     )
                     row("API base URL", AppConfig.apiBaseURL.absoluteString)
                     row("Supabase native OAuth", AppConfig.supabaseURL == nil ? "Not configured" : "Public config present")
@@ -23,18 +24,15 @@ struct SettingsView: View {
                     SectionHeader(
                         eyebrow: "Support",
                         title: "Need help?",
-                        subtitle: "Use this for privacy, billing, abuse, moderation, or venue account support."
+                        subtitle: "Use this for privacy, billing, abuse, moderation, or venue account support.",
+                        systemImage: "lifepreserver.fill"
                     )
                     TextField("Message", text: $supportMessage, axis: .vertical)
                         .lineLimit(4...8)
                         .textFieldStyle(.roundedBorder)
-                    Button {
+                    PrimaryButton(title: "Send support note", systemImage: "paperplane.fill", isLoading: model.isLoading) {
                         Task { await sendSupport() }
-                    } label: {
-                        Label("Send support note", systemImage: "paperplane.fill")
-                            .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
                     .disabled(supportMessage.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)
                 }
                 .beerMapCard()
@@ -43,7 +41,8 @@ struct SettingsView: View {
                     SectionHeader(
                         eyebrow: "Safety",
                         title: "Responsible use",
-                        subtitle: "BeerMap is 18+ only. Prices and availability can change, and venues may refuse service under RSA obligations."
+                        subtitle: "BeerMap is 18+ only. Prices and availability can change, and venues may refuse service under RSA obligations.",
+                        systemImage: "checkmark.shield.fill"
                     )
                     Label("Location is opt-in and one-time where used.", systemImage: "location.circle.fill")
                     Label("Venue reports use aggregate privacy-safe analytics.", systemImage: "chart.bar.xaxis")
@@ -54,7 +53,7 @@ struct SettingsView: View {
             }
             .padding()
         }
-        .background(BeerMapTheme.background)
+        .beerMapScreen()
         .navigationTitle("Settings")
     }
 
@@ -91,4 +90,3 @@ struct SettingsView: View {
         }
     }
 }
-

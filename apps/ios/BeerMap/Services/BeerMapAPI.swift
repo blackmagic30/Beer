@@ -145,6 +145,18 @@ struct BeerMapAPI {
         try await send("/api/business/account/saved-items", method: "POST", body: item, token: token)
     }
 
+    func createSubmission(_ submission: CreateSubmissionRequest, token: String) async throws -> SubmissionResult {
+        try await send("/api/business/submissions", method: "POST", body: submission, token: token)
+    }
+
+    func reportWrongPrice(_ report: WrongPriceReportRequest, token: String?) async throws -> EmptyResponse {
+        try await send("/api/business/wrong-price-reports", method: "POST", body: report, token: token)
+    }
+
+    func createRequest(_ request: VenueRequestPayload, token: String?) async throws -> EmptyResponse {
+        try await send("/api/business/requests", method: "POST", body: request, token: token)
+    }
+
     func track(_ event: EventRequest, token: String?) async {
         do {
             let _: EmptyResponse = try await send("/api/business/events", method: "POST", body: event, token: token)
@@ -235,4 +247,3 @@ struct BeerMapAPI {
         value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 }
-

@@ -20,9 +20,29 @@ enum BeerMapTheme {
         Color(uiColor: .tertiarySystemGroupedBackground)
     }
 
+    static var hairline: Color {
+        Color.primary.opacity(0.08)
+    }
+
+    static var softShadow: Color {
+        Color.black.opacity(0.07)
+    }
+
     static var primaryGradient: LinearGradient {
         LinearGradient(
-            colors: [honey, amber, sky],
+            colors: [honey, amber, leaf],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    static var screenGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                background,
+                amber.opacity(0.08),
+                sky.opacity(0.06)
+            ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
@@ -30,14 +50,15 @@ enum BeerMapTheme {
 }
 
 extension View {
-    func beerMapCard() -> some View {
+    func beerMapCard(padding: CGFloat = 16) -> some View {
         self
-            .padding(16)
+            .padding(padding)
             .background(BeerMapTheme.card, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    .stroke(BeerMapTheme.hairline, lineWidth: 1)
             )
+            .shadow(color: BeerMapTheme.softShadow, radius: 10, x: 0, y: 5)
     }
 
     func readableForm() -> some View {
@@ -46,5 +67,10 @@ extension View {
             .autocorrectionDisabled()
             .submitLabel(.done)
     }
-}
 
+    func beerMapScreen() -> some View {
+        self
+            .background(BeerMapTheme.screenGradient.ignoresSafeArea())
+            .scrollDismissesKeyboard(.interactively)
+    }
+}

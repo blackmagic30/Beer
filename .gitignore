@@ -22,3 +22,16 @@ uploads/
 transcripts/
 call-review/
 *.log
+
+# Mobile local build/config/signing files
+apps/android/local.properties
+apps/android/.gradle/
+apps/android/**/build/
+apps/android/**/*.jks
+apps/android/**/*.keystore
+apps/ios/Config.xcconfig
+apps/ios/**/*.xcuserdata/
+apps/ios/**/xcuserdata/
+apps/ios/**/*.xcuserdatad/
+apps/ios/**/*.xcuserstate
+apps/ios/**/DerivedData/

@@ -275,6 +275,78 @@ struct FeedbackRequest: Codable {
     let venueName: String?
 }
 
+struct SubmissionResult: Codable, Hashable {
+    let id: String?
+    let status: String?
+    let idempotentReplay: Bool?
+}
+
+struct CreateSubmissionRequest: Codable {
+    let clientSubmissionId: String?
+    let venueId: String
+    let venueName: String
+    let suburb: String?
+    let newVenue: PendingSubmissionVenue?
+    let submissionType: String
+    let observedAt: String
+    let sourcePhotoDataUrl: String?
+    let sourcePhotoUrl: String?
+    let uploadLocation: UploadLocationRequest?
+    let notes: String?
+    let items: [SubmissionItemRequest]
+}
+
+struct PendingSubmissionVenue: Codable, Hashable {
+    let googlePlaceId: String?
+    let name: String
+    let address: String?
+    let suburb: String?
+    let state: String?
+    let postcode: String?
+    let phone: String?
+    let website: String?
+    let latitude: Double?
+    let longitude: Double?
+}
+
+struct UploadLocationRequest: Codable, Hashable {
+    let latitude: Double
+    let longitude: Double
+    let accuracyMeters: Double?
+    let capturedAt: String
+}
+
+struct SubmissionItemRequest: Codable, Hashable {
+    let beerName: String
+    let servingSize: String
+    let price: Double?
+    let isHappyHourPrice: Bool
+    let happyHourDetails: String?
+    let isOnTap: String
+}
+
+struct WrongPriceReportRequest: Codable {
+    let anonymousSessionId: String?
+    let venueId: String
+    let venueName: String
+    let priceRecordId: String?
+    let beerName: String?
+    let reason: String
+    let notes: String?
+    let sourcePhotoDataUrl: String?
+    let sourcePhotoUrl: String?
+}
+
+struct VenueRequestPayload: Codable {
+    let anonymousSessionId: String?
+    let requestType: String
+    let venueId: String?
+    let venueName: String?
+    let beerName: String?
+    let suburb: String?
+    let notes: String?
+}
+
 struct VenuePortalData: Codable {
     let accessState: String?
     let assignments: [VenueAssignment]?

@@ -256,6 +256,122 @@ final class BeerMapAppModel: ObservableObject {
         }
     }
 
+    func submitPriceUpdate(venueId: String, beerName: String, servingSize: String, priceText: String, notes: String) async {
+        guard let token = sessionToken else {
+            errorMessage = "Sign in before submitting venue data."
+            return
+        }
+        guard let venue = venues.first(where: { $0.id == venueId }) else {
+            errorMessage = "Choose a venue before submitting."
+            return
+        }
+        let trimmedBeer = beerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBeer.isEmpty else {
+            errorMessage = "Add the beer name before submitting."
+            return
+        }
+        let cleanedPrice = priceText
+            .replacingOccurrences(of: "$", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let price = Double(cleanedPrice), price > 0 else {
+            errorMessage = "Add a valid observed price."
+            return
+        }
+
+        setLoading(true)
+        defer { setLoading(false) }
+        do {
+            let submission = CreateSubmissionRequest(
+                clientSubmissionId: "ios-\(UUID().uuidString)",
+                venueId: venue.id,
+                venueName: venue.name,
+                suburb: venue.suburb,
+                newVenue: nil,
+                submissionType: "single_beer_price",
+                observedAt: isoNow(),
+                sourcePhotoDataUrl: nil,
+                sourcePhotoUrl: nil,
+                uploadLocation: nil,
+                notes: notes.nilIfBlank,
+                items: [
+                    SubmissionItemRequest(
+                        beerName: trimmedBeer,
+                        servingSize: servingSize,
+                        price: price,
+                        isHappyHourPrice: false,
+                        happyHourDetails: nil,
+                        isOnTap: "unknown"
+                    )
+                ]
+            )
+            _ = try await api.createSubmission(submission, token: token)
+            notice = "Price update sent for review."
+            await track("submission_completed", venueId: venue.id, suburb: venue.suburb, metadata: ["source": .string("ios_app")])
+            await refreshAccount()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func reportWrongPrice(venueId: String, beerName: String, notes: String) async {
+        guard let venue = venues.first(where: { $0.id == venueId }) else {
+            errorMessage = "Choose a venue before reporting."
+            return
+        }
+        setLoading(true)
+        defer { setLoading(false) }
+        do {
+            let report = WrongPriceReportRequest(
+                anonymousSessionId: anonymousSessionId,
+                venueId: venue.id,
+                venueName: venue.name,
+                priceRecordId: nil,
+                beerName: beerName.nilIfBlank,
+                reason: "other",
+                notes: notes.nilIfBlank,
+                sourcePhotoDataUrl: nil,
+                sourcePhotoUrl: nil
+            )
+            _ = try await api.reportWrongPrice(report, token: sessionToken)
+            notice = "Wrong-price report sent."
+            await track("wrong_price_reported", venueId: venue.id, suburb: venue.suburb, metadata: ["source": .string("ios_app")])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func requestMissing(requestType: String, venueName: String, beerName: String, suburb: String, notes: String) async {
+        let trimmedVenue = venueName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBeer = beerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if requestType == "missing_beer", trimmedBeer.isEmpty {
+            errorMessage = "Add the beer name before sending the request."
+            return
+        }
+        if requestType != "missing_beer", trimmedVenue.isEmpty {
+            errorMessage = "Add the venue name before sending the request."
+            return
+        }
+
+        setLoading(true)
+        defer { setLoading(false) }
+        do {
+            let payload = VenueRequestPayload(
+                anonymousSessionId: anonymousSessionId,
+                requestType: requestType,
+                venueId: nil,
+                venueName: trimmedVenue.nilIfBlank,
+                beerName: trimmedBeer.nilIfBlank,
+                suburb: suburb.nilIfBlank,
+                notes: notes.nilIfBlank
+            )
+            _ = try await api.createRequest(payload, token: sessionToken)
+            notice = requestType == "missing_beer" ? "Beer request sent." : "Venue request sent."
+            await track(requestType == "missing_beer" ? "beer_requested" : "venue_requested", suburb: suburb.nilIfBlank, metadata: ["source": .string("ios_app")])
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func track(_ eventType: String, venueId: String? = nil, suburb: String? = nil, metadata: [String: JSONValue] = [:]) async {
         guard optionalAnalyticsEnabled else { return }
         await api.track(
@@ -293,5 +409,8 @@ final class BeerMapAppModel: ObservableObject {
     private func setLoading(_ value: Bool) {
         isLoading = value
     }
-}
 
+    private func isoNow() -> String {
+        ISO8601DateFormatter().string(from: Date())
+    }
+}

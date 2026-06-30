@@ -10,6 +10,7 @@
 		4A0000010000000000000001 /* BeerMapApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000101 /* BeerMapApp.swift */; };
 		4A0000010000000000000002 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000102 /* RootView.swift */; };
 		4A0000010000000000000003 /* DiscoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000103 /* DiscoverView.swift */; };
+		4A0000010000000000000010 /* ContributeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000110 /* ContributeView.swift */; };
 		4A0000010000000000000004 /* AuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000104 /* AuthView.swift */; };
 		4A0000010000000000000005 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000105 /* AccountView.swift */; };
 		4A0000010000000000000006 /* VenuePortalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0000010000000000000106 /* VenuePortalView.swift */; };
@@ -26,6 +27,7 @@
 		4A0000010000000000000101 /* BeerMapApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BeerMapApp.swift; sourceTree = "<group>"; };
 		4A0000010000000000000102 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		4A0000010000000000000103 /* DiscoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverView.swift; sourceTree = "<group>"; };
+		4A0000010000000000000110 /* ContributeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContributeView.swift; sourceTree = "<group>"; };
 		4A0000010000000000000104 /* AuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthView.swift; sourceTree = "<group>"; };
 		4A0000010000000000000105 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
 		4A0000010000000000000106 /* VenuePortalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VenuePortalView.swift; sourceTree = "<group>"; };
@@ -95,6 +97,7 @@
 			children = (
 				4A0000010000000000000102 /* RootView.swift */,
 				4A0000010000000000000103 /* DiscoverView.swift */,
+				4A0000010000000000000110 /* ContributeView.swift */,
 				4A0000010000000000000104 /* AuthView.swift */,
 				4A0000010000000000000105 /* AccountView.swift */,
 				4A0000010000000000000106 /* VenuePortalView.swift */,
@@ -208,6 +211,7 @@
 				4A0000010000000000000001 /* BeerMapApp.swift in Sources */,
 				4A0000010000000000000002 /* RootView.swift in Sources */,
 				4A0000010000000000000003 /* DiscoverView.swift in Sources */,
+				4A0000010000000000000010 /* ContributeView.swift in Sources */,
 				4A0000010000000000000004 /* AuthView.swift in Sources */,
 				4A0000010000000000000005 /* AccountView.swift in Sources */,
 				4A0000010000000000000006 /* VenuePortalView.swift in Sources */,
@@ -352,8 +356,11 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
+				PINT_PATH_API_BASE_URL = "https:/$()/pintpath.au";
 				PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.beermap;
 				PRODUCT_NAME = BeerMap;
+				SUPABASE_ANON_KEY = "";
+				SUPABASE_URL = "";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -375,8 +382,11 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
+				PINT_PATH_API_BASE_URL = "https:/$()/pintpath.au";
 				PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.beermap;
 				PRODUCT_NAME = BeerMap;
+				SUPABASE_ANON_KEY = "";
+				SUPABASE_URL = "";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -409,4 +419,3 @@
 	};
 	rootObject = 4A0000010000000000000701 /* Project object */;
 }
-

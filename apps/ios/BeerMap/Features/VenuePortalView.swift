@@ -14,6 +14,17 @@ struct VenuePortalView: View {
         case reports = "Reports"
 
         var id: String { rawValue }
+
+        var systemImage: String {
+            switch self {
+            case .dashboard: return "chart.bar.fill"
+            case .profile: return "building.2.fill"
+            case .beers: return "mug.fill"
+            case .happyHours: return "clock.badge.checkmark.fill"
+            case .specials: return "tag.fill"
+            case .reports: return "doc.text.fill"
+            }
+        }
     }
 
     var body: some View {
@@ -37,7 +48,7 @@ struct VenuePortalView: View {
             }
             .padding()
         }
-        .background(BeerMapTheme.background)
+        .beerMapScreen()
         .navigationTitle("Bars")
         .refreshable {
             await model.refreshVenuePortal(venueId: selectedVenueId.isEmpty ? nil : selectedVenueId)
@@ -53,7 +64,8 @@ struct VenuePortalView: View {
                 SectionHeader(
                     eyebrow: portal.tier?.tierLabel ?? portal.profile?.membershipTier ?? "Venue",
                     title: portal.selectedVenue?.venueName ?? "Venue dashboard",
-                    subtitle: portal.privacyCopy ?? "Venue insights are aggregate and privacy-safe."
+                    subtitle: portal.privacyCopy ?? "Venue insights are aggregate and privacy-safe.",
+                    systemImage: "building.2.fill"
                 )
 
                 if let message = portal.message {
@@ -77,12 +89,34 @@ struct VenuePortalView: View {
             }
             .beerMapCard()
 
-            Picker("Dashboard section", selection: $selectedSection) {
-                ForEach(PortalSection.allCases) { section in
-                    Text(section.rawValue).tag(section)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(PortalSection.allCases) { section in
+                        Button {
+                            selectedSection = section
+                        } label: {
+                            Label(section.rawValue, systemImage: section.systemImage)
+                                .font(.caption.weight(.bold))
+                                .lineLimit(1)
+                                .padding(.horizontal, 12)
+                                .frame(height: 42)
+                                .background(
+                                    selectedSection == section ? BeerMapTheme.ink : BeerMapTheme.card,
+                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                )
+                                .foregroundStyle(selectedSection == section ? Color.white : Color.primary)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(BeerMapTheme.hairline, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Show \(section.rawValue)")
+                    }
                 }
+                .padding(.vertical, 2)
             }
-            .pickerStyle(.segmented)
+            .accessibilityElement(children: .contain)
 
             switch selectedSection {
             case .dashboard:
@@ -121,7 +155,8 @@ struct PortalDashboard: View {
                     SectionHeader(
                         eyebrow: "Analytics",
                         title: analytics.privacyFloorMet == false ? "Demand snapshot building" : "Demand snapshot",
-                        subtitle: analytics.privacyFloorMet == false ? "Area data stays hidden until the privacy floor is met." : nil
+                        subtitle: analytics.privacyFloorMet == false ? "Area data stays hidden until the privacy floor is met." : nil,
+                        systemImage: "chart.xyaxis.line"
                     )
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                         MetricPill(title: "Lookups", value: "\(analytics.barLookups ?? 0)", systemImage: "magnifyingglass", tint: BeerMapTheme.sky)
@@ -152,7 +187,7 @@ struct ProfileEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(eyebrow: "Profile", title: "Bar profile", subtitle: "Keep public venue details accurate for the map and reports.")
+            SectionHeader(eyebrow: "Profile", title: "Bar profile", subtitle: "Keep public venue details accurate for the map and reports.", systemImage: "building.2.fill")
             TextField("Venue name", text: $draft.name)
                 .textFieldStyle(.roundedBorder)
             TextField("Address", text: binding("address"))
@@ -165,7 +200,7 @@ struct ProfileEditor: View {
             TextField("Website", text: binding("website"))
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.URL)
-            TextField("Instagram", text: binding("instagram"))
+            TextField("Instagram URL", text: binding("instagram"))
                 .textFieldStyle(.roundedBorder)
             TextField("Description", text: binding("description"), axis: .vertical)
                 .lineLimit(3...6)
@@ -177,6 +212,7 @@ struct ProfileEditor: View {
             PrimaryButton(title: "Save profile", systemImage: "checkmark.circle.fill", isLoading: model.isLoading) {
                 Task { await model.saveProfile(draft) }
             }
+            .disabled(draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .beerMapCard()
     }
@@ -216,24 +252,35 @@ struct BeerInventoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(eyebrow: "Stock", title: "Beers and prices", subtitle: "Venue updates stay server-reviewed where required.")
-            ForEach(beers, id: \.stableId) { beer in
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(beer.beerName)
-                            .font(.headline)
-                        Text([beer.style, beer.serveSize, beer.onTap ? "On tap" : nil].compactMap { $0 }.joined(separator: " · "))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            SectionHeader(eyebrow: "Stock", title: "Beers and prices", subtitle: "Venue updates stay server-reviewed where required.", systemImage: "mug.fill")
+            if beers.isEmpty {
+                EmptyStateView(
+                    title: "No beer rows yet",
+                    message: "Add the beers staff want visible first. You can expand stock detail after the first save.",
+                    systemImage: "tray",
+                    isFramed: false
+                )
+            } else {
+                ForEach(beers, id: \.stableId) { beer in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(beer.beerName)
+                                .font(.headline)
+                            Text([beer.style, beer.serveSize, beer.onTap ? "On tap" : nil].compactMap { $0 }.joined(separator: " · "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        if let price = beer.price {
+                            Text("$\(String(format: "%.2f", price))")
+                                .font(.headline.weight(.bold))
+                        }
                     }
-                    Spacer()
-                    if let price = beer.price {
-                        Text("$\(String(format: "%.2f", price))")
-                            .font(.headline.weight(.bold))
-                    }
+                    .padding(10)
+                    .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
                 }
-                .padding(10)
-                .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
             }
 
             Divider()
@@ -279,20 +326,30 @@ struct HappyHourInventoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(eyebrow: "Happy hours", title: "Current specials", subtitle: "Use native time pickers so staff can update quickly.")
-            ForEach(happyHours, id: \.stableId) { item in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title)
-                        .font(.headline)
-                    Text("\(item.daysOfWeek.joined(separator: ", ")) · \(item.startTime)-\(item.endTime)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(item.description)
-                        .font(.caption)
+            SectionHeader(eyebrow: "Happy hours", title: "Current specials", subtitle: "Use native time pickers so staff can update quickly.", systemImage: "clock.badge.checkmark.fill")
+            if happyHours.isEmpty {
+                EmptyStateView(
+                    title: "No happy hours yet",
+                    message: "Add the recurring windows your team wants customers to find quickly.",
+                    systemImage: "clock",
+                    isFramed: false
+                )
+            } else {
+                ForEach(happyHours, id: \.stableId) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title)
+                            .font(.headline)
+                        Text("\(item.daysOfWeek.joined(separator: ", ")) · \(item.startTime)-\(item.endTime)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(item.description)
+                            .font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
             }
 
             Divider()
@@ -338,6 +395,7 @@ struct HappyHourInventoryView: View {
                 }
                 .buttonStyle(.plain)
                 .background(selectedDays.contains(day) ? BeerMapTheme.amber.opacity(0.28) : BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityLabel("\(day.uppercased()) \(selectedDays.contains(day) ? "selected" : "not selected")")
             }
         }
     }
@@ -358,24 +416,34 @@ struct SpecialInventoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(eyebrow: "Specials", title: "Pint Path specials", subtitle: canManage ? "Pro venues can submit reviewed specials." : "Upgrade to Pro to add reviewed specials.")
+            SectionHeader(eyebrow: "Specials", title: "Pint Path specials", subtitle: canManage ? "Pro venues can submit reviewed specials." : "Upgrade to Pro to add reviewed specials.", systemImage: "tag.fill")
             if !canManage {
                 StatusBanner(message: "Free venue accounts can manage beers and happy hours. Pro unlocks reviewed Pint Path specials.")
             }
 
-            ForEach(specials, id: \.stableId) { item in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title)
-                        .font(.headline)
-                    Text([item.discount, item.startTime + "-" + item.endTime].compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(item.description)
-                        .font(.caption)
+            if specials.isEmpty {
+                EmptyStateView(
+                    title: canManage ? "No specials yet" : "Specials are locked",
+                    message: canManage ? "Add a reviewed Pint Path special for peak service windows." : "Pro unlocks reviewed Pint Path specials for this venue.",
+                    systemImage: "tag",
+                    isFramed: false
+                )
+            } else {
+                ForEach(specials, id: \.stableId) { item in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title)
+                            .font(.headline)
+                        Text([item.discount, item.startTime + "-" + item.endTime].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(item.description)
+                            .font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
             }
 
             if canManage {
@@ -425,7 +493,8 @@ struct PortalReportsView: View {
             SectionHeader(
                 eyebrow: "Reports",
                 title: portal.tier?.monthlyReports == true ? "Monthly report" : "Reports locked",
-                subtitle: portal.tier?.monthlyReports == true ? "Generated reports use privacy-safe aggregate data." : portal.tier?.upgradeCopy
+                subtitle: portal.tier?.monthlyReports == true ? "Generated reports use privacy-safe aggregate data." : portal.tier?.upgradeCopy,
+                systemImage: "doc.text.fill"
             )
             if portal.tier?.monthlyReports == true {
                 MetricPill(title: "Privacy floor", value: portal.analytics?.privacyFloorMet == true ? "Met" : "Building", systemImage: "lock.shield.fill", tint: BeerMapTheme.leaf)

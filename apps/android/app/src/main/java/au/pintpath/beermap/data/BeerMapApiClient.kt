@@ -8,6 +8,9 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
+import java.util.UUID
 
 class BeerMapApiClient(
     private val baseUrl: String = BuildConfig.PINT_PATH_API_BASE_URL
@@ -92,6 +95,87 @@ class BeerMapApiClient(
                 .put("label", venue.name)
                 .putNullable("suburb", venue.suburb)
                 .put("metadata", JSONObject().put("source", "android_app")),
+            token = token
+        )
+    }
+
+    suspend fun submitPriceUpdate(
+        venue: Venue,
+        beerName: String,
+        servingSize: String,
+        price: Double,
+        notes: String?,
+        token: String
+    ) {
+        request(
+            path = "/api/business/submissions",
+            method = "POST",
+            body = JSONObject()
+                .put("clientSubmissionId", "android-${UUID.randomUUID()}")
+                .put("venueId", venue.id)
+                .put("venueName", venue.name)
+                .putNullable("suburb", venue.suburb)
+                .putNullable("newVenue", null)
+                .put("submissionType", "single_beer_price")
+                .put("observedAt", isoNow())
+                .putNullable("sourcePhotoDataUrl", null)
+                .putNullable("sourcePhotoUrl", null)
+                .putNullable("uploadLocation", null)
+                .putNullable("notes", notes)
+                .put(
+                    "items",
+                    org.json.JSONArray().put(
+                        JSONObject()
+                            .put("beerName", beerName)
+                            .put("servingSize", servingSize)
+                            .put("price", price)
+                            .put("isHappyHourPrice", false)
+                            .putNullable("happyHourDetails", null)
+                            .put("isOnTap", "unknown")
+                    )
+                ),
+            token = token
+        )
+    }
+
+    suspend fun reportWrongPrice(venue: Venue, beerName: String?, notes: String?, anonymousSessionId: String, token: String?) {
+        request(
+            path = "/api/business/wrong-price-reports",
+            method = "POST",
+            body = JSONObject()
+                .put("anonymousSessionId", anonymousSessionId)
+                .put("venueId", venue.id)
+                .put("venueName", venue.name)
+                .putNullable("priceRecordId", null)
+                .putNullable("beerName", beerName)
+                .put("reason", "other")
+                .putNullable("notes", notes)
+                .putNullable("sourcePhotoDataUrl", null)
+                .putNullable("sourcePhotoUrl", null),
+            token = token
+        )
+    }
+
+    suspend fun requestMissing(
+        requestType: String,
+        venueName: String?,
+        beerName: String?,
+        suburb: String?,
+        notes: String?,
+        anonymousSessionId: String,
+        token: String?
+    ) {
+        request(
+            path = "/api/business/requests",
+            method = "POST",
+            body = JSONObject()
+                .put("anonymousSessionId", anonymousSessionId)
+                .put("requestType", requestType)
+                .putNullable("venueId", null)
+                .putNullable("venueName", venueName)
+                .putNullable("beerName", beerName)
+                .putNullable("suburb", suburb)
+                .putNullable("notes", notes),
             token = token
         )
     }
@@ -187,5 +271,6 @@ class BeerMapApiClient(
     }
 
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
-}
 
+    private fun isoNow(): String = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+}

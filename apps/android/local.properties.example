@@ -4,10 +4,13 @@
 # sdk.dir=/Users/you/Library/Android/sdk
 
 # Existing BeerMap/Pint Path backend.
+# Hosted default:
 PINT_PATH_API_BASE_URL=https://pintpath.au
+# Android emulator with backend on the Mac:
+# PINT_PATH_API_BASE_URL=http://10.0.2.2:3000
+# Physical device with local backend: use an HTTPS tunnel or a LAN URL reachable from the device.
 
 # Optional public Supabase Auth config for future native OAuth.
 # Never put service-role keys in Android config.
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
-

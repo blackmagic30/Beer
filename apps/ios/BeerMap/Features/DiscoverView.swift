@@ -49,7 +49,7 @@ struct DiscoverView: View {
             }
             .padding()
         }
-        .background(BeerMapTheme.background)
+        .beerMapScreen()
         .navigationTitle("BeerMap")
         .refreshable {
             await model.loadHome(search: searchText)
@@ -61,25 +61,15 @@ struct DiscoverView: View {
 
     private var hero: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("BeerMap")
-                        .font(.largeTitle.weight(.black))
-                    Text("Melbourne beer prices, happy hours, and bar updates in your pocket.")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "mug.fill")
-                    .font(.system(size: 42, weight: .black))
-                    .foregroundStyle(.white)
-                    .frame(width: 72, height: 72)
-                    .background(BeerMapTheme.primaryGradient, in: RoundedRectangle(cornerRadius: 8))
-                    .accessibilityHidden(true)
-            }
+            SectionHeader(
+                eyebrow: "BeerMap",
+                title: "Find the right bar faster",
+                subtitle: "Melbourne beer prices, happy hours, and bar updates in your pocket.",
+                systemImage: "mug.fill"
+            )
 
             if model.config?.fieldTestMode == true {
-                StatusBanner(message: "Field-test mode is on. Venue data may change during beta.")
+                StatusBanner(message: "Field-test mode is on. Venue data may change during beta.", systemImage: "testtube.2")
             }
         }
         .beerMapCard()
@@ -117,21 +107,20 @@ struct VenueDetailView: View {
         ScrollView {
             VStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(eyebrow: venue.membershipTier == "pro" ? "Pro venue" : "Venue", title: venue.name, subtitle: venue.address ?? venue.displayLocation)
+                    SectionHeader(
+                        eyebrow: venue.membershipTier == "pro" ? "Pro venue" : "Venue",
+                        title: venue.name,
+                        subtitle: venue.address ?? venue.displayLocation,
+                        systemImage: "building.2.fill"
+                    )
                     HStack {
-                        Button {
+                        SecondaryButton(title: "Save", systemImage: "bookmark.fill") {
                             Task { await model.saveVenue(venue) }
-                        } label: {
-                            Label("Save", systemImage: "bookmark.fill")
                         }
-                        .buttonStyle(.bordered)
 
-                        Button {
+                        PrimaryButton(title: "Show prices", systemImage: "eye.fill", isLoading: model.isLoading) {
                             Task { await model.revealPrices(for: venue) }
-                        } label: {
-                            Label("Show prices", systemImage: "eye.fill")
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                 }
                 .beerMapCard()
@@ -141,7 +130,7 @@ struct VenueDetailView: View {
                         StatusBanner(message: "Some exact prices stay locked to Premium, contributor, or admin access.", isError: false)
                     }
                     if response.records.isEmpty {
-                        EmptyStateView(title: "No price rows yet", message: "This venue needs a trusted update.", systemImage: "tray")
+                        EmptyStateView(title: "No price rows yet", message: "This venue needs a trusted update.", systemImage: "tray", isFramed: false)
                     } else {
                         VStack(spacing: 10) {
                             ForEach(response.records) { record in
@@ -170,7 +159,7 @@ struct VenueDetailView: View {
             }
             .padding()
         }
-        .background(BeerMapTheme.background)
+        .beerMapScreen()
         .navigationTitle(venue.name)
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -180,4 +169,3 @@ struct VenueDetailView: View {
         }
     }
 }
-
