@@ -20,6 +20,8 @@ import {
   authLoginSchema,
   authSupabaseSessionSchema,
   authSignupSchema,
+  beerCatalogApproveSchema,
+  beerCatalogMergeSchema,
   checkoutSchema,
   checkoutSessionSchema,
   createMissionSchema,
@@ -603,6 +605,25 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/admin/queues", (req, res) => {
     const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getAdminQueues(admin)));
+  });
+
+  router.get("/admin/beer-catalog", (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    res.json(success(businessService.getAdminBeerCatalog(admin)));
+  });
+
+  router.post("/admin/beer-catalog/:key/approve", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(beerCatalogApproveSchema, req.body, "Invalid beer catalogue approval payload");
+    const key = String(req.params.key ?? "");
+    res.json(success(businessService.approveBeerCatalogItem(admin, key, body)));
+  });
+
+  router.post("/admin/beer-catalog/:key/merge", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(beerCatalogMergeSchema, req.body, "Invalid beer catalogue merge payload");
+    const key = String(req.params.key ?? "");
+    res.json(success(businessService.mergeBeerCatalogItem(admin, key, body)));
   });
 
   router.get("/admin/venue-partners", (req, res) => {

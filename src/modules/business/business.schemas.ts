@@ -655,6 +655,15 @@ export const adminAccountSearchSchema = z.object({
   limit: z.coerce.number().int().min(1).max(25).default(10),
 });
 
+export const beerCatalogApproveSchema = z.object({
+  reviewNote: nullableTrimmedStringSchema.default(null),
+});
+
+export const beerCatalogMergeSchema = z.object({
+  targetKey: z.string().trim().min(1).max(160),
+  reviewNote: nullableTrimmedStringSchema.default(null),
+});
+
 const reportMonthSchema = z.string().trim().regex(/^\d{4}-\d{2}$/, "Use YYYY-MM, for example 2026-05.");
 
 export const monthlyReportGenerateSchema = z.object({

@@ -243,6 +243,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("function beerMatchesSearchQuery");
     expect(html).toContain("record.normalizedBeerId || record.beerName || record.id");
     expect(html).toContain("normalized_beer_id: record.normalizedBeerId || null");
+    expect(venuePortalHtml).toContain("function findClosestTrackedBeer");
+    expect(venuePortalHtml).toContain("data-use-portal-beer-suggestion");
+    expect(venuePortalHtml).toContain("New beer will be saved for admin review and reused next time.");
     expect(html).toContain("Loading venue list");
     expect(html).toContain("Map tiles are unavailable, so Pint Path is loading the venue list instead.");
     expect(html).toContain("Venue list unavailable");

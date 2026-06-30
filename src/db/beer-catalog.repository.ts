@@ -17,6 +17,20 @@ export interface ResolvedBeerCatalogItem {
   matchedExisting: boolean;
 }
 
+export interface BeerCatalogAdminItem {
+  key: string;
+  name: string;
+  brewery: string | null;
+  style: string | null;
+  abv: number | null;
+  status: BeerCatalogStatus;
+  source: string;
+  reviewNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+  aliases: string[];
+}
+
 interface BeerCatalogRow {
   key: string;
   name: string;
@@ -25,6 +39,12 @@ interface BeerCatalogRow {
   abv: number | null;
   status: BeerCatalogStatus;
   source: string;
+}
+
+interface BeerCatalogAdminRow extends BeerCatalogRow {
+  review_note: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface BeerCatalogAliasRow {
@@ -176,6 +196,59 @@ export class BeerCatalogRepository {
     return row ?? null;
   }
 
+  private findAdminByKey(key: string): BeerCatalogAdminRow | null {
+    const row = this.db
+      .prepare(
+        `SELECT key, name, brewery, style, abv, status, source, review_note, created_at, updated_at
+           FROM beer_catalog_items
+          WHERE key = ?
+          LIMIT 1`,
+      )
+      .get(key) as BeerCatalogAdminRow | undefined;
+    return row ?? null;
+  }
+
+  private aliasesForKeys(keys: string[]): Map<string, string[]> {
+    if (!keys.length) {
+      return new Map();
+    }
+
+    const aliasesByBeerKey = new Map<string, string[]>();
+    const aliasRows = this.db
+      .prepare(
+        `SELECT beer_key, alias
+           FROM beer_catalog_aliases
+          WHERE beer_key IN (${keys.map(() => "?").join(", ")})
+          ORDER BY alias COLLATE NOCASE ASC`,
+      )
+      .all(...keys) as BeerCatalogAliasRow[];
+
+    aliasRows.forEach((row) => {
+      const aliases = aliasesByBeerKey.get(row.beer_key) ?? [];
+      aliases.push(row.alias);
+      aliasesByBeerKey.set(row.beer_key, aliases);
+    });
+
+    return aliasesByBeerKey;
+  }
+
+  private toAdminItem(row: BeerCatalogAdminRow, aliasesByBeerKey: Map<string, string[]>): BeerCatalogAdminItem {
+    const aliases = new Set([row.key, row.name, ...(aliasesByBeerKey.get(row.key) ?? [])].filter(Boolean));
+    return {
+      key: row.key,
+      name: row.name,
+      brewery: row.brewery,
+      style: row.style,
+      abv: row.abv,
+      status: row.status,
+      source: row.source,
+      reviewNote: row.review_note,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      aliases: Array.from(aliases),
+    };
+  }
+
   private uniqueKey(baseKey: string): string {
     let candidate = fallbackBeerKey(baseKey);
     let suffix = 2;
@@ -211,6 +284,117 @@ export class BeerCatalogRepository {
       .run(aliasKey, input.beerKey, alias, input.source, input.now);
   }
 
+  listForAdmin(status: BeerCatalogStatus | "all" = "pending_review", limit = 100): BeerCatalogAdminItem[] {
+    const rows = this.db
+      .prepare(
+        `SELECT key, name, brewery, style, abv, status, source, review_note, created_at, updated_at
+           FROM beer_catalog_items
+          WHERE (? = 'all' OR status = ?)
+          ORDER BY CASE status WHEN 'pending_review' THEN 0 ELSE 1 END, updated_at DESC, name COLLATE NOCASE ASC
+          LIMIT ?`,
+      )
+      .all(status, status, limit) as BeerCatalogAdminRow[];
+    const aliasesByBeerKey = this.aliasesForKeys(rows.map((row) => row.key));
+    return rows.map((row) => this.toAdminItem(row, aliasesByBeerKey));
+  }
+
+  approvePendingBeer(input: {
+    key: string;
+    reviewNote?: string | null;
+    now: string;
+  }): BeerCatalogAdminItem | null {
+    const row = this.findAdminByKey(input.key);
+    if (!row || row.status !== "pending_review") {
+      return null;
+    }
+
+    const approve = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE beer_catalog_items
+              SET status = 'active',
+                  review_note = ?,
+                  updated_at = ?
+            WHERE key = ?
+              AND status = 'pending_review'`,
+        )
+        .run(input.reviewNote ?? row.review_note, input.now, input.key);
+      this.upsertAlias({
+        beerKey: input.key,
+        alias: row.name,
+        source: "admin_catalog_review",
+        now: input.now,
+      });
+    });
+
+    approve();
+    return this.getAdminItem(input.key);
+  }
+
+  mergePendingBeer(input: {
+    sourceKey: string;
+    targetKey: string;
+    reviewNote?: string | null;
+    now: string;
+  }): { source: BeerCatalogAdminItem; target: BeerCatalogAdminItem } | null {
+    if (input.sourceKey === input.targetKey) {
+      return null;
+    }
+
+    const sourceRow = this.findAdminByKey(input.sourceKey);
+    const targetRow = this.findAdminByKey(input.targetKey);
+    if (!sourceRow || sourceRow.status !== "pending_review" || !targetRow || targetRow.status !== "active") {
+      return null;
+    }
+
+    const aliasesByBeerKey = this.aliasesForKeys([sourceRow.key, targetRow.key]);
+    const sourceBeforeMerge = this.toAdminItem(sourceRow, aliasesByBeerKey);
+
+    const merge = this.db.transaction(() => {
+      for (const alias of [sourceRow.key, sourceRow.name, ...(aliasesByBeerKey.get(sourceRow.key) ?? [])]) {
+        this.upsertAlias({
+          beerKey: targetRow.key,
+          alias,
+          source: "admin_catalog_merge",
+          now: input.now,
+        });
+      }
+
+      const tables = [
+        "submission_items",
+        "venue_price_records",
+        "venue_beers",
+      ];
+      for (const table of tables) {
+        this.db
+          .prepare(`UPDATE ${table} SET beer_name = ?, normalized_beer_id = ? WHERE normalized_beer_id = ?`)
+          .run(targetRow.name, targetRow.key, sourceRow.key);
+      }
+
+      this.db
+        .prepare(
+          `UPDATE beer_catalog_items
+              SET review_note = ?,
+                  updated_at = ?
+            WHERE key = ?`,
+        )
+        .run(input.reviewNote ?? `Merged ${sourceRow.name} into ${targetRow.name}.`, input.now, targetRow.key);
+      this.db.prepare("DELETE FROM beer_catalog_items WHERE key = ?").run(sourceRow.key);
+    });
+
+    merge();
+    const target = this.getAdminItem(targetRow.key);
+    return target ? { source: sourceBeforeMerge, target } : null;
+  }
+
+  getAdminItem(key: string): BeerCatalogAdminItem | null {
+    const row = this.findAdminByKey(key);
+    if (!row) {
+      return null;
+    }
+    return this.toAdminItem(row, this.aliasesForKeys([row.key]));
+  }
+
   listForViewer(limit = 500): BeerCatalogItem[] {
     const rows = this.db
       .prepare(
@@ -226,21 +410,7 @@ export class BeerCatalogRepository {
       return BEER_CATALOG.slice(0, limit);
     }
 
-    const aliasesByBeerKey = new Map<string, string[]>();
-    const aliasRows = this.db
-      .prepare(
-        `SELECT beer_key, alias
-           FROM beer_catalog_aliases
-          WHERE beer_key IN (${rows.map(() => "?").join(", ")})
-          ORDER BY alias COLLATE NOCASE ASC`,
-      )
-      .all(...rows.map((row) => row.key)) as BeerCatalogAliasRow[];
-
-    aliasRows.forEach((row) => {
-      const aliases = aliasesByBeerKey.get(row.beer_key) ?? [];
-      aliases.push(row.alias);
-      aliasesByBeerKey.set(row.beer_key, aliases);
-    });
+    const aliasesByBeerKey = this.aliasesForKeys(rows.map((row) => row.key));
 
     return rows.map((row) => {
       const aliasSet = new Set([row.key, row.name, ...(aliasesByBeerKey.get(row.key) ?? [])]);

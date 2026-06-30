@@ -6274,6 +6274,48 @@ body.discountPassModalOpen {
   color: #fecaca;
 }
 
+.inlineSuggestionButton {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  margin: 0 2px;
+  padding: 2px 8px;
+  color: #d9f99d;
+  background: rgba(132, 204, 22, 0.18);
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.inlineSuggestionButton:hover,
+.inlineSuggestionButton:focus-visible {
+  color: #ffffff;
+  background: rgba(132, 204, 22, 0.3);
+  outline: 2px solid rgba(132, 204, 22, 0.35);
+  outline-offset: 2px;
+}
+
+.adminBeerCatalogPanel {
+  gap: 14px;
+}
+
+.adminBeerCatalogRow {
+  gap: 10px;
+}
+
+.adminBeerCatalogActions {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+@media (max-width: 680px) {
+  .adminBeerCatalogActions {
+    grid-template-columns: 1fr;
+  }
+}
+
 .betaFeaturePanel {
   display: grid;
   gap: 14px;

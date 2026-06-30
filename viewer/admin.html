@@ -174,6 +174,19 @@
           </div>
         </div>
 
+        <div class="panel adminPanelSpan adminBeerCatalogPanel">
+          <div class="sectionHeader">
+            <div>
+              <h2>Pending beer catalogue</h2>
+              <p class="muted">Approve real new beers, or merge spelling mistakes into the canonical catalogue before they spread.</p>
+            </div>
+            <button id="refreshBeerCatalogButton" class="button button--small" type="button">Refresh</button>
+          </div>
+          <div id="adminBeerCatalogStatus" class="notice">Loading pending beer names...</div>
+          <datalist id="adminBeerCatalogMergeTargets"></datalist>
+          <div id="pendingBeerCatalog" class="list"></div>
+        </div>
+
         <div class="adminGrid adminGrid--two">
           <div class="panel">
             <h2>Pending submissions</h2>
@@ -1812,6 +1825,108 @@
       element.className = `notice ${isWarning ? "notice--warning" : ""}`;
     }
 
+    function adminCatalogLabel(beer) {
+      return [beer.name, beer.brewery, beer.style].filter(Boolean).join(" · ");
+    }
+
+    function findAdminCatalogTarget(value, activeBeers) {
+      const key = String(value || "").trim().toLowerCase();
+      if (!key) return null;
+      return activeBeers.find((beer) => {
+        const candidates = [beer.key, beer.name, ...(beer.aliases || [])]
+          .map((candidate) => String(candidate || "").trim().toLowerCase())
+          .filter(Boolean);
+        return candidates.includes(key);
+      }) || null;
+    }
+
+    function renderPendingBeerCatalog(data) {
+      const pending = Array.isArray(data?.pending) ? data.pending : [];
+      const active = Array.isArray(data?.active) ? data.active : [];
+      adminBeerCatalogMergeTargets.innerHTML = active
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map((beer) => `<option value="${escapeHtml(beer.name)}">${escapeHtml(beer.key)}</option>`)
+        .join("");
+      setLocalNotice(
+        adminBeerCatalogStatus,
+        pending.length
+          ? `${pending.length} pending beer ${pending.length === 1 ? "name needs" : "names need"} review.`
+          : "No pending beer names.",
+        false,
+      );
+      pendingBeerCatalog.innerHTML = pending.length
+        ? pending.map((beer) => `
+          <article class="listItem adminBeerCatalogRow" data-catalog-beer="${escapeHtml(beer.key)}">
+            <div class="adminReviewCard__header">
+              <div>
+                <strong>${escapeHtml(beer.name)}</strong>
+                <div class="muted">${escapeHtml([beer.brewery, beer.style, beer.abv ? `${beer.abv}%` : ""].filter(Boolean).join(" · ") || "No brewery/style metadata yet")}</div>
+              </div>
+              <div class="adminReviewCard__badges">
+                <span class="pill pill--warning">Pending</span>
+                <span class="pill">${escapeHtml(beer.source || "catalogue")}</span>
+              </div>
+            </div>
+            <div class="muted">Aliases: ${escapeHtml((beer.aliases || []).slice(0, 8).join(" · ") || beer.key)}</div>
+            <div class="adminBeerCatalogActions">
+              <button class="button button--primary button--small" type="button" data-approve-catalog-beer="${escapeHtml(beer.key)}">Approve new beer</button>
+              <label class="field compactField">Merge into
+                <input data-catalog-merge-target="${escapeHtml(beer.key)}" list="adminBeerCatalogMergeTargets" placeholder="Canonical beer name" autocomplete="off" />
+              </label>
+              <button class="button button--small" type="button" data-merge-catalog-beer="${escapeHtml(beer.key)}">Merge</button>
+            </div>
+          </article>
+        `).join("")
+        : '<div class="listItem muted">No pending beer catalogue items.</div>';
+
+      pendingBeerCatalog.querySelectorAll("[data-approve-catalog-beer]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          await reviewCatalogBeer(button.dataset.approveCatalogBeer, "approve", null, active);
+        });
+      });
+      pendingBeerCatalog.querySelectorAll("[data-merge-catalog-beer]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const sourceKey = button.dataset.mergeCatalogBeer;
+          const targetInput = Array.from(pendingBeerCatalog.querySelectorAll("[data-catalog-merge-target]"))
+            .find((input) => input.dataset.catalogMergeTarget === sourceKey);
+          const target = findAdminCatalogTarget(targetInput?.value, active);
+          if (!target) {
+            setLocalNotice(adminBeerCatalogStatus, "Choose a canonical beer from the merge field first.", true);
+            targetInput?.focus();
+            return;
+          }
+          await reviewCatalogBeer(sourceKey, "merge", target, active);
+        });
+      });
+    }
+
+    async function loadBeerCatalogReview() {
+      const data = await MelbBeerBusiness.apiFetch("/api/business/admin/beer-catalog");
+      renderPendingBeerCatalog(data);
+      return data;
+    }
+
+    async function reviewCatalogBeer(sourceKey, action, target) {
+      if (!sourceKey) return;
+      try {
+        setLocalNotice(adminBeerCatalogStatus, action === "merge" ? "Merging beer catalogue item..." : "Approving beer catalogue item...");
+        const endpoint = action === "merge"
+          ? `/api/business/admin/beer-catalog/${encodeURIComponent(sourceKey)}/merge`
+          : `/api/business/admin/beer-catalog/${encodeURIComponent(sourceKey)}/approve`;
+        const body = action === "merge"
+          ? { targetKey: target.key, reviewNote: `Merged into ${target.name} from admin review.` }
+          : { reviewNote: "Approved from admin review." };
+        await MelbBeerBusiness.apiFetch(endpoint, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        await loadBeerCatalogReview();
+      } catch (error) {
+        setLocalNotice(adminBeerCatalogStatus, error.message || "Could not review beer catalogue item.", true);
+      }
+    }
+
     function renderAdminCaptureMetrics() {
       const ocrLabel = adminDataToolsStatus.ocrEnabled
         ? "Ready"
@@ -3172,6 +3287,17 @@
       });
     }
 
+    function retirePendingSubmissionCard(id) {
+      const card = pendingSubmissions.querySelector(`[data-submission-card="${CSS.escape(id)}"]`);
+      if (card) {
+        card.remove();
+      }
+
+      if (!pendingSubmissions.querySelector("[data-submission-card]")) {
+        pendingSubmissions.innerHTML = '<div class="listItem muted">No pending submissions.</div>';
+      }
+    }
+
     async function reviewSubmission(id, status, note = null) {
       try {
         const body = status === "approved"
@@ -3182,6 +3308,7 @@
           body: JSON.stringify(body),
         });
         MelbBeerBusiness.setStatus(statusEl, `Reviewed ${result.submission.venueName}. Awarded ${result.pointsAwarded} points.`);
+        retirePendingSubmissionCard(id);
         await loadAdmin();
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message, true);
@@ -3310,7 +3437,7 @@
         ? prioritySubmissions.map((submission) => {
           const priority = submissionPriorityLabel(submission);
           return `
-          <article class="listItem adminReviewCard adminReviewCard--${escapeHtml(priority.tone)}">
+          <article class="listItem adminReviewCard adminReviewCard--${escapeHtml(priority.tone)}" data-submission-card="${escapeHtml(submission.id)}">
             <div class="adminReviewCard__header">
               <div>
                 <strong>${escapeHtml(submission.venueName)}</strong>
@@ -3332,10 +3459,10 @@
             <div class="muted">Points location: ${submission.pointsEligibleByLocation ? "within 200m" : "not eligible"}${submission.distanceToVenueMeters != null ? ` · ${Math.round(Number(submission.distanceToVenueMeters))}m from venue` : ""}${submission.pointsEligibilityReason ? ` · ${escapeHtml(submission.pointsEligibilityReason)}` : ""}</div>
             <div class="muted">${escapeHtml(submission.notes || "No notes")}</div>
             <div class="actionRow adminReviewActionBar">
-              <button class="button button--primary" data-approve="${escapeHtml(submission.id)}">${submission.pendingVenue ? "Approve + publish venue" : "Approve"}</button>
-              <button class="button" data-evidence="${escapeHtml(submission.id)}">Needs evidence</button>
-              <button class="button button--danger" data-reject="${escapeHtml(submission.id)}">Reject</button>
-              <button class="button button--danger" data-fraud="${escapeHtml(submission.id)}">Flag fraud</button>
+              <button class="button button--primary" type="button" data-approve="${escapeHtml(submission.id)}">${submission.pendingVenue ? "Approve + publish venue" : "Approve"}</button>
+              <button class="button" type="button" data-evidence="${escapeHtml(submission.id)}">Needs evidence</button>
+              <button class="button button--danger" type="button" data-reject="${escapeHtml(submission.id)}">Reject</button>
+              <button class="button button--danger" type="button" data-fraud="${escapeHtml(submission.id)}">Flag fraud</button>
             </div>
           </article>
         `;
@@ -3358,7 +3485,7 @@
         button.addEventListener("click", () => promptSubmissionReview(submission, "fraud_flagged"));
       });
 
-      const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners, leaderboardPrizes] = await Promise.all([
+      const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners, leaderboardPrizes, beerCatalog] = await Promise.all([
         MelbBeerBusiness.apiFetch(`/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`),
         MelbBeerBusiness.apiFetch("/api/business/admin/kpis?range=today"),
         MelbBeerBusiness.apiFetch("/api/business/admin/retention?groupBy=week&limit=12"),
@@ -3367,6 +3494,7 @@
         MelbBeerBusiness.apiFetch("/api/business/admin/queues"),
         MelbBeerBusiness.apiFetch("/api/business/admin/venue-partners"),
         MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes"),
+        MelbBeerBusiness.apiFetch("/api/business/admin/beer-catalog"),
       ]);
       renderKpis(kpis);
       renderAdminTodayQueue(todayKpis, queues, submissions.submissions);
@@ -3378,6 +3506,7 @@
       renderVenuePartners(venuePartners);
       renderPitchReadiness(leads, venuePartners);
       renderAdminLeaderboardPrizes(leaderboardPrizes);
+      renderPendingBeerCatalog(beerCatalog);
       renderAdminDashboard({
         todayKpis,
         leads,
@@ -3401,6 +3530,16 @@
       reviewDecisionCancel.addEventListener("click", closeReviewDecision);
       reviewDecisionConfirm.addEventListener("click", confirmReviewDecision);
       refreshAdminPageButton.addEventListener("click", refreshAdminPage);
+      refreshBeerCatalogButton.addEventListener("click", async () => {
+        try {
+          refreshBeerCatalogButton.disabled = true;
+          await loadBeerCatalogReview();
+        } catch (error) {
+          setLocalNotice(adminBeerCatalogStatus, error.message || "Could not refresh beer catalogue.", true);
+        } finally {
+          refreshBeerCatalogButton.disabled = false;
+        }
+      });
       reviewDecisionDialog.addEventListener("cancel", () => {
         reviewDecisionState = null;
       });

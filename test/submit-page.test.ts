@@ -284,6 +284,20 @@ describe("submit page auth gate", () => {
     expect(css).toContain(".submitNewVenueShortcut");
   });
 
+  it("gives contributors beer-name match, typo, and new-catalogue feedback", () => {
+    const html = submitHtml();
+    const css = businessCss();
+
+    expect(html).toContain("function findClosestTrackedBeer");
+    expect(html).toContain("function updateBeerRowCatalogueUx");
+    expect(html).toContain("Matched to ${escapeHtml(trackedBeer.name)}");
+    expect(html).toContain("New beer will be saved for admin review and reused next time.");
+    expect(html).toContain("Did you mean <button class=\"inlineSuggestionButton\"");
+    expect(html).toContain("data-use-beer-suggestion");
+    expect(html).toContain("Did you mean ${closestBeer.name}? Choose it or tick Add new beer.");
+    expect(css).toContain(".inlineSuggestionButton");
+  });
+
   it("explains submission location proof and offline queueing in the FAQ", () => {
     const html = faqHtml();
 

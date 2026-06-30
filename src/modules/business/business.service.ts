@@ -34,7 +34,7 @@ import {
   type SourceEvidenceObject,
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
-import { BeerCatalogRepository, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
+import { BeerCatalogRepository, type BeerCatalogAdminItem, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
 import { SUPPORTED_BEERS, VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, findTrackedBeerByName, normalizeBeerSearchKey } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
@@ -2129,6 +2129,72 @@ export class BusinessService {
       },
       trackedBeers: this.getTrackedBeerCatalogForViewer(),
     };
+  }
+
+  getAdminBeerCatalog(account: BusinessAccount): {
+    pending: BeerCatalogAdminItem[];
+    active: BeerCatalogAdminItem[];
+  } {
+    if (!this.isAdmin(account)) {
+      throw new AppError("Admin access required.", 403);
+    }
+    if (!this.beerCatalogRepository) {
+      throw new AppError("Beer catalogue review is not configured.", 503);
+    }
+
+    return {
+      pending: this.beerCatalogRepository.listForAdmin("pending_review", 100),
+      active: this.beerCatalogRepository.listForAdmin("active", 500),
+    };
+  }
+
+  approveBeerCatalogItem(
+    account: BusinessAccount,
+    key: string,
+    input: { reviewNote?: string | null },
+  ): { beer: BeerCatalogAdminItem } {
+    if (!this.isAdmin(account)) {
+      throw new AppError("Admin access required.", 403);
+    }
+    if (!this.beerCatalogRepository) {
+      throw new AppError("Beer catalogue review is not configured.", 503);
+    }
+
+    const beer = this.beerCatalogRepository.approvePendingBeer({
+      key,
+      reviewNote: input.reviewNote ?? null,
+      now: nowIso(),
+    });
+    if (!beer) {
+      throw new AppError("Pending beer was not found.", 404);
+    }
+
+    return { beer };
+  }
+
+  mergeBeerCatalogItem(
+    account: BusinessAccount,
+    key: string,
+    input: { targetKey: string; reviewNote?: string | null },
+  ): { source: BeerCatalogAdminItem; target: BeerCatalogAdminItem } {
+    if (!this.isAdmin(account)) {
+      throw new AppError("Admin access required.", 403);
+    }
+    if (!this.beerCatalogRepository) {
+      throw new AppError("Beer catalogue review is not configured.", 503);
+    }
+
+    const result = this.beerCatalogRepository.mergePendingBeer({
+      sourceKey: key,
+      targetKey: input.targetKey,
+      reviewNote: input.reviewNote ?? null,
+      now: nowIso(),
+    });
+    if (!result) {
+      throw new AppError("Pending beer could not be merged into that catalogue item.", 404);
+    }
+
+    return result;
   }
 
   getAccountFromAuthorization(
@@ -4534,6 +4600,7 @@ export class BusinessService {
   }
 
   private mergeVenueRows(primary: VenueRow[], secondary: VenueRow[], limit: number): VenueRow[] {
+    const primaryIds = new Set(primary.map((venue) => venue.id));
     const merged = new Map<string, VenueRow>();
     [...primary, ...secondary].forEach((venue) => {
       merged.set(venue.id, {
@@ -4541,7 +4608,22 @@ export class BusinessService {
         ...this.getPublicVenueTierMetadata(venue.id),
       });
     });
-    return Array.from(merged.values()).slice(0, limit);
+
+    const orderedIds = [
+      ...secondary.filter((venue) => !primaryIds.has(venue.id)).map((venue) => venue.id),
+      ...primary.map((venue) => venue.id),
+    ];
+    const seen = new Set<string>();
+    return orderedIds
+      .map((id) => merged.get(id))
+      .filter((venue): venue is VenueRow => {
+        if (!venue || seen.has(venue.id)) {
+          return false;
+        }
+        seen.add(venue.id);
+        return true;
+      })
+      .slice(0, limit);
   }
 
   private assertAccountCanSubmit(account: BusinessAccount, options: { allowVenueManager?: boolean } = {}): void {

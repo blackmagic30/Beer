@@ -912,6 +912,68 @@
       return key ? trackedBeerLookup.get(key) || null : null;
     }
 
+    function compactBeerSearchKey(value) {
+      return normalizeBeerSearchKey(value).replace(/_/g, "");
+    }
+
+    function levenshteinDistance(left, right) {
+      if (!left) return right.length;
+      if (!right) return left.length;
+      const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+      for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+        let lastDiagonal = previous[0];
+        previous[0] = leftIndex;
+        for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+          const nextDiagonal = previous[rightIndex];
+          const cost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+          previous[rightIndex] = Math.min(
+            previous[rightIndex] + 1,
+            previous[rightIndex - 1] + 1,
+            lastDiagonal + cost,
+          );
+          lastDiagonal = nextDiagonal;
+        }
+      }
+      return previous[right.length];
+    }
+
+    function scoreBeerSuggestion(query, beer) {
+      const queryKey = normalizeBeerSearchKey(query);
+      const queryCompact = compactBeerSearchKey(query);
+      if (!queryKey || queryCompact.length < 3) return 0;
+      let score = 0;
+      [beer.key, beer.name, ...(beer.aliases || [])].forEach((candidate) => {
+        const candidateKey = normalizeBeerSearchKey(candidate);
+        const candidateCompact = compactBeerSearchKey(candidate);
+        if (!candidateKey || !candidateCompact) return;
+        if (candidateKey === queryKey) {
+          score = Math.max(score, 100);
+        } else if (candidateKey.includes(queryKey) || queryKey.includes(candidateKey)) {
+          score = Math.max(score, 84 - Math.abs(candidateKey.length - queryKey.length));
+        } else if (Math.min(candidateCompact.length, queryCompact.length) >= 5) {
+          const distance = levenshteinDistance(queryCompact, candidateCompact);
+          if (distance <= 2) {
+            score = Math.max(score, 76 - distance * 12);
+          }
+        }
+      });
+      return score;
+    }
+
+    function findClosestTrackedBeer(value) {
+      const scored = TRACKED_BEERS
+        .map((beer) => ({ beer, score: scoreBeerSuggestion(value, beer) }))
+        .filter((item) => item.score >= 52)
+        .sort((left, right) => right.score - left.score || left.beer.name.localeCompare(right.beer.name));
+      return scored[0]?.beer || null;
+    }
+
+    function setBeerCatalogueHint(message, tone = "") {
+      beerCatalogueHint.innerHTML = message;
+      beerCatalogueHint.classList.toggle("fieldHint--success", tone === "success");
+      beerCatalogueHint.classList.toggle("fieldHint--error", tone === "error");
+    }
+
     function populateBeerSuggestions() {
       if (!window.portalBeerSuggestions) return;
       window.portalBeerSuggestions.innerHTML = TRACKED_BEERS
@@ -951,13 +1013,28 @@
           style: trackedBeer.style || "",
           abv: trackedBeer.abv == null ? "" : String(trackedBeer.abv),
         };
-        beerCatalogueHint.textContent = `Matched ${trackedBeer.name}. Brewery/style details can still be edited if this venue lists it differently.`;
+        setBeerCatalogueHint(`Matched ${escapeHtml(trackedBeer.name)}. Brewery/style details can still be edited.`, "success");
         return;
       }
       resetBeerAutofillMemory();
-      beerCatalogueHint.textContent = addNewInput.checked
-        ? "New beer mode: enter the name exactly as it appears on the menu or tap list."
-        : "Choose from the Pint Path catalogue to keep spelling consistent across venues.";
+      if (beerNameInput.value.trim() && trackedBeer && addNewInput.checked) {
+        setBeerCatalogueHint(`Already in the catalogue as ${escapeHtml(trackedBeer.name)}. Untick Add new beer to avoid a duplicate.`, "error");
+        return;
+      }
+      const closestBeer = findClosestTrackedBeer(beerNameInput.value);
+      if (beerNameInput.value.trim() && !addNewInput.checked && closestBeer) {
+        setBeerCatalogueHint(
+          `No exact match. Did you mean <button class="inlineSuggestionButton" type="button" data-use-portal-beer-suggestion="${escapeHtml(closestBeer.name)}">${escapeHtml(closestBeer.name)}</button>?`,
+          "error",
+        );
+        return;
+      }
+      setBeerCatalogueHint(
+        addNewInput.checked
+          ? "New beer will be saved for admin review and reused next time."
+          : "Choose from the Pint Path catalogue to keep spelling consistent across venues.",
+        addNewInput.checked && beerNameInput.value.trim() ? "success" : "",
+      );
     }
 
     function field(form, name) {
@@ -3012,12 +3089,15 @@
         field(freePintRewardForm, "code").value = freePintCodeFromQr.toUpperCase();
       }
       field(beerForm, "beerName").addEventListener("change", updateBeerCatalogueState);
-      field(beerForm, "beerName").addEventListener("input", () => {
-        if (!field(beerForm, "isNewBeer").checked) {
-          beerCatalogueHint.textContent = "Pick the matching beer from the dropdown, or tick Add new beer if it is not listed.";
-        }
-      });
+      field(beerForm, "beerName").addEventListener("input", updateBeerCatalogueState);
       field(beerForm, "isNewBeer").addEventListener("change", updateBeerCatalogueState);
+      beerCatalogueHint.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-use-portal-beer-suggestion]");
+        if (!button) return;
+        field(beerForm, "beerName").value = button.dataset.usePortalBeerSuggestion || "";
+        field(beerForm, "isNewBeer").checked = false;
+        updateBeerCatalogueState();
+      });
       [field(happyHourForm, "startTime"), field(happyHourForm, "endTime")].forEach((input) => {
         input.addEventListener("blur", () => normalizeTimeField(input));
       });
@@ -3124,7 +3204,14 @@
           return;
         }
         if (!isNewBeer && !trackedBeer) {
-          MelbBeerBusiness.setStatus(beerStatus, `"${rawBeerName}" is not in the Pint Path catalogue yet. Choose a dropdown match or tick Add new beer.`, true);
+          const closestBeer = findClosestTrackedBeer(rawBeerName);
+          MelbBeerBusiness.setStatus(
+            beerStatus,
+            closestBeer
+              ? `"${rawBeerName}" is not in the Pint Path catalogue yet. Did you mean ${closestBeer.name}? Choose it or tick Add new beer.`
+              : `"${rawBeerName}" is not in the Pint Path catalogue yet. Choose a dropdown match or tick Add new beer.`,
+            true,
+          );
           return;
         }
         const abvValue = nullableNumber(field(beerForm, "abv").value);

@@ -1152,6 +1152,10 @@ describe("production hardening", () => {
     expect(adminHtml).toContain("/api/admin/captures/manual");
     expect(adminHtml).toContain("/api/admin/ingestions/queue");
     expect(adminHtml).toContain("id=\"adminBeerRows\"");
+    expect(adminHtml).toContain("id=\"pendingBeerCatalog\"");
+    expect(adminHtml).toContain("/api/business/admin/beer-catalog");
+    expect(adminHtml).toContain("data-approve-catalog-beer");
+    expect(adminHtml).toContain("data-merge-catalog-beer");
     expect(adminHtml).toContain("const formElement = event.currentTarget");
     expect(adminHtml).toContain("new FormData(formElement)");
     expect(adminHtml).not.toContain("event.currentTarget.reset()");
@@ -1611,6 +1615,11 @@ describe("production hardening", () => {
       confidence: "photo_verified",
     });
 
+    expect(service.listSubmissions(admin, { status: "pending", mine: false, limit: 100 }))
+      .not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: submission.submission.id }),
+      ]));
+
     const venues = await service.listVenues("Moonlit", 10);
     const publishedVenue = venues.find((venue) => venue.id === venueId);
     expect(publishedVenue).toEqual(expect.objectContaining({
@@ -1619,7 +1628,45 @@ describe("production hardening", () => {
       address: "10 Test Lane",
       suburb: "Fitzroy",
       membershipTier: "basic",
+      latitude: -37.798,
+      longitude: 144.979,
     }));
+
+    expect(service.listPriceRecords(admin, {
+      limit: 20,
+      venueId,
+      anonymousSessionId: null,
+      reveal: true,
+    }).records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        venueId,
+        venueName: "Moonlit Taproom",
+        beerName: "Guinness",
+        price: 13,
+      }),
+    ]));
+
+    const remoteVenues = [
+      { id: "remote-venue-1", name: "Remote Venue One", address: "1 Remote St", suburb: "Melbourne", state: "VIC", postcode: "3000", latitude: -37.81, longitude: 144.96 },
+      { id: "remote-venue-2", name: "Remote Venue Two", address: "2 Remote St", suburb: "Richmond", state: "VIC", postcode: "3121", latitude: -37.82, longitude: 144.99 },
+    ];
+    const supabaseVenueBuilder = {
+      select: vi.fn(() => supabaseVenueBuilder),
+      limit: vi.fn(() => supabaseVenueBuilder),
+      order: vi.fn(async () => ({ data: remoteVenues, error: null })),
+    };
+    (service as unknown as { supabase: unknown }).supabase = {
+      from: vi.fn(() => supabaseVenueBuilder),
+    };
+
+    expect(await service.listVenues(undefined, 2)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: venueId,
+        name: "Moonlit Taproom",
+        latitude: -37.798,
+        longitude: 144.979,
+      }),
+    ]));
 
     const records = repository.listVenueManagerPriceRecords(20, venueId);
     expect(records.map((record) => record.beerName).sort()).toEqual([
@@ -3116,6 +3163,87 @@ describe("business demo contribution model", () => {
       name: "Very Local Hazy Pint",
       aliases: expect.arrayContaining(["Very Local Hazy Pint"]),
     }));
+  });
+
+  it("lets admins approve or merge pending beer catalogue names without leaving duplicate IDs", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "catalog-review-user");
+    const admin = createAccount(repository, "catalog-review-admin", "admin");
+
+    const targetSubmission = service.createSubmission(user, createSubmissionSchema.parse({
+      venueId: "catalog-review-venue-1",
+      venueName: "Review Bar",
+      suburb: "Melbourne",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoUrl: null,
+      sourcePhotoDataUrl: null,
+      notes: null,
+      items: [{
+        beerName: "Very Local Hazy Pint",
+        servingSize: "pint",
+        price: 15,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    }));
+    expect(repository.getSubmissionById(targetSubmission.submission.id)!.items[0]).toEqual(expect.objectContaining({
+      beerName: "Very Local Hazy Pint",
+      normalizedBeerId: "very_local_hazy_pint",
+    }));
+
+    const approved = service.approveBeerCatalogItem(admin, "very_local_hazy_pint", {
+      reviewNote: "Real local beer.",
+    });
+    expect(approved.beer).toEqual(expect.objectContaining({
+      key: "very_local_hazy_pint",
+      name: "Very Local Hazy Pint",
+      status: "active",
+    }));
+
+    const typoSubmission = service.createSubmission(user, createSubmissionSchema.parse({
+      venueId: "catalog-review-venue-2",
+      venueName: "Typo Bar",
+      suburb: "Fitzroy",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoUrl: null,
+      sourcePhotoDataUrl: null,
+      notes: null,
+      items: [{
+        beerName: "Very Locl Hazy Pint",
+        servingSize: "pint",
+        price: 16,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    }));
+    expect(repository.getSubmissionById(typoSubmission.submission.id)!.items[0]).toEqual(expect.objectContaining({
+      beerName: "Very Locl Hazy Pint",
+      normalizedBeerId: "very_locl_hazy_pint",
+    }));
+    expect(service.getAdminBeerCatalog(admin).pending).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "very_locl_hazy_pint" }),
+    ]));
+
+    const merged = service.mergeBeerCatalogItem(admin, "very_locl_hazy_pint", {
+      targetKey: "very_local_hazy_pint",
+      reviewNote: "Typo merged.",
+    });
+    expect(merged.target).toEqual(expect.objectContaining({
+      key: "very_local_hazy_pint",
+      aliases: expect.arrayContaining(["Very Locl Hazy Pint"]),
+    }));
+    expect(repository.getSubmissionById(typoSubmission.submission.id)!.items[0]).toEqual(expect.objectContaining({
+      beerName: "Very Local Hazy Pint",
+      normalizedBeerId: "very_local_hazy_pint",
+    }));
+    expect(service.getAdminBeerCatalog(admin).pending).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "very_locl_hazy_pint" }),
+    ]));
   });
 
   it("increments fraud strikes and suspends reward earning after three fraud flags", () => {

@@ -4551,8 +4551,13 @@ export class BusinessRepository {
       );
 
       if (current.submission.pendingVenue && !item.isHappyHourPrice) {
+        const beerKey = (item.normalizedBeerId || item.beerName)
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || item.id;
         insertVenueBeer.run(
-          `${current.submission.id}:venue-beer:${item.id}`,
+          `approved-submission:${current.submission.venueId}:${beerKey}:${item.servingSize}`,
           current.submission.venueId,
           item.beerName,
           item.normalizedBeerId,
