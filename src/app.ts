@@ -2,7 +2,7 @@ import path from "node:path";
 
 import express from "express";
 import helmet from "helmet";
-import type { Request, RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 
 import { env } from "./config/env.js";
 import { PREMIUM_PRICING } from "./config/business-rules.js";
@@ -88,25 +88,63 @@ function safeJsonForHtml(value: unknown): string {
   return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
 
+function getStaticAssetCacheControl(filePath: string): string {
+  if (env.NODE_ENV !== "production") {
+    return "no-store";
+  }
+
+  const extension = path.extname(filePath).toLowerCase();
+  const normalizedPath = filePath.replaceAll(path.sep, "/");
+
+  if (extension === ".html") {
+    return "no-store";
+  }
+
+  if ([".js", ".css", ".txt", ".xml", ".webmanifest"].includes(extension)) {
+    return "public, max-age=300, stale-while-revalidate=3600";
+  }
+
+  if (normalizedPath.includes("/assets/") || [".ico", ".png", ".jpg", ".jpeg", ".webp", ".svg"].includes(extension)) {
+    return "public, max-age=86400, stale-while-revalidate=604800";
+  }
+
+  return "public, max-age=300, stale-while-revalidate=3600";
+}
+
+function setStaticAssetHeaders(res: Response, filePath: string): void {
+  res.setHeader("Cache-Control", getStaticAssetCacheControl(filePath));
+}
+
 function renderPublicVenuePage(venue: Awaited<ReturnType<BusinessService["getPublicVenueById"]>>): string {
   if (!venue) {
     throw new AppError("Venue not found.", 404);
   }
 
-  const title = `${venue.name} on Pint Path`;
+  const title = `${venue.name} beer prices and happy hours | Pint Path`;
   const locationParts = [venue.address, venue.suburb, venue.state, venue.postcode].filter(Boolean);
   const location = locationParts.join(", ");
-  const description = `${venue.name}${venue.suburb ? ` in ${venue.suburb}` : ""} on Pint Path. View mapped beer data, happy-hour details, directions, and venue updates.`;
+  const description = `View ${venue.name}${venue.suburb ? ` in ${venue.suburb}` : ""} on Pint Path for mapped beer data, happy-hour details, directions, and venue updates.`;
   const canonicalUrl = absoluteUrl(`/venues/${encodeURIComponent(venue.id)}`);
   const mapUrl = absoluteUrl(`/?venueId=${encodeURIComponent(venue.id)}&venueName=${encodeURIComponent(venue.name)}`);
   const portalUrl = absoluteUrl(`/venue-portal?venueId=${encodeURIComponent(venue.id)}`);
+  const imageUrl = absoluteUrl("/assets/pint-path-logo.png");
   const tier = venue.membershipTier === "pro" ? "Pro" : "Free";
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "BarOrPub",
     name: venue.name,
-    address: location || undefined,
+    address: location
+      ? {
+          "@type": "PostalAddress",
+          streetAddress: venue.address || undefined,
+          addressLocality: venue.suburb || undefined,
+          addressRegion: venue.state || undefined,
+          postalCode: venue.postcode || undefined,
+          addressCountry: "AU",
+        }
+      : undefined,
     url: canonicalUrl,
+    image: imageUrl,
     geo: venue.latitude && venue.longitude
       ? {
           "@type": "GeoCoordinates",
@@ -125,12 +163,15 @@ function renderPublicVenuePage(venue: Awaited<ReturnType<BusinessService["getPub
   <meta name="description" content="${escapeHtml(description)}" />
   <link rel="canonical" href="${escapeHtml(canonicalUrl)}" />
   <meta property="og:type" content="place" />
+  <meta property="og:site_name" content="Pint Path" />
   <meta property="og:title" content="${escapeHtml(title)}" />
   <meta property="og:description" content="${escapeHtml(description)}" />
   <meta property="og:url" content="${escapeHtml(canonicalUrl)}" />
+  <meta property="og:image" content="${escapeHtml(imageUrl)}" />
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content="${escapeHtml(title)}" />
   <meta name="twitter:description" content="${escapeHtml(description)}" />
+  <meta name="twitter:image" content="${escapeHtml(imageUrl)}" />
   <script type="application/ld+json">${safeJsonForHtml(structuredData)}</script>
   <style>
     :root { color-scheme: dark; --bg:#070a12; --panel:#121a2c; --text:#f8fafc; --muted:#cbd5e1; --cyan:#22d3ee; --gold:#f5c542; }
@@ -441,13 +482,24 @@ export function createApp() {
     }
   });
   app.get("/auth/callback", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     res.sendFile(path.join(viewerDirectory, "auth", "callback.html"));
   });
-  app.use(express.static(viewerDirectory));
+  app.get(["/.well-known/security.txt", "/security.txt"], (_req, res) => {
+    res
+      .type("text/plain; charset=utf-8")
+      .setHeader("Cache-Control", env.NODE_ENV === "production" ? "public, max-age=300" : "no-store")
+      .sendFile(path.join(viewerDirectory, "security.txt"));
+  });
+  app.use(express.static(viewerDirectory, {
+    setHeaders: setStaticAssetHeaders,
+  }));
   app.get("/", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     res.sendFile(path.join(viewerDirectory, "index.html"));
   });
   app.get("/venue-portal", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     res.sendFile(path.join(viewerDirectory, "venue-portal.html"));
   });
 

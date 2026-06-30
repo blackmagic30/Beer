@@ -8,12 +8,17 @@ function mockResponse() {
   return {
     statusCode: 0,
     body: null as unknown,
+    sentFile: "",
     status(code: number) {
       this.statusCode = code;
       return this;
     },
     json(body: unknown) {
       this.body = body;
+      return this;
+    },
+    sendFile(filePath: string) {
+      this.sentFile = filePath;
       return this;
     },
   };
@@ -79,6 +84,24 @@ describe("error handler logging", () => {
     expect(response.statusCode).toBe(404);
     expect(JSON.stringify(response.body)).toContain("GET /missing");
     expect(JSON.stringify(response.body)).not.toContain("secret");
+  });
+
+  it("serves the branded 404 page for browser HTML requests", () => {
+    const response = mockResponse();
+
+    notFoundHandler(
+      {
+        method: "GET",
+        path: "/missing-page",
+        originalUrl: "/missing-page?token=secret",
+        accepts: (types: string[]) => types.includes("html") ? "html" : false,
+      } as never,
+      response as never,
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(response.sentFile).toContain("viewer/404.html");
+    expect(response.body).toBeNull();
   });
 
   it("logs server errors at error level", () => {

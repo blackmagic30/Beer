@@ -3,15 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Venue Dashboard | Pint Path</title>
+  <title>Bar Owner Dashboard & Venue Portal | Pint Path</title>
+  <meta name="description" content="Verified bars use the Pint Path venue portal to manage beer data, happy hours, profile details, reviewed specials, and privacy-safe venue reports." />
+  <link rel="canonical" href="https://pintpath.au/venue-portal" />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/pint-path-icon-192.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/pint-path-apple-touch-icon.png" />
   <link rel="manifest" href="/site.webmanifest" />
   <meta name="theme-color" content="#070A12" />
+  <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Pint Path" />
+  <meta property="og:title" content="Bar Owner Dashboard & Venue Portal | Pint Path" />
+  <meta property="og:description" content="Manage verified venue data, happy hours, reviewed specials, and privacy-safe reports from the Pint Path venue portal." />
+  <meta property="og:url" content="https://pintpath.au/venue-portal" />
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Bar Owner Dashboard & Venue Portal | Pint Path" />
+  <meta name="twitter:description" content="Manage verified venue data, happy hours, reviewed specials, and privacy-safe reports from the Pint Path venue portal." />
+  <meta name="twitter:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
@@ -28,7 +38,7 @@
       </div>
     </section>
 
-    <section id="portalAccess" class="notice">Log in with an assigned venue-manager account to view this dashboard.</section>
+    <section id="portalAccess" class="notice" role="status" aria-live="polite" aria-atomic="true">Log in with an assigned venue-manager account to view this dashboard.</section>
 
     <section id="claimPanel" class="panel is-hidden">
       <div class="sectionHeader">
@@ -53,7 +63,7 @@
             <select id="venueSelect"></select>
           </label>
           <div id="selectedVenueSummary" class="venueSummaryCard"></div>
-          <nav class="tabNav" aria-label="Bar dashboard sections">
+          <nav class="tabNav" role="tablist" aria-label="Bar dashboard sections">
             <button class="tabButton is-active" type="button" data-tab="overview">Overview</button>
             <button class="tabButton" type="button" data-tab="redemption">Redeem code</button>
             <button class="tabButton" type="button" data-tab="profile">Profile</button>
@@ -69,8 +79,42 @@
 
         <div class="dashboardMain">
           <section class="tabPanel" data-panel="overview">
+            <article id="dashboardSetupProgress" class="dashboardSetupProgress"></article>
             <article id="venueDailyActions" class="venueDailyActions"></article>
+            <div id="venuePulseGrid" class="venuePulseGrid" aria-label="Venue dashboard summary"></div>
+            <div class="venueOverviewActionGrid" aria-label="Venue dashboard quick actions">
+              <article id="weeklyActionCard" class="venueOverviewActionCard"></article>
+              <article id="staffModeCard" class="venueOverviewActionCard"></article>
+              <article id="specialsHeroCard" class="venueOverviewActionCard"></article>
+              <article id="staffInviteCard" class="venueOverviewActionCard"></article>
+            </div>
+            <article id="venueDemandPanel" class="venueDemandPanel is-hidden"></article>
             <article id="premiumVenueDashboard" class="premiumVenueDashboard"></article>
+            <article id="businessToolkit" class="panel businessToolkit is-hidden"></article>
+            <div class="venueOverviewDataGrid">
+              <article class="panel">
+                <div class="sectionHeader">
+                  <div>
+                    <div class="eyebrow">Profile completeness</div>
+                    <h2>Listing readiness</h2>
+                    <p class="muted">A fuller listing gives users more confidence before they choose where to go.</p>
+                  </div>
+                  <div id="qualityScore" class="venueQualityScore"></div>
+                </div>
+                <ul id="qualityChecklist" class="venueChecklist"></ul>
+              </article>
+              <article class="panel">
+                <div class="sectionHeader">
+                  <div>
+                    <div class="eyebrow">Stock confidence</div>
+                    <h2>Recent price records</h2>
+                    <p class="muted">Keep current tap prices visible so beer searchers can act quickly.</p>
+                  </div>
+                  <button class="button button--small" type="button" data-jump-tab="price-refresh">Refresh prices</button>
+                </div>
+                <div id="priceRecords" class="list"></div>
+              </article>
+            </div>
           </section>
 
           <section class="tabPanel is-hidden" data-panel="pending-reviews">
@@ -493,7 +537,7 @@
       </div>
     </section>
 
-    <p class="footerCopy">Venue insights are aggregate and directional while the beta grows. We do not expose individual user clickstream or exact user location to venues. Prices may change. Drink responsibly.</p>
+    <p class="footerCopy">Venue insights are aggregate and directional while the beta grows. We do not expose individual user clickstream or exact user location to venues. Prices may change. Drink responsibly. <a href="/pricing.html?audience=venues">Venue pricing</a> · <a href="/trust.html?audience=bars">Bar FAQ</a> · <a href="/feedback.html?audience=bars">Venue support</a> · <a href="/privacy.html">Privacy</a></p>
   </main>
 
   <script>
@@ -1041,13 +1085,42 @@
       return form.elements.namedItem(name);
     }
 
+    function panelIdForTab(name) {
+      return `venuePortalPanel-${String(name || "").replace(/[^a-z0-9]+/gi, "-")}`;
+    }
+
+    function tabIdForTab(name) {
+      return `venuePortalTab-${String(name || "").replace(/[^a-z0-9]+/gi, "-")}`;
+    }
+
+    function configurePortalTabs() {
+      document.querySelectorAll(".tabButton").forEach((button) => {
+        const tabName = button.dataset.tab;
+        const panel = document.querySelector(`.tabPanel[data-panel="${tabName}"]`);
+        if (!tabName || !panel) {
+          return;
+        }
+
+        button.id = button.id || tabIdForTab(tabName);
+        button.setAttribute("role", "tab");
+        button.setAttribute("aria-controls", panel.id || panelIdForTab(tabName));
+        panel.id = panel.id || panelIdForTab(tabName);
+        panel.setAttribute("role", "tabpanel");
+        panel.setAttribute("aria-labelledby", button.id);
+      });
+    }
+
     function showTab(name) {
       const nextName = name === "specials" && !portalCanManageSpecials() ? "beers" : name;
       document.querySelectorAll(".tabButton").forEach((button) => {
-        button.classList.toggle("is-active", button.dataset.tab === nextName);
+        const active = button.dataset.tab === nextName;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
       });
       document.querySelectorAll(".tabPanel").forEach((panel) => {
-        panel.classList.toggle("is-hidden", panel.dataset.panel !== nextName);
+        const active = panel.dataset.panel === nextName;
+        panel.classList.toggle("is-hidden", !active);
+        panel.hidden = !active;
       });
     }
 
@@ -1083,6 +1156,23 @@
         return;
       }
       showTab(name);
+    }
+
+    function focusVenueField(key) {
+      const fieldTargets = {
+        beerName: { tab: "beers", selector: '#beerForm [name="beerName"]' },
+        happyHourTitle: { tab: "happy-hours", selector: '#happyHourForm [name="title"]' },
+        specialTitle: { tab: "specials", selector: '#specialForm [name="title"]' },
+        profileName: { tab: "profile", selector: '#profileForm [name="name"]' },
+      };
+      const target = fieldTargets[key];
+      if (!target) return;
+      showTab(target.tab);
+      window.requestAnimationFrame(() => {
+        const input = document.querySelector(target.selector);
+        input?.scrollIntoView({ behavior: "smooth", block: "center" });
+        input?.focus({ preventScroll: true });
+      });
     }
 
     function syncTierControls(data) {
@@ -1227,8 +1317,14 @@
       renderHappyHours(happyHours);
       renderSpecials(specials);
       renderSpecialsPlanner(data);
+      renderDashboardSetupProgress(data);
       renderVenueDailyActions(data);
+      renderVenuePulseGrid(data);
+      renderVenuePortalLaunchCards(data);
+      renderVenueDemandPanel(data);
       renderPremiumVenueDashboard(data);
+      renderBusinessToolkit(data);
+      renderOverviewData(data);
       renderDiscountOps(data);
       renderDiscountSpecialChoices(data);
       renderRedemptionItemOptions(data);
@@ -1256,6 +1352,103 @@
           <strong>${escapeHtml(String(item.value))}</strong>
           <small>${escapeHtml(item.helper || "")}</small>
         </article>
+      `;
+    }
+
+    function renderDashboardSetupProgress(data) {
+      const container = document.getElementById("dashboardSetupProgress");
+      if (!container) return;
+
+      const profile = data.profile || {};
+      const beers = data.inventory?.beers || [];
+      const happyHours = data.inventory?.happyHours || [];
+      const specials = data.inventory?.specials || [];
+      const pendingCount = data.pendingChanges?.length || 0;
+      const pricedRows = beers.filter((beer) => beer.price != null).length;
+      const activeHappyHours = happyHours.filter((item) => item.active !== false).length;
+      const activeSpecials = specials.filter((item) => item.active !== false).length;
+      const canSpecials = portalCanManageSpecials(data);
+      const setupItems = [
+        {
+          label: "Profile basics",
+          helper: "Name, suburb, and contact details are the trust layer.",
+          complete: Boolean(profile.name && profile.suburb && (profile.website || profile.phone || profile.instagram)),
+          target: "profile",
+          focusField: "profileName",
+        },
+        {
+          label: "Useful beer list",
+          helper: "Three current rows is enough for users to compare you.",
+          complete: beers.length >= 3,
+          target: "beers",
+          focusField: "beerName",
+        },
+        {
+          label: "Visible prices",
+          helper: beers.length ? `${formatCount(pricedRows)} of ${formatCount(beers.length)} beer rows have prices.` : "Add beer rows, then include the current pint price.",
+          complete: beers.length > 0 && pricedRows >= Math.min(3, beers.length),
+          target: "price-refresh",
+        },
+        {
+          label: "Happy-hour signal",
+          helper: "A simple time window helps nearby users decide tonight.",
+          complete: activeHappyHours > 0,
+          target: "happy-hours",
+          focusField: "happyHourTitle",
+        },
+        canSpecials
+          ? {
+              label: "Pint Path special",
+              helper: "One app-only offer gives staff something clear to redeem.",
+              complete: activeSpecials > 0,
+              target: "specials",
+              focusField: "specialTitle",
+            }
+          : {
+              label: "Core tools unlocked",
+              helper: "Profile, beer, and happy-hour tools are available on this plan.",
+              complete: true,
+              target: "beers",
+            },
+        {
+          label: "Review queue",
+          helper: pendingCount ? `${formatCount(pendingCount)} edit${pendingCount === 1 ? "" : "s"} waiting for approval.` : "No pending venue edits blocking the listing.",
+          complete: pendingCount === 0,
+          target: "pending-reviews",
+        },
+      ];
+      const completedCount = setupItems.filter((item) => item.complete).length;
+      const progress = Math.round((completedCount / setupItems.length) * 100);
+      const nextItem = setupItems.find((item) => !item.complete) || {
+        label: "Open monthly report",
+        helper: "Your setup looks healthy. Check the report or keep prices fresh before peak trade.",
+        target: "report",
+      };
+      const actionAttrs = (item) => item.focusField
+        ? `data-focus-venue-field="${escapeHtml(item.focusField)}"`
+        : `data-jump-tab="${escapeHtml(item.target)}"`;
+
+      container.innerHTML = `
+        <div class="dashboardSetupProgress__copy">
+          <div class="eyebrow">Setup progress</div>
+          <h2>${formatCount(progress)}% ready for customers</h2>
+          <p>${escapeHtml(nextItem.helper)}</p>
+          <button class="button button--primary" type="button" ${actionAttrs(nextItem)}>${escapeHtml(nextItem.label)}</button>
+        </div>
+        <div class="dashboardSetupProgress__body">
+          <div class="dashboardSetupProgress__meter" aria-label="Dashboard setup progress">
+            <span style="width:${progress}%"></span>
+          </div>
+          <div class="dashboardSetupChecklist">
+            ${setupItems.map((item) => `
+              <button class="dashboardSetupItem ${item.complete ? "is-complete" : ""}" type="button" ${actionAttrs(item)}>
+                <span>${item.complete ? "Done" : "Next"}</span>
+                <strong>${escapeHtml(item.label)}</strong>
+                <small>${escapeHtml(item.helper)}</small>
+              </button>
+            `).join("")}
+          </div>
+        </div>
       `;
     }
 
@@ -1931,7 +2124,15 @@
             <span class="rowPrice">${money(record.price)}</span>
           </div>
         `).join("")
-        : '<div class="listItem muted">No verified price rows yet. Add beers, upload a tap-list source, or submit verified data for review.</div>';
+        : `
+          <div class="emptyState">
+            <strong>No verified price rows yet.</strong><br />
+            Add beer rows with current prices, then use the weekly refresh tool to keep them trusted.
+            <div class="actionRow actionRow--compact" style="margin-top:12px;">
+              <button class="button button--small button--primary" type="button" data-focus-venue-field="beerName">Add beer rows</button>
+            </div>
+          </div>
+        `;
     }
 
     function renderVenueDemandPanel(data) {
@@ -2566,7 +2767,15 @@
             </div>
           </div>
         `).join("")
-        : '<div class="emptyState"><strong>No beers yet.</strong><br />Add your first beer so Pint Path users can see what is available now.</div>';
+        : `
+          <div class="emptyState">
+            <strong>No beers yet.</strong><br />
+            Add the first few beers customers ask about most. Three priced rows is enough to make the listing useful.
+            <div class="actionRow actionRow--compact" style="margin-top:12px;">
+              <button class="button button--small button--primary" type="button" data-focus-venue-field="beerName">Add first beer</button>
+            </div>
+          </div>
+        `;
     }
 
     function sortedBeerRows(beers) {
@@ -2747,7 +2956,15 @@
             </div>
           </div>
         `).join("")
-        : '<div class="emptyState"><strong>No happy hours yet.</strong><br />Add a happy hour to help nearby users find your best times to visit.</div>';
+        : `
+          <div class="emptyState">
+            <strong>No happy hours yet.</strong><br />
+            Add one simple time window so nearby users can spot a reason to visit tonight.
+            <div class="actionRow actionRow--compact" style="margin-top:12px;">
+              <button class="button button--small button--primary" type="button" data-focus-venue-field="happyHourTitle">Add happy hour</button>
+            </div>
+          </div>
+        `;
     }
 
     function renderSpecialsPlanner(data) {
@@ -2906,7 +3123,15 @@
             </div>
           </div>
         `).join("")
-        : '<div class="emptyState"><strong>No Pint Path specials yet.</strong><br />Add a clear venue special so users know what is current.</div>';
+        : `
+          <div class="emptyState">
+            <strong>No Pint Path specials yet.</strong><br />
+            Add one clear app-only offer that staff can explain quickly at the bar.
+            <div class="actionRow actionRow--compact" style="margin-top:12px;">
+              <button class="button button--small button--primary" type="button" data-focus-venue-field="specialTitle">Add special</button>
+            </div>
+          </div>
+        `;
     }
 
     function renderAnalytics(data) {
@@ -3082,6 +3307,8 @@
       const discountCodeFromQr = urlParams.get("discountCode");
       const freePintCodeFromQr = urlParams.get("freePintCode");
       const requestedTab = urlParams.get("tab");
+      configurePortalTabs();
+      showTab("overview");
       if (discountCodeFromQr && discountRedemptionFormElement) {
         field(discountRedemptionFormElement, "code").value = discountCodeFromQr.toUpperCase();
       }
@@ -3108,17 +3335,22 @@
         if (row) syncOpeningHoursRow(row);
       });
 
-      try {
-        await loadPortal(urlParams.get("venueId"));
-        if (requestedTab || discountCodeFromQr) {
-          jumpToPortalTarget(requestedTab || "redemption");
+      if (MelbBeerBusiness.hasAuthenticatedSessionHint()) {
+        try {
+          MelbBeerBusiness.setStatus(portalAccess, "Loading your venue dashboard...");
+          await loadPortal(urlParams.get("venueId"));
+          if (requestedTab || discountCodeFromQr) {
+            jumpToPortalTarget(requestedTab || "redemption");
+          }
+        } catch (error) {
+          claimPanel.classList.add("is-hidden");
+          const message = /login required/i.test(error.message || "")
+            ? "Log in with an assigned venue-manager account to view this dashboard."
+            : error.message || "Bar dashboard unavailable. Log in, confirm 18+, or ask admin to assign your account to a venue.";
+          MelbBeerBusiness.setStatus(portalAccess, message, true);
         }
-      } catch (error) {
-        claimPanel.classList.add("is-hidden");
-        const message = /login required/i.test(error.message || "")
-          ? "Log in with an assigned venue-manager account to view this dashboard."
-          : error.message || "Bar dashboard unavailable. Log in, confirm 18+, or ask admin to assign your account to a venue.";
-        MelbBeerBusiness.setStatus(portalAccess, message, true);
+      } else {
+        MelbBeerBusiness.setStatus(portalAccess, "Log in with an assigned venue-manager account to view this dashboard.", true);
       }
 
       document.querySelectorAll(".tabButton").forEach((button) => {
@@ -3167,6 +3399,7 @@
       });
 
       venueSelect.addEventListener("change", () => {
+        MelbBeerBusiness.setStatus(portalAccess, "Switching venue...");
         void loadPortal(venueSelect.value).catch((error) => MelbBeerBusiness.setStatus(portalAccess, error.message, true));
       });
 
@@ -3187,7 +3420,7 @@
           active: field(profileForm, "active").checked,
         };
         try {
-          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/profile`, body, profileStatus, "Profile saved.");
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/profile`, body, profileStatus, "Profile saved for review. Public listing data updates after Pint Path approval.");
         } catch (error) {
           MelbBeerBusiness.setStatus(profileStatus, error.message || "Could not save profile.", true);
         }
@@ -3228,7 +3461,7 @@
           notes: field(beerForm, "notes").value || null,
         };
         try {
-          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/beers`, body, beerStatus, "Beer row saved.");
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/beers`, body, beerStatus, "Beer row saved for review. Keep going while the tap list is fresh.");
           resetForm(beerForm);
           field(beerForm, "inStock").checked = true;
           field(beerForm, "isNewBeer").checked = false;
@@ -3257,7 +3490,7 @@
           active: field(happyHourForm, "active").checked,
         };
         try {
-          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/happy-hours`, body, happyHourStatus, "Happy hour saved.");
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/happy-hours`, body, happyHourStatus, "Happy hour saved for review. Users will see it after approval.");
           resetForm(happyHourForm);
           field(happyHourForm, "active").checked = true;
           renderChecklist(happyHourDays, dayOptions);
@@ -3294,7 +3527,7 @@
           active: field(specialForm, "active").checked,
         };
         try {
-          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/specials`, body, specialStatus, "Pint Path special saved.");
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/specials`, body, specialStatus, "Pint Path special saved for review. Staff can keep using the dashboard while it is checked.");
           resetSpecialFormState();
         } catch (error) {
           MelbBeerBusiness.setStatus(specialStatus, error.message || "Could not save Pint Path special.", true);
@@ -3434,8 +3667,14 @@
         const target = event.target;
         if (!(target instanceof HTMLElement) || !selectedVenueId()) return;
 
-        if (target.dataset.jumpTab) {
-          jumpToPortalTarget(target.dataset.jumpTab);
+        const navigationTarget = target.closest("[data-jump-tab], [data-focus-venue-field]");
+        if (navigationTarget instanceof HTMLElement && navigationTarget.dataset.jumpTab) {
+          jumpToPortalTarget(navigationTarget.dataset.jumpTab);
+          return;
+        }
+
+        if (navigationTarget instanceof HTMLElement && navigationTarget.dataset.focusVenueField) {
+          focusVenueField(navigationTarget.dataset.focusVenueField);
           return;
         }
 
@@ -3604,17 +3843,21 @@
         }
 
         const deleteTargets = [
-          ["deleteBeer", "beers"],
-          ["deleteHappyHour", "happy-hours"],
-          ["deleteSpecial", "specials"],
+          ["deleteBeer", "beers", "beer row"],
+          ["deleteHappyHour", "happy-hours", "happy hour"],
+          ["deleteSpecial", "specials", "Pint Path special"],
         ];
-        for (const [key, route] of deleteTargets) {
+        for (const [key, route, label] of deleteTargets) {
           const id = target.dataset[key];
           if (!id) continue;
           if (route === "specials" && !portalCanManageSpecials()) {
             MelbBeerBusiness.setStatus(portalAccess, "Pint Path specials are available on Pro venue tiers.", true);
             return;
           }
+          const confirmed = window.confirm(`Remove this ${label}? The public map keeps the last approved data until Pint Path finishes review.`);
+          if (!confirmed) return;
+          target.setAttribute("disabled", "true");
+          MelbBeerBusiness.setStatus(portalAccess, `Removing ${label}...`);
           try {
             const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/${route}/${encodeURIComponent(id)}`, { method: "DELETE" });
             await loadPortal(selectedVenueId());
@@ -3624,6 +3867,8 @@
             }
           } catch (error) {
             MelbBeerBusiness.setStatus(portalAccess, error.message || "Could not remove item.", true);
+          } finally {
+            target.removeAttribute("disabled");
           }
           return;
         }

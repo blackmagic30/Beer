@@ -13,7 +13,13 @@ const files = Array.from(new Set(gitFilesOutput
   .map((file) => file.trim())
   .filter(Boolean)));
 
-for (const ignoredLocalConfig of ["viewer/config.js"]) {
+const IGNORED_LOCAL_CONFIGS_TO_SCAN = [
+  "viewer/config.js",
+  "apps/android/local.properties",
+  "apps/ios/Config.xcconfig",
+];
+
+for (const ignoredLocalConfig of IGNORED_LOCAL_CONFIGS_TO_SCAN) {
   if (fs.existsSync(ignoredLocalConfig) && !files.includes(ignoredLocalConfig)) {
     files.push(ignoredLocalConfig);
   }

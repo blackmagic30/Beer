@@ -570,7 +570,7 @@ function renderNav(active = "") {
     ...(isFieldTestMode() ? [{ key: "feedback", href: "/feedback.html", label: "Contact us" }] : []),
   ];
   const navLinks = navItems
-    .map((item) => `<a ${activeKey === item.key ? 'class="pill"' : ""} href="${item.href}">${item.label}</a>`)
+    .map((item) => `<a ${activeKey === item.key ? 'class="pill" aria-current="page"' : ""} href="${item.href}">${item.label}</a>`)
     .join("");
   return `
     <nav class="topNav" aria-label="Primary">
@@ -597,12 +597,28 @@ function installFieldTestChrome() {
 }
 
 function installAccessibilityChrome() {
-  if (!document.getElementById("mainContent")) {
-    const main = document.querySelector("main");
-    if (main) {
-      main.id = "mainContent";
-      main.setAttribute("tabindex", "-1");
-    }
+  const main = document.getElementById("mainContent") || document.querySelector("main") || document.getElementById("mapShell");
+  if (!main) {
+    return;
+  }
+
+  if (!main.id) {
+    main.id = "mainContent";
+  }
+  if (!main.hasAttribute("tabindex")) {
+    main.setAttribute("tabindex", "-1");
+  }
+
+  if (!document.getElementById("skipToMainContent")) {
+    const skipLink = document.createElement("a");
+    skipLink.id = "skipToMainContent";
+    skipLink.className = "skipLink";
+    skipLink.href = `#${main.id}`;
+    skipLink.textContent = "Skip to main content";
+    skipLink.addEventListener("click", () => {
+      window.requestAnimationFrame(() => main.focus({ preventScroll: true }));
+    });
+    document.body.prepend(skipLink);
   }
 }
 
@@ -653,9 +669,15 @@ function formatDate(value) {
 }
 
 function setStatus(element, message, isError = false) {
+  if (!element) {
+    return;
+  }
   element.hidden = false;
   element.textContent = message;
   element.className = `notice ${isError ? "notice--warning" : ""}`;
+  element.setAttribute("role", isError ? "alert" : "status");
+  element.setAttribute("aria-live", isError ? "assertive" : "polite");
+  element.setAttribute("aria-atomic", "true");
 }
 
 async function trackEvent(eventType, metadata = {}) {

@@ -415,6 +415,158 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     expect(basicPortal.tier?.analyticsLocked).toBe(true);
     expect(basicPortal.analytics).toBeNull();
   });
+
+  it("exercises the authenticated owner portal HTTP journey with safe pending-review boundaries", async () => {
+    const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
+    const admin = signup(harness, "admin@pintpath.test");
+    const owner = signup(harness, "owner-journey@pintpath.test");
+    const otherOwner = signup(harness, "owner-journey-other@pintpath.test");
+
+    harness.service.assignVenueManager(admin.account, {
+      userId: owner.account.id,
+      venueId: "venue-owner-journey",
+      venueName: "Owner Journey Bar",
+      suburb: "Richmond",
+    });
+    harness.service.assignVenueManager(admin.account, {
+      userId: otherOwner.account.id,
+      venueId: "venue-owner-other",
+      venueName: "Other Owner Bar",
+      suburb: "Carlton",
+    });
+    harness.service.upsertBarProfile(admin.account, "venue-owner-journey", venueProfileInput({
+      name: "Owner Journey Bar",
+      suburb: "Richmond",
+      area: "Richmond",
+      membershipTier: "pro",
+    }));
+
+    await withHttpServer(harness.app, async (baseUrl) => {
+      const loggedIn = await requestJson(baseUrl, "/api/business/auth/login", {
+        method: "POST",
+        body: { email: owner.account.email, password: PASSWORD },
+      });
+      expect(loggedIn.response.status).toBe(200);
+      const ownerToken = (loggedIn.json?.data as { token: string }).token;
+
+      const portal = await requestJson(baseUrl, "/api/business/venue-portal?venueId=venue-owner-journey", {
+        token: ownerToken,
+      });
+      expect(portal.response.status).toBe(200);
+      expect((portal.json?.data as { profile: { name: string }; tier: { analyticsLocked: boolean } }).profile.name)
+        .toBe("Owner Journey Bar");
+      expect((portal.json?.data as { tier: { analyticsLocked: boolean } }).tier.analyticsLocked).toBe(false);
+
+      const profileUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/profile", {
+        method: "POST",
+        token: ownerToken,
+        body: venueProfileInput({
+          name: "Owner Journey Bar",
+          address: "1 Launch Lane",
+          suburb: "Richmond",
+          area: "Richmond",
+          phone: "0399999999",
+          website: "https://owner-journey.example",
+          description: "Synthetic owner journey profile update.",
+          membershipTier: "pro",
+        }),
+      });
+      expect(profileUpdate.response.status).toBe(200);
+      expect((profileUpdate.json?.data as { pendingChange: { status: string; changeType: string } }).pendingChange)
+        .toMatchObject({ status: "pending", changeType: "profile" });
+
+      const beerUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/beers", {
+        method: "POST",
+        token: ownerToken,
+        body: {
+          id: null,
+          beerName: "Carlton Draught",
+          brewery: "Carlton & United Breweries",
+          style: "Lager",
+          abv: 4.6,
+          serveSize: "pint",
+          price: 12.5,
+          onTap: true,
+          inStock: true,
+          notes: "Synthetic owner journey tap row.",
+        },
+      });
+      expect(beerUpdate.response.status).toBe(201);
+      expect((beerUpdate.json?.data as { pendingChange: { status: string; changeType: string } }).pendingChange)
+        .toMatchObject({ status: "pending", changeType: "beer" });
+
+      const happyHourUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/happy-hours", {
+        method: "POST",
+        token: ownerToken,
+        body: {
+          id: null,
+          title: "After-work pints",
+          daysOfWeek: ["thu", "fri"],
+          startTime: "17:00",
+          endTime: "19:00",
+          description: "$10 selected pints after work.",
+          active: true,
+        },
+      });
+      expect(happyHourUpdate.response.status).toBe(201);
+      expect((happyHourUpdate.json?.data as { pendingChange: { status: string; changeType: string } }).pendingChange)
+        .toMatchObject({ status: "pending", changeType: "happy_hour" });
+
+      const specialUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/specials", {
+        method: "POST",
+        token: ownerToken,
+        body: {
+          id: null,
+          title: "Launch burger and pint",
+          description: "Synthetic Pro venue special for launch QA.",
+          price: 25,
+          discount: null,
+          startsAt: null,
+          endsAt: null,
+          startTime: "17:00",
+          endTime: "20:00",
+          scheduleNote: "Thursdays only",
+          exclusive: false,
+          active: true,
+        },
+      });
+      expect(specialUpdate.response.status).toBe(201);
+      expect((specialUpdate.json?.data as { special: { title: string } }).special.title).toBe("Launch burger and pint");
+
+      const supportRequest = await requestJson(baseUrl, "/api/business/feedback", {
+        method: "POST",
+        token: ownerToken,
+        body: {
+          anonymousSessionId: null,
+          feedbackType: "venue_partner_interest",
+          venueId: "venue-owner-journey",
+          venueName: "Owner Journey Bar",
+          message: "Synthetic launch QA support request from the owner dashboard.",
+        },
+      });
+      expect(supportRequest.response.status).toBe(201);
+      expect((supportRequest.json?.data as { feedback: { priority: string } }).feedback.priority).toBe("medium");
+
+      const crossOwnerPortal = await requestJson(baseUrl, "/api/business/venue-portal?venueId=venue-owner-journey", {
+        token: otherOwner.token,
+      });
+      expect(crossOwnerPortal.response.status).toBe(403);
+
+      const afterUpdates = await requestJson(baseUrl, "/api/business/venue-portal?venueId=venue-owner-journey", {
+        token: ownerToken,
+      });
+      const pendingChanges = (afterUpdates.json?.data as { pendingChanges: Array<{ changeType: string }> }).pendingChanges;
+      expect(pendingChanges.map((change) => change.changeType)).toEqual(expect.arrayContaining([
+        "profile",
+        "beer",
+        "happy_hour",
+      ]));
+      expect((afterUpdates.json?.data as { inventory: { specials: Array<{ title: string }> } }).inventory.specials)
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ title: "Launch burger and pint" }),
+        ]));
+    });
+  });
 });
 
 describe("Pint Path release-readiness analytics and report privacy", () => {

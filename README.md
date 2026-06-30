@@ -236,6 +236,7 @@ STRIPE_PRO_PRICE_ID=price_venue_pro_aud
 ```
 
 Run `npm run readiness:providers` after configuring env. It checks required provider values without printing secrets.
+Before broad public launch, run `npm run readiness:launch` with the real production env; it treats provider warnings as launch-blocking. Use [`docs/launch-9-readiness-gates.md`](./docs/launch-9-readiness-gates.md) for the full provider, owner-journey, monitoring, performance, accessibility, and legal evidence pack.
 
 Stripe test-mode webhook check:
 

@@ -1,0 +1,53 @@
+import fs from "node:fs";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+function readFile(filePath: string): string {
+  return fs.readFileSync(path.resolve(process.cwd(), filePath), "utf8");
+}
+
+describe("website accessibility polish", () => {
+  it("installs shared keyboard and announcement helpers", () => {
+    const script = readFile("viewer/business.js");
+    const css = readFile("viewer/business.css");
+
+    expect(script).toContain("Skip to main content");
+    expect(script).toContain('skipLink.href = `#${main.id}`');
+    expect(script).toContain('element.setAttribute("role", isError ? "alert" : "status")');
+    expect(script).toContain('element.setAttribute("aria-live", isError ? "assertive" : "polite")');
+    expect(css).toContain(".skipLink");
+    expect(css).toContain('[aria-invalid="true"]');
+    expect(css).toContain("min-height: 44px");
+  });
+
+  it("keeps account and recovery forms understandable to assistive tech", () => {
+    const accountHtml = readFile("viewer/account.html");
+    const resetHtml = readFile("viewer/reset-password.html");
+    const resendHtml = readFile("viewer/resend-confirmation.html");
+
+    expect(accountHtml).toContain('role="tab" aria-selected="true" aria-controls="loginForm"');
+    expect(accountHtml).toContain('role="tabpanel" aria-labelledby="showSignupButton signupHeading" hidden');
+    expect(accountHtml).toContain("function markAuthFields");
+    expect(accountHtml).toContain('input.setAttribute("aria-invalid", "true")');
+    expect(accountHtml).toContain('button.setAttribute("aria-label", `${showing ? "Hide" : "Show"} password`)');
+    expect(resetHtml).toContain('id="resetStatus" class="notice" role="status" aria-live="polite" aria-atomic="true"');
+    expect(resetHtml).toContain("function markResetFieldError");
+    expect(resendHtml).toContain('id="resendStatus" class="notice" role="status" aria-live="polite" aria-atomic="true"');
+    expect(resendHtml).toContain('$("confirmationEmail").setAttribute("aria-invalid", "true")');
+  });
+
+  it("labels map and dashboard interactive regions", () => {
+    const mapHtml = readFile("viewer/index.html");
+    const portalHtml = readFile("viewer/venue-portal.html");
+
+    expect(mapHtml).toContain('id="map" role="region" aria-label="Interactive Pint Path beer map"');
+    expect(mapHtml).toContain('role="dialog" aria-live="polite" aria-labelledby="venueDetailOverlayTitle"');
+    expect(mapHtml).toContain("venueDetailReturnFocus");
+    expect(portalHtml).toContain('class="tabNav" role="tablist" aria-label="Bar dashboard sections"');
+    expect(portalHtml).toContain("function configurePortalTabs");
+    expect(portalHtml).toContain('button.setAttribute("role", "tab")');
+    expect(portalHtml).toContain('panel.setAttribute("role", "tabpanel")');
+    expect(portalHtml).toContain('id="portalAccess" class="notice" role="status" aria-live="polite" aria-atomic="true"');
+  });
+});

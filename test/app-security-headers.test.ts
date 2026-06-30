@@ -15,4 +15,14 @@ describe("application security headers", () => {
     expect(source).toContain("new URL(env.SUPABASE_URL).origin");
     expect(source).toContain('"connect-src": cspConnectSources');
   });
+
+  it("publishes security contact discovery without exposing secrets", () => {
+    const source = appSource();
+    const securityTxt = fs.readFileSync(path.resolve(process.cwd(), "viewer/security.txt"), "utf8");
+
+    expect(source).toContain('["/.well-known/security.txt", "/security.txt"]');
+    expect(securityTxt).toContain("Contact: https://pintpath.au/feedback.html");
+    expect(securityTxt).toContain("Policy: https://pintpath.au/security.html");
+    expect(securityTxt).not.toMatch(/service_role|sk_live_|whsec_|AIza/i);
+  });
 });

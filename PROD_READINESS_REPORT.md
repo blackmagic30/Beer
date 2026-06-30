@@ -1,13 +1,24 @@
 # Pint Path Production Readiness Report
 
 Date: 2026-05-25
-Latest update: 2026-06-02
+Latest update: 2026-07-01
 
 ## Executive Summary
 
 Pint Path is substantially hardened for a controlled Melbourne beta, but it is not yet ready for full-scale production deployment without provider/dashboard verification. The application now has strong server-side price gating, admin/venue-manager authorization tests, pending-review workflows for venue-manager changes, production admin MFA step-up guards, private source-evidence references with signed server URLs, Redis-capable rate limiting, Stripe webhook signature handling, upload validation, security audit logging, production config guards, and a CI path that runs build/test/secret scan/dependency audit.
 
 The remaining blockers are now mostly provider and operations verification: Supabase MFA/AAL2 must be configured and tested, private Supabase Storage should be verified before broad source-evidence uploads, Redis must be provisioned for production rate limiting, backup/restore and monitoring must be tested, and live Stripe/Supabase/Google configuration must be verified in staging. The old phone-call automation surface has been retired from the active app.
+
+## Latest Patch: 9/10 Launch Gates
+
+This pass converted the final launch-readiness gaps into concrete gates without touching production data or changing database behavior:
+
+- Added `npm run readiness:launch`, a strict production provider preflight that treats warnings as launch blockers.
+- Added `docs/launch-9-readiness-gates.md` for provider proof, authenticated owner-journey evidence, monitoring/restore proof, performance budgets, accessibility/device checks, and legal/support review.
+- Added an HTTP-level release test for the authenticated owner portal journey: login, assigned venue access, profile, beer/stock, happy-hour, Pro special, support request, cross-owner blocking, and pending-review state.
+- Added `/.well-known/security.txt` and `/security.txt` as private security-report discovery paths.
+- Increased small-screen nav/footer touch target guardrails.
+- Updated Supabase live verification notes for deprecated Postgres 14 and current Data API exposure/grant expectations.
 
 ## Latest Patch: Production Guard Tightening
 

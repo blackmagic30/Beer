@@ -188,7 +188,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.updateDisplayName(account, body)));
   });
 
-  router.post("/account/discount-pass", async (req, res, next) => {
+  router.post("/account/discount-pass", writeLimiter, async (req, res, next) => {
     try {
       const account = requireAccount(req, businessService);
       res.json(success(await businessService.getDiscountPass(account, getAuthorization(req))));
@@ -197,7 +197,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.post("/account/free-pint-reward-code", async (req, res, next) => {
+  router.post("/account/free-pint-reward-code", writeLimiter, async (req, res, next) => {
     try {
       const account = requireAccount(req, businessService);
       const body = parseWithSchema(freePintRewardCodeSchema, req.body, "Invalid Free Pint Reward payload");
@@ -207,25 +207,25 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.post("/account/age-confirm", (req, res) => {
+  router.post("/account/age-confirm", writeLimiter, (req, res) => {
     parseWithSchema(ageConfirmSchema, req.body, "Invalid age confirmation payload");
     const account = requireAccount(req, businessService);
     res.json(success(businessService.confirmAge(account)));
   });
 
-  router.post("/account/legal-acceptance", (req, res) => {
+  router.post("/account/legal-acceptance", writeLimiter, (req, res) => {
     const body = parseWithSchema(legalAcceptanceSchema, req.body, "Invalid legal acceptance payload");
     const account = requireAccount(req, businessService);
     res.json(success(businessService.acceptLegal(account, body)));
   });
 
-  router.post("/account/preferences", (req, res) => {
+  router.post("/account/preferences", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(accountPreferencesSchema, req.body, "Invalid preferences payload");
     res.json(success(businessService.savePreferences(account, body)));
   });
 
-  router.post("/account/privacy-settings", (req, res) => {
+  router.post("/account/privacy-settings", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(accountPrivacySettingsSchema, req.body, "Invalid privacy settings payload");
     res.json(success(businessService.savePrivacySettings(account, body)));
@@ -236,19 +236,19 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.exportAccountData(account)));
   });
 
-  router.post("/account/delete-request", (req, res) => {
+  router.post("/account/delete-request", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(accountDeletionRequestSchema, req.body, "Invalid deletion request payload");
     res.json(success(businessService.requestAccountDeletion(account, body)));
   });
 
-  router.post("/account/saved-items", (req, res) => {
+  router.post("/account/saved-items", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(saveItemSchema, req.body, "Invalid saved item payload");
     res.status(201).json(success(businessService.saveItem(account, body)));
   });
 
-  router.delete("/account/saved-items", (req, res) => {
+  router.delete("/account/saved-items", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(removeSavedItemSchema, req.body, "Invalid saved item removal payload");
     res.json(success(businessService.removeSavedItem(account, body)));
@@ -397,7 +397,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
-  router.post("/missions", (req, res) => {
+  router.post("/missions", adminWriteLimiter, (req, res) => {
     requireAdmin(req, businessService);
     const body = parseWithSchema(createMissionSchema, req.body, "Invalid mission payload");
     const mission = businessService.createMission(body);

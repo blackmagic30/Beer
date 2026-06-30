@@ -73,6 +73,8 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Priority admin review queue");
     expect(pricingHtml).toContain("Pro growth studio with premium-placement checklist and weekend playbook.");
     expect(pricingHtml).toContain("Transparent discovery boost");
+    expect(pricingHtml).toContain("do not treat displayed tiers as final billing terms until checkout, refund, cancellation, tax invoice, and venue subscription terms are published");
+    expect(pricingHtml).toContain("Pro placement does not fake popularity or reviews.");
     expect(pricingHtml).toContain('href="/venue-portal.html"');
     expect(pricingHtml).toContain('id="venuePricingSection"');
     expect(pricingHtml).toContain('id="venuePricingSection" class="venuePricingSection" aria-labelledby="venuePricingTitle" hidden');

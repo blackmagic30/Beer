@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Account | Pint Path</title>
+  <meta name="robots" content="noindex,follow" />
+  <meta name="description" content="Sign in to manage your Pint Path account, submissions, privacy settings, discounts, and contributor progress." />
   <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="icon" type="image/png" sizes="48x48" href="/favicon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/pint-path-icon-192.png" />
@@ -14,7 +16,7 @@
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -44,11 +46,11 @@
 
       <section class="authCard panel" aria-label="Account access">
         <div class="authTabs" role="tablist" aria-label="Choose sign in or create account">
-          <button id="showLoginButton" class="authTab is-active" type="button" role="tab" aria-controls="loginPanel">Sign in</button>
-          <button id="showSignupButton" class="authTab" type="button" role="tab" aria-controls="signupPanel">Create account</button>
+          <button id="showLoginButton" class="authTab is-active" type="button" role="tab" aria-selected="true" aria-controls="loginForm">Sign in</button>
+          <button id="showSignupButton" class="authTab" type="button" role="tab" aria-selected="false" aria-controls="signupForm">Create account</button>
         </div>
 
-        <form id="loginForm" class="form authForm" aria-labelledby="loginHeading">
+        <form id="loginForm" class="form authForm" role="tabpanel" aria-labelledby="showLoginButton loginHeading">
           <div id="loginPanel" class="authPanelStack">
             <h2 id="loginHeading">Welcome back</h2>
             <p class="muted">Sign in to upload venue data, view your submissions, and track contribution progress.</p>
@@ -84,7 +86,7 @@
           </div>
         </form>
 
-        <form id="signupForm" class="form authForm is-hidden" aria-labelledby="signupHeading">
+        <form id="signupForm" class="form authForm is-hidden" role="tabpanel" aria-labelledby="showSignupButton signupHeading" hidden>
           <div id="signupPanel" class="authPanelStack">
             <h2 id="signupHeading">Create your contributor account</h2>
             <p class="muted">Use a real email so review notes and future contributor access can stay attached to you.</p>
@@ -120,7 +122,7 @@
           </div>
         </form>
 
-        <div id="authStatus" class="notice" role="status" hidden></div>
+        <div id="authStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>
       </section>
     </section>
 
@@ -134,16 +136,16 @@
         <a class="button" href="/feedback.html">Contact us</a>
       </section>
 
-      <div id="dashboardStatus" class="notice" role="status" hidden></div>
+      <div id="dashboardStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
       <section id="accountSettingsHub" class="accountSectionStack settingsHub">
-        <nav class="settingsNav" aria-label="Account settings sections">
-          <button class="settingsNavButton" type="button" data-settings-target="stats" aria-controls="settingsStatsPanel" aria-selected="false">My stats</button>
-          <button class="settingsNavButton" type="button" data-settings-target="submissions" aria-controls="settingsSubmissionsPanel" aria-selected="false">View submissions</button>
-          <button class="settingsNavButton" type="button" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
-          <button class="settingsNavButton" type="button" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
-          <button class="settingsNavButton" type="button" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
-          <button id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta" type="button" data-settings-target="beta-testing" aria-controls="settingsBetaTestingPanel" aria-selected="false" hidden>BetaTesting</button>
+        <nav class="settingsNav" role="tablist" aria-label="Account settings sections">
+          <button id="settingsStatsTab" class="settingsNavButton" type="button" role="tab" data-settings-target="stats" aria-controls="settingsStatsPanel" aria-selected="false">My stats</button>
+          <button id="settingsSubmissionsTab" class="settingsNavButton" type="button" role="tab" data-settings-target="submissions" aria-controls="settingsSubmissionsPanel" aria-selected="false">View submissions</button>
+          <button id="settingsPrivacyTab" class="settingsNavButton" type="button" role="tab" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
+          <button id="settingsSupportTab" class="settingsNavButton" type="button" role="tab" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
+          <button id="settingsSecurityTab" class="settingsNavButton" type="button" role="tab" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
+          <button id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta" type="button" role="tab" data-settings-target="beta-testing" aria-controls="settingsBetaTestingPanel" aria-selected="false" hidden>BetaTesting</button>
         </nav>
 
         <section id="accountQuickStart" class="accountQuickStart panel" aria-label="Recommended next actions"></section>
@@ -184,7 +186,7 @@
           <p class="muted">Open stats, submissions, privacy, support, or security from the buttons above.</p>
         </article>
 
-        <div id="settingsSubmissionsPanel" class="settingsPanel" data-settings-panel="submissions" role="tabpanel" hidden>
+        <div id="settingsSubmissionsPanel" class="settingsPanel" data-settings-panel="submissions" role="tabpanel" aria-labelledby="settingsSubmissionsTab" hidden>
           <section id="recentSubmissionsSection" class="panel">
             <div class="sectionHeader">
               <div>
@@ -196,7 +198,7 @@
           </section>
         </div>
 
-        <div id="settingsStatsPanel" class="settingsPanel" data-settings-panel="stats" role="tabpanel" hidden>
+        <div id="settingsStatsPanel" class="settingsPanel" data-settings-panel="stats" role="tabpanel" aria-labelledby="settingsStatsTab" hidden>
           <section class="panel">
             <div class="sectionHeader">
               <div>
@@ -212,7 +214,7 @@
           </section>
         </div>
 
-        <div id="settingsBetaTestingPanel" class="settingsPanel" data-settings-panel="beta-testing" role="tabpanel" hidden>
+        <div id="settingsBetaTestingPanel" class="settingsPanel" data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" hidden>
           <section class="panel betaTestingPanel betaTestingShell">
             <div class="betaTestingHeader">
               <div>
@@ -312,7 +314,7 @@
           </section>
         </div>
 
-        <div id="settingsPrivacyPanel" class="settingsPanel" data-settings-panel="privacy" role="tabpanel" hidden>
+        <div id="settingsPrivacyPanel" class="settingsPanel" data-settings-panel="privacy" role="tabpanel" aria-labelledby="settingsPrivacyTab" hidden>
           <form id="privacySettingsForm" class="panel form">
             <div class="sectionHeader">
               <div>
@@ -340,13 +342,14 @@
           </form>
         </div>
 
-        <div id="settingsSupportPanel" class="settingsPanel" data-settings-panel="support" role="tabpanel" hidden>
+        <div id="settingsSupportPanel" class="settingsPanel" data-settings-panel="support" role="tabpanel" aria-labelledby="settingsSupportTab" hidden>
           <div class="grid grid--two accountSupportGrid">
             <form id="dataRequestForm" class="panel form accountSupportPanel">
               <div class="accountSupportIntro">
                 <div>
                   <h2>Privacy, support, and appeals</h2>
                   <p class="muted">Create a tracked request for export, deletion, correction, moderation appeals, security reports, or billing help.</p>
+                  <p class="helperCopy">Deletion is a review request, not an instant switch. Pint Path checks account ownership plus billing, moderation, fraud-prevention, security, and legal retention needs before removing or anonymising data where practical.</p>
                 </div>
                 <div class="quickPrivacyActions">
                   <button id="downloadAccountDataButton" class="button" type="button">Download my data</button>
@@ -369,13 +372,14 @@
                 <label class="field">Details
                   <textarea name="message" required maxlength="1200" placeholder="Tell us what you need. Do not include passwords, card numbers, ID documents, or private keys."></textarea>
                 </label>
+                <p class="helperCopy">The quick account export is JSON and excludes raw passwords, tokens, private evidence files, raw photo data, and exact stored upload coordinates.</p>
                 <button class="button button--primary" type="submit">Send request</button>
               </div>
             </form>
           </div>
         </div>
 
-        <div id="settingsSecurityPanel" class="settingsPanel" data-settings-panel="security" role="tabpanel" hidden>
+        <div id="settingsSecurityPanel" class="settingsPanel" data-settings-panel="security" role="tabpanel" aria-labelledby="settingsSecurityTab" hidden>
           <article id="securitySettingsCard" class="panel accountSecurityPanel">
             <div>
               <h2>Account security</h2>
@@ -716,10 +720,14 @@
 
     function showAuthTab(tab) {
       const showLogin = tab === "login";
+      $("loginForm").hidden = !showLogin;
+      $("signupForm").hidden = showLogin;
       $("loginForm").classList.toggle("is-hidden", !showLogin);
       $("signupForm").classList.toggle("is-hidden", showLogin);
       $("showLoginButton").classList.toggle("is-active", showLogin);
       $("showSignupButton").classList.toggle("is-active", !showLogin);
+      $("showLoginButton").setAttribute("aria-selected", showLogin ? "true" : "false");
+      $("showSignupButton").setAttribute("aria-selected", showLogin ? "false" : "true");
       setAccountStatus($("authStatus"), showLogin ? "Sign in with email and password." : "Create an account to start contributing.");
     }
 
@@ -740,6 +748,40 @@
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
       });
+    }
+
+    function clearAuthFieldErrors(form) {
+      form.querySelectorAll("[aria-invalid='true']").forEach((input) => {
+        input.removeAttribute("aria-invalid");
+        const describedBy = (input.getAttribute("aria-describedby") || "")
+          .split(/\s+/)
+          .filter((id) => id && id !== "authStatus");
+        if (describedBy.length) {
+          input.setAttribute("aria-describedby", describedBy.join(" "));
+        } else {
+          input.removeAttribute("aria-describedby");
+        }
+      });
+    }
+
+    function markAuthFields(form, names = []) {
+      names.forEach((name) => {
+        const input = form.elements.namedItem(name);
+        if (!input || typeof input.setAttribute !== "function") {
+          return;
+        }
+        input.setAttribute("aria-invalid", "true");
+        const describedBy = new Set((input.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean));
+        describedBy.add("authStatus");
+        input.setAttribute("aria-describedby", Array.from(describedBy).join(" "));
+      });
+    }
+
+    function focusAuthField(form, name) {
+      const input = form.elements.namedItem(name);
+      if (input && typeof input.focus === "function") {
+        input.focus();
+      }
     }
 
     function showBetaFeature(target = "pub-golf") {
@@ -1949,14 +1991,25 @@
       const isSignup = path.includes("signup");
 
       try {
+        clearAuthFieldErrors(form);
         if (isSignup && body.password !== body.confirmPassword) {
+          markAuthFields(form, ["password", "confirmPassword"]);
+          focusAuthField(form, "confirmPassword");
           throw new Error("Passwords do not match.");
         }
         if (isSignup && (!body.ageConfirmed || !body.termsAccepted || !body.privacyAccepted)) {
+          markAuthFields(form, ["ageConfirmed", "termsAccepted", "privacyAccepted"]);
+          focusAuthField(form, !body.ageConfirmed ? "ageConfirmed" : !body.termsAccepted ? "termsAccepted" : "privacyAccepted");
           throw new Error("Confirm you are 18+ and accept the Terms and Privacy Policy to create an account.");
         }
         if (isSignup) {
-          body.displayName = validateDisplayNameClient(body.displayName);
+          try {
+            body.displayName = validateDisplayNameClient(body.displayName);
+          } catch (error) {
+            markAuthFields(form, ["displayName"]);
+            focusAuthField(form, "displayName");
+            throw error;
+          }
         }
         delete body.confirmPassword;
 
@@ -2030,12 +2083,26 @@
     }
 
     function installPasswordToggles() {
-      document.querySelectorAll("[data-password-toggle]").forEach((button) => {
+      document.querySelectorAll("[data-password-toggle]").forEach((button, index) => {
+        const input = button.parentElement.querySelector("input");
+        if (!input) {
+          return;
+        }
+        if (!input.id) {
+          input.id = `accountPasswordInput${index + 1}`;
+        }
+        button.setAttribute("aria-controls", input.id);
+        const syncToggleState = () => {
+          const showing = input.type === "text";
+          button.textContent = showing ? "Hide" : "Show";
+          button.setAttribute("aria-label", `${showing ? "Hide" : "Show"} password`);
+          button.setAttribute("aria-pressed", showing ? "true" : "false");
+        };
+        syncToggleState();
         button.addEventListener("click", () => {
-          const input = button.parentElement.querySelector("input");
           const showing = input.type === "text";
           input.type = showing ? "password" : "text";
-          button.textContent = showing ? "Show" : "Hide";
+          syncToggleState();
         });
       });
     }

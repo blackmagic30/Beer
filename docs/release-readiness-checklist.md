@@ -16,6 +16,14 @@ git diff --check
 
 The `test:release:pintpath` script currently runs the Pint Path release-readiness Vitest suite, the local secret scanner, and `npm audit --audit-level=high`.
 
+After production provider env is configured, also run:
+
+```bash
+npm run readiness:launch
+```
+
+This strict launch gate treats provider warnings as blockers. See `docs/launch-9-readiness-gates.md` for the manual evidence pack that local tests cannot prove.
+
 ## Synthetic Data
 
 Use only clearly marked synthetic data:
@@ -36,6 +44,7 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 - Admin and analytics preview routes reject anonymous and normal users.
 - Source evidence stays behind private references and signed URLs.
 - Obvious localhost/private/metadata source-photo URLs are rejected before storage.
+- The authenticated owner portal route path covers login, assigned venue access, profile, beer/stock, happy-hour, Pro special, support, cross-owner blocking, and pending-review state.
 - Venue-manager edits create pending changes and do not publish to the public map/API until admin approval.
 - Pending venue changes are visible to the owning venue manager and admins, but not another venue manager.
 - Rejected venue-manager changes do not publish.
@@ -56,6 +65,8 @@ These are launch-critical but require provider/staging verification:
 - **Supabase OAuth:** Google and Apple provider credentials, Supabase app redirect URLs, provider callback URLs, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; Google/Apple should allow the Supabase provider callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`.
 - **Supabase Auth security:** Enable leaked-password protection before public launch.
 - **Supabase RLS live audit:** Apply migrations, then test anonymous/authenticated access in the Supabase dashboard or staging client. Local SQL parsing is not a substitute for live policy verification.
+- **Supabase database version:** Confirm the live project is not on deprecated Postgres 14 before launch.
+- **Supabase Data API exposure:** Confirm any new public-schema tables have intentional grants/exposure plus RLS; do not assume new tables are auto-exposed.
 - **Storage bucket live audit:** Verify `beermap-source-evidence` is private, has the intended file-size limit, and owner-only policies work in Supabase Storage.
 - **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
 - **Stripe:** Do not enable live payments until Stripe CLI or dashboard test webhooks prove signed webhook verification, duplicate-event idempotency, subscription updates, cancellations, and failed invoices.

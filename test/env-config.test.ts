@@ -94,6 +94,9 @@ describe("environment safety defaults", () => {
 
   it("checks all paid-plan and POS launch variables in provider readiness", () => {
     const readinessScript = fs.readFileSync(path.resolve(process.cwd(), "scripts/provider-readiness-check.ts"), "utf8");
+    const packageJson = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
 
     expect(readinessScript).toContain('checkRequired("STRIPE_PRICE_MONTHLY"');
     expect(readinessScript).toContain('checkRequired("STRIPE_PRICE_YEARLY"');
@@ -104,5 +107,8 @@ describe("environment safety defaults", () => {
     expect(readinessScript).toContain("SUPABASE_PROVIDER_CALLBACK_URL");
     expect(readinessScript).toContain("/auth/v1/callback");
     expect(readinessScript).toContain("ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION");
+    expect(readinessScript).toContain("LAUNCH_READINESS_STRICT");
+    expect(readinessScript).toContain("blockingWarnings");
+    expect(packageJson.scripts["readiness:launch"]).toContain("LAUNCH_READINESS_STRICT=true NODE_ENV=production");
   });
 });

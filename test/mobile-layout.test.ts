@@ -16,9 +16,10 @@ describe("mobile layout guardrails", () => {
     expect(css).toMatch(/\.dayChip input\s*\{[\s\S]*width:\s*20px;[\s\S]*height:\s*20px;/);
     expect(css).toMatch(/\.field input\[type="checkbox"\]\s*\{[\s\S]*width:\s*20px;[\s\S]*height:\s*20px;/);
     expect(css).toMatch(/\.cookieConsent__actions \.button\s*\{[\s\S]*min-height:\s*44px;/);
+    expect(css).toMatch(/\.footerCopy a\s*\{[\s\S]*min-height:\s*40px;/);
     expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.brand\s*\{[\s\S]*display:\s*none;/);
     expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.navLinks\s*\{[\s\S]*flex-wrap:\s*nowrap;[\s\S]*overflow-x:\s*auto;/);
-    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.navLinks a\s*\{[\s\S]*min-height:\s*34px;[\s\S]*font-size:\s*10px;/);
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.navLinks a\s*\{[\s\S]*min-height:\s*40px;[\s\S]*font-size:\s*11px;/);
     expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.button\s*\{[\s\S]*white-space:\s*normal;/);
   });
 

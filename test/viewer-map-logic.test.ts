@@ -206,6 +206,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("getClusterVisual(count)");
     expect(html).toContain("const viewState = getViewState();");
     expect(html).toContain("AdvancedMarkerElement");
+    expect(html).toContain('marker.addEventListener("gmp-click", handleMarkerClick)');
     expect(html).toContain("createAdvancedMapMarker");
     expect(html).toContain("advancedMapPin");
     expect(html).toContain("advancedMapPin--priced");
@@ -282,8 +283,10 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('id="searchThisAreaButton"');
     expect(html).toContain('id="mapOverlayTabs" aria-label="Map panels" hidden');
     expect(html).toContain("MAP_OVERLAYS_ENABLED = true");
-    expect(html).not.toContain('id="recentlyViewedPanel"');
-    expect(html).not.toContain('id="recentlyViewedTitle"');
+    expect(html).toContain('id="recentlyViewedPanel"');
+    expect(html).toContain('id="recentlyViewedTitle"');
+    expect(html).toContain('id="recentlyViewedList"');
+    expect(html).toContain('id="clearRecentlyViewed"');
     expect(html).toContain('id="nightPlanPanel"');
     expect(html).toContain('LOCAL_SAVED_VENUES_STORAGE_KEY = "pintPathLocalSavedVenues"');
     expect(html).toContain('RECENTLY_VIEWED_STORAGE_KEY = "pintPathRecentlyViewedVenues"');
@@ -374,9 +377,21 @@ describe("viewer map UI wiring", () => {
 
   it("surfaces the premium tiered venue command centre preview", () => {
     expect(venuePortalHtml).toContain('id="premiumVenueDashboard"');
+    expect(venuePortalHtml).toContain('id="dashboardSetupProgress"');
     expect(venuePortalHtml).toContain('id="venueDailyActions"');
+    expect(venuePortalHtml).toContain('id="venuePulseGrid"');
+    expect(venuePortalHtml).toContain('id="weeklyActionCard"');
+    expect(venuePortalHtml).toContain('id="businessToolkit"');
+    expect(venuePortalHtml).toContain('id="qualityScore"');
+    expect(venuePortalHtml).toContain('id="priceRecords"');
+    expect(venuePortalHtml).toContain("function renderDashboardSetupProgress");
     expect(venuePortalHtml).toContain("function renderVenueDailyActions");
     expect(venuePortalHtml).toContain("function renderPremiumVenueDashboard");
+    expect(venuePortalHtml).toContain("function focusVenueField");
+    expect(venuePortalHtml).toContain("renderVenuePulseGrid(data)");
+    expect(venuePortalHtml).toContain("renderBusinessToolkit(data)");
+    expect(venuePortalHtml).toContain("window.confirm(`Remove this ${label}?");
+    expect(venuePortalHtml).toContain('data-focus-venue-field="beerName"');
     expect(venuePortalHtml).toContain("formatAppValueHeadline");
     expect(venuePortalHtml).toContain("No app redemptions logged yet");
     expect(venuePortalHtml).toContain("No redemptions yet");

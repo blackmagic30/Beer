@@ -28,6 +28,7 @@
     "test:security:pintpath": "vitest run test/pintpath-release-readiness.test.ts",
     "test:release:pintpath": "npm run build && npm run test:e2e:pintpath && npm run readiness:providers && npm run security:scan && npm run security:audit",
     "audit:deployment": "npm run build && npm test && npm run readiness:providers && npm run security:scan && npm run security:audit",
+    "readiness:launch": "LAUNCH_READINESS_STRICT=true NODE_ENV=production tsx scripts/provider-readiness-check.ts",
     "test": "vitest run test",
     "security:scan": "node scripts/security-scan.mjs",
     "security:audit": "npm audit --audit-level=high",

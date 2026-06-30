@@ -1,0 +1,9 @@
+Contact: https://pintpath.au/feedback.html
+Policy: https://pintpath.au/security.html
+Preferred-Languages: en
+Canonical: https://pintpath.au/.well-known/security.txt
+Expires: 2027-06-30T00:00:00Z
+
+# Pint Path is in beta. Please report security, privacy, account, billing,
+# source-evidence, or venue-access issues privately through the contact form.
+# Do not test against accounts, venues, or private evidence that you do not own.

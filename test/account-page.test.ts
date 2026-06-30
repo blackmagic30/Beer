@@ -176,8 +176,8 @@ describe("account page shell", () => {
     expect(html).toContain("betaLeaderboardRow--outside");
     expect(html).toContain("Venue added to the public map");
     expect(html).toContain("submissionPendingNotice");
-    expect(html).toContain('id="authStatus" class="notice" role="status" hidden></div>');
-    expect(html).toContain('id="dashboardStatus" class="notice" role="status" hidden></div>');
+    expect(html).toContain('id="authStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>');
+    expect(html).toContain('id="dashboardStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>');
     expect(html).toContain("function hideAccountStatus");
     expect(html).toContain("quietAuthMessages");
     expect(html).toContain('hideAccountStatus($("dashboardStatus"))');
@@ -268,6 +268,9 @@ describe("account page shell", () => {
     expect(feedback).toContain('id="feedbackForm"');
     expect(feedback).toContain("Tell us what you need, or ask about joining as a venue.");
     expect(feedback).toContain("venue_partner_interest");
+    expect(feedback).toContain("Account deletion starts as a review request.");
+    expect(feedback).toContain("Use this form until launch contacts are final.");
+    expect(feedback).toContain("Do not include passwords, card numbers, private keys, or ID documents");
     expect(feedback).toContain('MelbBeerBusiness.renderNav(isVenueSupport ? "venue-support" : "feedback")');
     expect(feedback).toContain("Ask Pint Path about your venue account.");
     expect(feedback).toContain("Venue support messages are saved into the Pint Path admin support inbox.");
@@ -387,17 +390,17 @@ describe("account page shell", () => {
     expect(html).toContain('data-settings-target="stats" aria-controls="settingsStatsPanel"');
     expect(html).not.toContain('href="#recentSubmissionsSection"');
     expect(html).not.toContain('href="/stats.html"');
-    expect(html).toContain('data-settings-panel="submissions" role="tabpanel" hidden');
-    expect(html).toContain('data-settings-panel="stats" role="tabpanel" hidden');
+    expect(html).toContain('data-settings-panel="submissions" role="tabpanel" aria-labelledby="settingsSubmissionsTab" hidden');
+    expect(html).toContain('data-settings-panel="stats" role="tabpanel" aria-labelledby="settingsStatsTab" hidden');
     expect(html).not.toContain('data-settings-panel="preferences" role="tabpanel" hidden');
     expect(html).not.toContain('data-settings-panel="watchlist" role="tabpanel" hidden');
-    expect(html).toContain('data-settings-panel="privacy" role="tabpanel" hidden');
-    expect(html).toContain('data-settings-panel="support" role="tabpanel" hidden');
-    expect(html).toContain('data-settings-panel="security" role="tabpanel" hidden');
+    expect(html).toContain('data-settings-panel="privacy" role="tabpanel" aria-labelledby="settingsPrivacyTab" hidden');
+    expect(html).toContain('data-settings-panel="support" role="tabpanel" aria-labelledby="settingsSupportTab" hidden');
+    expect(html).toContain('data-settings-panel="security" role="tabpanel" aria-labelledby="settingsSecurityTab" hidden');
     expect(html).toContain('id="betaTestingNavButton"');
     expect(html).toContain('data-settings-target="beta-testing"');
     expect(html).toContain('aria-controls="settingsBetaTestingPanel"');
-    expect(html).toContain('data-settings-panel="beta-testing" role="tabpanel" hidden');
+    expect(html).toContain('data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" hidden');
     expect(html).toContain("function showAccountSettingsPanel");
     expect(html).toContain('document.querySelectorAll("[data-settings-target]")');
     expect(html).toContain("showAccountSettingsPanel(button.dataset.settingsTarget)");
@@ -540,7 +543,7 @@ describe("account page shell", () => {
 
     expect(nav).toContain('href="/">Map</a>');
     expect(nav).toContain('href="/submit.html">Submit</a>');
-    expect(nav).toContain('class="pill" href="/admin.html">Admin</a>');
+    expect(nav).toContain('class="pill" aria-current="page" href="/admin.html">Admin</a>');
     expect(nav).toContain('href="/account.html">Account</a>');
     expect(nav).not.toContain('href="/missions.html"');
     expect(nav).not.toContain('href="/pricing.html"');
@@ -756,10 +759,18 @@ describe("account page shell", () => {
     expect(terms).toContain("scrape protected data");
     expect(terms).toContain("Display names/usernames must be unique");
     expect(terms).toContain("We do not tolerate rude or discriminatory names");
+    expect(terms).toContain("Final owner contact, billing, refund, cancellation, and jurisdiction details");
+    expect(terms).toContain("Beta legal-review notice");
+    expect(terms).toContain("publish final cancellation, refund, Stripe customer portal");
     expect(privacy).toContain("Privacy Policy");
+    expect(privacy).toContain("Plain-English beta summary");
+    expect(privacy).toContain("Service providers and integrations");
     expect(privacy).toContain("Venue reports are aggregate-only");
     expect(privacy).toContain("We do not store raw ID documents");
     expect(privacy).toContain("one-time upload-location proof");
+    expect(privacy).toContain("Account deletion and export");
+    expect(privacy).toContain("Final owner contact details should be published here");
+    expect(privacy).not.toContain("[legal entity name]");
   });
 
   it("adds a FAQ with trust, community, security, privacy, and support paths", () => {
@@ -797,6 +808,7 @@ describe("account page shell", () => {
     expect(security).toContain("Security & privacy");
     expect(security).toContain("Log out all sessions");
     expect(security).toContain("Security report");
+    expect(security).toContain("If you cannot sign in, use Contact us and include the account email");
     expect(trust).toContain("/status.html");
     expect(security).toContain("/status.html");
     expect(status).toContain("Pint Path status and incident reporting.");
@@ -825,6 +837,8 @@ describe("account page shell", () => {
     expect(html).toContain('id="dataRequestForm"');
     expect(html).toContain('id="downloadAccountDataButton"');
     expect(html).toContain('id="requestAccountDeletionButton"');
+    expect(html).toContain("Deletion is a review request, not an instant switch.");
+    expect(html).toContain("The quick account export is JSON");
     expect(html).not.toContain('id="requestForm"');
     expect(html).not.toContain('class="panel supportSubmitCard"');
     expect(html).not.toContain("Add venue data");
@@ -862,9 +876,9 @@ describe("account page shell", () => {
     expect(script).toContain('aria-label="Primary"');
     expect(script).toContain("function installAccessibilityChrome");
     expect(script).toContain('main.id = "mainContent"');
-    expect(script).not.toContain("Skip to main content");
+    expect(script).toContain("Skip to main content");
     expect(css).toContain(".cookieConsent");
-    expect(css).not.toContain(".skipLink");
+    expect(css).toContain(".skipLink");
     expect(css).toContain(":focus-visible");
   });
 });

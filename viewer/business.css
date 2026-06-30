@@ -101,6 +101,42 @@ a {
   color: inherit;
 }
 
+.skipLink {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 20000;
+  border: 1px solid rgba(245, 197, 66, 0.55);
+  border-radius: var(--radius-pill);
+  background: #f8fafc;
+  color: #07101f;
+  padding: 10px 14px;
+  font-weight: 900;
+  text-decoration: none;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.32);
+  transform: translateY(-160%);
+  transition: transform var(--transition-fast);
+}
+
+.skipLink:focus,
+.skipLink:focus-visible {
+  transform: translateY(0);
+  outline: 3px solid rgba(34, 211, 238, 0.84);
+  outline-offset: 3px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .pageShell {
   width: min(1160px, calc(100% - 32px));
   margin: 0 auto;
@@ -204,7 +240,7 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 42px;
+  min-height: 44px;
   padding: 10px 14px;
   font: inherit;
   font-size: 14px;
@@ -268,7 +304,7 @@ a {
 }
 
 .button--small {
-  min-height: 38px;
+  min-height: 40px;
   padding: 8px 11px;
   font-size: 0.82rem;
 }
@@ -1380,6 +1416,13 @@ h3 {
     linear-gradient(145deg, rgba(255, 255, 255, 0.062), rgba(255, 255, 255, 0.024)),
     rgba(7, 10, 18, 0.82);
   box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+.field input[aria-invalid="true"],
+.field select[aria-invalid="true"],
+.field textarea[aria-invalid="true"] {
+  border-color: rgba(239, 68, 68, 0.82);
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .field textarea {
@@ -3545,6 +3588,119 @@ button.adminFocusRail__item:focus-visible {
   color: #ffefbd;
 }
 
+.dashboardSetupProgress {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+  margin-bottom: 16px;
+  padding: clamp(16px, 2vw, 22px);
+  border: 1px solid rgba(245, 197, 66, 0.22);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(245, 197, 66, 0.1), rgba(15, 23, 42, 0.82)),
+    rgba(15, 23, 42, 0.86);
+  box-shadow: var(--soft-shadow);
+}
+
+.dashboardSetupProgress__copy {
+  display: grid;
+  align-content: space-between;
+  gap: 12px;
+}
+
+.dashboardSetupProgress__copy h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: clamp(1.35rem, 2.4vw, 2rem);
+  line-height: 1.08;
+}
+
+.dashboardSetupProgress__copy p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.dashboardSetupProgress__copy .button {
+  width: fit-content;
+}
+
+.dashboardSetupProgress__body {
+  display: grid;
+  gap: 14px;
+}
+
+.dashboardSetupProgress__meter {
+  height: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(245, 197, 66, 0.18);
+  border-radius: 999px;
+  background: rgba(3, 7, 18, 0.42);
+}
+
+.dashboardSetupProgress__meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f5c542, #22d3ee);
+}
+
+.dashboardSetupChecklist {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboardSetupItem {
+  appearance: none;
+  display: grid;
+  gap: 6px;
+  min-height: 124px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+  padding: 12px;
+  color: var(--text-primary);
+  text-align: left;
+  background: rgba(3, 7, 18, 0.24);
+  cursor: pointer;
+}
+
+.dashboardSetupItem:hover,
+.dashboardSetupItem:focus-visible {
+  border-color: rgba(34, 211, 238, 0.4);
+  transform: translateY(-1px);
+}
+
+.dashboardSetupItem span {
+  width: fit-content;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #fef3c7;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.dashboardSetupItem strong {
+  font-size: 0.95rem;
+  line-height: 1.15;
+}
+
+.dashboardSetupItem small {
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.dashboardSetupItem.is-complete {
+  border-color: rgba(34, 197, 94, 0.26);
+}
+
+.dashboardSetupItem.is-complete span {
+  border-color: rgba(34, 197, 94, 0.32);
+  color: #bbf7d0;
+}
+
 .venueDailyActions {
   display: grid;
   gap: 14px;
@@ -4471,18 +4627,22 @@ button.adminFocusRail__item:focus-visible {
 }
 
 .venueActionGrid,
-.venueOverviewColumns {
+.venueOverviewActionGrid,
+.venueOverviewColumns,
+.venueOverviewDataGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-top: 20px;
 }
 
-.venueActionGrid {
+.venueActionGrid,
+.venueOverviewActionGrid {
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
 }
 
-.venueActionGrid .panel {
+.venueActionGrid .panel,
+.venueOverviewActionCard {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -4491,12 +4651,79 @@ button.adminFocusRail__item:focus-visible {
   border-color: rgba(34, 211, 238, 0.16);
 }
 
+.venueOverviewActionCard {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  padding: 16px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)),
+    rgba(15, 23, 42, 0.74);
+  box-shadow: var(--soft-shadow);
+}
+
 .venueActionGrid .panel:nth-child(2) {
   border-color: rgba(245, 197, 66, 0.24);
 }
 
 .venueActionGrid .panel:nth-child(3) {
   border-color: rgba(139, 92, 246, 0.24);
+}
+
+.venueOverviewActionCard:nth-child(2) {
+  border-color: rgba(245, 197, 66, 0.24);
+}
+
+.venueOverviewActionCard:nth-child(3) {
+  border-color: rgba(139, 92, 246, 0.24);
+}
+
+.venueOverviewActionCard h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.12rem;
+  line-height: 1.15;
+}
+
+.venueOverviewDataGrid {
+  align-items: stretch;
+}
+
+.venueQualityScore {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 96px;
+}
+
+.venueQualityScore strong {
+  color: var(--text-primary);
+  font-family: var(--display-font);
+  font-size: clamp(32px, 4vw, 48px);
+  line-height: 0.9;
+}
+
+.venueQualityScore span {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.venueChecklist {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.venueChecklist li {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  background: rgba(3, 7, 18, 0.22);
 }
 
 .venueCardHeader {
@@ -7335,7 +7562,8 @@ body.discountPassModalOpen {
 .footerCopy a {
   display: inline-flex;
   align-items: center;
-  min-height: 32px;
+  min-height: 40px;
+  padding: 4px 2px;
   color: #ffe4a8;
   font-weight: 800;
 }
@@ -7492,9 +7720,9 @@ body.discountPassModalOpen {
 
   .navLinks a {
     flex: 0 0 auto;
-    min-height: 34px;
-    padding: 7px 8px;
-    font-size: 10px;
+    min-height: 40px;
+    padding: 8px 9px;
+    font-size: 11px;
     white-space: nowrap;
   }
 
@@ -7535,6 +7763,8 @@ body.discountPassModalOpen {
   .premiumUpgradeBanner,
   .premiumListRow,
   .premiumCampaignRow,
+  .dashboardSetupProgress,
+  .dashboardSetupChecklist,
   .specialsPlanner__hero,
   .specialsPlannerColumns,
   .specialsPlannerWindow,
@@ -7543,7 +7773,9 @@ body.discountPassModalOpen {
   .venueDemandPanel__header,
   .venueDemandPanel__body,
   .venueDemandPanel__footer,
+  .venueOverviewActionGrid,
   .venueOverviewColumns,
+  .venueOverviewDataGrid,
   .openingHoursRow,
   .redemptionFlowGrid,
   .discountQuickPanel,
@@ -7629,6 +7861,7 @@ body.discountPassModalOpen {
   .specialsPlannerSignalGrid,
   .venueDemandMetrics,
   .venuePulseGrid,
+  .venueOverviewActionGrid,
   .venueActionGrid {
     grid-template-columns: 1fr;
   }
@@ -8816,6 +9049,7 @@ body.discountPassModalOpen {
   }
 
   .accountQuickStart,
+  .dashboardSetupChecklist,
   .venueDailyActions__grid,
   .venueDailyActions__stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8824,6 +9058,7 @@ body.discountPassModalOpen {
 
 @media (max-width: 760px) {
   .accountQuickStart,
+  .dashboardSetupProgress,
   .venueDailyActions__header {
     grid-template-columns: 1fr;
   }
@@ -8833,9 +9068,15 @@ body.discountPassModalOpen {
   }
 
   .accountQuickStart__status,
+  .dashboardSetupChecklist,
   .venueDailyActions__grid,
   .venueDailyActions__stats {
     grid-template-columns: 1fr;
+  }
+
+  .dashboardSetupProgress__copy .button {
+    width: 100%;
+    justify-content: center;
   }
 
   .venueDailyActions__header {

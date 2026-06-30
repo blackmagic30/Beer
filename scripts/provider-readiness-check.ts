@@ -24,6 +24,12 @@ function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
+function isStrictLaunchCheck(): boolean {
+  return process.env.LAUNCH_READINESS_STRICT === "true"
+    || process.argv.includes("--strict")
+    || process.argv.includes("--launch");
+}
+
 function checkRequired(name: string, label: string, action: string): ProviderCheck {
   const present = hasValue(name);
   return {
@@ -142,18 +148,22 @@ const checks: ProviderCheck[] = [
 
 const failed = checks.filter((check) => check.status === "fail");
 const warned = checks.filter((check) => check.status === "warn");
+const strict = isStrictLaunchCheck();
+const blockingWarnings = strict ? warned : [];
 
 console.log(JSON.stringify({
-  ok: failed.length === 0,
+  ok: failed.length === 0 && blockingWarnings.length === 0,
   environment: process.env.NODE_ENV ?? "development",
+  strictLaunchCheck: strict,
   summary: {
     passed: checks.filter((check) => check.status === "pass").length,
     warnings: warned.length,
+    blockingWarnings: blockingWarnings.length,
     failures: failed.length,
   },
   checks,
 }, null, 2));
 
-if (failed.length > 0) {
+if (failed.length > 0 || blockingWarnings.length > 0) {
   process.exit(1);
 }

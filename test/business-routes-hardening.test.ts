@@ -24,6 +24,24 @@ describe("business route hardening", () => {
       'router.post("/admin/requests/:id/mission", adminWriteLimiter',
       'router.post("/admin/users/:id/status", adminWriteLimiter',
       'router.post("/demo/seed", adminWriteLimiter',
+      'router.post("/missions", adminWriteLimiter',
+    ].forEach((route) => expect(source).toContain(route));
+  });
+
+  it("rate limits account mutation routes", () => {
+    const source = routesSource();
+
+    [
+      'router.post("/account/display-name", writeLimiter',
+      'router.post("/account/discount-pass", writeLimiter',
+      'router.post("/account/free-pint-reward-code", writeLimiter',
+      'router.post("/account/age-confirm", writeLimiter',
+      'router.post("/account/legal-acceptance", writeLimiter',
+      'router.post("/account/preferences", writeLimiter',
+      'router.post("/account/privacy-settings", writeLimiter',
+      'router.post("/account/delete-request", writeLimiter',
+      'router.post("/account/saved-items", writeLimiter',
+      'router.delete("/account/saved-items", writeLimiter',
     ].forEach((route) => expect(source).toContain(route));
   });
 

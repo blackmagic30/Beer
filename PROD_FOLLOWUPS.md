@@ -42,7 +42,8 @@ These are the remaining actions after the production-readiness pass. Priorities 
 ## P1: Supabase RLS Application And Formal Audit
 
 - Why it matters: Supabase Auth/OAuth is supported, but direct browser writes/reads must be protected by RLS before expanding Supabase-backed flows.
-- Suggested fix: Apply `supabase/migrations/20260512000000_auth_profiles_activity.sql`, review policies in the Supabase dashboard, and test anonymous/authenticated insert/update behavior.
+- Status: Local migration contract tests cover the intended RLS/security posture, and the main app continues to route canonical submissions through Express.
+- Suggested fix: Apply all pending `supabase/migrations/`, review policies in the Supabase dashboard/RLS Tester, confirm the live database is not deprecated Postgres 14, confirm any new public-schema tables have intentional Data API grants plus RLS, and test anonymous/authenticated insert/update behavior.
 - Blocks production: Yes if direct browser Supabase writes are enabled. Less critical while public data access remains server-gated through Express.
 
 ## P1: Distributed Rate Limiting
@@ -114,5 +115,6 @@ These are the remaining actions after the production-readiness pass. Priorities 
 ## P3: Performance Profiling And Bundle Cleanup
 
 - Why it matters: The viewer is static and large. Full-scale usage will benefit from profiling map interactions and reducing client-side work.
-- Suggested fix: Add Lighthouse/mobile profiling, split large inline scripts where practical, and cache immutable assets.
+- Status: Basic loading improvements and static cache headers are in place; the remaining step is measured deployed-site profiling.
+- Suggested fix: Run the performance budget in `docs/launch-9-readiness-gates.md`, split large inline scripts where practical, and keep cache-friendly asset handling.
 - Blocks production: No.

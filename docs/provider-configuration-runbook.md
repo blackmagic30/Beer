@@ -19,9 +19,10 @@ Run the provider check with production semantics before setting Railway live:
 
 ```bash
 NODE_ENV=production npm run readiness:providers
+npm run readiness:launch
 ```
 
-The provider check only reports whether values are present. It never prints secret values.
+The provider check only reports whether values are present. It never prints secret values. `readiness:launch` is stricter: any remaining provider warning blocks broad public launch.
 
 ## Google Maps
 
@@ -100,12 +101,14 @@ Required checks:
 - `SUPABASE_SERVICE_ROLE_KEY` is only server-side.
 - Google/Apple OAuth providers are configured with minimal scopes.
 - Leaked password protection is enabled in Supabase Auth.
+- The hosted database is not on deprecated Postgres 14.
 - Supabase Auth redirect URLs include the app callback pages:
   - `http://localhost:3000/auth/callback`
   - `https://pintpath.au/auth/callback`
 - Google and Apple provider consoles include the Supabase provider callback URL derived from `SUPABASE_URL`:
   - `https://auth.pintpath.au/auth/v1/callback` when `SUPABASE_URL=https://auth.pintpath.au`
 - RLS policies from `supabase/migrations/` are applied and tested in staging.
+- New public-schema tables have intentional Data API exposure/grants plus RLS; do not assume new tables are automatically exposed.
 - The `beermap-source-evidence` Storage bucket is private and owner/admin access is verified.
 - Supabase MFA is enabled for admin accounts before public launch.
 

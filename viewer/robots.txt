@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /admin.html
+Disallow: /account.html
+Disallow: /auth/
+Disallow: /reset-password.html
+Disallow: /resend-confirmation.html
+Disallow: /stats.html
+
+Sitemap: https://pintpath.au/sitemap.xml
