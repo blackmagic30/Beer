@@ -428,7 +428,9 @@ describe("viewer map UI wiring", () => {
       html.indexOf('href="/missions.html" data-venue-hidden>Missions'),
     );
     expect(html).toContain('id="accessPill"');
-    expect(html).toContain('<a href="/feedback.html">Contact us</a> · <a href="/privacy.html">Privacy</a>');
+    const responsibleNote = html.match(/<div class="responsibleNote">([\s\S]*?)<\/div>/)?.[1] || "";
+    expect(responsibleNote).toContain("Prices may change. Check with the venue before ordering. Drink responsibly.");
+    expect(responsibleNote).not.toContain("<a ");
     expect(html).toContain('class="controlDeck"');
     expect(html).toContain("Find a venue fast");
     expect(html).toContain('placeholder="Area or venue"');
