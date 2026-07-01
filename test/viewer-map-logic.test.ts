@@ -223,11 +223,16 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('loading: "async"');
     expect(html).toContain("EFFECTIVE_GOOGLE_MAPS_MAP_ID");
     expect(html).toContain("useConfiguredGoogleMapsMapId");
+    expect(html).toContain("PINT_PATH_CLEAN_MAP_TYPE_ID");
     expect(html).toContain("PINT_PATH_BASE_MAP_STYLES");
-    expect(html).toContain('featureType: "poi.business"');
-    expect(html).toContain('featureType: "transit.station.bus"');
-    expect(html).toContain('featureType: "transit.station.rail"');
+    expect(html).toContain('featureType: "poi", elementType: "all"');
+    expect(html).toContain('featureType: "transit", elementType: "labels.icon"');
+    expect(html).toContain('featureType: "transit", elementType: "labels.text"');
+    expect(html).toContain("new google.maps.StyledMapType(PINT_PATH_BASE_MAP_STYLES");
+    expect(html).toContain("map.mapTypes.set(PINT_PATH_CLEAN_MAP_TYPE_ID, cleanMapType)");
+    expect(html).toContain("map.setMapTypeId(PINT_PATH_CLEAN_MAP_TYPE_ID)");
     expect(html).toContain("mapOptions.styles = PINT_PATH_BASE_MAP_STYLES");
+    expect(html).toContain("installCleanGoogleMapType(map)");
     expect(html).toContain('gestureHandling: "cooperative"');
     expect(html).toContain("zoomControl: false");
     expect(html).toContain("clickableIcons: false");
@@ -424,9 +429,11 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("<h1>Pint Path</h1>");
     expect(html).not.toContain("Verified local price index");
     expect(html).toContain('id="topbarBusinessLinks"');
-    expect(html.indexOf('href="/submit.html" data-venue-hidden>Submit')).toBeLessThan(
-      html.indexOf('href="/missions.html" data-venue-hidden>Missions'),
+    expect(html.indexOf('href="/submit.html">Submit')).toBeLessThan(
+      html.indexOf('href="/missions.html">Missions'),
     );
+    expect(html).toContain('href="/feedback.html" id="topbarFeedbackLink">Contact us');
+    expect(html).not.toContain("data-venue-hidden");
     expect(html).toContain('id="accessPill"');
     const responsibleNote = html.match(/<div class="responsibleNote">([\s\S]*?)<\/div>/)?.[1] || "";
     expect(responsibleNote).toContain("Prices may change. Check with the venue before ordering. Drink responsibly.");

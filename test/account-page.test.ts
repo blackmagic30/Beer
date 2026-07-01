@@ -52,6 +52,18 @@ function loadBusinessHelpers() {
   }).MelbBeerBusiness;
 }
 
+function navLinkLabels(markup: string) {
+  return Array.from(markup.matchAll(/href="[^"]+">([^<]+)<\/a>/g), (match) => match[1]);
+}
+
+function htmlBetween(html: string, start: string, end: string) {
+  const startIndex = html.indexOf(start);
+  const endIndex = html.indexOf(end, startIndex + start.length);
+  expect(startIndex, start).toBeGreaterThanOrEqual(0);
+  expect(endIndex, end).toBeGreaterThan(startIndex);
+  return html.slice(startIndex, endIndex);
+}
+
 function businessCss() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/business.css"), "utf8");
 }
@@ -278,8 +290,7 @@ describe("account page shell", () => {
     expect(feedback).toContain('MelbBeerBusiness.apiFetch("/api/business/feedback"');
     expect(feedback.indexOf("Privacy note")).toBeLessThan(feedback.indexOf('id="feedbackForm"'));
     expect(css).toContain("margin-top: clamp(14px, 2.2vw, 24px);");
-    expect(script).toContain('{ key: "feedback", href: "/feedback.html", label: "Contact us" }');
-    expect(script).toContain('{ key: "venue-support", href: "/feedback.html?audience=bars", label: "Support" }');
+    expect(script).toContain('{ key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: venueManagerNav ? "Support" : "Contact us" }');
     expect(script).not.toContain('href="/account.html#feedbackForm"');
     expect(script).not.toContain("fieldTestFeedbackButton");
     expect(script).not.toContain("floatingFeedback");
@@ -312,11 +323,20 @@ describe("account page shell", () => {
     expect(html).not.toContain("submitQuickUpload");
   });
 
-  it("keeps Account focused on savings and specials while moving detailed stats to My Stats", () => {
+  it("keeps account hero cards only inside My Stats", () => {
     const html = accountHtml();
     const css = businessCss();
+    const submissionsPanel = htmlBetween(html, 'id="settingsSubmissionsPanel"', 'id="settingsStatsPanel"');
+    const statsPanel = htmlBetween(html, 'id="settingsStatsPanel"', 'id="settingsBetaTestingPanel"');
+    const betaTestingPanel = htmlBetween(html, 'id="settingsBetaTestingPanel"', 'id="settingsPrivacyPanel"');
+    const privacyPanel = htmlBetween(html, 'id="settingsPrivacyPanel"', 'id="settingsSupportPanel"');
+    const supportPanel = htmlBetween(html, 'id="settingsSupportPanel"', 'id="settingsSecurityPanel"');
+    const securityPanel = html.slice(html.indexOf('id="settingsSecurityPanel"'), html.indexOf("</section>", html.indexOf('id="settingsSecurityPanel"')));
 
     expect(html).toContain('class="accountHighlightsGrid"');
+    expect(html).not.toContain("Start here");
+    expect(html).not.toContain("accountQuickStart");
+    expect(css).not.toContain("accountQuickStart");
     expect(html).not.toContain('id="accountIdMetric"');
     expect(html).toContain('id="savingsMetric"');
     expect(html).toContain('id="refreshDiscountPassButton"');
@@ -339,7 +359,12 @@ describe("account page shell", () => {
     expect(html).toContain('class="accountDashboardIntro sectionHeader"');
     expect(html.indexOf('id="accountDashboardTitle"')).toBeLessThan(html.indexOf('id="accountSettingsHub"'));
     expect(html.indexOf('class="settingsNav"')).toBeLessThan(html.indexOf('class="accountHighlightsGrid"'));
-    expect(html.indexOf('class="accountHighlightsGrid"')).toBeLessThan(html.indexOf('id="settingsStatsPanel"'));
+    expect(statsPanel).toContain('class="accountHighlightsGrid"');
+    [submissionsPanel, betaTestingPanel, privacyPanel, supportPanel, securityPanel].forEach((panel) => {
+      expect(panel).not.toContain('class="accountHighlightsGrid"');
+      expect(panel).not.toContain("accountHeroMetric--savings");
+      expect(panel).not.toContain("accountHeroMetric--special");
+    });
     expect(html).toContain("accountHeroMetric--savings");
     expect(html).toContain("accountHeroMetric--special");
     expect(html.indexOf('label: "Total saved"')).toBeLessThan(html.indexOf('label: "Total uploads"'));
@@ -347,6 +372,7 @@ describe("account page shell", () => {
     expect(html.indexOf('label: "Verified"')).toBeLessThan(html.indexOf('label: "Pending review"'));
     expect(html.indexOf('label: "Rejected"')).toBeLessThan(html.indexOf('label: "Trust score"'));
     expect(css).toContain(".accountHighlightsGrid");
+    expect(css).toContain("margin: clamp(14px, 1.8vw, 20px) 0;");
     expect(css).toContain(".accountDashboardIntro");
     expect(css).toContain(".accountHeroMetric--savings");
     expect(css).toContain(".accountHeroMetric--special");
@@ -490,7 +516,13 @@ describe("account page shell", () => {
     expect(script).toContain("subscriptionStatus: account.subscriptionStatus || null");
     expect(script).not.toContain("email: account.email || null");
     expect(script).not.toContain("email: session?.user?.email");
-    expect(script).toContain('const venueManagerNav = active === "venue-portal" || active === "bar-faq" || active === "venue-support" || isVenueManagerContext()');
+    const helpers = loadBusinessHelpers();
+    const publicNavLabels = ["Map", "Submit", "Missions", "Pricing", "FAQ", "Account", "Contact us"];
+
+    ["", "account", "bar-faq", "faq", "feedback", "missions", "pricing", "submit", "trust", "venue-portal", "venue-support"].forEach((active) => {
+      expect(navLinkLabels(helpers.renderNav(active))).toEqual(publicNavLabels);
+    });
+    expect(script).toContain('const venueManagerNav = isVenueManagerContext()');
     expect(script).toContain('const adminNav = active === "admin" || isAdminContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
@@ -500,17 +532,19 @@ describe("account page shell", () => {
     );
     expect(script).toContain('{ key: "admin", href: "/admin.html", label: "Admin" }');
     expect(script).toContain('{ key: "pricing", href: "/pricing.html", label: "Pricing" }');
-    expect(script).toContain('{ key: "faq", href: "/trust.html", label: "FAQ" }');
     expect(script).toContain('{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }');
-    expect(script).toContain('{ key: "venue-support", href: "/feedback.html?audience=bars", label: "Support" }');
+    expect(script).toContain('{ key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: venueManagerNav ? "Bar FAQ" : "FAQ" }');
+    expect(script).toContain('{ key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: venueManagerNav ? "Support" : "Contact us" }');
     expect(script).not.toContain("const authenticatedLinks");
     expect(html).toContain('id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard');
-    expect(html).toContain('href="/submit.html" data-venue-hidden>Submit');
-    expect(html).toContain('href="/missions.html" data-venue-hidden>Missions');
-    expect(html.indexOf('href="/submit.html" data-venue-hidden>Submit')).toBeLessThan(
-      html.indexOf('href="/missions.html" data-venue-hidden>Missions'),
+    expect(html).toContain('href="/submit.html">Submit');
+    expect(html).toContain('href="/missions.html">Missions');
+    expect(html.indexOf('href="/submit.html">Submit')).toBeLessThan(
+      html.indexOf('href="/missions.html">Missions'),
     );
     expect(html).toContain('href="/trust.html" id="venueFaqLink">FAQ');
+    expect(html).toContain('href="/feedback.html" id="topbarFeedbackLink">Contact us');
+    expect(html).not.toContain("data-venue-hidden");
     expect(html).not.toContain('href="/missions.html" data-auth-required');
     expect(html).not.toContain('href="/submit.html" data-auth-required');
     expect(html).not.toContain('href="/submit.html" class="primary" data-auth-required');
@@ -519,7 +553,7 @@ describe("account page shell", () => {
     expect(html).toContain('document.querySelectorAll("[data-auth-required]")');
   });
 
-  it("keeps venue-manager navigation focused on bar account tools", () => {
+  it("keeps venue-manager navigation in the same order with venue links added", () => {
     const helpers = loadBusinessHelpers();
     helpers.setAccountContext({
       id: "venue-user-1",
@@ -529,28 +563,18 @@ describe("account page shell", () => {
     });
     const nav = helpers.renderNav("account");
 
-    expect(nav).toContain('href="/">Map</a>');
-    expect(nav).toContain('href="/venue-portal.html">Dashboard</a>');
-    expect(nav).toContain('href="/pricing.html">Pricing</a>');
-    expect(nav).toContain('href="/trust.html?audience=bars">Bar FAQ</a>');
-    expect(nav).toContain('href="/feedback.html?audience=bars">Support</a>');
-    expect(nav).not.toContain('href="/account.html">Account</a>');
-    expect(nav).not.toContain('href="/submit.html"');
-    expect(nav).not.toContain('href="/missions.html"');
+    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Pricing", "Bar FAQ", "Account", "Support"]);
+    expect(navLinkLabels(helpers.renderNav("venue-portal"))).toEqual(navLinkLabels(nav));
+    expect(navLinkLabels(helpers.renderNav("venue-support"))).toEqual(navLinkLabels(nav));
+    expect(nav).toContain('class="pill" aria-current="page" href="/account.html">Account</a>');
   });
 
-  it("keeps the admin page nav focused on admin work", () => {
+  it("keeps the admin page in the same nav with Admin highlighted", () => {
     const helpers = loadBusinessHelpers();
     const nav = helpers.renderNav("admin");
 
-    expect(nav).toContain('href="/">Map</a>');
-    expect(nav).toContain('href="/submit.html">Submit</a>');
+    expect(navLinkLabels(nav)).toEqual(["Map", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
     expect(nav).toContain('class="pill" aria-current="page" href="/admin.html">Admin</a>');
-    expect(nav).toContain('href="/account.html">Account</a>');
-    expect(nav).not.toContain('href="/missions.html"');
-    expect(nav).not.toContain('href="/pricing.html"');
-    expect(nav).not.toContain('href="/trust.html"');
-    expect(nav).not.toContain('href="/feedback.html"');
   });
 
   it("keeps potential partner leads compact on the admin page", () => {
@@ -794,7 +818,7 @@ describe("account page shell", () => {
     const nav = businessJs();
     const css = businessCss();
 
-    expect(nav).toContain('{ key: "faq", href: "/trust.html", label: "FAQ" }');
+    expect(nav).toContain('key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html"');
     expect(trust).toContain("FAQ | Pint Path");
     expect(trust).not.toContain("Where did the Trust Centre go?");
     expect(trust).not.toContain("Tap a question when you need detail.");

@@ -3386,11 +3386,12 @@
         <div id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation">
           <a href="/" aria-current="page">Map</a>
           <a id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard</a>
-          <a href="/submit.html" data-venue-hidden>Submit</a>
-          <a href="/missions.html" data-venue-hidden>Missions</a>
+          <a href="/submit.html">Submit</a>
+          <a href="/missions.html">Missions</a>
           <a href="/pricing.html">Pricing</a>
           <a href="/trust.html" id="venueFaqLink">FAQ</a>
-          <a href="/account.html" data-venue-hidden>Account</a>
+          <a href="/account.html">Account</a>
+          <a href="/feedback.html" id="topbarFeedbackLink">Contact us</a>
         </div>
       </div>
     </nav>
@@ -3627,17 +3628,11 @@
       west: 112,
       east: 154.5,
     });
+    const PINT_PATH_CLEAN_MAP_TYPE_ID = "pint_path_clean_map";
     const PINT_PATH_BASE_MAP_STYLES = Object.freeze([
-      { featureType: "poi.business", stylers: [{ visibility: "off" }] },
-      { featureType: "poi.attraction", stylers: [{ visibility: "off" }] },
-      { featureType: "poi.government", stylers: [{ visibility: "off" }] },
-      { featureType: "poi.medical", stylers: [{ visibility: "off" }] },
-      { featureType: "poi.place_of_worship", stylers: [{ visibility: "off" }] },
-      { featureType: "poi.school", stylers: [{ visibility: "off" }] },
-      { featureType: "poi.sports_complex", stylers: [{ visibility: "off" }] },
-      { featureType: "transit.station", stylers: [{ visibility: "on" }] },
-      { featureType: "transit.station.bus", stylers: [{ visibility: "on" }] },
-      { featureType: "transit.station.rail", stylers: [{ visibility: "on" }] },
+      { featureType: "poi", elementType: "all", stylers: [{ visibility: "off" }] },
+      { featureType: "transit", elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+      { featureType: "transit", elementType: "labels.text", stylers: [{ visibility: "off" }] },
     ]);
     const GOOGLE_MAPS_KEY =
       params.get("googleMapsKey") ||
@@ -3670,6 +3665,7 @@
     const topbarBusinessLinksEl = document.getElementById("topbarBusinessLinks");
     const venueDashboardLinkEl = document.getElementById("venueDashboardLink");
     const venueFaqLinkEl = document.getElementById("venueFaqLink");
+    const topbarFeedbackLinkEl = document.getElementById("topbarFeedbackLink");
     const accessPillEl = document.getElementById("accessPill");
     const venueSearchEl = document.getElementById("venueSearch");
     const beerSearchEl = document.getElementById("beerSearch");
@@ -3889,15 +3885,16 @@
       document.querySelectorAll("[data-auth-required]").forEach((link) => {
         link.hidden = !isAuthenticated || isVenueManager;
       });
-      document.querySelectorAll("[data-venue-hidden]").forEach((link) => {
-        link.hidden = isVenueManager;
-      });
       if (venueDashboardLinkEl) {
         venueDashboardLinkEl.hidden = !isVenueManager;
       }
       if (venueFaqLinkEl) {
         venueFaqLinkEl.href = isVenueManager ? "/trust.html?audience=bars" : "/trust.html";
         venueFaqLinkEl.textContent = isVenueManager ? "Bar FAQ" : "FAQ";
+      }
+      if (topbarFeedbackLinkEl) {
+        topbarFeedbackLinkEl.href = isVenueManager ? "/feedback.html?audience=bars" : "/feedback.html";
+        topbarFeedbackLinkEl.textContent = isVenueManager ? "Support" : "Contact us";
       }
     }
 
@@ -7966,6 +7963,18 @@
       map.setZoom(clampMapZoom(currentZoom + step));
     }
 
+    function installCleanGoogleMapType(map) {
+      if (!map || !window.google?.maps?.StyledMapType || !map.mapTypes?.set || typeof map.setMapTypeId !== "function") {
+        return;
+      }
+
+      const cleanMapType = new google.maps.StyledMapType(PINT_PATH_BASE_MAP_STYLES, {
+        name: "Pint Path clean map",
+      });
+      map.mapTypes.set(PINT_PATH_CLEAN_MAP_TYPE_ID, cleanMapType);
+      map.setMapTypeId(PINT_PATH_CLEAN_MAP_TYPE_ID);
+    }
+
     function installCommandScrollZoomAssist(map, mapElement) {
       if (!map || !mapElement || mapElement.dataset.commandScrollZoomAssist === "installed") {
         return;
@@ -8067,6 +8076,7 @@
         }
         const map = new google.maps.Map(mapElement, mapOptions);
         googleMapInstance = map;
+        installCleanGoogleMapType(map);
         installCommandScrollZoomAssist(map, mapElement);
 
         const markerClustererReady = loadMarkerClustererScript().catch((error) => {

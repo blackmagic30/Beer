@@ -542,32 +542,24 @@ async function updatePassword(password) {
 }
 
 function renderNav(active = "") {
-  const activeKey = active === "trust" || active === "bar-faq" ? "faq" : active;
-  const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
-  const adminPageNav = active === "admin";
-  const venueManagerNav = active === "venue-portal" || active === "bar-faq" || active === "venue-support" || isVenueManagerContext();
+  const venueManagerNav = isVenueManagerContext();
   const adminNav = active === "admin" || isAdminContext();
-  const navItems = adminPageNav ? [
+  const activeKey = active === "trust" || active === "bar-faq"
+    ? "faq"
+    : active === "venue-support"
+      ? "feedback"
+      : active;
+  const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
+  const navItems = [
     { key: "map", href: "/", label: "Map" },
-    { key: "submit", href: "/submit.html", label: "Submit" },
-    { key: "admin", href: "/admin.html", label: "Admin" },
-    { key: "account", href: "/account.html", label: "Account" },
-  ] : venueManagerNav ? [
-    { key: "map", href: "/", label: "Map" },
-    { key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" },
-    ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
-    { key: "pricing", href: "/pricing.html", label: "Pricing" },
-    { key: "faq", href: "/trust.html?audience=bars", label: "Bar FAQ" },
-    { key: "venue-support", href: "/feedback.html?audience=bars", label: "Support" },
-  ] : [
-    { key: "map", href: "/", label: "Map" },
+    ...(venueManagerNav ? [{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }] : []),
     { key: "submit", href: "/submit.html", label: "Submit" },
     { key: "missions", href: "/missions.html", label: "Missions" },
     ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
     { key: "pricing", href: "/pricing.html", label: "Pricing" },
-    { key: "faq", href: "/trust.html", label: "FAQ" },
+    { key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: venueManagerNav ? "Bar FAQ" : "FAQ" },
     { key: "account", href: "/account.html", label: "Account" },
-    ...(isFieldTestMode() ? [{ key: "feedback", href: "/feedback.html", label: "Contact us" }] : []),
+    { key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: venueManagerNav ? "Support" : "Contact us" },
   ];
   const navLinks = navItems
     .map((item) => `<a ${activeKey === item.key ? 'class="pill" aria-current="page"' : ""} href="${item.href}">${item.label}</a>`)
