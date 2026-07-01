@@ -262,6 +262,7 @@ describe("account page shell", () => {
     const html = accountHtml();
     const feedback = feedbackHtml();
     const script = businessJs();
+    const css = businessCss();
 
     expect(html).not.toContain('id="feedbackForm"');
     expect(html).toContain('href="/feedback.html"');
@@ -276,6 +277,7 @@ describe("account page shell", () => {
     expect(feedback).toContain("Venue support messages are saved into the Pint Path admin support inbox.");
     expect(feedback).toContain('MelbBeerBusiness.apiFetch("/api/business/feedback"');
     expect(feedback.indexOf("Privacy note")).toBeLessThan(feedback.indexOf('id="feedbackForm"'));
+    expect(css).toContain("margin-top: clamp(14px, 2.2vw, 24px);");
     expect(script).toContain('{ key: "feedback", href: "/feedback.html", label: "Contact us" }');
     expect(script).toContain('{ key: "venue-support", href: "/feedback.html?audience=bars", label: "Support" }');
     expect(script).not.toContain('href="/account.html#feedbackForm"');
@@ -819,8 +821,8 @@ describe("account page shell", () => {
     expect(security).toContain("Log out all sessions");
     expect(security).toContain("Security report");
     expect(security).toContain("If you cannot sign in, use Contact us and include the account email");
-    expect(trust).toContain("/status.html");
-    expect(security).toContain("/status.html");
+    expect(trust).not.toContain('<a href="/status.html"');
+    expect(security).not.toContain('<a href="/status.html"');
     expect(status).toContain("Pint Path status and incident reporting.");
     expect(status).toContain("Provider checks still need human verification");
     expect(status).toContain("Railway");
