@@ -193,4 +193,40 @@ describe("AdminIngestionQueueRepository", () => {
       }),
     ]);
   });
+
+  it("keeps source ingestion pending when priced rows cannot be written to the live map", async () => {
+    const repository = createRepository();
+    const queueItem = queueSource(repository, 1);
+    const service = new AdminService(
+      repository,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+    );
+    attachFakeSupabase(service, queueItem.venueId);
+
+    await expect(service.publishQueuedIngestion(queueItem.id, {
+      beers: [
+        {
+          name: "Carlton Draught",
+          servingSize: "pint",
+          priceNumeric: 13.5,
+          priceText: "$13.50",
+          availabilityStatus: "on_tap",
+          availableOnTap: true,
+          availablePackageOnly: false,
+          unavailableReason: null,
+          needsReview: false,
+        },
+      ],
+      note: "Verified against source image.",
+    })).rejects.toThrow("Live map price database is unavailable");
+
+    expect(repository.getById(queueItem.id)).toEqual(expect.objectContaining({
+      status: "pending_review",
+      publishedAt: null,
+      reviewBeers: null,
+    }));
+    expect(repository.count("pending_review")).toBe(1);
+  });
 });

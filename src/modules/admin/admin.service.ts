@@ -966,6 +966,10 @@ export class AdminService {
     return publish();
   }
 
+  private countPublishableMapPriceRows(beers: AdminBeerInput[]): number {
+    return beers.filter((beer) => Number.isFinite(beer.priceNumeric ?? Number.NaN) && beer.priceNumeric != null).length;
+  }
+
   private async fetchImageDataUrlFromSourceUrl(sourceUrl: string): Promise<string> {
     let url: URL;
 
@@ -1293,6 +1297,10 @@ export class AdminService {
       "source_ingestion_review",
       new Date().toISOString(),
     );
+    const expectedPriceRecordCount = this.countPublishableMapPriceRows(reviewedBeers);
+    if (expectedPriceRecordCount > 0 && !this.priceRecordDatabase) {
+      throw new AppError("Live map price database is unavailable, so this source cannot be published yet.", 503);
+    }
     const noteParts = [
       queueItem.note,
       queueItem.capturedNotes,
@@ -1305,12 +1313,6 @@ export class AdminService {
       note: noteParts.length > 0 ? noteParts.join("\n") : null,
       beers: reviewedBeers,
     });
-    const priceRecordCount = this.publishIngestionPriceRecords({
-      ingestionId,
-      venue: result.venue,
-      savedAt: result.savedAt,
-      beers: reviewedBeers,
-    });
     const crawlerFeedback = buildCrawlerFeedback({
       outcome: "published",
       extractedBeers: queueItem.extractedBeers,
@@ -1318,18 +1320,53 @@ export class AdminService {
       note: input.note,
       generatedAt: result.savedAt,
     });
+    let priceRecordCount = 0;
 
-    repository.markPublished(
-      ingestionId,
-      reviewedBeers.map((beer) => ({
-        ...beer,
-        confidence: 1,
-        notes: null,
-      })),
-      input.note,
-      crawlerFeedback,
-      result.savedAt,
-    );
+    if (this.priceRecordDatabase) {
+      const publishLocalState = this.priceRecordDatabase.transaction(() => {
+        const published = this.publishIngestionPriceRecords({
+          ingestionId,
+          venue: result.venue,
+          savedAt: result.savedAt,
+          beers: reviewedBeers,
+        });
+
+        if (published !== expectedPriceRecordCount) {
+          throw new AppError(
+            `Source review publish wrote ${published} of ${expectedPriceRecordCount} expected live map price row${expectedPriceRecordCount === 1 ? "" : "s"}.`,
+            500,
+          );
+        }
+
+        repository.markPublished(
+          ingestionId,
+          reviewedBeers.map((beer) => ({
+            ...beer,
+            confidence: 1,
+            notes: null,
+          })),
+          input.note,
+          crawlerFeedback,
+          result.savedAt,
+        );
+
+        return published;
+      });
+
+      priceRecordCount = publishLocalState();
+    } else {
+      repository.markPublished(
+        ingestionId,
+        reviewedBeers.map((beer) => ({
+          ...beer,
+          confidence: 1,
+          notes: null,
+        })),
+        input.note,
+        crawlerFeedback,
+        result.savedAt,
+      );
+    }
 
     return {
       queueItem: repository.getById(ingestionId)!,

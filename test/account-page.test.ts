@@ -717,8 +717,9 @@ describe("account page shell", () => {
     expect(html).toContain("function moveAdminIngestionPage");
     expect(html).toContain('<option value="pending_review">Pending</option>');
     expect(html).toContain('params.set("status", adminIngestionStatus.value);');
-    expect(html).toContain('MelbBeerBusiness.setStatus(statusEl, "Source ingestion published.");');
-    expect(html).toContain('await loadAdminIngestionQueue();');
+    expect(html).toContain("Source ingestion published. ${mapRows} live map row");
+    expect(html).toContain('adminIngestionStatus.value = "pending_review";');
+    expect(html).toContain("await loadAdminIngestionQueue({ resetPage: true });");
     expect(html).toContain("Load next 12");
     expect(html).toContain("function prefillOutreachFromLead");
     expect(html).toContain("function renderOutreachPipeline");

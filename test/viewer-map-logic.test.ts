@@ -457,6 +457,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('placeholder="Area or venue"');
     expect(html).toContain('<select id="beerSearch" class="controlInput beerSelect">');
     expect(html).toContain('<option value="">Beer</option>');
+    expect(html).toContain("function isBeerDropdownLabel(label)");
+    expect(html).toContain("BEER_DROPDOWN_EXCLUDED_KEYS");
+    expect(html).toContain("isBeerDropdownLabel(displayLabel)");
     expect(html).toContain('id="advancedFiltersToggle"');
     expect(html).toContain('aria-controls="advancedFiltersPanel" hidden>Advanced filters</button>');
     expect(html).toContain('id="advancedFiltersPanel" class="advancedFiltersPanel" hidden');

@@ -3170,21 +3170,36 @@
 
     async function publishQueuedIngestion(article, modalNote = null) {
       if (!article) return;
+      const publishButton = article.querySelector("[data-publish-ingestion]");
       try {
+        if (publishButton) {
+          publishButton.disabled = true;
+          publishButton.textContent = "Publishing...";
+        }
         const beers = collectBeerRows(article.querySelector(".adminQueueBeerRows"));
         if (!beers.length) {
           throw new Error("Keep at least one beer row before publishing.");
         }
         const inlineNote = article.querySelector("[data-ingestion-note]").value.trim() || null;
         const note = modalNote || inlineNote;
-        await MelbBeerBusiness.apiFetch(`/api/admin/ingestions/${encodeURIComponent(article.dataset.ingestionId)}/publish`, {
+        const result = await MelbBeerBusiness.apiFetch(`/api/admin/ingestions/${encodeURIComponent(article.dataset.ingestionId)}/publish`, {
           method: "POST",
           body: JSON.stringify({ beers, note }),
         });
-        MelbBeerBusiness.setStatus(statusEl, "Source ingestion published.");
-        await loadAdminIngestionQueue();
+        const mapRows = Number(result.mapPriceRecordCount || 0);
+        MelbBeerBusiness.setStatus(
+          statusEl,
+          `Source ingestion published. ${mapRows} live map row${mapRows === 1 ? "" : "s"} saved.`,
+        );
+        adminIngestionStatus.value = "pending_review";
+        await loadAdminIngestionQueue({ resetPage: true });
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message || "Failed to publish source ingestion.", true);
+      } finally {
+        if (publishButton && document.body.contains(publishButton)) {
+          publishButton.disabled = false;
+          publishButton.textContent = "Publish rows";
+        }
       }
     }
 

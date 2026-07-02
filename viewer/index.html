@@ -6408,17 +6408,72 @@
       ];
     }
 
+    const BEER_DROPDOWN_EXCLUDED_KEYS = new Set([
+      "happy_hour",
+      "happy_hour_special",
+      "happy_hour_specials",
+      "house_wine",
+      "house_wines",
+      "basic_spirits",
+      "selected_tap_beer",
+      "selected_taps",
+      "venue_special",
+      "venue_specials",
+      "weekly_special",
+      "weekly_specials",
+      "cocktail",
+      "cocktails",
+      "negroni",
+      "negronis",
+    ]);
+
+    function isBeerDropdownLabel(label) {
+      const value = String(label || "").trim();
+      if (!value || !/[a-z]/i.test(value)) {
+        return false;
+      }
+
+      if (getTrackedBeerMeta(value)) {
+        return true;
+      }
+
+      const normalizedValue = value.replace(/&amp;/gi, "&");
+      const key = toSearchKey(normalizedValue);
+      if (!key || BEER_DROPDOWN_EXCLUDED_KEYS.has(key)) {
+        return false;
+      }
+
+      if (
+        /^(?:https?:|www\.|\/\/|\/|[+$])/i.test(normalizedValue) ||
+        /[/?=]/.test(normalizedValue) ||
+        /&amp\b/i.test(value)
+      ) {
+        return false;
+      }
+
+      if (
+        /\b(?:happy\s*hour|cocktails?|negronis?|house\s*wines?|basic\s*spirits?|selected\s*tap|weekly\s*specials?|grab\s+a|for\s+just|blogs?|event)\b/i.test(normalizedValue) ||
+        /\b(?:pints?|pots?|schooners?)\s+(?:of|and|selected|house)\b/i.test(normalizedValue) ||
+        /\b\d{1,2}(?::?\d{2})?\s*(?:am|pm)\b/i.test(normalizedValue) ||
+        /^\d{3,4}\s*(?:am|pm)?\b/i.test(normalizedValue)
+      ) {
+        return false;
+      }
+
+      return normalizedValue.length <= 64;
+    }
+
     function getUniqueBeerLabels(rows) {
       const labelsByKey = new Map();
-      const addLabel = (label) => {
+      const addLabel = (label, options = {}) => {
         const displayLabel = getTrackedBeerDisplayName(label);
         const key = toSearchKey(displayLabel);
-        if (displayLabel && key && !labelsByKey.has(key)) {
+        if (displayLabel && key && !labelsByKey.has(key) && (options.trusted || isBeerDropdownLabel(displayLabel))) {
           labelsByKey.set(key, displayLabel);
         }
       };
 
-      TRACKED_BEERS.forEach((beer) => addLabel(beer.name));
+      TRACKED_BEERS.forEach((beer) => addLabel(beer.name, { trusted: true }));
       rows.forEach((row) => {
         getBeerItems(row).forEach((beer) => addLabel(beer.label));
       });
