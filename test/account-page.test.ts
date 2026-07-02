@@ -632,6 +632,13 @@ describe("account page shell", () => {
     expect(css).toContain("overscroll-behavior: contain;");
   });
 
+  it("labels mixed package availability as cans or bottles in admin review", () => {
+    const html = adminHtml();
+
+    expect(html).toContain('<option value="cans_or_bottles">Cans or bottles</option>');
+    expect(html).toContain('unavailableReason: "cans_or_bottles"');
+  });
+
   it("groups the admin page into clear workflow sections without removing tools", () => {
     const html = adminHtml();
     const css = businessCss();

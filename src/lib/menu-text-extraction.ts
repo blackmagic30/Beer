@@ -29,7 +29,7 @@ const HEADING_PREFIX_PATTERN =
   /^(?:(?:drink|drinks|beer|beers|on\s+tap|tap\s+beers?|beers?\s+on\s+tap|pots?|pints?|jugs?|bottles?\s*(?:&|and)\s*cans?|cans?\s*(?:&|and)\s*bottles?|sparkling\s*&\s*rose|white|red|glass|bottle)\b[\s/:,-]*)+/i;
 
 const BEERISH_NAME_PATTERN =
-  /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|ginger\s+beer|guinness|asahi|balter|carlton|northern|goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny)\b/i;
+  /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|ginger\s+beer|whisky|dry|lemon|hard\s+rated|rtd|guinness|asahi|balter|carlton|northern|goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|obrien'?s|heaps\s+normal)\b/i;
 
 function normalizeLooseText(value: string): string {
   return value
@@ -87,6 +87,7 @@ function normalizeMenuText(value: string): string {
   return value
     .replace(/\r/g, "\n")
     .replace(/\u00a0/g, " ")
+    .replace(/[\u2018\u2019]/g, "'")
     .replace(/[•·]/g, "\n")
     .replace(/[–—]/g, "-")
     .replace(/\s+\|\s+/g, "\n")

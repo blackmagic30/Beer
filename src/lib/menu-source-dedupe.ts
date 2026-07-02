@@ -4,6 +4,13 @@ export interface CrawlerQueueSourceIdentity {
   canonicalSourceUrl?: string | null | undefined;
 }
 
+export interface CrawlerQueueDedupeRow {
+  name: string;
+  priceNumeric: number | null;
+  priceText: string | null;
+  availabilityStatus: string;
+}
+
 export function normalizeCrawlerQueueText(value: string | null | undefined): string {
   return String(value ?? "")
     .toLowerCase()
@@ -61,4 +68,38 @@ export function crawlerQueueSourceUrlCandidates(input: CrawlerQueueSourceIdentit
     .filter(Boolean);
 
   return Array.from(new Set(candidates));
+}
+
+function normalizeCrawlerQueuePrice(row: CrawlerQueueDedupeRow): string {
+  if (Number.isFinite(row.priceNumeric ?? Number.NaN)) {
+    return Number(row.priceNumeric).toFixed(2);
+  }
+  return normalizeCrawlerQueueText(row.priceText);
+}
+
+export function crawlerQueueRowKey(row: CrawlerQueueDedupeRow): string {
+  return [
+    normalizeCrawlerQueueText(row.name),
+    normalizeCrawlerQueuePrice(row),
+    normalizeCrawlerQueueText(row.availabilityStatus),
+  ].join("|");
+}
+
+export function crawlerQueueRowOverlapRatio(
+  existingRowKeys: ReadonlySet<string>,
+  candidateRows: CrawlerQueueDedupeRow[],
+): number {
+  const candidateKeys = new Set(candidateRows.map(crawlerQueueRowKey).filter(Boolean));
+  if (candidateKeys.size === 0) {
+    return 0;
+  }
+
+  let overlapping = 0;
+  for (const key of candidateKeys) {
+    if (existingRowKeys.has(key)) {
+      overlapping += 1;
+    }
+  }
+
+  return overlapping / candidateKeys.size;
 }

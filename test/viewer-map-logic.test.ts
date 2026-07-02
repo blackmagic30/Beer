@@ -76,6 +76,20 @@ describe("viewer map price logic", () => {
     expect(logic.getBeerPriceText(source, label, price)).toBe("Price unknown");
   });
 
+  it("labels packaged crawler rows as cans or bottles instead of raw package-only copy", () => {
+    const source = {
+      availability_status: "package_only",
+      unavailable_reason: "cans_or_bottles",
+      price_numeric: 8,
+    };
+    const label = logic.getAvailabilityLabel(source);
+
+    expect(label).toBe("Cans or bottles");
+    expect(logic.getMarkerState({ priceNumeric: null, availabilityLabel: label })).toBe("package_only");
+    expect(logic.getMarkerLabel({ priceNumeric: null, availabilityLabel: label })).toBe("C/B");
+    expect(logic.getAvailabilityLabel({ availability_status: "package_only" })).toBe("Cans or bottles");
+  });
+
   it("excludes unknown prices from cheapest and under-threshold calculations", () => {
     const beers = [
       { label: "Guinness", priceNumeric: null, availabilityLabel: "On tap" },

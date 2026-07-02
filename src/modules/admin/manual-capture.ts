@@ -83,7 +83,15 @@ function formatPriceText(input: {
   unavailableReason: BeerUnavailableReason;
 }): string {
   if (input.availabilityStatus === "package_only") {
-    return input.unavailableReason === "bottles_only" ? "Bottles only" : "Cans only";
+    if (input.unavailableReason === "cans_or_bottles") {
+      return "Cans or bottles";
+    }
+
+    if (input.unavailableReason === "bottles_only") {
+      return "Bottles only";
+    }
+
+    return input.unavailableReason === "cans_only" ? "Cans only" : "Cans or bottles";
   }
 
   if (input.availabilityStatus === "unavailable") {

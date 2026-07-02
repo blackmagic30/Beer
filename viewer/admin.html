@@ -2263,6 +2263,13 @@
             availablePackageOnly: true,
             unavailableReason: "cans_only",
           };
+        case "cans_or_bottles":
+          return {
+            availabilityStatus: "package_only",
+            availableOnTap: false,
+            availablePackageOnly: true,
+            unavailableReason: "cans_or_bottles",
+          };
         case "bottles_only":
           return {
             availabilityStatus: "package_only",
@@ -2304,7 +2311,9 @@
     function availabilityChoiceFromBeer(beer) {
       if (!beer) return "on_tap";
       if (beer.availabilityStatus === "package_only") {
-        return beer.unavailableReason === "bottles_only" ? "bottles_only" : "cans_only";
+        if (beer.unavailableReason === "cans_or_bottles") return "cans_or_bottles";
+        if (beer.unavailableReason === "bottles_only") return "bottles_only";
+        return beer.unavailableReason === "cans_only" ? "cans_only" : "cans_or_bottles";
       }
       if (beer.availabilityStatus === "unavailable") {
         if (beer.unavailableReason === "no_pints") return "no_pints";
@@ -2336,6 +2345,7 @@
           <select data-role="availability">
             <option value="on_tap">On tap</option>
             <option value="no_pints">No pints</option>
+            <option value="cans_or_bottles">Cans or bottles</option>
             <option value="cans_only">Cans only</option>
             <option value="bottles_only">Bottles only</option>
             <option value="not_on_tap">Not on tap</option>

@@ -1,7 +1,7 @@
 (function attachMelbourneBeerMapLogic(root) {
   const UNKNOWN_PRICE_TEXT = "Price unknown";
   const UNAVAILABLE_LABELS = new Set(["Unavailable", "Not on tap", "No pints"]);
-  const PACKAGE_LABELS = new Set(["Cans only", "Bottles only"]);
+  const PACKAGE_LABELS = new Set(["Cans or bottles", "Cans only", "Bottles only"]);
   const PRICE_RING_COLORS = Object.freeze({
     cheap: "#16a34a",
     mid: "#facc15",
@@ -129,7 +129,13 @@
       case "on_tap":
         return "On tap";
       case "package_only":
-        return source.unavailable_reason === "bottles_only" ? "Bottles only" : "Cans only";
+        if (source.unavailable_reason === "cans_or_bottles") {
+          return "Cans or bottles";
+        }
+        if (source.unavailable_reason === "bottles_only") {
+          return "Bottles only";
+        }
+        return source.unavailable_reason === "cans_only" ? "Cans only" : "Cans or bottles";
       case "unavailable":
         if (source.unavailable_reason === "no_pints") {
           return "No pints";
@@ -179,6 +185,7 @@
           background: "#dcfce7",
           color: "#166534",
         };
+      case "Cans or bottles":
       case "Cans only":
       case "Bottles only":
       case "No pints":
@@ -309,6 +316,10 @@
 
     if (beer.availabilityLabel === "Cans only") {
       return "CAN";
+    }
+
+    if (beer.availabilityLabel === "Cans or bottles") {
+      return "C/B";
     }
 
     if (beer.availabilityLabel === "Bottles only") {

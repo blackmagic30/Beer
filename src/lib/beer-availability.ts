@@ -99,11 +99,19 @@ export function formatBeerAvailabilityLabel(input: {
   }
 
   if (input.availabilityStatus === "package_only") {
+    if (input.unavailableReason === "cans_or_bottles") {
+      return "Cans or bottles";
+    }
+
     if (input.unavailableReason === "bottles_only") {
       return "Bottles only";
     }
 
-    return "Cans only";
+    if (input.unavailableReason === "cans_only") {
+      return "Cans only";
+    }
+
+    return "Cans or bottles";
   }
 
   if (input.availabilityStatus === "unavailable") {

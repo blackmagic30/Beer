@@ -5,6 +5,7 @@ const beerServingSizeSchema = z.enum(["pint"]);
 const beerUnavailableReasonSchema = z.enum([
   "cans_only",
   "bottles_only",
+  "cans_or_bottles",
   "no_pints",
   "not_on_tap",
   "not_stocked",

@@ -14,7 +14,10 @@ import type {
 } from "../src/db/models.js";
 import {
   crawlerQueueDuplicateKey,
+  crawlerQueueRowKey,
+  crawlerQueueRowOverlapRatio,
   crawlerQueueSourceUrlCandidates,
+  normalizeCrawlerQueueText,
   normalizeSqlComparableText,
 } from "../src/lib/menu-source-dedupe.js";
 
@@ -145,7 +148,7 @@ function mapAvailability(row: ExtractedBeerRow): Pick<
     return { availableOnTap: true, availablePackageOnly: false, unavailableReason: null };
   }
   if (row.availabilityStatus === "package_only") {
-    return { availableOnTap: false, availablePackageOnly: true, unavailableReason: "cans_only" };
+    return { availableOnTap: false, availablePackageOnly: true, unavailableReason: "cans_or_bottles" };
   }
   if (row.availabilityStatus === "unavailable") {
     return { availableOnTap: false, availablePackageOnly: false, unavailableReason: "not_stocked" };
@@ -430,6 +433,7 @@ let skippedByLimit = 0;
 let queuedRows = 0;
 const queuedVenues = new Set<string>();
 const queuedCandidateKeys = new Set<string>();
+const queuedRowKeysByVenue = new Map<string, Set<string>>();
 const queueCandidates = candidates
   .filter((candidate) => {
     if (includeExternal || candidate.sourceOrigin === "official_host") {
@@ -482,6 +486,13 @@ const transaction = db.transaction(() => {
       continue;
     }
 
+    const venueRowsKey = normalizeCrawlerQueueText(candidate.venueName);
+    const queuedVenueRowKeys = queuedRowKeysByVenue.get(venueRowsKey);
+    if (queuedVenueRowKeys && crawlerQueueRowOverlapRatio(queuedVenueRowKeys, rows) >= 0.75) {
+      skippedDuplicate += 1;
+      continue;
+    }
+
     if (duplicateQuery.get({
       venueId: candidate.venueId,
       venueName: normalizeSqlComparableText(candidate.venueName),
@@ -494,6 +505,11 @@ const transaction = db.transaction(() => {
     }
 
     queuedCandidateKeys.add(candidateKey);
+    const rowKeys = queuedVenueRowKeys ?? new Set<string>();
+    for (const row of rows) {
+      rowKeys.add(crawlerQueueRowKey(row));
+    }
+    queuedRowKeysByVenue.set(venueRowsKey, rowKeys);
 
     if (!dryRun) {
       insertQueueItem.run({
