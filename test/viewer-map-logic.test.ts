@@ -460,6 +460,10 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("function isBeerDropdownLabel(label)");
     expect(html).toContain("BEER_DROPDOWN_EXCLUDED_KEYS");
     expect(html).toContain("isBeerDropdownLabel(displayLabel)");
+    expect(html).toContain("included_you_ll_find");
+    expect(html).toContain("ipa");
+    expect(html).toContain("/[/?=*$%]/.test(normalizedValue)");
+    expect(html).toContain("words.length > 7");
     expect(html).toContain('id="advancedFiltersToggle"');
     expect(html).toContain('aria-controls="advancedFiltersPanel" hidden>Advanced filters</button>');
     expect(html).toContain('id="advancedFiltersPanel" class="advancedFiltersPanel" hidden');

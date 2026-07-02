@@ -1,7 +1,12 @@
 import type BetterSqlite3 from "better-sqlite3";
 
 import { BEER_CATALOG, type BeerCatalogItem } from "../constants/beer-catalog.js";
-import { canonicalizeTrackedBeerName, findTrackedBeerByName, normalizeBeerSearchKey } from "../constants/beers.js";
+import {
+  canonicalizeTrackedBeerName,
+  findTrackedBeerByName,
+  isLikelyBeerName,
+  normalizeBeerSearchKey,
+} from "../constants/beers.js";
 
 export type BeerCatalogStatus = "active" | "pending_review";
 
@@ -106,6 +111,20 @@ export class BeerCatalogRepository {
     const existing = this.findByAliasKey(aliasKey) ?? (tracked ? this.findByKey(tracked.key) : null);
     if (existing) {
       return rowToResolved(existing, false);
+    }
+
+    if (!tracked && !isLikelyBeerName(cleaned)) {
+      return {
+        key: fallbackBeerKey(cleaned),
+        name: cleaned,
+        brewery: null,
+        style: null,
+        abv: null,
+        status: "pending_review",
+        source: input.source,
+        created: false,
+        matchedExisting: false,
+      };
     }
 
     if (input.createIfMissing === false) {

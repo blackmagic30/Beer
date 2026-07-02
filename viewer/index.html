@@ -6421,10 +6421,33 @@
       "venue_specials",
       "weekly_special",
       "weekly_specials",
+      "included",
+      "includes",
+      "included_you_ll_find",
+      "included_you_ll_find_cocktails",
+      "included_you_ll_find_cocktails_spirits",
       "cocktail",
       "cocktails",
       "negroni",
       "negronis",
+      "home_hero",
+      "beer",
+      "pint",
+      "pints",
+      "pot",
+      "pots",
+      "schooner",
+      "schooners",
+      "draught",
+      "draft",
+      "lager",
+      "ale",
+      "pale_ale",
+      "ipa",
+      "xpa",
+      "stout",
+      "cider",
+      "pilsner",
     ]);
 
     function isBeerDropdownLabel(label) {
@@ -6445,18 +6468,28 @@
 
       if (
         /^(?:https?:|www\.|\/\/|\/|[+$])/i.test(normalizedValue) ||
-        /[/?=]/.test(normalizedValue) ||
+        /[/?=*$%]/.test(normalizedValue) ||
         /&amp\b/i.test(value)
       ) {
         return false;
       }
 
       if (
-        /\b(?:happy\s*hour|cocktails?|negronis?|house\s*wines?|basic\s*spirits?|selected\s*tap|weekly\s*specials?|grab\s+a|for\s+just|blogs?|event)\b/i.test(normalizedValue) ||
+        /\b(?:happy\s*hour|included|includes|cocktails?|negronis?|spirits?|house\s*wines?|basic\s*spirits?|selected\s*taps?|weekly\s*specials?|grab\s+a|for\s+just|blogs?|event|source|menu)\b/i.test(normalizedValue) ||
+        /\byou\W?ll\s+find\b/i.test(normalizedValue) ||
         /\b(?:pints?|pots?|schooners?)\s+(?:of|and|selected|house)\b/i.test(normalizedValue) ||
         /\b\d{1,2}(?::?\d{2})?\s*(?:am|pm)\b/i.test(normalizedValue) ||
         /^\d{3,4}\s*(?:am|pm)?\b/i.test(normalizedValue)
       ) {
+        return false;
+      }
+
+      const words = normalizedValue.split(/\s+/).filter(Boolean);
+      if (words.length > 7) {
+        return false;
+      }
+
+      if (words.length === 1 && normalizedValue === normalizedValue.toUpperCase()) {
         return false;
       }
 

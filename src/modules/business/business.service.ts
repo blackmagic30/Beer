@@ -35,7 +35,14 @@ import {
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
 import { BeerCatalogRepository, type BeerCatalogAdminItem, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
-import { SUPPORTED_BEERS, VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, findTrackedBeerByName, normalizeBeerSearchKey } from "../../constants/beers.js";
+import {
+  SUPPORTED_BEERS,
+  VIEWER_TRACKED_BEERS,
+  canonicalizeTrackedBeerName,
+  findTrackedBeerByName,
+  isLikelyBeerName,
+  normalizeBeerSearchKey,
+} from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { redactSecrets } from "../../lib/redact.js";
@@ -504,25 +511,8 @@ function normalizeTrackedBeerId(value: string): string {
   return findTrackedBeerByName(value)?.key ?? normalizeBeerId(value);
 }
 
-const GENERIC_NON_BEER_KEYS = new Set([
-  "happy_hour",
-  "happy_hour_special",
-  "happy_hour_specials",
-  "venue_special",
-  "venue_specials",
-  "pint_path_special",
-  "pint_path_specials",
-  "special",
-  "specials",
-]);
-
 function shouldCatalogBeerName(value: string | null | undefined, isHappyHour = false): boolean {
-  const normalized = normalizeBeerSearchKey(value);
-  if (!normalized) {
-    return false;
-  }
-
-  return !(isHappyHour && GENERIC_NON_BEER_KEYS.has(normalized));
+  return !isHappyHour && isLikelyBeerName(value);
 }
 
 function hashToken(token: string): string {
@@ -1046,6 +1036,14 @@ const FREE_PREVIEW_BEER_KEYS = new Set([
 
 function isHappyHourRecord(record: PublicVenuePriceRecord): boolean {
   return record.displayKind === "happy_hour" || record.isHappyHourPrice;
+}
+
+function isSpecialRecord(record: PublicVenuePriceRecord): boolean {
+  return record.displayKind === "special";
+}
+
+function shouldExposePriceRecord(record: PublicVenuePriceRecord): boolean {
+  return isHappyHourRecord(record) || isSpecialRecord(record) || isLikelyBeerName(record.beerName);
 }
 
 function isPintServing(record: PublicVenuePriceRecord): boolean {
@@ -6658,6 +6656,7 @@ export class BusinessService {
       ...this.repository.listLatestPriceRecords(input.limit, input.venueId),
       ...this.repository.listVenueManagerPriceRecords(input.limit, input.venueId),
     ]
+      .filter(shouldExposePriceRecord)
       .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime())
       .slice(0, input.limit);
     const hasFullAccess = isFullAccess(account);

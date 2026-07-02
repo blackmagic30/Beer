@@ -3,7 +3,13 @@ import BetterSqlite3 from "better-sqlite3";
 
 import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
-import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, findTrackedBeerByName, normalizeBeerSearchKey } from "../src/constants/beers.js";
+import {
+  VIEWER_TRACKED_BEERS,
+  canonicalizeTrackedBeerName,
+  findTrackedBeerByName,
+  isLikelyBeerName,
+  normalizeBeerSearchKey,
+} from "../src/constants/beers.js";
 
 describe("Pint Path beer catalogue", () => {
   it("provides a broad dropdown catalogue for venue-owner beer entry", () => {
@@ -69,6 +75,17 @@ describe("Pint Path beer catalogue", () => {
     expect(collisions).toEqual([]);
   });
 
+  it("rejects crawler menu-copy fragments as beer names", () => {
+    expect(isLikelyBeerName("Hop Nation Jedi Juice")).toBe(true);
+    expect(isLikelyBeerName("Very Local Hazy Pint")).toBe(true);
+    expect(isLikelyBeerName("INCLUDED YOU'LL FIND *")).toBe(false);
+    expect(isLikelyBeerName("INCLUDED YOU'LL FIND * $ COCKTAILS *")).toBe(false);
+    expect(isLikelyBeerName("Includes")).toBe(false);
+    expect(isLikelyBeerName("IPA")).toBe(false);
+    expect(isLikelyBeerName("Happy Hour -8pm -")).toBe(false);
+    expect(isLikelyBeerName("Heaps Normal % Lager Mornington Peninsula Free % XPA")).toBe(false);
+  });
+
   it("seeds the system beer registry and resolves static aliases", () => {
     const database = new BetterSqlite3(":memory:");
     try {
@@ -125,6 +142,63 @@ describe("Pint Path beer catalogue", () => {
         key: "very_local_hazy_pint",
         name: "Very Local Hazy Pint",
         aliases: expect.arrayContaining(["Very Local Hazy Pint"]),
+      }));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("does not create pending catalogue entries for obvious OCR noise", () => {
+    const database = new BetterSqlite3(":memory:");
+    try {
+      initializeDatabaseSchema(database);
+      const repository = new BeerCatalogRepository(database);
+
+      const rejected = repository.resolveBeerName({
+        name: "INCLUDED YOU'LL FIND *",
+        source: "menu_crawler_import",
+        now: "2026-06-30T00:00:00.000Z",
+      });
+
+      expect(rejected).toEqual(expect.objectContaining({
+        key: "included_you_ll_find",
+        name: "INCLUDED YOU'LL FIND *",
+        status: "pending_review",
+        created: false,
+        matchedExisting: false,
+      }));
+      expect(repository.listForAdmin("pending_review", 20)).not.toContainEqual(expect.objectContaining({
+        name: "INCLUDED YOU'LL FIND *",
+      }));
+    } finally {
+      database.close();
+    }
+  });
+
+  it("cleans old pending crawler noise from the beer catalogue on startup", () => {
+    const database = new BetterSqlite3(":memory:");
+    try {
+      initializeDatabaseSchema(database);
+      database
+        .prepare(
+          `INSERT INTO beer_catalog_items (
+            key, name, brewery, style, abv, status, source, created_at, updated_at
+          ) VALUES (?, ?, NULL, NULL, NULL, 'pending_review', 'menu_crawler_import', ?, ?)`,
+        )
+        .run("included_you_ll_find", "INCLUDED YOU'LL FIND *", "2026-06-30T00:00:00.000Z", "2026-06-30T00:00:00.000Z");
+      database
+        .prepare(
+          `INSERT INTO beer_catalog_aliases (
+            alias_key, beer_key, alias, source, created_at
+          ) VALUES (?, ?, ?, 'menu_crawler_import', ?)`,
+        )
+        .run("included_you_ll_find", "included_you_ll_find", "INCLUDED YOU'LL FIND *", "2026-06-30T00:00:00.000Z");
+
+      initializeDatabaseSchema(database);
+      const repository = new BeerCatalogRepository(database);
+
+      expect(repository.listForAdmin("pending_review", 20)).not.toContainEqual(expect.objectContaining({
+        key: "included_you_ll_find",
       }));
     } finally {
       database.close();

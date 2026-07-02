@@ -72,6 +72,100 @@ export function findTrackedBeerByName(value: string | null | undefined): ViewerT
   return normalized ? TRACKED_BEER_LOOKUP.get(normalized) ?? null : null;
 }
 
+const NON_BEER_NAME_KEYS = new Set([
+  "happy_hour",
+  "happy_hour_special",
+  "happy_hour_specials",
+  "venue_special",
+  "venue_specials",
+  "pint_path_special",
+  "pint_path_specials",
+  "weekly_special",
+  "weekly_specials",
+  "special",
+  "specials",
+  "included",
+  "includes",
+  "included_you_ll_find",
+  "included_you_ll_find_cocktails",
+  "included_you_ll_find_cocktails_spirits",
+  "house_wine",
+  "house_wines",
+  "basic_spirits",
+  "selected_tap_beer",
+  "selected_taps",
+  "home_hero",
+  "beer",
+  "pint",
+  "pints",
+  "pot",
+  "pots",
+  "schooner",
+  "schooners",
+  "draught",
+  "draft",
+  "lager",
+  "ale",
+  "pale_ale",
+  "ipa",
+  "xpa",
+  "stout",
+  "cider",
+  "pilsner",
+  "cocktail",
+  "cocktails",
+  "negroni",
+  "negronis",
+  "spirits",
+  "wines",
+]);
+
+export function isLikelyBeerName(value: string | null | undefined): boolean {
+  const trimmed = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!trimmed || !/[a-z]/i.test(trimmed)) {
+    return false;
+  }
+
+  if (findTrackedBeerByName(trimmed)) {
+    return true;
+  }
+
+  const normalizedValue = trimmed.replace(/&amp;/gi, "&");
+  const key = normalizeBeerSearchKey(normalizedValue);
+  if (!key || NON_BEER_NAME_KEYS.has(key)) {
+    return false;
+  }
+
+  if (
+    /^(?:https?:|www\.|\/\/|\/|[+$])/i.test(normalizedValue) ||
+    /[/?=*$%]/.test(normalizedValue) ||
+    /&amp\b/i.test(trimmed)
+  ) {
+    return false;
+  }
+
+  if (
+    /\b(?:happy\s*hour|included|includes|cocktails?|negronis?|spirits?|house\s*wines?|basic\s*spirits?|selected\s*taps?|weekly\s*specials?|grab\s+a|for\s+just|blogs?|event|source|menu)\b/i.test(normalizedValue) ||
+    /\byou\W?ll\s+find\b/i.test(normalizedValue) ||
+    /\b(?:pints?|pots?|schooners?)\s+(?:of|and|selected|house)\b/i.test(normalizedValue) ||
+    /\b\d{1,2}(?::?\d{2})?\s*(?:am|pm)\b/i.test(normalizedValue) ||
+    /^\d{3,4}\s*(?:am|pm)?\b/i.test(normalizedValue)
+  ) {
+    return false;
+  }
+
+  const words = normalizedValue.split(/\s+/).filter(Boolean);
+  if (words.length > 7) {
+    return false;
+  }
+
+  if (words.length === 1 && normalizedValue === normalizedValue.toUpperCase()) {
+    return false;
+  }
+
+  return normalizedValue.length <= 64;
+}
+
 export function canonicalizeTrackedBeerName(value: string | null | undefined): string {
   return findTrackedBeerByName(value)?.name ?? String(value ?? "").trim();
 }

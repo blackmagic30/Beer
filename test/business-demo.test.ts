@@ -1042,6 +1042,29 @@ describe("production hardening", () => {
     })).toBe(1);
   });
 
+  it("filters obvious crawler noise out of public price records", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "admin", "admin");
+    const insertPriceRecord = database.prepare(
+      `INSERT INTO venue_price_records (
+        id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size, price,
+        is_happy_hour_price, is_on_tap, confidence, source_type, last_verified_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pint', ?, 0, 'yes', 'photo_verified', 'source_ingestion', ?, ?, ?)`,
+    );
+
+    insertPriceRecord.run("noise-included", "venue-noise", "Noise Bar", "Fitzroy", "INCLUDED YOU'LL FIND *", "included_you_ll_find", 13, NOW, NOW, NOW);
+    insertPriceRecord.run("noise-ipa", "venue-noise", "Noise Bar", "Fitzroy", "IPA", "ipa", 14, NOW, NOW, NOW);
+    insertPriceRecord.run("good-local", "venue-noise", "Noise Bar", "Fitzroy", "Very Local Hazy Pint", "very_local_hazy_pint", 15, NOW, NOW, NOW);
+
+    expect(service.listPriceRecords(admin, {
+      anonymousSessionId: null,
+      reveal: false,
+      limit: 20,
+      venueId: "venue-noise",
+    }).records.map((record) => record.beerName)).toEqual(["Very Local Hazy Pint"]);
+  });
+
   it("keeps non-preview prices locked for free users while allowing premium, contributor, and admin exact price access", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, { FREE_PRICE_REVEALS_PER_DAY: 1 });

@@ -6,7 +6,7 @@ import BetterSqlite3 from "better-sqlite3";
 
 import { env } from "../config/env.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
-import { normalizeBeerSearchKey } from "../constants/beers.js";
+import { isLikelyBeerName } from "../constants/beers.js";
 
 function resolveSchemaPath(): string | URL {
   const bundledSchemaPath = new URL("./schema.sql", import.meta.url);
@@ -96,18 +96,6 @@ const venueBeersColumns = [
 ] as const;
 
 const PUBLIC_ACCOUNT_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const GENERIC_NON_BEER_KEYS = new Set([
-  "happy_hour",
-  "happy_hour_special",
-  "happy_hour_specials",
-  "venue_special",
-  "venue_specials",
-  "pint_path_special",
-  "pint_path_specials",
-  "special",
-  "specials",
-]);
-
 function ensureColumns(
   database: BetterSqlite3.Database,
   tableName: string,
@@ -462,12 +450,7 @@ function normalizeVenueTiers(database: BetterSqlite3.Database): void {
 }
 
 function shouldCatalogBeerName(value: string | null | undefined, isHappyHour = false): boolean {
-  const key = normalizeBeerSearchKey(value);
-  if (!key) {
-    return false;
-  }
-
-  return !(isHappyHour && GENERIC_NON_BEER_KEYS.has(key));
+  return !isHappyHour && isLikelyBeerName(value);
 }
 
 function backfillBeerNames(database: BetterSqlite3.Database): void {
@@ -520,6 +503,30 @@ function backfillBeerNames(database: BetterSqlite3.Database): void {
   });
 }
 
+function deletePendingNonBeerCatalogItems(database: BetterSqlite3.Database): void {
+  const rows = database
+    .prepare("SELECT key, name FROM beer_catalog_items WHERE status = 'pending_review'")
+    .all() as Array<{ key: string; name: string }>;
+  const invalidKeys = rows
+    .filter((row) => !isLikelyBeerName(row.name))
+    .map((row) => row.key);
+
+  if (!invalidKeys.length) {
+    return;
+  }
+
+  const deleteAliases = database.prepare("DELETE FROM beer_catalog_aliases WHERE beer_key = ?");
+  const deleteItem = database.prepare("DELETE FROM beer_catalog_items WHERE key = ? AND status = 'pending_review'");
+  const cleanup = database.transaction(() => {
+    invalidKeys.forEach((key) => {
+      deleteAliases.run(key);
+      deleteItem.run(key);
+    });
+  });
+
+  cleanup();
+}
+
 export function initializeDatabaseSchema(database: BetterSqlite3.Database): void {
   const schema = fs.readFileSync(resolveSchemaPath(), "utf8");
 
@@ -537,6 +544,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
   ensureColumns(database, "venue_beers", venueBeersColumns);
   syncStaticBeerCatalog(database);
+  deletePendingNonBeerCatalogItems(database);
   backfillBeerNames(database);
   normalizeVenueTiers(database);
   backfillPublicAccountIds(database);
