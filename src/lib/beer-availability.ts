@@ -9,7 +9,7 @@ export interface BeerAvailabilityDetails {
 
 const SMALL_TAP_POUR_PATTERN = "(?:schooners?|pots?|midd(?:y|ies)|halves?)";
 const CANS_ONLY_REGEX =
-  /\b(?:only got (?:the )?(?:big )?cans?|only have (?:the )?(?:big )?cans?|(?:just |only )?do(?: it)? (?:like )?(?:on|in)? ?(?:the )?(?:big )?cans?|cans? only|only in cans?|only cans?|only (?:do |have )?canned beer|canned beer only)\b/i;
+  /\b(?:only got (?:the )?(?:big )?(?:cans?|tins?)|only have (?:the )?(?:big )?(?:cans?|tins?)|(?:just |only )?do(?: it)? (?:like )?(?:on|in)? ?(?:the )?(?:big )?(?:cans?|tins?)|(?:cans?|tins?) only|only in (?:cans?|tins?)|only (?:cans?|tins?)|only (?:do |have )?(?:canned|tinned) beer|(?:canned|tinned) beer only)\b/i;
 const BOTTLES_ONLY_REGEX =
   /\b(?:only got bottles?|only have bottles?|(?:just |only )?do(?: it)? (?:on|in)? ?(?:the )?bottles?|bottles? only|only in bottles?|only bottles?|only (?:do |have )?bottled beer|bottled beer only)\b/i;
 const NO_PINTS_REGEX = new RegExp(

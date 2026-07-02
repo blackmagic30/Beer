@@ -22,14 +22,22 @@ const MENU_ROW_PATTERN =
 
 const SECTION_PATTERNS: Array<{ label: string; availabilityStatus: MenuTextAvailabilityStatus; pattern: RegExp }> = [
   { label: "ON TAP", availabilityStatus: "on_tap", pattern: /\b(?:ON\s+TAP|TAP\s+BEERS?|BEERS?\s+ON\s+TAP|DRAUGHT|DRAFT)\b/gi },
-  { label: "BOTTLES & CANS", availabilityStatus: "package_only", pattern: /\b(?:BOTTLES?\s*(?:&|AND)\s*CANS?|CANS?\s*(?:&|AND)\s*BOTTLES?|PACKAGED\s+(?:BEER|DRINKS?)|TINNIES)\b/gi },
+  { label: "CANS OR BOTTLES", availabilityStatus: "package_only", pattern: /\b(?:BOTTLES?\s*(?:&|AND)\s*(?:CANS?|TINS?)|CANS?\s*(?:&|AND)\s*BOTTLES?|TINS?\s*(?:&|AND)\s*BOTTLES?|PACKAGED\s+(?:BEER|DRINKS?)|TINNIES?)\b/gi },
 ];
 
 const HEADING_PREFIX_PATTERN =
-  /^(?:(?:drink|drinks|beer|beers|on\s+tap|tap\s+beers?|beers?\s+on\s+tap|pots?|pints?|jugs?|bottles?\s*(?:&|and)\s*cans?|cans?\s*(?:&|and)\s*bottles?|sparkling\s*&\s*rose|white|red|glass|bottle)\b[\s/:,-]*)+/i;
+  /^(?:(?:drink|drinks|beer|beers|on\s+tap|tap\s+beers?|beers?\s+on\s+tap|pots?|pints?|jugs?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|tins?\s*(?:&|and)\s*bottles?|tinnies?|packaged|sparkling\s*&\s*rose|white|red|glass|bottle|can|tin)\b[\s/:,-]*)+/i;
 
 const BEERISH_NAME_PATTERN =
-  /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|ginger\s+beer|whisky|dry|lemon|hard\s+rated|rtd|guinness|asahi|balter|carlton|northern|goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|obrien'?s|heaps\s+normal)\b/i;
+  /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|sour|ginger\s+beer|whisky|dry|lemon|hard\s+rated|rtd|guinness|asahi|balter|carlton|northern|goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|obrien'?s|heaps\s+normal|pabst)\b/i;
+
+const TAP_SECTION_LINE_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
+const PACKAGE_SECTION_LINE_PATTERN =
+  /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
+const NON_BEER_SECTION_LINE_PATTERN =
+  /^(?:red(?:\s+wine)?|white(?:\s+wine)?|sparkling(?:\s*&\s*|\s+and\s+)ros[eé]|ros[eé]|cocktails?|spirits?|food|snacks?|kitchen|desserts?)$/i;
+const SIMPLE_MENU_PRICE_PATTERN =
+  /(?:\$?\d{1,2}(?:\.\d{1,2})?(?:\s*\/\s*\$?\d{1,2}(?:\.\d{1,2})?){0,3}|\/\s*\$?\d{1,2}(?:\.\d{1,2})?)(?![\d.]|\s*%)/g;
 
 function normalizeLooseText(value: string): string {
   return value
@@ -97,6 +105,21 @@ function normalizeMenuText(value: string): string {
     .trim();
 }
 
+function normalizeMenuLines(value: string): string[] {
+  const normalized = value
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[•·]/g, "\n")
+    .replace(/[–—]/g, "-")
+    .replace(/\s+\|\s+/g, "\n");
+
+  return normalized
+    .split(/\n|(?<=\d)\s{2,}(?=[A-Z])|(?<=[.!?])\s+(?=[A-Z])/)
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean);
+}
+
 function detectSections(text: string): SectionMarker[] {
   const sections: SectionMarker[] = [];
   for (const sectionPattern of SECTION_PATTERNS) {
@@ -124,6 +147,26 @@ function sectionForIndex(sections: SectionMarker[], index: number): SectionMarke
   return current;
 }
 
+function sectionForMenuLine(line: string): SectionMarker | "reset" | null {
+  const cleaned = line
+    .replace(/[^\w\s&]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) {
+    return null;
+  }
+  if (TAP_SECTION_LINE_PATTERN.test(cleaned)) {
+    return { index: 0, label: "ON TAP", availabilityStatus: "on_tap" };
+  }
+  if (PACKAGE_SECTION_LINE_PATTERN.test(cleaned)) {
+    return { index: 0, label: "CANS OR BOTTLES", availabilityStatus: "package_only" };
+  }
+  if (NON_BEER_SECTION_LINE_PATTERN.test(cleaned)) {
+    return "reset";
+  }
+  return null;
+}
+
 function cleanMenuRowName(value: string): string {
   let cleaned = value
     .replace(HEADING_PREFIX_PATTERN, "")
@@ -134,7 +177,9 @@ function cleanMenuRowName(value: string): string {
     .replace(/\s+/g, " ")
     .trim();
 
-  const trailingHeading = cleaned.match(/\b(?:ON\s+TAP|BOTTLES?\s*(?:&|AND)\s*CANS?)\s+(.+)$/i);
+  const trailingHeading = cleaned.match(
+    /\b(?:ON\s+TAP|BOTTLES?\s*(?:&|AND)\s*(?:CANS?|TINS?)|CANS?\s*(?:&|AND)\s*BOTTLES?|TINS?\s*(?:&|AND)\s*BOTTLES?)\s+(.+)$/i,
+  );
   if (trailingHeading?.[1]) {
     cleaned = trailingHeading[1].trim();
   }
@@ -170,7 +215,7 @@ function inferAvailabilityStatus(input: {
   if (/\b(tap|draught|draft|pint|schooner|pot|jug|500\s?ml|425\s?ml|400\s?ml|285\s?ml)\b/i.test(input.sourceRow)) {
     return "on_tap";
   }
-  if (/\b(can|cans|bottle|bottles|bucket|pack|takeaway)\b/i.test(input.sourceRow)) {
+  if (/\b(can|cans|bottle|bottles|tin|tins|tinnie|tinnies|bucket|pack|takeaway)\b/i.test(input.sourceRow)) {
     return "package_only";
   }
   return "unknown";
@@ -204,6 +249,36 @@ function hasPotsPintsJugsHint(text: string, index: number, priceCount: number): 
   }
   const nearby = text.slice(Math.max(0, index - 260), Math.min(text.length, index + 80));
   return /\bPots?\s*\/\s*Pints?\s*\/\s*Jugs?\b/i.test(nearby);
+}
+
+function simpleMenuPriceMatch(line: string): { index: number; priceText: string; prices: number[] } | null {
+  SIMPLE_MENU_PRICE_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SIMPLE_MENU_PRICE_PATTERN.exec(line))) {
+    const rawPriceText = match[0] ?? "";
+    const prices = parsePriceNumbers(rawPriceText);
+    if (prices.length === 0) {
+      continue;
+    }
+
+    const before = line.slice(0, match.index).trim();
+    if (!before || before.length > 90 || !/[A-Za-z]/.test(before)) {
+      continue;
+    }
+
+    const context = line.slice(Math.max(0, match.index - 20), Math.min(line.length, match.index + rawPriceText.length + 20));
+    if (/%/.test(rawPriceText) || /\b(?:19|20)\d{2}\b/.test(context)) {
+      continue;
+    }
+
+    return {
+      index: match.index,
+      priceText: rawPriceText,
+      prices,
+    };
+  }
+
+  return null;
 }
 
 function rowKey(row: Pick<ExtractedMenuBeerRow, "name" | "priceNumeric" | "availabilityStatus">): string {
@@ -269,6 +344,71 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
         .filter(Boolean)
         .join(" | "),
       confidence: trackedName ? 0.88 : 0.68,
+    };
+    const key = rowKey(row);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    rows.push(row);
+  }
+
+  let currentSection: SectionMarker | null = null;
+  for (const line of normalizeMenuLines(text)) {
+    const lineSection = sectionForMenuLine(line);
+    if (lineSection === "reset") {
+      currentSection = null;
+      continue;
+    }
+    if (lineSection) {
+      currentSection = lineSection;
+      continue;
+    }
+
+    const priceMatch = simpleMenuPriceMatch(line);
+    if (!priceMatch) {
+      continue;
+    }
+
+    const rawName = line.slice(0, priceMatch.index);
+    const cleanedName = cleanMenuRowName(rawName);
+    if (!cleanedName || cleanedName.length < 3 || cleanedName.length > 80) {
+      continue;
+    }
+
+    const trackedName = findTrackedBeerInRowName(cleanedName);
+    if (!trackedName && !BEERISH_NAME_PATTERN.test(cleanedName)) {
+      continue;
+    }
+
+    const availabilityStatus = inferAvailabilityStatus({
+      sourceRow: line,
+      section: currentSection,
+      priceCount: priceMatch.prices.length,
+      hasPotsPintsJugsHint: false,
+    });
+    const selectedPrice = selectDisplayPrice({
+      prices: priceMatch.prices,
+      availabilityStatus,
+      hasPotsPintsJugsHint: false,
+    });
+    if (selectedPrice == null) {
+      continue;
+    }
+
+    const row: ExtractedMenuBeerRow = {
+      name: trackedName ?? canonicalizeTrackedBeerName(cleanedName),
+      priceNumeric: selectedPrice,
+      priceText: formatCurrencyPrice(selectedPrice),
+      availabilityStatus,
+      notes: [
+        currentSection ? `Section: ${currentSection.label}` : null,
+        priceMatch.prices.length > 1 && availabilityStatus === "on_tap" ? "Selected largest tap pour price from slash-separated row." : null,
+        `Source row: ${sourceRowPreview(line)}`,
+      ]
+        .filter(Boolean)
+        .join(" | "),
+      confidence: trackedName ? 0.82 : 0.6,
     };
     const key = rowKey(row);
     if (seen.has(key)) {

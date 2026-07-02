@@ -72,6 +72,74 @@ describe("menu crawler extraction", () => {
     expect(canonicalizeTrackedBeerName("Great Northern Supercrisp")).toBe("Great Northern Super Crisp");
   });
 
+  it("uses Australian tins and later ON TAP headings for simple PDF rows", () => {
+    const savingGraceText = [
+      "TINS & BOTTLES",
+      "LAGER",
+      "Asahi Super Dry Mid-Strength 13",
+      "Asahi - Japan - 3.5%",
+      "Asahi Super Dry 14",
+      "Asahi - Japan - 5%",
+      "Pabst Blue Ribbon 15",
+      "Pabst Brewing Co - Irwindale, USA - 4.7%",
+      "Heaps Normal XPA 10",
+      "Heaps Normal - Marrickville, NSW <0.5%",
+      "ON TAP",
+      "Rotating Specials Tap",
+      "Ask staff for details.",
+      "Pacific Ale 9/16.5",
+      "Stone & Wood - Byron Bay, NSW 4.4%",
+      "Status Quo Hazy Pale 9/16.5",
+      "Mountain Culture - Katoomba, NSW 5.2%",
+      "Cult IPA 10/17.5",
+      "Mountain Culture - Katoomba, NSW 6.2%",
+      "Flemington Lager 7.5/14",
+      "Bonehead - Kensington, VIC 4.7%",
+      "Guinness /16",
+      "Guinness - Ireland 4.2%",
+      "RED WINE",
+      "Punt Road Shiraz 14/56",
+    ].join("\n");
+
+    const rows = extractStructuredBeerRowsFromText(savingGraceText);
+    const byName = new Map(rows.map((row) => [row.name, row]));
+
+    expect(byName.get("Asahi Super Dry Mid-Strength")).toEqual(expect.objectContaining({
+      priceNumeric: 13,
+      availabilityStatus: "package_only",
+    }));
+    expect(byName.get("Pabst Blue Ribbon")).toEqual(expect.objectContaining({
+      priceNumeric: 15,
+      availabilityStatus: "package_only",
+    }));
+    expect(byName.get("Heaps Normal XPA")).toEqual(expect.objectContaining({
+      priceNumeric: 10,
+      availabilityStatus: "package_only",
+    }));
+    expect(byName.get("Stone & Wood Pacific Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 16.5,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Mountain Culture Status Quo Hazy Pale")).toEqual(expect.objectContaining({
+      priceNumeric: 16.5,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Mountain Culture Cult IPA")).toEqual(expect.objectContaining({
+      priceNumeric: 17.5,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Bonehead Flemington Lager")).toEqual(expect.objectContaining({
+      priceNumeric: 14,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Guinness")).toEqual(expect.objectContaining({
+      priceNumeric: 16,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.has("Punt Road Shiraz")).toBe(false);
+    expect(canonicalizeTrackedBeerName("conehead flemington lager")).toBe("Bonehead Flemington Lager");
+  });
+
   it("treats three-price pots/pints/jugs rows as on tap even when PDF columns leak headings", () => {
     const rows = extractStructuredBeerRowsFromText(
       "BOTTLES & CANS WHITE SPARKLING & ROSE Carlton Draught (4.6%) .............. 7.50 / 14.50 / 29 ON TAP Carlton Draught (4.6%) .............. 7.50 / 14.50 / 29",

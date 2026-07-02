@@ -1036,6 +1036,9 @@ export class AdminService {
       `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${this.getTrackedBeerNamesForOcrPrompt()}.`,
       "Use confidence values from 0 to 1 based on how readable and reliable each beer item looks.",
       "If a beer has a visible price, put the numeric value in price_numeric and preserve the menu wording in price_text.",
+      "When a section heading says ON TAP, mark every readable beer row under that heading as availability_status 'on_tap' until the next major section heading, even if the row only shows prices like 9/16.5, 7.5/14, or /16.",
+      "When a section heading says TINS & BOTTLES, TINS, TINNIES, BOTTLES & CANS, CANS, BOTTLES, or PACKAGED, mark rows under that heading as availability_status 'package_only'. In Australian menus, tins means cans.",
+      "If an ABV percentage is printed beside a beer, include it in notes with the brewery/source wording.",
       "If tap or package format is not clear, use availability_status 'unknown'.",
       input.venueNameHint ? `Venue hint: ${input.venueNameHint}` : "Venue hint: none",
     ].join("\n");
