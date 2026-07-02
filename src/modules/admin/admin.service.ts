@@ -137,6 +137,27 @@ function getOcrProviderErrorDetails(error: unknown): Record<string, unknown> {
   };
 }
 
+function getExternalErrorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof AppError && isRecord(error.details)) {
+    return error.details;
+  }
+
+  return isRecord(error) ? error : {};
+}
+
+function getExternalErrorMessage(error: unknown): string {
+  const details = getExternalErrorDetails(error);
+  if (typeof details.message === "string" && details.message.trim()) {
+    return redactSecrets(details.message);
+  }
+
+  if (error instanceof Error && error.message) {
+    return redactSecrets(error.message);
+  }
+
+  return "unknown";
+}
+
 function normalizeConfidence(value: unknown, fallback: number | null = null): number | null {
   if (value == null || value === "") {
     return fallback;
@@ -890,6 +911,86 @@ export class AdminService {
     };
   }
 
+  private async persistSourceIngestionCaptureSnapshot(input: {
+    venueId: string;
+    note: string | null;
+    beers: AdminBeerInput[];
+    savedAt: string;
+  }): Promise<{
+    venue: VenueRow;
+    captureSaved: boolean;
+    captureWarning: string | null;
+  }> {
+    const supabase = this.getSupabase();
+    const venue = await this.getVenueById(input.venueId);
+    let latest: ExistingVenueMenuCaptureSnapshot | null = null;
+    const warnings: string[] = [];
+
+    try {
+      latest = await this.getLatestVenueMenuCapture(input.venueId);
+    } catch (error) {
+      const message = getExternalErrorMessage(error);
+      warnings.push("Previous menu capture snapshot unavailable; published live map rows without merging capture history.");
+      logger.warn("Skipping source ingestion capture merge snapshot", {
+        venueId: input.venueId,
+        error: message,
+      });
+    }
+
+    const row = buildManualVenueCaptureRow({
+      venue,
+      latestCapture: latest,
+      beers: input.beers,
+      source: "source_ingestion",
+      note: input.note,
+      savedAt: input.savedAt,
+    });
+
+    try {
+      const { error } = await supabase.from(this.menuCaptureTable).insert(row);
+
+      if (error) {
+        const message = getExternalErrorMessage(error);
+        warnings.push("Menu capture history save unavailable; live map rows were still published.");
+        logger.warn("Skipping source ingestion capture history save", {
+          venueId: input.venueId,
+          error: message,
+        });
+
+        return {
+          venue,
+          captureSaved: false,
+          captureWarning: warnings.join(" "),
+        };
+      }
+    } catch (error) {
+      const message = getExternalErrorMessage(error);
+      warnings.push("Menu capture history save unavailable; live map rows were still published.");
+      logger.warn("Skipping source ingestion capture history save", {
+        venueId: input.venueId,
+        error: message,
+      });
+
+      return {
+        venue,
+        captureSaved: false,
+        captureWarning: warnings.join(" "),
+      };
+    }
+
+    logger.info("Saved source ingestion capture history", {
+      venueId: venue.id,
+      venueName: venue.name,
+      beerCount: input.beers.length,
+    });
+
+    return {
+      venue,
+      captureSaved: true,
+      captureWarning: warnings.join(" ") || null,
+    };
+  }
+
   private publishIngestionPriceRecords(input: {
     ingestionId: string;
     venue: VenueRow;
@@ -1285,6 +1386,8 @@ export class AdminService {
     savedAt: string;
     beerCount: number;
     mapPriceRecordCount: number;
+    captureSaved: boolean;
+    captureWarning: string | null;
   }> {
     const repository = this.getIngestionQueue();
     const queueItem = repository.getById(ingestionId);
@@ -1312,18 +1415,19 @@ export class AdminService {
       queueItem.sourceUrl ? `Source: ${queueItem.sourceUrl}` : null,
       input.note,
     ].filter(Boolean);
-    const result = await this.persistManualCapture({
+    const savedAt = new Date().toISOString();
+    const captureResult = await this.persistSourceIngestionCaptureSnapshot({
       venueId: queueItem.venueId,
-      source: "source_ingestion",
       note: noteParts.length > 0 ? noteParts.join("\n") : null,
       beers: reviewedBeers,
+      savedAt,
     });
     const crawlerFeedback = buildCrawlerFeedback({
       outcome: "published",
       extractedBeers: queueItem.extractedBeers,
       reviewBeers: reviewedBeers,
       note: input.note,
-      generatedAt: result.savedAt,
+      generatedAt: savedAt,
     });
     let priceRecordCount = 0;
 
@@ -1331,8 +1435,8 @@ export class AdminService {
       const publishLocalState = this.priceRecordDatabase.transaction(() => {
         const published = this.publishIngestionPriceRecords({
           ingestionId,
-          venue: result.venue,
-          savedAt: result.savedAt,
+          venue: captureResult.venue,
+          savedAt,
           beers: reviewedBeers,
         });
 
@@ -1352,7 +1456,7 @@ export class AdminService {
           })),
           input.note,
           crawlerFeedback,
-          result.savedAt,
+          savedAt,
         );
 
         return published;
@@ -1369,16 +1473,18 @@ export class AdminService {
         })),
         input.note,
         crawlerFeedback,
-        result.savedAt,
+        savedAt,
       );
     }
 
     return {
       queueItem: repository.getById(ingestionId)!,
-      venue: result.venue,
-      savedAt: result.savedAt,
-      beerCount: result.beerCount,
+      venue: captureResult.venue,
+      savedAt,
+      beerCount: reviewedBeers.length,
       mapPriceRecordCount: priceRecordCount,
+      captureSaved: captureResult.captureSaved,
+      captureWarning: captureResult.captureWarning,
     };
   }
 

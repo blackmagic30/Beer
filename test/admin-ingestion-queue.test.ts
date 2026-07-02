@@ -56,7 +56,11 @@ function queueSource(repository: AdminIngestionQueueRepository, index: number, s
   return item;
 }
 
-function attachFakeSupabase(service: AdminService, venueId: string) {
+function attachFakeSupabase(
+  service: AdminService,
+  venueId: string,
+  options: { menuCaptureError?: { message: string; code: string } } = {},
+) {
   const insertedCaptures: unknown[] = [];
   const venue = {
     id: venueId,
@@ -84,6 +88,19 @@ function attachFakeSupabase(service: AdminService, venueId: string) {
       }
 
       if (tableName === "venue_menu_captures") {
+        if (options.menuCaptureError) {
+          return {
+            select: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: null, error: options.menuCaptureError }),
+                }),
+              }),
+            }),
+            insert: async () => ({ error: options.menuCaptureError }),
+          };
+        }
+
         return {
           select: () => ({
             eq: () => ({
@@ -190,6 +207,60 @@ describe("AdminIngestionQueueRepository", () => {
         confidence: "photo_verified",
         sourceType: "source_ingestion",
         sourceSubmissionId: null,
+      }),
+    ]);
+  });
+
+  it("publishes source ingestion rows locally when capture history table is unavailable", async () => {
+    const repository = createRepository();
+    const businessRepository = new BusinessRepository(database!);
+    const queueItem = queueSource(repository, 1);
+    const service = new AdminService(
+      repository,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      undefined,
+      undefined,
+      database!,
+    );
+    const { insertedCaptures } = attachFakeSupabase(service, queueItem.venueId, {
+      menuCaptureError: {
+        message: "Could not find the table 'public.venue_menu_captures' in the schema cache",
+        code: "PGRST205",
+      },
+    });
+
+    const result = await service.publishQueuedIngestion(queueItem.id, {
+      beers: [
+        {
+          name: "Carlton Draught",
+          servingSize: "pint",
+          priceNumeric: 13.5,
+          priceText: "$13.50",
+          availabilityStatus: "on_tap",
+          availableOnTap: true,
+          availablePackageOnly: false,
+          unavailableReason: null,
+          needsReview: false,
+        },
+      ],
+      note: "Verified against source image.",
+    });
+
+    expect(result.queueItem.status).toBe("published");
+    expect(result.mapPriceRecordCount).toBe(1);
+    expect(result.captureSaved).toBe(false);
+    expect(result.captureWarning).toContain("live map rows were still published");
+    expect(insertedCaptures).toHaveLength(0);
+    expect(repository.count("pending_review")).toBe(0);
+    expect(businessRepository.listLatestPriceRecords(10, queueItem.venueId)).toEqual([
+      expect.objectContaining({
+        id: `source-ingestion:${queueItem.id}:0`,
+        venueName: "Venue 1",
+        beerName: "Carlton Draught",
+        price: 13.5,
+        isOnTap: "yes",
       }),
     ]);
   });
