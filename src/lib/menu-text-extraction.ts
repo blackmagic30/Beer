@@ -32,8 +32,11 @@ const BEERISH_NAME_PATTERN =
   /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|sour|ginger\s+beer|whisky|dry|lemon|hard\s+rated|rtd|guinness|asahi|balter|carlton|northern|goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|obrien'?s|heaps\s+normal|pabst)\b/i;
 
 const TAP_SECTION_LINE_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
+const TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
 const PACKAGE_SECTION_LINE_PATTERN =
   /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
+const PACKAGE_SECTION_PREFIX_PATTERN =
+  /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)\b/i;
 const NON_BEER_SECTION_LINE_PATTERN =
   /^(?:red(?:\s+wine)?|white(?:\s+wine)?|sparkling(?:\s*&\s*|\s+and\s+)ros[eé]|ros[eé]|cocktails?|spirits?|food|snacks?|kitchen|desserts?)$/i;
 const SIMPLE_MENU_PRICE_PATTERN =
@@ -158,10 +161,10 @@ function sectionForMenuLine(line: string): SectionMarker | "reset" | null {
   if (!cleaned) {
     return null;
   }
-  if (TAP_SECTION_LINE_PATTERN.test(cleaned)) {
+  if (TAP_SECTION_LINE_PATTERN.test(cleaned) || TAP_SECTION_PREFIX_PATTERN.test(cleaned)) {
     return { index: 0, label: "ON TAP", availabilityStatus: "on_tap" };
   }
-  if (PACKAGE_SECTION_LINE_PATTERN.test(cleaned)) {
+  if (PACKAGE_SECTION_LINE_PATTERN.test(cleaned) || PACKAGE_SECTION_PREFIX_PATTERN.test(cleaned)) {
     return { index: 0, label: "CANS OR BOTTLES", availabilityStatus: "package_only" };
   }
   if (NON_BEER_SECTION_LINE_PATTERN.test(cleaned)) {
@@ -253,6 +256,9 @@ function inferAvailabilityStatus(input: {
     return "package_only";
   }
   if (/\b(tap|draught|draft|pint|schooner|pot|jug|500\s?ml|425\s?ml|400\s?ml|285\s?ml)\b/i.test(input.sourceRow)) {
+    return "on_tap";
+  }
+  if (input.priceCount >= 2 && /\d\s*\/\s*\d/.test(input.sourceRow) && !/\b(wine|cocktail|spritz|margarita|negroni)\b/i.test(input.sourceRow)) {
     return "on_tap";
   }
   if (/\b(can|cans|bottle|bottles|tin|tins|tinnie|tinnies|bucket|pack|takeaway)\b/i.test(input.sourceRow)) {

@@ -1559,8 +1559,11 @@ type TextExtractionSection = {
 };
 
 const TEXT_TAP_SECTION_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
+const TEXT_TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
 const TEXT_PACKAGE_SECTION_PATTERN =
   /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
+const TEXT_PACKAGE_SECTION_PREFIX_PATTERN =
+  /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)\b/i;
 const TEXT_NON_BEER_SECTION_PATTERN =
   /^(?:red(?:\s+wine)?|white(?:\s+wine)?|sparkling(?:\s*&\s*|\s+and\s+)ros[eé]|ros[eé]|cocktails?|spirits?|food|snacks?|kitchen|desserts?)$/i;
 const TEXT_ABV_PATTERN = /\b(?:ABV\s*)?(<\s*)?\d{1,2}(?:\.\d+)?\s*%/i;
@@ -1575,10 +1578,10 @@ function sectionFromExtractionLine(line: string): TextExtractionSection | "reset
   if (!cleaned) {
     return null;
   }
-  if (TEXT_TAP_SECTION_PATTERN.test(cleaned)) {
+  if (TEXT_TAP_SECTION_PATTERN.test(cleaned) || TEXT_TAP_SECTION_PREFIX_PATTERN.test(cleaned)) {
     return { label: "ON TAP", availabilityStatus: "on_tap" };
   }
-  if (TEXT_PACKAGE_SECTION_PATTERN.test(cleaned)) {
+  if (TEXT_PACKAGE_SECTION_PATTERN.test(cleaned) || TEXT_PACKAGE_SECTION_PREFIX_PATTERN.test(cleaned)) {
     return { label: "CANS OR BOTTLES", availabilityStatus: "package_only" };
   }
   if (TEXT_NON_BEER_SECTION_PATTERN.test(cleaned)) {
@@ -1639,6 +1642,9 @@ function inferAvailabilityStatus(
   }
   if (section?.availabilityStatus === "package_only") {
     return "package_only";
+  }
+  if (/\d\s*\/\s*\d/.test(line) && !/\b(wine|cocktail|spritz|margarita|negroni)\b/i.test(line)) {
+    return "on_tap";
   }
   return "unknown";
 }
