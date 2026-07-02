@@ -66,6 +66,7 @@ describe("menu crawler extraction", () => {
       availabilityStatus: "package_only",
     }));
     expect(byName.get("Carlton Draught")?.notes).toContain("Section: ON TAP");
+    expect(byName.get("Carlton Draught")?.notes).toContain("ABV: 4.6%");
   });
 
   it("canonicalises Royal Derby style Great Northern spelling", () => {
@@ -120,6 +121,8 @@ describe("menu crawler extraction", () => {
       priceNumeric: 16.5,
       availabilityStatus: "on_tap",
     }));
+    expect(byName.get("Stone & Wood Pacific Ale")?.notes).toContain("Beer details: Stone & Wood - Byron Bay, NSW 4.4%");
+    expect(byName.get("Stone & Wood Pacific Ale")?.notes).toContain("ABV: 4.4%");
     expect(byName.get("Mountain Culture Status Quo Hazy Pale")).toEqual(expect.objectContaining({
       priceNumeric: 16.5,
       availabilityStatus: "on_tap",
@@ -128,6 +131,7 @@ describe("menu crawler extraction", () => {
       priceNumeric: 17.5,
       availabilityStatus: "on_tap",
     }));
+    expect(byName.get("Mountain Culture Cult IPA")?.notes).toContain("Beer details: Mountain Culture - Katoomba, NSW 6.2%");
     expect(byName.get("Bonehead Flemington Lager")).toEqual(expect.objectContaining({
       priceNumeric: 14,
       availabilityStatus: "on_tap",

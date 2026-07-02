@@ -38,6 +38,9 @@ const NON_BEER_SECTION_LINE_PATTERN =
   /^(?:red(?:\s+wine)?|white(?:\s+wine)?|sparkling(?:\s*&\s*|\s+and\s+)ros[eé]|ros[eé]|cocktails?|spirits?|food|snacks?|kitchen|desserts?)$/i;
 const SIMPLE_MENU_PRICE_PATTERN =
   /(?:\$?\d{1,2}(?:\.\d{1,2})?(?:\s*\/\s*\$?\d{1,2}(?:\.\d{1,2})?){0,3}|\/\s*\$?\d{1,2}(?:\.\d{1,2})?)(?![\d.]|\s*%)/g;
+const ABV_PATTERN = /\b(?:ABV\s*)?(<\s*)?\d{1,2}(?:\.\d+)?\s*%/i;
+const DETAIL_LINE_PATTERN =
+  /\b(?:brewing|brewery|brewers?|beer|co|company|stone\s*&\s*wood|mountain\s+culture|bonehead|guinness|asahi|pabst|heaps\s+normal|two\s+bays|bad\s+shepherd|venom|brick\s+lane|hargraves?|hargreaves?)\b/i;
 
 function normalizeLooseText(value: string): string {
   return value
@@ -165,6 +168,43 @@ function sectionForMenuLine(line: string): SectionMarker | "reset" | null {
     return "reset";
   }
   return null;
+}
+
+function isBeerDetailLine(line: string): boolean {
+  if (!line || simpleMenuPriceMatch(line)) {
+    return false;
+  }
+  return ABV_PATTERN.test(line) || (DETAIL_LINE_PATTERN.test(line) && /\s+-\s+/.test(line));
+}
+
+function detailLineAfter(lines: string[], index: number): string | null {
+  for (let offset = 1; offset <= 2; offset += 1) {
+    const candidate = lines[index + offset];
+    if (!candidate) {
+      return null;
+    }
+    if (sectionForMenuLine(candidate)) {
+      return null;
+    }
+    if (simpleMenuPriceMatch(candidate)) {
+      return null;
+    }
+    if (isBeerDetailLine(candidate)) {
+      return sourceRowPreview(candidate);
+    }
+    if (!/^(?:ask\s+staff|rotating|specials?|lager|ipa|dark\s+beer|sour\s+beer|ginger\s+beer|seltzers?|ciders?)\b/i.test(candidate)) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function abvNoteFromText(value: string | null): string | null {
+  const match = value?.match(ABV_PATTERN);
+  if (!match?.[0]) {
+    return null;
+  }
+  return `ABV: ${match[0].replace(/^ABV\s*/i, "").replace(/\s+/g, "")}`;
 }
 
 function cleanMenuRowName(value: string): string {
@@ -340,6 +380,7 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
         hint && prices.length >= 3 ? "Selected pint price from pots/pints/jugs." : null,
         servingText ? `Serving hint: ${servingText}` : null,
         `Source row: ${sourceRow}`,
+        abvNoteFromText(`${rawName} ${sourceRow}`),
       ]
         .filter(Boolean)
         .join(" | "),
@@ -354,7 +395,9 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
   }
 
   let currentSection: SectionMarker | null = null;
-  for (const line of normalizeMenuLines(text)) {
+  const menuLines = normalizeMenuLines(text);
+  for (let lineIndex = 0; lineIndex < menuLines.length; lineIndex += 1) {
+    const line = menuLines[lineIndex]!;
     const lineSection = sectionForMenuLine(line);
     if (lineSection === "reset") {
       currentSection = null;
@@ -396,6 +439,7 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       continue;
     }
 
+    const detailLine = detailLineAfter(menuLines, lineIndex);
     const row: ExtractedMenuBeerRow = {
       name: trackedName ?? canonicalizeTrackedBeerName(cleanedName),
       priceNumeric: selectedPrice,
@@ -405,6 +449,8 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
         currentSection ? `Section: ${currentSection.label}` : null,
         priceMatch.prices.length > 1 && availabilityStatus === "on_tap" ? "Selected largest tap pour price from slash-separated row." : null,
         `Source row: ${sourceRowPreview(line)}`,
+        detailLine ? `Beer details: ${detailLine}` : null,
+        abvNoteFromText(`${line} ${detailLine ?? ""}`),
       ]
         .filter(Boolean)
         .join(" | "),

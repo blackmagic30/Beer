@@ -1563,6 +1563,9 @@ const TEXT_PACKAGE_SECTION_PATTERN =
   /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
 const TEXT_NON_BEER_SECTION_PATTERN =
   /^(?:red(?:\s+wine)?|white(?:\s+wine)?|sparkling(?:\s*&\s*|\s+and\s+)ros[eé]|ros[eé]|cocktails?|spirits?|food|snacks?|kitchen|desserts?)$/i;
+const TEXT_ABV_PATTERN = /\b(?:ABV\s*)?(<\s*)?\d{1,2}(?:\.\d+)?\s*%/i;
+const TEXT_DETAIL_LINE_PATTERN =
+  /\b(?:brewing|brewery|brewers?|beer|co|company|stone\s*&\s*wood|mountain\s+culture|bonehead|guinness|asahi|pabst|heaps\s+normal|two\s+bays|bad\s+shepherd|venom|brick\s+lane|hargraves?|hargreaves?)\b/i;
 
 function sectionFromExtractionLine(line: string): TextExtractionSection | "reset" | null {
   const cleaned = line
@@ -1582,6 +1585,43 @@ function sectionFromExtractionLine(line: string): TextExtractionSection | "reset
     return "reset";
   }
   return null;
+}
+
+function isTextBeerDetailLine(line: string): boolean {
+  if (!line || extractPriceMatchesFromLine(line).length > 0) {
+    return false;
+  }
+  return TEXT_ABV_PATTERN.test(line) || (TEXT_DETAIL_LINE_PATTERN.test(line) && /\s+-\s+/.test(line));
+}
+
+function detailLineAfter(lines: string[], index: number): string | null {
+  for (let offset = 1; offset <= 2; offset += 1) {
+    const candidate = lines[index + offset];
+    if (!candidate) {
+      return null;
+    }
+    if (sectionFromExtractionLine(candidate)) {
+      return null;
+    }
+    if (extractPriceMatchesFromLine(candidate).length > 0) {
+      return null;
+    }
+    if (isTextBeerDetailLine(candidate)) {
+      return candidate.length <= 180 ? candidate : `${candidate.slice(0, 177)}...`;
+    }
+    if (!/^(?:ask\s+staff|rotating|specials?|lager|ipa|dark\s+beer|sour\s+beer|ginger\s+beer|seltzers?|ciders?)\b/i.test(candidate)) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function abvNoteFromText(value: string | null): string | null {
+  const match = value?.match(TEXT_ABV_PATTERN);
+  if (!match?.[0]) {
+    return null;
+  }
+  return `ABV: ${match[0].replace(/^ABV\s*/i, "").replace(/\s+/g, "")}`;
 }
 
 function inferAvailabilityStatus(
@@ -1829,7 +1869,9 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
   );
 
   let currentSection: TextExtractionSection | null = null;
-  for (const line of splitTextIntoExtractionLines(text)) {
+  const extractionLines = splitTextIntoExtractionLines(text);
+  for (let lineIndex = 0; lineIndex < extractionLines.length; lineIndex += 1) {
+    const line = extractionLines[lineIndex]!;
     const section = sectionFromExtractionLine(line);
     if (section === "reset") {
       currentSection = null;
@@ -1859,7 +1901,8 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
       }
 
       const localPriceContext = priceContext(line, match.index);
-      const trackedBeer = findTrackedBeerInText(localPriceContext);
+      const detailLine = detailLineAfter(extractionLines, lineIndex);
+      const trackedBeer = findTrackedBeerInText(`${localPriceContext} ${detailLine ?? ""}`);
       const genericName = trackedBeer ? null : inferGenericDrinkName(line, match.index);
       const name = canonicalizeTrackedBeerName(trackedBeer ?? genericName ?? "");
       if (!name || name.length < 3 || !isUsableExtractedDrinkName(name, trackedBeer)) {
@@ -1882,6 +1925,8 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
         currentSection ? `Section: ${currentSection.label}` : null,
         servingNote,
         line.length <= 180 ? `Source line: ${line}` : `Source line: ${line.slice(0, 177)}...`,
+        detailLine ? `Beer details: ${detailLine}` : null,
+        abvNoteFromText(`${line} ${detailLine ?? ""}`),
       ]
         .filter(Boolean)
         .join(" | ");
@@ -2171,10 +2216,12 @@ async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: Open
       "Only include rows that are readable and useful for a pub beer map or Pint Path special review.",
       `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${VIEWER_TRACKED_BEERS.map((beer) => beer.name).join(", ")}.`,
       "Keep each menu row separate. Do not carry a beer name or price from the previous or next row.",
+      "Many PDF menus put the beer name and price on one line, then brewery, location, and ABV on the next line. Pair that following detail line with the beer above it in notes; do not emit the detail line as its own beer.",
       "When a table heading says Pots / Pints / Jugs, choose the Pints price as price_numeric and price_text.",
       "When a section heading says ON TAP, mark every readable beer row under that heading as availability_status 'on_tap' until the next major section heading, even if the row only shows prices like 9/16.5, 7.5/14, or /16.",
       "When a section heading says TINS & BOTTLES, TINS, TINNIES, BOTTLES & CANS, CANS, BOTTLES, or PACKAGED, mark rows under that heading as availability_status 'package_only'. In Australian menus, tins means cans.",
       "If an ABV percentage is printed beside a beer, include it in notes with the brewery/source wording.",
+      "Do not include category headings such as Lager, IPA, Sour Beer, Red Wine, or White Wine as beer rows.",
       "If the row price/name pairing is ambiguous after checking the row and heading, omit the row instead of guessing.",
       `Venue hint: ${candidate.venueName}`,
       `Source URL: ${candidate.sourceUrl}`,
