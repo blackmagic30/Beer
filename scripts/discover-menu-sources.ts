@@ -1784,6 +1784,10 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
   const seen = new Set(
     structuredRows.map((row) => `${normalizeLooseText(row.name)}|${row.priceNumeric ?? ""}|${row.availabilityStatus}`),
   );
+  const structuredNames = new Set(structuredRows.map((row) => normalizeLooseText(row.name)));
+  const structuredNameAvailability = new Set(
+    structuredRows.map((row) => `${normalizeLooseText(row.name)}|${row.availabilityStatus}`),
+  );
 
   for (const line of splitTextIntoExtractionLines(text)) {
     const lower = line.toLowerCase();
@@ -1813,6 +1817,11 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
       }
 
       const availabilityStatus = inferAvailabilityStatus(line);
+      const nameAvailabilityKey = `${normalizeLooseText(name)}|${availabilityStatus}`;
+      if (structuredNameAvailability.has(nameAvailabilityKey) || (availabilityStatus === "unknown" && structuredNames.has(normalizeLooseText(name)))) {
+        continue;
+      }
+
       const servingNote = inferServingNote(line);
       const lineNameServingKey = `${normalizeLooseText(name)}|${availabilityStatus}|${normalizeLooseText(servingNote ?? "")}`;
       if (priceMatches.length > 1 && lineNameServingKeys.has(lineNameServingKey)) {
@@ -2656,14 +2665,20 @@ async function main(): Promise<void> {
   const maxLinksPerVenue = numberArg("max-links-per-venue", DEFAULT_MAX_LINKS_PER_VENUE);
   const concurrency = numberArg("concurrency", Number(process.env.MENU_DISCOVERY_CONCURRENCY ?? DEFAULT_CONCURRENCY));
   const resolvePlaces = hasFlag("resolve-places") || envFlag("MENU_DISCOVERY_RESOLVE_PLACES");
+  const venueQuery = normalizeVenueKey(getArg("venue-query") ?? getArg("venue") ?? "");
   const ocrEnabled = envFlag("MENU_DISCOVERY_OCR_IMAGES");
   const openai = ocrEnabled && process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
-  const venues = mergeVenues([
+  const loadedVenues = mergeVenues([
     ...(await loadSupabaseVenues(limit)),
     ...loadSqliteVenues(limit),
     ...loadArtifactVenues(limit),
-  ]).slice(0, limit);
+  ]);
+  const venues = (venueQuery
+    ? loadedVenues.filter((venue) =>
+        normalizeVenueKey([venue.name, venue.address, venue.suburb, venue.website].filter(Boolean).join(" ")).includes(venueQuery),
+      )
+    : loadedVenues).slice(0, limit);
 
   let resolvedWithGooglePlaces = 0;
   if (resolvePlaces) {
