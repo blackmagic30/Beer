@@ -161,11 +161,11 @@ function inferAvailabilityStatus(input: {
   if (input.section?.availabilityStatus === "on_tap") {
     return "on_tap";
   }
-  if (input.section?.availabilityStatus === "package_only") {
-    return "package_only";
-  }
   if (input.hasPotsPintsJugsHint || input.priceCount >= 3) {
     return "on_tap";
+  }
+  if (input.section?.availabilityStatus === "package_only") {
+    return "package_only";
   }
   if (/\b(tap|draught|draft|pint|schooner|pot|jug|500\s?ml|425\s?ml|400\s?ml|285\s?ml)\b/i.test(input.sourceRow)) {
     return "on_tap";

@@ -72,6 +72,19 @@ describe("menu crawler extraction", () => {
     expect(canonicalizeTrackedBeerName("Great Northern Supercrisp")).toBe("Great Northern Super Crisp");
   });
 
+  it("treats three-price pots/pints/jugs rows as on tap even when PDF columns leak headings", () => {
+    const rows = extractStructuredBeerRowsFromText(
+      "BOTTLES & CANS WHITE SPARKLING & ROSE Carlton Draught (4.6%) .............. 7.50 / 14.50 / 29 ON TAP Carlton Draught (4.6%) .............. 7.50 / 14.50 / 29",
+    );
+    const carltonRows = rows.filter((row) => row.name === "Carlton Draught");
+
+    expect(carltonRows).toHaveLength(1);
+    expect(carltonRows[0]).toEqual(expect.objectContaining({
+      priceNumeric: 14.5,
+      availabilityStatus: "on_tap",
+    }));
+  });
+
   it("uses venue name and source URL to catch duplicate queue candidates across venue ids", () => {
     const first = crawlerQueueDuplicateKey({
       venueName: "Royal Derby Hotel",
