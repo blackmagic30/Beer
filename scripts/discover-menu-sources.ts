@@ -1530,10 +1530,21 @@ function isUsableExtractedDrinkName(name: string, trackedBeer: string | null): b
   if (!trimmed || !loose || !/[a-z]/i.test(trimmed)) {
     return false;
   }
+  if (/^\+/.test(trimmed)) {
+    return false;
+  }
   if (!trackedBeer && (trimmed.length > 70 || loose.split(/\s+/).length > 9)) {
     return false;
   }
   if (/[[\]{}\\]/.test(trimmed)) {
+    return false;
+  }
+  if (
+    !trackedBeer &&
+    /\b(?:gin|vodka|rum|tequila|mezcal|vermouth|amaro|aperitif|liqueur|whisk(?:e)?y|bourbon|scotch|rye|brandy|cognac|sambuca|ouzo|pisco|campari|aperol|tanqueray|poor\s+tom'?s|archie\s+rose|aviation|four\s+pillars|mgc|hellyer'?s|noilly\s+prat|marionette|bulleit|bitter\s+orange|dry\s+cassis|single\s+shot)\b/i.test(
+      trimmed,
+    )
+  ) {
     return false;
   }
   if (

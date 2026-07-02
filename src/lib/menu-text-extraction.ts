@@ -29,7 +29,9 @@ const HEADING_PREFIX_PATTERN =
   /^(?:(?:drink|drinks|beer|beers|on\s+tap|tap\s+beers?|beers?\s+on\s+tap|pots?|pints?|jugs?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|tins?\s*(?:&|and)\s*bottles?|tinnies?|packaged|sparkling\s*&\s*rose|white|red|glass|bottle|can|tin)\b[\s/:,-]*)+/i;
 
 const BEERISH_NAME_PATTERN =
-  /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|sour|ginger\s+beer|whisky|dry|lemon|hard\s+rated|rtd|guinness|asahi|balter|carlton|northern|goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|obrien'?s|heaps\s+normal|pabst)\b/i;
+  /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|sour|ginger\s+beer|hard\s+rated|rtd|guinness|asahi|balter|carlton|northern|goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|kirin|furphy|napoleone|little\s+creatures|obrien'?s|heaps\s+normal|pabst)\b/i;
+const NON_BEER_DRINK_NAME_PATTERN =
+  /\b(?:gin|vodka|rum|tequila|mezcal|vermouth|amaro|aperitif|liqueur|whisk(?:e)?y|bourbon|scotch|rye|brandy|cognac|sambuca|ouzo|pisco|campari|aperol|tanqueray|poor\s+tom'?s|archie\s+rose|aviation|four\s+pillars|mgc|hellyer'?s|noilly\s+prat|marionette|bulleit|bitter\s+orange|dry\s+cassis|single\s+shot)\b/i;
 
 const TAP_SECTION_LINE_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
 const TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
@@ -214,6 +216,7 @@ function cleanMenuRowName(value: string): string {
   let cleaned = value
     .replace(HEADING_PREFIX_PATTERN, "")
     .replace(/\(\s*\d+(?:\.\d+)?%\s*\)/g, "")
+    .replace(/\b(?:ABV\s*)?(?:<\s*)?\d{1,2}(?:\.\d+)?\s*%.*$/i, "")
     .replace(/\b(?:pots?|pints?|jugs?)\s*(?:\/|\b)/gi, " ")
     .replace(/\b(?:glass|bottle)\s*(?:\/|\b)/gi, " ")
     .replace(/^[\s:;,.\/-]+|[\s:;,.\/-]+$/g, "")
@@ -228,6 +231,15 @@ function cleanMenuRowName(value: string): string {
   }
 
   return cleaned;
+}
+
+function isLikelyNonBeerDrinkName(name: string, sourceRow: string): boolean {
+  const text = `${name} ${sourceRow}`;
+  if (!NON_BEER_DRINK_NAME_PATTERN.test(text)) {
+    return false;
+  }
+
+  return !/\b(?:beer|lager|ale|ipa|xpa|stout|porter|pilsner|cider|ginger\s+beer|hard\s+rated|rtd)\b/i.test(name);
 }
 
 function formatCurrencyPrice(value: number): string {
@@ -327,6 +339,121 @@ function simpleMenuPriceMatch(line: string): { index: number; priceText: string;
   return null;
 }
 
+function priceOnlyLine(line: string): { prices: number[]; priceText: string } | null {
+  const cleaned = line.trim();
+  if (!cleaned || !/^(?:[$\d\s./-]|—)+$/.test(cleaned) || /%/.test(cleaned)) {
+    return null;
+  }
+
+  const prices = parsePriceNumbers(cleaned);
+  if (prices.length === 0) {
+    return null;
+  }
+
+  return {
+    prices,
+    priceText: cleaned,
+  };
+}
+
+function isLikelyStandaloneBeerNameLine(line: string, section: SectionMarker | null): boolean {
+  const cleanedName = cleanMenuRowName(line);
+  if (!cleanedName || cleanedName.length < 3 || cleanedName.length > 80) {
+    return false;
+  }
+  if (sectionForMenuLine(line) || simpleMenuPriceMatch(line) || priceOnlyLine(line)) {
+    return false;
+  }
+
+  const trackedName = findTrackedBeerInRowName(cleanedName);
+  if (trackedName) {
+    return true;
+  }
+  if (isLikelyNonBeerDrinkName(cleanedName, line)) {
+    return false;
+  }
+
+  return Boolean(section) && (BEERISH_NAME_PATTERN.test(cleanedName) || ABV_PATTERN.test(line));
+}
+
+function collectFollowingMenuPrices(lines: string[], startIndex: number): {
+  prices: number[];
+  priceText: string;
+  detailLine: string | null;
+  lastIndex: number;
+} | null {
+  const prices: number[] = [];
+  const priceTexts: string[] = [];
+  let detailLine: string | null = null;
+  let lastIndex = startIndex;
+  let skippedDetail = false;
+
+  for (let offset = 1; offset <= 4; offset += 1) {
+    const candidate = lines[startIndex + offset];
+    if (!candidate || sectionForMenuLine(candidate)) {
+      break;
+    }
+
+    const priceOnly = priceOnlyLine(candidate);
+    if (priceOnly) {
+      prices.push(...priceOnly.prices);
+      priceTexts.push(priceOnly.priceText);
+      lastIndex = startIndex + offset;
+      if (prices.length >= 3) {
+        break;
+      }
+      continue;
+    }
+
+    if (prices.length > 0) {
+      break;
+    }
+
+    const trimmed = candidate.trim();
+    const looksLikeDetail =
+      isBeerDetailLine(trimmed) ||
+      (!skippedDetail && trimmed.length <= 42 && /^[A-Za-z][A-Za-z\s,.'-]+$/.test(trimmed) && !isLikelyStandaloneBeerNameLine(trimmed, null));
+    if (!looksLikeDetail) {
+      break;
+    }
+
+    detailLine = sourceRowPreview(trimmed);
+    skippedDetail = true;
+    lastIndex = startIndex + offset;
+  }
+
+  if (prices.length === 0) {
+    return null;
+  }
+
+  return {
+    prices,
+    priceText: priceTexts.join(" / "),
+    detailLine,
+    lastIndex,
+  };
+}
+
+function inferAvailabilityStatusForLookahead(input: {
+  section: SectionMarker | null;
+  priceCount: number;
+  sourceRow: string;
+}): MenuTextAvailabilityStatus {
+  if (input.priceCount >= 2) {
+    return "on_tap";
+  }
+  if (input.section?.availabilityStatus === "package_only") {
+    return "package_only";
+  }
+  if (/\b(can|cans|bottle|bottles|tin|tins|tinnie|tinnies|bucket|pack|takeaway)\b/i.test(input.sourceRow)) {
+    return "package_only";
+  }
+  if (/\b(tap|draught|draft|pint|schooner|pot|jug)\b/i.test(input.sourceRow)) {
+    return "on_tap";
+  }
+  return "unknown";
+}
+
 function rowKey(row: Pick<ExtractedMenuBeerRow, "name" | "priceNumeric" | "availabilityStatus">): string {
   return `${normalizeLooseText(row.name)}|${row.priceNumeric ?? ""}|${row.availabilityStatus}`;
 }
@@ -353,6 +480,9 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
     }
 
     const trackedName = findTrackedBeerInRowName(cleanedName);
+    if (!trackedName && isLikelyNonBeerDrinkName(cleanedName, match[0] ?? "")) {
+      continue;
+    }
     if (!trackedName && !BEERISH_NAME_PATTERN.test(cleanedName)) {
       continue;
     }
@@ -426,6 +556,9 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
     }
 
     const trackedName = findTrackedBeerInRowName(cleanedName);
+    if (!trackedName && isLikelyNonBeerDrinkName(cleanedName, line)) {
+      continue;
+    }
     if (!trackedName && !BEERISH_NAME_PATTERN.test(cleanedName)) {
       continue;
     }
@@ -468,6 +601,73 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
     }
     seen.add(key);
     rows.push(row);
+  }
+
+  currentSection = null;
+  for (let lineIndex = 0; lineIndex < menuLines.length; lineIndex += 1) {
+    const line = menuLines[lineIndex]!;
+    const lineSection = sectionForMenuLine(line);
+    if (lineSection === "reset") {
+      currentSection = null;
+      continue;
+    }
+    if (lineSection) {
+      currentSection = lineSection;
+      continue;
+    }
+    if (!isLikelyStandaloneBeerNameLine(line, currentSection)) {
+      continue;
+    }
+
+    const priceBlock = collectFollowingMenuPrices(menuLines, lineIndex);
+    if (!priceBlock) {
+      continue;
+    }
+
+    const cleanedName = cleanMenuRowName(line);
+    const trackedName = findTrackedBeerInRowName(cleanedName);
+    if (!trackedName && isLikelyNonBeerDrinkName(cleanedName, line)) {
+      continue;
+    }
+
+    const availabilityStatus = inferAvailabilityStatusForLookahead({
+      section: currentSection,
+      priceCount: priceBlock.prices.length,
+      sourceRow: `${line} ${priceBlock.priceText}`,
+    });
+    const selectedPrice = selectDisplayPrice({
+      prices: priceBlock.prices,
+      availabilityStatus,
+      hasPotsPintsJugsHint: priceBlock.prices.length >= 3,
+    });
+    if (selectedPrice == null) {
+      continue;
+    }
+
+    const row: ExtractedMenuBeerRow = {
+      name: trackedName ?? canonicalizeTrackedBeerName(cleanedName),
+      priceNumeric: selectedPrice,
+      priceText: formatCurrencyPrice(selectedPrice),
+      availabilityStatus,
+      notes: [
+        currentSection ? `Section: ${currentSection.label}` : null,
+        priceBlock.prices.length >= 3 ? "Selected pint price from pot/pint/jug table." : null,
+        `Source row: ${sourceRowPreview(`${line} ${priceBlock.priceText}`)}`,
+        priceBlock.detailLine ? `Beer details: ${priceBlock.detailLine}` : null,
+        abvNoteFromText(`${line} ${priceBlock.detailLine ?? ""}`),
+      ]
+        .filter(Boolean)
+        .join(" | "),
+      confidence: trackedName ? 0.84 : 0.72,
+    };
+    const key = rowKey(row);
+    if (seen.has(key)) {
+      lineIndex = Math.max(lineIndex, priceBlock.lastIndex);
+      continue;
+    }
+    seen.add(key);
+    rows.push(row);
+    lineIndex = Math.max(lineIndex, priceBlock.lastIndex);
   }
 
   return rows;

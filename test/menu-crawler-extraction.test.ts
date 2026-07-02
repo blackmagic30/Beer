@@ -156,6 +156,107 @@ describe("menu crawler extraction", () => {
     }));
   });
 
+  it("reads Rooftop Bar style HTML table text without drifting into spirits", () => {
+    const rooftopText = [
+      "Beer",
+      "Cocktails",
+      "Wine",
+      "Spirits",
+      "Happy",
+      "Hour",
+      "Guinness Pint $10",
+      "Beer",
+      "On Tap",
+      "Pot",
+      "Pint",
+      "Jug",
+      "Hahn Superdry 3.5% NSW",
+      "$7",
+      "$14",
+      "$40",
+      "Napoleone Apple Cider 4.7% Coldstream",
+      "$8",
+      "$16",
+      "$46",
+      "Furphy Refreshing Ale 4.4% Geelong",
+      "$8",
+      "$16",
+      "$46",
+      "Stone & Wood Pacific Ale 4.4% NSW",
+      "$8",
+      "$16",
+      "$46",
+      "Little Creatures Pale Ale 5.2% Geelong",
+      "$8",
+      "$16",
+      "$46",
+      "Guinness Stout 4.2% Ireland",
+      "$9",
+      "$18",
+      "Heineken 5.0% Netherlands",
+      "$9",
+      "$18",
+      "$52",
+      "Kirin Ichiban 5.0% Japan",
+      "$9",
+      "$18",
+      "$52",
+      "Kirin Hyoketsu 4.0% Japan",
+      "$9",
+      "$18",
+      "$52",
+      "Spirits",
+      "Gin",
+      "Tanqueray $12",
+      "Poor Tom's Sydney Dry $14",
+      "Archie Rose Signature Dry $14",
+      "Four Pillars Rare Dry $14",
+    ].join("\n");
+
+    const rows = extractStructuredBeerRowsFromText(rooftopText);
+    const byName = new Map(rows.map((row) => [row.name, row]));
+
+    expect(byName.get("Hahn Super Dry")).toEqual(expect.objectContaining({
+      priceNumeric: 14,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Napoleone Apple Cider")).toEqual(expect.objectContaining({
+      priceNumeric: 16,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Furphy Refreshing Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 16,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Stone & Wood Pacific Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 16,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Little Creatures Pale Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 16,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Guinness Stout")).toEqual(expect.objectContaining({
+      priceNumeric: 18,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Heineken")).toEqual(expect.objectContaining({
+      priceNumeric: 18,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Kirin Ichiban")).toEqual(expect.objectContaining({
+      priceNumeric: 18,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Kirin Hyoketsu")).toEqual(expect.objectContaining({
+      priceNumeric: 18,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.has("Poor Tom's Sydney Dry")).toBe(false);
+    expect(byName.has("Archie Rose Signature Dry")).toBe(false);
+    expect(byName.has("Four Pillars Rare Dry")).toBe(false);
+  });
+
   it("uses venue name and source URL to catch duplicate queue candidates across venue ids", () => {
     const first = crawlerQueueDuplicateKey({
       venueName: "Royal Derby Hotel",
