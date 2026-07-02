@@ -31,6 +31,7 @@ describe("Pint Path beer catalogue", () => {
       name: "Stone & Wood Pacific Ale",
     }));
     expect(canonicalizeTrackedBeerName("Great Northern")).toBe("Great Northern Original");
+    expect(canonicalizeTrackedBeerName("Great Northern Supercrisp")).toBe("Great Northern Super Crisp");
     expect(canonicalizeTrackedBeerName("reschs")).toBe("Resch's Draught");
 
     const beer = findTrackedBeerByName("balter xpa");

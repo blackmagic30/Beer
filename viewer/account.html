@@ -227,6 +227,7 @@
                     <button type="button" role="menuitem" data-beta-feature-target="pub-golf">Pub Golf</button>
                     <button type="button" role="menuitem" data-beta-feature-target="leaderboard">Leaderboard</button>
                     <button type="button" role="menuitem" data-beta-feature-target="pint-points">Pint Point Wallet</button>
+                    <button type="button" role="menuitem" data-beta-feature-target="can-i-drive">Can I Drive?</button>
                   </div>
                 </div>
               </div>
@@ -307,6 +308,58 @@
                 </div>
                 <p class="helperCopy">Free Pint Rewards use 50 Pint Points at affiliated bars only.</p>
               </article>
+            </section>
+
+            <section id="betaFeatureCanIDrive" class="betaFeaturePanel canIDrivePanel" data-beta-feature-panel="can-i-drive" hidden>
+              <div class="sectionHeader">
+                <div>
+                  <div class="eyebrow">Safety beta</div>
+                  <h3>Can I Drive?</h3>
+                  <p class="muted">No calculator can tell you that. This beta only estimates standard drinks and a rough BAC from logged Pint Point drinks.</p>
+                </div>
+                <span class="pill pill--danger">Do not drive</span>
+              </div>
+              <div class="canIDriveWarningStack" role="note" aria-label="Can I Drive warnings">
+                <div class="notice notice--warning">This is not legal advice, medical advice, or a real breath test. Do not use it to decide whether you can legally or safely drive.</div>
+                <div class="notice notice--warning">Pint Path does not approve drinking and driving. Pint Path is not responsible for decisions made from this fun calculator.</div>
+                <div class="notice notice--warning">BAC can change with food, time, pour size, medication, health, fatigue, metabolism, sex, and the exact alcohol served. Use a taxi, rideshare, public transport, or a sober driver.</div>
+              </div>
+              <form id="canIDriveForm" class="form canIDriveForm">
+                <div class="grid grid--two">
+                  <label class="field">Height
+                    <input name="heightCm" type="number" inputmode="decimal" min="120" max="230" step="1" placeholder="cm" autocomplete="off" required />
+                    <span class="fieldHint">Stored only in this browser for the beta calculator.</span>
+                  </label>
+                  <label class="field">Weight
+                    <input name="weightKg" type="number" inputmode="decimal" min="35" max="220" step="0.1" placeholder="kg" autocomplete="off" required />
+                    <span class="fieldHint">Used for a rough Widmark-style estimate only.</span>
+                  </label>
+                </div>
+                <div class="grid grid--two">
+                  <label class="field">Logged drink window
+                    <select name="windowHours">
+                      <option value="2">Last 2 hours</option>
+                      <option value="4" selected>Last 4 hours</option>
+                      <option value="6">Last 6 hours</option>
+                      <option value="12">Last 12 hours</option>
+                    </select>
+                    <span class="fieldHint">Uses recent alcoholic Pint Point drink records on your account.</span>
+                  </label>
+                  <label class="field">Extra unlogged standard drinks
+                    <input name="extraStandardDrinks" type="number" inputmode="decimal" min="0" max="20" step="0.1" value="0" />
+                    <span class="fieldHint">Add anything you drank that Pint Path did not log.</span>
+                  </label>
+                </div>
+                <button class="button button--danger" type="submit">Estimate only</button>
+                <p class="helperCopy">This beta never gives a driving clearance. Even a low estimate can be wrong or illegal for your licence, state, job, or situation.</p>
+              </form>
+              <div id="canIDriveResult" class="canIDriveResult" aria-live="polite">
+                <div class="emptyState">
+                  <strong>No estimate yet.</strong>
+                  <span>Enter height and weight, then estimate from your recent logged drinks.</span>
+                </div>
+              </div>
+              <div id="canIDriveDrinkList" class="canIDriveDrinkList"></div>
             </section>
           </section>
         </div>
@@ -430,6 +483,11 @@
       pubGolfDirectionsRenderer: null,
     };
 
+    const CAN_I_DRIVE_PROFILE_KEY = "pintPathCanIDriveProfile";
+    const AU_STANDARD_DRINK_GRAMS = 10;
+    const BAC_ELIMINATION_PER_HOUR = 0.015;
+    const CAN_I_DRIVE_MAX_RECENT_DRINKS = 25;
+
     const statusLabels = {
       pending: "Pending",
       approved: "Verified",
@@ -463,6 +521,7 @@
       "pub-golf": "Pub Golf",
       leaderboard: "Leaderboard",
       "pint-points": "Pint Point Wallet",
+      "can-i-drive": "Can I Drive?",
     };
 
     const melbourneBoundsLiteral = {
@@ -511,6 +570,281 @@
 
     function formatMoney(value) {
       return new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" }).format(Number(value || 0));
+    }
+
+    function parseFiniteNumber(value, fallback = null) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : fallback;
+    }
+
+    function clampNumber(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function formatStandardDrinks(value) {
+      const numeric = Number(value || 0);
+      return numeric < 10 ? numeric.toFixed(1) : Math.round(numeric).toString();
+    }
+
+    function loadCanIDriveProfile() {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(CAN_I_DRIVE_PROFILE_KEY) || "{}");
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function saveCanIDriveProfile(form) {
+      const profile = {
+        heightCm: parseFiniteNumber(form.heightCm.value, null),
+        weightKg: parseFiniteNumber(form.weightKg.value, null),
+        windowHours: parseFiniteNumber(form.windowHours.value, 4),
+      };
+      try {
+        window.localStorage.setItem(CAN_I_DRIVE_PROFILE_KEY, JSON.stringify(profile));
+      } catch {
+        // Local-only profile storage is optional.
+      }
+    }
+
+    function populateCanIDriveForm() {
+      const form = $("canIDriveForm");
+      if (!form || form.dataset.profileLoaded === "true") {
+        return;
+      }
+      const profile = loadCanIDriveProfile();
+      if (profile.heightCm) {
+        form.heightCm.value = profile.heightCm;
+      }
+      if (profile.weightKg) {
+        form.weightKg.value = profile.weightKg;
+      }
+      if ([2, 4, 6, 12].includes(Number(profile.windowHours))) {
+        form.windowHours.value = String(profile.windowHours);
+      }
+      form.dataset.profileLoaded = "true";
+    }
+
+    function recordStandardDrinksPerUnit(record) {
+      if (!record?.isAlcoholic) {
+        return 0;
+      }
+      const metadata = record.metadata || {};
+      const metadataStandard = parseFiniteNumber(
+        metadata.standardDrinksPerUnit ?? metadata.standardDrinksPerDrink ?? metadata.standardDrinks,
+        null,
+      );
+      if (metadataStandard != null && metadataStandard > 0 && metadataStandard <= 6) {
+        return metadataStandard;
+      }
+
+      const itemText = [
+        record.itemName,
+        record.beverageCategory,
+        metadata.itemName,
+        metadata.beerName,
+        metadata.servingSize,
+      ].filter(Boolean).join(" ").toLowerCase();
+
+      if (/\b(non[-\s]?alcoholic|zero alcohol|0\.0|soft drink|water|soda)\b/.test(itemText)) {
+        return 0;
+      }
+      if (/\b(pint|570\s?ml|guinness|draught|draft|lager|ale|ipa|xpa|stout|cider|beer)\b/.test(itemText)) {
+        return 2;
+      }
+      if (/\b(schooner|425\s?ml)\b/.test(itemText)) {
+        return 1.5;
+      }
+      if (/\b(pot|middy|285\s?ml)\b/.test(itemText)) {
+        return 0.9;
+      }
+      if (/\b(wine|rose|sparkling)\b/.test(itemText)) {
+        return 1.4;
+      }
+      if (/\b(cocktail|margarita|spritz|negroni|martini)\b/.test(itemText)) {
+        return 1.6;
+      }
+      if (/\b(vodka|gin|whisky|whiskey|rum|tequila|spirit)\b/.test(itemText)) {
+        return 1;
+      }
+      return 1.6;
+    }
+
+    function estimateStandardDrinksForRecord(record) {
+      const quantity = clampNumber(parseFiniteNumber(record?.quantity, 1) || 1, 0, 20);
+      return quantity * recordStandardDrinksPerUnit(record);
+    }
+
+    function canIDriveRecordDate(record) {
+      const date = new Date(record?.recordedAt || record?.createdAt || "");
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function canIDriveRecordsForWindow(result, windowHours) {
+      const records = result?.pintPoints?.recentDrinkRecords || [];
+      const cutoff = Date.now() - Math.max(1, Number(windowHours || 4)) * 60 * 60 * 1000;
+      return records
+        .filter((record) => record?.isAlcoholic)
+        .map((record) => ({ record, recordedAt: canIDriveRecordDate(record) }))
+        .filter((entry) => entry.recordedAt && entry.recordedAt.getTime() >= cutoff)
+        .slice(0, CAN_I_DRIVE_MAX_RECENT_DRINKS);
+    }
+
+    function estimateBodyWaterFactor(weightKg, heightCm) {
+      const heightM = heightCm / 100;
+      const bmi = heightM > 0 ? weightKg / (heightM * heightM) : 24;
+      const factor = 0.6 - clampNumber((bmi - 22) * 0.006, -0.05, 0.08);
+      return clampNumber(factor, 0.52, 0.66);
+    }
+
+    function calculateEstimatedBac(input) {
+      const standardDrinks = Math.max(0, Number(input.standardDrinks || 0));
+      const weightKg = Number(input.weightKg);
+      const heightCm = Number(input.heightCm);
+      const elapsedHours = Math.max(0, Number(input.elapsedHours || 0));
+      if (!Number.isFinite(weightKg) || !Number.isFinite(heightCm) || weightKg <= 0 || heightCm <= 0) {
+        return null;
+      }
+      const gramsAlcohol = standardDrinks * AU_STANDARD_DRINK_GRAMS;
+      const bodyWaterFactor = estimateBodyWaterFactor(weightKg, heightCm);
+      const rawBac = (gramsAlcohol / (weightKg * 1000 * bodyWaterFactor)) * 100;
+      return Math.max(0, rawBac - (elapsedHours * BAC_ELIMINATION_PER_HOUR));
+    }
+
+    function calculateCanIDriveEstimate(form, result) {
+      const windowHours = parseFiniteNumber(form.windowHours.value, 4) || 4;
+      const heightCm = parseFiniteNumber(form.heightCm.value, null);
+      const weightKg = parseFiniteNumber(form.weightKg.value, null);
+      const extraStandardDrinks = clampNumber(parseFiniteNumber(form.extraStandardDrinks.value, 0) || 0, 0, 20);
+      const records = canIDriveRecordsForWindow(result, windowHours);
+      const loggedStandardDrinks = records.reduce(
+        (total, entry) => total + estimateStandardDrinksForRecord(entry.record),
+        0,
+      );
+      const standardDrinks = loggedStandardDrinks + extraStandardDrinks;
+      const oldestRecordTime = records.reduce((oldest, entry) =>
+        Math.min(oldest, entry.recordedAt.getTime()),
+        Date.now(),
+      );
+      const elapsedFromRecords = records.length
+        ? Math.max(0.5, (Date.now() - oldestRecordTime) / (60 * 60 * 1000))
+        : windowHours;
+      const elapsedHours = extraStandardDrinks > 0 && !records.length
+        ? windowHours
+        : Math.min(windowHours, elapsedFromRecords);
+      return {
+        records,
+        windowHours,
+        heightCm,
+        weightKg,
+        loggedStandardDrinks,
+        extraStandardDrinks,
+        standardDrinks,
+        elapsedHours,
+        estimatedBac: calculateEstimatedBac({ standardDrinks, heightCm, weightKg, elapsedHours }),
+      };
+    }
+
+    function canIDriveBacBand(estimatedBac) {
+      if (estimatedBac == null) {
+        return { label: "Missing details", tone: "warning" };
+      }
+      if (estimatedBac <= 0) {
+        return { label: "No clearance", tone: "neutral" };
+      }
+      if (estimatedBac < 0.02) {
+        return { label: "Alcohol may still be present", tone: "warning" };
+      }
+      if (estimatedBac < 0.05) {
+        return { label: "Impairment possible", tone: "danger" };
+      }
+      return { label: "High estimate", tone: "danger" };
+    }
+
+    function renderCanIDriveDrinkList(entries = []) {
+      const list = $("canIDriveDrinkList");
+      if (!list) {
+        return;
+      }
+      if (!entries.length) {
+        list.innerHTML = `
+          <div class="emptyState">
+            <strong>No logged alcoholic drinks in this window.</strong>
+            <span>Add unlogged standard drinks if Pint Path did not record everything.</span>
+          </div>
+        `;
+        return;
+      }
+      list.innerHTML = `
+        <div class="betaLeaderboardMeta">
+          <strong>Logged drinks used</strong>
+          <span>Standard drinks are estimated from item names and quantities, not from a breath test or lab measurement.</span>
+        </div>
+        ${entries.map(({ record }) => {
+          const standardDrinks = estimateStandardDrinksForRecord(record);
+          return `
+            <article class="canIDriveDrinkRow">
+              <div>
+                <strong>${escapeHtml(record.itemName || record.beverageCategory || "Logged drink")}</strong>
+                <span>${escapeHtml(record.venueName || "Pint Path venue")} · ${escapeHtml(MelbBeerBusiness.formatDate(record.recordedAt || record.createdAt))}</span>
+              </div>
+              <em>${escapeHtml(formatStandardDrinks(standardDrinks))} std</em>
+            </article>
+          `;
+        }).join("")}
+      `;
+    }
+
+    function renderCanIDriveEstimate(estimate) {
+      const target = $("canIDriveResult");
+      if (!target) {
+        return;
+      }
+      const band = canIDriveBacBand(estimate.estimatedBac);
+      const bacCopy = estimate.estimatedBac == null ? "Enter height and weight" : `${estimate.estimatedBac.toFixed(3)}%`;
+      target.innerHTML = `
+        <section class="canIDriveEstimate canIDriveEstimate--${escapeHtml(band.tone)}">
+          <div class="canIDriveAnswer">
+            <span class="metricLabel">Can I drive?</span>
+            <strong>No calculator can say yes.</strong>
+            <p>Do not drive after drinking. Use a sober driver, taxi, rideshare, public transport, or wait and use a real breath/blood test where appropriate.</p>
+          </div>
+          <div class="canIDriveMetricGrid">
+            <article class="metricCard">
+              <div class="metricLabel">Estimated BAC now</div>
+              <div class="metricValue metricValue--small">${escapeHtml(bacCopy)}</div>
+              <p class="helperCopy">${escapeHtml(band.label)}. This is not a legal reading.</p>
+            </article>
+            <article class="metricCard">
+              <div class="metricLabel">Standard drinks</div>
+              <div class="metricValue metricValue--small">${escapeHtml(formatStandardDrinks(estimate.standardDrinks))}</div>
+              <p class="helperCopy">${escapeHtml(formatStandardDrinks(estimate.loggedStandardDrinks))} logged + ${escapeHtml(formatStandardDrinks(estimate.extraStandardDrinks))} unlogged.</p>
+            </article>
+            <article class="metricCard">
+              <div class="metricLabel">Records used</div>
+              <div class="metricValue metricValue--small">${escapeHtml(estimate.records.length)}</div>
+              <p class="helperCopy">From the last ${escapeHtml(estimate.windowHours)} hours and your recent Pint Point log.</p>
+            </article>
+            <article class="metricCard">
+              <div class="metricLabel">Calculation window</div>
+              <div class="metricValue metricValue--small">${escapeHtml(estimate.elapsedHours.toFixed(1))}h</div>
+              <p class="helperCopy">Assumes alcohol burns off at an average rate. Real people vary.</p>
+            </article>
+          </div>
+          <div class="notice notice--warning">This beta estimate is for curiosity only. It is not legal advice, not medical advice, not a safety clearance, and not evidence that you are under any legal limit.</div>
+        </section>
+      `;
+    }
+
+    function renderCanIDrivePanel(result) {
+      populateCanIDriveForm();
+      const form = $("canIDriveForm");
+      if (!form) {
+        return;
+      }
+      const windowHours = parseFiniteNumber(form.windowHours.value, 4) || 4;
+      renderCanIDriveDrinkList(canIDriveRecordsForWindow(result, windowHours));
     }
 
     function googleMapsConfig() {
@@ -802,6 +1136,9 @@
       document.querySelector(".betaFeatureMenu")?.classList.remove("is-open");
       if (activeTarget === "pub-golf") {
         installPubGolfLocationResolver();
+      }
+      if (activeTarget === "can-i-drive") {
+        renderCanIDrivePanel(state.accountData || {});
       }
     }
 
@@ -1098,6 +1435,7 @@
       }
 
       renderPubGolfDrinkGrid(beta.pubGolf?.defaultDrinks || []);
+      renderCanIDrivePanel(result);
       installBetaFeatureMenu();
       showBetaFeature(state.activeBetaFeature);
       const campaign = beta.leaderboard?.campaign || {};
@@ -2252,6 +2590,18 @@
         } finally {
           setLoading(button, false);
         }
+      });
+      $("canIDriveForm").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const form = $("canIDriveForm");
+        saveCanIDriveProfile(form);
+        const estimate = calculateCanIDriveEstimate(form, state.accountData || {});
+        renderCanIDriveEstimate(estimate);
+        renderCanIDriveDrinkList(estimate.records);
+        MelbBeerBusiness.setStatus(
+          $("dashboardStatus"),
+          "Estimate rendered. This is not legal advice or a driving clearance. Do not drive after drinking.",
+        );
       });
       $("privacySettingsForm").addEventListener("submit", async (event) => {
         event.preventDefault();

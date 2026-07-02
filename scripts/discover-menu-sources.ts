@@ -12,6 +12,7 @@ import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../src/constants/beers.js";
+import { extractStructuredBeerRowsFromText } from "../src/lib/menu-text-extraction.js";
 import {
   normalizeVenueKey,
   shouldImportBarOrPubPlace,
@@ -404,11 +405,17 @@ function venueKey(venue: Pick<VenueCandidate, "name" | "address" | "suburb">): s
     .join("|");
 }
 
+function venueMergeKey(venue: VenueCandidate): string {
+  const naturalKey = venueKey(venue);
+  const naturalKeyParts = naturalKey.split("|").filter(Boolean);
+  return naturalKey && naturalKeyParts.length >= 2 ? naturalKey : venue.id || naturalKey;
+}
+
 function mergeVenues(venues: VenueCandidate[]): VenueCandidate[] {
   const merged = new Map<string, VenueCandidate>();
 
   for (const venue of venues) {
-    const key = venue.id || venueKey(venue);
+    const key = venueMergeKey(venue);
     const existing = merged.get(key);
     if (!existing) {
       merged.set(key, venue);
@@ -1772,8 +1779,11 @@ function splitTextIntoExtractionLines(text: string): string[] {
 }
 
 function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
-  const rows: MenuImageOcrBeer[] = [];
-  const seen = new Set<string>();
+  const structuredRows = extractStructuredBeerRowsFromText(text).slice(0, MAX_ROWS_PER_TEXT_SOURCE);
+  const rows: MenuImageOcrBeer[] = [...structuredRows];
+  const seen = new Set(
+    structuredRows.map((row) => `${normalizeLooseText(row.name)}|${row.priceNumeric ?? ""}|${row.availabilityStatus}`),
+  );
 
   for (const line of splitTextIntoExtractionLines(text)) {
     const lower = line.toLowerCase();
@@ -1815,7 +1825,7 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
       ]
         .filter(Boolean)
         .join(" | ");
-      const key = `${normalizeLooseText(name)}|${match.priceNumeric}|${availabilityStatus}|${normalizeLooseText(notes)}`;
+      const key = `${normalizeLooseText(name)}|${match.priceNumeric}|${availabilityStatus}`;
       if (seen.has(key)) {
         continue;
       }
@@ -2100,7 +2110,11 @@ async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: Open
       "}",
       "Only include rows that are readable and useful for a pub beer map or Pint Path special review.",
       `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${VIEWER_TRACKED_BEERS.map((beer) => beer.name).join(", ")}.`,
-      "If tap format is not clear, use availability_status 'unknown'.",
+      "Keep each menu row separate. Do not carry a beer name or price from the previous or next row.",
+      "When a table heading says Pots / Pints / Jugs, choose the Pints price as price_numeric and price_text.",
+      "When a section heading says ON TAP, mark the readable rows under that heading as availability_status 'on_tap' until the next section heading.",
+      "When a section heading says BOTTLES & CANS, CANS, BOTTLES, or PACKAGED, mark rows under that heading as availability_status 'package_only'.",
+      "If the row price/name pairing is ambiguous after checking the row and heading, omit the row instead of guessing.",
       `Venue hint: ${candidate.venueName}`,
       `Source URL: ${candidate.sourceUrl}`,
     ].join("\n");

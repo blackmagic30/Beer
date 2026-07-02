@@ -3873,7 +3873,7 @@ export class BusinessService {
     const activeCodes = this.repository
       .listFreePintRewardCodesForUser(account.id, 10)
       .filter((code) => code.status === "active" && code.expiresAt > now);
-    const recentDrinkRecords = this.repository.listPintPointDrinkRecordsForUser(account.id, 10);
+    const recentDrinkRecords = this.repository.listPintPointDrinkRecordsForUser(account.id, 25);
     const recentLedger = this.repository.listPintPointLedgerForUser(account.id, 20);
     const rewardRedemptions = this.repository.listFreePintRewardRedemptionsForUser(account.id, 10);
 
@@ -4407,6 +4407,11 @@ export class BusinessService {
           enabled: hasFullAccess,
           defaultDrinks: PUB_GOLF_DEFAULT_DRINKS,
           copy: "Build a nine-stop Pub Golf route from real venue drink data. Beta routing uses Pint Path venue coordinates with walking/transit hints.",
+        },
+        canIDrive: {
+          enabled: hasFullAccess,
+          sourceDrinkLimit: 25,
+          copy: "Estimate standard drinks and a rough BAC from recent Pint Point drink records. This never provides a driving clearance.",
         },
       },
       ageVerification: {

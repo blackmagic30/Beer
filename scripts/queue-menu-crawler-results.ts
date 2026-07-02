@@ -12,6 +12,11 @@ import type {
   AdminIngestionCrawlerFeedback,
   BeerAvailabilityStatus,
 } from "../src/db/models.js";
+import {
+  crawlerQueueDuplicateKey,
+  crawlerQueueSourceUrlCandidates,
+  normalizeSqlComparableText,
+} from "../src/lib/menu-source-dedupe.js";
 
 type SourceKind = "menu_page" | "menu_image" | "menu_pdf" | "homepage_menu_signal";
 type SourceOrigin = "official_host" | "trusted_external_menu_host";
@@ -371,8 +376,12 @@ const beerCatalogRepository = dryRun ? null : new BeerCatalogRepository(db);
 const duplicateQuery = db.prepare(
   `SELECT id
      FROM admin_ingestion_queue
-    WHERE venue_id = ?
-      AND source_url = ?
+    WHERE source_url IN (@sourceUrl, @candidateSourceUrl, @normalizedSourceUrl)
+      AND (
+        venue_id = @venueId
+        OR lower(trim(venue_name)) = @venueName
+        OR lower(trim(COALESCE(venue_name_guess, ''))) = @venueName
+      )
       AND status IN ('pending_review', 'published')
     LIMIT 1`,
 );
@@ -420,6 +429,7 @@ let skippedNoUsableRows = 0;
 let skippedByLimit = 0;
 let queuedRows = 0;
 const queuedVenues = new Set<string>();
+const queuedCandidateKeys = new Set<string>();
 const queueCandidates = candidates
   .filter((candidate) => {
     if (includeExternal || candidate.sourceOrigin === "official_host") {
@@ -462,11 +472,28 @@ const transaction = db.transaction(() => {
       continue;
     }
 
-    const sourceUrl = candidate.canonicalSourceUrl || candidate.sourceUrl;
-    if (duplicateQuery.get(candidate.venueId, sourceUrl)) {
+    const sourceUrlCandidates = crawlerQueueSourceUrlCandidates(candidate);
+    const sourceUrl = sourceUrlCandidates[0] ?? (candidate.canonicalSourceUrl || candidate.sourceUrl);
+    const candidateSourceUrl = sourceUrlCandidates[1] ?? sourceUrl;
+    const normalizedSourceUrl = sourceUrlCandidates[2] ?? sourceUrl;
+    const candidateKey = crawlerQueueDuplicateKey(candidate);
+    if (queuedCandidateKeys.has(candidateKey)) {
       skippedDuplicate += 1;
       continue;
     }
+
+    if (duplicateQuery.get({
+      venueId: candidate.venueId,
+      venueName: normalizeSqlComparableText(candidate.venueName),
+      sourceUrl,
+      candidateSourceUrl,
+      normalizedSourceUrl,
+    })) {
+      skippedDuplicate += 1;
+      continue;
+    }
+
+    queuedCandidateKeys.add(candidateKey);
 
     if (!dryRun) {
       insertQueueItem.run({

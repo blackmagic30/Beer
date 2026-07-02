@@ -6531,6 +6531,108 @@ body.discountPassModalOpen {
   display: none;
 }
 
+.canIDrivePanel {
+  border-color: rgba(248, 113, 113, 0.22);
+}
+
+.canIDriveWarningStack,
+.canIDriveForm,
+.canIDriveResult,
+.canIDriveDrinkList,
+.canIDriveEstimate {
+  display: grid;
+  gap: 10px;
+}
+
+.canIDriveForm {
+  border: 1px solid rgba(248, 113, 113, 0.18);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.54);
+  padding: 14px;
+}
+
+.canIDriveEstimate {
+  border: 1px solid rgba(248, 113, 113, 0.22);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.32);
+  padding: 14px;
+}
+
+.canIDriveAnswer {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  border-radius: 16px;
+  background: rgba(127, 29, 29, 0.22);
+  padding: 14px;
+}
+
+.canIDriveAnswer strong {
+  color: #fee2e2;
+  font-size: clamp(1.2rem, 2.5vw, 1.7rem);
+  line-height: 1.05;
+}
+
+.canIDriveAnswer p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.canIDriveMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.canIDriveMetricGrid .metricCard {
+  min-height: 132px;
+}
+
+.canIDriveDrinkList {
+  margin-top: 2px;
+}
+
+.canIDriveDrinkRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 16px;
+  background: rgba(3, 7, 18, 0.28);
+  padding: 12px;
+}
+
+.canIDriveDrinkRow div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.canIDriveDrinkRow strong,
+.canIDriveDrinkRow span {
+  overflow-wrap: anywhere;
+}
+
+.canIDriveDrinkRow span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 780;
+}
+
+.canIDriveDrinkRow em {
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.1);
+  color: #fecaca;
+  padding: 5px 9px;
+  font-style: normal;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
 .leaderboardPodium {
   display: grid;
   grid-template-areas: "second first third";
@@ -8183,6 +8285,14 @@ body.discountPassModalOpen {
     padding: 13px;
   }
 
+  .canIDriveMetricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .canIDriveMetricGrid .metricCard {
+    min-height: 118px;
+  }
+
   .accountStatsProgressCard {
     grid-column: 1 / -1;
     min-height: auto;
@@ -8874,6 +8984,23 @@ body.discountPassModalOpen {
 
   .pubGolfRouteMap {
     min-height: 300px;
+  }
+
+  .canIDriveMetricGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .canIDriveMetricGrid .metricCard {
+    min-height: 98px;
+  }
+
+  .canIDriveDrinkRow {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .canIDriveDrinkRow em {
+    justify-self: start;
   }
 
   .discountPassModal {

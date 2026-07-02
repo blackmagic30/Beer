@@ -68,6 +68,10 @@ function businessCss() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/business.css"), "utf8");
 }
 
+function businessServiceTs() {
+  return fs.readFileSync(path.resolve(process.cwd(), "src/modules/business/business.service.ts"), "utf8");
+}
+
 function callbackHtml() {
   return fs.readFileSync(path.resolve(process.cwd(), "viewer/auth/callback.html"), "utf8");
 }
@@ -183,6 +187,8 @@ describe("account page shell", () => {
     expect(html.indexOf('id="displayNameForm"')).toBeLessThan(html.indexOf('id="leaderboardPodium"'));
     expect(html).toContain('id="rewardVoucherList"');
     expect(html).toContain('id="pubGolfForm"');
+    expect(html).toContain('data-beta-feature-target="can-i-drive"');
+    expect(html).toContain('id="canIDriveForm"');
     expect(html).toContain("Ranks 4-50");
     expect(html).toContain("betaLeaderboardRow--me");
     expect(html).toContain("betaLeaderboardRow--outside");
@@ -407,6 +413,44 @@ describe("account page shell", () => {
     expect(css).toContain(".accountSupportFields");
     expect(css).toContain(".rewardVoucherCard");
     expect(css).toContain(".pubGolfDrinkGrid");
+    expect(css).toContain(".canIDrivePanel");
+  });
+
+  it("adds a guarded Can I Drive beta calculator without giving driving clearance", () => {
+    const html = accountHtml();
+    const css = businessCss();
+    const service = businessServiceTs();
+
+    expect(html).toContain('id="betaFeatureCanIDrive"');
+    expect(html).toContain('data-beta-feature-panel="can-i-drive"');
+    expect(html).toContain("Can I Drive?");
+    expect(html).toContain("No calculator can tell you that.");
+    expect(html).toContain("This is not legal advice, medical advice, or a real breath test.");
+    expect(html).toContain("Pint Path does not approve drinking and driving.");
+    expect(html).toContain("Pint Path is not responsible for decisions made from this fun calculator.");
+    expect(html).toContain("Do not drive after drinking.");
+    expect(html).toContain('name="heightCm"');
+    expect(html).toContain('name="weightKg"');
+    expect(html).toContain('name="extraStandardDrinks"');
+    expect(html).toContain("CAN_I_DRIVE_PROFILE_KEY");
+    expect(html).toContain("AU_STANDARD_DRINK_GRAMS");
+    expect(html).toContain("BAC_ELIMINATION_PER_HOUR");
+    expect(html).toContain("function estimateStandardDrinksForRecord");
+    expect(html).toContain("function calculateEstimatedBac");
+    expect(html).toContain("function calculateCanIDriveEstimate");
+    expect(html).toContain("renderCanIDrivePanel(result)");
+    expect(html).toContain("renderCanIDriveEstimate(estimate)");
+    expect(html).toContain("No calculator can say yes.");
+    expect(html).not.toContain("Safe to drive");
+
+    expect(css).toContain(".canIDriveWarningStack");
+    expect(css).toContain(".canIDriveMetricGrid");
+    expect(css).toContain(".canIDriveDrinkRow");
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.canIDriveMetricGrid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+    expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.canIDriveMetricGrid\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
+    expect(service).toContain("listPintPointDrinkRecordsForUser(account.id, 25)");
+    expect(service).toContain("canIDrive");
+    expect(service).toContain("This never provides a driving clearance.");
   });
 
   it("opens account settings sections on demand instead of rendering every panel open", () => {
