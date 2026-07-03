@@ -31,7 +31,11 @@ const HEADING_PREFIX_PATTERN =
 const BEERISH_NAME_PATTERN =
   /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|sour|ginger\s+beer|hard\s+rated|rtd|guinness|asahi|balter|carlton|northern|goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|kirin|furphy|napoleone|little\s+creatures|obrien'?s|heaps\s+normal|pabst)\b/i;
 const NON_BEER_DRINK_NAME_PATTERN =
-  /\b(?:gin|vodka|rum|tequila|mezcal|vermouth|amaro|aperitif|liqueur|whisk(?:e)?y|bourbon|scotch|rye|brandy|cognac|sambuca|ouzo|pisco|campari|aperol|tanqueray|poor\s+tom'?s|archie\s+rose|aviation|four\s+pillars|mgc|hellyer'?s|noilly\s+prat|marionette|bulleit|bitter\s+orange|dry\s+cassis|single\s+shot)\b/i;
+  /\b(?:wine|cocktails?|spritz|margarita|negroni|amaretto|mini\s+beer|baby\s+guinness|gin|vodka|rum|tequila|mezcal|vermouth|amaro|aperitif|liqueur|whisk(?:e)?y|bourbon|scotch|rye|brandy|cognac|sambuca|ouzo|pisco|campari|aperol|tanqueray|poor\s+tom'?s|archie\s+rose|aviation|four\s+pillars|mgc|hellyer'?s|noilly\s+prat|marionette|bulleit|bitter\s+orange|dry\s+cassis|single\s+shot)\b/i;
+const FOOD_OR_EVENT_NOISE_PATTERN =
+  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|parma|parmigiana|schnitzel|sandwich|toastie|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan)\b/i;
+const ARTICLE_OR_JSON_NOISE_PATTERN =
+  /\b(?:description|urlslug|structured_data|utm_|blogs?\/events?|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|soft\s+drink)\b/i;
 
 const TAP_SECTION_LINE_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
 const TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
@@ -240,6 +244,38 @@ function isLikelyNonBeerDrinkName(name: string, sourceRow: string): boolean {
   }
 
   return !/\b(?:beer|lager|ale|ipa|xpa|stout|porter|pilsner|cider|ginger\s+beer|hard\s+rated|rtd)\b/i.test(name);
+}
+
+function isReadableMenuRowText(value: string): boolean {
+  const compact = value.replace(/\s+/g, "");
+  if (compact.length < 3) {
+    return false;
+  }
+
+  const strangeChars = compact.match(/[^\x20-\x7e\u00a0-\u024f]/g)?.length ?? 0;
+  if (strangeChars >= 3 && strangeChars / compact.length > 0.08) {
+    return false;
+  }
+
+  const letters = compact.match(/[A-Za-z]/g)?.length ?? 0;
+  return letters >= 3;
+}
+
+function isLikelyMenuNoiseName(name: string, sourceRow: string): boolean {
+  const text = `${name} ${sourceRow}`;
+  if (!isReadableMenuRowText(text)) {
+    return true;
+  }
+  if (FOOD_OR_EVENT_NOISE_PATTERN.test(text) || ARTICLE_OR_JSON_NOISE_PATTERN.test(text)) {
+    return true;
+  }
+  if (/^\s*(?:cocktails?|red\s+wine|white\s+wine|sparkling\s+wine|ros[eé]|spirits?)\b/i.test(name)) {
+    return true;
+  }
+  if (/^\s*(?:mini\s+beer|baby\s+guinness|amaretto\s+sour)\s*$/i.test(name)) {
+    return true;
+  }
+  return false;
 }
 
 function formatCurrencyPrice(value: number): string {
@@ -487,7 +523,11 @@ function simpleMenuPriceMatch(line: string): { index: number; priceText: string;
     }
 
     const context = line.slice(Math.max(0, match.index - 20), Math.min(line.length, match.index + rawPriceText.length + 20));
+    const after = line.slice(match.index + rawPriceText.length, Math.min(line.length, match.index + rawPriceText.length + 16));
     if (/%/.test(rawPriceText) || /\b(?:19|20)\d{2}\b/.test(context)) {
+      continue;
+    }
+    if (/^\s*packs?\b/i.test(after)) {
       continue;
     }
 
@@ -527,12 +567,12 @@ function isLikelyStandaloneBeerNameLine(line: string, section: SectionMarker | n
     return false;
   }
 
+  if (isLikelyMenuNoiseName(cleanedName, line) || isLikelyNonBeerDrinkName(cleanedName, line)) {
+    return false;
+  }
   const trackedName = findTrackedBeerInRowName(cleanedName);
   if (trackedName) {
     return true;
-  }
-  if (isLikelyNonBeerDrinkName(cleanedName, line)) {
-    return false;
   }
 
   return Boolean(section) && (BEERISH_NAME_PATTERN.test(cleanedName) || ABV_PATTERN.test(line));
@@ -641,6 +681,9 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       continue;
     }
 
+    if (isLikelyMenuNoiseName(cleanedName, match[0] ?? "")) {
+      continue;
+    }
     const trackedName = findTrackedBeerInRowName(cleanedName);
     if (!trackedName && isLikelyNonBeerDrinkName(cleanedName, match[0] ?? "")) {
       continue;
@@ -665,6 +708,9 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       hasPotsPintsJugsHint: hint,
     });
     if (selectedPrice == null) {
+      continue;
+    }
+    if (priceText.replace(/\s/g, "").startsWith("$") === false && prices.length === 1 && selectedPrice > 40) {
       continue;
     }
 
@@ -717,6 +763,9 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       continue;
     }
 
+    if (isLikelyMenuNoiseName(cleanedName, line)) {
+      continue;
+    }
     const trackedName = findTrackedBeerInRowName(cleanedName);
     if (!trackedName && isLikelyNonBeerDrinkName(cleanedName, line)) {
       continue;
@@ -737,6 +786,9 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       hasPotsPintsJugsHint: false,
     });
     if (selectedPrice == null) {
+      continue;
+    }
+    if (!priceMatch.priceText.trim().startsWith("$") && priceMatch.prices.length === 1 && selectedPrice > 40) {
       continue;
     }
 
@@ -787,6 +839,9 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
     }
 
     const cleanedName = cleanMenuRowName(line);
+    if (isLikelyMenuNoiseName(cleanedName, line)) {
+      continue;
+    }
     const trackedName = findTrackedBeerInRowName(cleanedName);
     if (!trackedName && isLikelyNonBeerDrinkName(cleanedName, line)) {
       continue;
@@ -803,6 +858,9 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       hasPotsPintsJugsHint: priceBlock.prices.length >= 3,
     });
     if (selectedPrice == null) {
+      continue;
+    }
+    if (!priceBlock.priceText.trim().startsWith("$") && priceBlock.prices.length === 1 && selectedPrice > 40) {
       continue;
     }
 

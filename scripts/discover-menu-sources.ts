@@ -783,6 +783,17 @@ function isExcludedMenuSourceUrl(url: string, text: string): boolean {
     return true;
   }
   const haystack = `${url} ${text}`.replace(/[-_]+/g, " ");
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    if (/\.(?:css|js|woff2?|ttf|otf|eot|mp4|webm|mov|avi)(?:$|\?)/i.test(pathname)) {
+      return true;
+    }
+    if (/\/(?:shop|product|products|product-category|collections?|cart|checkout)(?:\/|$)/i.test(pathname) && !/\bmenus?\b/i.test(pathname)) {
+      return true;
+    }
+  } catch {
+    // Fall through to text-based exclusions below.
+  }
   return /\b(masterclass|gift cards?|careers?|jobs?|functions?|weddings?|events packages?|private dining|reservations?|bookings?|accommodation|rooms?|stay|hotel rooms?|privacy|terms|accessibility|newsletter|login|cart|checkout|delivery|gallery|press)\b/i.test(
     haystack,
   );
@@ -1467,10 +1478,29 @@ function extractPdfTextFallback(buffer: Buffer): string {
   return decodePdfTextLikeContent(chunks.join("\n")).slice(0, MAX_TEXT_EXTRACTION_CHARS);
 }
 
+function pdfFallbackTextIsUsable(value: string): boolean {
+  const compact = value.replace(/\s+/g, "");
+  if (compact.length < 60) {
+    return false;
+  }
+
+  const strangeChars = compact.match(/[^\x20-\x7e\u00a0-\u024f]/g)?.length ?? 0;
+  if (strangeChars >= 8 && strangeChars / compact.length > 0.04) {
+    return false;
+  }
+
+  const words = value.match(/\b[A-Za-z][A-Za-z'&-]{2,}\b/g)?.length ?? 0;
+  return words >= 8;
+}
+
 async function extractPdfText(buffer: Buffer): Promise<string> {
   const preferred = await extractPdfTextWithPdftotext(buffer);
   const fallback = extractPdfTextFallback(buffer);
-  return textForExtraction([preferred, fallback].filter(Boolean).join("\n"));
+  const chunks = preferred ? [preferred] : [];
+  if (pdfFallbackTextIsUsable(fallback) && (!preferred || !hasDrinkPriceSignals(preferred) || hasDrinkPriceSignals(fallback))) {
+    chunks.push(fallback);
+  }
+  return textForExtraction(chunks.filter(Boolean).join("\n"));
 }
 
 function normalizeLooseText(value: string): string {
@@ -1504,7 +1534,7 @@ function inferGenericDrinkName(line: string, priceIndex: number): string | null 
   const beforePrice = line.slice(0, Math.max(0, priceIndex)).replace(/\s+/g, " ").trim();
   const afterPrice = line.slice(priceIndex).replace(/\s+/g, " ").trim();
   const genericMatch = `${beforePrice} ${afterPrice}`.match(
-    /\b(guinness|lager|pale ale|pacific ale|ipa|xpa|stout|porter|pilsner|draught|draft|cider|ginger beer|red wine|white wine|sparkling wine|rose|ros[eé]|margarita|spritz|cocktail)\b/i,
+    /\b(guinness|lager|pale ale|pacific ale|ipa|xpa|stout|porter|pilsner|draught|draft|cider|ginger beer)\b/i,
   );
   if (genericMatch?.[1]) {
     const maybeName = beforePrice
@@ -1524,6 +1554,44 @@ function inferGenericDrinkName(line: string, priceIndex: number): string | null 
   return null;
 }
 
+const EXTRACTION_FOOD_EVENT_NOISE_PATTERN =
+  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|parma|parmigiana|schnitzel|sandwich|toastie|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan)\b/i;
+const EXTRACTION_ARTICLE_OR_JSON_NOISE_PATTERN =
+  /\b(?:description|urlslug|structured_data|utm_|blogs?\/events?|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|soft\s+drink)\b/i;
+
+function isReadableExtractionText(value: string): boolean {
+  const compact = value.replace(/\s+/g, "");
+  if (compact.length < 3) {
+    return false;
+  }
+
+  const strangeChars = compact.match(/[^\x20-\x7e\u00a0-\u024f]/g)?.length ?? 0;
+  if (strangeChars >= 3 && strangeChars / compact.length > 0.08) {
+    return false;
+  }
+
+  const letters = compact.match(/[A-Za-z]/g)?.length ?? 0;
+  return letters >= 3;
+}
+
+function isLikelyMenuNoiseText(value: string): boolean {
+  if (!isReadableExtractionText(value)) {
+    return true;
+  }
+  const hasBeerServingSignal = /\b(?:beer|pint|schooner|pot|jug|tap|draught|draft|lager|ale|ipa|xpa|stout|porter|pilsner|cider)\b/i.test(value);
+  const hasHardNonBeerDrinkSignal =
+    /\b(?:cocktails?|spritz|margarita|negroni|amaretto|mini\s+beer|baby\s+guinness|gin|vodka|rum|tequila|mezcal|vermouth|amaro|aperitif|liqueur|whisk(?:e)?y|bourbon|scotch|rye|brandy|cognac|sambuca|ouzo|pisco|campari|aperol)\b/i.test(
+      value,
+    );
+  const hasWineOnlySignal = /\bwine\b/i.test(value) && !hasBeerServingSignal;
+  return (
+    EXTRACTION_FOOD_EVENT_NOISE_PATTERN.test(value) ||
+    EXTRACTION_ARTICLE_OR_JSON_NOISE_PATTERN.test(value) ||
+    hasHardNonBeerDrinkSignal ||
+    hasWineOnlySignal
+  );
+}
+
 function isUsableExtractedDrinkName(name: string, trackedBeer: string | null): boolean {
   const trimmed = name.trim();
   const loose = normalizeLooseText(trimmed);
@@ -1541,10 +1609,13 @@ function isUsableExtractedDrinkName(name: string, trackedBeer: string | null): b
   }
   if (
     !trackedBeer &&
-    /\b(?:gin|vodka|rum|tequila|mezcal|vermouth|amaro|aperitif|liqueur|whisk(?:e)?y|bourbon|scotch|rye|brandy|cognac|sambuca|ouzo|pisco|campari|aperol|tanqueray|poor\s+tom'?s|archie\s+rose|aviation|four\s+pillars|mgc|hellyer'?s|noilly\s+prat|marionette|bulleit|bitter\s+orange|dry\s+cassis|single\s+shot)\b/i.test(
+    /\b(?:wine|cocktails?|spritz|margarita|negroni|amaretto|mini\s+beer|baby\s+guinness|gin|vodka|rum|tequila|mezcal|vermouth|amaro|aperitif|liqueur|whisk(?:e)?y|bourbon|scotch|rye|brandy|cognac|sambuca|ouzo|pisco|campari|aperol|tanqueray|poor\s+tom'?s|archie\s+rose|aviation|four\s+pillars|mgc|hellyer'?s|noilly\s+prat|marionette|bulleit|bitter\s+orange|dry\s+cassis|single\s+shot)\b/i.test(
       trimmed,
     )
   ) {
+    return false;
+  }
+  if (isLikelyMenuNoiseText(trimmed)) {
     return false;
   }
   if (
@@ -1673,6 +1744,9 @@ function isLikelyFoodOrMerchPrice(line: string, priceIndex: number): boolean {
   const context = priceContext(line, priceIndex);
   const nearPrice = line.slice(Math.max(0, priceIndex - 45), Math.min(line.length, priceIndex + 55));
   const immediatelyAfterPrice = line.slice(priceIndex, Math.min(line.length, priceIndex + 40));
+  if (isLikelyMenuNoiseText(context)) {
+    return true;
+  }
   if (/\b(prawn cocktail|shrimp cocktail|seafood cocktail|oyster shooter|calamari|garlic prawns)\b/i.test(context)) {
     return true;
   }
@@ -1693,7 +1767,9 @@ function isLikelyFoodOrMerchPrice(line: string, priceIndex: number): boolean {
     );
   const mealWithDrinkBundle =
     foodNearPrice &&
-    /\b(served with|with fries|with chips|with a glass|glass of house wine|paired with|includes)\b/i.test(context);
+    /\b(served with|with fries|with chips|with a glass|with (?:a )?(?:pot|schooner|pint) of beer|with (?:a )?schooner of beer|glass of house wine|house wine|soft drink|paired with|includes|meal with|dish with)\b/i.test(
+      context,
+    );
   if (mealWithDrinkBundle) {
     return true;
   }
@@ -1722,7 +1798,7 @@ interface TextPriceMatch {
 }
 
 function hasDrinkExtractionTerm(line: string): boolean {
-  return /\b(beer|pint|tap|draught|draft|lager|ale|ipa|xpa|stout|porter|pilsner|cider|guinness|carlton|stone|wood|wine|cocktail|happy\s?hour|schooner|pot|jug|can|tin|tinnie|bottle)\b/i.test(
+  return /\b(beer|pint|tap|draught|draft|lager|ale|ipa|xpa|stout|porter|pilsner|cider|guinness|carlton|stone|wood|happy\s?hour|schooner|pot|jug|can|tin|tinnie|bottle)\b/i.test(
     line,
   );
 }
@@ -1748,10 +1824,10 @@ function isBarePriceTokenAllowed(line: string, start: number, end: number, value
   if (/[.$:#]$/.test(before) || /^[:.%A-Za-z]/.test(after) || /^[-/]\d/.test(after) || /^-\s*(?:hour|hours?|hrs?)\b/i.test(after) || /-\s*$/.test(before)) {
     return false;
   }
-  if (/^\s*(?:am|pm|hrs?|hours?|mins?|minutes?|kg|g|ml|l\b|oz|people|guests|days?|for\b|off\b|%)/i.test(after)) {
+  if (/^\s*(?:am|pm|hrs?|hours?|mins?|minutes?|kg|g|ml|l\b|oz|people|guests|days?|packs?|for\b|off\b|%)/i.test(after)) {
     return false;
   }
-  if (/^\s*beers?\s+on\s+tap\b/i.test(after)) {
+  if (/^\s*(?:beers?\s+on\s+tap|tap\s+beers?|beers?\s+including)\b/i.test(after)) {
     return false;
   }
   if (/\b(?:19|20)\d{2}\b/.test(line.slice(Math.max(0, start - 8), Math.min(line.length, end + 8)))) {
@@ -1762,7 +1838,7 @@ function isBarePriceTokenAllowed(line: string, start: number, end: number, value
   }
 
   const context = priceContext(line, start);
-  return /\b(pint|schooner|pot|jug|tap|draught|draft|can|tin|tinnie|bottle|cocktail|wine|spritz|margarita|beer|lager|ale|stout|ipa|xpa|cider)\b/i.test(
+  return /\b(pint|schooner|pot|jug|tap|draught|draft|can|tin|tinnie|bottle|beer|lager|ale|stout|ipa|xpa|cider)\b/i.test(
     context,
   );
 }
@@ -1783,10 +1859,22 @@ function isPlausibleDrinkPrice(line: string, match: TextPriceMatch): boolean {
   if (/\bwith\s+over\s+\d{1,2}\s+beers?\s+on\s+tap\b/i.test(line)) {
     return false;
   }
+  if (/\b\d{1,2}\s+tap\s+beers?\b/i.test(line) && !/\b(?:pint|schooner|pot|jug)\b/i.test(line)) {
+    return false;
+  }
+  if (
+    /\b(?:festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|bottomless|beer\s+tasting|food\s+and\s+beverage\s+stalls?)\b/i.test(line) &&
+    !/\b(?:pint|schooner|pot|jug|tap|draught|draft)\b/i.test(line)
+  ) {
+    return false;
+  }
   return true;
 }
 
 function isUsableExtractionLine(line: string): boolean {
+  if (isLikelyMenuNoiseText(line)) {
+    return false;
+  }
   if (/(?:\\[()])|(?:\]\s*TJ\b)|(?:\)\s*Tj\b)/i.test(line)) {
     return false;
   }
@@ -1794,6 +1882,9 @@ function isUsableExtractionLine(line: string): boolean {
     return false;
   }
   if (/\b(?:increase quantity|decrease quantity|add to cart|checkout|subtotal)\b/i.test(line)) {
+    return false;
+  }
+  if (/\/blogs?\/events?\/|utm_campaign=structured_data_events|event\/|\/events?\//i.test(line)) {
     return false;
   }
   return true;

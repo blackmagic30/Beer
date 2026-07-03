@@ -330,6 +330,36 @@ describe("menu crawler extraction", () => {
     expect(rows.some((row) => row.priceNumeric === 4.2 || row.priceNumeric === 4.6 || row.priceNumeric === 5)).toBe(false);
   });
 
+  it("drops food, cocktail, event, and unreadable PDF noise from low-confidence sources", () => {
+    const noisyText = [
+      "Wedges, sour cream, sweet chilli (V, VGA) $14",
+      "Stone & Wood Beer Battered Fish (1 piece) chips, salad, lemon, tartare $24",
+      "COCKTAIL 20 - 80",
+      "Baby Guinness 14.5",
+      "Mini Beer 14.5",
+      "Join us for Beer and Carols at the Wesley Anne on Saturday 14th December between 2.30pm and 4.30pm.",
+      "Tallboy & Moose are hosting the ultimate Beer Olympics to celebrate their 7th birthday.",
+      "A mixed case of all our current beers on offer: 6 Pack Lead Head Lager 6 Pack XPA 43 4 Pack Bayside IPA 4 Pack True Course Session Ale",
+      "Our Beers XPA 43",
+      "\u001ed0\u0019\u0082\u00f9\u00a1\u00b8\u00f5\u0080\u00a9$\u0017\u00beD0 \"Y`ALE\u00ecAHI\"I\"}\u00c1\u0095p\u00c4D\u00cc\u0098\u00c6\u0011\u00031b\u001aCz\u0093XL1\u0088&\u00bd0",
+      "Vergina, Lager Makethonia, Greece.........................11",
+    ].join("\n");
+
+    const rows = extractStructuredBeerRowsFromText(noisyText);
+    const names = rows.map((row) => row.name);
+
+    expect(names).toContain("Vergina, Lager Makethonia, Greece");
+    expect(names).not.toContain("Wedges, sour cream, sweet chilli (V, VGA)");
+    expect(names).not.toContain("Stone & Wood Pacific Ale");
+    expect(names).not.toContain("COCKTAIL");
+    expect(names).not.toContain("Baby Guinness");
+    expect(names).not.toContain("Mini Beer");
+    expect(names).not.toContain("Pack Lead Head Lager");
+    expect(names).not.toContain("XPA");
+    expect(names).not.toContain("Our Beers XPA");
+    expect(names.some((name) => new RegExp("Beer Olympics|Beer and Carols|ALE\\u00ecAHI", "i").test(name))).toBe(false);
+  });
+
   it("uses venue name and source URL to catch duplicate queue candidates across venue ids", () => {
     const first = crawlerQueueDuplicateKey({
       venueName: "Royal Derby Hotel",
