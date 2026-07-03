@@ -798,7 +798,7 @@ function isExcludedMenuSourceUrl(url: string, text: string): boolean {
     if (/\/(?:wine|wines|redwines?|whitewines?|cocktails?)(?:\/|$)/i.test(pathname) && !/\b(?:menus?|drinks?-menu|beer-menu)\b/i.test(pathname)) {
       return true;
     }
-    if (/\b(?:faq|trivia|answers?|lunch|guided-tour|beer-trail|bookings?)\b/i.test(pathname) && !/\b(?:happy-hour|pints?|schooners?|tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
+    if (/\b(?:faq|trivia|answers?|lunch|guided-tour|beer-trail|bookings?|competition|corporate)\b/i.test(pathname) && !/\b(?:happy-hour|pints?|schooners?|tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
       return true;
     }
     if (/\/events?(?:\/|$)/i.test(pathname) && !/\b(?:happy-hour|pints?|schooners?|tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
@@ -1570,7 +1570,7 @@ function inferGenericDrinkName(line: string, priceIndex: number): string | null 
 const EXTRACTION_FOOD_EVENT_NOISE_PATTERN =
   /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|burgers?|parmas?|parma|parmigiana|schnitzel|sandwich|toastie|share\s+plates?|pub\s+meal|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan|fine\s+sugar|fresh\s+ginger|honey\s+with\s+ginger)\b/i;
 const EXTRACTION_ARTICLE_OR_JSON_NOISE_PATTERN =
-  /\b(?:description|urlslug|structured_data|utm_|blogs?\/|\/news\/|\/articles?\/|cdn\/shop|width=|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|house\s+wine|soft\s+drink|official\s+beer\s+(?:and\s+cider\s+)?partner|bookings?|reservations?|guests?|time\s+slots?|security|confiscated|litres?\s+of\s+beer|beer\s+mugs?|million\s+litres?|guided\s+tour)\b/i;
+  /\b(?:description|urlslug|structured_data|utm_|blogs?\/|\/news\/|\/articles?\/|cdn\/shop|width=|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|house\s+wine|soft\s+drink|official\s+beer\s+(?:and\s+cider\s+)?partner|bookings?|reservations?|guests?|time\s+slots?|security|confiscated|litres?\s+of\s+beer|beer\s+mugs?|million\s+litres?|guided\s+tour|terminal\s+\d|first\s+working\s+brewery|fourth\s+in\s+the\s+world)\b/i;
 
 function isReadableExtractionText(value: string): boolean {
   const compact = value.replace(/\s+/g, "");
@@ -1617,7 +1617,7 @@ function isUsableExtractedDrinkName(name: string, trackedBeer: string | null): b
   if (/^(?:https?:)?\/\//i.test(trimmed) || /^\//.test(trimmed) || /\b(?:cdn\/shop|\.com\/|\.com\.au\/|width=|[?&]v=)\b/i.test(trimmed)) {
     return false;
   }
-  if (/^\(/.test(trimmed) || /\b\d{2,4}\s*ml\b/i.test(trimmed) && /\b\d{1,4}\s*g\b/i.test(trimmed)) {
+  if (/^\(/.test(trimmed) || /\b\d{3,4}\s*ml\b/i.test(trimmed) || /\b\d{2,4}\s*ml\b/i.test(trimmed) && /\b\d{1,4}\s*g\b/i.test(trimmed)) {
     return false;
   }
   if (!trackedBeer && (trimmed.length > 70 || loose.split(/\s+/).length > 9)) {
@@ -1846,7 +1846,7 @@ function isBarePriceTokenAllowed(line: string, start: number, end: number, value
   if (/^\s*(?:am|pm|hrs?|hours?|mins?|minutes?|kg|g|ml|l\b|oz|people|guests|days?|packs?|for\b|off\b|%)/i.test(after)) {
     return false;
   }
-  if (/^\s*(?:\+?\s*)?(?:beers?\s+on\s+tap|tap\s+beers?|beers?\s+including|different\s+(?:draught|draft|tap\s+)?beers?|(?:draught|draft|tap)\s+(?:beers?|bar|taps?)\s+(?:to\s+choose|available|on\s+tap)?|taps?\s+(?:will\s+pour|to\s+choose|available))\b/i.test(after)) {
+  if (/^\s*(?:\+?\s*)?(?:beers?\s+on\s+tap|tap\s+beers?|beers?\s+including|different\s+(?:draught|draft|tap\s+)?beers?|(?:draught|draft|tap)\s+(?:beers?|bar|taps?)(?:\s+(?:to\s+choose|available|on\s+tap))?|taps?\s+(?:will\s+pour|to\s+choose|available))\b/i.test(after)) {
     return false;
   }
   if (/\b(?:19|20)\d{2}\b/.test(line.slice(Math.max(0, start - 8), Math.min(line.length, end + 8)))) {
@@ -1878,7 +1878,7 @@ function isPlausibleDrinkPrice(line: string, match: TextPriceMatch): boolean {
   if (/\bwith\s+over\s+\d{1,2}\s+beers?\s+on\s+tap\b/i.test(line)) {
     return false;
   }
-  if (/\b\d{1,2}\+?\s+(?:different\s+)?(?:draught|draft|tap\s+)?(?:beers?|taps?|tap\s+bar)\s+(?:to\s+choose|available|on\s+tap|will\s+pour)?\b/i.test(line)) {
+  if (/\b\d{1,2}\+?\s+(?:different\s+)?(?:draught|draft|tap\s+)?(?:beers?|taps?|tap\s+bar)(?:\s+(?:to\s+choose|available|on\s+tap|will\s+pour))?\b/i.test(line)) {
     return false;
   }
   if (/\b(?:groups?\s+of\s+\d|how\s+many|litres?\s+of\s+beer|beer\s+mugs?|million\s+litres?|glasses?|bookings?|guests?|mouthwatering\s+burgers?|pub\s+meal|fave\s+dish|pot\s+of\s+beer\s+or\s+house\s+wine)\b/i.test(line)) {

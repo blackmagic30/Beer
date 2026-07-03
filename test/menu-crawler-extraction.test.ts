@@ -355,6 +355,8 @@ describe("menu crawler extraction", () => {
       "Enjoy your fave dish with a pot of beer or house wine for $25, every Monday-Friday from 12pm-3pm.",
       "Grab a beer, dig into a classic pub meal and dive into our 7 mouthwatering burgers, 9 irresistible parmas, and share plates.",
       "Hargreaves Hill As Advertised - Hazy IPA 440ml $40",
+      "355ml 4.3% 15 Collingwood",
+      "Stomping Ground Brewery and Beer Hall inside the airport's Terminal 3 is the first working brewery inside an airport in Australia.",
       "\u001ed0\u0019\u0082\u00f9\u00a1\u00b8\u00f5\u0080\u00a9$\u0017\u00beD0 \"Y`ALE\u00ecAHI\"I\"}\u00c1\u0095p\u00c4D\u00cc\u0098\u00c6\u0011\u00031b\u001aCz\u0093XL1\u0088&\u00bd0",
       "Vergina, Lager Makethonia, Greece.........................11",
     ].join("\n");
@@ -373,7 +375,7 @@ describe("menu crawler extraction", () => {
     expect(names).not.toContain("Our Beers XPA");
     expect(names).not.toContain("Draught");
     expect(names).not.toContain("Lager");
-    expect(names.some((name) => /https?:|\/blogs|cdn\/shop|Tiger beer|Fine sugar|Fresh ginger|Beer Olympics|Beer and Carols|tap bar|BOOKINGS|litres|house wine|pub meal|mouthwatering|440ml|ALE\u00ecAHI/i.test(name))).toBe(false);
+    expect(names.some((name) => /https?:|\/blogs|cdn\/shop|Tiger beer|Fine sugar|Fresh ginger|Beer Olympics|Beer and Carols|tap bar|BOOKINGS|litres|house wine|pub meal|mouthwatering|440ml|355ml|Terminal 3|ALE\u00ecAHI/i.test(name))).toBe(false);
   });
 
   it("uses venue name and source URL to catch duplicate queue candidates across venue ids", () => {
