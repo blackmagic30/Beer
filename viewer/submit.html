@@ -158,8 +158,9 @@
           </label>
           <div id="missionContext" class="notice missionContext is-hidden"></div>
           <label id="sourcePhotoField" class="field is-hidden">Source photo/menu/receipt/happy-hour board
-            <input id="sourcePhoto" type="file" accept="image/*" disabled />
-            <span id="sourcePhotoHint" class="fieldHint">Upload a clear menu, tap-list, receipt, or venue board for review.</span>
+            <input id="sourcePhoto" type="file" accept="image/*" multiple disabled />
+            <span id="sourcePhotoHint" class="fieldHint">Upload clear menu, tap-list, receipt, or venue board images for review.</span>
+            <div id="sourcePhotoList" class="sourcePhotoList" aria-live="polite" hidden></div>
           </label>
           <div id="happyHourSection" class="submitModeBlock is-hidden">
             <div class="field">
@@ -219,6 +220,7 @@
     let lastVenueQuery = "";
     let draftSaveTimer = null;
     let uploadLocation = null;
+    let selectedSourcePhotoFiles = [];
     let isNewVenueMode = false;
     let selectedNewVenueGooglePlace = null;
     const UPLOAD_LOCATION_STORAGE_KEY = "pintPathUploadLocationProof";
@@ -228,6 +230,9 @@
     const SUBMISSION_QUEUE_DB_VERSION = 1;
     const SUBMISSION_QUEUE_STORE_NAME = "queuedSubmissions";
     const SOURCE_PHOTO_MAX_EDGE = 1600;
+    const SOURCE_PHOTO_MAX_FILES = 6;
+    const SOURCE_PHOTO_COMPOSITE_MAX_WIDTH = 1400;
+    const SOURCE_PHOTO_COMPOSITE_GAP = 14;
     const SOURCE_PHOTO_OUTPUT_TYPE = "image/jpeg";
     const SOURCE_PHOTO_OUTPUT_QUALITY = 0.76;
     const UPLOAD_LOCATION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -413,6 +418,82 @@
       }
       element.textContent = text;
       element.className = `fieldStatusPill fieldStatusPill--${tone}`;
+    }
+
+    function formatFileSize(bytes) {
+      const size = Number(bytes || 0);
+      if (!Number.isFinite(size) || size <= 0) {
+        return "image";
+      }
+      if (size < 1024 * 1024) {
+        return `${Math.max(1, Math.round(size / 1024))} KB`;
+      }
+      return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function sourcePhotoFileKey(file) {
+      return [
+        file?.name || "image",
+        file?.size || 0,
+        file?.lastModified || 0,
+      ].join(":");
+    }
+
+    function renderSourcePhotoList(emptyHint = null) {
+      const isPhotoOnly = submissionTypeSelect.value === "photo_upload";
+      sourcePhoto.required = isPhotoOnly && selectedSourcePhotoFiles.length === 0;
+      sourcePhotoList.hidden = selectedSourcePhotoFiles.length === 0;
+      sourcePhotoList.innerHTML = selectedSourcePhotoFiles.map((file, index) => `
+        <div class="sourcePhotoItem">
+          <span>
+            <strong>${escapeHtml(file.name || `Source image ${index + 1}`)}</strong>
+            <small>${escapeHtml(formatFileSize(file.size))}</small>
+          </span>
+          <button class="sourcePhotoRemove" type="button" data-remove-source-photo-index="${index}" aria-label="Remove ${escapeHtml(file.name || `source image ${index + 1}`)}">X</button>
+        </div>
+      `).join("");
+
+      if (selectedSourcePhotoFiles.length) {
+        const count = selectedSourcePhotoFiles.length;
+        sourcePhotoHint.textContent = `${count} source image${count === 1 ? "" : "s"} attached. Pint Path compresses ${count === 1 ? "it" : "them"} and strips metadata before saving or sending.`;
+        return;
+      }
+
+      if (emptyHint != null) {
+        sourcePhotoHint.textContent = emptyHint;
+      }
+    }
+
+    function clearSelectedSourcePhotos(emptyHint = null) {
+      selectedSourcePhotoFiles = [];
+      sourcePhoto.value = "";
+      renderSourcePhotoList(emptyHint);
+    }
+
+    function addSelectedSourcePhotos(files) {
+      const incomingFiles = Array.from(files || []);
+      if (!incomingFiles.length) {
+        renderSourcePhotoList();
+        return;
+      }
+
+      const existingKeys = new Set(selectedSourcePhotoFiles.map(sourcePhotoFileKey));
+      const nextFiles = [...selectedSourcePhotoFiles];
+      for (const file of incomingFiles) {
+        const key = sourcePhotoFileKey(file);
+        if (existingKeys.has(key) || nextFiles.length >= SOURCE_PHOTO_MAX_FILES) {
+          continue;
+        }
+        existingKeys.add(key);
+        nextFiles.push(file);
+      }
+
+      selectedSourcePhotoFiles = nextFiles;
+      sourcePhoto.value = "";
+      renderSourcePhotoList("Required for photo/source submissions. Beer rows are not needed here.");
+      if (incomingFiles.length && selectedSourcePhotoFiles.length >= SOURCE_PHOTO_MAX_FILES) {
+        sourcePhotoHint.textContent = `${SOURCE_PHOTO_MAX_FILES} source images attached. Remove one before adding another.`;
+      }
     }
 
     function submissionTypeLabel(type) {
@@ -1341,9 +1422,8 @@
       addBeerRowButton.classList.toggle("is-hidden", isSingle);
       sourcePhotoField.classList.toggle("is-hidden", !isPhotoOnly);
       sourcePhoto.disabled = !isPhotoOnly;
-      sourcePhoto.required = isPhotoOnly;
       if (!isPhotoOnly) {
-        sourcePhoto.value = "";
+        clearSelectedSourcePhotos();
       }
       happyHourStartTime.required = isHappyHour;
       happyHourEndTime.required = isHappyHour;
@@ -1382,7 +1462,7 @@
         },
       }[type];
 
-      sourcePhotoHint.textContent = copy.source;
+      renderSourcePhotoList(copy.source);
       beerRowsTitle.textContent = copy.rowsTitle || "Beer price rows";
       beerRowsHint.textContent = copy.rowsHint || "";
       updateRowControls();
@@ -1586,6 +1666,72 @@
       }
     }
 
+    function loadImageFromDataUrl(dataUrl) {
+      return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Could not prepare the selected source images."));
+        image.src = dataUrl;
+      });
+    }
+
+    async function combinePhotoDataUrls(dataUrls) {
+      const images = await Promise.all(dataUrls.map(loadImageFromDataUrl));
+      const sourceSizes = images.map((image) => ({
+        width: image.naturalWidth || image.width || 1,
+        height: image.naturalHeight || image.height || 1,
+      }));
+      const targetWidth = Math.min(
+        SOURCE_PHOTO_COMPOSITE_MAX_WIDTH,
+        Math.max(...sourceSizes.map((size) => size.width)),
+      );
+      const scaledImages = images.map((image, index) => {
+        const size = sourceSizes[index];
+        const scale = Math.min(1, targetWidth / size.width);
+        return {
+          image,
+          width: Math.max(1, Math.round(size.width * scale)),
+          height: Math.max(1, Math.round(size.height * scale)),
+        };
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, ...scaledImages.map((item) => item.width));
+      canvas.height = scaledImages.reduce((total, item) => total + item.height, 0) +
+        SOURCE_PHOTO_COMPOSITE_GAP * Math.max(0, scaledImages.length - 1);
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("Could not prepare source photo compression in this browser.");
+      }
+
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      let offsetY = 0;
+      scaledImages.forEach((item) => {
+        const offsetX = Math.round((canvas.width - item.width) / 2);
+        context.drawImage(item.image, offsetX, offsetY, item.width, item.height);
+        offsetY += item.height + SOURCE_PHOTO_COMPOSITE_GAP;
+      });
+
+      const blob = await canvasToBlob(canvas, SOURCE_PHOTO_OUTPUT_TYPE, SOURCE_PHOTO_OUTPUT_QUALITY);
+      return blobToDataUrl(blob);
+    }
+
+    async function readSourcePhotoSelectionDataUrl(files) {
+      const sourceFiles = Array.from(files || []).slice(0, SOURCE_PHOTO_MAX_FILES);
+      if (!sourceFiles.length) {
+        return null;
+      }
+      if (sourceFiles.length === 1) {
+        return readPhotoDataUrl(sourceFiles[0]);
+      }
+
+      const dataUrls = [];
+      for (const file of sourceFiles) {
+        dataUrls.push(await readPhotoDataUrl(file));
+      }
+      return combinePhotoDataUrls(dataUrls);
+    }
+
     function formatAccuracy(meters) {
       if (!Number.isFinite(Number(meters))) {
         return "accuracy unavailable";
@@ -1755,6 +1901,7 @@
 
     function resetSubmissionFormAfterSave() {
       submissionForm.reset();
+      clearSelectedSourcePhotos();
       uploadLocation = null;
       persistUploadLocation(null);
       clearFieldDraft(true);
@@ -1935,11 +2082,21 @@
         });
       });
       sourcePhoto.addEventListener("change", () => {
-        if (sourcePhoto.files[0]) {
-          sourcePhotoHint.textContent = "Photo attached. Pint Path compresses it and strips metadata before saving or sending.";
-        } else {
-          sourcePhotoHint.textContent = "Required for photo/source submissions. Beer rows are not needed here.";
+        addSelectedSourcePhotos(sourcePhoto.files);
+        scheduleDraftAutosave();
+      });
+      sourcePhotoList.addEventListener("click", (event) => {
+        const removeButton = event.target.closest("[data-remove-source-photo-index]");
+        if (!removeButton) {
+          return;
         }
+        const index = Number(removeButton.dataset.removeSourcePhotoIndex);
+        if (!Number.isInteger(index) || index < 0 || index >= selectedSourcePhotoFiles.length) {
+          return;
+        }
+        selectedSourcePhotoFiles.splice(index, 1);
+        renderSourcePhotoList("Required for photo/source submissions. Beer rows are not needed here.");
+        scheduleDraftAutosave();
       });
       submissionTypeSelect.addEventListener("change", applySubmissionType);
       newVenueToggle.addEventListener("change", () => setNewVenueMode(newVenueToggle.checked));
@@ -2015,11 +2172,14 @@
         try {
           const formData = new FormData(submissionForm);
           const observedAt = new Date().toISOString();
-          if (submissionTypeSelect.value === "photo_upload" && sourcePhoto.files[0]) {
-            MelbBeerBusiness.setStatus(statusEl, "Preparing photo for review...");
+          if (submissionTypeSelect.value === "photo_upload" && selectedSourcePhotoFiles.length) {
+            MelbBeerBusiness.setStatus(
+              statusEl,
+              selectedSourcePhotoFiles.length === 1 ? "Preparing photo for review..." : `Preparing ${selectedSourcePhotoFiles.length} photos for review...`,
+            );
           }
           const sourcePhotoDataUrl = submissionTypeSelect.value === "photo_upload"
-            ? await readPhotoDataUrl(sourcePhoto.files[0])
+            ? await readSourcePhotoSelectionDataUrl(selectedSourcePhotoFiles)
             : null;
           const items = collectItems();
           const newVenue = collectNewVenue();

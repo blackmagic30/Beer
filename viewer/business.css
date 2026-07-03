@@ -271,6 +271,7 @@ a {
 
 .navLinks a:focus-visible,
 .button:focus-visible,
+.sourcePhotoRemove:focus-visible,
 .field input:focus-visible,
 .field select:focus-visible,
 .field textarea:focus-visible {
@@ -1074,6 +1075,76 @@ h3 {
 
 .submitOptionGrid + [data-remove] {
   margin-top: 14px;
+}
+
+.sourcePhotoList {
+  display: grid;
+  gap: 8px;
+}
+
+.sourcePhotoList[hidden] {
+  display: none;
+}
+
+.sourcePhotoItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 7px 8px 7px 11px;
+}
+
+.sourcePhotoItem span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sourcePhotoItem strong,
+.sourcePhotoItem small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourcePhotoItem strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.sourcePhotoItem small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.sourcePhotoRemove {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(239, 68, 68, 0.42);
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.1);
+  color: #fecaca;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sourcePhotoRemove:hover {
+  border-color: rgba(248, 113, 113, 0.64);
+  background: rgba(239, 68, 68, 0.18);
 }
 
 .submitCheckbox {

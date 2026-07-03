@@ -116,10 +116,12 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain('name="observedAt"');
     expect(html).not.toContain('name="notes" placeholder="Optional notes, conditions, or source details"');
     expect(html).toContain('id="sourcePhotoField" class="field is-hidden"');
-    expect(html).toContain('id="sourcePhoto" type="file" accept="image/*" disabled');
+    expect(html).toContain('id="sourcePhoto" type="file" accept="image/*" multiple disabled');
+    expect(html).toContain('id="sourcePhotoList" class="sourcePhotoList" aria-live="polite" hidden');
+    expect(html).toContain("let selectedSourcePhotoFiles = [];");
     expect(html).toContain("sourcePhotoField.classList.toggle(\"is-hidden\", !isPhotoOnly)");
     expect(html).toContain("sourcePhoto.disabled = !isPhotoOnly");
-    expect(html).toContain("sourcePhoto.required = isPhotoOnly");
+    expect(html).toContain("sourcePhoto.required = isPhotoOnly && selectedSourcePhotoFiles.length === 0");
     expect(html).toContain("const observedAt = new Date().toISOString();");
     expect(html).toContain('submissionTypeSelect.value === "photo_upload"');
     expect(html).toContain("const notes = missionNote || null;");
@@ -222,7 +224,10 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain("(beer.aliases || []).forEach((alias) => labels.add(alias))");
     expect(html).toContain('const statusEl = document.getElementById("status")');
     expect(html).toContain("MelbBeerBusiness.setStatus(statusEl");
-    expect(html).toContain("Photo attached. Pint Path compresses it and strips metadata before saving or sending.");
+    expect(html).toContain("attached. Pint Path compresses");
+    expect(html).toContain('sourcePhoto.addEventListener("change"');
+    expect(html).toContain('sourcePhotoList.addEventListener("click"');
+    expect(html).toContain("data-remove-source-photo-index");
     expect(css).not.toContain(".fieldTestConsole");
     expect(css).not.toContain(".recentVenuePanel");
     expect(css).not.toContain(".recentVenueButton");
@@ -230,6 +235,8 @@ describe("submit page auth gate", () => {
     expect(css).toContain(".queuedSubmissionItem.is-sending");
     expect(css).toContain(".submitStep");
     expect(css).toContain(".submitActionDock");
+    expect(css).toContain(".sourcePhotoList");
+    expect(css).toContain(".sourcePhotoRemove");
     expect(css).not.toContain(".quickBeerChip");
   });
 
@@ -237,17 +244,40 @@ describe("submit page auth gate", () => {
     const html = submitHtml();
 
     expect(html).toContain("SOURCE_PHOTO_MAX_EDGE");
+    expect(html).toContain("SOURCE_PHOTO_MAX_FILES");
+    expect(html).toContain("SOURCE_PHOTO_COMPOSITE_MAX_WIDTH");
     expect(html).toContain("SOURCE_PHOTO_OUTPUT_TYPE");
     expect(html).toContain("SOURCE_PHOTO_OUTPUT_QUALITY");
     expect(html).toContain("function loadImageFromFile");
+    expect(html).toContain("function loadImageFromDataUrl");
     expect(html).toContain("function canvasToBlob");
     expect(html).toContain("function blobToDataUrl");
     expect(html).toContain("async function readPhotoDataUrl");
+    expect(html).toContain("async function combinePhotoDataUrls");
+    expect(html).toContain("async function readSourcePhotoSelectionDataUrl");
     expect(html).toContain('document.createElement("canvas")');
     expect(html).toContain("context.drawImage(image, 0, 0, width, height)");
+    expect(html).toContain("context.drawImage(item.image, offsetX, offsetY, item.width, item.height)");
     expect(html).toContain("canvasToBlob(canvas, SOURCE_PHOTO_OUTPUT_TYPE, SOURCE_PHOTO_OUTPUT_QUALITY)");
+    expect(html).toContain("await readPhotoDataUrl(file)");
+    expect(html).toContain("await readSourcePhotoSelectionDataUrl(selectedSourcePhotoFiles)");
     expect(html).toContain("Attach a real photo or screenshot image");
     expect(html).toContain("clientSubmissionId: createQueuedSubmissionId()");
+  });
+
+  it("lets contributors attach and remove multiple OCR/source images before submitting", () => {
+    const html = submitHtml();
+    const css = businessCss();
+
+    expect(html).toContain("function addSelectedSourcePhotos");
+    expect(html).toContain("function clearSelectedSourcePhotos");
+    expect(html).toContain("function renderSourcePhotoList");
+    expect(html).toContain("selectedSourcePhotoFiles.splice(index, 1)");
+    expect(html).toContain('aria-label="Remove ${escapeHtml(file.name || `source image ${index + 1}`)}"');
+    expect(html).toContain("Remove one before adding another.");
+    expect(html).toContain("selectedSourcePhotoFiles.length === 1 ? \"Preparing photo for review...\"");
+    expect(css).toContain("grid-template-columns: minmax(0, 1fr) 34px");
+    expect(css).toContain("border-radius: 50%");
   });
 
   it("keeps the submission type selector compact and ordered for field entry", () => {
