@@ -12,7 +12,7 @@ import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../src/constants/beers.js";
-import { extractStructuredBeerRowsFromText } from "../src/lib/menu-text-extraction.js";
+import { extractOnTapCardRowsFromHtml, extractStructuredBeerRowsFromText } from "../src/lib/menu-text-extraction.js";
 import {
   normalizeVenueKey,
   shouldImportBarOrPubPlace,
@@ -1967,13 +1967,15 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
   return rows;
 }
 
-function buildTextExtraction(method: TextExtractionMethod, text: string): MenuTextExtractionResult | null {
+function buildTextExtraction(method: TextExtractionMethod, text: string, rawSourceText: string = text): MenuTextExtractionResult | null {
   const sourceText = textForExtraction(text);
   if (!sourceText || !hasDrinkPriceSignals(sourceText)) {
     return null;
   }
 
-  const rows = extractBeerRowsFromText(sourceText);
+  const cardRows =
+    method === "html_text" ? extractOnTapCardRowsFromHtml(rawSourceText).slice(0, MAX_ROWS_PER_TEXT_SOURCE) : [];
+  const rows = cardRows.length >= 3 ? cardRows : extractBeerRowsFromText(sourceText);
   if (rows.length === 0) {
     return {
       attemptedAt: new Date().toISOString(),
@@ -1988,7 +1990,11 @@ function buildTextExtraction(method: TextExtractionMethod, text: string): MenuTe
     attemptedAt: new Date().toISOString(),
     method,
     rows,
-    notes: [`Extracted ${rows.length} row${rows.length === 1 ? "" : "s"} from ${method.replace("_", " ")}.`],
+    notes: [
+      cardRows.length >= 3
+        ? `Extracted ${rows.length} row${rows.length === 1 ? "" : "s"} from structured on-tap HTML cards.`
+        : `Extracted ${rows.length} row${rows.length === 1 ? "" : "s"} from ${method.replace("_", " ")}.`,
+    ],
     error: null,
   };
 }
@@ -2315,13 +2321,13 @@ function textExtractionMethodForSource(sourceKind: SourceKind): TextExtractionMe
   return null;
 }
 
-function attachTextExtraction(candidate: MenuSourceCandidate, sourceText: string): void {
+function attachTextExtraction(candidate: MenuSourceCandidate, sourceText: string, rawSourceText: string = sourceText): void {
   const method = textExtractionMethodForSource(candidate.sourceKind);
   if (!method) {
     return;
   }
 
-  candidate.textExtraction = buildTextExtraction(method, sourceText);
+  candidate.textExtraction = buildTextExtraction(method, sourceText, rawSourceText);
   if (candidate.textExtraction?.rows.length) {
     candidate.signals.push(`${method.replace("_", " ")} rows`);
     candidate.confidence = Math.min(1, Number((candidate.confidence + 0.08).toFixed(2)));
@@ -2591,7 +2597,7 @@ async function buildCandidateFromFetchedSource(input: {
   });
 
   if (candidate) {
-    attachTextExtraction(candidate, scoringText);
+    attachTextExtraction(candidate, scoringText, input.fetched.text);
   }
 
   const childLinks =
@@ -2653,7 +2659,7 @@ async function discoverSourcesForVenue(
         linkText: "homepage",
       });
       if (candidate) {
-        attachTextExtraction(candidate, homepageText);
+        attachTextExtraction(candidate, homepageText, homepage.text);
         candidates.push(candidate);
       }
     }

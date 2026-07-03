@@ -252,6 +252,168 @@ function parsePriceNumbers(value: string): number[] {
     .filter((price) => Number.isFinite(price) && price > 0 && price <= 80);
 }
 
+function decodeMenuHtml(value: string): string {
+  return value
+    .replace(/&nbsp;/g, " ")
+    .replace(/&ndash;/g, "-")
+    .replace(/&mdash;/g, "-")
+    .replace(/&middot;/g, " ")
+    .replace(/&bull;/g, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function stripMenuHtml(value: string): string {
+  return decodeMenuHtml(value)
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractFirstClassText(html: string, className: string): string | null {
+  const pattern = new RegExp(`<[^>]+class=["'][^"']*${escapeRegExp(className)}[^"']*["'][^>]*>([\\s\\S]*?)<\\/[^>]+>`, "i");
+  const value = stripMenuHtml(html.match(pattern)?.[1] ?? "");
+  return value || null;
+}
+
+function extractClassTexts(html: string, className: string): string[] {
+  const pattern = new RegExp(`<[^>]+class=["'][^"']*${escapeRegExp(className)}[^"']*["'][^>]*>([\\s\\S]*?)<\\/[^>]+>`, "gi");
+  const values: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html))) {
+    const value = stripMenuHtml(match[1] ?? "");
+    if (value) {
+      values.push(value);
+    }
+  }
+  return values;
+}
+
+function extractOnTapCardPricePairs(html: string): Array<{ size: string; price: number; priceText: string }> {
+  const pairs: Array<{ size: string; price: number; priceText: string }> = [];
+  const pattern =
+    /class=["'][^"']*sp-on-tap-price-size[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>\s*<[^>]+class=["'][^"']*sp-on-tap-style[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(html))) {
+    const size = stripMenuHtml(match[1] ?? "").replace(/[:\s]+$/g, "");
+    const rawPriceText = stripMenuHtml(match[2] ?? "");
+    const price = parsePriceNumbers(rawPriceText)[0];
+    if (!size || price == null) {
+      continue;
+    }
+    pairs.push({ size, price, priceText: formatCurrencyPrice(price) });
+  }
+  return pairs;
+}
+
+function hasNameOverlapBeyondBrewery(beerName: string, candidateName: string, brewery: string): boolean {
+  const sourceTokens = new Set(normalizeLooseText(beerName).split(/\s+/).filter((token) => token.length >= 3));
+  const breweryTokens = new Set(normalizeLooseText(brewery).split(/\s+/).filter(Boolean));
+  return normalizeLooseText(candidateName)
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && token !== "and" && !breweryTokens.has(token))
+    .some((token) => sourceTokens.has(token));
+}
+
+export function extractOnTapCardRowsFromHtml(html: string): ExtractedMenuBeerRow[] {
+  if (!/\bsp_on-tap_name\b/i.test(html) || !/\bsp-on-tap-prices-flex\b/i.test(html)) {
+    return [];
+  }
+
+  const rows: ExtractedMenuBeerRow[] = [];
+  const seen = new Set<string>();
+  const nameTagPattern = /<[^>]+class=["'][^"']*\bsp_on-tap_name\b[^"']*["'][^>]*>/gi;
+  const starts: number[] = [];
+  let nameTagMatch: RegExpExecArray | null;
+  while ((nameTagMatch = nameTagPattern.exec(html))) {
+    starts.push(nameTagMatch.index);
+  }
+
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = starts[index];
+    if (start == null) {
+      continue;
+    }
+    const end = starts[index + 1] ?? html.length;
+    const itemHtml = html.slice(start, end);
+    const rawName = extractFirstClassText(itemHtml, "sp_on-tap_name");
+    const cleanedName = cleanMenuRowName(rawName ?? "");
+    if (!cleanedName || cleanedName.length < 3 || cleanedName.length > 90) {
+      continue;
+    }
+
+    const pricePairs = extractOnTapCardPricePairs(itemHtml);
+    const pintPair = pricePairs.find((pair) => /\bpint\b/i.test(pair.size));
+    if (!pintPair) {
+      continue;
+    }
+
+    const pricesIndex = itemHtml.search(/class=["'][^"']*sp-on-tap-prices-flex\b/i);
+    const detailHtml = pricesIndex >= 0 ? itemHtml.slice(0, pricesIndex) : itemHtml;
+    const brewery = extractFirstClassText(itemHtml, "sp_on-tap_brewery");
+    const abvValue = extractClassTexts(detailHtml, "sp-on-tap-abv").find((value) => /\d/.test(value))?.replace(/\s*%\s*$/, "") ?? null;
+    const style = extractClassTexts(detailHtml, "sp-on-tap-style")
+      .find((value) => !/^\$?\d/.test(value) && !/^(?:pot|schooner|pint)$/i.test(value)) ?? null;
+    const trackedNameFromSource = findTrackedBeerInRowName(cleanedName);
+    const trackedNameFromBreweryContext = brewery ? findTrackedBeerInRowName(`${brewery} ${cleanedName}`) : null;
+    const trackedName =
+      trackedNameFromSource ??
+      (trackedNameFromBreweryContext && brewery && hasNameOverlapBeyondBrewery(cleanedName, trackedNameFromBreweryContext, brewery)
+        ? trackedNameFromBreweryContext
+        : null);
+    const name = trackedName ?? canonicalizeTrackedBeerName(cleanedName);
+    if (isLikelyNonBeerDrinkName(name, `${cleanedName} ${brewery ?? ""} ${style ?? ""}`)) {
+      continue;
+    }
+
+    const sourceRow = sourceRowPreview(
+      [
+        cleanedName,
+        brewery,
+        abvValue ? `${abvValue}%` : null,
+        style,
+        ...pricePairs.map((pair) => `${pair.size} ${pair.priceText}`),
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+    const row: ExtractedMenuBeerRow = {
+      name,
+      priceNumeric: pintPair.price,
+      priceText: pintPair.priceText,
+      availabilityStatus: "on_tap",
+      notes: [
+        "Section: ON TAP",
+        "Selected pint price from structured on-tap card.",
+        `Source row: ${sourceRow}`,
+        brewery ? `Brewery: ${brewery}` : null,
+        style ? `Style: ${style}` : null,
+        abvValue ? `ABV: ${abvValue}%` : null,
+      ]
+        .filter(Boolean)
+        .join(" | "),
+      confidence: trackedName ? 0.92 : 0.86,
+    };
+
+    const key = rowKey(row);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
 function inferAvailabilityStatus(input: {
   sourceRow: string;
   section: SectionMarker | null;

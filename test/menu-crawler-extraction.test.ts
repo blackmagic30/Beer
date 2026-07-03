@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { canonicalizeTrackedBeerName } from "../src/constants/beers.js";
 import { crawlerQueueDuplicateKey, crawlerQueueRowKey, crawlerQueueRowOverlapRatio } from "../src/lib/menu-source-dedupe.js";
-import { extractStructuredBeerRowsFromText } from "../src/lib/menu-text-extraction.js";
+import { extractOnTapCardRowsFromHtml, extractStructuredBeerRowsFromText } from "../src/lib/menu-text-extraction.js";
 
 describe("menu crawler extraction", () => {
   it("keeps dotted PDF menu rows paired with their own beer and pint price", () => {
@@ -255,6 +255,79 @@ describe("menu crawler extraction", () => {
     expect(byName.has("Poor Tom's Sydney Dry")).toBe(false);
     expect(byName.has("Archie Rose Signature Dry")).toBe(false);
     expect(byName.has("Four Pillars Rare Dry")).toBe(false);
+  });
+
+  it("uses pint prices rather than ABV from structured on-tap website cards", () => {
+    const steamPacketHtml = `
+      <div class="collection-item w-dyn-item">
+        <div class="w-layout-grid sp-grid-whats-on">
+          <div class="sp_on-tap_name">Steam Packet Draught</div>
+          <div class="sp_on-tap_brewery">Hop Nation</div>
+          <div class="w-layout-vflex sp_on-tap_details-flex">
+            <div><div class="sp-on-tap-abv">4.2</div><div class="sp-on-tap-abv">%</div></div>
+            <div class="sp-on-tap-style">Draught</div>
+          </div>
+          <div class="w-layout-vflex sp-on-tap-prices-flex">
+            <div class="sp-on-tap-price-item"><div class="sp-on-tap-price-size">Pot </div><div class="sp-on-tap-style">$5</div></div>
+            <div class="sp-on-tap-price-item"><div class="sp-on-tap-price-size">Schooner </div><div class="sp-on-tap-style">$8</div></div>
+            <div class="sp-on-tap-price-item"><div class="sp-on-tap-price-size">Pint </div><div class="sp-on-tap-style">$10</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="collection-item w-dyn-item">
+        <div class="w-layout-grid sp-grid-whats-on">
+          <div class="sp_on-tap_name">Birra Moretti</div>
+          <div class="sp_on-tap_brewery">Moretti</div>
+          <div class="w-layout-vflex sp_on-tap_details-flex">
+            <div><div class="sp-on-tap-abv">4.6</div><div class="sp-on-tap-abv">%</div></div>
+            <div class="sp-on-tap-style">Lager</div>
+          </div>
+          <div class="w-layout-vflex sp-on-tap-prices-flex">
+            <div class="sp-on-tap-price-item"><div class="sp-on-tap-price-size">Pot </div><div class="sp-on-tap-style">$8.50</div></div>
+            <div class="sp-on-tap-price-item"><div class="sp-on-tap-price-size">Schooner </div><div class="sp-on-tap-style">$14.00</div></div>
+            <div class="sp-on-tap-price-item"><div class="sp-on-tap-price-size">Pint </div><div class="sp-on-tap-style">$17.00</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="collection-item w-dyn-item">
+        <div class="w-layout-grid sp-grid-whats-on">
+          <div class="sp_on-tap_name">Balter XPA</div>
+          <div class="sp_on-tap_brewery">Balter</div>
+          <div class="w-layout-vflex sp_on-tap_details-flex">
+            <div><div class="sp-on-tap-abv">5</div><div class="sp-on-tap-abv">%</div></div>
+            <div class="sp-on-tap-style">XPA</div>
+          </div>
+          <div class="w-layout-vflex sp-on-tap-prices-flex">
+            <div class="sp-on-tap-price-item"><div class="sp-on-tap-price-size">Pot </div><div class="sp-on-tap-style">$8.00</div></div>
+            <div class="sp-on-tap-price-item"><div class="sp-on-tap-price-size">Schooner </div><div class="sp-on-tap-style">$13.00</div></div>
+            <div class="sp-on-tap-price-item"><div class="sp-on-tap-price-size">Pint </div><div class="sp-on-tap-style">$16.00</div></div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const rows = extractOnTapCardRowsFromHtml(steamPacketHtml);
+    const byName = new Map(rows.map((row) => [row.name, row]));
+
+    expect(byName.get("Steam Packet Draught")).toEqual(expect.objectContaining({
+      priceNumeric: 10,
+      priceText: "$10",
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Steam Packet Draught")?.notes).toContain("ABV: 4.2%");
+    expect(byName.get("Birra Moretti")).toEqual(expect.objectContaining({
+      priceNumeric: 17,
+      priceText: "$17",
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Birra Moretti")?.notes).toContain("ABV: 4.6%");
+    expect(byName.get("Balter XPA")).toEqual(expect.objectContaining({
+      priceNumeric: 16,
+      priceText: "$16",
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Balter XPA")?.notes).toContain("ABV: 5%");
+    expect(rows.some((row) => row.priceNumeric === 4.2 || row.priceNumeric === 4.6 || row.priceNumeric === 5)).toBe(false);
   });
 
   it("uses venue name and source URL to catch duplicate queue candidates across venue ids", () => {
