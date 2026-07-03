@@ -786,6 +786,9 @@ function isExcludedMenuSourceUrl(url: string, text: string): boolean {
     if (/\.(?:css|js|woff2?|ttf|otf|eot|mp4|webm|mov|avi)(?:$|\?)/i.test(pathname)) {
       return true;
     }
+    if (/\/sitemap[^/]*\.xml$/i.test(pathname)) {
+      return true;
+    }
     if (/\/(?:shop|product|products|product-category|collections?|cart|checkout)(?:\/|$)/i.test(pathname) && !/\bmenus?\b/i.test(pathname)) {
       return true;
     }
@@ -793,6 +796,12 @@ function isExcludedMenuSourceUrl(url: string, text: string): boolean {
       return true;
     }
     if (/\/(?:wine|wines|redwines?|whitewines?|cocktails?)(?:\/|$)/i.test(pathname) && !/\b(?:menus?|drinks?-menu|beer-menu)\b/i.test(pathname)) {
+      return true;
+    }
+    if (/\b(?:faq|trivia|answers?|lunch|guided-tour|beer-trail|bookings?)\b/i.test(pathname) && !/\b(?:happy-hour|pints?|schooners?|tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
+      return true;
+    }
+    if (/\/events?(?:\/|$)/i.test(pathname) && !/\b(?:happy-hour|pints?|schooners?|tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
       return true;
     }
   } catch {
@@ -1559,9 +1568,9 @@ function inferGenericDrinkName(line: string, priceIndex: number): string | null 
 }
 
 const EXTRACTION_FOOD_EVENT_NOISE_PATTERN =
-  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|parma|parmigiana|schnitzel|sandwich|toastie|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan|fine\s+sugar|fresh\s+ginger|honey\s+with\s+ginger)\b/i;
+  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|burgers?|parmas?|parma|parmigiana|schnitzel|sandwich|toastie|share\s+plates?|pub\s+meal|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan|fine\s+sugar|fresh\s+ginger|honey\s+with\s+ginger)\b/i;
 const EXTRACTION_ARTICLE_OR_JSON_NOISE_PATTERN =
-  /\b(?:description|urlslug|structured_data|utm_|blogs?\/|\/news\/|\/articles?\/|cdn\/shop|width=|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|soft\s+drink|official\s+beer\s+(?:and\s+cider\s+)?partner)\b/i;
+  /\b(?:description|urlslug|structured_data|utm_|blogs?\/|\/news\/|\/articles?\/|cdn\/shop|width=|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|house\s+wine|soft\s+drink|official\s+beer\s+(?:and\s+cider\s+)?partner|bookings?|reservations?|guests?|time\s+slots?|security|confiscated|litres?\s+of\s+beer|beer\s+mugs?|million\s+litres?|guided\s+tour)\b/i;
 
 function isReadableExtractionText(value: string): boolean {
   const compact = value.replace(/\s+/g, "");
@@ -1837,13 +1846,13 @@ function isBarePriceTokenAllowed(line: string, start: number, end: number, value
   if (/^\s*(?:am|pm|hrs?|hours?|mins?|minutes?|kg|g|ml|l\b|oz|people|guests|days?|packs?|for\b|off\b|%)/i.test(after)) {
     return false;
   }
-  if (/^\s*(?:beers?\s+on\s+tap|tap\s+beers?|beers?\s+including|different\s+(?:draught|draft|tap\s+)?beers?|(?:draught|draft|tap)\s+beers?\s+to\s+choose)\b/i.test(after)) {
+  if (/^\s*(?:\+?\s*)?(?:beers?\s+on\s+tap|tap\s+beers?|beers?\s+including|different\s+(?:draught|draft|tap\s+)?beers?|(?:draught|draft|tap)\s+(?:beers?|bar|taps?)\s+(?:to\s+choose|available|on\s+tap)?|taps?\s+(?:will\s+pour|to\s+choose|available))\b/i.test(after)) {
     return false;
   }
   if (/\b(?:19|20)\d{2}\b/.test(line.slice(Math.max(0, start - 8), Math.min(line.length, end + 8)))) {
     return false;
   }
-  if (/\b(?:years?|founded|established|opened|serving locals|bar scene)\b/i.test(priceContext(line, start))) {
+  if (/\b(?:years?|founded|established|opened|serving locals|bar scene|groups?\s+of|how\s+many|bookings?|guests?|litres?|mugs?|glasses?|mouthwatering|pub\s+meal)\b/i.test(priceContext(line, start))) {
     return false;
   }
 
@@ -1869,7 +1878,10 @@ function isPlausibleDrinkPrice(line: string, match: TextPriceMatch): boolean {
   if (/\bwith\s+over\s+\d{1,2}\s+beers?\s+on\s+tap\b/i.test(line)) {
     return false;
   }
-  if (!match.hadCurrency && /\b\d{1,2}\s+(?:different\s+)?(?:draught|draft|tap\s+)?beers?\s+(?:to\s+choose|available|on\s+tap)\b/i.test(line)) {
+  if (/\b\d{1,2}\+?\s+(?:different\s+)?(?:draught|draft|tap\s+)?(?:beers?|taps?|tap\s+bar)\s+(?:to\s+choose|available|on\s+tap|will\s+pour)?\b/i.test(line)) {
+    return false;
+  }
+  if (/\b(?:groups?\s+of\s+\d|how\s+many|litres?\s+of\s+beer|beer\s+mugs?|million\s+litres?|glasses?|bookings?|guests?|mouthwatering\s+burgers?|pub\s+meal|fave\s+dish|pot\s+of\s+beer\s+or\s+house\s+wine)\b/i.test(line)) {
     return false;
   }
   if (/\b\d{1,2}\s+tap\s+beers?\b/i.test(line) && !/\b(?:pint|schooner|pot|jug)\b/i.test(line)) {
@@ -1894,7 +1906,7 @@ function isUsableExtractionLine(line: string): boolean {
   if (/\b(?:urlSlug|qtyInStock|allowMultiplePurchase|mightHavePaymentPlan|published|productId)\b/i.test(line)) {
     return false;
   }
-  if (/\b(?:increase quantity|decrease quantity|add to cart|checkout|subtotal)\b/i.test(line)) {
+  if (/\b(?:increase quantity|decrease quantity|add to cart|checkout|subtotal|variant|unit price|regular price)\b/i.test(line)) {
     return false;
   }
   if (/\/blogs?\//i.test(line) || /\/news\//i.test(line) || /\/articles?\//i.test(line) || /utm_campaign=structured_data_events|event\/|\/events?\//i.test(line)) {
