@@ -341,6 +341,13 @@ describe("menu crawler extraction", () => {
       "Tallboy & Moose are hosting the ultimate Beer Olympics to celebrate their 7th birthday.",
       "A mixed case of all our current beers on offer: 6 Pack Lead Head Lager 6 Pack XPA 43 4 Pack Bayside IPA 4 Pack True Course Session Ale",
       "Our Beers XPA 43",
+      "We pride ourselves on having something for everyone, with a range of wine available, plus 14 different draught beers to choose from and all your favourite spirits.",
+      "$25 Marga & Lager Every Wednesday",
+      "/blogs/weekly-specials/25-marga-lager#article",
+      "https://mollyrosebrewing.com/blogs/weekly-specials/25-marga-lager",
+      "https://cbco.beer/cdn/shop/files/CBCo_For-Australian-Tastes.jpg?v=1740976211&width=500",
+      "https://cbco.beer/cdn/shop/articles/07-24_Future-Golf-Partnership-v3.jpg?v=1721193323&width=1920",
+      "(400ml Tiger beer, 200g Fine sugar & 30g Fresh ginger) OR Honey with ginger $30",
       "\u001ed0\u0019\u0082\u00f9\u00a1\u00b8\u00f5\u0080\u00a9$\u0017\u00beD0 \"Y`ALE\u00ecAHI\"I\"}\u00c1\u0095p\u00c4D\u00cc\u0098\u00c6\u0011\u00031b\u001aCz\u0093XL1\u0088&\u00bd0",
       "Vergina, Lager Makethonia, Greece.........................11",
     ].join("\n");
@@ -357,7 +364,9 @@ describe("menu crawler extraction", () => {
     expect(names).not.toContain("Pack Lead Head Lager");
     expect(names).not.toContain("XPA");
     expect(names).not.toContain("Our Beers XPA");
-    expect(names.some((name) => new RegExp("Beer Olympics|Beer and Carols|ALE\\u00ecAHI", "i").test(name))).toBe(false);
+    expect(names).not.toContain("Draught");
+    expect(names).not.toContain("Lager");
+    expect(names.some((name) => /https?:|\/blogs|cdn\/shop|Tiger beer|Fine sugar|Fresh ginger|Beer Olympics|Beer and Carols|ALE\u00ecAHI/i.test(name))).toBe(false);
   });
 
   it("uses venue name and source URL to catch duplicate queue candidates across venue ids", () => {

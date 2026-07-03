@@ -67,8 +67,6 @@ const COMMON_MENU_PATHS = [
   "/eat-and-drink",
   "/bar-menu",
   "/beer",
-  "/wine",
-  "/cocktails",
   "/happy-hour",
   "/specials",
   "/whats-on",
@@ -775,7 +773,7 @@ function isBogusAssetReference(url: string): boolean {
 }
 
 function isMenuTerm(value: string): boolean {
-  return /\b(menu|menus|drinks?|beverages?|beer|wine|cocktails?|tap\s?list|happy\s?hour|specials?)\b/i.test(value);
+  return /\b(menu|menus|drinks?|beverages?|beer|tap\s?list|happy\s?hour|specials?)\b/i.test(value);
 }
 
 function isExcludedMenuSourceUrl(url: string, text: string): boolean {
@@ -789,6 +787,12 @@ function isExcludedMenuSourceUrl(url: string, text: string): boolean {
       return true;
     }
     if (/\/(?:shop|product|products|product-category|collections?|cart|checkout)(?:\/|$)/i.test(pathname) && !/\bmenus?\b/i.test(pathname)) {
+      return true;
+    }
+    if (/\/(?:blogs?|news|articles?|members)(?:\/|$)/i.test(pathname) && !/\b(?:menus?|tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
+      return true;
+    }
+    if (/\/(?:wine|wines|redwines?|whitewines?|cocktails?)(?:\/|$)/i.test(pathname) && !/\b(?:menus?|drinks?-menu|beer-menu)\b/i.test(pathname)) {
       return true;
     }
   } catch {
@@ -823,7 +827,7 @@ function isLikelyMenuImageCandidate(url: string, text: string): boolean {
 
 function hasDrinkPriceSignals(text: string): boolean {
   const hasDrinkText =
-    /\b(beer|pint|tap|draught|draft|guinness|carlton|stone\s*&\s*wood|lager|ale|stout|wine|cocktail|happy\s?hour|schooner|pot|jug|tin|tins|tinnies)\b/i.test(
+    /\b(beer|pint|tap|draught|draft|guinness|carlton|stone\s*&\s*wood|lager|ale|stout|happy\s?hour|schooner|pot|jug|tin|tins|tinnies)\b/i.test(
       text,
     );
   if (!hasDrinkText) {
@@ -832,7 +836,7 @@ function hasDrinkPriceSignals(text: string): boolean {
 
   return (
     /(?:\$|A\$|AUD\s*)\s*\d{1,3}(?:\.\d{1,2})?/.test(text) ||
-    /\b(?:pint|schooner|pot|jug|tap|draught|draft|beer|lager|ale|stout|ipa|xpa|cider|cocktail|wine)\b[^\n$]{0,80}\b\d{1,2}(?:\.\d{1,2})?\b/i.test(
+    /\b(?:pint|schooner|pot|jug|tap|draught|draft|beer|lager|ale|stout|ipa|xpa|cider)\b[^\n$]{0,80}\b\d{1,2}(?:\.\d{1,2})?\b/i.test(
       text,
     )
   );
@@ -1246,7 +1250,7 @@ function sourceHasMenuSignal(linkText: string, sourceUrl: string): boolean {
 function isLowIntentMenuSourceUrl(sourceUrl: string): boolean {
   try {
     const pathname = new URL(sourceUrl).pathname.toLowerCase();
-    if (/\b(?:happy|special|drink|drinks|menu|food|beer|wine|cocktail|eat-drink|eat-and-drink)\b/i.test(pathname)) {
+    if (/\b(?:happy|special|drink|drinks|menu|food|beer|eat-drink|eat-and-drink)\b/i.test(pathname)) {
       return false;
     }
     return /\/(?:about|history|faqs?|contact|privacy|terms|careers?|jobs?|blog|news)(?:\/|$)/i.test(pathname);
@@ -1555,9 +1559,9 @@ function inferGenericDrinkName(line: string, priceIndex: number): string | null 
 }
 
 const EXTRACTION_FOOD_EVENT_NOISE_PATTERN =
-  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|parma|parmigiana|schnitzel|sandwich|toastie|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan)\b/i;
+  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|parma|parmigiana|schnitzel|sandwich|toastie|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan|fine\s+sugar|fresh\s+ginger|honey\s+with\s+ginger)\b/i;
 const EXTRACTION_ARTICLE_OR_JSON_NOISE_PATTERN =
-  /\b(?:description|urlslug|structured_data|utm_|blogs?\/events?|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|soft\s+drink)\b/i;
+  /\b(?:description|urlslug|structured_data|utm_|blogs?\/|\/news\/|\/articles?\/|cdn\/shop|width=|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|soft\s+drink|official\s+beer\s+(?:and\s+cider\s+)?partner)\b/i;
 
 function isReadableExtractionText(value: string): boolean {
   const compact = value.replace(/\s+/g, "");
@@ -1599,6 +1603,12 @@ function isUsableExtractedDrinkName(name: string, trackedBeer: string | null): b
     return false;
   }
   if (/^\+/.test(trimmed)) {
+    return false;
+  }
+  if (/^(?:https?:)?\/\//i.test(trimmed) || /^\//.test(trimmed) || /\b(?:cdn\/shop|\.com\/|\.com\.au\/|width=|[?&]v=)\b/i.test(trimmed)) {
+    return false;
+  }
+  if (/^\(/.test(trimmed) || /\b\d{2,4}\s*ml\b/i.test(trimmed) && /\b\d{1,4}\s*g\b/i.test(trimmed)) {
     return false;
   }
   if (!trackedBeer && (trimmed.length > 70 || loose.split(/\s+/).length > 9)) {
@@ -1827,7 +1837,7 @@ function isBarePriceTokenAllowed(line: string, start: number, end: number, value
   if (/^\s*(?:am|pm|hrs?|hours?|mins?|minutes?|kg|g|ml|l\b|oz|people|guests|days?|packs?|for\b|off\b|%)/i.test(after)) {
     return false;
   }
-  if (/^\s*(?:beers?\s+on\s+tap|tap\s+beers?|beers?\s+including)\b/i.test(after)) {
+  if (/^\s*(?:beers?\s+on\s+tap|tap\s+beers?|beers?\s+including|different\s+(?:draught|draft|tap\s+)?beers?|(?:draught|draft|tap)\s+beers?\s+to\s+choose)\b/i.test(after)) {
     return false;
   }
   if (/\b(?:19|20)\d{2}\b/.test(line.slice(Math.max(0, start - 8), Math.min(line.length, end + 8)))) {
@@ -1859,6 +1869,9 @@ function isPlausibleDrinkPrice(line: string, match: TextPriceMatch): boolean {
   if (/\bwith\s+over\s+\d{1,2}\s+beers?\s+on\s+tap\b/i.test(line)) {
     return false;
   }
+  if (!match.hadCurrency && /\b\d{1,2}\s+(?:different\s+)?(?:draught|draft|tap\s+)?beers?\s+(?:to\s+choose|available|on\s+tap)\b/i.test(line)) {
+    return false;
+  }
   if (/\b\d{1,2}\s+tap\s+beers?\b/i.test(line) && !/\b(?:pint|schooner|pot|jug)\b/i.test(line)) {
     return false;
   }
@@ -1884,7 +1897,10 @@ function isUsableExtractionLine(line: string): boolean {
   if (/\b(?:increase quantity|decrease quantity|add to cart|checkout|subtotal)\b/i.test(line)) {
     return false;
   }
-  if (/\/blogs?\/events?\/|utm_campaign=structured_data_events|event\/|\/events?\//i.test(line)) {
+  if (/\/blogs?\//i.test(line) || /\/news\//i.test(line) || /\/articles?\//i.test(line) || /utm_campaign=structured_data_events|event\/|\/events?\//i.test(line)) {
+    return false;
+  }
+  if (/https?:\/\/|(?:^|[\s"'])\/\/|cdn\/shop|width=\d|[?&]v=\d/i.test(line)) {
     return false;
   }
   return true;
@@ -2111,7 +2127,7 @@ function scoreSource(input: {
 }): MenuSourceCandidate | null {
   const signals: string[] = [];
   let confidence = 0;
-  const hasStrongDrinkText = hasDrinkPriceSignals(input.text) || /\b(beer|drinks?|cocktails?|wine|tap\s?list|happy\s?hour)\b/i.test(input.text);
+  const hasStrongDrinkText = hasDrinkPriceSignals(input.text) || /\b(beer|drinks?|tap\s?list|happy\s?hour)\b/i.test(input.text);
   const isGeneratedDiscoveryLink = /\b(common menu path probe|sitemap menu url|robots sitemap menu url|wordpress rest menu url|quoted url menu asset|embedded json menu asset)\b/i.test(input.linkText);
   const discoveryMethod = discoveryMethodFromLinkText(input.linkText, input.officialWebsite, input.sourceUrl);
   const trustedExternalMenuHost = !sameOrigin(input.officialWebsite, input.sourceUrl) && isTrustedExternalMenuHost(input.sourceUrl);

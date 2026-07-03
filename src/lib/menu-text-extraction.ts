@@ -33,9 +33,9 @@ const BEERISH_NAME_PATTERN =
 const NON_BEER_DRINK_NAME_PATTERN =
   /\b(?:wine|cocktails?|spritz|margarita|negroni|amaretto|mini\s+beer|baby\s+guinness|gin|vodka|rum|tequila|mezcal|vermouth|amaro|aperitif|liqueur|whisk(?:e)?y|bourbon|scotch|rye|brandy|cognac|sambuca|ouzo|pisco|campari|aperol|tanqueray|poor\s+tom'?s|archie\s+rose|aviation|four\s+pillars|mgc|hellyer'?s|noilly\s+prat|marionette|bulleit|bitter\s+orange|dry\s+cassis|single\s+shot)\b/i;
 const FOOD_OR_EVENT_NOISE_PATTERN =
-  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|parma|parmigiana|schnitzel|sandwich|toastie|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan)\b/i;
+  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|parma|parmigiana|schnitzel|sandwich|toastie|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan|fine\s+sugar|fresh\s+ginger|honey\s+with\s+ginger)\b/i;
 const ARTICLE_OR_JSON_NOISE_PATTERN =
-  /\b(?:description|urlslug|structured_data|utm_|blogs?\/events?|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|soft\s+drink)\b/i;
+  /\b(?:description|urlslug|structured_data|utm_|blogs?\/|\/news\/|\/articles?\/|cdn\/shop|width=|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|soft\s+drink|official\s+beer\s+(?:and\s+cider\s+)?partner)\b/i;
 
 const TAP_SECTION_LINE_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
 const TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
@@ -267,6 +267,12 @@ function isLikelyMenuNoiseName(name: string, sourceRow: string): boolean {
     return true;
   }
   if (FOOD_OR_EVENT_NOISE_PATTERN.test(text) || ARTICLE_OR_JSON_NOISE_PATTERN.test(text)) {
+    return true;
+  }
+  if (/^(?:https?:)?\/\//i.test(name) || /^\//.test(name) || /\b(?:cdn\/shop|\.com\/|\.com\.au\/|width=|[?&]v=)/i.test(name)) {
+    return true;
+  }
+  if (/^\(/.test(name) || (/\b\d{2,4}\s*ml\b/i.test(text) && /\b\d{1,4}\s*g\b/i.test(text))) {
     return true;
   }
   if (/^\s*(?:cocktails?|red\s+wine|white\s+wine|sparkling\s+wine|ros[eé]|spirits?)\b/i.test(name)) {
