@@ -711,7 +711,7 @@ function isLikelyStandaloneBeerNameLine(line: string, section: SectionMarker | n
     return true;
   }
 
-  return Boolean(section) && (BEERISH_NAME_PATTERN.test(cleanedName) || ABV_PATTERN.test(line));
+  return Boolean(section) && BEERISH_NAME_PATTERN.test(cleanedName);
 }
 
 function collectFollowingMenuPrices(lines: string[], startIndex: number): {

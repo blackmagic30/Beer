@@ -371,6 +371,9 @@ describe("menu crawler extraction", () => {
       "Stomping Ground Big Sky Hazy Pale Ale 4.3%",
       "$8.5 POT, $17 PINT",
       "Collingwood",
+      "Lemon 4.5%",
+      "$8.5 POT, $17 PINT",
+      "Australia",
       "Can",
       "2 Brothers Kung Foo Rice Lager 4.6%",
       "$15",
@@ -392,6 +395,7 @@ describe("menu crawler extraction", () => {
       priceNumeric: 15,
       availabilityStatus: "package_only",
     }));
+    expect(byName.has("Lemon")).toBe(false);
   });
 
   it("uses pint prices rather than ABV from structured on-tap website cards", () => {
