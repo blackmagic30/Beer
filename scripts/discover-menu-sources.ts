@@ -2012,6 +2012,19 @@ function splitTextIntoExtractionLines(text: string): string[] {
     .filter(Boolean);
 }
 
+function normalizeTextRowAvailabilityFromSectionNote(row: MenuImageOcrBeer): MenuImageOcrBeer {
+  if (row.availabilityStatus !== "unknown" || !row.notes) {
+    return row;
+  }
+  if (/\bSection:\s*ON TAP\b/i.test(row.notes)) {
+    return { ...row, availabilityStatus: "on_tap" };
+  }
+  if (/\bSection:\s*CANS OR BOTTLES\b/i.test(row.notes)) {
+    return { ...row, availabilityStatus: "package_only" };
+  }
+  return row;
+}
+
 function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
   const structuredRows = extractStructuredBeerRowsFromText(text).slice(0, MAX_ROWS_PER_TEXT_SOURCE);
   const rows: MenuImageOcrBeer[] = [...structuredRows];
@@ -2106,7 +2119,7 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
     }
   }
 
-  return rows;
+  return rows.map(normalizeTextRowAvailabilityFromSectionNote);
 }
 
 function buildTextExtraction(method: TextExtractionMethod, text: string, rawSourceText: string = text): MenuTextExtractionResult | null {

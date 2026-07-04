@@ -854,6 +854,19 @@ function rowKey(row: Pick<ExtractedMenuBeerRow, "name" | "priceNumeric" | "avail
   return `${normalizeLooseText(row.name)}|${row.priceNumeric ?? ""}|${row.availabilityStatus}`;
 }
 
+function normalizeAvailabilityFromSectionNote(row: ExtractedMenuBeerRow): ExtractedMenuBeerRow {
+  if (row.availabilityStatus !== "unknown" || !row.notes) {
+    return row;
+  }
+  if (/\bSection:\s*ON TAP\b/i.test(row.notes)) {
+    return { ...row, availabilityStatus: "on_tap" };
+  }
+  if (/\bSection:\s*CANS OR BOTTLES\b/i.test(row.notes)) {
+    return { ...row, availabilityStatus: "package_only" };
+  }
+  return row;
+}
+
 export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBeerRow[] {
   const normalizedText = normalizeMenuText(text);
   if (!normalizedText) {
@@ -1096,5 +1109,5 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
     lineIndex = Math.max(lineIndex, priceBlock.lastIndex);
   }
 
-  return rows;
+  return rows.map(normalizeAvailabilityFromSectionNote);
 }
