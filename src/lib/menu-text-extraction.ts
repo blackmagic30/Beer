@@ -17,6 +17,8 @@ interface SectionMarker {
   availabilityStatus: MenuTextAvailabilityStatus;
 }
 
+type PourPriceLabel = "pot" | "schooner" | "pint" | "jug";
+
 const MENU_ROW_PATTERN =
   /([A-Z][A-Za-z0-9'&.,\- ]{2,100}?(?:\(\s*\d+(?:\.\d+)?%\s*\))?)\s*(?:\.{3,}|_{3,}|-{3,})\s*((?:\$?\d{1,2}(?:\.\d{1,2})?\s*(?:\/\s*)?){1,4})(?:\s*\(([^)]{1,30})\))?/g;
 
@@ -29,11 +31,11 @@ const HEADING_PREFIX_PATTERN =
   /^(?:(?:drink|drinks|beer|beers|on\s+tap|tap\s+beers?|beers?\s+on\s+tap|pots?|pints?|jugs?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|tins?\s*(?:&|and)\s*bottles?|tinnies?|packaged|sparkling\s*&\s*rose|white|red|glass|bottle|can|tin)\b[\s/:,-]*)+/i;
 
 const BEERISH_NAME_PATTERN =
-  /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|sour|ginger\s+beer|hard\s+rated|rtd|guinness|asahi|balter|carlton|northern|goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|kirin|furphy|napoleone|little\s+creatures|obrien'?s|heaps\s+normal|pabst)\b/i;
+  /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|sour|ginger\s+beer|hard\s+rated|rtd|guinness|asahi|balter|carlton|great\s+northern|mountain\s+goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|kirin|furphy|napoleone|little\s+creatures|obrien'?s|heaps\s+normal|pabst)\b/i;
 const NON_BEER_DRINK_NAME_PATTERN =
   /\b(?:wine|cocktails?|spritz|margarita|negroni|amaretto|mini\s+beer|baby\s+guinness|gin|vodka|rum|tequila|mezcal|vermouth|amaro|aperitif|liqueur|whisk(?:e)?y|bourbon|scotch|rye|brandy|cognac|sambuca|ouzo|pisco|campari|aperol|tanqueray|poor\s+tom'?s|archie\s+rose|aviation|four\s+pillars|mgc|hellyer'?s|noilly\s+prat|marionette|bulleit|bitter\s+orange|dry\s+cassis|single\s+shot)\b/i;
 const FOOD_OR_EVENT_NOISE_PATTERN =
-  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|burgers?|parmas?|parma|parmigiana|schnitzel|sandwich|toastie|share\s+plates?|pub\s+meal|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan|fine\s+sugar|fresh\s+ginger|honey\s+with\s+ginger)\b/i;
+  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|t[-\s]?bone|rib[-\s]?eye|porterhouse|sirloin|scotch\s+fillet|eye\s+fillet|tenderloin|wagyu|angus|beef|chicken|pork|lamb|brisket|ribs?|cutlets?|roast|charcuterie|platter|grazing|cheese|tart|msa\s*\d?\s*grade|\d+\s*day\s+aged|dry[-\s]?aged|grass[-\s]?fed|grain[-\s]?fed|burger|burgers?|parmas?|parma|parmigiana|schnitzel|sandwich|toastie|share\s+plates?|pub\s+meal|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan|fine\s+sugar|fresh\s+ginger|honey\s+with\s+ginger)\b/i;
 const ARTICLE_OR_JSON_NOISE_PATTERN =
   /\b(?:description|urlslug|structured_data|utm_|blogs?\/|\/news\/|\/articles?\/|cdn\/shop|width=|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|house\s+wine|soft\s+drink|official\s+beer\s+(?:and\s+cider\s+)?partner|bookings?|reservations?|guests?|time\s+slots?|security|confiscated|litres?\s+of\s+beer|beer\s+mugs?|million\s+litres?|guided\s+tour|terminal\s+\d|first\s+working\s+brewery|fourth\s+in\s+the\s+world)\b/i;
 
@@ -359,7 +361,7 @@ function isEmbeddedInMeasurementToken(line: string, start: number, end: number):
   if (/\d/.test(before)) {
     return true;
   }
-  return /^\s*(?:ml|l\b|oz|cl|g\b|kg\b|%)/i.test(after);
+  return /^\s*(?:ml|l\b|oz|cl|g\b|kg\b|%|days?\b|years?\b|yrs?\b|packs?\b|grade\b)/i.test(after);
 }
 
 function decodeMenuHtml(value: string): string {
@@ -581,34 +583,66 @@ function hasPotsPintsJugsHint(text: string, index: number, priceCount: number): 
   return /\bPots?\s*\/\s*Pints?\s*\/\s*Jugs?\b/i.test(nearby);
 }
 
-function parseLabeledPourPrices(line: string, startIndex: number): { priceText: string; prices: number[] } | null {
+function normalizePourPriceLabel(value: string): PourPriceLabel {
+  return value.toLowerCase().replace(/s$/, "") as PourPriceLabel;
+}
+
+function preferredPourPrice(matches: Array<{ label: PourPriceLabel; price: number }>): { label: PourPriceLabel; price: number } | null {
+  return (
+    matches.find((match) => match.label === "pint") ??
+    matches.find((match) => match.label === "schooner") ??
+    matches.find((match) => match.label === "jug") ??
+    matches.find((match) => match.label === "pot") ??
+    null
+  );
+}
+
+function parseLabeledPourPrices(
+  line: string,
+  startIndex: number,
+): { priceText: string; prices: number[]; preferredPrice: number | null; preferredLabel: PourPriceLabel | null } | null {
   const priceArea = line.slice(startIndex);
-  const matches: Array<{ index: number; price: number; text: string }> = [];
+  const matches: Array<{ index: number; label: PourPriceLabel; price: number; text: string }> = [];
   const seen = new Set<string>();
-  const patterns = [
-    /(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)\s*(?:pot|pots|schooner|schooners|pint|pints|jug|jugs)\b/gi,
-    /\b(?:pot|pots|schooner|schooners|pint|pints|jug|jugs)\b\s*[:=-]?\s*(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)/gi,
+  const patterns: Array<{
+    pattern: RegExp;
+    priceGroup: number;
+    labelGroup: number;
+  }> = [
+    {
+      pattern: /(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)\s*(pot|pots|schooner|schooners|pint|pints|jug|jugs)\b/gi,
+      priceGroup: 1,
+      labelGroup: 2,
+    },
+    {
+      pattern: /\b(pot|pots|schooner|schooners|pint|pints|jug|jugs)\b\s*[:=-]?\s*(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)/gi,
+      priceGroup: 2,
+      labelGroup: 1,
+    },
   ];
 
-  for (const pattern of patterns) {
+  for (const { pattern, priceGroup, labelGroup } of patterns) {
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(priceArea))) {
-      const numericRaw = match[1];
-      if (!numericRaw) {
+      const numericRaw = match[priceGroup];
+      const labelRaw = match[labelGroup];
+      if (!numericRaw || !labelRaw) {
         continue;
       }
       const price = Number(numericRaw);
       if (!Number.isFinite(price) || price <= 0 || price > 80) {
         continue;
       }
+      const label = normalizePourPriceLabel(labelRaw);
       const absoluteIndex = startIndex + match.index;
-      const key = `${absoluteIndex}:${price}`;
+      const key = `${absoluteIndex}:${label}:${price}`;
       if (seen.has(key)) {
         continue;
       }
       seen.add(key);
       matches.push({
         index: absoluteIndex,
+        label,
         price,
         text: match[0].trim(),
       });
@@ -619,14 +653,19 @@ function parseLabeledPourPrices(line: string, startIndex: number): { priceText: 
   if (ordered.length === 0) {
     return null;
   }
+  const preferred = preferredPourPrice(ordered);
 
   return {
     priceText: ordered.map((match) => match.text).join(" / "),
     prices: ordered.map((match) => match.price),
+    preferredPrice: preferred?.price ?? null,
+    preferredLabel: preferred?.label ?? null,
   };
 }
 
-function simpleMenuPriceMatch(line: string): { index: number; priceText: string; prices: number[] } | null {
+function simpleMenuPriceMatch(
+  line: string,
+): { index: number; priceText: string; prices: number[]; preferredPrice: number | null; preferredLabel: PourPriceLabel | null } | null {
   SIMPLE_MENU_PRICE_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = SIMPLE_MENU_PRICE_PATTERN.exec(line))) {
@@ -649,16 +688,18 @@ function simpleMenuPriceMatch(line: string): { index: number; priceText: string;
     if (/%/.test(rawPriceText) || /\b(?:19|20)\d{2}\b/.test(context)) {
       continue;
     }
-    if (/^\s*packs?\b/i.test(after)) {
+    if (/^\s*(?:packs?|days?|years?|yrs?|grade)\b/i.test(after) || /\b(?:day\s+aged|dry[-\s]?aged|msa\s*\d?\s*grade)\b/i.test(context)) {
       continue;
     }
 
-    const labeledPourPrices = parseLabeledPourPrices(line, match.index);
+    const labeledPourPrices = parseLabeledPourPrices(line, Math.max(0, match.index - 24));
     if (labeledPourPrices) {
       return {
         index: match.index,
         priceText: labeledPourPrices.priceText,
         prices: labeledPourPrices.prices,
+        preferredPrice: labeledPourPrices.preferredPrice,
+        preferredLabel: labeledPourPrices.preferredLabel,
       };
     }
 
@@ -666,13 +707,17 @@ function simpleMenuPriceMatch(line: string): { index: number; priceText: string;
       index: match.index,
       priceText: rawPriceText,
       prices,
+      preferredPrice: null,
+      preferredLabel: null,
     };
   }
 
   return null;
 }
 
-function priceOnlyLine(line: string): { prices: number[]; priceText: string } | null {
+function priceOnlyLine(
+  line: string,
+): { prices: number[]; priceText: string; preferredPrice: number | null; preferredLabel: PourPriceLabel | null } | null {
   const cleaned = line.trim();
   const labeledPourPrices = parseLabeledPourPrices(cleaned, 0);
   if (
@@ -694,6 +739,8 @@ function priceOnlyLine(line: string): { prices: number[]; priceText: string } | 
   return {
     prices,
     priceText: cleaned,
+    preferredPrice: null,
+    preferredLabel: null,
   };
 }
 
@@ -720,11 +767,15 @@ function isLikelyStandaloneBeerNameLine(line: string, section: SectionMarker | n
 function collectFollowingMenuPrices(lines: string[], startIndex: number): {
   prices: number[];
   priceText: string;
+  preferredPrice: number | null;
+  preferredLabel: PourPriceLabel | null;
   detailLine: string | null;
   lastIndex: number;
 } | null {
   const prices: number[] = [];
   const priceTexts: string[] = [];
+  let preferredPrice: number | null = null;
+  let preferredLabel: PourPriceLabel | null = null;
   let detailLine: string | null = null;
   let lastIndex = startIndex;
   let skippedDetail = false;
@@ -739,6 +790,8 @@ function collectFollowingMenuPrices(lines: string[], startIndex: number): {
     if (priceOnly) {
       prices.push(...priceOnly.prices);
       priceTexts.push(priceOnly.priceText);
+      preferredPrice ??= priceOnly.preferredPrice;
+      preferredLabel ??= priceOnly.preferredLabel;
       lastIndex = startIndex + offset;
       if (prices.length >= 3) {
         break;
@@ -770,6 +823,8 @@ function collectFollowingMenuPrices(lines: string[], startIndex: number): {
   return {
     prices,
     priceText: priceTexts.join(" / "),
+    preferredPrice,
+    preferredLabel,
     detailLine,
     lastIndex,
   };
@@ -919,7 +974,7 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       priceCount: priceMatch.prices.length,
       hasPotsPintsJugsHint: false,
     });
-    const selectedPrice = selectDisplayPrice({
+    const selectedPrice = priceMatch.preferredPrice ?? selectDisplayPrice({
       prices: priceMatch.prices,
       availabilityStatus,
       hasPotsPintsJugsHint: false,
@@ -939,7 +994,10 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       availabilityStatus,
       notes: [
         currentSection ? `Section: ${currentSection.label}` : null,
-        priceMatch.prices.length > 1 && availabilityStatus === "on_tap" ? "Selected largest tap pour price from slash-separated row." : null,
+        priceMatch.preferredLabel === "pint" ? "Selected pint price from labelled pour row." : null,
+        !priceMatch.preferredLabel && priceMatch.prices.length > 1 && availabilityStatus === "on_tap"
+          ? "Selected largest tap pour price from slash-separated row."
+          : null,
         `Source row: ${sourceRowPreview(line)}`,
         detailLine ? `Beer details: ${detailLine}` : null,
         abvNoteFromText(`${line} ${detailLine ?? ""}`),
@@ -991,7 +1049,7 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       priceCount: priceBlock.prices.length,
       sourceRow: `${line} ${priceBlock.priceText}`,
     });
-    const selectedPrice = selectDisplayPrice({
+    const selectedPrice = priceBlock.preferredPrice ?? selectDisplayPrice({
       prices: priceBlock.prices,
       availabilityStatus,
       hasPotsPintsJugsHint: priceBlock.prices.length >= 3,
@@ -1010,7 +1068,8 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       availabilityStatus,
       notes: [
         currentSection ? `Section: ${currentSection.label}` : null,
-        priceBlock.prices.length >= 3 ? "Selected pint price from pot/pint/jug table." : null,
+        priceBlock.preferredLabel === "pint" ? "Selected pint price from labelled pour row." : null,
+        !priceBlock.preferredLabel && priceBlock.prices.length >= 3 ? "Selected pint price from pot/pint/jug table." : null,
         `Source row: ${sourceRowPreview(`${line} ${priceBlock.priceText}`)}`,
         priceBlock.detailLine ? `Beer details: ${priceBlock.detailLine}` : null,
         abvNoteFromText(`${line} ${priceBlock.detailLine ?? ""}`),

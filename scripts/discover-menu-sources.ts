@@ -1572,7 +1572,7 @@ function inferGenericDrinkName(line: string, priceIndex: number): string | null 
 }
 
 const EXTRACTION_FOOD_EVENT_NOISE_PATTERN =
-  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|burger|burgers?|parmas?|parma|parmigiana|schnitzel|sandwich|toastie|share\s+plates?|pub\s+meal|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan|fine\s+sugar|fresh\s+ginger|honey\s+with\s+ginger)\b/i;
+  /\b(?:beer[-\s]?battered|sour\s+cream|sweet\s+chilli|red\s+wine\s+vinegar|red\s+wine\s+jus|white\s+wine\s+jus|wedges?|chips?|fries|salad|fish|prawns?|oysters?|calamari|seafood|steak|t[-\s]?bone|rib[-\s]?eye|porterhouse|sirloin|scotch\s+fillet|eye\s+fillet|tenderloin|wagyu|angus|beef|chicken|pork|lamb|brisket|ribs?|cutlets?|roast|charcuterie|platter|grazing|cheese|tart|msa\s*\d?\s*grade|\d+\s*day\s+aged|dry[-\s]?aged|grass[-\s]?fed|grain[-\s]?fed|burger|burgers?|parmas?|parma|parmigiana|schnitzel|sandwich|toastie|share\s+plates?|pub\s+meal|dessert|festival|tickets?|tix|birthday|olympics?|carols|wrestling|run|km|food\s+and\s+beverage\s+stalls?|bottomless|course\s+meal|vegetarian|vegan|fine\s+sugar|fresh\s+ginger|honey\s+with\s+ginger)\b/i;
 const EXTRACTION_ARTICLE_OR_JSON_NOISE_PATTERN =
   /\b(?:description|urlslug|structured_data|utm_|blogs?\/|\/news\/|\/articles?\/|cdn\/shop|width=|join\s+us|hosting|celebrate|soak\s+up|grab\s+a\s+free|served\s+with|glass\s+of\s+house\s+wine|house\s+wine|soft\s+drink|official\s+beer\s+(?:and\s+cider\s+)?partner|bookings?|reservations?|guests?|time\s+slots?|security|confiscated|litres?\s+of\s+beer|beer\s+mugs?|million\s+litres?|guided\s+tour|terminal\s+\d|first\s+working\s+brewery|fourth\s+in\s+the\s+world)\b/i;
 
@@ -1776,12 +1776,12 @@ function isLikelyFoodOrMerchPrice(line: string, priceIndex: number): boolean {
   if (/\b(red wine jus|white wine jus|jus|aioli|mayo|gravy|dipping sauce|sauce)\b/i.test(context)) {
     return true;
   }
-  if (/\b(pizza|pie|gravy|jus|aioli|mayo|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|gift card|voucher)\b/i.test(immediatelyAfterPrice)) {
+  if (/\b(pizza|pie|gravy|jus|aioli|mayo|sauce|steak|t[-\s]?bone|rib[-\s]?eye|porterhouse|sirloin|scotch\s+fillet|eye\s+fillet|tenderloin|wagyu|angus|msa\s*\d?\s*grade|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|roast|charcuterie|platter|grazing|cheese|tart|gift card|voucher)\b/i.test(immediatelyAfterPrice)) {
     return true;
   }
 
   const foodNearPrice =
-    /\b(pizza|pie|gravy|jus|aioli|mayo|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
+    /\b(pizza|pie|gravy|jus|aioli|mayo|sauce|steak|t[-\s]?bone|rib[-\s]?eye|porterhouse|sirloin|scotch\s+fillet|eye\s+fillet|tenderloin|wagyu|angus|msa\s*\d?\s*grade|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|roast|charcuterie|platter|grazing|cheese|tart|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
       nearPrice,
     );
   const drinkNearPrice =
@@ -1808,7 +1808,7 @@ function isLikelyFoodOrMerchPrice(line: string, priceIndex: number): boolean {
     return false;
   }
 
-  return /\b(pizza|pie|gravy|jus|aioli|mayo|sauce|steak|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
+  return /\b(pizza|pie|gravy|jus|aioli|mayo|sauce|steak|t[-\s]?bone|rib[-\s]?eye|porterhouse|sirloin|scotch\s+fillet|eye\s+fillet|tenderloin|wagyu|angus|msa\s*\d?\s*grade|striploin|burger|chips|fries|salad|pasta|risotto|chicken|beef|pork|lamb|fish|prawn|prawns|oyster|oysters|calamari|seafood|taco|tacos|nachos|parma|parmigiana|schnitzel|sandwich|toastie|dessert|cake|pudding|roast|charcuterie|platter|grazing|cheese|tart|tasting paddle|gift card|voucher|function|booking|room hire)\b/i.test(
     context,
   );
 }
@@ -1840,7 +1840,7 @@ function isEmbeddedInMeasurementToken(line: string, start: number, end: number):
   if (/\d/.test(before)) {
     return true;
   }
-  return /^\s*(?:ml|l\b|oz|cl|g\b|kg\b|%)/i.test(after);
+  return /^\s*(?:ml|l\b|oz|cl|g\b|kg\b|%|days?\b|years?\b|yrs?\b|packs?\b|grade\b)/i.test(after);
 }
 
 function isBarePriceTokenAllowed(line: string, start: number, end: number, value: number): boolean {

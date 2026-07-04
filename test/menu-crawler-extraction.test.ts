@@ -402,6 +402,30 @@ describe("menu crawler extraction", () => {
     expect(byName.has("Lemon")).toBe(false);
   });
 
+  it("does not turn steak or food rows into crawler beer rows", () => {
+    const blazedMenuText = [
+      "Premium Northern Victorian T bone 30 day aged, MSA 6 grade",
+      "Rib eye 300g grass fed 42",
+      "Goat cheese tart 18",
+      "Chicken schnitzel 26",
+      "Carlton Draught Pint $11 / Schooner $9 / Pot $7",
+    ].join("\n");
+
+    const rows = extractStructuredBeerRowsFromText(blazedMenuText);
+    const byName = new Map(rows.map((row) => [row.name, row]));
+
+    expect(byName.has("Premium Northern Victorian T bone")).toBe(false);
+    expect(byName.has("Rib eye")).toBe(false);
+    expect(byName.has("Goat cheese tart")).toBe(false);
+    expect(byName.has("Chicken schnitzel")).toBe(false);
+    expect(rows.some((row) => /t[-\s]?bone|rib[-\s]?eye|goat cheese|schnitzel|msa\s*\d?\s*grade|day aged/i.test(row.name))).toBe(false);
+    expect(byName.get("Carlton Draught")).toEqual(expect.objectContaining({
+      priceNumeric: 11,
+      priceText: "$11",
+      availabilityStatus: "on_tap",
+    }));
+  });
+
   it("uses pint prices rather than ABV from structured on-tap website cards", () => {
     const steamPacketHtml = `
       <div class="collection-item w-dyn-item">
