@@ -371,6 +371,9 @@ describe("menu crawler extraction", () => {
       "Stomping Ground Big Sky Hazy Pale Ale 4.3%",
       "$8.5 POT, $17 PINT",
       "Collingwood",
+      "Hazy Apple Cider 5%",
+      "$9.5 POT, $18.5 PINT",
+      "Richmond",
       "Lemon 4.5%",
       "$8.5 POT, $17 PINT",
       "Australia",
@@ -395,6 +398,7 @@ describe("menu crawler extraction", () => {
       priceNumeric: 15,
       availabilityStatus: "package_only",
     }));
+    expect(byName.has("Hazy Apple Cider")).toBe(false);
     expect(byName.has("Lemon")).toBe(false);
   });
 

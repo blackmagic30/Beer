@@ -337,6 +337,9 @@ function isLikelyMenuNoiseName(name: string, sourceRow: string): boolean {
   if (/^\s*(?:mini\s+beer|baby\s+guinness|amaretto\s+sour)\s*$/i.test(name)) {
     return true;
   }
+  if (/^\s*(?:apple\s+cider|hazy\s+apple\s+cider|lemon)\s*$/i.test(name)) {
+    return true;
+  }
   return false;
 }
 
