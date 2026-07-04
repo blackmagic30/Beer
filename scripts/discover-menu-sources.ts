@@ -1662,9 +1662,9 @@ type TextExtractionSection = {
 const TEXT_TAP_SECTION_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
 const TEXT_TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
 const TEXT_PACKAGE_SECTION_PATTERN =
-  /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
+  /^(?:tins?\s*(?:&|and|or)\s*bottles?|bottles?\s*(?:&|and|or)\s*(?:cans?|tins?)|cans?\s*(?:&|and|or)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
 const TEXT_PACKAGE_SECTION_PREFIX_PATTERN =
-  /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)\b/i;
+  /^(?:tins?\s*(?:&|and|or)\s*bottles?|bottles?\s*(?:&|and|or)\s*(?:cans?|tins?)|cans?\s*(?:&|and|or)\s*bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)\b/i;
 const TEXT_NON_BEER_SECTION_PATTERN =
   /^(?:red(?:\s+wine)?|white(?:\s+wine)?|sparkling(?:\s*&\s*|\s+and\s+)ros[eé]|ros[eé]|cocktails?|spirits?|food|snacks?|kitchen|desserts?)$/i;
 const TEXT_ABV_PATTERN = /\b(?:ABV\s*)?(<\s*)?\d{1,2}(?:\.\d+)?\s*%/i;
@@ -1830,6 +1830,15 @@ function overlapsExistingSpan(start: number, end: number, spans: Array<{ start: 
   return spans.some((span) => start < span.end && end > span.start);
 }
 
+function isEmbeddedInMeasurementToken(line: string, start: number, end: number): boolean {
+  const before = line.slice(Math.max(0, start - 1), start);
+  const after = line.slice(end, Math.min(line.length, end + 6));
+  if (/\d/.test(before)) {
+    return true;
+  }
+  return /^\s*(?:ml|l\b|oz|cl|g\b|kg\b|%)/i.test(after);
+}
+
 function isBarePriceTokenAllowed(line: string, start: number, end: number, value: number): boolean {
   if (value < 2 || value > 80) {
     return false;
@@ -1935,6 +1944,9 @@ function extractPriceMatchesFromLine(line: string): TextPriceMatch[] {
     }
     const start = currencyMatch.index;
     const end = currencyMatch.index + currencyMatch[0].length;
+    if (isEmbeddedInMeasurementToken(line, start, end)) {
+      continue;
+    }
     currencySpans.push({ start, end });
     matches.push({
       index: start,
@@ -1957,6 +1969,9 @@ function extractPriceMatchesFromLine(line: string): TextPriceMatch[] {
     }
     const start = bareMatch.index + bareMatch[0].indexOf(numericRaw);
     const end = start + numericRaw.length;
+    if (isEmbeddedInMeasurementToken(line, start, end)) {
+      continue;
+    }
     if (overlapsExistingSpan(start, end, currencySpans)) {
       continue;
     }
@@ -2359,9 +2374,12 @@ async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: Open
       `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${VIEWER_TRACKED_BEERS.map((beer) => beer.name).join(", ")}.`,
       "Keep each menu row separate. Do not carry a beer name or price from the previous or next row.",
       "Many PDF menus put the beer name and price on one line, then brewery, location, and ABV on the next line. Pair that following detail line with the beer above it in notes; do not emit the detail line as its own beer.",
+      "Never use package volume, serving size, ABV, years, counts, or measurements such as 330ml, 335ml, 355ml, 375ml, 440ml, 500ml, 4.2%, 2025, 4 pack, grams, or litres as price_numeric.",
+      "If a package row only shows size and ABV, with no actual price or currency, omit the row instead of inventing a price from the size.",
+      "When a row shows labelled prices such as $8.5 POT, $17 PINT, choose the PINT price for price_numeric and price_text.",
       "When a table heading says Pots / Pints / Jugs, choose the Pints price as price_numeric and price_text.",
       "When a section heading says ON TAP, mark every readable beer row under that heading as availability_status 'on_tap' until the next major section heading, even if the row only shows prices like 9/16.5, 7.5/14, or /16.",
-      "When a section heading says TINS & BOTTLES, TINS, TINNIES, BOTTLES & CANS, CANS, BOTTLES, or PACKAGED, mark rows under that heading as availability_status 'package_only'. In Australian menus, tins means cans.",
+      "When a section heading says TINS & BOTTLES, TINS, TINNIES, BOTTLES & CANS, CANS OR BOTTLES, CANS, BOTTLES, or PACKAGED, mark rows under that heading as availability_status 'package_only'. In Australian menus, tins means cans.",
       "If an ABV percentage is printed beside a beer, include it in notes with the brewery/source wording.",
       "Do not include category headings such as Lager, IPA, Sour Beer, Red Wine, or White Wine as beer rows.",
       "If the row price/name pairing is ambiguous after checking the row and heading, omit the row instead of guessing.",

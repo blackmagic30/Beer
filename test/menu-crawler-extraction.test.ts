@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { canonicalizeTrackedBeerName } from "../src/constants/beers.js";
@@ -257,6 +259,57 @@ describe("menu crawler extraction", () => {
     expect(byName.has("Four Pillars Rare Dry")).toBe(false);
   });
 
+  it("does not turn package millilitre sizes into Botanical Hotel prices", () => {
+    const botanicalText = [
+      "ON TAP",
+      "Mountain Goat Tasty Pale Ale 4.4%",
+      "Richmond",
+      "$9 POT, $18 PINT",
+      "Stomping Ground Big Sky Hazy Pale Ale 4.3%",
+      "Collingwood",
+      "$8.5 POT, $17 PINT",
+      "Fixation IPA 6.4%",
+      "Hobart",
+      "$9 POT, $18 PINT",
+      "Guinness Stout 4.2%",
+      "$9 POT, $18 PINT",
+      "Hard Rated Lemon 4.5%",
+      "$8.5 POT, $17 PINT",
+      "CANS OR BOTTLES",
+      "Stomping Ground Big Sky Hazy Pale Ale 335ml 4.3%",
+      "Guinness Stout 440ml 4.2%",
+      "Peroni 330ml 5.1%",
+      "Asahi Super Dry 330ml 5%",
+      "Carlton Zero 330ml 0%",
+    ].join("\n");
+
+    const rows = extractStructuredBeerRowsFromText(botanicalText);
+    const byName = new Map(rows.map((row) => [row.name, row]));
+
+    expect(byName.get("Stomping Ground Gipps St Pale Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 17,
+      priceText: "$17",
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Fixation IPA")).toEqual(expect.objectContaining({
+      priceNumeric: 18,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Guinness Stout")).toEqual(expect.objectContaining({
+      priceNumeric: 18,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Hard Rated Lemon")).toEqual(expect.objectContaining({
+      priceNumeric: 17,
+      availabilityStatus: "on_tap",
+    }));
+    expect(rows.some((row) => [30, 35, 40].includes(row.priceNumeric ?? 0))).toBe(false);
+    expect(rows.some((row) => /330ml|335ml|440ml/i.test(row.notes ?? ""))).toBe(false);
+    expect(byName.has("Guinness Stout 4")).toBe(false);
+    expect(byName.has("Peroni 3")).toBe(false);
+    expect(byName.has("Carlton Zero 3")).toBe(false);
+  });
+
   it("uses pint prices rather than ABV from structured on-tap website cards", () => {
     const steamPacketHtml = `
       <div class="collection-item w-dyn-item">
@@ -410,5 +463,19 @@ describe("menu crawler extraction", () => {
       ...combinedMenuRows,
       { name: "New Local Lager", priceNumeric: 12, priceText: "$12", availabilityStatus: "on_tap" },
     ])).toBe(0.75);
+  });
+
+  it("keeps OCR prompts from treating package sizes or ABV as prices", () => {
+    const promptSources = [
+      readFileSync(resolve(process.cwd(), "src/modules/admin/admin.service.ts"), "utf8"),
+      readFileSync(resolve(process.cwd(), "scripts/discover-menu-sources.ts"), "utf8"),
+    ];
+
+    for (const source of promptSources) {
+      expect(source).toContain("Never use package volume, serving size, ABV");
+      expect(source).toContain("omit the row instead of inventing a price from the size");
+      expect(source).toContain("choose the PINT price");
+      expect(source).toContain("CANS OR BOTTLES");
+    }
   });
 });

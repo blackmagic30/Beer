@@ -22,7 +22,7 @@ const MENU_ROW_PATTERN =
 
 const SECTION_PATTERNS: Array<{ label: string; availabilityStatus: MenuTextAvailabilityStatus; pattern: RegExp }> = [
   { label: "ON TAP", availabilityStatus: "on_tap", pattern: /\b(?:ON\s+TAP|TAP\s+BEERS?|BEERS?\s+ON\s+TAP|DRAUGHT|DRAFT)\b/gi },
-  { label: "CANS OR BOTTLES", availabilityStatus: "package_only", pattern: /\b(?:BOTTLES?\s*(?:&|AND)\s*(?:CANS?|TINS?)|CANS?\s*(?:&|AND)\s*BOTTLES?|TINS?\s*(?:&|AND)\s*BOTTLES?|PACKAGED\s+(?:BEER|DRINKS?)|TINNIES?)\b/gi },
+  { label: "CANS OR BOTTLES", availabilityStatus: "package_only", pattern: /\b(?:BOTTLES?\s*(?:&|AND|OR)\s*(?:CANS?|TINS?)|CANS?\s*(?:&|AND|OR)\s*BOTTLES?|TINS?\s*(?:&|AND|OR)\s*BOTTLES?|PACKAGED\s+(?:BEER|DRINKS?)|TINNIES?)\b/gi },
 ];
 
 const HEADING_PREFIX_PATTERN =
@@ -40,9 +40,9 @@ const ARTICLE_OR_JSON_NOISE_PATTERN =
 const TAP_SECTION_LINE_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
 const TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
 const PACKAGE_SECTION_LINE_PATTERN =
-  /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
+  /^(?:tins?\s*(?:&|and|or)\s*bottles?|bottles?\s*(?:&|and|or)\s*(?:cans?|tins?)|cans?\s*(?:&|and|or)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
 const PACKAGE_SECTION_PREFIX_PATTERN =
-  /^(?:tins?\s*(?:&|and)\s*bottles?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)\b/i;
+  /^(?:tins?\s*(?:&|and|or)\s*bottles?|bottles?\s*(?:&|and|or)\s*(?:cans?|tins?)|cans?\s*(?:&|and|or)\s*bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)\b/i;
 const NON_BEER_SECTION_LINE_PATTERN =
   /^(?:red(?:\s+wine)?|white(?:\s+wine)?|sparkling(?:\s*&\s*|\s+and\s+)ros[eé]|ros[eé]|cocktails?|spirits?|food|snacks?|kitchen|desserts?)$/i;
 const SIMPLE_MENU_PRICE_PATTERN =
@@ -294,6 +294,15 @@ function parsePriceNumbers(value: string): number[] {
     .filter((price) => Number.isFinite(price) && price > 0 && price <= 80);
 }
 
+function isEmbeddedInMeasurementToken(line: string, start: number, end: number): boolean {
+  const before = line.slice(Math.max(0, start - 1), start);
+  const after = line.slice(end, Math.min(line.length, end + 6));
+  if (/\d/.test(before)) {
+    return true;
+  }
+  return /^\s*(?:ml|l\b|oz|cl|g\b|kg\b|%)/i.test(after);
+}
+
 function decodeMenuHtml(value: string): string {
   return value
     .replace(/&nbsp;/g, " ")
@@ -513,11 +522,59 @@ function hasPotsPintsJugsHint(text: string, index: number, priceCount: number): 
   return /\bPots?\s*\/\s*Pints?\s*\/\s*Jugs?\b/i.test(nearby);
 }
 
+function parseLabeledPourPrices(line: string, startIndex: number): { priceText: string; prices: number[] } | null {
+  const priceArea = line.slice(startIndex);
+  const matches: Array<{ index: number; price: number; text: string }> = [];
+  const seen = new Set<string>();
+  const patterns = [
+    /(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)\s*(?:pot|pots|schooner|schooners|pint|pints|jug|jugs)\b/gi,
+    /\b(?:pot|pots|schooner|schooners|pint|pints|jug|jugs)\b\s*[:=-]?\s*(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)/gi,
+  ];
+
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(priceArea))) {
+      const numericRaw = match[1];
+      if (!numericRaw) {
+        continue;
+      }
+      const price = Number(numericRaw);
+      if (!Number.isFinite(price) || price <= 0 || price > 80) {
+        continue;
+      }
+      const absoluteIndex = startIndex + match.index;
+      const key = `${absoluteIndex}:${price}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      matches.push({
+        index: absoluteIndex,
+        price,
+        text: match[0].trim(),
+      });
+    }
+  }
+
+  const ordered = matches.sort((left, right) => left.index - right.index);
+  if (ordered.length === 0) {
+    return null;
+  }
+
+  return {
+    priceText: ordered.map((match) => match.text).join(" / "),
+    prices: ordered.map((match) => match.price),
+  };
+}
+
 function simpleMenuPriceMatch(line: string): { index: number; priceText: string; prices: number[] } | null {
   SIMPLE_MENU_PRICE_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = SIMPLE_MENU_PRICE_PATTERN.exec(line))) {
     const rawPriceText = match[0] ?? "";
+    if (isEmbeddedInMeasurementToken(line, match.index, match.index + rawPriceText.length)) {
+      continue;
+    }
     const prices = parsePriceNumbers(rawPriceText);
     if (prices.length === 0) {
       continue;
@@ -537,6 +594,15 @@ function simpleMenuPriceMatch(line: string): { index: number; priceText: string;
       continue;
     }
 
+    const labeledPourPrices = parseLabeledPourPrices(line, match.index);
+    if (labeledPourPrices) {
+      return {
+        index: match.index,
+        priceText: labeledPourPrices.priceText,
+        prices: labeledPourPrices.prices,
+      };
+    }
+
     return {
       index: match.index,
       priceText: rawPriceText,
@@ -549,6 +615,14 @@ function simpleMenuPriceMatch(line: string): { index: number; priceText: string;
 
 function priceOnlyLine(line: string): { prices: number[]; priceText: string } | null {
   const cleaned = line.trim();
+  const labeledPourPrices = parseLabeledPourPrices(cleaned, 0);
+  if (
+    labeledPourPrices &&
+    /^(?:\s|,|\/|\.|-|A\$|AUD|\$|\d|pot|pots|schooner|schooners|pint|pints|jug|jugs)+$/i.test(cleaned)
+  ) {
+    return labeledPourPrices;
+  }
+
   if (!cleaned || !/^(?:[$\d\s./-]|—)+$/.test(cleaned) || /%/.test(cleaned)) {
     return null;
   }
