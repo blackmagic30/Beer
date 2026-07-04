@@ -1663,8 +1663,8 @@ type TextExtractionSection = {
   availabilityStatus: MenuImageOcrBeer["availabilityStatus"];
 };
 
-const TEXT_TAP_SECTION_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
-const TEXT_TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
+const TEXT_TAP_SECTION_PATTERN = /^(?:on\s+tap|tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
+const TEXT_TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
 const TEXT_PACKAGE_SECTION_PATTERN =
   /^(?:tins?\s*(?:&|and|or)\s*bottles?|bottles?\s*(?:&|and|or)\s*(?:cans?|tins?)|cans?\s*(?:&|and|or)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
 const TEXT_PACKAGE_SECTION_PREFIX_PATTERN =

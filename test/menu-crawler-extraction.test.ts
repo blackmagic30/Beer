@@ -361,6 +361,39 @@ describe("menu crawler extraction", () => {
     expect(byName.has("Stomping Ground Gipps St Pale Ale")).toBe(false);
   });
 
+  it("treats plain Tap headings as on-tap sections for website name-price-location rows", () => {
+    const botanicalWebsiteText = [
+      "Beer & Cider",
+      "Tap",
+      "Mountain Goat Tasty Pale Ale 4.4%",
+      "$9 POT, $18 PINT",
+      "Richmond",
+      "Stomping Ground Big Sky Hazy Pale Ale 4.3%",
+      "$8.5 POT, $17 PINT",
+      "Collingwood",
+      "Can",
+      "2 Brothers Kung Foo Rice Lager 4.6%",
+      "$15",
+      "Moorabbin",
+    ].join("\n");
+
+    const rows = extractStructuredBeerRowsFromText(botanicalWebsiteText);
+    const byName = new Map(rows.map((row) => [row.name, row]));
+
+    expect(byName.get("Mountain Goat Tasty Pale Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 18,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Stomping Ground Big Sky Hazy Pale Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 17,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("2 Brothers Kung Foo Rice Lager")).toEqual(expect.objectContaining({
+      priceNumeric: 15,
+      availabilityStatus: "package_only",
+    }));
+  });
+
   it("uses pint prices rather than ABV from structured on-tap website cards", () => {
     const steamPacketHtml = `
       <div class="collection-item w-dyn-item">
