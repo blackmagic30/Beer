@@ -890,12 +890,16 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
     const hint = hasPotsPintsJugsHint(normalizedText, match.index, prices.length);
     const section = sectionForIndex(sections, match.index);
     const sourceRow = sourceRowPreview(match[0] ?? "");
-    const availabilityStatus = inferAvailabilityStatus({
+    const inferredAvailabilityStatus = inferAvailabilityStatus({
       sourceRow: `${sourceRow} ${servingText}`,
       section,
       priceCount: prices.length,
       hasPotsPintsJugsHint: hint,
     });
+    const availabilityStatus =
+      inferredAvailabilityStatus === "unknown" && section?.availabilityStatus
+        ? section.availabilityStatus
+        : inferredAvailabilityStatus;
     const selectedPrice = selectDisplayPrice({
       prices,
       availabilityStatus,
@@ -968,12 +972,16 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       continue;
     }
 
-    const availabilityStatus = inferAvailabilityStatus({
+    const inferredAvailabilityStatus = inferAvailabilityStatus({
       sourceRow: line,
       section: currentSection,
       priceCount: priceMatch.prices.length,
       hasPotsPintsJugsHint: false,
     });
+    const availabilityStatus =
+      inferredAvailabilityStatus === "unknown" && currentSection?.availabilityStatus
+        ? currentSection.availabilityStatus
+        : inferredAvailabilityStatus;
     const selectedPrice = priceMatch.preferredPrice ?? selectDisplayPrice({
       prices: priceMatch.prices,
       availabilityStatus,

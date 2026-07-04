@@ -2064,7 +2064,11 @@ function extractBeerRowsFromText(text: string): MenuImageOcrBeer[] {
         continue;
       }
 
-      const availabilityStatus = inferAvailabilityStatus(line, currentSection);
+      const inferredAvailabilityStatus = inferAvailabilityStatus(line, currentSection);
+      const availabilityStatus =
+        inferredAvailabilityStatus === "unknown" && currentSection?.availabilityStatus
+          ? currentSection.availabilityStatus
+          : inferredAvailabilityStatus;
       const nameAvailabilityKey = `${normalizeLooseText(name)}|${availabilityStatus}`;
       if (structuredNameAvailability.has(nameAvailabilityKey) || (availabilityStatus === "unknown" && structuredNames.has(normalizeLooseText(name)))) {
         continue;
