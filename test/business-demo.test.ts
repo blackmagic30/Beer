@@ -3107,6 +3107,7 @@ describe("business demo contribution model", () => {
     const { database, repository } = createRepository();
     const service = createBusinessService(repository);
     const user = createAccount(repository, "catalog-submit-user");
+    const admin = createAccount(repository, "catalog-submit-admin", "admin");
 
     const aliasSubmission = service.createSubmission(user, createSubmissionSchema.parse({
       venueId: "catalog-venue-1",
@@ -3181,7 +3182,10 @@ describe("business demo contribution model", () => {
       beerName: "Very Local Hazy Pint",
       normalizedBeerId: "very_local_hazy_pint",
     }));
-    expect(service.getPublicConfig().trackedBeers).toContainEqual(expect.objectContaining({
+    expect(service.getPublicConfig().trackedBeers).not.toContainEqual(expect.objectContaining({
+      key: "very_local_hazy_pint",
+    }));
+    expect(service.getAdminBeerCatalog(admin).pending).toContainEqual(expect.objectContaining({
       key: "very_local_hazy_pint",
       name: "Very Local Hazy Pint",
       aliases: expect.arrayContaining(["Very Local Hazy Pint"]),
@@ -3224,6 +3228,11 @@ describe("business demo contribution model", () => {
       key: "very_local_hazy_pint",
       name: "Very Local Hazy Pint",
       status: "active",
+    }));
+    expect(service.getPublicConfig().trackedBeers).toContainEqual(expect.objectContaining({
+      key: "very_local_hazy_pint",
+      name: "Very Local Hazy Pint",
+      aliases: expect.arrayContaining(["Very Local Hazy Pint"]),
     }));
 
     const typoSubmission = service.createSubmission(user, createSubmissionSchema.parse({

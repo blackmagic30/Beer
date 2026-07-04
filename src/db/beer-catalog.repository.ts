@@ -419,8 +419,8 @@ export class BeerCatalogRepository {
       .prepare(
         `SELECT key, name, brewery, style, abv, status, source
            FROM beer_catalog_items
-          WHERE status IN ('active', 'pending_review')
-          ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, name COLLATE NOCASE ASC
+          WHERE status = 'active'
+          ORDER BY name COLLATE NOCASE ASC
           LIMIT ?`,
       )
       .all(limit) as BeerCatalogRow[];

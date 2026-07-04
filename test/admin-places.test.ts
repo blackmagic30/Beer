@@ -189,10 +189,15 @@ describe("admin Google Places venue lookup", () => {
 
     try {
       initializeDatabaseSchema(database);
-      new BeerCatalogRepository(database).resolveBeerName({
+      const beerCatalog = new BeerCatalogRepository(database);
+      beerCatalog.resolveBeerName({
         name: "Very Local Hazy Pint",
         source: "test_dynamic_catalog",
         now: "2026-06-30T00:00:00.000Z",
+      });
+      beerCatalog.approvePendingBeer({
+        key: "very_local_hazy_pint",
+        now: "2026-06-30T00:01:00.000Z",
       });
 
       const service = new AdminService(
@@ -242,7 +247,7 @@ describe("admin Google Places venue lookup", () => {
       expect(prompt).toContain("Very Local Hazy Pint");
       expect(result.beers[0]).toEqual(expect.objectContaining({
         name: "Very Local Hazy Pint",
-        needsReview: true,
+        needsReview: false,
       }));
     } finally {
       database.close();

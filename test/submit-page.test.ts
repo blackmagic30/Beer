@@ -67,6 +67,12 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain('list="venueSuggestions"');
   });
 
+  it("keeps beer suggestions separate from browser form history", () => {
+    const html = submitHtml();
+
+    expect(html).toContain('<input data-field="beerName" list="trackedBeerSuggestions" placeholder="Start typing Guinness, Carlton Draught..." autocomplete="off" autocapitalize="words" spellcheck="false" />');
+  });
+
   it("lets contributors request a missing venue with beer data from a Google-verified venue", () => {
     const html = submitHtml();
 

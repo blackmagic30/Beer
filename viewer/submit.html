@@ -1332,7 +1332,7 @@
       wrapper.innerHTML = `
         <div class="grid grid--two submitBeerRowGrid">
           <label class="field">Beer name
-            <input data-field="beerName" list="trackedBeerSuggestions" placeholder="Start typing Guinness, Carlton Draught..." />
+            <input data-field="beerName" list="trackedBeerSuggestions" placeholder="Start typing Guinness, Carlton Draught..." autocomplete="off" autocapitalize="words" spellcheck="false" />
             <span data-role="beerHint" class="fieldHint">Choose a tracked beer from suggestions, or tick Add new beer below.</span>
           </label>
           <label class="field">Serving size
