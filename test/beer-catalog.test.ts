@@ -39,6 +39,8 @@ describe("Pint Path beer catalogue", () => {
     expect(canonicalizeTrackedBeerName("Great Northern")).toBe("Great Northern Original");
     expect(canonicalizeTrackedBeerName("Great Northern Supercrisp")).toBe("Great Northern Super Crisp");
     expect(canonicalizeTrackedBeerName("reschs")).toBe("Resch's Draught");
+    expect(canonicalizeTrackedBeerName("Mountain Goat Lager")).toBe("Mountain Goat Lager");
+    expect(canonicalizeTrackedBeerName("Stomping Ground Gipps St Pale")).toBe("Stomping Ground Gipps St Pale Ale");
 
     const beer = findTrackedBeerByName("balter xpa");
     expect(beer).toEqual(expect.objectContaining({
@@ -46,6 +48,16 @@ describe("Pint Path beer catalogue", () => {
       brewery: "Balter",
       style: "XPA",
     }));
+  });
+
+  it("does not use brewery-only aliases for unrelated beers or ciders", () => {
+    expect(findTrackedBeerByName("Mountain Goat")).toBeNull();
+    expect(canonicalizeTrackedBeerName("Mountain Goat Tasty Pale Ale")).toBe("Mountain Goat Tasty Pale Ale");
+    expect(canonicalizeTrackedBeerName("Mountain Goat Hazy Apple Cider")).toBe("Mountain Goat Hazy Apple Cider");
+    expect(findTrackedBeerByName("Stomping Ground")).toBeNull();
+    expect(canonicalizeTrackedBeerName("Stomping Ground Big Sky Hazy Pale Ale")).toBe(
+      "Stomping Ground Big Sky Hazy Pale Ale",
+    );
   });
 
   it("does not publish duplicate visible names in the tracked catalogue", () => {

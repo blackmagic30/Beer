@@ -286,7 +286,11 @@ describe("menu crawler extraction", () => {
     const rows = extractStructuredBeerRowsFromText(botanicalText);
     const byName = new Map(rows.map((row) => [row.name, row]));
 
-    expect(byName.get("Stomping Ground Gipps St Pale Ale")).toEqual(expect.objectContaining({
+    expect(byName.get("Mountain Goat Tasty Pale Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 18,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Stomping Ground Big Sky Hazy Pale Ale")).toEqual(expect.objectContaining({
       priceNumeric: 17,
       priceText: "$17",
       availabilityStatus: "on_tap",
@@ -308,6 +312,8 @@ describe("menu crawler extraction", () => {
     expect(byName.has("Guinness Stout 4")).toBe(false);
     expect(byName.has("Peroni 3")).toBe(false);
     expect(byName.has("Carlton Zero 3")).toBe(false);
+    expect(byName.has("Mountain Goat Lager")).toBe(false);
+    expect(byName.has("Stomping Ground Gipps St Pale Ale")).toBe(false);
   });
 
   it("uses pint prices rather than ABV from structured on-tap website cards", () => {
