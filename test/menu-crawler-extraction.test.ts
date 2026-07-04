@@ -4,9 +4,36 @@ import { describe, expect, it } from "vitest";
 
 import { canonicalizeTrackedBeerName } from "../src/constants/beers.js";
 import { crawlerQueueDuplicateKey, crawlerQueueRowKey, crawlerQueueRowOverlapRatio } from "../src/lib/menu-source-dedupe.js";
+import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
 import { extractOnTapCardRowsFromHtml, extractStructuredBeerRowsFromText } from "../src/lib/menu-text-extraction.js";
 
 describe("menu crawler extraction", () => {
+  it("rejects happy-hour and specials pages as regular crawler price sources", () => {
+    const rejectedSources = [
+      "https://anglers-tavern.com.au/events/happy-hour/",
+      "https://mollyrosebrewing.com/blogs/weekly-specials/25-marga-lager",
+      "https://example.com/happy-hour",
+      "https://example.com/specials",
+      "https://example.com/whats-on",
+      "https://example.com/offers/weeknight-pints",
+    ];
+    const allowedSources = [
+      "https://example.com/menu",
+      "https://example.com/drinks-menu",
+      "https://example.com/bar-menu",
+      "https://example.com/tap-list",
+      "https://example.com/eat-drink",
+      "https://example.com/events/beer-menu",
+    ];
+
+    rejectedSources.forEach((sourceUrl) => {
+      expect(isTimeLimitedMenuSource(sourceUrl, "happy hour menu link")).toBe(true);
+    });
+    allowedSources.forEach((sourceUrl) => {
+      expect(isTimeLimitedMenuSource(sourceUrl, "drink menu link")).toBe(false);
+    });
+  });
+
   it("keeps dotted PDF menu rows paired with their own beer and pint price", () => {
     const royalDerbyText = [
       "DRINK",
@@ -517,6 +544,7 @@ describe("menu crawler extraction", () => {
       "https://cbco.beer/cdn/shop/files/CBCo_For-Australian-Tastes.jpg?v=1740976211&width=500",
       "https://cbco.beer/cdn/shop/articles/07-24_Future-Golf-Partnership-v3.jpg?v=1721193323&width=1920",
       "(400ml Tiger beer, 200g Fine sugar & 30g Fresh ginger) OR Honey with ginger $30",
+      "We believe beer should be for everyone, so the 30 taps will pour a wide range of beer styles to suit all tastes, from laid-back easy drinkers to the more adventurous.",
       "With its beer garden sheltered by a retractable roof, cubby house and giant 30 tap bar, it's fast become the welcoming community hub.",
       "BOOKINGS At our Collingwood Beer Hall we take online reservations for groups of 2-20 guests.",
       "Menu Good food and good beer goes hand in hand with our huge range of 25+ tap beers, great wines and a cider.",
@@ -545,6 +573,7 @@ describe("menu crawler extraction", () => {
     expect(names).not.toContain("Draught");
     expect(names).not.toContain("Lager");
     expect(names.some((name) => /https?:|\/blogs|cdn\/shop|Tiger beer|Fine sugar|Fresh ginger|Beer Olympics|Beer and Carols|tap bar|BOOKINGS|litres|house wine|pub meal|mouthwatering|440ml|355ml|Terminal 3|ALE\u00ecAHI/i.test(name))).toBe(false);
+    expect(names.some((name) => /we believe|for everyone|wide range|all tastes|drinkers|adventurous/i.test(name))).toBe(false);
   });
 
   it("uses venue name and source URL to catch duplicate queue candidates across venue ids", () => {

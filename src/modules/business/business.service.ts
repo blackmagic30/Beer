@@ -2195,6 +2195,30 @@ export class BusinessService {
     return result;
   }
 
+  rejectBeerCatalogItem(
+    account: BusinessAccount,
+    key: string,
+    input: { reviewNote?: string | null },
+  ): { beer: BeerCatalogAdminItem } {
+    if (!this.isAdmin(account)) {
+      throw new AppError("Admin access required.", 403);
+    }
+    if (!this.beerCatalogRepository) {
+      throw new AppError("Beer catalogue review is not configured.", 503);
+    }
+
+    const beer = this.beerCatalogRepository.rejectPendingBeer({
+      key,
+      reviewNote: input.reviewNote ?? null,
+      now: nowIso(),
+    });
+    if (!beer) {
+      throw new AppError("Pending beer was not found.", 404);
+    }
+
+    return { beer };
+  }
+
   getAccountFromAuthorization(
     authorizationHeader: string | undefined,
     context?: SessionRequestContext | undefined,
@@ -5418,21 +5442,24 @@ export class BusinessService {
     };
   }
 
-  listSubmissions(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number }) {
+  listSubmissions(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number; includeReviewData?: boolean | undefined }) {
     if (!account) {
       throw new AppError("Login required.", 401);
     }
 
     const isAdmin = account.role === "admin" || account.subscriptionStatus === "admin";
+    const listMethod = input.includeReviewData && isAdmin
+      ? this.repository.listSubmissionsWithItems.bind(this.repository)
+      : this.repository.listSubmissions.bind(this.repository);
     if (input.mine || !isAdmin) {
-      return this.repository.listSubmissions({
+      return listMethod({
         userId: account.id,
         status: input.status as never,
         limit: input.limit,
       });
     }
 
-    return this.repository.listSubmissions({
+    return listMethod({
       status: input.status as never,
       limit: input.limit,
     });

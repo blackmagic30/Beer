@@ -176,6 +176,10 @@ export interface BusinessSubmissionItem {
   createdAt: string;
 }
 
+export interface BusinessSubmissionWithItems extends BusinessSubmission {
+  items: BusinessSubmissionItem[];
+}
+
 export interface BusinessMission {
   id: string;
   venueId: string;
@@ -4346,6 +4350,36 @@ export class BusinessRepository {
       submission: toSubmission(submissionRow),
       items: itemRows.map(toSubmissionItem),
     };
+  }
+
+  listSubmissionsWithItems(filters: { userId?: string | undefined; status?: SubmissionStatus | undefined; limit: number }): BusinessSubmissionWithItems[] {
+    return this.withSubmissionItems(this.listSubmissions(filters));
+  }
+
+  private withSubmissionItems(submissions: BusinessSubmission[]): BusinessSubmissionWithItems[] {
+    if (!submissions.length) {
+      return [];
+    }
+
+    const itemRows = this.database
+      .prepare(
+        `SELECT *
+           FROM submission_items
+          WHERE submission_id IN (${submissions.map(() => "?").join(", ")})
+          ORDER BY created_at ASC`,
+      )
+      .all(...submissions.map((submission) => submission.id)) as SubmissionItemRow[];
+    const itemsBySubmissionId = new Map<string, BusinessSubmissionItem[]>();
+    itemRows.forEach((row) => {
+      const items = itemsBySubmissionId.get(row.submission_id) ?? [];
+      items.push(toSubmissionItem(row));
+      itemsBySubmissionId.set(row.submission_id, items);
+    });
+
+    return submissions.map((submission) => ({
+      ...submission,
+      items: itemsBySubmissionId.get(submission.id) ?? [],
+    }));
   }
 
   listSubmissions(filters: { userId?: string | undefined; status?: SubmissionStatus | undefined; limit: number }): BusinessSubmission[] {

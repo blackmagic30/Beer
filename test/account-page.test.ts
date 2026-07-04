@@ -702,6 +702,7 @@ describe("account page shell", () => {
     expect(html).toContain('data-admin-tab-panel="analytics" role="tabpanel" hidden');
     expect(html).toContain("function showAdminTab");
     expect(html).toContain("function renderAdminFocusRail");
+    expect(html).toContain("function adminJumpAttributes");
     expect(html).toContain("function refreshAdminPage");
     expect(html).toContain("function openReviewDecision");
     expect(html).toContain("function promptSubmissionReview");
@@ -741,6 +742,12 @@ describe("account page shell", () => {
     expect(html).toContain('name="nextAction"');
     expect(html).toContain('name="lastContactedAt"');
     expect(html).toContain('document.querySelectorAll("[data-admin-tab-target]")');
+    expect(html).toContain('metricCard${options.target ? " metricCard--button" : ""}');
+    expect(html).toContain('renderMetric("Pending approvals", metrics.totalPendingSubmissions, { target: "review", selector: "#pendingSubmissions"');
+    expect(html).toContain('renderMetric("Submissions today", metrics.totalSubmissionCompletions || 0, { target: "review", selector: "#pendingSubmissions"');
+    expect(html).toContain('label: "Source queue",');
+    expect(html).toContain('selector: "#adminIngestionQueue"');
+    expect(html).toContain('wireAdminJumpActions(panel);');
     sectionOrder.forEach((section, index) => {
       expect(html).toContain(section);
       if (index > 0) {
@@ -756,6 +763,7 @@ describe("account page shell", () => {
     expect(css).toContain(".adminTabButton");
     expect(css).toContain(".adminGrid--two");
     expect(css).toContain(".adminCommandCard");
+    expect(css).toContain(".metricCard--button");
     expect(css).toContain(".adminReviewActionBar");
     expect(css).toContain(".adminCrawlerDetails");
     expect(css).toContain(".adminCrawlerRewardHint");

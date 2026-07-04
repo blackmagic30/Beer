@@ -163,6 +163,49 @@ describe("Pint Path beer catalogue", () => {
     }
   });
 
+  it("lets admins reject pending catalogue names without deleting active beers", () => {
+    const database = new BetterSqlite3(":memory:");
+    try {
+      initializeDatabaseSchema(database);
+      const repository = new BeerCatalogRepository(database);
+
+      repository.resolveBeerName({
+        name: "Very Local Hazy Pint",
+        source: "menu_crawler_import",
+        now: "2026-06-30T00:00:00.000Z",
+      });
+
+      const rejected = repository.rejectPendingBeer({
+        key: "very_local_hazy_pint",
+        reviewNote: "OCR website copy noise.",
+        now: "2026-06-30T00:15:00.000Z",
+      });
+
+      expect(rejected).toEqual(expect.objectContaining({
+        key: "very_local_hazy_pint",
+        name: "Very Local Hazy Pint",
+        reviewNote: "OCR website copy noise.",
+      }));
+      expect(repository.listForAdmin("pending_review", 20)).not.toContainEqual(expect.objectContaining({
+        key: "very_local_hazy_pint",
+      }));
+      expect(database.prepare("SELECT count(*) AS count FROM beer_catalog_aliases WHERE beer_key = ?").get("very_local_hazy_pint")).toEqual({
+        count: 0,
+      });
+      expect(repository.rejectPendingBeer({
+        key: "carlton_draft",
+        reviewNote: "Should not remove active beers.",
+        now: "2026-06-30T00:20:00.000Z",
+      })).toBeNull();
+      expect(repository.listForViewer()).toContainEqual(expect.objectContaining({
+        key: "carlton_draft",
+        name: "Carlton Draught",
+      }));
+    } finally {
+      database.close();
+    }
+  });
+
   it("does not create pending catalogue entries for obvious OCR noise", () => {
     const database = new BetterSqlite3(":memory:");
     try {

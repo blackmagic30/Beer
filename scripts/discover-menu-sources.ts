@@ -17,6 +17,7 @@ import {
   extractStructuredBeerRowsFromText,
   splitCollapsedMenuRowsForExtraction,
 } from "../src/lib/menu-text-extraction.js";
+import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
 import {
   normalizeVenueKey,
   shouldImportBarOrPubPlace,
@@ -71,9 +72,6 @@ const COMMON_MENU_PATHS = [
   "/eat-and-drink",
   "/bar-menu",
   "/beer",
-  "/happy-hour",
-  "/specials",
-  "/whats-on",
 ] as const;
 
 type SourceKind = "menu_page" | "menu_image" | "menu_pdf" | "homepage_menu_signal";
@@ -777,11 +775,14 @@ function isBogusAssetReference(url: string): boolean {
 }
 
 function isMenuTerm(value: string): boolean {
-  return /\b(menu|menus|drinks?|beverages?|beer|tap\s?list|happy\s?hour|specials?)\b/i.test(value);
+  return /\b(menu|menus|drinks?|beverages?|beer|tap\s?list)\b/i.test(value);
 }
 
 function isExcludedMenuSourceUrl(url: string, text: string): boolean {
   if (isBogusAssetReference(url)) {
+    return true;
+  }
+  if (isTimeLimitedMenuSource(url, text)) {
     return true;
   }
   const haystack = `${url} ${text}`.replace(/[-_]+/g, " ");
@@ -802,10 +803,10 @@ function isExcludedMenuSourceUrl(url: string, text: string): boolean {
     if (/\/(?:wine|wines|redwines?|whitewines?|cocktails?)(?:\/|$)/i.test(pathname) && !/\b(?:menus?|drinks?-menu|beer-menu)\b/i.test(pathname)) {
       return true;
     }
-    if (/\b(?:faq|trivia|answers?|lunch|guided-tour|beer-trail|bookings?|competition|corporate)\b/i.test(pathname) && !/\b(?:happy-hour|pints?|schooners?|tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
+    if (/\b(?:faq|trivia|answers?|lunch|guided-tour|beer-trail|bookings?|competition|corporate)\b/i.test(pathname) && !/\b(?:pints?|schooners?|tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
       return true;
     }
-    if (/\/events?(?:\/|$)/i.test(pathname) && !/\b(?:happy-hour|pints?|schooners?|tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
+    if (/\/events?(?:\/|$)/i.test(pathname) && !/\b(?:tap-?list|beer-menu|drinks?-menu)\b/i.test(pathname)) {
       return true;
     }
   } catch {
@@ -827,7 +828,7 @@ function isLikelyMenuImageCandidate(url: string, text: string): boolean {
   }
 
   const positive =
-    /\b(menu|menus|food menu|drink menu|drinks menu|beverage menu|beer menu|wine menu|cocktail menu|tap list|happy hour|specials?|poster)\b/i.test(
+    /\b(menu|menus|food menu|drink menu|drinks menu|beverage menu|beer menu|wine menu|cocktail menu|tap list)\b/i.test(
       haystack,
     );
   const negative =
@@ -1263,7 +1264,7 @@ function sourceHasMenuSignal(linkText: string, sourceUrl: string): boolean {
 function isLowIntentMenuSourceUrl(sourceUrl: string): boolean {
   try {
     const pathname = new URL(sourceUrl).pathname.toLowerCase();
-    if (/\b(?:happy|special|drink|drinks|menu|food|beer|eat-drink|eat-and-drink)\b/i.test(pathname)) {
+    if (/\b(?:drink|drinks|menu|food|beer|eat-drink|eat-and-drink)\b/i.test(pathname)) {
       return false;
     }
     return /\/(?:about|history|faqs?|contact|privacy|terms|careers?|jobs?|blog|news)(?:\/|$)/i.test(pathname);
@@ -2175,7 +2176,11 @@ function scoreSource(input: {
 }): MenuSourceCandidate | null {
   const signals: string[] = [];
   let confidence = 0;
-  const hasStrongDrinkText = hasDrinkPriceSignals(input.text) || /\b(beer|drinks?|tap\s?list|happy\s?hour)\b/i.test(input.text);
+  if (isTimeLimitedMenuSource(input.sourceUrl, input.linkText)) {
+    return null;
+  }
+
+  const hasStrongDrinkText = hasDrinkPriceSignals(input.text) || /\b(beer|drinks?|tap\s?list)\b/i.test(input.text);
   const isGeneratedDiscoveryLink = /\b(common menu path probe|sitemap menu url|robots sitemap menu url|wordpress rest menu url|quoted url menu asset|embedded json menu asset)\b/i.test(input.linkText);
   const discoveryMethod = discoveryMethodFromLinkText(input.linkText, input.officialWebsite, input.sourceUrl);
   const trustedExternalMenuHost = !sameOrigin(input.officialWebsite, input.sourceUrl) && isTrustedExternalMenuHost(input.sourceUrl);
@@ -2373,7 +2378,7 @@ async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: Open
   try {
     const imageDataUrl = await fetchImageDataUrlForOcr(candidate.sourceUrl);
     const prompt = [
-      "Extract useful beer, beer special, happy-hour, or drink-price information from this pub or bar menu image.",
+      "Extract regular beer and drink-price information from this pub or bar menu image.",
       "Return JSON only.",
       "Schema:",
       "{",
@@ -2391,7 +2396,8 @@ async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: Open
       "    }",
       "  ]",
       "}",
-      "Only include rows that are readable and useful for a pub beer map or Pint Path special review.",
+      "Only include rows that are readable and useful for a regular pub beer map price review.",
+      "Do not include happy-hour, weekly-special, event, promo, deal, limited-time, or discounted special prices.",
       `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${VIEWER_TRACKED_BEERS.map((beer) => beer.name).join(", ")}.`,
       "Keep each menu row separate. Do not carry a beer name or price from the previous or next row.",
       "Many PDF menus put the beer name and price on one line, then brewery, location, and ABV on the next line. Pair that following detail line with the beer above it in notes; do not emit the detail line as its own beer.",
@@ -2666,7 +2672,7 @@ async function discoverWordPressRestMenuLinks(
   }
 
   const links: Array<{ url: string; text: string }> = [];
-  const searchTerms = ["menu", "drinks", "beer", "happy hour"];
+  const searchTerms = ["menu", "drinks", "beer"];
   for (const term of searchTerms) {
     if (links.length >= limit) {
       break;
@@ -2807,7 +2813,7 @@ async function discoverSourcesForVenue(
   try {
     const homepage = await fetchTextForCandidate(officialWebsite);
     const homepageText = `${htmlToPlainText(homepage.text)}\n${extractJsonLdText(homepage.text)}`;
-    if (hasDrinkPriceSignals(homepageText) || /\b(menu|drinks?|happy\s?hour)\b/i.test(homepageText)) {
+    if (hasDrinkPriceSignals(homepageText) || /\b(menu|drinks?)\b/i.test(homepageText)) {
       const candidate = scoreSource({
         venue,
         officialWebsite,

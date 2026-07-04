@@ -1933,6 +1933,100 @@ button.adminFocusRail__item:focus-visible {
   border-color: rgba(250, 204, 21, 0.22);
 }
 
+.adminSubmissionEvidencePanel {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.adminSubmissionEvidencePreview {
+  min-height: 170px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(2, 6, 23, 0.5);
+}
+
+.adminSubmissionEvidencePreview__placeholder,
+.adminSubmissionEvidencePreview__link {
+  min-height: 170px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.adminSubmissionEvidencePreview__placeholder {
+  padding: 14px;
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.adminSubmissionEvidencePreview__link {
+  position: relative;
+  color: #ffffff;
+  text-decoration: none;
+}
+
+.adminSubmissionEvidencePreview__link img {
+  width: 100%;
+  height: 100%;
+  min-height: 170px;
+  object-fit: cover;
+  display: block;
+}
+
+.adminSubmissionEvidencePreview__link span {
+  position: absolute;
+  inset-inline: 10px;
+  bottom: 10px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.76);
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.adminSubmissionOcrPanel,
+.adminSubmissionOcrRows {
+  display: grid;
+  gap: 8px;
+}
+
+.adminSubmissionOcrRow {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.adminSubmissionOcrRow__index {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.14);
+  color: #bae6fd;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.adminSubmissionOcrEmpty {
+  padding: 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.22);
+}
+
 .adminReviewActionBar {
   align-items: center;
   gap: 8px;
@@ -5174,6 +5268,23 @@ button.adminFocusRail__item:focus-visible {
   overflow: hidden;
 }
 
+.metricCard--button {
+  appearance: none;
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.metricCard--button:hover,
+.metricCard--button:focus-visible {
+  border-color: rgba(56, 189, 248, 0.38);
+  box-shadow: var(--soft-shadow), 0 0 0 1px rgba(56, 189, 248, 0.1);
+  transform: translateY(-1px);
+}
+
 .metricValue {
   font-family: var(--display-font);
   font-size: 34px;
@@ -6582,7 +6693,7 @@ body.discountPassModalOpen {
 
 .adminBeerCatalogActions {
   display: grid;
-  grid-template-columns: auto minmax(220px, 1fr) auto;
+  grid-template-columns: auto minmax(220px, 1fr) auto auto;
   gap: 10px;
   align-items: end;
 }
@@ -8705,6 +8816,10 @@ body.discountPassModalOpen {
 
   .adminReviewCard__badges {
     justify-content: flex-start;
+  }
+
+  .adminSubmissionEvidencePanel {
+    grid-template-columns: 1fr;
   }
 
   .adminReviewActionBar {

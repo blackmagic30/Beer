@@ -429,6 +429,18 @@ describe("submission queue access checks", () => {
     expect(() => service.listSubmissions(null, { mine: false, limit: 10 })).toThrow("Login required.");
     expect(service.listSubmissions(user, { mine: false, limit: 10 })).toEqual([ownSubmission]);
     expect(service.listSubmissions(admin, { mine: false, limit: 10 })).toHaveLength(2);
+    expect(service.listSubmissions(user, { mine: false, limit: 10, includeReviewData: true })).toEqual([ownSubmission]);
+    expect(service.listSubmissions(admin, { mine: false, limit: 10, includeReviewData: true })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: ownSubmission.id,
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            beerName: "Carlton Draught",
+            price: 14,
+          }),
+        ]),
+      }),
+    ]));
   });
 });
 
@@ -1179,6 +1191,10 @@ describe("production hardening", () => {
     expect(adminHtml).toContain("/api/business/admin/beer-catalog");
     expect(adminHtml).toContain("data-approve-catalog-beer");
     expect(adminHtml).toContain("data-merge-catalog-beer");
+    expect(adminHtml).toContain("data-reject-catalog-beer");
+    expect(adminHtml).toContain("includeReviewData=true");
+    expect(adminHtml).toContain("data-submission-evidence-preview");
+    expect(adminHtml).toContain("Captured rows for review");
     expect(adminHtml).toContain("const formElement = event.currentTarget");
     expect(adminHtml).toContain("new FormData(formElement)");
     expect(adminHtml).not.toContain("event.currentTarget.reset()");
@@ -3276,6 +3292,43 @@ describe("business demo contribution model", () => {
     expect(service.getAdminBeerCatalog(admin).pending).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ key: "very_locl_hazy_pint" }),
     ]));
+
+    service.createSubmission(user, createSubmissionSchema.parse({
+      venueId: "catalog-review-venue-3",
+      venueName: "Crawler Noise Bar",
+      suburb: "Richmond",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoUrl: null,
+      sourcePhotoDataUrl: null,
+      notes: null,
+      items: [{
+        beerName: "Website Copy Lager",
+        servingSize: "pint",
+        price: 14,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    }));
+    expect(service.getAdminBeerCatalog(admin).pending).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "website_copy_lager" }),
+    ]));
+
+    const rejected = service.rejectBeerCatalogItem(admin, "website_copy_lager", {
+      reviewNote: "Not a real beer name.",
+    });
+    expect(rejected.beer).toEqual(expect.objectContaining({
+      key: "website_copy_lager",
+      name: "Website Copy Lager",
+      reviewNote: "Not a real beer name.",
+    }));
+    expect(service.getAdminBeerCatalog(admin).pending).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "website_copy_lager" }),
+    ]));
+    expect(() => service.rejectBeerCatalogItem(admin, "very_local_hazy_pint", {
+      reviewNote: "Do not delete active beers.",
+    })).toThrow("Pending beer was not found.");
   });
 
   it("increments fraud strikes and suspends reward earning after three fraud flags", () => {

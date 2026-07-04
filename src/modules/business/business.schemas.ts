@@ -285,6 +285,7 @@ export const submissionsQuerySchema = z.object({
   status: submissionStatusSchema.optional(),
   mine: z.preprocess((value) => value === "true" || value === true, z.boolean()).default(false),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  includeReviewData: z.preprocess((value) => value === "true" || value === true, z.boolean()).default(false),
 });
 
 export const reviewSubmissionSchema = z.object({
@@ -656,6 +657,10 @@ export const adminAccountSearchSchema = z.object({
 });
 
 export const beerCatalogApproveSchema = z.object({
+  reviewNote: nullableTrimmedStringSchema.default(null),
+});
+
+export const beerCatalogRejectSchema = z.object({
   reviewNote: nullableTrimmedStringSchema.default(null),
 });
 

@@ -406,6 +406,32 @@ export class BeerCatalogRepository {
     return target ? { source: sourceBeforeMerge, target } : null;
   }
 
+  rejectPendingBeer(input: {
+    key: string;
+    reviewNote?: string | null;
+    now: string;
+  }): BeerCatalogAdminItem | null {
+    const row = this.findAdminByKey(input.key);
+    if (!row || row.status !== "pending_review") {
+      return null;
+    }
+
+    const aliasesByBeerKey = this.aliasesForKeys([row.key]);
+    const rejectedItem = {
+      ...this.toAdminItem(row, aliasesByBeerKey),
+      reviewNote: input.reviewNote ?? row.review_note,
+      updatedAt: input.now,
+    };
+
+    const reject = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM beer_catalog_aliases WHERE beer_key = ?").run(row.key);
+      this.db.prepare("DELETE FROM beer_catalog_items WHERE key = ? AND status = 'pending_review'").run(row.key);
+    });
+
+    reject();
+    return rejectedItem;
+  }
+
   getAdminItem(key: string): BeerCatalogAdminItem | null {
     const row = this.findAdminByKey(key);
     if (!row) {

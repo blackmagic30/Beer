@@ -20,6 +20,7 @@ import {
   normalizeCrawlerQueueText,
   normalizeSqlComparableText,
 } from "../src/lib/menu-source-dedupe.js";
+import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
 
 type SourceKind = "menu_page" | "menu_image" | "menu_pdf" | "homepage_menu_signal";
 type SourceOrigin = "official_host" | "trusted_external_menu_host";
@@ -428,6 +429,7 @@ const insertQueueItem = db.prepare(
 let inserted = 0;
 let skippedDuplicate = 0;
 let skippedExternal = 0;
+let skippedTimeLimited = 0;
 let skippedNoUsableRows = 0;
 let skippedByLimit = 0;
 let queuedRows = 0;
@@ -435,6 +437,13 @@ const queuedVenues = new Set<string>();
 const queuedCandidateKeys = new Set<string>();
 const queuedRowKeysByVenue = new Map<string, Set<string>>();
 const queueCandidates = candidates
+  .filter((candidate) => {
+    if (!isTimeLimitedMenuSource(candidate.sourceUrl, `${candidate.reviewNote || ""} ${candidate.signals.join(" ")}`)) {
+      return true;
+    }
+    skippedTimeLimited += 1;
+    return false;
+  })
   .filter((candidate) => {
     if (includeExternal || candidate.sourceOrigin === "official_host") {
       return true;
@@ -554,6 +563,7 @@ console.log(
       crawlerFeedbackSignals: crawlerFeedbackScores.count,
       skippedDuplicate,
       skippedExternal,
+      skippedTimeLimited,
       skippedNoUsableRows,
       skippedByLimit,
     },

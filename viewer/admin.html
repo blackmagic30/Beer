@@ -610,12 +610,27 @@
       return Number((Number(value || 0) / 100).toFixed(2));
     }
 
-    function renderMetric(label, value) {
+    function adminJumpAttributes(options = {}) {
+      if (!options.target) {
+        return "";
+      }
+      return [
+        `data-admin-jump="${escapeHtml(options.target)}"`,
+        options.selector ? `data-admin-jump-target="${escapeHtml(options.selector)}"` : "",
+        options.title ? `aria-label="${escapeHtml(options.title)}"` : "",
+      ].filter(Boolean).join(" ");
+    }
+
+    function renderMetric(label, value, options = {}) {
+      const className = `metricCard${options.target ? " metricCard--button" : ""}`;
+      const attrs = adminJumpAttributes(options);
+      const tag = options.target ? "button" : "div";
+      const typeAttr = options.target ? ' type="button"' : "";
       return `
-        <div class="metricCard">
+        <${tag} class="${className}"${typeAttr}${attrs ? ` ${attrs}` : ""}>
           <div class="metricValue">${value}</div>
           <div class="metricLabel">${label}</div>
-        </div>
+        </${tag}>
       `;
     }
 
@@ -707,6 +722,12 @@
         "OCR too noisy to publish",
         "Source does not match venue",
         "Image or URL is not usable",
+      ],
+      beer_catalog_rejected: [
+        "Not a beer",
+        "OCR or website copy noise",
+        "Food or non-beer drink item",
+        "Duplicate with no clear canonical match",
       ],
     };
     const OUTREACH_STAGES = [
@@ -1264,17 +1285,18 @@
     function renderFieldTestSummary(data, queues) {
       const metrics = data.metrics;
       fieldTestMetrics.innerHTML = [
-        renderMetric("Users today", metrics.newUsers),
-        renderMetric("Searches today", metrics.totalVenueSearches + metrics.totalBeerSearches),
-        renderMetric("Near-me uses", metrics.totalNearMeUses || 0),
-        renderMetric("HH near me", metrics.totalHappyHourNearMeUses || 0),
-        renderMetric("Price reveals", metrics.totalExactPriceReveals),
-        renderMetric("Blocked reveals", metrics.totalBlockedPriceReveals || 0),
-        renderMetric("Submissions", metrics.totalSubmissionCompletions),
-        renderMetric("Pending approvals", metrics.totalPendingSubmissions),
-        renderMetric("Wrong-price reports", queues.wrongPriceReports.length),
-        renderMetric("Contact", queues.feedback.length),
+        renderMetric("Users today", metrics.newUsers, { target: "analytics", selector: "#retentionCohorts", title: "Open analytics retention data" }),
+        renderMetric("Searches today", metrics.totalVenueSearches + metrics.totalBeerSearches, { target: "analytics", selector: "#demandSignals", title: "Open search demand signals" }),
+        renderMetric("Near-me uses", metrics.totalNearMeUses || 0, { target: "analytics", selector: "#demandSignals", title: "Open nearby demand signals" }),
+        renderMetric("HH near me", metrics.totalHappyHourNearMeUses || 0, { target: "analytics", selector: "#demandSignals", title: "Open happy-hour demand signals" }),
+        renderMetric("Price reveals", metrics.totalExactPriceReveals, { target: "analytics", selector: "#demandSignals", title: "Open price reveal analytics" }),
+        renderMetric("Blocked reveals", metrics.totalBlockedPriceReveals || 0, { target: "analytics", selector: "#demandSignals", title: "Open blocked reveal analytics" }),
+        renderMetric("Submissions", metrics.totalSubmissionCompletions, { target: "review", selector: "#pendingSubmissions", title: "Open pending submissions" }),
+        renderMetric("Pending approvals", metrics.totalPendingSubmissions, { target: "review", selector: "#pendingSubmissions", title: "Open pending approvals" }),
+        renderMetric("Wrong-price reports", queues.wrongPriceReports.length, { target: "review", selector: "#reviewQueues", title: "Open wrong-price reports" }),
+        renderMetric("Contact", queues.feedback.length, { target: "review", selector: "#reviewQueues", title: "Open contact messages" }),
       ].join("");
+      wireAdminJumpActions(fieldTestMetrics);
       fieldTestSignals.innerHTML = [
         `<div class="listItem"><strong>Top clicked venues today</strong><div class="muted">${formatBucketSummary(data.topClickedVenues, "No venue clicks today")}</div></div>`,
         `<div class="listItem"><strong>Top searched beers today</strong><div class="muted">${formatBucketSummary(data.topSearchedBeers, "No beer searches today")}</div></div>`,
@@ -1538,38 +1560,46 @@
       wireAdminJumpActions(adminDashboardTasks);
 
       adminDashboardPulse.innerHTML = [
-        renderMetric("Searches today", totalSearchesToday),
-        renderMetric("Submissions", metrics.totalSubmissionCompletions || 0),
-        renderMetric("Price reveals", metrics.totalExactPriceReveals || 0),
-        renderMetric("Pending approvals", metrics.totalPendingSubmissions || counts.submissions),
+        renderMetric("Searches today", totalSearchesToday, { target: "analytics", selector: "#demandSignals", title: "Open search demand signals" }),
+        renderMetric("Submissions", metrics.totalSubmissionCompletions || 0, { target: "review", selector: "#pendingSubmissions", title: "Open pending submissions" }),
+        renderMetric("Price reveals", metrics.totalExactPriceReveals || 0, { target: "analytics", selector: "#demandSignals", title: "Open price reveal analytics" }),
+        renderMetric("Pending approvals", metrics.totalPendingSubmissions || counts.submissions, { target: "review", selector: "#pendingSubmissions", title: "Open pending approvals" }),
       ].join("");
+      wireAdminJumpActions(adminDashboardPulse);
 
       const toolRows = [
         {
           label: "Source queue",
           copy: adminDataToolsStatus.queueEnabled ? "Source review is available." : statusCopy(adminDataToolsStatus.queueEnabled, adminDataToolsStatus.queueReason, "Off").copy,
           tone: adminDataToolsStatus.queueEnabled ? "success" : "warning",
+          target: "review",
+          selector: "#adminIngestionQueue",
         },
         {
           label: "Menu OCR",
           copy: adminDataToolsStatus.ocrEnabled ? "Menu OCR is available." : statusCopy(adminDataToolsStatus.ocrEnabled, adminDataToolsStatus.ocrReason, "Off").copy,
           tone: adminDataToolsStatus.ocrEnabled ? "success" : "warning",
+          target: "capture",
+          selector: "#adminMenuPhoto",
         },
         {
           label: "Trust queue",
           copy: `${counts.wrongPriceReports} wrong-price report${counts.wrongPriceReports === 1 ? "" : "s"} · ${counts.contactMessages} contact message${counts.contactMessages === 1 ? "" : "s"}`,
           tone: counts.wrongPriceReports || counts.contactMessages ? "warning" : "success",
+          target: "review",
+          selector: "#reviewQueues",
         },
       ];
       adminDashboardNeeds.innerHTML = toolRows.map((row) => `
-        <div class="listItem dataRow">
+        <button class="listItem listItem--button dataRow" type="button" data-admin-jump="${escapeHtml(row.target)}" data-admin-jump-target="${escapeHtml(row.selector)}">
           <div>
             <strong>${escapeHtml(row.label)}</strong>
             <div class="muted">${escapeHtml(row.copy)}</div>
           </div>
           <span class="pill ${row.tone === "success" ? "pill--success" : "pill--warning"}">${row.tone === "success" ? "Ready" : "Check"}</span>
-        </div>
+        </button>
       `).join("");
+      wireAdminJumpActions(adminDashboardNeeds);
 
       renderDashboardPitchList(data.leads, data.venuePartners);
       renderDashboardPrizeSummary(data.leaderboardPrizes);
@@ -1876,6 +1906,7 @@
                 <input data-catalog-merge-target="${escapeHtml(beer.key)}" list="adminBeerCatalogMergeTargets" placeholder="Canonical beer name" autocomplete="off" />
               </label>
               <button class="button button--small" type="button" data-merge-catalog-beer="${escapeHtml(beer.key)}">Merge</button>
+              <button class="button button--small button--danger" type="button" data-reject-catalog-beer="${escapeHtml(beer.key)}">Reject</button>
             </div>
           </article>
         `).join("")
@@ -1883,7 +1914,7 @@
 
       pendingBeerCatalog.querySelectorAll("[data-approve-catalog-beer]").forEach((button) => {
         button.addEventListener("click", async () => {
-          await reviewCatalogBeer(button.dataset.approveCatalogBeer, "approve", null, active);
+          await reviewCatalogBeer(button.dataset.approveCatalogBeer, "approve");
         });
       });
       pendingBeerCatalog.querySelectorAll("[data-merge-catalog-beer]").forEach((button) => {
@@ -1897,7 +1928,13 @@
             targetInput?.focus();
             return;
           }
-          await reviewCatalogBeer(sourceKey, "merge", target, active);
+          await reviewCatalogBeer(sourceKey, "merge", target);
+        });
+      });
+      pendingBeerCatalog.querySelectorAll("[data-reject-catalog-beer]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const beer = pending.find((item) => item.key === button.dataset.rejectCatalogBeer);
+          promptCatalogBeerReject(beer);
         });
       });
     }
@@ -1908,16 +1945,32 @@
       return data;
     }
 
-    async function reviewCatalogBeer(sourceKey, action, target) {
+    function promptCatalogBeerReject(beer) {
+      if (!beer?.key) return;
+      openReviewDecision({
+        eyebrow: "Beer catalogue",
+        title: `Reject ${beer.name}`,
+        copy: "Rejecting removes this pending name from the system catalogue review list. It will not delete existing source-ingestion rows.",
+        confirmLabel: "Reject beer name",
+        tone: "danger",
+        reasons: REVIEW_REASON_OPTIONS.beer_catalog_rejected,
+        onConfirm: ({ combinedNote }) => reviewCatalogBeer(beer.key, "reject", null, combinedNote),
+      });
+    }
+
+    async function reviewCatalogBeer(sourceKey, action, target, reviewNote = null) {
       if (!sourceKey) return;
       try {
-        setLocalNotice(adminBeerCatalogStatus, action === "merge" ? "Merging beer catalogue item..." : "Approving beer catalogue item...");
-        const endpoint = action === "merge"
-          ? `/api/business/admin/beer-catalog/${encodeURIComponent(sourceKey)}/merge`
-          : `/api/business/admin/beer-catalog/${encodeURIComponent(sourceKey)}/approve`;
+        const actionCopy = action === "merge"
+          ? "Merging beer catalogue item..."
+          : action === "reject"
+            ? "Rejecting beer catalogue item..."
+            : "Approving beer catalogue item...";
+        setLocalNotice(adminBeerCatalogStatus, actionCopy);
+        const endpoint = `/api/business/admin/beer-catalog/${encodeURIComponent(sourceKey)}/${action}`;
         const body = action === "merge"
-          ? { targetKey: target.key, reviewNote: `Merged into ${target.name} from admin review.` }
-          : { reviewNote: "Approved from admin review." };
+          ? { targetKey: target.key, reviewNote: reviewNote || `Merged into ${target.name} from admin review.` }
+          : { reviewNote: reviewNote || (action === "reject" ? "Rejected from admin review." : "Approved from admin review.") };
         await MelbBeerBusiness.apiFetch(endpoint, {
           method: "POST",
           body: JSON.stringify(body),
@@ -1940,12 +1993,13 @@
           ? "Key missing"
           : "Manual";
       adminCaptureMetrics.innerHTML = [
-        renderMetric("Manual captures", adminDataToolsStatus.enabled ? "Ready" : "Off"),
-        renderMetric("Menu OCR", ocrLabel),
-        renderMetric("Google venue add", googlePlacesLabel),
-        renderMetric("Source queue", adminDataToolsStatus.queueEnabled ? "Ready" : "Off"),
-        renderMetric("Venues loaded", adminVenues.length),
+        renderMetric("Manual captures", adminDataToolsStatus.enabled ? "Ready" : "Off", { target: "capture", selector: "#adminVenueSearch", title: "Open manual capture tools" }),
+        renderMetric("Menu OCR", ocrLabel, { target: "capture", selector: "#adminMenuPhoto", title: "Open menu OCR tools" }),
+        renderMetric("Google venue add", googlePlacesLabel, { target: "capture", selector: "#adminCreateVenueForm", title: "Open Google venue add tools" }),
+        renderMetric("Source queue", adminDataToolsStatus.queueEnabled ? "Ready" : "Off", { target: "review", selector: "#adminIngestionQueue", title: "Open source review queue" }),
+        renderMetric("Venues loaded", adminVenues.length, { target: "capture", selector: "#adminVenueSearch", title: "Open venue search" }),
       ].join("");
+      wireAdminJumpActions(adminCaptureMetrics);
       renderAdminHealthPanel();
       renderAdminDashboard();
       syncAdminCaptureControls();
@@ -1976,22 +2030,48 @@
       }
 
       const rows = [
-        ["Manual captures", statusCopy(adminDataToolsStatus.enabled, adminDataToolsStatus.reason, "Off")],
-        ["Menu OCR", statusCopy(adminDataToolsStatus.ocrEnabled, adminDataToolsStatus.ocrReason, "Off")],
-        ["Google venue search", statusCopy(adminDataToolsStatus.googlePlacesEnabled, adminDataToolsStatus.googlePlacesReason, "Manual")],
-        ["Source queue", statusCopy(adminDataToolsStatus.queueEnabled, adminDataToolsStatus.queueReason, "Off")],
-        ["Venue cache", { label: adminVenues.length ? `${adminVenues.length} loaded` : "Empty", copy: adminVenues.length ? "Ready for admin search and capture." : "No venues loaded yet.", tone: adminVenues.length ? "success" : "warning" }],
+        {
+          label: "Manual captures",
+          status: statusCopy(adminDataToolsStatus.enabled, adminDataToolsStatus.reason, "Off"),
+          target: "capture",
+          selector: "#adminVenueSearch",
+        },
+        {
+          label: "Menu OCR",
+          status: statusCopy(adminDataToolsStatus.ocrEnabled, adminDataToolsStatus.ocrReason, "Off"),
+          target: "capture",
+          selector: "#adminMenuPhoto",
+        },
+        {
+          label: "Google venue search",
+          status: statusCopy(adminDataToolsStatus.googlePlacesEnabled, adminDataToolsStatus.googlePlacesReason, "Manual"),
+          target: "capture",
+          selector: "#adminCreateVenueForm",
+        },
+        {
+          label: "Source queue",
+          status: statusCopy(adminDataToolsStatus.queueEnabled, adminDataToolsStatus.queueReason, "Off"),
+          target: "review",
+          selector: "#adminIngestionQueue",
+        },
+        {
+          label: "Venue cache",
+          status: { label: adminVenues.length ? `${adminVenues.length} loaded` : "Empty", copy: adminVenues.length ? "Ready for admin search and capture." : "No venues loaded yet.", tone: adminVenues.length ? "success" : "warning" },
+          target: "capture",
+          selector: "#adminVenueSearch",
+        },
       ];
 
-      panel.innerHTML = rows.map(([label, status]) => `
-        <div class="listItem dataRow">
+      panel.innerHTML = rows.map((row) => `
+        <button class="listItem listItem--button dataRow" type="button" data-admin-jump="${escapeHtml(row.target)}" data-admin-jump-target="${escapeHtml(row.selector)}">
           <div>
-            <strong>${escapeHtml(label)}</strong>
-            <div class="muted">${escapeHtml(status.copy)}</div>
+            <strong>${escapeHtml(row.label)}</strong>
+            <div class="muted">${escapeHtml(row.status.copy)}</div>
           </div>
-          <span class="pill ${status.tone === "success" ? "pill--success" : ""}">${escapeHtml(status.label)}</span>
-        </div>
+          <span class="pill ${row.status.tone === "success" ? "pill--success" : ""}">${escapeHtml(row.status.label)}</span>
+        </button>
       `).join("");
+      wireAdminJumpActions(panel);
     }
 
     function submissionConfidenceBadges(submission) {
@@ -1999,7 +2079,7 @@
       if (submission.pendingVenue) {
         badges.push("New venue");
       }
-      if (submission.sourcePhotoPath || submission.sourcePhotoDataUrl || submission.hasPhotoEvidence) {
+      if (submission.sourcePhotoUrl || submission.sourcePhotoPath || submission.sourcePhotoDataUrl || submission.hasPhotoEvidence) {
         badges.push("Photo evidence");
       }
       if (submission.pointsEligibleByLocation) {
@@ -2016,6 +2096,98 @@
     function isPhotoEvidenceOnlySubmission(submission) {
       return submission?.submissionType === "photo_upload"
         && !(Array.isArray(submission.items) && submission.items.length);
+    }
+
+    function formatSubmissionItemPrice(item) {
+      if (item?.price == null || Number.isNaN(Number(item.price))) {
+        return "Price not captured";
+      }
+      const price = Number(item.price);
+      return `$${price.toFixed(price % 1 === 0 ? 0 : 2)}`;
+    }
+
+    function formatSubmissionTapStatus(value) {
+      if (value === "yes") return "On tap";
+      if (value === "no") return "Not on tap";
+      return "Tap unknown";
+    }
+
+    function renderSubmissionCapturedRows(submission) {
+      const items = Array.isArray(submission?.items) ? submission.items : [];
+      if (!items.length) {
+        return `
+          <div class="adminSubmissionOcrEmpty">
+            <strong>No captured beer rows</strong>
+            <div class="muted">${submission?.sourcePhotoUrl ? "Source image is attached, but no OCR/menu rows were saved with this submission." : "No source rows were submitted."}</div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="adminSubmissionOcrRows">
+          ${items.map((item, index) => `
+            <div class="adminSubmissionOcrRow">
+              <span class="adminSubmissionOcrRow__index">${index + 1}</span>
+              <div>
+                <strong>${escapeHtml(item.beerName || "Unnamed beer")}</strong>
+                <div class="muted">
+                  ${escapeHtml([
+                    item.servingSize ? String(item.servingSize).replace("_", " ") : null,
+                    formatSubmissionItemPrice(item),
+                    formatSubmissionTapStatus(item.isOnTap),
+                    item.isHappyHourPrice ? "Happy-hour price" : null,
+                    item.confidence != null ? `${formatPercent(item.confidence)} capture confidence` : null,
+                  ].filter(Boolean).join(" · "))}
+                </div>
+                ${item.happyHourDetails ? `<div class="muted">${escapeHtml(item.happyHourDetails)}</div>` : ""}
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderSubmissionEvidencePanel(submission) {
+      return `
+        <div class="adminSubmissionEvidencePanel">
+          <div class="adminSubmissionEvidencePreview" data-submission-evidence-preview="${escapeHtml(submission.id)}">
+            ${submission.sourcePhotoUrl ? `
+              <div class="adminSubmissionEvidencePreview__placeholder">Loading source image...</div>
+            ` : `
+              <div class="adminSubmissionEvidencePreview__placeholder">No source image</div>
+            `}
+          </div>
+          <div class="adminSubmissionOcrPanel">
+            <div class="eyebrow">Captured rows for review</div>
+            ${renderSubmissionCapturedRows(submission)}
+          </div>
+        </div>
+      `;
+    }
+
+    async function hydrateSubmissionEvidencePreviews() {
+      const previews = Array.from(pendingSubmissions.querySelectorAll("[data-submission-evidence-preview]"))
+        .filter((preview) => preview.textContent?.includes("Loading source image"));
+      await Promise.all(previews.map(async (preview) => {
+        const submissionId = preview.dataset.submissionEvidencePreview;
+        if (!submissionId) return;
+        try {
+          const result = await MelbBeerBusiness.apiFetch(`/api/business/submissions/${encodeURIComponent(submissionId)}/source-evidence-url`);
+          if (!result.signedUrl) {
+            preview.innerHTML = '<div class="adminSubmissionEvidencePreview__placeholder">Source image unavailable</div>';
+            return;
+          }
+          const signedUrl = escapeHtml(result.signedUrl);
+          preview.innerHTML = `
+            <a class="adminSubmissionEvidencePreview__link" href="${signedUrl}" target="_blank" rel="noopener">
+              <img src="${signedUrl}" alt="Submission source evidence" loading="lazy" />
+              <span>Open full evidence</span>
+            </a>
+          `;
+        } catch {
+          preview.innerHTML = '<div class="adminSubmissionEvidencePreview__placeholder">Could not load source image</div>';
+        }
+      }));
     }
 
     function renderAdminTodayQueue(todayKpis, queues, submissions) {
@@ -2069,8 +2241,8 @@
 
       adminTodayQueue.innerHTML = `
         <div class="metricGrid">
-          ${renderMetric("Searches today", Number(metrics.totalVenueSearches || 0) + Number(metrics.totalBeerSearches || 0))}
-          ${renderMetric("Submissions today", metrics.totalSubmissionCompletions || 0)}
+          ${renderMetric("Searches today", Number(metrics.totalVenueSearches || 0) + Number(metrics.totalBeerSearches || 0), { target: "analytics", selector: "#demandSignals", title: "Open search demand signals" })}
+          ${renderMetric("Submissions today", metrics.totalSubmissionCompletions || 0, { target: "review", selector: "#pendingSubmissions", title: "Open pending submissions" })}
         </div>
         <div class="adminCommandGrid">
         ${rows.map((row, index) => `
@@ -3530,7 +3702,7 @@
 
     async function loadAdmin() {
       updateAdminLoadSummary("Loading admin data...");
-      const submissions = await MelbBeerBusiness.apiFetch("/api/business/submissions?status=pending&limit=100");
+      const submissions = await MelbBeerBusiness.apiFetch("/api/business/submissions?status=pending&limit=100&includeReviewData=true");
       const prioritySubmissions = [...(submissions.submissions || [])]
         .sort((a, b) => getSubmissionPriority(b) - getSubmissionPriority(a));
       pendingSubmissions.innerHTML = prioritySubmissions.length
@@ -3565,6 +3737,7 @@
             <div class="muted">Points location: ${submission.pointsEligibleByLocation ? "within 200m" : "not eligible"}${submission.distanceToVenueMeters != null ? ` · ${Math.round(Number(submission.distanceToVenueMeters))}m from venue` : ""}${submission.pointsEligibilityReason ? ` · ${escapeHtml(submission.pointsEligibilityReason)}` : ""}</div>
             ${evidenceOnlySubmission ? '<div class="muted">Photo evidence only; approval will not publish live beer rows.</div>' : ""}
             <div class="muted">${escapeHtml(submission.notes || "No notes")}</div>
+            ${renderSubmissionEvidencePanel(submission)}
             <div class="actionRow adminReviewActionBar">
               <button class="button button--primary" type="button" data-approve="${escapeHtml(submission.id)}">${escapeHtml(approveLabel)}</button>
               <button class="button" type="button" data-evidence="${escapeHtml(submission.id)}">Needs evidence</button>
@@ -3591,6 +3764,7 @@
         const submission = prioritySubmissions.find((item) => item.id === button.dataset.fraud);
         button.addEventListener("click", () => promptSubmissionReview(submission, "fraud_flagged"));
       });
+      await hydrateSubmissionEvidencePreviews();
 
       const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners, leaderboardPrizes, beerCatalog] = await Promise.all([
         MelbBeerBusiness.apiFetch(`/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`),

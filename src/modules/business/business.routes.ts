@@ -22,6 +22,7 @@ import {
   authSignupSchema,
   beerCatalogApproveSchema,
   beerCatalogMergeSchema,
+  beerCatalogRejectSchema,
   checkoutSchema,
   checkoutSessionSchema,
   createMissionSchema,
@@ -624,6 +625,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const body = parseWithSchema(beerCatalogMergeSchema, req.body, "Invalid beer catalogue merge payload");
     const key = String(req.params.key ?? "");
     res.json(success(businessService.mergeBeerCatalogItem(admin, key, body)));
+  });
+
+  router.post("/admin/beer-catalog/:key/reject", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(beerCatalogRejectSchema, req.body, "Invalid beer catalogue rejection payload");
+    const key = String(req.params.key ?? "");
+    res.json(success(businessService.rejectBeerCatalogItem(admin, key, body)));
   });
 
   router.get("/admin/venue-partners", (req, res) => {
