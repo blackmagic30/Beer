@@ -316,6 +316,51 @@ describe("menu crawler extraction", () => {
     expect(byName.has("Stomping Ground Gipps St Pale Ale")).toBe(false);
   });
 
+  it("splits collapsed Botanical Hotel website rows before extracting prices", () => {
+    const collapsedBotanicalText = [
+      "ON TAP Carlton Draught 4.6% $8.5 POT, $17 PINT Abbotsford",
+      "Asahi Super Dry 5% $9.5 POT, $19 PINT Abbotsford",
+      "Stone & Wood Pacific Ale 4.5% $8.5 POT, $17 PINT Byron Bay",
+      "Balter XPA 5% $9.5 POT, $18.5 PINT Currumbin",
+      "Mountain Goat Tasty Pale Ale 4.4% $9 POT, $18 PINT Richmond",
+      "Stomping Ground Big Sky Hazy Pale Ale 4.3% $8.5 POT, $17 PINT Collingwood",
+      "Fixation IPA 6.4% $9 POT, $18 PINT Hobart",
+      "Guinness Stout 4.2% $9 POT, $18 PINT",
+      "Mountain Goat Hazy Apple Cider 5% $9.5 POT, $18.5 PINT Richmond",
+      "Hard Rated Lemon 4.5% $8.5 POT, $17 PINT Australia",
+      "Can 2 Brothers Kung Foo Rice Lager 4.6% $15 Moorabbin",
+      "Peroni Red 4.7% $13 Italy",
+    ].join(" ");
+
+    const rows = extractStructuredBeerRowsFromText(collapsedBotanicalText);
+    const byName = new Map(rows.map((row) => [row.name, row]));
+
+    expect(byName.get("Mountain Goat Tasty Pale Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 18,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Stomping Ground Big Sky Hazy Pale Ale")).toEqual(expect.objectContaining({
+      priceNumeric: 17,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("Mountain Goat Hazy Apple Cider")).toEqual(expect.objectContaining({
+      priceNumeric: 18.5,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("2 Brothers Kung Foo Rice Lager")).toEqual(expect.objectContaining({
+      priceNumeric: 15,
+      availabilityStatus: "package_only",
+    }));
+    expect(byName.get("Peroni Red")).toEqual(expect.objectContaining({
+      priceNumeric: 13,
+      availabilityStatus: "package_only",
+    }));
+    expect(byName.has("Tasty Pale Ale")).toBe(false);
+    expect(byName.has("Big Sky Hazy Pale Ale")).toBe(false);
+    expect(byName.has("Mountain Goat Lager")).toBe(false);
+    expect(byName.has("Stomping Ground Gipps St Pale Ale")).toBe(false);
+  });
+
   it("uses pint prices rather than ABV from structured on-tap website cards", () => {
     const steamPacketHtml = `
       <div class="collection-item w-dyn-item">

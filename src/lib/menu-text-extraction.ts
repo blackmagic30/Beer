@@ -73,6 +73,51 @@ const TRACKED_ALIASES = VIEWER_TRACKED_BEERS.flatMap((beer) =>
   .filter((item) => item.normalizedAlias.length >= 3)
   .sort((a, b) => b.normalizedAlias.length - a.normalizedAlias.length);
 
+const COLLAPSED_ROW_START_STOPWORDS = new Set([
+  "ale",
+  "beer",
+  "bitter",
+  "cider",
+  "draft",
+  "draught",
+  "ginger beer",
+  "ipa",
+  "jug",
+  "jugs",
+  "lager",
+  "pale ale",
+  "pint",
+  "pints",
+  "pilsner",
+  "pot",
+  "pots",
+  "schooner",
+  "schooners",
+  "stout",
+  "xpa",
+]);
+const COLLAPSED_ROW_START_TERMS = Array.from(
+  new Set(
+    VIEWER_TRACKED_BEERS.flatMap((beer) => [beer.name, beer.brewery, ...beer.aliases])
+      .map((term) => term?.replace(/\s+/g, " ").trim())
+      .filter((term): term is string => Boolean(term))
+      .filter((term) => term.length >= 4 && !COLLAPSED_ROW_START_STOPWORDS.has(term.toLowerCase())),
+  ),
+).sort((left, right) => right.length - left.length);
+const COLLAPSED_ROW_START_SOURCE = COLLAPSED_ROW_START_TERMS.map(escapeRegExp).join("|");
+const COLLAPSED_ROW_AFTER_TAP_PRICE_PATTERN = new RegExp(
+  `(\\b(?:PINT|PINTS|SCHOONER|SCHOONERS|POT|POTS|JUG|JUGS)\\b\\s+[A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+){0,1})\\s+(?=${COLLAPSED_ROW_START_SOURCE}\\b)`,
+  "g",
+);
+const COLLAPSED_ROW_AFTER_PACKAGE_PRICE_PATTERN = new RegExp(
+  `(\\$\\d{1,2}(?:\\.\\d{1,2})?\\s+[A-Z][A-Za-z]+(?:\\s+[A-Z][A-Za-z]+){0,1})\\s+(?=${COLLAPSED_ROW_START_SOURCE}\\b)`,
+  "g",
+);
+const COLLAPSED_PACKAGE_HEADING_PATTERN = new RegExp(
+  `\\s+\\b(CAN|CANS|BOTTLE|BOTTLES|TIN|TINS|TINNIES|PACKAGED)\\s+(?=[A-Z0-9][A-Za-z0-9'&., -]{2,90}\\s+(?:\\d{1,2}(?:\\.\\d+)?%\\s+)?\\$?\\d)`,
+  "gi",
+);
+
 function findTrackedBeerInRowName(value: string): string | null {
   const normalized = normalizeLooseText(value);
   if (!normalized) {
@@ -104,7 +149,7 @@ function findTrackedBeerInRowName(value: string): string | null {
 }
 
 function normalizeMenuText(value: string): string {
-  return value
+  return splitCollapsedMenuRowsForExtraction(value)
     .replace(/\r/g, "\n")
     .replace(/\u00a0/g, " ")
     .replace(/[\u2018\u2019]/g, "'")
@@ -117,8 +162,19 @@ function normalizeMenuText(value: string): string {
     .trim();
 }
 
+export function splitCollapsedMenuRowsForExtraction(value: string): string {
+  return value
+    .replace(
+      /\b(ON\s+TAP|TAP\s+BEERS?|BEERS?\s+ON\s+TAP|CANS?\s+OR\s+BOTTLES?|BOTTLES?\s*(?:&|AND|OR)\s*(?:CANS?|TINS?)|CANS?\s*(?:&|AND|OR)\s*BOTTLES?|TINS?\s*(?:&|AND|OR)\s*BOTTLES?|TINNIES?|PACKAGED)\s+(?=[A-Z0-9])/gi,
+      "$1\n",
+    )
+    .replace(COLLAPSED_PACKAGE_HEADING_PATTERN, "\n$1\n")
+    .replace(COLLAPSED_ROW_AFTER_TAP_PRICE_PATTERN, "$1\n")
+    .replace(COLLAPSED_ROW_AFTER_PACKAGE_PRICE_PATTERN, "$1\n");
+}
+
 function normalizeMenuLines(value: string): string[] {
-  const normalized = value
+  const normalized = splitCollapsedMenuRowsForExtraction(value)
     .replace(/\r/g, "\n")
     .replace(/\u00a0/g, " ")
     .replace(/[\u2018\u2019]/g, "'")

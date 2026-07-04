@@ -12,7 +12,11 @@ import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName } from "../src/constants/beers.js";
-import { extractOnTapCardRowsFromHtml, extractStructuredBeerRowsFromText } from "../src/lib/menu-text-extraction.js";
+import {
+  extractOnTapCardRowsFromHtml,
+  extractStructuredBeerRowsFromText,
+  splitCollapsedMenuRowsForExtraction,
+} from "../src/lib/menu-text-extraction.js";
 import {
   normalizeVenueKey,
   shouldImportBarOrPubPlace,
@@ -1991,7 +1995,7 @@ function extractPriceMatchesFromLine(line: string): TextPriceMatch[] {
 }
 
 function splitTextIntoExtractionLines(text: string): string[] {
-  const normalized = text
+  const normalized = splitCollapsedMenuRowsForExtraction(text)
     .replace(/\r/g, "\n")
     .replace(/[•·]/g, "\n")
     .replace(/\s+\|\s+/g, "\n");
