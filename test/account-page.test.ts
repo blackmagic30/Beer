@@ -705,6 +705,10 @@ describe("account page shell", () => {
     expect(html).toContain("function refreshAdminPage");
     expect(html).toContain("function openReviewDecision");
     expect(html).toContain("function promptSubmissionReview");
+    expect(html).toContain("function isPhotoEvidenceOnlySubmission");
+    expect(html).toContain("Approve evidence only");
+    expect(html).toContain("will not publish live beer prices");
+    expect(html).toContain("Evidence-only upload approved; no live beer rows were published.");
     expect(html).toContain("function promptQueuedIngestionReview");
     expect(html).toContain("function renderCrawlerDetails");
     expect(html).toContain("function crawlerFeedbackPill");

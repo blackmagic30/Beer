@@ -2013,6 +2013,11 @@
       return badges;
     }
 
+    function isPhotoEvidenceOnlySubmission(submission) {
+      return submission?.submissionType === "photo_upload"
+        && !(Array.isArray(submission.items) && submission.items.length);
+    }
+
     function renderAdminTodayQueue(todayKpis, queues, submissions) {
       if (todayKpis || queues || submissions) {
         latestAdminTodayPayload = { todayKpis, queues, submissions };
@@ -3337,8 +3342,9 @@
       if (!submission?.id || !status) return;
       const reasonKey = status;
       const approve = status === "approved";
+      const evidenceOnlyApproval = approve && isPhotoEvidenceOnlySubmission(submission);
       const titleByStatus = {
-        approved: submission.pendingVenue ? "Approve and publish venue" : "Approve submission",
+        approved: submission.pendingVenue ? "Approve and publish venue" : evidenceOnlyApproval ? "Approve evidence only" : "Approve submission",
         needs_more_evidence: "Ask for more evidence",
         rejected: "Reject submission",
         fraud_flagged: "Flag submission as fraud",
@@ -3347,12 +3353,14 @@
         eyebrow: "Submission review",
         title: `${titleByStatus[status] || "Review submission"} · ${submission.venueName}`,
         copy: approve
-          ? "Confirm the evidence is good enough to publish and award points."
+          ? evidenceOnlyApproval
+            ? "This approves the screenshot evidence and awards eligible points, but it will not publish live beer prices because no beer rows are attached."
+            : "Confirm the evidence is good enough to publish and award points."
           : "Choose the clearest reason so the contributor and future admins have context.",
-        confirmLabel: approve ? "Approve" : titleByStatus[status] || "Confirm",
+        confirmLabel: approve ? evidenceOnlyApproval ? "Approve evidence only" : "Approve" : titleByStatus[status] || "Confirm",
         tone: status === "rejected" || status === "fraud_flagged" ? "danger" : "default",
         reasons: REVIEW_REASON_OPTIONS[reasonKey] || REVIEW_REASON_OPTIONS.rejected,
-        onConfirm: ({ combinedNote }) => reviewSubmission(submission.id, status, combinedNote),
+        onConfirm: ({ combinedNote }) => reviewSubmission(submission, status, combinedNote),
       });
     }
 
@@ -3383,7 +3391,11 @@
       }
     }
 
-    async function reviewSubmission(id, status, note = null) {
+    async function reviewSubmission(submissionOrId, status, note = null) {
+      const submission = typeof submissionOrId === "object" ? submissionOrId : null;
+      const id = typeof submissionOrId === "string" ? submissionOrId : submissionOrId?.id;
+      if (!id) return;
+      const evidenceOnlyApproval = status === "approved" && isPhotoEvidenceOnlySubmission(submission);
       try {
         const body = status === "approved"
           ? { status, confidence: "photo_verified", rejectionReason: note }
@@ -3392,7 +3404,10 @@
           method: "POST",
           body: JSON.stringify(body),
         });
-        MelbBeerBusiness.setStatus(statusEl, `Reviewed ${result.submission.venueName}. Awarded ${result.pointsAwarded} points.`);
+        MelbBeerBusiness.setStatus(
+          statusEl,
+          `Reviewed ${result.submission.venueName}. Awarded ${result.pointsAwarded} points.${evidenceOnlyApproval ? " Evidence-only upload approved; no live beer rows were published." : ""}`,
+        );
         retirePendingSubmissionCard(id);
         await loadAdmin();
       } catch (error) {
@@ -3521,6 +3536,12 @@
       pendingSubmissions.innerHTML = prioritySubmissions.length
         ? prioritySubmissions.map((submission) => {
           const priority = submissionPriorityLabel(submission);
+          const evidenceOnlySubmission = isPhotoEvidenceOnlySubmission(submission);
+          const approveLabel = submission.pendingVenue
+            ? "Approve + publish venue"
+            : evidenceOnlySubmission
+              ? "Approve evidence only"
+              : "Approve";
           return `
           <article class="listItem adminReviewCard adminReviewCard--${escapeHtml(priority.tone)}" data-submission-card="${escapeHtml(submission.id)}">
             <div class="adminReviewCard__header">
@@ -3542,9 +3563,10 @@
               ${submissionConfidenceBadges(submission).map((badge) => `<span class="pill">${escapeHtml(badge)}</span>`).join("") || '<span class="pill">Manual review</span>'}
             </div>
             <div class="muted">Points location: ${submission.pointsEligibleByLocation ? "within 200m" : "not eligible"}${submission.distanceToVenueMeters != null ? ` · ${Math.round(Number(submission.distanceToVenueMeters))}m from venue` : ""}${submission.pointsEligibilityReason ? ` · ${escapeHtml(submission.pointsEligibilityReason)}` : ""}</div>
+            ${evidenceOnlySubmission ? '<div class="muted">Photo evidence only; approval will not publish live beer rows.</div>' : ""}
             <div class="muted">${escapeHtml(submission.notes || "No notes")}</div>
             <div class="actionRow adminReviewActionBar">
-              <button class="button button--primary" type="button" data-approve="${escapeHtml(submission.id)}">${submission.pendingVenue ? "Approve + publish venue" : "Approve"}</button>
+              <button class="button button--primary" type="button" data-approve="${escapeHtml(submission.id)}">${escapeHtml(approveLabel)}</button>
               <button class="button" type="button" data-evidence="${escapeHtml(submission.id)}">Needs evidence</button>
               <button class="button button--danger" type="button" data-reject="${escapeHtml(submission.id)}">Reject</button>
               <button class="button button--danger" type="button" data-fraud="${escapeHtml(submission.id)}">Flag fraud</button>
