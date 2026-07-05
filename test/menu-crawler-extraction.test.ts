@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalizeTrackedBeerName } from "../src/constants/beers.js";
 import { crawlerQueueDuplicateKey, crawlerQueueRowKey, crawlerQueueRowOverlapRatio } from "../src/lib/menu-source-dedupe.js";
 import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
+import { selectLabeledPintPrice } from "../src/lib/menu-price-selection.js";
 import { extractOnTapCardRowsFromHtml, extractStructuredBeerRowsFromText } from "../src/lib/menu-text-extraction.js";
 
 describe("menu crawler extraction", () => {
@@ -672,5 +673,17 @@ describe("menu crawler extraction", () => {
       expect(source).toContain("choose the PINT price");
       expect(source).toContain("CANS OR BOTTLES");
     }
+  });
+
+  it("normalizes OCR-labelled pour prices to the pint value before queueing", () => {
+    expect(selectLabeledPintPrice("$9.5 POT $15 PINT")).toEqual({
+      priceNumeric: 15,
+      priceText: "$15",
+    });
+    expect(selectLabeledPintPrice("Pot $8.5 Schooner $12 Pint $17 Jug $35")).toEqual({
+      priceNumeric: 17,
+      priceText: "$17",
+    });
+    expect(selectLabeledPintPrice("$11 bottle")).toBeNull();
   });
 });

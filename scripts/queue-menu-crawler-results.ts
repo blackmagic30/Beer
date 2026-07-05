@@ -21,6 +21,7 @@ import {
   normalizeSqlComparableText,
 } from "../src/lib/menu-source-dedupe.js";
 import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
+import { selectLabeledPintPrice } from "../src/lib/menu-price-selection.js";
 
 type SourceKind = "menu_page" | "menu_image" | "menu_pdf" | "homepage_menu_signal";
 type SourceOrigin = "official_host" | "trusted_external_menu_host";
@@ -163,8 +164,9 @@ function mapBeerRow(input: {
   now: string;
 }): AdminIngestionBeerRecord {
   const row = input.row;
-  const priceText = cleanText(row.priceText, 40);
-  const priceNumeric = Number.isFinite(row.priceNumeric ?? Number.NaN) ? Number(row.priceNumeric) : null;
+  const labeledPintPrice = selectLabeledPintPrice(row.priceText);
+  const priceText = cleanText(labeledPintPrice?.priceText ?? row.priceText, 40);
+  const priceNumeric = labeledPintPrice?.priceNumeric ?? (Number.isFinite(row.priceNumeric ?? Number.NaN) ? Number(row.priceNumeric) : null);
   const availability = mapAvailability(row);
   const rawName = cleanText(row.name, 120) ?? "Unknown beer";
   const resolvedBeer = input.beerCatalogRepository?.resolveBeerName({
@@ -200,7 +202,7 @@ function isUsableRow(row: ExtractedBeerRow, includePackageOnly: boolean, maxPric
   if (!includePackageOnly && row.availabilityStatus === "package_only") {
     return false;
   }
-  const priceNumeric = Number(row.priceNumeric);
+  const priceNumeric = selectLabeledPintPrice(row.priceText)?.priceNumeric ?? Number(row.priceNumeric);
   if (!Number.isFinite(priceNumeric) || priceNumeric <= 0 || priceNumeric > maxPrice) {
     return false;
   }
