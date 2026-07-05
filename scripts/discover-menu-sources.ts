@@ -838,29 +838,37 @@ function isLikelyMenuImageCandidate(url: string, text: string): boolean {
     }
   })();
   const filename = pathname.split("/").pop() ?? pathname;
+  const pathSignal = pathname.replace(/[-_+%]+/g, " ");
+  const textSignal = text.replace(/[-_+%]+/g, " ");
 
-  const strongMenuAsset =
-    /\b(?:drinks?|beverage|beer|bar|cocktail|tap)\s*menu\b/i.test(haystack) ||
-    /\b(?:beer|tap)\s*list\b/i.test(haystack) ||
-    /\bmenu\s*(?:single\s*page|graphic|qr|image|asset|board|page)\b/i.test(haystack) ||
-    /\b(?:qr\s*code|menu\s*qr)\b/i.test(haystack);
-  const positive =
-    /\b(menu|menus|food menu|drink menu|drinks menu|beverage menu|beer menu|wine menu|cocktail menu|tap list)\b/i.test(
-      haystack,
-    );
+  const strongPathSignal =
+    /\b(?:drinks?|beverage|beer|bar|cocktail|tap)\s*menu\b/i.test(pathSignal) ||
+    /\b(?:beer|tap)\s*list\b/i.test(pathSignal) ||
+    /\bmenu\s*(?:single\s*page|graphic|qr|board|page)\b/i.test(pathSignal) ||
+    /\b(?:qr\s*code|menu\s*qr)\b/i.test(pathSignal);
+  const strongTextSignal =
+    /\b(?:drinks?|beverage|beer|bar|cocktail|tap)\s*menu\b/i.test(textSignal) ||
+    /\b(?:beer|tap)\s*list\b/i.test(textSignal) ||
+    /\b(?:qr\s*code|menu\s*qr)\b/i.test(textSignal);
+  const strongMenuAsset = strongPathSignal || strongTextSignal;
   const negative =
-    /\b(logo|favicon|apple touch icon|brand|banner|hero|venue|slider|home page|home img|mobile menu|mockup|where to buy|buy now|beer taps?|beer tanks?|pouring|private dining|shareboards?|product|thumbnail|cropped|symbol|screenshot|gallery|interior|internal|walk through|meat|food photo|kitchen|dining|tile|lensaloft|unknown)\b/i.test(
+    /\b(logo|favicon|apple touch icon|brand|banner|hero|venue|slider|home page|home img|mobile menu|mockup|where to buy|buy now|beer taps?|beer tanks?|pouring|private dining|shareboards?|product|thumbnail|cropped|symbol|screenshot|gallery|interior|internal|walk through|meat|food photo|kitchen|dining|tile|navitem|lensaloft|unknown)\b/i.test(
       haystack,
     );
+  const uploadYear = pathname.match(/\/(20\d{2})\//)?.[1];
+  const oldGenericUpload =
+    uploadYear != null &&
+    Number(uploadYear) < new Date().getUTCFullYear() - 1 &&
+    !/\b(?:drinks?|beverage|beer|cocktail|tap)\b/i.test(pathSignal);
 
-  if (negative && !strongMenuAsset) {
+  if (negative || oldGenericUpload) {
     return false;
   }
   if (/\b(?:favicon|apple-touch-icon|cropped-|logo|symbol|screenshot|home_img|unknown)\b/i.test(filename) && !strongMenuAsset) {
     return false;
   }
 
-  return (positive || strongMenuAsset) && !negative;
+  return strongMenuAsset;
 }
 
 function hasDrinkPriceSignals(text: string): boolean {
