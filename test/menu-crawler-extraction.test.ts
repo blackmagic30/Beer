@@ -185,6 +185,56 @@ describe("menu crawler extraction", () => {
     }));
   });
 
+  it("uses pint prices when tap menus say pot, schooner and pint are available", () => {
+    const strayNeighbourText = [
+      "TAP BEER",
+      "POT, SCHOONER AND PINT AVAILABLE",
+      "STRAY LAGER BY TALLBOY & MOOSE 4.2% ABV $ 6 / $ 9 / $ 12",
+      "HAWKERS STOUT 5.4% ABV $ 8 / $ 11 / $ 14",
+      "STRAY PALE ALE BY TALLBOY & MOOSE 4.8% ABV $ 7 / $ 10 / $ 13",
+      "HAWKERS IPA 6.2% ABV $10 / $15 / $17",
+      "HAWKERS MIDWAY PALE ALE 3.5% $6 / $9 / $12",
+      "WHITE BAY JAPANESE LAGER 4.3% $7 / $10 / $13",
+      "TINS",
+      "BETTER CIDER 4.2% ABV $11",
+      "STOMPING GROUND PALE ALE $10",
+    ].join("\n");
+
+    const rows = extractStructuredBeerRowsFromText(strayNeighbourText);
+    const byName = new Map(rows.map((row) => [row.name, row]));
+
+    expect(byName.get("STRAY LAGER BY TALLBOY & MOOSE")).toEqual(expect.objectContaining({
+      priceNumeric: 12,
+      priceText: "$12",
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("HAWKERS STOUT")).toEqual(expect.objectContaining({
+      priceNumeric: 14,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("STRAY PALE ALE BY TALLBOY & MOOSE")).toEqual(expect.objectContaining({
+      priceNumeric: 13,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("HAWKERS IPA")).toEqual(expect.objectContaining({
+      priceNumeric: 17,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("HAWKERS MIDWAY PALE ALE")).toEqual(expect.objectContaining({
+      priceNumeric: 12,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("WHITE BAY JAPANESE LAGER")).toEqual(expect.objectContaining({
+      priceNumeric: 13,
+      availabilityStatus: "on_tap",
+    }));
+    expect(byName.get("BETTER CIDER")).toEqual(expect.objectContaining({
+      priceNumeric: 11,
+      availabilityStatus: "package_only",
+    }));
+    expect(byName.get("STRAY LAGER BY TALLBOY & MOOSE")?.notes).toContain("Selected pint price from menu pour order.");
+  });
+
   it("reads Rooftop Bar style HTML table text without drifting into spirits", () => {
     const rooftopText = [
       "Beer",

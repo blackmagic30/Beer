@@ -24,11 +24,11 @@ const MENU_ROW_PATTERN =
 
 const SECTION_PATTERNS: Array<{ label: string; availabilityStatus: MenuTextAvailabilityStatus; pattern: RegExp }> = [
   { label: "ON TAP", availabilityStatus: "on_tap", pattern: /\b(?:ON\s+TAP|TAP|TAP\s+BEERS?|BEERS?\s+ON\s+TAP|DRAUGHT|DRAFT)\b/gi },
-  { label: "CANS OR BOTTLES", availabilityStatus: "package_only", pattern: /\b(?:BOTTLES?\s*(?:&|AND|OR)\s*(?:CANS?|TINS?)|CANS?\s*(?:&|AND|OR)\s*BOTTLES?|TINS?\s*(?:&|AND|OR)\s*BOTTLES?|PACKAGED\s+(?:BEER|DRINKS?)|TINNIES?)\b/gi },
+  { label: "CANS OR BOTTLES", availabilityStatus: "package_only", pattern: /\b(?:BOTTLES?\s*(?:&|AND|OR)\s*(?:CANS?|TINS?)|CANS?\s*(?:&|AND|OR)\s*BOTTLES?|TINS?\s*(?:&|AND|OR)\s*BOTTLES?|TINS?|PACKAGED\s+(?:BEER|DRINKS?)|TINNIES?)\b/gi },
 ];
 
 const HEADING_PREFIX_PATTERN =
-  /^(?:(?:drink|drinks|beer|beers|on\s+tap|tap\s+beers?|beers?\s+on\s+tap|pots?|pints?|jugs?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|tins?\s*(?:&|and)\s*bottles?|tinnies?|packaged|sparkling\s*&\s*rose|white|red|glass|bottle|can|tin)\b[\s/:,-]*)+/i;
+  /^(?:(?:drink|drinks|beer|beers|on\s+tap|tap\s+beers?|beers?\s+on\s+tap|pots?|pints?|jugs?|bottles?\s*(?:&|and)\s*(?:cans?|tins?)|cans?\s*(?:&|and)\s*bottles?|tins?\s*(?:&|and)\s*bottles?|tinnies?|packaged|sparkling\s*&\s*rose|white(?!\s+(?:bay|rabbit)\b)|red|glass|bottle|can|tin)\b[\s/:,-]*)+/i;
 
 const BEERISH_NAME_PATTERN =
   /\b(beer|lager|ale|ipa|xpa|stout|porter|pilsner|draught|draft|bitter|cider|sour|ginger\s+beer|hard\s+rated|rtd|guinness|asahi|balter|carlton|great\s+northern|mountain\s+goat|bulmers|lions?|corona|peroni|heineken|sapporo|kilkenny|kirin|furphy|napoleone|little\s+creatures|obrien'?s|heaps\s+normal|pabst)\b/i;
@@ -44,13 +44,14 @@ const MARKETING_COPY_NOISE_PATTERN =
 const TAP_SECTION_LINE_PATTERN = /^(?:on\s+tap|tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)$/i;
 const TAP_SECTION_PREFIX_PATTERN = /^(?:on\s+tap|tap|tap\s+beers?|beers?\s+on\s+tap|draught|draft)\b/i;
 const PACKAGE_SECTION_LINE_PATTERN =
-  /^(?:tins?\s*(?:&|and|or)\s*bottles?|bottles?\s*(?:&|and|or)\s*(?:cans?|tins?)|cans?\s*(?:&|and|or)\s*bottles?|cans?|bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
+  /^(?:tins?\s*(?:&|and|or)\s*bottles?|bottles?\s*(?:&|and|or)\s*(?:cans?|tins?)|cans?\s*(?:&|and|or)\s*bottles?|cans?|bottles?|tins?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)$/i;
 const PACKAGE_SECTION_PREFIX_PATTERN =
-  /^(?:tins?\s*(?:&|and|or)\s*bottles?|bottles?\s*(?:&|and|or)\s*(?:cans?|tins?)|cans?\s*(?:&|and|or)\s*bottles?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)\b/i;
+  /^(?:tins?\s*(?:&|and|or)\s*bottles?|bottles?\s*(?:&|and|or)\s*(?:cans?|tins?)|cans?\s*(?:&|and|or)\s*bottles?|tins?|tinnies?|packaged(?:\s+(?:beer|drinks?))?)\b/i;
 const NON_BEER_SECTION_LINE_PATTERN =
   /^(?:red(?:\s+wine)?|white(?:\s+wine)?|sparkling(?:\s*&\s*|\s+and\s+)ros[eé]|ros[eé]|cocktails?|spirits?|food|snacks?|kitchen|desserts?)$/i;
+const PRICE_TOKEN_PATTERN_SOURCE = String.raw`(?:A\$|AUD\s*|\$)?\s*\d{1,2}(?:\.\d{1,2})?`;
 const SIMPLE_MENU_PRICE_PATTERN =
-  /(?:\$?\d{1,2}(?:\.\d{1,2})?(?:\s*\/\s*\$?\d{1,2}(?:\.\d{1,2})?){0,3}|\/\s*\$?\d{1,2}(?:\.\d{1,2})?)(?![\d.]|\s*%)/g;
+  new RegExp(`(?:${PRICE_TOKEN_PATTERN_SOURCE}(?:\\s*\\/\\s*${PRICE_TOKEN_PATTERN_SOURCE}){0,3}|\\/\\s*${PRICE_TOKEN_PATTERN_SOURCE})(?![\\d.]|\\s*%)`, "g");
 const ABV_PATTERN = /\b(?:ABV\s*)?(<\s*)?\d{1,2}(?:\.\d+)?\s*%/i;
 const DETAIL_LINE_PATTERN =
   /\b(?:brewing|brewery|brewers?|beer|co|company|stone\s*&\s*wood|mountain\s+culture|bonehead|guinness|asahi|pabst|heaps\s+normal|two\s+bays|bad\s+shepherd|venom|brick\s+lane|hargraves?|hargreaves?)\b/i;
@@ -542,16 +543,16 @@ function inferAvailabilityStatus(input: {
   sourceRow: string;
   section: SectionMarker | null;
   priceCount: number;
-  hasPotsPintsJugsHint: boolean;
+  tapPriceOrder: PourPriceLabel[] | null;
 }): MenuTextAvailabilityStatus {
   if (input.section?.availabilityStatus === "on_tap") {
     return "on_tap";
   }
-  if (input.hasPotsPintsJugsHint || input.priceCount >= 3) {
-    return "on_tap";
-  }
-  if (input.section?.availabilityStatus === "package_only") {
+  if (input.section?.availabilityStatus === "package_only" && input.priceCount < 3) {
     return "package_only";
+  }
+  if (input.tapPriceOrder || input.priceCount >= 3) {
+    return "on_tap";
   }
   if (/\b(tap|draught|draft|pint|schooner|pot|jug|500\s?ml|425\s?ml|400\s?ml|285\s?ml)\b/i.test(input.sourceRow)) {
     return "on_tap";
@@ -568,14 +569,28 @@ function inferAvailabilityStatus(input: {
 function selectDisplayPrice(input: {
   prices: number[];
   availabilityStatus: MenuTextAvailabilityStatus;
-  hasPotsPintsJugsHint: boolean;
+  tapPriceOrder: PourPriceLabel[] | null;
 }): number | null {
   if (input.prices.length === 0) {
     return null;
   }
-  if (input.availabilityStatus === "on_tap" || input.hasPotsPintsJugsHint) {
+
+  const shouldUseTapPriceOrder = input.availabilityStatus === "on_tap" || (
+    Boolean(input.tapPriceOrder) && input.availabilityStatus !== "package_only"
+  );
+  const explicitPintIndex = input.tapPriceOrder?.indexOf("pint") ?? -1;
+  if (shouldUseTapPriceOrder && explicitPintIndex >= 0 && explicitPintIndex < input.prices.length) {
+    return input.prices[explicitPintIndex] ?? null;
+  }
+
+  if (shouldUseTapPriceOrder) {
     if (input.prices.length >= 3) {
-      return input.prices[1] ?? null;
+      const lastPrice = input.prices[input.prices.length - 1];
+      const previousPrice = input.prices[input.prices.length - 2];
+      if (lastPrice != null && previousPrice != null && lastPrice >= previousPrice * 1.45) {
+        return previousPrice;
+      }
+      return lastPrice ?? null;
     }
     return input.prices[input.prices.length - 1] ?? null;
   }
@@ -587,16 +602,57 @@ function sourceRowPreview(value: string): string {
   return cleaned.length <= 180 ? cleaned : `${cleaned.slice(0, 177)}...`;
 }
 
-function hasPotsPintsJugsHint(text: string, index: number, priceCount: number): boolean {
-  if (priceCount >= 3) {
-    return true;
-  }
-  const nearby = text.slice(Math.max(0, index - 260), Math.min(text.length, index + 80));
-  return /\bPots?\s*\/\s*Pints?\s*\/\s*Jugs?\b/i.test(nearby);
-}
-
 function normalizePourPriceLabel(value: string): PourPriceLabel {
   return value.toLowerCase().replace(/s$/, "") as PourPriceLabel;
+}
+
+function tapPriceOrderFromText(value: string): PourPriceLabel[] | null {
+  const matches = Array.from(value.matchAll(/\b(pots?|schooners?|pints?|jugs?)\b/gi))
+    .map((match) => normalizePourPriceLabel(match[1] ?? ""))
+    .filter((label): label is PourPriceLabel => ["pot", "schooner", "pint", "jug"].includes(label));
+
+  for (let index = 0; index <= matches.length - 3; index += 1) {
+    const candidate = matches.slice(index, index + 3);
+    const uniqueLabels = new Set(candidate);
+    if (uniqueLabels.size === 3 && uniqueLabels.has("pint")) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function tapPriceOrderHint(text: string, index: number): PourPriceLabel[] | null {
+  const nearby = text.slice(Math.max(0, index - 320), Math.min(text.length, index + 120));
+  return tapPriceOrderFromText(nearby);
+}
+
+function tapPriceOrderForMenuLine(lines: string[], index: number): PourPriceLabel[] | null {
+  const start = Math.max(0, index - 8);
+  const end = Math.min(lines.length, index + 2);
+  return tapPriceOrderFromText(lines.slice(start, end).join(" "));
+}
+
+function tapPriceSelectionNote(input: {
+  tapPriceOrder: PourPriceLabel[] | null;
+  prices: number[];
+  selectedPrice: number;
+  preferredLabel: PourPriceLabel | null;
+}): string | null {
+  if (input.preferredLabel === "pint") {
+    return "Selected pint price from labelled pour row.";
+  }
+  const explicitPintIndex = input.tapPriceOrder?.indexOf("pint") ?? -1;
+  if (explicitPintIndex >= 0 && explicitPintIndex < input.prices.length) {
+    return "Selected pint price from menu pour order.";
+  }
+  if (input.prices.length >= 3) {
+    const lastPrice = input.prices[input.prices.length - 1];
+    return input.selectedPrice === lastPrice
+      ? "Selected largest tap pour price as pint."
+      : "Selected middle tap pour price because the largest pour appears to be a jug.";
+  }
+  return null;
 }
 
 function preferredPourPrice(matches: Array<{ label: PourPriceLabel; price: number }>): { label: PourPriceLabel; price: number } | null {
@@ -912,14 +968,14 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
     }
 
     const prices = parsePriceNumbers(priceText);
-    const hint = hasPotsPintsJugsHint(normalizedText, match.index, prices.length);
+    const tapPriceOrder = tapPriceOrderHint(normalizedText, match.index);
     const section = sectionForIndex(sections, match.index);
     const sourceRow = sourceRowPreview(match[0] ?? "");
     const inferredAvailabilityStatus = inferAvailabilityStatus({
       sourceRow: `${sourceRow} ${servingText}`,
       section,
       priceCount: prices.length,
-      hasPotsPintsJugsHint: hint,
+      tapPriceOrder,
     });
     const availabilityStatus =
       inferredAvailabilityStatus === "unknown" && section?.availabilityStatus
@@ -928,7 +984,7 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
     const selectedPrice = selectDisplayPrice({
       prices,
       availabilityStatus,
-      hasPotsPintsJugsHint: hint,
+      tapPriceOrder,
     });
     if (selectedPrice == null) {
       continue;
@@ -944,7 +1000,7 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       availabilityStatus,
       notes: [
         section ? `Section: ${section.label}` : null,
-        hint && prices.length >= 3 ? "Selected pint price from pots/pints/jugs." : null,
+        tapPriceSelectionNote({ tapPriceOrder, prices, selectedPrice, preferredLabel: null }),
         servingText ? `Serving hint: ${servingText}` : null,
         `Source row: ${sourceRow}`,
         abvNoteFromText(`${rawName} ${sourceRow}`),
@@ -997,11 +1053,12 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       continue;
     }
 
+    const tapPriceOrder = tapPriceOrderForMenuLine(menuLines, lineIndex);
     const inferredAvailabilityStatus = inferAvailabilityStatus({
       sourceRow: line,
       section: currentSection,
       priceCount: priceMatch.prices.length,
-      hasPotsPintsJugsHint: false,
+      tapPriceOrder,
     });
     const availabilityStatus =
       inferredAvailabilityStatus === "unknown" && currentSection?.availabilityStatus
@@ -1010,7 +1067,7 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
     const selectedPrice = priceMatch.preferredPrice ?? selectDisplayPrice({
       prices: priceMatch.prices,
       availabilityStatus,
-      hasPotsPintsJugsHint: false,
+      tapPriceOrder,
     });
     if (selectedPrice == null) {
       continue;
@@ -1027,10 +1084,12 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       availabilityStatus,
       notes: [
         currentSection ? `Section: ${currentSection.label}` : null,
-        priceMatch.preferredLabel === "pint" ? "Selected pint price from labelled pour row." : null,
-        !priceMatch.preferredLabel && priceMatch.prices.length > 1 && availabilityStatus === "on_tap"
-          ? "Selected largest tap pour price from slash-separated row."
-          : null,
+        tapPriceSelectionNote({
+          tapPriceOrder,
+          prices: priceMatch.prices,
+          selectedPrice,
+          preferredLabel: priceMatch.preferredLabel,
+        }),
         `Source row: ${sourceRowPreview(line)}`,
         detailLine ? `Beer details: ${detailLine}` : null,
         abvNoteFromText(`${line} ${detailLine ?? ""}`),
@@ -1082,10 +1141,11 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       priceCount: priceBlock.prices.length,
       sourceRow: `${line} ${priceBlock.priceText}`,
     });
+    const tapPriceOrder = tapPriceOrderForMenuLine(menuLines, lineIndex);
     const selectedPrice = priceBlock.preferredPrice ?? selectDisplayPrice({
       prices: priceBlock.prices,
       availabilityStatus,
-      hasPotsPintsJugsHint: priceBlock.prices.length >= 3,
+      tapPriceOrder,
     });
     if (selectedPrice == null) {
       continue;
@@ -1101,8 +1161,12 @@ export function extractStructuredBeerRowsFromText(text: string): ExtractedMenuBe
       availabilityStatus,
       notes: [
         currentSection ? `Section: ${currentSection.label}` : null,
-        priceBlock.preferredLabel === "pint" ? "Selected pint price from labelled pour row." : null,
-        !priceBlock.preferredLabel && priceBlock.prices.length >= 3 ? "Selected pint price from pot/pint/jug table." : null,
+        tapPriceSelectionNote({
+          tapPriceOrder,
+          prices: priceBlock.prices,
+          selectedPrice,
+          preferredLabel: priceBlock.preferredLabel,
+        }),
         `Source row: ${sourceRowPreview(`${line} ${priceBlock.priceText}`)}`,
         priceBlock.detailLine ? `Beer details: ${priceBlock.detailLine}` : null,
         abvNoteFromText(`${line} ${priceBlock.detailLine ?? ""}`),
