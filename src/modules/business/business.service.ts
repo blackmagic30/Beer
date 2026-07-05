@@ -1046,6 +1046,55 @@ function shouldExposePriceRecord(record: PublicVenuePriceRecord): boolean {
   return isHappyHourRecord(record) || isSpecialRecord(record) || isLikelyBeerName(record.beerName);
 }
 
+function priceRecordIdentityKey(record: PublicVenuePriceRecord): string {
+  if (isHappyHourRecord(record) || isSpecialRecord(record)) {
+    return `${record.displayKind ?? "record"}:${record.id}`;
+  }
+
+  const beerKey = record.normalizedBeerId
+    || findTrackedBeerByName(record.beerName)?.key
+    || normalizeBeerSearchKey(canonicalizeTrackedBeerName(record.beerName));
+  return [
+    "beer",
+    record.venueId,
+    beerKey,
+    normalizeBeerSearchKey(record.servingSize || "other"),
+  ].join(":");
+}
+
+function priceRecordSourcePriority(record: PublicVenuePriceRecord): number {
+  if (record.sourceType === "venue_manager_portal") {
+    return 3;
+  }
+
+  if (record.sourceType === "source_ingestion") {
+    return 2;
+  }
+
+  return 1;
+}
+
+function comparePriceRecordPriority(left: PublicVenuePriceRecord, right: PublicVenuePriceRecord): number {
+  const dateDelta = new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime();
+  if (dateDelta !== 0) {
+    return dateDelta;
+  }
+
+  return priceRecordSourcePriority(right) - priceRecordSourcePriority(left);
+}
+
+function dedupePublicPriceRecords(records: PublicVenuePriceRecord[]): PublicVenuePriceRecord[] {
+  const selected = new Map<string, PublicVenuePriceRecord>();
+  for (const record of [...records].sort(comparePriceRecordPriority)) {
+    const key = priceRecordIdentityKey(record);
+    if (!selected.has(key)) {
+      selected.set(key, record);
+    }
+  }
+
+  return [...selected.values()];
+}
+
 function isPintServing(record: PublicVenuePriceRecord): boolean {
   return normalizeBeerSearchKey(record.servingSize) === "pint";
 }
@@ -2217,6 +2266,35 @@ export class BusinessService {
     }
 
     return { beer };
+  }
+
+  rejectBeerCatalogItems(
+    account: BusinessAccount,
+    input: { keys: string[]; reviewNote?: string | null },
+  ): { beers: BeerCatalogAdminItem[]; rejectedCount: number } {
+    if (!this.isAdmin(account)) {
+      throw new AppError("Admin access required.", 403);
+    }
+    if (!this.beerCatalogRepository) {
+      throw new AppError("Beer catalogue review is not configured.", 503);
+    }
+
+    const beers = input.keys.map((key) => {
+      const beer = this.beerCatalogRepository!.rejectPendingBeer({
+        key,
+        reviewNote: input.reviewNote ?? null,
+        now: nowIso(),
+      });
+      if (!beer) {
+        throw new AppError("Pending beer was not found.", 404);
+      }
+      return beer;
+    });
+
+    return {
+      beers,
+      rejectedCount: beers.length,
+    };
   }
 
   getAccountFromAuthorization(
@@ -4851,9 +4929,9 @@ export class BusinessService {
     return {
       submission,
       statusCopy: publishedVenueImmediately
-        ? "Venue added to the public map. Beer data is saved for review before prices appear publicly."
+        ? "Venue added to the public map. Drink data is saved for review before prices appear publicly."
         : pendingVenue
-        ? "New venue and beer data submitted for admin review. It will appear on the global map only after approval."
+        ? "New venue and drink data submitted for admin review. It will appear on the global map only after approval."
         : !rewardEligible
         ? "Venue update submitted for review. Venue-manager updates do not earn contributor points."
         : submission.pointsEligibleByLocation
@@ -5401,9 +5479,13 @@ export class BusinessService {
       },
     });
 
+    const message = input.requestType === "missing_venue"
+      ? `${input.venueName || "This venue"} has been added to the admin review queue.`
+      : "Request saved. Admin can turn high-demand requests into missions.";
+
     return {
       request,
-      message: "Request saved. Admin can turn high-demand requests into missions.",
+      message,
     };
   }
 
@@ -6684,21 +6766,27 @@ export class BusinessService {
       ...this.repository.listVenueManagerPriceRecords(input.limit, input.venueId),
     ]
       .filter(shouldExposePriceRecord)
+      .filter((record) =>
+        !record.sourceType.startsWith("venue_manager_portal") ||
+        record.displayKind !== "beer" ||
+        record.price != null,
+      );
+    const dedupedRecords = dedupePublicPriceRecords(records)
       .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime())
       .slice(0, input.limit);
     const hasFullAccess = isFullAccess(account);
 
     if (hasFullAccess) {
       return {
-        records,
+        records: dedupedRecords,
         access: this.getAccessState(account, anonymousSessionId),
         revealed: true,
         blocked: false,
       };
     }
 
-    const freePreviewRecords = records.map(freePreviewPriceRecord);
-    if (!input.reveal || !input.venueId || records.length === 0) {
+    const freePreviewRecords = dedupedRecords.map(freePreviewPriceRecord);
+    if (!input.reveal || !input.venueId || dedupedRecords.length === 0) {
       return {
         records: freePreviewRecords,
         access: this.getAccessState(account, anonymousSessionId),

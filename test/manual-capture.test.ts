@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
+import BetterSqlite3 from "better-sqlite3";
+import { afterEach, describe, expect, it } from "vitest";
 
+import { BusinessRepository } from "../src/db/business.repository.js";
+import { initializeDatabaseSchema } from "../src/db/database.js";
 import {
   buildManualBeerEntry,
   buildManualVenueCaptureRow,
@@ -7,6 +10,79 @@ import {
   toBeerKey,
 } from "../src/modules/admin/manual-capture.js";
 import { AdminService, buildCrawlerFeedback } from "../src/modules/admin/admin.service.js";
+
+let database: BetterSqlite3.Database | null = null;
+
+afterEach(() => {
+  database?.close();
+  database = null;
+});
+
+function attachManualCaptureSupabase(
+  service: AdminService,
+  options: { menuCaptureError?: { message: string; code: string } } = {},
+) {
+  const insertedCaptures: unknown[] = [];
+  const venue = {
+    id: "venue-ocr-1",
+    name: "OCR Arms",
+    address: "1 OCR Lane",
+    suburb: "Melbourne",
+    state: "VIC",
+    postcode: "3000",
+    phone: null,
+    website: "https://example.com",
+    latitude: -37.8136,
+    longitude: 144.9631,
+  };
+
+  (service as unknown as { supabase: unknown }).supabase = {
+    from(tableName: string) {
+      if (tableName === "venues") {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: async () => ({ data: venue, error: null }),
+            }),
+          }),
+        };
+      }
+
+      if (tableName === "venue_menu_captures") {
+        if (options.menuCaptureError) {
+          return {
+            select: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: async () => ({ data: null, error: options.menuCaptureError }),
+                }),
+              }),
+            }),
+            insert: async () => ({ error: options.menuCaptureError }),
+          };
+        }
+
+        return {
+          select: () => ({
+            eq: () => ({
+              order: () => ({
+                limit: async () => ({ data: [], error: null }),
+              }),
+            }),
+          }),
+          insert: async (row: unknown) => {
+            insertedCaptures.push(row);
+            return { error: null };
+          },
+        };
+      }
+
+      throw new Error(`Unexpected Supabase table ${tableName}`);
+    },
+  };
+
+  return { insertedCaptures, venue };
+}
 
 describe("manual capture helpers", () => {
   it("normalizes beer keys safely", () => {
@@ -154,6 +230,122 @@ describe("manual capture helpers", () => {
       googlePlacesReason: "missing_google_places_api_key",
       queueEnabled: false,
     });
+  });
+
+  it("publishes manual OCR capture rows to map records and venue inventory", async () => {
+    database = new BetterSqlite3(":memory:");
+    initializeDatabaseSchema(database);
+    const repository = new BusinessRepository(database);
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      undefined,
+      undefined,
+      database,
+    );
+    const { insertedCaptures, venue } = attachManualCaptureSupabase(service);
+
+    const result = await service.saveManualCapture({
+      venueId: venue.id,
+      source: "menu_photo_ocr",
+      note: "Admin checked OCR.",
+      beers: [
+        {
+          name: "Carlton Draught",
+          servingSize: "pint",
+          priceNumeric: 13.5,
+          priceText: "$13.50",
+          availabilityStatus: "on_tap",
+          availableOnTap: true,
+          availablePackageOnly: false,
+          unavailableReason: null,
+          needsReview: false,
+        },
+      ],
+    });
+
+    expect(result.beerCount).toBe(1);
+    expect(result.mapPriceRecordCount).toBe(1);
+    expect(result.inventoryBeerCount).toBe(1);
+    expect(result.captureSaved).toBe(true);
+    expect(insertedCaptures).toHaveLength(1);
+    expect(repository.listLatestPriceRecords(10, venue.id)).toEqual([
+      expect.objectContaining({
+        id: `admin-capture:${venue.id}:carlton-draft:pint`,
+        venueId: venue.id,
+        venueName: "OCR Arms",
+        beerName: "Carlton Draught",
+        price: 13.5,
+        isOnTap: "yes",
+        confidence: "photo_verified",
+        sourceType: "menu_photo_ocr",
+      }),
+    ]);
+    expect(repository.listBarBeers(venue.id)).toEqual([
+      expect.objectContaining({
+        id: `admin-reviewed:${venue.id}:carlton-draft:pint`,
+        barId: venue.id,
+        beerName: "Carlton Draught",
+        price: 13.5,
+        onTap: true,
+        inStock: true,
+      }),
+    ]);
+  });
+
+  it("still publishes manual capture rows locally when capture history is unavailable", async () => {
+    database = new BetterSqlite3(":memory:");
+    initializeDatabaseSchema(database);
+    const repository = new BusinessRepository(database);
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      undefined,
+      undefined,
+      database,
+    );
+    const { insertedCaptures, venue } = attachManualCaptureSupabase(service, {
+      menuCaptureError: {
+        message: "Could not find the table 'public.venue_menu_captures' in the schema cache",
+        code: "PGRST205",
+      },
+    });
+
+    const result = await service.saveManualCapture({
+      venueId: venue.id,
+      source: "menu_photo_ocr",
+      note: "Admin checked OCR.",
+      beers: [
+        {
+          name: "Carlton Draught",
+          servingSize: "pint",
+          priceNumeric: 13.5,
+          priceText: "$13.50",
+          availabilityStatus: "on_tap",
+          availableOnTap: true,
+          availablePackageOnly: false,
+          unavailableReason: null,
+          needsReview: false,
+        },
+      ],
+    });
+
+    expect(result.mapPriceRecordCount).toBe(1);
+    expect(result.inventoryBeerCount).toBe(1);
+    expect(result.captureSaved).toBe(false);
+    expect(result.captureWarning).toContain("live venue data was still published");
+    expect(insertedCaptures).toHaveLength(0);
+    expect(repository.listBarBeers(venue.id)).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draught",
+        price: 13.5,
+        onTap: true,
+      }),
+    ]);
   });
 
   it("turns source review decisions into crawler feedback scores", () => {

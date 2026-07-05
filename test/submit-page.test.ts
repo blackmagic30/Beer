@@ -73,7 +73,7 @@ describe("submit page auth gate", () => {
     expect(html).toContain('<input data-field="beerName" list="trackedBeerSuggestions" placeholder="Start typing Guinness, Carlton Draught..." autocomplete="off" autocapitalize="words" spellcheck="false" />');
   });
 
-  it("lets contributors request a missing venue with beer data from a Google-verified venue", () => {
+  it("lets contributors request a missing venue with drink data from a Google-verified venue", () => {
     const html = submitHtml();
 
     expect(html).toContain('id="newVenueToggle"');
@@ -93,10 +93,16 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="newVenueLatitude" type="hidden"');
     expect(html).toContain('id="newVenueLongitude" type="hidden"');
     expect(html).toContain('id="newVenueSubmitShortcut"');
+    expect(html).toContain('id="newVenueSubmitShortcut" class="button button--primary submitNewVenueShortcut" type="button"');
     expect(html).toContain("function collectNewVenue()");
     expect(html).toContain("function createPendingVenueId()");
     expect(html).toContain("function searchNewVenueGooglePlaces()");
     expect(html).toContain("function loadNewVenueGoogleDetails");
+    expect(html).toContain("async function submitNewVenueRequest()");
+    expect(html).toContain("/api/business/requests");
+    expect(html).toContain('requestType: "missing_venue"');
+    expect(html).toContain("has been added to the admin review queue");
+    expect(html).toContain("Added for review");
     expect(html).toContain("newVenueGoogleResults.hidden = true;");
     expect(html).toContain("newVenueGoogleResults.hidden = false;");
     expect(html).toContain('submissionTypeSelect.value = "single_beer_price";');
@@ -112,7 +118,9 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain("Use saved location as venue coordinates");
     expect(html).not.toContain("Find coordinates from address");
     expect(html).not.toContain("Use manual fallback for now");
-    expect(html).toContain("Request it once, then add the beer data you saw.");
+    expect(html).toContain("Request it once, then add the drink data you saw.");
+    expect(html).toContain("Drink rows submitted below stay linked to this new venue.");
+    expect(html).toContain("Add beer, cider, or happy-hour data below and use Submit for review to link drinks to this venue.");
   });
 
   it("keeps submit-time, notes, and evidence fields constrained by submission type", () => {

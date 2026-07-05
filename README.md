@@ -667,6 +667,18 @@ That means the end-to-end loop is:
 5. publish trusted rows into `venue_price_records`
 6. refresh the hosted viewer and see the server-gated map update
 
+For a conservative crawler-to-map base pass, use the strict publisher after queueing crawler output:
+
+```bash
+npm run menus:discover -- --limit=1000 --concurrency=4
+npm run menus:queue-review -- --dry-run
+npm run menus:queue-review
+npm run menus:publish-map-base -- --dry-run
+npm run menus:publish-map-base
+```
+
+`menus:publish-map-base` only publishes pending `source_reference` items that look like regular menu/drinks/beer sources, revalidates the source URL by default, keeps numeric on-tap pint rows in a conservative price range, and skips happy-hour/event/special pages, direct raster image assets, non-beer drink products, non-on-tap rows, and ambiguous duplicate prices. Skipped rows stay in the admin queue for manual review.
+
 ## Future Menu Roadmap
 
 The current menu workflow is intentionally lightweight. The normalized payload leaves a clean runway for future crowdsourcing:

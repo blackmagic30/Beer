@@ -99,7 +99,7 @@
             <input id="newVenueToggle" type="checkbox" />
             <span>
               <strong>This venue is not on Pint Path yet</strong>
-              <small>Request it once, then add the beer data you saw.</small>
+              <small>Request it once, then add the drink data you saw.</small>
             </span>
           </label>
           <div id="newVenuePanel" class="submitInsetPanel is-hidden">
@@ -136,7 +136,7 @@
               <span class="fieldHint">Google Maps supplies the rest for admin review.</span>
             </details>
             <span id="newVenueHelp" class="fieldHint">Pick the best Google result first. Venue type is locked to eligible Google venue categories.</span>
-            <button id="newVenueSubmitShortcut" class="button button--primary submitNewVenueShortcut" type="submit">Submit new bar for review</button>
+            <button id="newVenueSubmitShortcut" class="button button--primary submitNewVenueShortcut" type="button">Submit new bar for review</button>
           </div>
         </section>
 
@@ -223,6 +223,8 @@
     let selectedSourcePhotoFiles = [];
     let isNewVenueMode = false;
     let selectedNewVenueGooglePlace = null;
+    let submittedNewVenueRequestPlaceId = null;
+    let isSubmittingNewVenueRequest = false;
     const UPLOAD_LOCATION_STORAGE_KEY = "pintPathUploadLocationProof";
     const FIELD_DRAFT_STORAGE_KEY = "pintPathSubmitDraft";
     const SUBMISSION_QUEUE_STORAGE_KEY = "pintPathQueuedSubmissions";
@@ -1084,9 +1086,21 @@
       `;
     }
 
+    function updateNewVenueShortcutState() {
+      const selectedPlaceId = selectedNewVenueGooglePlace?.googlePlaceId || null;
+      const alreadySubmitted = Boolean(selectedPlaceId && submittedNewVenueRequestPlaceId === selectedPlaceId);
+      newVenueSubmitShortcut.disabled = !isNewVenueMode || isSubmittingNewVenueRequest || !selectedPlaceId || alreadySubmitted;
+      newVenueSubmitShortcut.textContent = isSubmittingNewVenueRequest
+        ? "Submitting..."
+        : alreadySubmitted
+          ? "Added for review"
+          : "Submit new bar for review";
+    }
+
     function clearNewVenueGoogleSelection(options = {}) {
       const { clearSearch = false, clearFields = true } = options;
       selectedNewVenueGooglePlace = null;
+      submittedNewVenueRequestPlaceId = null;
       newVenueGoogleResults.innerHTML = "";
       newVenueGoogleResults.hidden = true;
       newVenueGoogleStatus.textContent = "Results are filtered to venues that make sense for Pint Path.";
@@ -1104,10 +1118,12 @@
         newVenueLatitude.value = "";
         newVenueLongitude.value = "";
       }
+      updateNewVenueShortcutState();
     }
 
     function fillNewVenueFieldsFromGoogle(place) {
       selectedNewVenueGooglePlace = place;
+      submittedNewVenueRequestPlaceId = null;
       newVenueName.value = place.name || "";
       newVenueSuburb.value = place.suburb || "";
       newVenueAddress.value = place.address || "";
@@ -1120,9 +1136,10 @@
       newVenueGoogleResults.innerHTML = "";
       newVenueGoogleResults.hidden = true;
       setNewVenueSelectedSummary(place);
-      newVenueGoogleStatus.textContent = `${place.name} selected. Add the beer or happy-hour data below.`;
-      newVenueHelp.textContent = "Venue details are ready for admin review. The name and address are locked from Google Maps so they stay accurate.";
+      newVenueGoogleStatus.textContent = `${place.name} selected. Add beer, cider, or happy-hour data below.`;
+      newVenueHelp.textContent = "Venue details are ready for admin review. Drink rows submitted below stay linked to this new venue.";
       newVenueManualDetails.open = false;
+      updateNewVenueShortcutState();
     }
 
     function renderNewVenueGoogleResults(places) {
@@ -1260,6 +1277,7 @@
         clearSelectedVenue("Search above and tap the matching venue before submitting.");
         venueSearchHelp.textContent = "Type 2 or more characters, then tap a venue.";
       }
+      updateNewVenueShortcutState();
     }
 
     function blankToNull(value) {
@@ -1324,6 +1342,60 @@
       }
 
       return null;
+    }
+
+    function buildNewVenueRequestNotes(newVenue) {
+      return [
+        newVenue.googlePlaceId ? `Google Place ID: ${newVenue.googlePlaceId}` : null,
+        newVenue.address ? `Address: ${newVenue.address}` : null,
+        newVenue.postcode ? `Postcode: ${newVenue.postcode}` : null,
+        newVenue.phone ? `Phone: ${newVenue.phone}` : null,
+        newVenue.website ? `Website: ${newVenue.website}` : null,
+      ].filter(Boolean).join("\n") || null;
+    }
+
+    async function submitNewVenueRequest() {
+      const newVenue = collectNewVenue();
+      const newVenueError = validateNewVenue(newVenue);
+      if (newVenueError) {
+        MelbBeerBusiness.setStatus(statusEl, newVenueError, true);
+        newVenueGoogleStatus.textContent = newVenueError;
+        return;
+      }
+
+      isSubmittingNewVenueRequest = true;
+      updateNewVenueShortcutState();
+      newVenueGoogleStatus.textContent = "Submitting new venue for admin review...";
+
+      try {
+        await MelbBeerBusiness.apiFetch("/api/business/requests", {
+          method: "POST",
+          body: JSON.stringify({
+            anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
+            requestType: "missing_venue",
+            venueId: null,
+            venueName: newVenue.name,
+            suburb: newVenue.suburb,
+            notes: buildNewVenueRequestNotes(newVenue),
+          }),
+        });
+        submittedNewVenueRequestPlaceId = newVenue.googlePlaceId;
+        const message = `${newVenue.name} has been added to the admin review queue. Add beer, cider, or happy-hour data below and use Submit for review to link drinks to this venue.`;
+        newVenueSelectedSummary.classList.remove("notice--warning");
+        newVenueSelectedSummary.innerHTML = `
+          <strong>${escapeHtml(newVenue.name)} added for review</strong>
+          <span class="fieldHint">${escapeHtml(newVenue.address || newVenue.suburb || "Admin will verify this Google Maps venue.")}</span>
+        `;
+        newVenueGoogleStatus.textContent = message;
+        MelbBeerBusiness.setStatus(statusEl, message);
+      } catch (error) {
+        const message = error.message || "Could not submit the new venue for review.";
+        newVenueGoogleStatus.textContent = message;
+        MelbBeerBusiness.setStatus(statusEl, message, true);
+      } finally {
+        isSubmittingNewVenueRequest = false;
+        updateNewVenueShortcutState();
+      }
     }
 
     function rowTemplate() {
@@ -2060,7 +2132,9 @@
       });
       newVenueGoogleSearch.addEventListener("input", () => {
         selectedNewVenueGooglePlace = null;
+        submittedNewVenueRequestPlaceId = null;
         setNewVenueSelectedSummary(null);
+        updateNewVenueShortcutState();
         scheduleNewVenueGoogleSearch();
       });
       newVenueGoogleButton.addEventListener("click", () => {
@@ -2079,6 +2153,13 @@
         }
         loadNewVenueGoogleDetails(button.dataset.newVenuePlaceId).catch((error) => {
           newVenueGoogleStatus.textContent = error.message || "Could not load that venue. Try another Google result.";
+        });
+      });
+      newVenueSubmitShortcut.addEventListener("click", () => {
+        submitNewVenueRequest().catch((error) => {
+          const message = error.message || "Could not submit the new venue for review.";
+          newVenueGoogleStatus.textContent = message;
+          MelbBeerBusiness.setStatus(statusEl, message, true);
         });
       });
       sourcePhoto.addEventListener("change", () => {

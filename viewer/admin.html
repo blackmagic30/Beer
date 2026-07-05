@@ -157,14 +157,17 @@
               <h2>Source ingestion review</h2>
               <p class="muted">Work one source at a time. The queue loads a focused batch so review stays fast and mistakes stay visible.</p>
             </div>
-            <label class="field compactField">Status
-              <select id="adminIngestionStatus">
-                <option value="pending_review">Pending</option>
-                <option value="published">Published</option>
-                <option value="rejected">Rejected</option>
-                <option value="">All</option>
-              </select>
-            </label>
+            <div class="actionRow">
+              <button id="rejectVisibleIngestionsButton" class="button button--small button--danger" type="button" disabled>Reject visible pending</button>
+              <label class="field compactField">Status
+                <select id="adminIngestionStatus">
+                  <option value="pending_review">Pending</option>
+                  <option value="published">Published</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="">All</option>
+                </select>
+              </label>
+            </div>
           </div>
           <div id="adminIngestionQueueSummary" class="notice adminQueueSummary" aria-live="polite">Loading the highest-priority source candidates...</div>
           <div id="adminIngestionQueue" class="list"></div>
@@ -181,7 +184,10 @@
               <h2>Pending beer catalogue</h2>
               <p class="muted">Approve real new beers, or merge spelling mistakes into the canonical catalogue before they spread.</p>
             </div>
-            <button id="refreshBeerCatalogButton" class="button button--small" type="button">Refresh</button>
+            <div class="actionRow">
+              <button id="rejectPendingBeerCatalogButton" class="button button--small button--danger" type="button" disabled>Reject pending junk</button>
+              <button id="refreshBeerCatalogButton" class="button button--small" type="button">Refresh</button>
+            </div>
           </div>
           <div id="adminBeerCatalogStatus" class="notice">Loading pending beer names...</div>
           <datalist id="adminBeerCatalogMergeTargets"></datalist>
@@ -671,6 +677,8 @@
     let latestAdminDashboardPayload = null;
     let reviewDecisionState = null;
     const ADMIN_INGESTION_PAGE_SIZE = 12;
+    const ADMIN_FAST_REJECT_SOURCE_NOTE = "Fast rejected during admin source cleanup.";
+    const ADMIN_FAST_REJECT_BEER_NOTE = "Fast rejected as beer catalogue cleanup noise.";
     let adminIngestionOffset = 0;
     let adminIngestionTotal = 0;
     const ADMIN_TAB_KEYS = ["dashboard", "review", "capture", "partners", "leaderboard", "analytics"];
@@ -1886,6 +1894,12 @@
           : "No pending beer names.",
         false,
       );
+      if (rejectPendingBeerCatalogButton) {
+        rejectPendingBeerCatalogButton.disabled = pending.length === 0;
+        rejectPendingBeerCatalogButton.textContent = pending.length
+          ? `Reject pending junk (${pending.length})`
+          : "Reject pending junk";
+      }
       pendingBeerCatalog.innerHTML = pending.length
         ? pending.map((beer) => `
           <article class="listItem adminBeerCatalogRow" data-catalog-beer="${escapeHtml(beer.key)}">
@@ -1933,8 +1947,7 @@
       });
       pendingBeerCatalog.querySelectorAll("[data-reject-catalog-beer]").forEach((button) => {
         button.addEventListener("click", async () => {
-          const beer = pending.find((item) => item.key === button.dataset.rejectCatalogBeer);
-          promptCatalogBeerReject(beer);
+          await reviewCatalogBeer(button.dataset.rejectCatalogBeer, "reject", null, ADMIN_FAST_REJECT_BEER_NOTE);
         });
       });
     }
@@ -1945,17 +1958,41 @@
       return data;
     }
 
-    function promptCatalogBeerReject(beer) {
-      if (!beer?.key) return;
-      openReviewDecision({
-        eyebrow: "Beer catalogue",
-        title: `Reject ${beer.name}`,
-        copy: "Rejecting removes this pending name from the system catalogue review list. It will not delete existing source-ingestion rows.",
-        confirmLabel: "Reject beer name",
-        tone: "danger",
-        reasons: REVIEW_REASON_OPTIONS.beer_catalog_rejected,
-        onConfirm: ({ combinedNote }) => reviewCatalogBeer(beer.key, "reject", null, combinedNote),
-      });
+    async function rejectPendingBeerCatalogJunk() {
+      const keys = Array.from(pendingBeerCatalog.querySelectorAll("[data-catalog-beer]"))
+        .map((item) => item.dataset.catalogBeer)
+        .filter(Boolean);
+      if (!keys.length) {
+        setLocalNotice(adminBeerCatalogStatus, "No pending beer names to reject.", false);
+        return;
+      }
+
+      try {
+        rejectPendingBeerCatalogButton.disabled = true;
+        rejectPendingBeerCatalogButton.textContent = "Rejecting...";
+        setLocalNotice(adminBeerCatalogStatus, `Rejecting ${keys.length} pending beer ${keys.length === 1 ? "name" : "names"}...`);
+        const result = await MelbBeerBusiness.apiFetch("/api/business/admin/beer-catalog/reject-pending", {
+          method: "POST",
+          body: JSON.stringify({
+            keys,
+            reviewNote: ADMIN_FAST_REJECT_BEER_NOTE,
+          }),
+        });
+        await loadBeerCatalogReview();
+        const rejectedCount = Number(result.rejectedCount || keys.length);
+        setLocalNotice(
+          adminBeerCatalogStatus,
+          `Rejected ${rejectedCount} pending beer ${rejectedCount === 1 ? "name" : "names"}.`,
+        );
+      } catch (error) {
+        setLocalNotice(adminBeerCatalogStatus, error.message || "Could not reject pending beer names.", true);
+      } finally {
+        const pendingCount = pendingBeerCatalog.querySelectorAll("[data-catalog-beer]").length;
+        rejectPendingBeerCatalogButton.disabled = pendingCount === 0;
+        rejectPendingBeerCatalogButton.textContent = pendingCount
+          ? `Reject pending junk (${pendingCount})`
+          : "Reject pending junk";
+      }
     }
 
     async function reviewCatalogBeer(sourceKey, action, target, reviewNote = null) {
@@ -3039,6 +3076,7 @@
       renderAdminDashboard();
       renderAdminFocusRail();
       const visibleItems = window.__adminIngestionQueueItems.slice(0, ADMIN_INGESTION_PAGE_SIZE);
+      const visiblePendingItems = visibleItems.filter((item) => item.status === "pending_review");
       const pageStart = visibleItems.length ? adminIngestionOffset + 1 : 0;
       const pageEnd = visibleItems.length ? adminIngestionOffset + visibleItems.length : 0;
       const queueSummary = document.getElementById("adminIngestionQueueSummary");
@@ -3056,6 +3094,12 @@
           : `Showing 0 of ${adminIngestionTotal}`;
         adminIngestionPrevPage.disabled = adminIngestionOffset <= 0;
         adminIngestionNextPage.disabled = pageEnd >= adminIngestionTotal;
+      }
+      if (rejectVisibleIngestionsButton) {
+        rejectVisibleIngestionsButton.disabled = visiblePendingItems.length === 0;
+        rejectVisibleIngestionsButton.textContent = visiblePendingItems.length
+          ? `Reject visible pending (${visiblePendingItems.length})`
+          : "Reject visible pending";
       }
       adminIngestionQueue.innerHTML = visibleItems.length
         ? visibleItems.map((item, index) => {
@@ -3076,6 +3120,7 @@
                   ${confidencePill(item.overallConfidence)}
                   <span class="pill">${beers.length}/${Math.max(1, extractedCount)} rows</span>
                   ${crawlerFeedbackPill(item.crawlerFeedback)}
+                  ${item.status === "pending_review" ? `<button class="button button--small button--danger" type="button" data-reject-ingestion>Reject</button>` : ""}
                 </div>
               </div>
               ${renderCrawlerDetails(item, beers)}
@@ -3160,7 +3205,11 @@
         button.addEventListener("click", () => promptQueuedIngestionReview(button.closest(".adminIngestionItem"), "publish"));
       });
       adminIngestionQueue.querySelectorAll("[data-reject-ingestion]").forEach((button) => {
-        button.addEventListener("click", () => promptQueuedIngestionReview(button.closest(".adminIngestionItem"), "reject"));
+        button.addEventListener("click", () => rejectQueuedIngestion(
+          button.closest(".adminIngestionItem"),
+          ADMIN_FAST_REJECT_SOURCE_NOTE,
+          button,
+        ));
       });
     }
 
@@ -3236,7 +3285,13 @@
             beers,
           }),
         });
-        setLocalNotice(adminCaptureStatus, `Saved ${result.beerCount} beer item${result.beerCount === 1 ? "" : "s"} for ${result.venue.name}.`);
+        const mapRows = Number(result.mapPriceRecordCount || 0);
+        const inventoryRows = Number(result.inventoryBeerCount || 0);
+        const captureWarning = result.captureWarning ? ` ${result.captureWarning}` : "";
+        setLocalNotice(
+          adminCaptureStatus,
+          `Saved ${result.beerCount} beer item${result.beerCount === 1 ? "" : "s"} for ${result.venue.name}. ${mapRows} live map row${mapRows === 1 ? "" : "s"} and ${inventoryRows} venue beer row${inventoryRows === 1 ? "" : "s"} updated.${captureWarning}`,
+        );
         adminCaptureSource = "manual_entry";
       } catch (error) {
         setLocalNotice(adminCaptureStatus, error.message || "Failed to save beer rows.", true);
@@ -3364,9 +3419,11 @@
           body: JSON.stringify({ beers, note }),
         });
         const mapRows = Number(result.mapPriceRecordCount || 0);
+        const inventoryRows = Number(result.inventoryBeerCount || 0);
+        const captureWarning = result.captureWarning ? ` ${result.captureWarning}` : "";
         MelbBeerBusiness.setStatus(
           statusEl,
-          `Source ingestion published. ${mapRows} live map row${mapRows === 1 ? "" : "s"} saved.`,
+          `Source ingestion published. ${mapRows} live map row${mapRows === 1 ? "" : "s"} and ${inventoryRows} venue beer row${inventoryRows === 1 ? "" : "s"} saved.${captureWarning}`,
         );
         adminIngestionStatus.value = "pending_review";
         await loadAdminIngestionQueue({ resetPage: true });
@@ -3380,11 +3437,16 @@
       }
     }
 
-    async function rejectQueuedIngestion(article, modalNote = null) {
+    async function rejectQueuedIngestion(article, fallbackNote = null, triggerButton = null) {
       if (!article) return;
+      const defaultButtonText = triggerButton?.textContent || "Reject";
       try {
+        if (triggerButton) {
+          triggerButton.disabled = true;
+          triggerButton.textContent = "Rejecting...";
+        }
         const inlineNote = article.querySelector("[data-ingestion-note]").value.trim() || null;
-        const note = modalNote || inlineNote;
+        const note = inlineNote || fallbackNote || ADMIN_FAST_REJECT_SOURCE_NOTE;
         await MelbBeerBusiness.apiFetch(`/api/admin/ingestions/${encodeURIComponent(article.dataset.ingestionId)}/reject`, {
           method: "POST",
           body: JSON.stringify({ note }),
@@ -3393,6 +3455,51 @@
         await loadAdminIngestionQueue();
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message || "Failed to reject source ingestion.", true);
+      } finally {
+        if (triggerButton && document.body.contains(triggerButton)) {
+          triggerButton.disabled = false;
+          triggerButton.textContent = defaultButtonText;
+        }
+      }
+    }
+
+    async function rejectVisibleQueuedIngestions() {
+      const ids = (Array.isArray(window.__adminIngestionQueueItems) ? window.__adminIngestionQueueItems : [])
+        .slice(0, ADMIN_INGESTION_PAGE_SIZE)
+        .filter((item) => item.status === "pending_review")
+        .map((item) => item.id)
+        .filter(Boolean);
+      if (!ids.length) {
+        MelbBeerBusiness.setStatus(statusEl, "No visible pending source ingestions to reject.");
+        return;
+      }
+
+      try {
+        rejectVisibleIngestionsButton.disabled = true;
+        rejectVisibleIngestionsButton.textContent = "Rejecting...";
+        const result = await MelbBeerBusiness.apiFetch("/api/admin/ingestions/reject", {
+          method: "POST",
+          body: JSON.stringify({
+            ids,
+            note: ADMIN_FAST_REJECT_SOURCE_NOTE,
+          }),
+        });
+        const rejectedCount = Number(result.rejectedCount || ids.length);
+        MelbBeerBusiness.setStatus(
+          statusEl,
+          `Rejected ${rejectedCount} visible source ingestion ${rejectedCount === 1 ? "item" : "items"}.`,
+        );
+        await loadAdminIngestionQueue();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusEl, error.message || "Failed to reject visible source ingestions.", true);
+      } finally {
+        const pendingCount = (Array.isArray(window.__adminIngestionQueueItems) ? window.__adminIngestionQueueItems : [])
+          .slice(0, ADMIN_INGESTION_PAGE_SIZE)
+          .filter((item) => item.status === "pending_review").length;
+        rejectVisibleIngestionsButton.disabled = pendingCount === 0;
+        rejectVisibleIngestionsButton.textContent = pendingCount
+          ? `Reject visible pending (${pendingCount})`
+          : "Reject visible pending";
       }
     }
 
@@ -3811,6 +3918,8 @@
       reviewDecisionCancel.addEventListener("click", closeReviewDecision);
       reviewDecisionConfirm.addEventListener("click", confirmReviewDecision);
       refreshAdminPageButton.addEventListener("click", refreshAdminPage);
+      rejectVisibleIngestionsButton.addEventListener("click", rejectVisibleQueuedIngestions);
+      rejectPendingBeerCatalogButton.addEventListener("click", rejectPendingBeerCatalogJunk);
       refreshBeerCatalogButton.addEventListener("click", async () => {
         try {
           refreshBeerCatalogButton.disabled = true;

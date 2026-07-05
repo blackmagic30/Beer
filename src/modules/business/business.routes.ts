@@ -21,6 +21,7 @@ import {
   authSupabaseSessionSchema,
   authSignupSchema,
   beerCatalogApproveSchema,
+  beerCatalogBulkRejectSchema,
   beerCatalogMergeSchema,
   beerCatalogRejectSchema,
   checkoutSchema,
@@ -125,6 +126,13 @@ const adminWriteLimiter = createRateLimiter({
   keyPrefix: "business:admin-writes",
   windowMs: 10 * 60_000,
   max: 30,
+  keyGenerator: rateLimitIdentity,
+});
+
+const adminReviewLimiter = createRateLimiter({
+  keyPrefix: "business:admin-review-writes",
+  windowMs: 10 * 60_000,
+  max: 180,
   keyGenerator: rateLimitIdentity,
 });
 
@@ -613,21 +621,27 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getAdminBeerCatalog(admin)));
   });
 
-  router.post("/admin/beer-catalog/:key/approve", adminWriteLimiter, (req, res) => {
+  router.post("/admin/beer-catalog/reject-pending", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(beerCatalogBulkRejectSchema, req.body, "Invalid beer catalogue bulk rejection payload");
+    res.json(success(businessService.rejectBeerCatalogItems(admin, body)));
+  });
+
+  router.post("/admin/beer-catalog/:key/approve", adminReviewLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(beerCatalogApproveSchema, req.body, "Invalid beer catalogue approval payload");
     const key = String(req.params.key ?? "");
     res.json(success(businessService.approveBeerCatalogItem(admin, key, body)));
   });
 
-  router.post("/admin/beer-catalog/:key/merge", adminWriteLimiter, (req, res) => {
+  router.post("/admin/beer-catalog/:key/merge", adminReviewLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(beerCatalogMergeSchema, req.body, "Invalid beer catalogue merge payload");
     const key = String(req.params.key ?? "");
     res.json(success(businessService.mergeBeerCatalogItem(admin, key, body)));
   });
 
-  router.post("/admin/beer-catalog/:key/reject", adminWriteLimiter, (req, res) => {
+  router.post("/admin/beer-catalog/:key/reject", adminReviewLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(beerCatalogRejectSchema, req.body, "Invalid beer catalogue rejection payload");
     const key = String(req.params.key ?? "");

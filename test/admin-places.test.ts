@@ -245,6 +245,8 @@ describe("admin Google Places venue lookup", () => {
       });
 
       expect(prompt).toContain("Very Local Hazy Pint");
+      expect(prompt).toContain("285ml, 425ml, and 570ml");
+      expect(prompt).toContain("pint-equivalent price");
       expect(result.beers[0]).toEqual(expect.objectContaining({
         name: "Very Local Hazy Pint",
         needsReview: false,

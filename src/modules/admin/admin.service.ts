@@ -29,6 +29,7 @@ import {
 
 import type {
   AdminBeerInput,
+  AdminBulkRejectQueuedIngestionsInput,
   AdminManualCaptureInput,
   AdminMenuPhotoOcrInput,
   AdminPublishQueuedIngestionInput,
@@ -255,6 +256,14 @@ function toAdminBeerInput(beer: AdminIngestionBeerRecord): AdminBeerInput {
     unavailableReason: beer.unavailableReason,
     needsReview: beer.needsReview,
   };
+}
+
+function toRecordIdSegment(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "beer";
 }
 
 function clampRewardScore(value: number): number {
@@ -869,12 +878,28 @@ export class AdminService {
     venue: VenueRow;
     savedAt: string;
     beerCount: number;
+    mapPriceRecordCount: number;
+    inventoryBeerCount: number;
+    captureSaved: boolean;
+    captureWarning: string | null;
   }> {
     const supabase = this.getSupabase();
     const venue = await this.getVenueById(input.venueId);
-    const latest = await this.getLatestVenueMenuCapture(input.venueId);
     const savedAt = new Date().toISOString();
     const beers = this.standardizeAdminBeerInputs(input.beers, input.source, savedAt);
+    let latest: ExistingVenueMenuCaptureSnapshot | null = null;
+    const warnings: string[] = [];
+
+    try {
+      latest = await this.getLatestVenueMenuCapture(input.venueId);
+    } catch (error) {
+      const message = getExternalErrorMessage(error);
+      warnings.push("Previous menu capture snapshot unavailable; published live venue data without merging capture history.");
+      logger.warn("Skipping manual capture merge snapshot", {
+        venueId: input.venueId,
+        error: message,
+      });
+    }
 
     const row = buildManualVenueCaptureRow({
       venue,
@@ -885,16 +910,51 @@ export class AdminService {
       savedAt,
     });
 
-    const { error } = await supabase.from(this.menuCaptureTable).insert(row);
+    let captureSaved = false;
+    try {
+      const { error } = await supabase.from(this.menuCaptureTable).insert(row);
 
-    if (error) {
-      throw new ExternalServiceError("Failed to save manual venue capture", {
+      if (error) {
+        const message = getExternalErrorMessage(error);
+        warnings.push("Menu capture history save unavailable; live venue data was still published.");
+        logger.warn("Skipping manual capture history save", {
+          venueId: input.venueId,
+          error: message,
+        });
+      } else {
+        captureSaved = true;
+      }
+    } catch (error) {
+      const message = getExternalErrorMessage(error);
+      warnings.push("Menu capture history save unavailable; live venue data was still published.");
+      logger.warn("Skipping manual capture history save", {
         venueId: input.venueId,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
+        error: message,
       });
+    }
+
+    let mapPriceRecordCount = 0;
+    let inventoryBeerCount = 0;
+    if (this.priceRecordDatabase) {
+      const publishLocalState = this.priceRecordDatabase.transaction(() => {
+        const mapRows = this.publishManualCapturePriceRecords({
+          venue,
+          savedAt,
+          beers,
+          source: input.source,
+        });
+        const inventoryRows = this.syncVenueBeerInventory({
+          venue,
+          savedAt,
+          beers,
+          source: input.source,
+        });
+
+        return { mapRows, inventoryRows };
+      });
+      const localState = publishLocalState();
+      mapPriceRecordCount = localState.mapRows;
+      inventoryBeerCount = localState.inventoryRows;
     }
 
     logger.info("Saved manual beer capture", {
@@ -902,12 +962,18 @@ export class AdminService {
       venueName: venue.name,
       source: input.source,
       beerCount: beers.length,
+      mapPriceRecordCount,
+      inventoryBeerCount,
     });
 
     return {
       venue,
       savedAt,
       beerCount: beers.length,
+      mapPriceRecordCount,
+      inventoryBeerCount,
+      captureSaved,
+      captureWarning: warnings.join(" ") || null,
     };
   }
 
@@ -1067,6 +1133,198 @@ export class AdminService {
     return publish();
   }
 
+  private publishManualCapturePriceRecords(input: {
+    venue: VenueRow;
+    savedAt: string;
+    beers: AdminBeerInput[];
+    source: AdminManualCaptureInput["source"];
+  }): number {
+    if (!this.priceRecordDatabase) {
+      return 0;
+    }
+
+    const now = input.savedAt;
+    const sourceType = input.source;
+    const confidence = input.source === "menu_photo_ocr" ? "photo_verified" : "venue_confirmed";
+    const upsertPriceRecord = this.priceRecordDatabase.prepare(
+      `INSERT INTO venue_price_records (
+        id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size,
+        price, is_happy_hour_price, happy_hour_details, is_on_tap, confidence,
+        source_type, source_submission_id, last_verified_at, created_at, updated_at
+      ) VALUES (
+        @id, @venueId, @venueName, @suburb, @beerName, @normalizedBeerId, @servingSize,
+        @price, 0, NULL, @isOnTap, @confidence,
+        @sourceType, NULL, @lastVerifiedAt, @createdAt, @updatedAt
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        venue_name = excluded.venue_name,
+        suburb = excluded.suburb,
+        beer_name = excluded.beer_name,
+        normalized_beer_id = excluded.normalized_beer_id,
+        serving_size = excluded.serving_size,
+        price = excluded.price,
+        is_on_tap = excluded.is_on_tap,
+        confidence = excluded.confidence,
+        source_type = excluded.source_type,
+        last_verified_at = excluded.last_verified_at,
+        updated_at = excluded.updated_at`,
+    );
+
+    let published = 0;
+    input.beers.forEach((beer) => {
+      if (!Number.isFinite(beer.priceNumeric ?? Number.NaN) || beer.priceNumeric == null) {
+        return;
+      }
+
+      const resolvedBeer = this.resolveSystemBeer({
+        name: beer.name,
+        source: "admin_manual_capture_price_record",
+        now,
+      });
+      const isOnTap = beer.availableOnTap === true
+        ? "yes"
+        : beer.availableOnTap === false || beer.availabilityStatus === "unavailable"
+          ? "no"
+          : "unknown";
+      const beerSegment = toRecordIdSegment(resolvedBeer.key || resolvedBeer.name);
+
+      upsertPriceRecord.run({
+        id: `admin-capture:${input.venue.id}:${beerSegment}:${beer.servingSize}`,
+        venueId: input.venue.id,
+        venueName: input.venue.name,
+        suburb: input.venue.suburb,
+        beerName: resolvedBeer.name,
+        normalizedBeerId: resolvedBeer.key,
+        servingSize: beer.servingSize,
+        price: beer.priceNumeric,
+        isOnTap,
+        confidence,
+        sourceType,
+        lastVerifiedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      published += 1;
+    });
+
+    return published;
+  }
+
+  private upsertVenueProfileForAdminVenue(venue: VenueRow, now: string): void {
+    if (!this.priceRecordDatabase) {
+      return;
+    }
+
+    this.priceRecordDatabase
+      .prepare(
+        `INSERT INTO venue_profiles (
+          venue_id, name, address, suburb, area, phone, website, opening_hours_json, venue_tags_json, created_at, updated_at
+        ) VALUES (
+          @venueId, @name, @address, @suburb, @area, @phone, @website, '{}', '[]', @createdAt, @updatedAt
+        )
+        ON CONFLICT(venue_id) DO UPDATE SET
+          name = excluded.name,
+          address = COALESCE(excluded.address, venue_profiles.address),
+          suburb = COALESCE(excluded.suburb, venue_profiles.suburb),
+          area = COALESCE(venue_profiles.area, excluded.area),
+          phone = COALESCE(excluded.phone, venue_profiles.phone),
+          website = COALESCE(excluded.website, venue_profiles.website),
+          active = 1,
+          updated_at = excluded.updated_at`,
+      )
+      .run({
+        venueId: venue.id,
+        name: venue.name,
+        address: venue.address,
+        suburb: venue.suburb,
+        area: venue.suburb,
+        phone: venue.phone,
+        website: venue.website,
+        createdAt: now,
+        updatedAt: now,
+      });
+  }
+
+  private syncVenueBeerInventory(input: {
+    venue: VenueRow;
+    savedAt: string;
+    beers: AdminBeerInput[];
+    source: AdminManualCaptureInput["source"] | "source_ingestion";
+  }): number {
+    if (!this.priceRecordDatabase) {
+      return 0;
+    }
+
+    this.upsertVenueProfileForAdminVenue(input.venue, input.savedAt);
+    const upsertVenueBeer = this.priceRecordDatabase.prepare(
+      `INSERT INTO venue_beers (
+        id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size,
+        price, currency, on_tap, in_stock, notes, created_at, updated_at
+      ) VALUES (
+        @id, @venueId, @beerName, @normalizedBeerId, @brewery, @style, @abv, @serveSize,
+        @price, 'AUD', @onTap, @inStock, @notes, @createdAt, @updatedAt
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        beer_name = excluded.beer_name,
+        normalized_beer_id = excluded.normalized_beer_id,
+        brewery = excluded.brewery,
+        style = excluded.style,
+        abv = excluded.abv,
+        serve_size = excluded.serve_size,
+        price = excluded.price,
+        on_tap = excluded.on_tap,
+        in_stock = excluded.in_stock,
+        notes = excluded.notes,
+        updated_at = excluded.updated_at
+      WHERE venue_beers.venue_id = excluded.venue_id`,
+    );
+
+    let synced = 0;
+    input.beers.forEach((beer) => {
+      const name = beer.name.trim();
+      if (!name) {
+        return;
+      }
+
+      const resolvedBeer = this.resolveSystemBeer({
+        name,
+        source: "admin_reviewed_venue_inventory",
+        now: input.savedAt,
+      });
+      const beerSegment = toRecordIdSegment(resolvedBeer.key || resolvedBeer.name);
+      const onTap = beer.availableOnTap === true || beer.availabilityStatus === "on_tap";
+      const inStock = beer.availabilityStatus !== "unavailable";
+      const notes = [
+        input.source === "source_ingestion"
+          ? "Published from admin source review."
+          : input.source === "menu_photo_ocr"
+            ? "Published from admin menu OCR."
+            : "Published from admin manual capture.",
+        beer.needsReview ? "Beer catalog review may still be needed." : null,
+      ].filter(Boolean).join(" ");
+
+      upsertVenueBeer.run({
+        id: `admin-reviewed:${input.venue.id}:${beerSegment}:${beer.servingSize}`,
+        venueId: input.venue.id,
+        beerName: resolvedBeer.name,
+        normalizedBeerId: resolvedBeer.key,
+        brewery: resolvedBeer.brewery,
+        style: resolvedBeer.style,
+        abv: resolvedBeer.abv,
+        serveSize: beer.servingSize,
+        price: beer.priceNumeric,
+        onTap: onTap ? 1 : 0,
+        inStock: inStock ? 1 : 0,
+        notes,
+        createdAt: input.savedAt,
+        updatedAt: input.savedAt,
+      });
+      synced += 1;
+    });
+
+    return synced;
+  }
+
   private countPublishableMapPriceRows(beers: AdminBeerInput[]): number {
     return beers.filter((beer) => Number.isFinite(beer.priceNumeric ?? Number.NaN) && beer.priceNumeric != null).length;
   }
@@ -1141,6 +1399,7 @@ export class AdminService {
       "If a package row only shows size and ABV, with no actual price or currency, omit the row instead of inventing a price from the size.",
       "When a row shows labelled prices such as $8.5 POT, $17 PINT, choose the PINT price for price_numeric and price_text.",
       "When a table heading says Pots / Pints / Jugs, choose the Pints price as price_numeric and price_text.",
+      "When an Australian tap menu uses metric columns such as 285ml, 425ml, and 570ml, treat the 570ml column as the pint-equivalent price for price_numeric and price_text.",
       "Many PDF menus put the beer name and price on one line, then brewery, location, and ABV on the next line. Pair that following detail line with the beer above it in notes; do not emit the detail line as its own beer.",
       "When a section heading says ON TAP, mark every readable beer row under that heading as availability_status 'on_tap' until the next major section heading, even if the row only shows prices like 9/16.5, 7.5/14, or /16.",
       "When a section heading says TINS & BOTTLES, TINS, TINNIES, BOTTLES & CANS, CANS OR BOTTLES, CANS, BOTTLES, or PACKAGED, mark rows under that heading as availability_status 'package_only'. In Australian menus, tins means cans.",
@@ -1390,6 +1649,7 @@ export class AdminService {
     savedAt: string;
     beerCount: number;
     mapPriceRecordCount: number;
+    inventoryBeerCount: number;
     captureSaved: boolean;
     captureWarning: string | null;
   }> {
@@ -1434,6 +1694,7 @@ export class AdminService {
       generatedAt: savedAt,
     });
     let priceRecordCount = 0;
+    let inventoryBeerCount = 0;
 
     if (this.priceRecordDatabase) {
       const publishLocalState = this.priceRecordDatabase.transaction(() => {
@@ -1451,6 +1712,13 @@ export class AdminService {
           );
         }
 
+        const syncedInventory = this.syncVenueBeerInventory({
+          venue: captureResult.venue,
+          savedAt,
+          beers: reviewedBeers,
+          source: "source_ingestion",
+        });
+
         repository.markPublished(
           ingestionId,
           reviewedBeers.map((beer) => ({
@@ -1463,10 +1731,12 @@ export class AdminService {
           savedAt,
         );
 
-        return published;
+        return { published, syncedInventory };
       });
 
-      priceRecordCount = publishLocalState();
+      const localState = publishLocalState();
+      priceRecordCount = localState.published;
+      inventoryBeerCount = localState.syncedInventory;
     } else {
       repository.markPublished(
         ingestionId,
@@ -1487,6 +1757,7 @@ export class AdminService {
       savedAt,
       beerCount: reviewedBeers.length,
       mapPriceRecordCount: priceRecordCount,
+      inventoryBeerCount,
       captureSaved: captureResult.captureSaved,
       captureWarning: captureResult.captureWarning,
     };
@@ -1515,6 +1786,18 @@ export class AdminService {
     repository.markRejected(ingestionId, input.note, crawlerFeedback, rejectedAt);
     return {
       queueItem: repository.getById(ingestionId)!,
+    };
+  }
+
+  rejectQueuedIngestions(input: AdminBulkRejectQueuedIngestionsInput): {
+    queueItems: AdminIngestionQueueRecord[];
+    rejectedCount: number;
+  } {
+    const queueItems = input.ids.map((id) => this.rejectQueuedIngestion(id, { note: input.note }).queueItem);
+
+    return {
+      queueItems,
+      rejectedCount: queueItems.length,
     };
   }
 }

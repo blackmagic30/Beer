@@ -263,6 +263,11 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("function beerMatchesSearchQuery");
     expect(html).toContain("record.normalizedBeerId || record.beerName || record.id");
     expect(html).toContain("normalized_beer_id: record.normalizedBeerId || null");
+    expect(html).toContain("function isPackagedBusinessServing");
+    expect(html).toContain('const isPackageOnly = isNotOnTap && isPackagedBusinessServing(record.servingSize);');
+    expect(html).toContain('const availabilityStatus = isOnTap ? "on_tap" : isPackageOnly ? "package_only" : isNotOnTap ? "unavailable" : "unknown";');
+    expect(html).toContain("available_package_only: isPackageOnly");
+    expect(html).toContain("unavailable_reason: unavailableReason");
     expect(venuePortalHtml).toContain("function findClosestTrackedBeer");
     expect(venuePortalHtml).toContain("data-use-portal-beer-suggestion");
     expect(venuePortalHtml).toContain("New beer will be saved for admin review and reused next time.");

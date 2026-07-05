@@ -180,6 +180,11 @@ export const adminRejectQueuedIngestionSchema = z.object({
   note: nullableTrimmedStringSchema.default(null),
 });
 
+export const adminBulkRejectQueuedIngestionsSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(50),
+  note: nullableTrimmedStringSchema.default(null),
+});
+
 export type AdminVenueInput = z.infer<typeof adminVenueSchema>;
 export type AdminBeerInput = z.infer<typeof adminBeerInputSchema>;
 export type AdminManualCaptureInput = z.infer<typeof adminManualCaptureSchema>;
@@ -187,3 +192,4 @@ export type AdminMenuPhotoOcrInput = z.infer<typeof adminMenuPhotoOcrSchema>;
 export type AdminSourceIngestionQueueInput = z.infer<typeof adminSourceIngestionQueueSchema>;
 export type AdminPublishQueuedIngestionInput = z.infer<typeof adminPublishQueuedIngestionSchema>;
 export type AdminRejectQueuedIngestionInput = z.infer<typeof adminRejectQueuedIngestionSchema>;
+export type AdminBulkRejectQueuedIngestionsInput = z.infer<typeof adminBulkRejectQueuedIngestionsSchema>;

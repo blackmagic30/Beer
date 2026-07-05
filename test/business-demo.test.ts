@@ -1186,9 +1186,15 @@ describe("production hardening", () => {
     expect(adminHtml).toContain("/api/admin/status");
     expect(adminHtml).toContain("/api/admin/captures/manual");
     expect(adminHtml).toContain("/api/admin/ingestions/queue");
+    expect(adminHtml).toContain("/api/admin/ingestions/reject");
+    expect(adminHtml).toContain('id="rejectVisibleIngestionsButton"');
+    expect(adminHtml).toContain("ADMIN_FAST_REJECT_SOURCE_NOTE");
     expect(adminHtml).toContain("id=\"adminBeerRows\"");
     expect(adminHtml).toContain("id=\"pendingBeerCatalog\"");
     expect(adminHtml).toContain("/api/business/admin/beer-catalog");
+    expect(adminHtml).toContain("/api/business/admin/beer-catalog/reject-pending");
+    expect(adminHtml).toContain('id="rejectPendingBeerCatalogButton"');
+    expect(adminHtml).toContain("ADMIN_FAST_REJECT_BEER_NOTE");
     expect(adminHtml).toContain("data-approve-catalog-beer");
     expect(adminHtml).toContain("data-merge-catalog-beer");
     expect(adminHtml).toContain("data-reject-catalog-beer");
@@ -1713,6 +1719,91 @@ describe("production hardening", () => {
       "Guinness",
       "Stone & Wood Pacific Ale",
     ]);
+  });
+
+  it("deduplicates public price records that are also present in venue inventory", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "dedupe-admin", "admin");
+    const now = new Date().toISOString();
+
+    database.prepare(
+      `INSERT INTO venue_price_records (
+        id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size,
+        price, is_happy_hour_price, happy_hour_details, is_on_tap, confidence,
+        source_type, source_submission_id, last_verified_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, NULL, ?, ?, ?)`,
+    ).run(
+      "source-record-1",
+      "dedupe-venue",
+      "Dedupe Hotel",
+      "Melbourne",
+      "Carlton Draught",
+      "carlton_draft",
+      "pint",
+      13,
+      "yes",
+      "photo_verified",
+      "source_ingestion",
+      now,
+      now,
+      now,
+    );
+    database.prepare(
+      `INSERT INTO venue_profiles (
+        venue_id, name, address, suburb, area, opening_hours_json, venue_tags_json, created_at, updated_at
+      ) VALUES (?, ?, NULL, ?, ?, '{}', '[]', ?, ?)`,
+    ).run("dedupe-venue", "Dedupe Hotel", "Melbourne", "Melbourne", now, now);
+    database.prepare(
+      `INSERT INTO venue_beers (
+        id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size,
+        price, currency, on_tap, in_stock, notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, 'AUD', 1, 1, NULL, ?, ?)`,
+    ).run(
+      "admin-reviewed:dedupe-venue:carlton-draft:pint",
+      "dedupe-venue",
+      "Carlton Draught",
+      "carlton_draft",
+      "pint",
+      13,
+      now,
+      now,
+    );
+    database.prepare(
+      `INSERT INTO venue_beers (
+        id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size,
+        price, currency, on_tap, in_stock, notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, 'AUD', 0, 0, NULL, ?, ?)`,
+    ).run(
+      "admin-reviewed:dedupe-venue:hahn-super-dry:pint",
+      "dedupe-venue",
+      "Hahn Super Dry",
+      "hahn_super_dry",
+      "pint",
+      14,
+      now,
+      now,
+    );
+
+    const records = service.listPriceRecords(admin, {
+      limit: 20,
+      venueId: "dedupe-venue",
+      anonymousSessionId: null,
+      reveal: true,
+    }).records;
+
+    expect(records.filter((record) => record.beerName === "Carlton Draught")).toHaveLength(1);
+    expect(records[0]).toEqual(expect.objectContaining({
+      venueId: "dedupe-venue",
+      beerName: "Carlton Draught",
+      sourceType: "venue_manager_portal",
+    }));
+    expect(records).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        beerName: "Hahn Super Dry",
+        sourceType: "venue_manager_portal",
+      }),
+    ]));
   });
 
   it("stores upload location proof and awards dynamic points only inside the 200m venue radius", () => {
@@ -3331,6 +3422,45 @@ describe("business demo contribution model", () => {
     })).toThrow("Pending beer was not found.");
   });
 
+  it("lets admins bulk reject pending beer catalogue junk", () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "catalog-bulk-admin", "admin");
+    const catalogRepository = new BeerCatalogRepository(database);
+
+    catalogRepository.resolveBeerName({
+      name: "Footer Copy Ale",
+      source: "menu_crawler_import",
+      now: NOW,
+    });
+    catalogRepository.resolveBeerName({
+      name: "Website Nav Lager",
+      source: "menu_crawler_import",
+      now: NOW,
+    });
+
+    const result = service.rejectBeerCatalogItems(admin, {
+      keys: ["footer_copy_ale", "website_nav_lager"],
+      reviewNote: "Fast rejected as beer catalogue cleanup noise.",
+    });
+
+    expect(result.rejectedCount).toBe(2);
+    expect(result.beers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        key: "footer_copy_ale",
+        reviewNote: "Fast rejected as beer catalogue cleanup noise.",
+      }),
+      expect.objectContaining({
+        key: "website_nav_lager",
+        reviewNote: "Fast rejected as beer catalogue cleanup noise.",
+      }),
+    ]));
+    expect(service.getAdminBeerCatalog(admin).pending).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "footer_copy_ale" }),
+      expect.objectContaining({ key: "website_nav_lager" }),
+    ]));
+  });
+
   it("increments fraud strikes and suspends reward earning after three fraud flags", () => {
     const { repository } = createRepository();
     const user = createAccount(repository, "fraud-user");
@@ -3501,6 +3631,17 @@ describe("business demo contribution model", () => {
         },
       }))).rejects.toThrow("Choose the new venue from Google Maps");
 
+      const requestResult = service.createVenueRequest(user, {
+        anonymousSessionId: "anon-locked-google-bar",
+        requestType: "missing_venue",
+        venueId: null,
+        venueName: "Locked Google Bar",
+        beerName: null,
+        suburb: "Fitzroy",
+        notes: "Google-selected venue request before adding drink rows.",
+      });
+      expect(requestResult.message).toBe("Locked Google Bar has been added to the admin review queue.");
+
       const result = await service.createUserSubmission(user, createSubmissionSchema.parse({
         ...basePayload,
         newVenue: {
@@ -3521,6 +3662,7 @@ describe("business demo contribution model", () => {
       expect(result.submission.venueName).toBe("Locked Google Bar");
       expect(result.submission.suburb).toBe("Fitzroy");
       expect(result.statusCopy).toContain("Venue added to the public map");
+      expect(result.statusCopy).toContain("Drink data is saved for review");
       expect(result.submission.pendingVenue).toEqual(expect.objectContaining({
         googlePlaceId: "google-place-locked-venue",
         name: "Locked Google Bar",
@@ -4191,6 +4333,32 @@ describe("business demo contribution model", () => {
       requests: 1,
       dataFreshness: "stale_or_missing",
     }));
+  });
+
+  it("creates missing venue requests through the public request service", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const user = createAccount(repository, "missing-venue-request-user");
+
+    const result = service.createVenueRequest(user, {
+      anonymousSessionId: "anon-newbay",
+      requestType: "missing_venue",
+      venueId: null,
+      venueName: "Newbay Hotel",
+      beerName: null,
+      suburb: "Brighton",
+      notes: "Address: 329 New St, Brighton VIC 3186",
+    });
+
+    expect(result.message).toBe("Newbay Hotel has been added to the admin review queue.");
+    expect(repository.listVenueRequests(10)).toEqual([
+      expect.objectContaining({
+        requestType: "missing_venue",
+        venueName: "Newbay Hotel",
+        suburb: "Brighton",
+        status: "open",
+      }),
+    ]);
   });
 
   it("deduplicates partner leads that use venue aliases for the same venue", () => {

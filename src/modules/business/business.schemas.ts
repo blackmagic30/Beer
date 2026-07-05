@@ -664,6 +664,11 @@ export const beerCatalogRejectSchema = z.object({
   reviewNote: nullableTrimmedStringSchema.default(null),
 });
 
+export const beerCatalogBulkRejectSchema = z.object({
+  keys: z.array(z.string().trim().min(1).max(160)).min(1).max(100),
+  reviewNote: nullableTrimmedStringSchema.default(null),
+});
+
 export const beerCatalogMergeSchema = z.object({
   targetKey: z.string().trim().min(1).max(160),
   reviewNote: nullableTrimmedStringSchema.default(null),

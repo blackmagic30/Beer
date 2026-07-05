@@ -17,6 +17,7 @@
     "venues:import:inner-ring": "tsx scripts/import-melbourne-venues.ts --inner-ring-backfill --inner-ring-only",
     "menus:discover": "tsx scripts/discover-menu-sources.ts",
     "menus:queue-review": "tsx scripts/queue-menu-crawler-results.ts",
+    "menus:publish-map-base": "tsx scripts/publish-source-ingestion-map-base.ts",
     "readiness:providers": "tsx scripts/provider-readiness-check.ts",
     "reports:generate": "tsx scripts/generate-monthly-reports.ts",
     "reports:deliver:mock": "REPORT_EMAIL_MODE=mock tsx scripts/generate-monthly-reports.ts --deliver",

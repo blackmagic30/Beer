@@ -151,6 +151,28 @@ describe("AdminIngestionQueueRepository", () => {
     ]);
   });
 
+  it("bulk rejects pending source ingestion rows for quick admin cleanup", () => {
+    const repository = createRepository();
+    const first = queueSource(repository, 1);
+    const second = queueSource(repository, 2);
+    const service = new AdminService(repository);
+
+    const result = service.rejectQueuedIngestions({
+      ids: [first.id, second.id],
+      note: "Fast rejected during admin source cleanup.",
+    });
+
+    expect(result.rejectedCount).toBe(2);
+    expect(result.queueItems.map((item) => item.status)).toEqual(["rejected", "rejected"]);
+    expect(repository.count("pending_review")).toBe(0);
+    expect(repository.count("rejected")).toBe(2);
+    expect(repository.getById(first.id)).toEqual(expect.objectContaining({
+      status: "rejected",
+      note: "Fast rejected during admin source cleanup.",
+      rejectedAt: expect.any(String),
+    }));
+  });
+
   it("publishes approved source ingestion rows to live map records and removes them from pending review", async () => {
     const repository = createRepository();
     const businessRepository = new BusinessRepository(database!);
@@ -186,6 +208,7 @@ describe("AdminIngestionQueueRepository", () => {
     expect(result.queueItem.status).toBe("published");
     expect(result.beerCount).toBe(1);
     expect(result.mapPriceRecordCount).toBe(1);
+    expect(result.inventoryBeerCount).toBe(1);
     expect(insertedCaptures).toHaveLength(1);
     expect(repository.getById(queueItem.id)).toEqual(expect.objectContaining({
       status: "published",
@@ -207,6 +230,17 @@ describe("AdminIngestionQueueRepository", () => {
         confidence: "photo_verified",
         sourceType: "source_ingestion",
         sourceSubmissionId: null,
+      }),
+    ]);
+    expect(businessRepository.listBarBeers(queueItem.venueId)).toEqual([
+      expect.objectContaining({
+        id: `admin-reviewed:${queueItem.venueId}:carlton-draft:pint`,
+        barId: queueItem.venueId,
+        beerName: "Carlton Draught",
+        serveSize: "pint",
+        price: 13.5,
+        onTap: true,
+        inStock: true,
       }),
     ]);
   });
@@ -250,6 +284,7 @@ describe("AdminIngestionQueueRepository", () => {
 
     expect(result.queueItem.status).toBe("published");
     expect(result.mapPriceRecordCount).toBe(1);
+    expect(result.inventoryBeerCount).toBe(1);
     expect(result.captureSaved).toBe(false);
     expect(result.captureWarning).toContain("live map rows were still published");
     expect(insertedCaptures).toHaveLength(0);
@@ -261,6 +296,14 @@ describe("AdminIngestionQueueRepository", () => {
         beerName: "Carlton Draught",
         price: 13.5,
         isOnTap: "yes",
+      }),
+    ]);
+    expect(businessRepository.listBarBeers(queueItem.venueId)).toEqual([
+      expect.objectContaining({
+        beerName: "Carlton Draught",
+        price: 13.5,
+        onTap: true,
+        inStock: true,
       }),
     ]);
   });

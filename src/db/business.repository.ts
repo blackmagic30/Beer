@@ -5111,7 +5111,9 @@ export class BusinessRepository {
 
   listVenueManagerPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {
     const values = venueId ? [venueId, limit] : [limit];
-    const beerWhere = venueId ? "WHERE beer.venue_id = ? AND profile.active = 1" : "WHERE profile.active = 1";
+    const beerWhere = venueId
+      ? "WHERE beer.venue_id = ? AND beer.on_tap = 1 AND beer.in_stock = 1 AND profile.active = 1"
+      : "WHERE beer.on_tap = 1 AND beer.in_stock = 1 AND profile.active = 1";
     const happyWhere = venueId
       ? "WHERE happy.venue_id = ? AND happy.active = 1 AND profile.active = 1"
       : "WHERE happy.active = 1 AND profile.active = 1";

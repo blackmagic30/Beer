@@ -5841,10 +5841,16 @@
       return normalized ? normalized.replace(/\s+/g, "_") : `business_${String(record.id || "unknown").replace(/[^a-z0-9]+/gi, "_")}`;
     }
 
+    function isPackagedBusinessServing(servingSize) {
+      return ["can", "cans", "bottle", "bottles"].includes(toSearchKey(servingSize));
+    }
+
     function businessPriceRecordToBeerSource(record) {
       const isOnTap = record.isOnTap === "yes";
       const isNotOnTap = record.isOnTap === "no";
-      const availabilityStatus = isOnTap ? "on_tap" : isNotOnTap ? "unavailable" : "unknown";
+      const isPackageOnly = isNotOnTap && isPackagedBusinessServing(record.servingSize);
+      const availabilityStatus = isOnTap ? "on_tap" : isPackageOnly ? "package_only" : isNotOnTap ? "unavailable" : "unknown";
+      const unavailableReason = isPackageOnly ? "cans_or_bottles" : isNotOnTap ? "not_on_tap" : null;
       const price = normalizePositiveNumber(record.price);
       const isRedacted = Boolean(record.priceRedacted);
 
@@ -5856,6 +5862,8 @@
         free_preview_included: Boolean(record.freePreviewIncluded),
         availability_status: availabilityStatus,
         available_on_tap: record.isOnTap === "unknown" ? null : isOnTap,
+        available_package_only: isPackageOnly,
+        unavailable_reason: unavailableReason,
         serving_size: record.servingSize,
         confidence_label: record.confidence,
         source_type: record.sourceType,

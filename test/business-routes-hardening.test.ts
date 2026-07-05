@@ -12,6 +12,7 @@ describe("business route hardening", () => {
     const source = routesSource();
 
     expect(source).toContain('const adminWriteLimiter = createRateLimiter({');
+    expect(source).toContain('const adminReviewLimiter = createRateLimiter({');
     expect(source).toContain('router.get("/admin/accounts"');
     [
       'router.post("/admin/reports/monthly/generate", adminWriteLimiter',
@@ -25,6 +26,13 @@ describe("business route hardening", () => {
       'router.post("/admin/users/:id/status", adminWriteLimiter',
       'router.post("/demo/seed", adminWriteLimiter',
       'router.post("/missions", adminWriteLimiter',
+    ].forEach((route) => expect(source).toContain(route));
+
+    [
+      'router.post("/admin/beer-catalog/reject-pending", adminReviewLimiter',
+      'router.post("/admin/beer-catalog/:key/approve", adminReviewLimiter',
+      'router.post("/admin/beer-catalog/:key/merge", adminReviewLimiter',
+      'router.post("/admin/beer-catalog/:key/reject", adminReviewLimiter',
     ].forEach((route) => expect(source).toContain(route));
   });
 

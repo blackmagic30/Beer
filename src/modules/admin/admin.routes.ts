@@ -5,6 +5,7 @@ import { success } from "../../lib/http.js";
 import { parseWithSchema } from "../../lib/validation.js";
 
 import {
+  adminBulkRejectQueuedIngestionsSchema,
   adminManualCaptureSchema,
   adminMenuPhotoOcrSchema,
   adminPublishQueuedIngestionSchema,
@@ -142,6 +143,20 @@ export function createAdminRouter(adminService: AdminService, businessService: B
       );
       const queueItem = await adminService.queueSourceIngestion(body);
       res.status(201).json(success({ queueItem }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/ingestions/reject", async (req, res, next) => {
+    try {
+      const body = parseWithSchema(
+        adminBulkRejectQueuedIngestionsSchema,
+        req.body,
+        "Invalid source review bulk reject payload",
+      );
+      const result = adminService.rejectQueuedIngestions(body);
+      res.json(success(result));
     } catch (error) {
       next(error);
     }
