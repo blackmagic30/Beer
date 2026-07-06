@@ -328,7 +328,7 @@ describe("Pint Path release-readiness security gates", () => {
 });
 
 describe("Pint Path release-readiness venue-manager approval workflow", () => {
-  it("keeps manager edits pending until admin approval and blocks cross-venue access", () => {
+  it("keeps scoped manager access while publishing beer rows directly and holding reviewed changes", () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
     const admin = signup(harness, "admin@pintpath.test").account;
     const managerA = signup(harness, "manager-a@pintpath.test").account;
@@ -350,7 +350,7 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     const updatedManagerB = harness.repository.getAccountById(managerB.id)!;
 
     harness.service.upsertBarProfile(admin, "venue-a", venueProfileInput({ membershipTier: "basic" }));
-    const pendingBeer = harness.service.upsertBarBeer(updatedManagerA, "venue-a", {
+    const directBeer = harness.service.upsertBarBeer(updatedManagerA, "venue-a", {
       id: null,
       beerName: "Asahi Super Dry",
       brewery: "Asahi",
@@ -361,27 +361,39 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       onTap: true,
       inStock: true,
       notes: "Synthetic venue-manager edit.",
-    }) as { pendingChange: { id: string; status: string; submittedBy: string } };
+    }) as { beer: { id: string; beerName: string; price: number } };
 
-    expect(pendingBeer.pendingChange).toMatchObject({
-      status: "pending",
-      submittedBy: managerA.id,
-    });
+    expect(directBeer.beer).toMatchObject({ beerName: "Asahi Super Dry", price: 12 });
     expect(harness.service.listPriceRecords(null, {
       venueId: "venue-a",
       anonymousSessionId: "anon-release",
       reveal: true,
       limit: 20,
-    }).records.some((record) => record.beerName === "Asahi Super Dry")).toBe(false);
+    }).records.some((record) => record.beerName === "Asahi Super Dry")).toBe(true);
 
     expect(harness.service.getVenuePortal(updatedManagerA, { venueId: "venue-a" }).pendingChanges)
-      .toHaveLength(1);
+      .toHaveLength(0);
     expect(() => harness.service.getVenuePortal(updatedManagerB, { venueId: "venue-a" }))
       .toThrow("assigned venues");
-    expect(harness.service.getVenuePartnerAdmin(admin).pendingChanges.map((change) => change.id))
-      .toContain(pendingBeer.pendingChange.id);
 
-    harness.service.reviewBarPendingChange(admin, pendingBeer.pendingChange.id, {
+    const pendingHappyHour = harness.service.upsertBarHappyHour(updatedManagerA, "venue-a", {
+      id: null,
+      title: "Synthetic reviewed happy hour",
+      daysOfWeek: ["fri"],
+      startTime: "16:00",
+      endTime: "18:00",
+      description: "$10 selected pints.",
+      active: true,
+    }) as { pendingChange: { id: string; status: string; submittedBy: string } };
+
+    expect(pendingHappyHour.pendingChange).toMatchObject({
+      status: "pending",
+      submittedBy: managerA.id,
+    });
+    expect(harness.service.getVenuePartnerAdmin(admin).pendingChanges.map((change) => change.id))
+      .toContain(pendingHappyHour.pendingChange.id);
+
+    harness.service.reviewBarPendingChange(admin, pendingHappyHour.pendingChange.id, {
       status: "approved",
       rejectionReason: null,
     });
@@ -492,8 +504,8 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
         },
       });
       expect(beerUpdate.response.status).toBe(201);
-      expect((beerUpdate.json?.data as { pendingChange: { status: string; changeType: string } }).pendingChange)
-        .toMatchObject({ status: "pending", changeType: "beer" });
+      expect((beerUpdate.json?.data as { beer: { beerName: string; price: number } }).beer)
+        .toMatchObject({ beerName: "Carlton Draught", price: 12.5 });
 
       const happyHourUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/happy-hours", {
         method: "POST",
@@ -558,9 +570,13 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       const pendingChanges = (afterUpdates.json?.data as { pendingChanges: Array<{ changeType: string }> }).pendingChanges;
       expect(pendingChanges.map((change) => change.changeType)).toEqual(expect.arrayContaining([
         "profile",
-        "beer",
         "happy_hour",
       ]));
+      expect(pendingChanges.map((change) => change.changeType)).not.toContain("beer");
+      expect((afterUpdates.json?.data as { inventory: { beers: Array<{ beerName: string; price: number }> } }).inventory.beers)
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ beerName: "Carlton Draught", price: 12.5 }),
+        ]));
       expect((afterUpdates.json?.data as { inventory: { specials: Array<{ title: string }> } }).inventory.specials)
         .toEqual(expect.arrayContaining([
           expect.objectContaining({ title: "Launch burger and pint" }),

@@ -759,6 +759,7 @@ CREATE TABLE IF NOT EXISTS venue_profiles (
   stripe_subscription_id TEXT,
   subscription_status TEXT,
   tier_manual_override INTEGER NOT NULL DEFAULT 0,
+  accepts_pint_path_codes INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

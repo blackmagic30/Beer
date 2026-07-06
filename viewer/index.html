@@ -996,22 +996,30 @@
     }
 
     .advancedMapPin--pro {
-      --pin-bg: linear-gradient(135deg, #f5c542 0%, #d946ef 52%, #38bdf8 100%);
-      --pin-border: #fde68a;
-      --pin-color: #07111f;
+      --pin-bg: #8b5cf6;
+      --pin-border: #c4b5fd;
+      --pin-color: #ffffff;
       box-shadow:
-        0 0 0 2px rgba(245, 197, 66, 0.42),
-        0 0 22px rgba(245, 197, 66, 0.36),
-        0 0 42px rgba(217, 70, 239, 0.18),
-        0 0 58px rgba(56, 189, 248, 0.12),
+        0 0 0 2px rgba(196, 181, 253, 0.5),
+        0 0 24px rgba(139, 92, 246, 0.42),
+        0 0 46px rgba(217, 70, 239, 0.2),
         0 16px 36px rgba(0, 0, 0, 0.4);
       filter: saturate(1.12);
     }
 
     .advancedMapPin--pro .advancedMapPin__glyph {
-      color: #07111f;
+      color: #ffffff;
       font-size: 0.84em;
-      text-shadow: 0 1px 10px rgba(255, 255, 255, 0.5);
+      text-shadow: 0 1px 10px rgba(15, 23, 42, 0.45);
+    }
+
+    .advancedMapPin--acceptsCodes {
+      outline: 3px solid rgba(34, 211, 238, 0.92);
+      outline-offset: 4px;
+      box-shadow:
+        0 0 0 1px rgba(34, 211, 238, 0.28),
+        0 0 24px rgba(34, 211, 238, 0.35),
+        0 14px 32px rgba(0, 0, 0, 0.36);
     }
 
     .advancedMapPin--cluster {
@@ -1322,9 +1330,15 @@
     }
 
     .legend__swatch--pro {
-      background: #f5c542;
-      border-color: rgba(217, 70, 239, 0.92);
-      box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.38), 0 0 20px rgba(245, 197, 66, 0.34);
+      background: #8b5cf6;
+      border-color: rgba(196, 181, 253, 0.92);
+      box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.38), 0 0 20px rgba(139, 92, 246, 0.34);
+    }
+
+    .legend__swatch--codes {
+      background: #2563eb;
+      border-color: rgba(34, 211, 238, 0.92);
+      box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.2), 0 0 18px rgba(34, 211, 238, 0.35);
     }
 
     .legend__itemTitle {
@@ -5917,6 +5931,14 @@
       const specialRecords = records
         .filter((record) => record.displayKind === "special")
         .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime());
+      const venueMetadataRecord = records.find((record) =>
+        record.membershipTier ||
+        record.membership_tier ||
+        record.acceptsPintPathCodes ||
+        record.accepts_pint_path_codes ||
+        record.premiumBadge ||
+        record.premium_badge
+      ) || records[0];
       const mergedSpecials = Array.isArray(cleaned.specials)
         ? cleaned.specials.filter((special) => special && typeof special === "object")
         : [];
@@ -5957,6 +5979,14 @@
           beers: mergedBeers,
           specials: mergedSpecials,
           business_record_venue_id: records[0]?.venueId || cleaned.business_record_venue_id || null,
+          venue_membership_tier: venueMetadataRecord?.membershipTier || venueMetadataRecord?.membership_tier || cleaned.venue_membership_tier || null,
+          venue_premium_badge: venueMetadataRecord?.premiumBadge || venueMetadataRecord?.premium_badge || cleaned.venue_premium_badge || null,
+          venue_accepts_pint_path_codes: Boolean(
+            venueMetadataRecord?.acceptsPintPathCodes ??
+            venueMetadataRecord?.accepts_pint_path_codes ??
+            cleaned.venue_accepts_pint_path_codes ??
+            false,
+          ),
           ...(happyHourRecords.length
             ? {
               happy_hour: {
@@ -6009,6 +6039,7 @@
 
       const query = new URLSearchParams();
       query.set("anonymousSessionId", window.MelbBeerBusiness.getAnonymousSessionId());
+      query.set("limit", String(options.limit || 500));
 
       if (options.venueId) {
         query.set("venueId", options.venueId);
@@ -6016,10 +6047,6 @@
 
       if (options.reveal) {
         query.set("reveal", "true");
-      }
-
-      if (options.limit) {
-        query.set("limit", String(options.limit));
       }
 
       const response = await window.MelbBeerBusiness.apiFetch(`/api/business/price-records?${query.toString()}`);
@@ -6211,12 +6238,25 @@
       return "free";
     }
 
+    function venueAcceptsPintPathCodes(rowOrVenue) {
+      const venue = getVenueRecord(rowOrVenue?.venues) || rowOrVenue || {};
+      return Boolean(
+        venue.acceptsPintPathCodes ??
+        venue.accepts_pint_path_codes ??
+        rowOrVenue?.acceptsPintPathCodes ??
+        rowOrVenue?.accepts_pint_path_codes ??
+        rowOrVenue?.cleaned?.venue_accepts_pint_path_codes ??
+        false
+      );
+    }
+
     function getVenueTierLabel(rowOrVenue) {
       const tier = getVenueTier(rowOrVenue);
       const venue = getVenueRecord(rowOrVenue?.venues) || rowOrVenue || {};
+      const premiumBadge = venue.premiumBadge || rowOrVenue?.premiumBadge || rowOrVenue?.cleaned?.venue_premium_badge;
 
-      if (typeof venue.premiumBadge === "string" && venue.premiumBadge.trim()) {
-        return venue.premiumBadge.trim();
+      if (typeof premiumBadge === "string" && premiumBadge.trim()) {
+        return premiumBadge.trim();
       }
 
       if (tier === "pro") {
@@ -6257,12 +6297,15 @@
 
       const tier = getVenueTier(rowOrVenue);
 
-      if (tier === "pro") {
+      if (tier === "pro" && visual.state !== "needs_data") {
+        const hasPriceRing = Boolean(visual.priceRingColor);
         return {
           ...visual,
-          strokeColor: "#f5c542",
+          fillColor: hasPriceRing ? visual.fillColor : "#8b5cf6",
+          strokeColor: "#c4b5fd",
+          labelColor: hasPriceRing ? visual.labelColor : "#ffffff",
           strokeWeight: Math.max(visual.strokeWeight + 1.2, 4),
-          scale: visual.scale + 1.8,
+          scale: visual.scale + 2.4,
           fillOpacity: Math.min(visual.fillOpacity + 0.05, 1),
         };
       }
@@ -6799,15 +6842,16 @@
 
       return {
         title: "All venues",
-        subtitle: "This is the full venue footprint. Blue markers have venue data; muted grey markers still need details.",
+        subtitle: "This is the full venue footprint. Blue markers are populated free listings, purple markers are premium venues, and muted grey markers still need details.",
         stats: [
           `${filteredRows.length} mapped venues`,
           `${missingCount} still need data`,
         ],
         items: [
-          ["neutral", "Has venue data", "Blue markers have captured beer prices, happy-hour info, or venue-supplied details."],
-          ["pro", "Pro venue", "Gold/violet ring means the venue has premium discovery treatment."],
-          ["needs", "Needs data", "Muted grey markers are mapped venues that still need beer prices or happy-hour details."],
+          ["neutral", "Populated free venue", "Blue markers have captured beer prices, happy-hour info, or venue-supplied details."],
+          ["pro", "Premium venue", "Purple markers are paid venues with premium discovery treatment."],
+          ["codes", "Accepts Pint Path codes", "Cyan outline means staff can scan or enter a Pint Path user code for Pint Points."],
+          ["needs", "Needs data", "Muted grey question-mark markers still need beer prices or happy-hour details."],
           ["selected", "Selected venue", "Gold ring shows the marker currently open in the venue card."],
         ],
             hint: "Switch to a beer search when you want green, yellow, orange, and dark-red price rings."
@@ -6983,6 +7027,7 @@
       const markerScale = Number(visual?.scale || 12);
       const size = options.size || Math.max(24, Math.min(46, Math.round(markerScale * 2.25)));
       const isProVenueMarker = options.tier === "pro" && options.variant !== "cluster" && options.variant !== "user";
+      const acceptsCodesMarker = Boolean(options.acceptsCodes) && options.variant !== "cluster" && options.variant !== "user";
       const defaultGlyph = String(options.glyphText ?? visual?.labelText ?? "");
       const glyph = isProVenueMarker && (!defaultGlyph || defaultGlyph === "✓" || defaultGlyph === "?")
         ? "PRO"
@@ -6992,6 +7037,7 @@
         "advancedMapPin",
         options.className,
         isProVenueMarker ? "advancedMapPin--pro" : "",
+        acceptsCodesMarker ? "advancedMapPin--acceptsCodes" : "",
         visual?.priceRingColor ? "advancedMapPin--priced" : "",
         options.variant === "cluster" ? "advancedMapPin--cluster" : "",
         options.variant === "user" ? "advancedMapPin--user" : "",
@@ -6999,12 +7045,10 @@
       ].filter(Boolean).join(" ");
       pinEl.style.setProperty(
         "--pin-bg",
-        isProVenueMarker && !visual?.priceRingColor
-          ? "linear-gradient(135deg, #f5c542 0%, #d946ef 52%, #38bdf8 100%)"
-          : visual?.fillColor || "#2563eb",
+        visual?.fillColor || (isProVenueMarker ? "#8b5cf6" : "#2563eb"),
       );
-      pinEl.style.setProperty("--pin-border", options.selected ? "#fef3c7" : isProVenueMarker ? "#f5c542" : visual?.strokeColor || "#bfdbfe");
-      pinEl.style.setProperty("--pin-color", isProVenueMarker && !visual?.priceRingColor ? "#07111f" : visual?.labelColor || "#ffffff");
+      pinEl.style.setProperty("--pin-border", options.selected ? "#fef3c7" : isProVenueMarker ? "#c4b5fd" : visual?.strokeColor || "#bfdbfe");
+      pinEl.style.setProperty("--pin-color", visual?.labelColor || "#ffffff");
       pinEl.style.setProperty("--pin-price-ring", visual?.priceRingColor || "transparent");
       pinEl.style.setProperty("--pin-size", `${size}px`);
       pinEl.setAttribute("aria-hidden", "true");
@@ -8220,6 +8264,7 @@
           variant = "venue",
           clickable = true,
           size,
+          acceptsCodes = false,
         }) {
           const marker = new AdvancedMarkerElement({
             map: markerMap,
@@ -8235,6 +8280,7 @@
             tier,
             variant,
             size,
+            acceptsCodes,
           };
           setAdvancedMarkerVisual(marker, visual, marker.__markerVisualOptions);
 
@@ -8408,6 +8454,7 @@
               visual: resolvedMarkerVisual,
               zIndex: markerCount + 1,
               tier: getVenueTier(item),
+              acceptsCodes: venueAcceptsPintPathCodes(item),
             });
 
             const address = formatAddress(venue);

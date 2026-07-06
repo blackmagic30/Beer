@@ -120,7 +120,7 @@
           <section class="tabPanel is-hidden" data-panel="pending-reviews">
             <article class="panel" style="margin-top:16px;">
               <h2>Pending review</h2>
-              <p class="helperCopy">Manager edits are saved privately until Pint Path admin approval. Public map/listing views keep showing the last approved data.</p>
+              <p class="helperCopy">Beer rows and prices save straight to your assigned venue. Profile and promotion changes may still wait for Pint Path admin approval.</p>
               <div id="pendingChanges" class="list"></div>
             </article>
           </section>
@@ -270,6 +270,10 @@
               <label class="dayChip">
                 <input name="active" type="checkbox" checked />
                 Active / listed
+              </label>
+              <label class="dayChip" id="acceptsPintPathCodesField">
+                <input name="acceptsPintPathCodes" type="checkbox" />
+                Accepts Pint Path user codes
               </label>
               <div id="profileStatus" class="notice" role="status" hidden></div>
             </form>
@@ -1342,6 +1346,10 @@
       field(profileForm, "instagram").value = profile.instagram || "";
       renderOpeningHoursEditor(profile.openingHours || {});
       field(profileForm, "active").checked = Boolean(profile.active);
+      const acceptsCodesControl = field(profileForm, "acceptsPintPathCodes");
+      acceptsCodesControl.checked = Boolean(profile.acceptsPintPathCodes);
+      acceptsCodesControl.disabled = !currentPortal?.isAdmin;
+      document.getElementById("acceptsPintPathCodesField")?.classList.toggle("is-disabled", !currentPortal?.isAdmin);
       renderChecklist(venueTags, tagOptions, profile.venueTags || []);
     }
 
@@ -3417,6 +3425,7 @@
           description: currentPortal?.profile?.description || null,
           openingHours: collectOpeningHours(),
           venueTags: checkedValues(venueTags),
+          acceptsPintPathCodes: currentPortal?.isAdmin ? field(profileForm, "acceptsPintPathCodes").checked : Boolean(currentPortal?.profile?.acceptsPintPathCodes),
           active: field(profileForm, "active").checked,
         };
         try {
@@ -3461,7 +3470,7 @@
           notes: field(beerForm, "notes").value || null,
         };
         try {
-          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/beers`, body, beerStatus, "Beer row saved for review. Keep going while the tap list is fresh.");
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/beers`, body, beerStatus, "Beer row saved. Keep going while the tap list is fresh.");
           resetForm(beerForm);
           field(beerForm, "inStock").checked = true;
           field(beerForm, "isNewBeer").checked = false;

@@ -126,6 +126,7 @@ interface VenueRow {
   premiumBadge?: string | null;
   promoted?: boolean;
   featuredSpecialEligible?: boolean;
+  acceptsPintPathCodes?: boolean;
   venueTags?: string[];
   isUserSubmittedVenue?: boolean;
 }
@@ -2497,6 +2498,7 @@ export class BusinessService {
       stripeSubscriptionId: null,
       subscriptionStatus: null,
       tierManualOverride: false,
+      acceptsPintPathCodes: false,
       active: true,
       createdAt: now,
       updatedAt: now,
@@ -2587,6 +2589,7 @@ export class BusinessService {
       openingHours: {},
       venueTags: [],
       membershipTier: "basic",
+      acceptsPintPathCodes: false,
       active: true,
       now: nowIso(),
       ...flags,
@@ -2667,7 +2670,9 @@ export class BusinessService {
     if (existingPendingDelete) {
       return {
         pendingChange: existingPendingDelete,
-        message: "Delete held for admin review because several venue items were removed in the last hour.",
+        message: input.changeType === "beer"
+          ? "Beer delete held for admin review because 3 beers were already removed in the last hour."
+          : "Delete held for admin review because several venue items were removed in the last hour.",
       };
     }
 
@@ -2683,7 +2688,9 @@ export class BusinessService {
 
     return {
       ...result,
-      message: "Delete held for admin review because several venue items were removed in the last hour.",
+      message: input.changeType === "beer"
+        ? "Beer delete held for admin review because 3 beers were already removed in the last hour."
+        : "Delete held for admin review because several venue items were removed in the last hour.",
     };
   }
 
@@ -2734,6 +2741,7 @@ export class BusinessService {
         venueTags: stringArrayFromUnknown(payload.venueTags),
         membershipTier,
         tierManualOverride: existing?.tierManualOverride ?? false,
+        acceptsPintPathCodes: existing?.acceptsPintPathCodes ?? false,
         active: booleanFromUnknown(payload.active, existing?.active ?? true),
         now,
         ...flags,
@@ -6254,7 +6262,7 @@ export class BusinessService {
 
   private getPublicVenueTierMetadata(venueId: string): Pick<
     VenueRow,
-    "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible"
+    "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible" | "acceptsPintPathCodes"
   > {
     const profile = this.repository.getBarProfile(venueId);
 
@@ -6265,6 +6273,7 @@ export class BusinessService {
         premiumBadge: null,
         promoted: false,
         featuredSpecialEligible: false,
+        acceptsPintPathCodes: false,
       };
     }
 
@@ -6275,6 +6284,7 @@ export class BusinessService {
       premiumBadge: profile.premiumBadge || flags.premiumBadge,
       promoted: flags.promoted && profile.promoted,
       featuredSpecialEligible: flags.featuredSpecialEligible && profile.featuredSpecialEligible,
+      acceptsPintPathCodes: profile.acceptsPintPathCodes,
     };
   }
 
@@ -6771,7 +6781,24 @@ export class BusinessService {
         record.displayKind !== "beer" ||
         record.price != null,
       );
-    const dedupedRecords = dedupePublicPriceRecords(records)
+    const publicVenueMetadata = new Map<string, Pick<
+      VenueRow,
+      "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible" | "acceptsPintPathCodes"
+    >>();
+    const getCachedVenueMetadata = (venueId: string) => {
+      const cached = publicVenueMetadata.get(venueId);
+      if (cached) {
+        return cached;
+      }
+      const metadata = this.getPublicVenueTierMetadata(venueId);
+      publicVenueMetadata.set(venueId, metadata);
+      return metadata;
+    };
+    const addVenueMetadata = (record: PublicVenuePriceRecord): PublicVenuePriceRecord => ({
+      ...record,
+      ...getCachedVenueMetadata(record.venueId),
+    });
+    const dedupedRecords = dedupePublicPriceRecords(records.map(addVenueMetadata))
       .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime())
       .slice(0, input.limit);
     const hasFullAccess = isFullAccess(account);
@@ -7252,6 +7279,7 @@ export class BusinessService {
     if (!isAdmin && assignments.length === 0) {
       return {
         accessState: "invite_required",
+        isAdmin,
         assignments: [],
         selectedVenue: null,
         profile: null,
@@ -7274,6 +7302,7 @@ export class BusinessService {
     const selectedVenueId = query.venueId ?? assignments[0]?.venueId;
     if (!selectedVenueId) {
       return {
+        isAdmin,
         assignments,
         selectedVenue: null,
         pendingChanges: [],
@@ -7502,6 +7531,7 @@ export class BusinessService {
     });
 
     return {
+      isAdmin,
       assignments,
       selectedVenue: {
         venueId: selectedVenueId,
@@ -7631,6 +7661,9 @@ export class BusinessService {
     const existing = this.repository.getBarProfile(venueId);
     const existingTier = existing?.membershipTier ?? "basic";
     const membershipTier = this.isAdmin(account) ? input.membershipTier ?? existingTier : existingTier;
+    const acceptsPintPathCodes = this.isAdmin(account)
+      ? input.acceptsPintPathCodes ?? existing?.acceptsPintPathCodes ?? false
+      : existing?.acceptsPintPathCodes ?? false;
     if (!this.isAdmin(account)) {
       return this.createPendingBarChange({
         account,
@@ -7641,6 +7674,7 @@ export class BusinessService {
         payload: {
           ...input,
           membershipTier,
+          acceptsPintPathCodes,
           venueTags: cleanStringList(input.venueTags),
           area: input.area ?? input.suburb ?? assignment?.suburb ?? existing?.area ?? existing?.suburb ?? null,
         },
@@ -7663,6 +7697,7 @@ export class BusinessService {
       openingHours: input.openingHours,
       venueTags: cleanStringList(input.venueTags),
       membershipTier,
+      acceptsPintPathCodes,
       active: input.active,
       tierManualOverride: this.isAdmin(account) && input.membershipTier !== undefined ? true : existing?.tierManualOverride ?? false,
       now,
@@ -7695,22 +7730,9 @@ export class BusinessService {
     const now = nowIso();
     const beerInput = this.standardizeBarBeerInput(
       input,
-      this.isAdmin(account) ? "venue_inventory_admin" : "venue_inventory_pending",
+      this.isAdmin(account) ? "venue_inventory_admin" : "venue_inventory_manager",
       now,
     );
-
-    if (!this.isAdmin(account)) {
-      const targetId = beerInput.id ?? crypto.randomUUID();
-      return this.createPendingBarChange({
-        account,
-        venueId,
-        changeType: "beer",
-        action: "upsert",
-        targetId,
-        payload: { ...beerInput, id: targetId },
-        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
-      });
-    }
 
     const profile = this.ensureBarProfile({
       barId: venueId,

@@ -225,6 +225,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("advancedMapPin");
     expect(html).toContain("advancedMapPin--priced");
     expect(html).toContain("advancedMapPin--pro");
+    expect(html).toContain("advancedMapPin--acceptsCodes");
+    expect(html).toContain("function venueAcceptsPintPathCodes");
+    expect(html).toContain("#8b5cf6");
     expect(html).toContain("const isProVenueMarker");
     expect(html).toContain('? "PRO"');
     expect(html).toContain("--pin-price-ring");
@@ -259,6 +262,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("const MAP_OVERLAYS_ENABLED = true");
     expect(html).toContain("renderVenueListFallback");
     expect(html).toContain("loadBusinessVenueRows");
+    expect(html).toContain('query.set("limit", String(options.limit || 500));');
     expect(html).toContain("function getBeerSearchCandidates");
     expect(html).toContain("function beerMatchesSearchQuery");
     expect(html).toContain("record.normalizedBeerId || record.beerName || record.id");

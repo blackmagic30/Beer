@@ -588,6 +588,7 @@ export const barProfileSchema = z.object({
   openingHours: z.record(z.string(), z.unknown()).default({}),
   venueTags: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
   membershipTier: barMembershipTierSchema.optional(),
+  acceptsPintPathCodes: z.boolean().optional(),
   active: z.boolean().default(true),
 });
 

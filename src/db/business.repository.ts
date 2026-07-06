@@ -250,6 +250,12 @@ export interface PublicVenuePriceRecord {
   venueName: string;
   suburb: string | null;
   venueAddress?: string | null;
+  membershipTier?: BarMembershipTier;
+  highlightedName?: boolean;
+  premiumBadge?: string | null;
+  promoted?: boolean;
+  featuredSpecialEligible?: boolean;
+  acceptsPintPathCodes?: boolean;
   beerName: string;
   normalizedBeerId: string | null;
   servingSize: ServingSize;
@@ -438,6 +444,7 @@ export interface BarProfile {
   stripeSubscriptionId: string | null;
   subscriptionStatus: string | null;
   tierManualOverride: boolean;
+  acceptsPintPathCodes: boolean;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -1162,6 +1169,7 @@ interface BarProfileRow {
   stripe_subscription_id: string | null;
   subscription_status: string | null;
   tier_manual_override: number;
+  accepts_pint_path_codes: number;
   active: number;
   created_at: string;
   updated_at: string;
@@ -2044,6 +2052,7 @@ function toBarProfile(row: BarProfileRow): BarProfile {
     stripeSubscriptionId: row.stripe_subscription_id,
     subscriptionStatus: row.subscription_status,
     tierManualOverride: Boolean(row.tier_manual_override),
+    acceptsPintPathCodes: Boolean(row.accepts_pint_path_codes),
     active: Boolean(row.active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -5127,42 +5136,90 @@ export class BusinessRepository {
            beer.*,
            profile.name AS profile_name,
            profile.suburb AS profile_suburb,
-           profile.address AS profile_address
+           profile.address AS profile_address,
+           profile.membership_tier AS profile_membership_tier,
+           profile.highlighted_name AS profile_highlighted_name,
+           profile.premium_badge AS profile_premium_badge,
+           profile.promoted AS profile_promoted,
+           profile.featured_special_eligible AS profile_featured_special_eligible,
+           profile.accepts_pint_path_codes AS profile_accepts_pint_path_codes
          FROM venue_beers beer
          INNER JOIN venue_profiles profile ON profile.venue_id = beer.venue_id
          ${beerWhere}
          ORDER BY beer.updated_at DESC
          LIMIT ?`,
       )
-      .all(...values) as Array<BarBeerRow & { profile_name: string | null; profile_suburb: string | null; profile_address: string | null }>;
+      .all(...values) as Array<BarBeerRow & {
+        profile_name: string | null;
+        profile_suburb: string | null;
+        profile_address: string | null;
+        profile_membership_tier: StoredBarMembershipTier;
+        profile_highlighted_name: number;
+        profile_premium_badge: string | null;
+        profile_promoted: number;
+        profile_featured_special_eligible: number;
+        profile_accepts_pint_path_codes: number;
+      }>;
     const happyRows = this.database
       .prepare(
         `SELECT
            happy.*,
            profile.name AS profile_name,
            profile.suburb AS profile_suburb,
-           profile.address AS profile_address
+           profile.address AS profile_address,
+           profile.membership_tier AS profile_membership_tier,
+           profile.highlighted_name AS profile_highlighted_name,
+           profile.premium_badge AS profile_premium_badge,
+           profile.promoted AS profile_promoted,
+           profile.featured_special_eligible AS profile_featured_special_eligible,
+           profile.accepts_pint_path_codes AS profile_accepts_pint_path_codes
          FROM venue_happy_hours happy
          INNER JOIN venue_profiles profile ON profile.venue_id = happy.venue_id
          ${happyWhere}
          ORDER BY happy.updated_at DESC
          LIMIT ?`,
       )
-      .all(...values) as Array<BarHappyHourRow & { profile_name: string | null; profile_suburb: string | null; profile_address: string | null }>;
+      .all(...values) as Array<BarHappyHourRow & {
+        profile_name: string | null;
+        profile_suburb: string | null;
+        profile_address: string | null;
+        profile_membership_tier: StoredBarMembershipTier;
+        profile_highlighted_name: number;
+        profile_premium_badge: string | null;
+        profile_promoted: number;
+        profile_featured_special_eligible: number;
+        profile_accepts_pint_path_codes: number;
+      }>;
     const specialRows = this.database
       .prepare(
         `SELECT
            special.*,
            profile.name AS profile_name,
            profile.suburb AS profile_suburb,
-           profile.address AS profile_address
+           profile.address AS profile_address,
+           profile.membership_tier AS profile_membership_tier,
+           profile.highlighted_name AS profile_highlighted_name,
+           profile.premium_badge AS profile_premium_badge,
+           profile.promoted AS profile_promoted,
+           profile.featured_special_eligible AS profile_featured_special_eligible,
+           profile.accepts_pint_path_codes AS profile_accepts_pint_path_codes
          FROM venue_specials special
          INNER JOIN venue_profiles profile ON profile.venue_id = special.venue_id
          ${specialWhere}
          ORDER BY special.exclusive DESC, special.updated_at DESC
          LIMIT ?`,
       )
-      .all(...values) as Array<BarSpecialRow & { profile_name: string | null; profile_suburb: string | null; profile_address: string | null }>;
+      .all(...values) as Array<BarSpecialRow & {
+        profile_name: string | null;
+        profile_suburb: string | null;
+        profile_address: string | null;
+        profile_membership_tier: StoredBarMembershipTier;
+        profile_highlighted_name: number;
+        profile_premium_badge: string | null;
+        profile_promoted: number;
+        profile_featured_special_eligible: number;
+        profile_accepts_pint_path_codes: number;
+      }>;
 
     return [
       ...beerRows.map((row) => ({
@@ -5171,6 +5228,12 @@ export class BusinessRepository {
         venueName: row.profile_name || row.venue_id,
         venueAddress: row.profile_address,
         suburb: row.profile_suburb,
+        membershipTier: normalizeBarMembershipTier(row.profile_membership_tier),
+        highlightedName: Boolean(row.profile_highlighted_name),
+        premiumBadge: row.profile_premium_badge,
+        promoted: Boolean(row.profile_promoted),
+        featuredSpecialEligible: Boolean(row.profile_featured_special_eligible),
+        acceptsPintPathCodes: Boolean(row.profile_accepts_pint_path_codes),
         beerName: row.beer_name,
         normalizedBeerId: row.normalized_beer_id,
         servingSize: row.serve_size || "other",
@@ -5192,6 +5255,12 @@ export class BusinessRepository {
         venueName: row.profile_name || row.venue_id,
         venueAddress: row.profile_address,
         suburb: row.profile_suburb,
+        membershipTier: normalizeBarMembershipTier(row.profile_membership_tier),
+        highlightedName: Boolean(row.profile_highlighted_name),
+        premiumBadge: row.profile_premium_badge,
+        promoted: Boolean(row.profile_promoted),
+        featuredSpecialEligible: Boolean(row.profile_featured_special_eligible),
+        acceptsPintPathCodes: Boolean(row.profile_accepts_pint_path_codes),
         beerName: row.title || "Happy hour",
         normalizedBeerId: null,
         servingSize: "other" as const,
@@ -5217,6 +5286,12 @@ export class BusinessRepository {
         venueName: row.profile_name || row.venue_id,
         venueAddress: row.profile_address,
         suburb: row.profile_suburb,
+        membershipTier: normalizeBarMembershipTier(row.profile_membership_tier),
+        highlightedName: Boolean(row.profile_highlighted_name),
+        premiumBadge: row.profile_premium_badge,
+        promoted: Boolean(row.profile_promoted),
+        featuredSpecialEligible: Boolean(row.profile_featured_special_eligible),
+        acceptsPintPathCodes: Boolean(row.profile_accepts_pint_path_codes),
         beerName: row.exclusive ? "Pint Path exclusive" : row.title || "Venue special",
         normalizedBeerId: null,
         servingSize: "other" as const,
@@ -5826,6 +5901,7 @@ export class BusinessRepository {
     stripeSubscriptionId?: string | null | undefined;
     subscriptionStatus?: string | null | undefined;
     tierManualOverride?: boolean | undefined;
+    acceptsPintPathCodes?: boolean | undefined;
     active: boolean;
     now: string;
   }): BarProfile {
@@ -5835,8 +5911,8 @@ export class BusinessRepository {
           venue_id, name, address, suburb, area, phone, website, instagram, description,
           opening_hours_json, venue_tags_json, membership_tier, highlighted_name, premium_badge,
           promoted, featured_special_eligible, stripe_customer_id, stripe_subscription_id,
-          subscription_status, tier_manual_override, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          subscription_status, tier_manual_override, accepts_pint_path_codes, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(venue_id) DO UPDATE SET
           name = excluded.name,
           address = excluded.address,
@@ -5857,6 +5933,7 @@ export class BusinessRepository {
           stripe_subscription_id = COALESCE(excluded.stripe_subscription_id, stripe_subscription_id),
           subscription_status = COALESCE(excluded.subscription_status, subscription_status),
           tier_manual_override = excluded.tier_manual_override,
+          accepts_pint_path_codes = excluded.accepts_pint_path_codes,
           active = excluded.active,
           updated_at = excluded.updated_at`,
       )
@@ -5881,6 +5958,7 @@ export class BusinessRepository {
         input.stripeSubscriptionId ?? null,
         input.subscriptionStatus ?? null,
         input.tierManualOverride ? 1 : 0,
+        input.acceptsPintPathCodes ? 1 : 0,
         input.active ? 1 : 0,
         input.now,
         input.now,

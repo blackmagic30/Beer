@@ -4594,7 +4594,7 @@ describe("business demo contribution model", () => {
       style: "Pacific ale",
     }));
 
-    const pending = pendingBarChangeFrom(service.upsertBarBeer(repository.getAccountById(manager.id)!, "inventory-venue", {
+    const managerBeer = service.upsertBarBeer(repository.getAccountById(manager.id)!, "inventory-venue", {
       id: null,
       beerName: "Very Local Hazy Pint",
       brewery: null,
@@ -4605,11 +4605,12 @@ describe("business demo contribution model", () => {
       onTap: true,
       inStock: true,
       notes: null,
-    }));
-    expect(pending.payload).toEqual(expect.objectContaining({
+    }).beer;
+    expect(managerBeer).toEqual(expect.objectContaining({
       beerName: "Very Local Hazy Pint",
       normalizedBeerId: "very_local_hazy_pint",
     }));
+    expect(repository.listBarPendingChanges({ barId: "inventory-venue", status: "pending", limit: 10 })).toHaveLength(0);
   });
 
   it("requires a verified account before bar portal or claim access", () => {
@@ -4638,7 +4639,7 @@ describe("business demo contribution model", () => {
     })).toThrow("Verify your account");
   });
 
-  it("keeps venue-manager edits pending until admin review publishes them", () => {
+  it("scopes venue-manager access while letting assigned managers maintain beer prices directly", () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const admin = createAccount(repository, "bar-admin", "admin");
@@ -4791,9 +4792,11 @@ describe("business demo contribution model", () => {
       active: true,
     });
 
-    const beerPending = pendingBarChangeFrom(beer);
     const happyHourPending = pendingBarChangeFrom(happyHour);
-    expect(beerPending).toEqual(expect.objectContaining({ status: "pending", changeType: "beer", action: "upsert" }));
+    expect(beer).toEqual(expect.objectContaining({
+      beer: expect.objectContaining({ beerName: "Carlton Draught", price: 13 }),
+      message: "Beer row saved.",
+    }));
     expect(happyHourPending).toEqual(expect.objectContaining({ status: "pending", changeType: "happy_hour", action: "upsert" }));
     expect(special).toEqual(expect.objectContaining({
       special: expect.objectContaining({ title: "Thursday burger and pint", active: true }),
@@ -4801,16 +4804,16 @@ describe("business demo contribution model", () => {
     }));
 
     const portal = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
-    expect(portal.pendingChanges).toHaveLength(3);
-    expect(portal.pendingChanges.map((change) => change.changeType)).toEqual(expect.arrayContaining(["profile", "beer", "happy_hour"]));
-    expect(portal.inventory.beers).toHaveLength(0);
+    expect(portal.pendingChanges).toHaveLength(2);
+    expect(portal.pendingChanges.map((change) => change.changeType)).toEqual(expect.arrayContaining(["profile", "happy_hour"]));
+    expect(portal.inventory.beers).toHaveLength(1);
     expect(portal.inventory.happyHours).toHaveLength(0);
     expect(portal.inventory.specials).toHaveLength(1);
     expect(portal.tier.analyticsLocked).toBe(false);
 
     const adminPortal = service.getVenuePortal(admin, { venueId: "bar-1" });
-    expect(adminPortal.pendingChanges).toHaveLength(3);
-    expect(service.getVenuePartnerAdmin(admin).pendingChanges).toHaveLength(3);
+    expect(adminPortal.pendingChanges).toHaveLength(2);
+    expect(service.getVenuePartnerAdmin(admin).pendingChanges).toHaveLength(2);
     expect(service.getVenuePortal(otherManagerAccount, { venueId: "bar-2" }).pendingChanges).toHaveLength(0);
     expect(() => service.getVenuePortal(otherManagerAccount, { venueId: "bar-1" })).toThrow("assigned venues");
 
@@ -4822,16 +4825,20 @@ describe("business demo contribution model", () => {
     });
     expect(publicBeforeApproval.records).toEqual(expect.arrayContaining([
       expect.objectContaining({
+        beerName: "Carlton Draught",
+        price: 13,
+        sourceType: "venue_manager_portal",
+      }),
+      expect.objectContaining({
         displayKind: "special",
         specialTitle: "Venue special",
         priceRedacted: true,
         sourceType: "venue_manager_portal:special",
       }),
     ]));
-    expect(publicBeforeApproval.records.some((record) => record.beerName === "Carlton Draught")).toBe(false);
     expect(publicBeforeApproval.records.some((record) => record.displayKind === "happy_hour")).toBe(false);
 
-    for (const change of [profilePending, beerPending, happyHourPending]) {
+    for (const change of [profilePending, happyHourPending]) {
       const review = service.reviewBarPendingChange(admin, change.id, { status: "approved", rejectionReason: null });
       expect(review.pendingChange?.status).toBe("approved");
     }
@@ -4962,7 +4969,7 @@ describe("business demo contribution model", () => {
       reveal: true,
     }).records.length).toBeGreaterThan(0);
 
-    const approvedBeerId = beerPending.targetId!;
+    const approvedBeerId = beer.beer.id;
     const priceBypassAttempt = service.upsertBarBeer(managerAccount, "bar-1", {
       id: approvedBeerId,
       beerName: "Carlton Draught",
@@ -4975,29 +4982,17 @@ describe("business demo contribution model", () => {
       inStock: true,
       notes: "Updated main tap",
     });
-    const priceBypassPending = pendingBarChangeFrom(priceBypassAttempt);
-    expect(priceBypassPending.status).toBe("pending");
-    const beforePriceApproval = service.listPriceRecords(null, {
+    expect(priceBypassAttempt).toEqual(expect.objectContaining({
+      beer: expect.objectContaining({ id: approvedBeerId, price: 15.5 }),
+      message: "Beer row saved.",
+    }));
+    const afterDirectPriceUpdate = service.listPriceRecords(null, {
       limit: 20,
       venueId: "bar-1",
       anonymousSessionId: "bar-direct-bypass",
       reveal: true,
     });
-    expect(beforePriceApproval.records).toEqual(expect.arrayContaining([
-      expect.objectContaining({ beerName: "Carlton Draught", price: 13 }),
-    ]));
-
-    service.reviewBarPendingChange(admin, priceBypassPending.id, {
-      status: "approved",
-      rejectionReason: null,
-    });
-    const afterPriceApproval = service.listPriceRecords(null, {
-      limit: 20,
-      venueId: "bar-1",
-      anonymousSessionId: "bar-after-price-approval",
-      reveal: true,
-    });
-    expect(afterPriceApproval.records).toEqual(expect.arrayContaining([
+    expect(afterDirectPriceUpdate.records).toEqual(expect.arrayContaining([
       expect.objectContaining({ beerName: "Carlton Draught", price: 15.5 }),
     ]));
 
@@ -5052,7 +5047,7 @@ describe("business demo contribution model", () => {
     const heldDelete = service.deleteBarBeer(managerAccount, "delete-guard-bar", beerIds[3]);
     const pendingDelete = pendingBarChangeFrom(heldDelete);
     expect(heldDelete).toEqual(expect.objectContaining({
-      message: "Delete held for admin review because several venue items were removed in the last hour.",
+      message: "Beer delete held for admin review because 3 beers were already removed in the last hour.",
     }));
     expect(pendingDelete).toEqual(expect.objectContaining({
       action: "delete",
@@ -5107,7 +5102,7 @@ describe("business demo contribution model", () => {
     expect(freePortal.analytics).toBeNull();
     expect(freePortal.monthlyReport).toBeNull();
 
-    expect(service.upsertBarBeer(managerAccount, "free-bar-1", {
+    const freeBeer = service.upsertBarBeer(managerAccount, "free-bar-1", {
       id: null,
       beerName: "Asahi Super Dry",
       brewery: "Asahi",
@@ -5118,7 +5113,11 @@ describe("business demo contribution model", () => {
       onTap: true,
       inStock: true,
       notes: null,
-    })).toEqual(expect.objectContaining({ pendingChange: expect.objectContaining({ changeType: "beer" }) }));
+    });
+    expect(freeBeer).toEqual(expect.objectContaining({
+      beer: expect.objectContaining({ beerName: "Asahi Super Dry", price: 12 }),
+    }));
+    expect(service.getVenuePortal(managerAccount, { venueId: "free-bar-1" }).inventory.beers).toHaveLength(1);
     expect(service.upsertBarHappyHour(managerAccount, "free-bar-1", {
       id: null,
       title: "Weekday happy hour",
@@ -5147,7 +5146,7 @@ describe("business demo contribution model", () => {
     })).toThrow("Pro venue tier required");
   });
 
-  it("keeps direct venue-portal API writes pending until admin approval", async () => {
+  it("saves direct venue-portal beer API writes without admin approval", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const admin = createAccount(repository, "api-bar-admin", "admin");
@@ -5207,13 +5206,8 @@ describe("business demo contribution model", () => {
         }),
       });
       expect(response.status).toBe(201);
-      const body = await response.json() as { data: { pendingChange: BarPendingChange } };
-      expect(body.data.pendingChange).toEqual(expect.objectContaining({ status: "pending", changeType: "beer" }));
-
-      const publicBefore = await fetch(`${baseUrl}/api/business/price-records?venueId=api-bar-1&limit=20&reveal=true&anonymousSessionId=api-api-before`);
-      expect((await publicBefore.json()).data.records).toEqual([]);
-
-      service.reviewBarPendingChange(admin, body.data.pendingChange.id, { status: "approved", rejectionReason: null });
+      const body = await response.json() as { data: { beer: { beerName: string; price: number } } };
+      expect(body.data.beer).toEqual(expect.objectContaining({ beerName: "Asahi Super Dry", price: 12 }));
 
       const publicAfter = await fetch(`${baseUrl}/api/business/price-records?venueId=api-bar-1&limit=20&reveal=true&anonymousSessionId=api-api-after`);
       expect((await publicAfter.json()).data.records).toEqual(expect.arrayContaining([
@@ -5812,29 +5806,23 @@ describe("business demo contribution model", () => {
       active: true,
     });
 
-    service.upsertBarBeer(repository.getAccountById(proManager.id)!, "priority-pro-bar", {
+    service.upsertBarHappyHour(repository.getAccountById(proManager.id)!, "priority-pro-bar", {
       id: null,
-      beerName: "Pro Lager",
-      brewery: null,
-      style: "Lager",
-      abv: null,
-      serveSize: "pint",
-      price: 14,
-      onTap: true,
-      inStock: true,
-      notes: null,
+      title: "Pro queue happy hour",
+      daysOfWeek: ["fri"],
+      startTime: "16:00",
+      endTime: "18:00",
+      description: "$10 pro pints.",
+      active: true,
     });
-    service.upsertBarBeer(repository.getAccountById(basicManager.id)!, "priority-basic-bar", {
+    service.upsertBarHappyHour(repository.getAccountById(basicManager.id)!, "priority-basic-bar", {
       id: null,
-      beerName: "Basic Lager",
-      brewery: null,
-      style: "Lager",
-      abv: null,
-      serveSize: "pint",
-      price: 13,
-      onTap: true,
-      inStock: true,
-      notes: null,
+      title: "Basic queue happy hour",
+      daysOfWeek: ["fri"],
+      startTime: "16:00",
+      endTime: "18:00",
+      description: "$11 basic pints.",
+      active: true,
     });
 
     expect(service.getVenuePartnerAdmin(admin).pendingChanges[0]?.barId).toBe("priority-pro-bar");
@@ -5858,6 +5846,7 @@ describe("business demo contribution model", () => {
       openingHours: {},
       venueTags: [],
       membershipTier: "pro",
+      acceptsPintPathCodes: true,
       active: true,
     });
 
@@ -5869,10 +5858,12 @@ describe("business demo contribution model", () => {
     expect(proVenue?.premiumBadge).toBe("Pro");
     expect(proVenue?.highlightedName).toBe(true);
     expect(proVenue?.promoted).toBe(true);
+    expect(proVenue?.acceptsPintPathCodes).toBe(true);
     expect(proVenue).not.toHaveProperty("stripeCustomerId");
     expect(proVenue).not.toHaveProperty("stripeSubscriptionId");
     expect(freeVenue?.membershipTier).toBe("basic");
     expect(freeVenue?.premiumBadge).toBeNull();
+    expect(freeVenue?.acceptsPintPathCodes).toBe(false);
   });
 
   it("serves a public venue detail lookup without private billing metadata", async () => {
@@ -5892,6 +5883,7 @@ describe("business demo contribution model", () => {
       openingHours: {},
       venueTags: [],
       membershipTier: "pro",
+      acceptsPintPathCodes: true,
       active: true,
     });
 
@@ -5900,6 +5892,7 @@ describe("business demo contribution model", () => {
     expect(venue?.name).toBe("Moonlit Taproom");
     expect(venue?.suburb).toBe("Fitzroy");
     expect(venue?.membershipTier).toBe("pro");
+    expect(venue?.acceptsPintPathCodes).toBe(true);
     expect(venue).not.toHaveProperty("stripeCustomerId");
     expect(await service.getPublicVenueById("missing-venue")).toBeNull();
   });

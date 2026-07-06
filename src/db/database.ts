@@ -23,6 +23,7 @@ const venueProfilesColumns = [
   { name: "stripe_subscription_id", definition: "TEXT" },
   { name: "subscription_status", definition: "TEXT" },
   { name: "tier_manual_override", definition: "INTEGER NOT NULL DEFAULT 0" },
+  { name: "accepts_pint_path_codes", definition: "INTEGER NOT NULL DEFAULT 0" },
 ] as const;
 
 const venueAnalyticsEventsColumns = [
