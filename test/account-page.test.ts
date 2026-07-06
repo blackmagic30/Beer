@@ -557,6 +557,7 @@ describe("account page shell", () => {
     expect(script).toContain("function hasCachedSupabaseSession");
     expect(script).toContain("function isVenueManagerContext");
     expect(script).toContain("function isAdminContext");
+    expect(script).toContain("function canUseVenuePortalContext");
     expect(script).toContain("subscriptionStatus: account.subscriptionStatus || null");
     expect(script).not.toContain("email: account.email || null");
     expect(script).not.toContain("email: session?.user?.email");
@@ -567,6 +568,7 @@ describe("account page shell", () => {
       expect(navLinkLabels(helpers.renderNav(active))).toEqual(publicNavLabels);
     });
     expect(script).toContain('const venueManagerNav = isVenueManagerContext()');
+    expect(script).toContain('const venuePortalNav = canUseVenuePortalContext()');
     expect(script).toContain('const adminNav = active === "admin" || isAdminContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
@@ -594,6 +596,7 @@ describe("account page shell", () => {
     expect(html).not.toContain('href="/submit.html" class="primary" data-auth-required');
     expect(html).toContain("function syncAuthenticatedNavLinks");
     expect(html).toContain("window.MelbBeerBusiness?.isVenueManagerContext?.()");
+    expect(html).toContain("window.MelbBeerBusiness?.canUseVenuePortalContext?.()");
     expect(html).toContain('document.querySelectorAll("[data-auth-required]")');
   });
 
@@ -619,6 +622,22 @@ describe("account page shell", () => {
 
     expect(navLinkLabels(nav)).toEqual(["Map", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
     expect(nav).toContain('class="pill" aria-current="page" href="/admin.html">Admin</a>');
+  });
+
+  it("shows the venue dashboard link to admins without changing bar-audience labels", () => {
+    const helpers = loadBusinessHelpers();
+    helpers.setAccountContext({
+      id: "admin-user-1",
+      role: "admin",
+      status: "active",
+      subscriptionStatus: "admin",
+    });
+    const nav = helpers.renderNav("account");
+
+    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
+    expect(nav).toContain('href="/venue-portal.html">Dashboard</a>');
+    expect(nav).toContain('href="/trust.html">FAQ</a>');
+    expect(nav).toContain('href="/feedback.html">Contact us</a>');
   });
 
   it("keeps potential partner leads compact on the admin page", () => {

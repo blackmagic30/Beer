@@ -96,6 +96,10 @@ describe("Pint Path beer catalogue", () => {
     expect(isLikelyBeerName("IPA")).toBe(false);
     expect(isLikelyBeerName("Happy Hour -8pm -")).toBe(false);
     expect(isLikelyBeerName("Heaps Normal % Lager Mornington Peninsula Free % XPA")).toBe(false);
+    expect(isLikelyBeerName("Poor Tom's Sydney Dry")).toBe(false);
+    expect(isLikelyBeerName("78 Degrees Whisky")).toBe(false);
+    expect(isLikelyBeerName("Premium Northern Victorian T bone")).toBe(false);
+    expect(isLikelyBeerName("Venom Cherry Sour")).toBe(true);
   });
 
   it("seeds the system beer registry and resolves static aliases", () => {

@@ -59,6 +59,10 @@ function isAdminContext() {
   return account?.role === "admin" || account?.subscriptionStatus === "admin";
 }
 
+function canUseVenuePortalContext() {
+  return isVenueManagerContext() || isAdminContext();
+}
+
 function hasCachedSupabaseSession() {
   try {
     for (let index = 0; index < window.localStorage.length; index += 1) {
@@ -543,6 +547,7 @@ async function updatePassword(password) {
 
 function renderNav(active = "") {
   const venueManagerNav = isVenueManagerContext();
+  const venuePortalNav = canUseVenuePortalContext();
   const adminNav = active === "admin" || isAdminContext();
   const activeKey = active === "trust" || active === "bar-faq"
     ? "faq"
@@ -552,7 +557,7 @@ function renderNav(active = "") {
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
   const navItems = [
     { key: "map", href: "/", label: "Map" },
-    ...(venueManagerNav ? [{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }] : []),
+    ...(venuePortalNav ? [{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }] : []),
     { key: "submit", href: "/submit.html", label: "Submit" },
     { key: "missions", href: "/missions.html", label: "Missions" },
     ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
@@ -713,6 +718,7 @@ window.MelbBeerBusiness = {
   getAccountContext,
   isVenueManagerContext,
   isAdminContext,
+  canUseVenuePortalContext,
   hasAuthenticatedSessionHint,
   getAnonymousSessionId,
   getViewerConfig,

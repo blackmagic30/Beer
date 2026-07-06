@@ -23,6 +23,36 @@ function formatCurrencyPrice(value: number): string {
   return `$${value.toFixed(value % 1 === 0 ? 0 : 2)}`;
 }
 
+function selectSlashSeparatedAustralianPintPrice(text: string): SelectedPintPrice | null {
+  if (!text.includes("/")) {
+    return null;
+  }
+
+  const prices = Array.from(text.matchAll(/(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)(?!\s*%)/gi))
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value) && value > 0 && value <= 80);
+
+  if (prices.length === 0) {
+    return null;
+  }
+
+  const selected =
+    prices.length >= 3
+      ? prices[2]
+      : prices.length === 2
+        ? prices[1]
+        : /^\s*\/\s*(?:A\$|AUD\s*|\$)?\s*\d/.test(text)
+          ? prices[0]
+          : null;
+
+  return selected == null
+    ? null
+    : {
+        priceNumeric: selected,
+        priceText: formatCurrencyPrice(selected),
+      };
+}
+
 export function selectLabeledPintPrice(priceText: string | null | undefined): SelectedPintPrice | null {
   const text = priceText?.trim();
   if (!text) {
@@ -97,7 +127,7 @@ export function selectLabeledPintPrice(priceText: string | null | undefined): Se
     .sort((left, right) => left.index - right.index)
     .find((match) => match.label === "pint");
   if (!pint) {
-    return null;
+    return selectSlashSeparatedAustralianPintPrice(text);
   }
 
   return {

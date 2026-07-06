@@ -14,10 +14,12 @@ import {
   VIEWER_TRACKED_BEERS,
   canonicalizeTrackedBeerName,
   findTrackedBeerByName,
+  isLikelyBeerName,
   normalizeBeerSearchKey,
 } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import { selectLabeledPintPrice } from "../../lib/menu-price-selection.js";
 import { redactSecrets } from "../../lib/redact.js";
 import {
   type GoogleAddressComponent,
@@ -81,6 +83,7 @@ interface GooglePlacesSearchResponse {
 
 const ADMIN_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const ADMIN_GOOGLE_VENUE_TYPE_SET = new Set<string>(ADMIN_GOOGLE_VENUE_TYPES);
+const MENU_PHOTO_OCR_MODEL = process.env.OPENAI_MENU_OCR_MODEL?.trim() || "gpt-4.1";
 
 interface MenuPhotoOcrModelItem {
   name: string;
@@ -222,6 +225,39 @@ function normalizeOcrResponse(value: unknown): MenuPhotoOcrModelResponse {
     overall_confidence: normalizeConfidence(value.overall_confidence, beers.length > 0 ? 0.7 : null),
     beers,
   };
+}
+
+function normalizedOcrBeerPrice(beer: MenuPhotoOcrModelItem): {
+  priceNumeric: number | null;
+  priceText: string | null;
+} {
+  const selectedPint = selectLabeledPintPrice(beer.price_text);
+  if (selectedPint) {
+    return {
+      priceNumeric: selectedPint.priceNumeric,
+      priceText: selectedPint.priceText,
+    };
+  }
+
+  const priceText = beer.price_text?.trim() || null;
+  const evidence = `${beer.name} ${priceText ?? ""} ${beer.notes ?? ""}`;
+  const priceNumeric = beer.price_numeric == null ? null : Number(beer.price_numeric);
+  if (priceNumeric == null || !Number.isFinite(priceNumeric)) {
+    return { priceNumeric: null, priceText };
+  }
+
+  const escapedPrice = String(priceNumeric).replace(/\.0$/, "").replace(".", "\\.");
+  const priceLooksLikeAbv = new RegExp(`\\b${escapedPrice}\\s*%`).test(evidence);
+  const hasCurrencyPrice = priceText != null && /(?:A\$|AUD\s*|\$)\s*\d/i.test(priceText);
+  if ((priceLooksLikeAbv || /\bABV\b/i.test(evidence)) && priceNumeric < 7 && !hasCurrencyPrice) {
+    return { priceNumeric: null, priceText };
+  }
+
+  if (priceNumeric > 80 || /\b(?:330|335|355|375|440|500|570)\s?ml\b/i.test(priceText ?? "")) {
+    return { priceNumeric: null, priceText };
+  }
+
+  return { priceNumeric, priceText };
 }
 
 function needsReviewFromConfidence(input: {
@@ -1391,7 +1427,9 @@ export class AdminService {
       "    }",
       "  ]",
       "}",
-      "Only include beer products that appear readable and useful for a pub beer map.",
+      "Read the whole image first, including all columns and lower sections, before returning JSON. Do not stop after the first readable row.",
+      "Only include beer, cider, and RTD products that appear under beer/cider/RTD/on tap/tins/cans/bottles sections and are useful for a regular pub beer map.",
+      "Do not include gin, vodka, whisky, bourbon, tequila, cocktails, wine, food, steak, venue welcome copy, promo copy, category descriptions, or event text as beer rows.",
       `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${this.getTrackedBeerNamesForOcrPrompt()}.`,
       "Use confidence values from 0 to 1 based on how readable and reliable each beer item looks.",
       "If a beer has a visible price, put the numeric value in price_numeric and preserve the menu wording in price_text.",
@@ -1399,12 +1437,16 @@ export class AdminService {
       "If a package row only shows size and ABV, with no actual price or currency, omit the row instead of inventing a price from the size.",
       "When a row shows labelled prices such as $8.5 POT, $17 PINT, choose the PINT price for price_numeric and price_text.",
       "When a table heading says Pots / Pints / Jugs, choose the Pints price as price_numeric and price_text.",
+      "When a tap section says pot, schooner and pint are available and a beer row shows three slash-separated prices such as $6 / $9 / $12, choose the third/rightmost price as the pint price. For two slash-separated tap prices such as 9/16.5, choose the second/rightmost price.",
       "When an Australian tap menu uses metric columns such as 285ml, 425ml, and 570ml, treat the 570ml column as the pint-equivalent price for price_numeric and price_text.",
+      "When a beer name wraps over two lines, combine the wrapped name into one name before pairing it with the price on that row.",
+      "Keep each menu row separate. Do not carry a beer name, price, or ABV from the previous row into the next row.",
       "Many PDF menus put the beer name and price on one line, then brewery, location, and ABV on the next line. Pair that following detail line with the beer above it in notes; do not emit the detail line as its own beer.",
       "When a section heading says ON TAP, mark every readable beer row under that heading as availability_status 'on_tap' until the next major section heading, even if the row only shows prices like 9/16.5, 7.5/14, or /16.",
       "When a section heading says TINS & BOTTLES, TINS, TINNIES, BOTTLES & CANS, CANS OR BOTTLES, CANS, BOTTLES, or PACKAGED, mark rows under that heading as availability_status 'package_only'. In Australian menus, tins means cans.",
       "If an ABV percentage is printed beside a beer, include it in notes with the brewery/source wording.",
       "Do not include category headings such as Lager, IPA, Sour Beer, Red Wine, or White Wine as beer rows.",
+      "If the row price/name pairing is ambiguous after checking the row, heading, and nearby detail line, omit the row instead of guessing.",
       "If tap or package format is not clear, use availability_status 'unknown'.",
       input.venueNameHint ? `Venue hint: ${input.venueNameHint}` : "Venue hint: none",
     ].join("\n");
@@ -1412,7 +1454,7 @@ export class AdminService {
     let response: Awaited<ReturnType<OpenAI["responses"]["create"]>>;
     try {
       response = await this.openai.responses.create({
-        model: "gpt-4.1-mini",
+        model: MENU_PHOTO_OCR_MODEL,
         input: [
           {
             role: "user",
@@ -1424,7 +1466,7 @@ export class AdminService {
               {
                 type: "input_image",
                 image_url: input.imageDataUrl,
-                detail: "auto",
+                detail: "high",
               },
             ],
           },
@@ -1453,12 +1495,13 @@ export class AdminService {
     }
 
     const parsed = normalizeOcrResponse(parsedPayload);
-    const rawBeers = parsed.beers.map((beer) => {
+    const rawBeers = parsed.beers.filter((beer) => isLikelyBeerName(beer.name)).map((beer) => {
+      const normalizedPrice = normalizedOcrBeerPrice(beer);
       const normalized = buildManualBeerEntry({
         name: beer.name,
         servingSize: "pint",
-        priceNumeric: beer.price_numeric,
-        priceText: beer.price_text,
+        priceNumeric: normalizedPrice.priceNumeric,
+        priceText: normalizedPrice.priceText,
         availabilityStatus: beer.availability_status,
         availableOnTap: beer.available_on_tap,
         availablePackageOnly: beer.available_package_only,
@@ -1466,7 +1509,7 @@ export class AdminService {
         needsReview: needsReviewFromConfidence({
           confidence: beer.confidence,
           availabilityStatus: beer.availability_status,
-          priceNumeric: beer.price_numeric,
+          priceNumeric: normalizedPrice.priceNumeric,
         }),
       });
 

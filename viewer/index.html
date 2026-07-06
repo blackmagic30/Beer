@@ -3896,11 +3896,12 @@
     function syncAuthenticatedNavLinks() {
       const isAuthenticated = Boolean(window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.());
       const isVenueManager = Boolean(window.MelbBeerBusiness?.isVenueManagerContext?.());
+      const canUseVenuePortal = Boolean(window.MelbBeerBusiness?.canUseVenuePortalContext?.());
       document.querySelectorAll("[data-auth-required]").forEach((link) => {
         link.hidden = !isAuthenticated || isVenueManager;
       });
       if (venueDashboardLinkEl) {
-        venueDashboardLinkEl.hidden = !isVenueManager;
+        venueDashboardLinkEl.hidden = !canUseVenuePortal;
       }
       if (venueFaqLinkEl) {
         venueFaqLinkEl.href = isVenueManager ? "/trust.html?audience=bars" : "/trust.html";

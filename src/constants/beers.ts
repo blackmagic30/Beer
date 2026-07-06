@@ -146,6 +146,9 @@ export function isLikelyBeerName(value: string | null | undefined): boolean {
 
   if (
     /\b(?:happy\s*hour|included|includes|cocktails?|negronis?|spirits?|house\s*wines?|basic\s*spirits?|selected\s*taps?|weekly\s*specials?|grab\s+a|for\s+just|blogs?|event|source|menu)\b/i.test(normalizedValue) ||
+    /\b(?:gin|vodka|rum|tequila|mezcal|whisk(?:e)?y|bourbon|brandy|cognac|vermouth|liqueur|amaro|aperol|campari|martini|margarita|spritz|mojito|daiquiri|poor\s+tom'?s|archie\s+rose|four\s+pillars|mgc\s+dry|78\s+degrees|hellyer'?s)\b/i.test(normalizedValue) ||
+    /\b(?:wine|shiraz|pinot|chardonnay|sauvignon|riesling|merlot|cabernet|prosecco|champagne|ros[eé]|grigio|moscato)\b/i.test(normalizedValue) ||
+    /\b(?:steak|t\s?-?\s?bone|sirloin|ribeye|burger|fries|chips|parma|parmi|schnitzel|oysters?|calamari|prawns?|salad|dessert)\b/i.test(normalizedValue) ||
     /\byou\W?ll\s+find\b/i.test(normalizedValue) ||
     /\b(?:pints?|pots?|schooners?)\s+(?:of|and|selected|house)\b/i.test(normalizedValue) ||
     /\b\d{1,2}(?::?\d{2})?\s*(?:am|pm)\b/i.test(normalizedValue) ||

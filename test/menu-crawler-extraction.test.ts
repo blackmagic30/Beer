@@ -671,6 +671,9 @@ describe("menu crawler extraction", () => {
       expect(source).toContain("Never use package volume, serving size, ABV");
       expect(source).toContain("omit the row instead of inventing a price from the size");
       expect(source).toContain("choose the PINT price");
+      expect(source).toContain("Read the whole image first");
+      expect(source).toContain("Do not include gin, vodka, whisky");
+      expect(source).toContain('detail: "high"');
       expect(source).toContain("CANS OR BOTTLES");
     }
   });
@@ -683,6 +686,18 @@ describe("menu crawler extraction", () => {
     expect(selectLabeledPintPrice("Pot $8.5 Schooner $12 Pint $17 Jug $35")).toEqual({
       priceNumeric: 17,
       priceText: "$17",
+    });
+    expect(selectLabeledPintPrice("$6 / $9 / $12")).toEqual({
+      priceNumeric: 12,
+      priceText: "$12",
+    });
+    expect(selectLabeledPintPrice("9/16.5")).toEqual({
+      priceNumeric: 16.5,
+      priceText: "$16.50",
+    });
+    expect(selectLabeledPintPrice("/16")).toEqual({
+      priceNumeric: 16,
+      priceText: "$16",
     });
     expect(selectLabeledPintPrice("$11 bottle")).toBeNull();
   });

@@ -211,7 +211,8 @@ describe("admin Google Places venue lookup", () => {
       );
       let prompt = "";
       const create = vi.fn(async (request: {
-        input: Array<{ content: Array<{ type: string; text?: string }> }>;
+        model: string;
+        input: Array<{ content: Array<{ type: string; text?: string; detail?: string }> }>;
       }) => {
         prompt = request.input[0]?.content.find((part) => part.type === "input_text")?.text ?? "";
         return {
@@ -244,6 +245,16 @@ describe("admin Google Places venue lookup", () => {
         imageDataUrl: "data:image/jpeg;base64,AAAA",
       });
 
+      expect(create).toHaveBeenCalledWith(expect.objectContaining({
+        model: "gpt-4.1",
+        input: expect.arrayContaining([
+          expect.objectContaining({
+            content: expect.arrayContaining([
+              expect.objectContaining({ type: "input_image", detail: "high" }),
+            ]),
+          }),
+        ]),
+      }));
       expect(prompt).toContain("Very Local Hazy Pint");
       expect(prompt).toContain("285ml, 425ml, and 570ml");
       expect(prompt).toContain("pint-equivalent price");
