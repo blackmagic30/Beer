@@ -674,6 +674,9 @@ describe("menu crawler extraction", () => {
       expect(source).toContain("Read the whole image first");
       expect(source).toContain("Do not include gin, vodka, whisky");
       expect(source).toContain('detail: "high"');
+      expect(source).toContain("second-pass quality check");
+      expect(source).toContain("Proposed first-pass extraction JSON");
+      expect(source).toContain("temperature: 0");
       expect(source).toContain("CANS OR BOTTLES");
     }
   });

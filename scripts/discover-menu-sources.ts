@@ -42,6 +42,8 @@ const MAX_HTML_BYTES = 1_500_000;
 const MAX_IMAGE_BYTES = 8_000_000;
 const MAX_PDF_BYTES = 20_000_000;
 const MENU_DISCOVERY_OCR_MODEL = process.env.OPENAI_MENU_OCR_MODEL?.trim() || "gpt-4.1";
+const MENU_DISCOVERY_OCR_REVIEW_PASS_ENABLED =
+  (process.env.OPENAI_MENU_OCR_REVIEW_PASS ?? "true").trim().toLowerCase() !== "false";
 const MAX_TEXT_EXTRACTION_CHARS = 80_000;
 const MAX_JSON_SCRIPT_CHARS = 500_000;
 const MAX_ROWS_PER_TEXT_SOURCE = 30;
@@ -236,6 +238,12 @@ function normalizeConfidence(value: unknown, fallback: number | null = null): nu
   }
 
   return Math.min(1, Math.max(0, numeric));
+}
+
+function normalizeOcrPayload(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function normalizedImageOcrBeerPrice(record: Record<string, unknown>, name: string): {
@@ -2438,6 +2446,99 @@ async function fetchImageDataUrlForOcr(sourceUrl: string): Promise<string> {
   return request;
 }
 
+async function requestMenuImageOcrPayload(
+  openai: OpenAI,
+  imageDataUrl: string,
+  prompt: string,
+): Promise<Record<string, unknown>> {
+  const response = await openai.responses.create({
+    model: MENU_DISCOVERY_OCR_MODEL,
+    temperature: 0,
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: prompt },
+          { type: "input_image", image_url: imageDataUrl, detail: "high" },
+        ],
+      },
+    ],
+  });
+
+  if (!response.output_text || !response.output_text.trim()) {
+    throw new Error("OCR returned an empty response");
+  }
+
+  return normalizeOcrPayload(parseJsonResponse(response.output_text));
+}
+
+function buildImageOcrReviewPrompt(
+  candidate: MenuSourceCandidate,
+  firstPass: Record<string, unknown>,
+): string {
+  return [
+    "You are doing a second-pass quality check on beer menu OCR for Pint Path.",
+    "Compare the proposed JSON extraction against the image itself. Return corrected JSON only, using the same schema.",
+    "Be stricter than the first pass. Remove any proposed row that is not clearly visible as beer, cider, or RTD.",
+    "Remove spirits, gin, whisky, vodka, cocktails, wine, food, steak, welcome copy, category descriptions, promos, happy-hour/event prices, and venue marketing copy.",
+    "Correct any row where the first pass used ABV, millilitres, package size, year, count, pot price, or schooner price as the pint price.",
+    "For Australian tap rows with pot/schooner/pint slash prices, choose the pint price: the third price for three values, the second/rightmost price for two values.",
+    "For labelled prices, only use the value labelled PINT as price_numeric and price_text.",
+    "If a beer/cider/RTD row is clearly readable in the image and missing from the proposed JSON, add it.",
+    "If a name, price, or availability cannot be verified from the image, remove the row instead of guessing.",
+    "Set confidence below 0.8 for corrected rows, below 0.65 for layout-ambiguous rows, and below 0.5 only when the row should normally be omitted.",
+    "Keep notes concise and include ABV/brewery text only when visible.",
+    "Schema:",
+    "{",
+    '  "venue_name_guess": string | null,',
+    '  "captured_notes": string | null,',
+    '  "overall_confidence": number | null,',
+    '  "beers": [',
+    "    {",
+    '      "name": string,',
+    '      "price_numeric": number | null,',
+    '      "price_text": string | null,',
+    '      "availability_status": "on_tap" | "package_only" | "unavailable" | "unknown",',
+    '      "notes": string | null,',
+    '      "confidence": number | null',
+    "    }",
+    "  ]",
+    "}",
+    `Canonical tracked beer names to prefer when clearly matched: ${VIEWER_TRACKED_BEERS.map((beer) => beer.name).join(", ")}.`,
+    `Venue hint: ${candidate.venueName}`,
+    `Source URL: ${candidate.sourceUrl}`,
+    `Proposed first-pass extraction JSON: ${JSON.stringify(firstPass)}`,
+  ].join("\n");
+}
+
+async function reviewMenuImageOcrPayload(
+  candidate: MenuSourceCandidate,
+  openai: OpenAI,
+  imageDataUrl: string,
+  firstPass: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (!MENU_DISCOVERY_OCR_REVIEW_PASS_ENABLED) {
+    return firstPass;
+  }
+
+  try {
+    const reviewed = await requestMenuImageOcrPayload(
+      openai,
+      imageDataUrl,
+      buildImageOcrReviewPrompt(candidate, firstPass),
+    );
+    return {
+      ...reviewed,
+      venue_name_guess: reviewed.venue_name_guess ?? firstPass.venue_name_guess,
+      captured_notes: reviewed.captured_notes ?? firstPass.captured_notes,
+      overall_confidence: reviewed.overall_confidence ?? firstPass.overall_confidence,
+    };
+  } catch (error) {
+    console.warn(`Menu OCR review pass failed for ${candidate.venueName}: ${error instanceof Error ? error.message : "unknown error"}`);
+    return firstPass;
+  }
+}
+
 async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: OpenAI | null): Promise<MenuImageOcrResult | null> {
   if (!envFlag("MENU_DISCOVERY_OCR_IMAGES")) {
     return null;
@@ -2491,27 +2592,8 @@ async function maybeExtractImageOcr(candidate: MenuSourceCandidate, openai: Open
       `Source URL: ${candidate.sourceUrl}`,
     ].join("\n");
 
-    const response = await openai.responses.create({
-      model: MENU_DISCOVERY_OCR_MODEL,
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: prompt },
-            { type: "input_image", image_url: imageDataUrl, detail: "high" },
-          ],
-        },
-      ],
-    });
-
-    if (!response.output_text || !response.output_text.trim()) {
-      throw new Error("OCR returned an empty response");
-    }
-
-    const parsed = parseJsonResponse(response.output_text);
-    const record = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
+    const firstPass = await requestMenuImageOcrPayload(openai, imageDataUrl, prompt);
+    const record = await reviewMenuImageOcrPayload(candidate, openai, imageDataUrl, firstPass);
     const beers = Array.isArray(record.beers)
       ? record.beers.map(normalizeOcrBeer).filter((beer): beer is MenuImageOcrBeer => Boolean(beer))
       : [];

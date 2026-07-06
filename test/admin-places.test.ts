@@ -209,12 +209,12 @@ describe("admin Google Places venue lookup", () => {
         undefined,
         database,
       );
-      let prompt = "";
+      const prompts: string[] = [];
       const create = vi.fn(async (request: {
         model: string;
         input: Array<{ content: Array<{ type: string; text?: string; detail?: string }> }>;
       }) => {
-        prompt = request.input[0]?.content.find((part) => part.type === "input_text")?.text ?? "";
+        prompts.push(request.input[0]?.content.find((part) => part.type === "input_text")?.text ?? "");
         return {
           output_text: JSON.stringify({
             venue_name_guess: null,
@@ -247,6 +247,7 @@ describe("admin Google Places venue lookup", () => {
 
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
         model: "gpt-4.1",
+        temperature: 0,
         input: expect.arrayContaining([
           expect.objectContaining({
             content: expect.arrayContaining([
@@ -255,9 +256,12 @@ describe("admin Google Places venue lookup", () => {
           }),
         ]),
       }));
-      expect(prompt).toContain("Very Local Hazy Pint");
-      expect(prompt).toContain("285ml, 425ml, and 570ml");
-      expect(prompt).toContain("pint-equivalent price");
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(prompts[0]).toContain("Very Local Hazy Pint");
+      expect(prompts[0]).toContain("285ml, 425ml, and 570ml");
+      expect(prompts[0]).toContain("pint-equivalent price");
+      expect(prompts[1]).toContain("second-pass quality check");
+      expect(prompts[1]).toContain("Proposed first-pass extraction JSON");
       expect(result.beers[0]).toEqual(expect.objectContaining({
         name: "Very Local Hazy Pint",
         needsReview: false,

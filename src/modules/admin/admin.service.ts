@@ -84,6 +84,10 @@ interface GooglePlacesSearchResponse {
 const ADMIN_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const ADMIN_GOOGLE_VENUE_TYPE_SET = new Set<string>(ADMIN_GOOGLE_VENUE_TYPES);
 const MENU_PHOTO_OCR_MODEL = process.env.OPENAI_MENU_OCR_MODEL?.trim() || "gpt-4.1";
+const MENU_PHOTO_OCR_REVIEW_PASS_ENABLED =
+  (process.env.OPENAI_MENU_OCR_REVIEW_PASS ?? "true").trim().toLowerCase() !== "false";
+
+type MenuPhotoOcrInput = AdminMenuPhotoOcrInput | { venueNameHint: string | null; imageDataUrl: string };
 
 interface MenuPhotoOcrModelItem {
   name: string;
@@ -1398,13 +1402,122 @@ export class AdminService {
     return `data:${contentType};base64,${base64}`;
   }
 
-  private async extractMenuPhoto(
-    input: AdminMenuPhotoOcrInput | { venueNameHint: string | null; imageDataUrl: string },
-  ): Promise<NormalizedOcrExtraction> {
+  private async requestMenuPhotoOcrModel(
+    input: MenuPhotoOcrInput,
+    prompt: string,
+  ): Promise<MenuPhotoOcrModelResponse> {
     if (!this.openai) {
       throw new AppError("Menu OCR is not configured. Set OPENAI_API_KEY on the server.", 503);
     }
 
+    let response: Awaited<ReturnType<OpenAI["responses"]["create"]>>;
+    try {
+      response = await this.openai.responses.create({
+        model: MENU_PHOTO_OCR_MODEL,
+        temperature: 0,
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: prompt,
+              },
+              {
+                type: "input_image",
+                image_url: input.imageDataUrl,
+                detail: "high",
+              },
+            ],
+          },
+        ],
+      });
+    } catch (error) {
+      const details = getOcrProviderErrorDetails(error);
+      logger.warn("Menu OCR provider request failed", details);
+      throw new ExternalServiceError(
+        "Menu OCR provider failed. Try a clearer or smaller photo, or enter the beer rows manually.",
+        details,
+      );
+    }
+
+    if (!response.output_text || response.output_text.trim().length === 0) {
+      throw new ExternalServiceError("Menu OCR returned an empty response");
+    }
+
+    let parsedPayload: unknown;
+    try {
+      parsedPayload = parseJsonResponse(response.output_text);
+    } catch (error) {
+      throw new ExternalServiceError("Menu OCR returned unreadable output. Try again or enter the beer rows manually.", {
+        message: error instanceof Error ? redactSecrets(error.message) : "Invalid JSON response",
+      });
+    }
+
+    return normalizeOcrResponse(parsedPayload);
+  }
+
+  private async reviewMenuPhotoOcrExtraction(
+    input: MenuPhotoOcrInput,
+    firstPass: MenuPhotoOcrModelResponse,
+  ): Promise<MenuPhotoOcrModelResponse> {
+    if (!MENU_PHOTO_OCR_REVIEW_PASS_ENABLED) {
+      return firstPass;
+    }
+
+    const prompt = [
+      "You are doing a second-pass quality check on beer menu OCR for Pint Path.",
+      "Compare the proposed JSON extraction against the image itself. Return corrected JSON only, using the same schema.",
+      "Be stricter than the first pass. If a proposed row is not clearly visible in the image as beer, cider, or RTD, remove it.",
+      "Remove spirits, gin, whisky, vodka, cocktails, wine, food, steak, welcome copy, category descriptions, promos, happy-hour/event prices, and venue marketing copy.",
+      "Correct any row where the first pass used ABV, millilitres, package size, year, count, pot price, or schooner price as the pint price.",
+      "For Australian tap rows with pot/schooner/pint slash prices, choose the pint price: the third price for three values, the second/rightmost price for two values.",
+      "For labelled prices, only use the value labelled PINT as price_numeric and price_text.",
+      "If a beer/cider/RTD row is clearly readable in the image and missing from the proposed JSON, add it.",
+      "If a name, price, or availability cannot be verified from the image, remove the row instead of guessing.",
+      "Set confidence below 0.8 for corrected rows, below 0.65 for layout-ambiguous rows, and below 0.5 only when the row should normally be omitted.",
+      "Keep notes concise and include ABV/brewery text only when visible.",
+      "Schema:",
+      "{",
+      '  "venue_name_guess": string | null,',
+      '  "captured_notes": string | null,',
+      '  "overall_confidence": number | null,',
+      '  "beers": [',
+      "    {",
+      '      "name": string,',
+      '      "price_numeric": number | null,',
+      '      "price_text": string | null,',
+      '      "availability_status": "on_tap" | "package_only" | "unavailable" | "unknown",',
+      '      "available_on_tap": boolean | null,',
+      '      "available_package_only": boolean,',
+      '      "unavailable_reason": "cans_only" | "bottles_only" | "cans_or_bottles" | "no_pints" | "not_on_tap" | "not_stocked" | "unknown" | null,',
+      '      "notes": string | null,',
+      '      "confidence": number | null',
+      "    }",
+      "  ]",
+      "}",
+      `Canonical tracked beer names to prefer when clearly matched: ${this.getTrackedBeerNamesForOcrPrompt()}.`,
+      input.venueNameHint ? `Venue hint: ${input.venueNameHint}` : "Venue hint: none",
+      `Proposed first-pass extraction JSON: ${JSON.stringify(firstPass)}`,
+    ].join("\n");
+
+    try {
+      const reviewed = await this.requestMenuPhotoOcrModel(input, prompt);
+      return {
+        ...reviewed,
+        venue_name_guess: reviewed.venue_name_guess ?? firstPass.venue_name_guess,
+        captured_notes: reviewed.captured_notes ?? firstPass.captured_notes,
+        overall_confidence: reviewed.overall_confidence ?? firstPass.overall_confidence,
+      };
+    } catch (error) {
+      logger.warn("Menu OCR review pass failed; using first pass extraction", {
+        error: getExternalErrorMessage(error),
+      });
+      return firstPass;
+    }
+  }
+
+  private async extractMenuPhoto(input: MenuPhotoOcrInput): Promise<NormalizedOcrExtraction> {
     const prompt = [
       "Extract useful beer menu information from this pub or bar menu photo.",
       "Return JSON only.",
@@ -1451,50 +1564,8 @@ export class AdminService {
       input.venueNameHint ? `Venue hint: ${input.venueNameHint}` : "Venue hint: none",
     ].join("\n");
 
-    let response: Awaited<ReturnType<OpenAI["responses"]["create"]>>;
-    try {
-      response = await this.openai.responses.create({
-        model: MENU_PHOTO_OCR_MODEL,
-        input: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: prompt,
-              },
-              {
-                type: "input_image",
-                image_url: input.imageDataUrl,
-                detail: "high",
-              },
-            ],
-          },
-        ],
-      });
-    } catch (error) {
-      const details = getOcrProviderErrorDetails(error);
-      logger.warn("Menu OCR provider request failed", details);
-      throw new ExternalServiceError(
-        "Menu OCR provider failed. Try a clearer or smaller photo, or enter the beer rows manually.",
-        details,
-      );
-    }
-
-    if (!response.output_text || response.output_text.trim().length === 0) {
-      throw new ExternalServiceError("Menu OCR returned an empty response");
-    }
-
-    let parsedPayload: unknown;
-    try {
-      parsedPayload = parseJsonResponse(response.output_text);
-    } catch (error) {
-      throw new ExternalServiceError("Menu OCR returned unreadable output. Try again or enter the beer rows manually.", {
-        message: error instanceof Error ? redactSecrets(error.message) : "Invalid JSON response",
-      });
-    }
-
-    const parsed = normalizeOcrResponse(parsedPayload);
+    const firstPass = await this.requestMenuPhotoOcrModel(input, prompt);
+    const parsed = await this.reviewMenuPhotoOcrExtraction(input, firstPass);
     const rawBeers = parsed.beers.filter((beer) => isLikelyBeerName(beer.name)).map((beer) => {
       const normalizedPrice = normalizedOcrBeerPrice(beer);
       const normalized = buildManualBeerEntry({
