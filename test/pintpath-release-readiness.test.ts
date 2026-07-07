@@ -267,6 +267,192 @@ describe("Pint Path release-readiness security gates", () => {
     });
   });
 
+  it("runs a dummy upload-to-publication journey through admin and community approval", async () => {
+    const harness = createHarness();
+    const uploader = signup(harness, "dummy-uploader@pintpath.test");
+    const admin = signup(harness, "admin@pintpath.test");
+    const verifierOne = signup(harness, "dummy-verifier-one@pintpath.test");
+    const verifierTwo = signup(harness, "dummy-verifier-two@pintpath.test");
+
+    await withHttpServer(harness.app, async (baseUrl) => {
+      const photoUpload = await requestJson(baseUrl, "/api/business/submissions", {
+        method: "POST",
+        token: uploader.token,
+        body: validSubmission({
+          clientSubmissionId: "dummy-photo-upload-1",
+          venueId: "dummy-admin-venue",
+          venueName: "Dummy Admin Approval Bar",
+          suburb: "Richmond",
+          submissionType: "photo_upload",
+          sourcePhotoDataUrl: PNG_DATA_URL,
+          sourcePhotoUrl: null,
+          items: [],
+        }),
+      });
+      expect(photoUpload.response.status).toBe(201);
+      expect((photoUpload.json?.data as { ocrStatus: string; submission: { status: string; sourcePhotoUrl: string } }))
+        .toMatchObject({
+          ocrStatus: "queued_for_review",
+          submission: {
+            status: "pending",
+            sourcePhotoUrl: expect.stringMatching(/^private:evidence:/),
+          },
+        });
+
+      const manualUpload = await requestJson(baseUrl, "/api/business/submissions", {
+        method: "POST",
+        token: uploader.token,
+        body: validSubmission({
+          clientSubmissionId: "dummy-admin-beer-1",
+          venueId: "dummy-admin-venue",
+          venueName: "Dummy Admin Approval Bar",
+          suburb: "Richmond",
+          sourcePhotoDataUrl: PNG_DATA_URL,
+          items: [{
+            beerName: "Carlton Draught",
+            servingSize: "pint",
+            price: 12,
+            isHappyHourPrice: false,
+            happyHourDetails: null,
+            isOnTap: "yes",
+          }],
+        }),
+      });
+      expect(manualUpload.response.status).toBe(201);
+      const manualSubmission = (manualUpload.json?.data as { submission: { id: string; status: string } }).submission;
+      expect(manualSubmission.status).toBe("pending");
+
+      const pendingBeforeAdmin = await requestJson(baseUrl, "/api/business/submissions?status=pending&includeReviewData=true", {
+        token: admin.token,
+      });
+      expect(pendingBeforeAdmin.response.status).toBe(200);
+      expect((pendingBeforeAdmin.json?.data as { submissions: Array<{ id: string }> }).submissions.map((submission) => submission.id))
+        .toEqual(expect.arrayContaining([manualSubmission.id]));
+
+      const hiddenBeforeApproval = await requestJson(
+        baseUrl,
+        "/api/business/price-records?venueId=dummy-admin-venue&reveal=true&anonymousSessionId=dummy-before-admin",
+        { token: admin.token },
+      );
+      expect(hiddenBeforeApproval.response.status).toBe(200);
+      expect((hiddenBeforeApproval.json?.data as { records: Array<{ beerName: string }> }).records)
+        .not.toEqual(expect.arrayContaining([expect.objectContaining({ beerName: "Carlton Draught" })]));
+
+      const adminReview = await requestJson(baseUrl, `/api/business/submissions/${manualSubmission.id}/review`, {
+        method: "POST",
+        token: admin.token,
+        body: {
+          status: "approved",
+          rejectionReason: null,
+          fraudFlagged: false,
+          pointsAwarded: 5,
+          confidence: "photo_verified",
+        },
+      });
+      expect(adminReview.response.status).toBe(200);
+      expect((adminReview.json?.data as { submission: { status: string }; pointsAwarded: number }))
+        .toMatchObject({ submission: { status: "approved" }, pointsAwarded: 0 });
+
+      const publishedAfterAdmin = await requestJson(
+        baseUrl,
+        "/api/business/price-records?venueId=dummy-admin-venue&reveal=true&anonymousSessionId=dummy-after-admin",
+        { token: admin.token },
+      );
+      expect(publishedAfterAdmin.response.status).toBe(200);
+      expect((publishedAfterAdmin.json?.data as { records: Array<{ beerName: string; price: number; confidence: string; sourceSubmissionId: string }> }).records)
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            beerName: "Carlton Draught",
+            price: 12,
+            confidence: "photo_verified",
+            sourceSubmissionId: manualSubmission.id,
+          }),
+        ]));
+
+      const communityUpload = await requestJson(baseUrl, "/api/business/submissions", {
+        method: "POST",
+        token: uploader.token,
+        body: validSubmission({
+          clientSubmissionId: "dummy-community-beer-1",
+          venueId: "dummy-community-venue",
+          venueName: "Dummy Community Bar",
+          suburb: "Fitzroy",
+          items: [{
+            beerName: "Guinness",
+            servingSize: "pint",
+            price: 13,
+            isHappyHourPrice: false,
+            happyHourDetails: null,
+            isOnTap: "yes",
+          }],
+        }),
+      });
+      expect(communityUpload.response.status).toBe(201);
+      const communitySubmission = (communityUpload.json?.data as { submission: { id: string; status: string } }).submission;
+      expect(communitySubmission.status).toBe("pending");
+
+      const communityHiddenBeforeConsensus = await requestJson(
+        baseUrl,
+        "/api/business/price-records?venueId=dummy-community-venue&reveal=true&anonymousSessionId=dummy-before-community",
+        { token: admin.token },
+      );
+      expect((communityHiddenBeforeConsensus.json?.data as { records: Array<{ beerName: string }> }).records)
+        .not.toEqual(expect.arrayContaining([expect.objectContaining({ beerName: "Guinness" })]));
+
+      const firstVerification = await requestJson(baseUrl, `/api/business/submissions/${communitySubmission.id}/verifications`, {
+        method: "POST",
+        token: verifierOne.token,
+        body: { result: "confirmed", notes: "Dummy first verifier saw the menu." },
+      });
+      expect(firstVerification.response.status).toBe(201);
+      expect((firstVerification.json?.data as { autoApproved: boolean }).autoApproved).toBe(false);
+
+      const stillHiddenAfterOne = await requestJson(
+        baseUrl,
+        "/api/business/price-records?venueId=dummy-community-venue&reveal=true&anonymousSessionId=dummy-after-one",
+        { token: admin.token },
+      );
+      expect((stillHiddenAfterOne.json?.data as { records: Array<{ beerName: string }> }).records)
+        .not.toEqual(expect.arrayContaining([expect.objectContaining({ beerName: "Guinness" })]));
+
+      const secondVerification = await requestJson(baseUrl, `/api/business/submissions/${communitySubmission.id}/verifications`, {
+        method: "POST",
+        token: verifierTwo.token,
+        body: { result: "confirmed", notes: "Dummy second verifier saw the same price." },
+      });
+      expect(secondVerification.response.status).toBe(201);
+      expect((secondVerification.json?.data as { autoApproved: boolean; message: string })).toMatchObject({
+        autoApproved: true,
+        message: "Verification saved. This price has enough community confirmations and is now live.",
+      });
+
+      const publishedByCommunity = await requestJson(
+        baseUrl,
+        "/api/business/price-records?venueId=dummy-community-venue&reveal=true&anonymousSessionId=dummy-community-live",
+        { token: admin.token },
+      );
+      expect(publishedByCommunity.response.status).toBe(200);
+      expect((publishedByCommunity.json?.data as { records: Array<{ beerName: string; price: number; confidence: string; sourceSubmissionId: string }> }).records)
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            beerName: "Guinness",
+            price: 13,
+            confidence: "community_confirmed",
+            sourceSubmissionId: communitySubmission.id,
+          }),
+        ]));
+
+      const uploaderDashboard = await requestJson(baseUrl, "/api/business/account", { token: uploader.token });
+      expect(uploaderDashboard.response.status).toBe(200);
+      expect((uploaderDashboard.json?.data as { dashboardStats: { totalUploads: number; verifiedCount: number; pendingVerificationCount: number } }).dashboardStats)
+        .toMatchObject({
+          totalUploads: 3,
+          verifiedCount: 2,
+          pendingVerificationCount: 1,
+        });
+    });
+  });
+
   it("keeps admin and analytics APIs protected from anonymous and normal users", async () => {
     const harness = createHarness();
     const user = signup(harness, "normal@pintpath.test");
