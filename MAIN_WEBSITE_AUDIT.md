@@ -60,7 +60,7 @@ Scope: main Pint Path / BeerMap website in `viewer/`, `src/`, `supabase/`, `scri
 6. Clarify venue pricing/tier naming.
    - The requested Basic/Plus/Pro mental model does not match the current UI exactly. The site now presents Free and Pro; old `plus` is normalized to Pro.
    - Decide whether launch copy should say Basic/Pro, Free/Pro, or Basic/Plus/Pro, then make pricing, dashboard gates, tests, and env docs consistent.
-   - Also clarify whether venue Pro `A$299` is monthly, yearly, beta, or one-off.
+   - Venue Pro is now shown as `A$149/month`; keep launch copy, dashboard gates, tests, and env docs consistent with that monthly plan.
 
 7. Reduce first-load weight and improve cache strategy.
    - `viewer/index.html` is about `292 KB`, `viewer/business.css` about `174 KB`, `viewer/venue-portal.html` about `175 KB`, and `viewer/assets/pint-path-logo.png` about `804 KB`.

@@ -184,14 +184,6 @@
                   <input name="quantity" type="number" min="1" max="20" value="1" />
                 </label>
                 <div class="redemptionSelectionStack">
-                  <div class="discountQuickPanel">
-                    <span class="eyebrow">Common app discount</span>
-                    <div class="actionRow actionRow--compact">
-                      <button class="button button--small" type="button" data-savings-dollars="0">$0</button>
-                      <button class="button button--small" type="button" data-savings-dollars="1">$1 off</button>
-                      <button class="button button--small" type="button" data-savings-dollars="2">$2 off</button>
-                    </div>
-                  </div>
                   <div id="discountSpecialChoices" class="discountSpecialChoices"></div>
                   <div id="selectedDiscountSpecial" class="selectedDiscountSpecial" hidden></div>
                 </div>
@@ -2581,23 +2573,10 @@
       return 0;
     }
 
-    function syncDiscountSavingsButtons() {
-      const form = document.getElementById("discountRedemptionForm");
-      if (!form) return;
-      const selectedValue = String(Number(field(form, "estimatedSavingsDollars").value || 0));
-      document.querySelectorAll(".discountQuickPanel [data-savings-dollars]").forEach((button) => {
-        const buttonValue = String(Number(button.dataset.savingsDollars || 0));
-        const isSelected = buttonValue === selectedValue;
-        button.classList.toggle("button--primary", isSelected);
-        button.setAttribute("aria-pressed", isSelected ? "true" : "false");
-      });
-    }
-
     function syncSelectedDiscountSpecial() {
       const panel = document.getElementById("selectedDiscountSpecial");
       const form = document.getElementById("discountRedemptionForm");
       if (!panel || !form) return;
-      syncDiscountSavingsButtons();
       const specialId = field(form, "specialId").value;
       document.querySelectorAll(".discountSpecialChoice").forEach((button) => {
         const isSelected = button.dataset.discountSpecialId === specialId && Boolean(specialId);
@@ -2626,9 +2605,7 @@
       const selectedOption = select.selectedOptions?.[0] || null;
       const specialId = selectedOption?.dataset?.discountSpecialId || "";
       field(form, "specialId").value = specialId;
-      if (selectedOption?.dataset?.savingsDollars != null) {
-        field(form, "estimatedSavingsDollars").value = selectedOption.dataset.savingsDollars || "0";
-      }
+      field(form, "estimatedSavingsDollars").value = selectedOption?.dataset?.savingsDollars ?? "0";
       syncSelectedDiscountSpecial();
     }
 
@@ -3718,7 +3695,7 @@
         if (target.dataset.discountSpecialId && discountRedemptionFormElement) {
           field(discountRedemptionFormElement, "specialId").value = target.dataset.discountSpecialId;
           field(discountRedemptionFormElement, "itemName").value = target.dataset.discountItem || "Pint Path special";
-          if (target.dataset.savingsDollars) {
+          if (target.dataset.savingsDollars != null) {
             field(discountRedemptionFormElement, "estimatedSavingsDollars").value = target.dataset.savingsDollars;
           }
           syncSelectedDiscountSpecial();

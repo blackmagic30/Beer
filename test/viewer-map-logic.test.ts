@@ -365,7 +365,8 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain('<select name="itemName" required>');
     expect(venuePortalHtml).toContain('optgroup label="Pint Path specials"');
     expect(venuePortalHtml).toContain('optgroup label="Beers / stock"');
-    expect(venuePortalHtml).toContain('data-savings-dollars="0">$0');
+    expect(venuePortalHtml).not.toContain("Common app discount");
+    expect(venuePortalHtml).not.toContain('data-savings-dollars="0">$0');
     expect(venuePortalHtml).toContain('name="estimatedSavingsDollars" type="hidden" value="0"');
     expect(venuePortalHtml).toContain("added automatically");
     expect(venuePortalHtml).not.toContain("Fixed-price special selected. Enter actual savings if you want it tracked.");

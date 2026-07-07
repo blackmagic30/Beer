@@ -6223,11 +6223,38 @@ body.discountPassModalOpen {
 }
 
 .venuePricingGrid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: clamp(18px, 3vw, 34px);
+  align-items: stretch;
+  max-width: 1120px;
+  margin-inline: auto;
 }
 
 .venuePricingCard {
-  min-height: 430px;
+  min-height: 100%;
+  padding: clamp(24px, 3vw, 34px);
+}
+
+.venuePricingCard__body {
+  gap: 18px;
+}
+
+.venuePricingCard__actions {
+  padding-top: 10px;
+}
+
+.venuePricingCard .price {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 8px 0 6px;
+}
+
+.venuePricingCard .price span {
+  color: var(--text-secondary);
+  font-size: clamp(0.9rem, 1.2vw, 1.08rem);
+  font-weight: 850;
+  letter-spacing: 0;
 }
 
 .tierBadge {
@@ -6269,6 +6296,15 @@ body.discountPassModalOpen {
 
 .tierList {
   padding-left: 21px;
+}
+
+.venuePricingCard .tierList {
+  gap: 12px;
+  padding-left: 22px;
+}
+
+.venuePricingCard .muted {
+  line-height: 1.55;
 }
 
 .card--highlight {
@@ -6346,15 +6382,15 @@ body.discountPassModalOpen {
 .tierSignalRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 2px 0 0;
+  gap: 10px;
+  margin: 4px 0 2px;
 }
 
 .tierSignal {
   display: inline-flex;
   align-items: center;
   min-height: 30px;
-  padding: 6px 9px;
+  padding: 7px 11px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
   background: rgba(255, 255, 255, 0.05);

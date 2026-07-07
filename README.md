@@ -104,7 +104,7 @@ The hosted viewer now includes a focused Melbourne/Victoria MVP business layer:
 
 Business demo pages:
 
-- `/pricing.html`: venue pricing for Free and Pro A$299 bar plans.
+- `/pricing.html`: venue pricing for Free and Pro A$149/month bar plans.
 - `/account.html`: signup/login, 18+ confirmation, access status, points, saved items, privacy preferences, requests, session controls, and submission status.
 - `/missions.html`: Needs Data mission board with sorting, quick-win guidance, and points.
 - `/submit.html`: venue data submission with manual rows and photo/source queue.
@@ -137,7 +137,7 @@ Venue partner demo layer:
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
 - Free/Basic venue accounts can add beer data and happy-hour data only; Pint Path specials, venue analytics, and monthly reports stay locked.
-- Pro A$299 unlocks reviewed Pint Path specials, privacy-safe suburb-level analytics, demand snapshots with beer/style opportunities, a staff/customer venue update link for QR prompts, protected monthly report generation/export in CSV or JSON, gold/violet map and listing treatment, featured Pint Path exclusive specials after review, priority admin review ordering for venue updates, a Pro growth studio with premium-placement readiness and weekend playbooks, Pro growth recommendations, and a transparent Best Match discovery boost that does not fake popularity or override cheapest/nearest sorting. Configure `STRIPE_PRO_PRICE_ID` with the Pro Stripe `price_...` ID.
+- Pro A$149/month unlocks reviewed Pint Path specials, privacy-safe suburb-level analytics, demand snapshots with beer/style opportunities, a staff/customer venue update link for QR prompts, protected monthly report generation/export in CSV or JSON, gold/violet map and listing treatment, featured Pint Path exclusive specials after review, priority admin review ordering for venue updates, a Pro growth studio with premium-placement readiness and weekend playbooks, Pro growth recommendations, and a transparent Best Match discovery boost that does not fake popularity or override cheapest/nearest sorting. Configure `STRIPE_PRO_PRICE_ID` with the Pro Stripe `price_...` ID.
 - Venue manager data updates are scoped to assigned venues. Verified public price publishing still goes through the existing review/approval flow.
 - Venue insights are aggregate-only and do not expose user names, individual clickstream, exact user location, private source evidence, or another venue’s private data.
 - The portal includes a listing quality score, wrong-price reports, user requests, current verified records, and a copyable update link for QR/signage use.

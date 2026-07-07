@@ -57,10 +57,10 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Free");
     expect(pricingHtml).toContain("Pro");
     expect(pricingHtml).toContain("A$0");
-    expect(pricingHtml).not.toContain("A$149");
+    expect(pricingHtml).toContain("A$149 <span>/month</span>");
     expect(pricingHtml).not.toContain(">Plus<");
     expect(pricingHtml).not.toContain("STRIPE_PLUS_PRICE_ID");
-    expect(pricingHtml).toContain("A$299");
+    expect(pricingHtml).not.toContain("A$299");
     expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
     expect(pricingHtml).toContain("No analytics or monthly reports.");
     expect(pricingHtml).toContain("Area-level search and interaction trends.");
@@ -87,6 +87,7 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).not.toContain('type="button" data-plan="yearly"');
     expect(readme).toContain("A$4.99/month");
     expect(readme).toContain("A$50/year");
+    expect(readme).toContain("Pro A$149/month");
     expect(readme).toContain("value rings");
     expect(readme).toContain("saved night shortcuts");
     expect(readme).toContain("discount-pass access");
