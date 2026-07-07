@@ -793,6 +793,47 @@ h3 {
   width: fit-content;
 }
 
+.venueBeerStockGrid {
+  grid-template-columns: minmax(320px, 0.92fr) minmax(360px, 1.08fr);
+  align-items: start;
+}
+
+#beerForm {
+  align-self: start;
+  align-content: start;
+}
+
+#beerForm .field,
+#beerForm .beerCatalogueField,
+.venueBeerMetaGrid,
+.venueBeerPriceGrid {
+  align-content: start;
+  align-items: start;
+}
+
+#beerForm .field input,
+#beerForm .field select {
+  min-height: 48px;
+}
+
+.venueBeerStockToggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.venueBeerStockToggles .dayChip {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 118px;
+  justify-content: flex-start;
+}
+
+.venueBeerListPanel {
+  align-self: start;
+}
+
 .priceRefreshPanel {
   display: grid;
   gap: 14px;

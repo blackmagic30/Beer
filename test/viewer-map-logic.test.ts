@@ -214,6 +214,7 @@ describe("viewer map price logic", () => {
 describe("viewer map UI wiring", () => {
   const html = fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
   const venuePortalHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/venue-portal.html"), "utf8");
+  const businessCss = fs.readFileSync(path.resolve(process.cwd(), "viewer/business.css"), "utf8");
 
   it("renders advanced markers with visible map panels and list-mode fallback", () => {
     expect(html).toContain("renderer: clusterRenderer");
@@ -391,6 +392,19 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).not.toContain('name="openingHoursNote"');
   });
 
+  it("keeps the venue beer stock form compact beside the current beer list", () => {
+    expect(venuePortalHtml).toContain('class="grid grid--two venueBeerStockGrid"');
+    expect(venuePortalHtml).toContain('class="grid grid--three venueBeerPriceGrid"');
+    expect(venuePortalHtml).toContain('class="dayChecklist venueBeerStockToggles"');
+    expect(venuePortalHtml).toContain('class="panel venueBeerListPanel"');
+    expect(businessCss).toContain(".venueBeerStockGrid");
+    expect(businessCss).toContain("align-items: start;");
+    expect(businessCss).toContain("#beerForm");
+    expect(businessCss).toContain("align-content: start;");
+    expect(businessCss).toContain(".venueBeerStockToggles .dayChip");
+    expect(businessCss).toContain("width: auto;");
+  });
+
   it("requires an ending time when venues add Pint Path specials", () => {
     expect(venuePortalHtml).toContain("Ending time");
     expect(venuePortalHtml).toContain("Choose start time");
@@ -414,6 +428,9 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain('id="qualityScore"');
     expect(venuePortalHtml).toContain('id="priceRecords"');
     expect(venuePortalHtml).toContain("function renderDashboardSetupProgress");
+    expect(venuePortalHtml).toContain("if (progress >= 100)");
+    expect(venuePortalHtml).toContain("container.hidden = true;");
+    expect(venuePortalHtml).toContain("container.hidden = false;");
     expect(venuePortalHtml).toContain("function renderVenueDailyActions");
     expect(venuePortalHtml).toContain("function renderPremiumVenueDashboard");
     expect(venuePortalHtml).toContain("function focusVenueField");

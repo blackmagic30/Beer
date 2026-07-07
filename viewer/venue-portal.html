@@ -272,7 +272,7 @@
           </section>
 
           <section class="tabPanel is-hidden" data-panel="beers">
-            <div class="grid grid--two">
+            <div class="grid grid--two venueBeerStockGrid">
               <form id="beerForm" class="panel form">
                 <div class="sectionHeader">
                   <div>
@@ -291,7 +291,7 @@
                     Add new beer not in catalogue
                   </label>
                 </div>
-                <div class="grid grid--two">
+                <div class="grid grid--two venueBeerMetaGrid">
                   <label class="field">Brewery
                     <input name="brewery" placeholder="Optional" />
                   </label>
@@ -299,7 +299,7 @@
                     <input name="style" placeholder="Lager, pale ale..." />
                   </label>
                 </div>
-                <div class="grid grid--three">
+                <div class="grid grid--three venueBeerPriceGrid">
                   <label class="field">ABV
                     <input name="abv" type="number" min="0" max="25" step="0.1" placeholder="Optional" />
                   </label>
@@ -319,7 +319,7 @@
                     <input name="price" type="number" min="0" max="250" step="0.01" placeholder="Optional" />
                   </label>
                 </div>
-                <div class="dayChecklist">
+                <div class="dayChecklist venueBeerStockToggles">
                   <label class="dayChip"><input name="onTap" type="checkbox" /> On tap</label>
                   <label class="dayChip"><input name="inStock" type="checkbox" checked /> In stock</label>
                 </div>
@@ -332,7 +332,7 @@
                 </div>
                 <div id="beerStatus" class="notice" role="status" hidden></div>
               </form>
-              <article class="panel">
+              <article class="panel venueBeerListPanel">
                 <h2>Current beer list</h2>
                 <div id="beerList" class="list"></div>
               </article>
@@ -1419,6 +1419,14 @@
       ];
       const completedCount = setupItems.filter((item) => item.complete).length;
       const progress = Math.round((completedCount / setupItems.length) * 100);
+      if (progress >= 100) {
+        container.hidden = true;
+        container.setAttribute("aria-hidden", "true");
+        container.innerHTML = "";
+        return;
+      }
+      container.hidden = false;
+      container.removeAttribute("aria-hidden");
       const nextItem = setupItems.find((item) => !item.complete) || {
         label: "Open monthly report",
         helper: "Your setup looks healthy. Check the report or keep prices fresh before peak trade.",
