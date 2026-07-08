@@ -803,6 +803,7 @@ CREATE TABLE IF NOT EXISTS venue_happy_hours (
   start_time TEXT NOT NULL,
   end_time TEXT NOT NULL,
   description TEXT NOT NULL,
+  happy_hour_beers_json TEXT NOT NULL DEFAULT '[]',
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

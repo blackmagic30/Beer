@@ -35,6 +35,10 @@ const venueSpecialsColumns = [
   { name: "end_time", definition: "TEXT" },
 ] as const;
 
+const venueHappyHoursColumns = [
+  { name: "happy_hour_beers_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+] as const;
+
 const authSessionsColumns = [
   { name: "revoked_at", definition: "TEXT" },
   { name: "last_used_at", definition: "TEXT" },
@@ -535,6 +539,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   migrateLegacyVenuePartnerTables(database);
   ensureColumns(database, "venue_profiles", venueProfilesColumns);
   ensureColumns(database, "venue_analytics_events", venueAnalyticsEventsColumns);
+  ensureColumns(database, "venue_happy_hours", venueHappyHoursColumns);
   ensureColumns(database, "venue_specials", venueSpecialsColumns);
   ensureColumns(database, "accounts", accountsColumns);
   ensureColumns(database, "profiles", profilesColumns);

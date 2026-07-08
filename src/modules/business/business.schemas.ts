@@ -611,6 +611,16 @@ export const barBeerSchema = z.object({
   notes: nullableTrimmedStringSchema.default(null),
 });
 
+const happyHourBeerSchema = z.object({
+  beerId: nullableTrimmedStringSchema.default(null),
+  beerName: z.string().trim().min(1).max(160),
+  normalizedBeerId: nullableTrimmedStringSchema.default(null),
+  servingSize: servingSizeSchema.nullable().default(null),
+  price: nullablePriceSchema.default(null),
+  onTap: z.boolean().default(false),
+  inStock: z.boolean().default(true),
+});
+
 export const barHappyHourSchema = z.object({
   id: nullableTrimmedStringSchema.default(null),
   title: z.string().trim().min(1).max(140),
@@ -618,6 +628,7 @@ export const barHappyHourSchema = z.object({
   startTime: timeSchema,
   endTime: timeSchema,
   description: z.string().trim().min(1).max(800),
+  happyHourBeers: z.array(happyHourBeerSchema).max(60).default([]),
   active: z.boolean().default(true),
 });
 

@@ -351,6 +351,27 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain('tab: "price-refresh"');
   });
 
+  it("lets venues attach beers to happy hours for beer plus happy-hour filtering", () => {
+    expect(venuePortalHtml).toContain("<span>Included beers</span>");
+    expect(venuePortalHtml).toContain('id="happyHourBeerChoices"');
+    expect(venuePortalHtml).toContain("function renderHappyHourBeerChoices");
+    expect(venuePortalHtml).toContain("function collectHappyHourBeers");
+    expect(venuePortalHtml).toContain("happyHourBeers: collectHappyHourBeers()");
+    expect(venuePortalHtml).toContain("renderHappyHourBeerChoices(item.happyHourBeers || [])");
+    expect(venuePortalHtml).toContain("Includes ${escapeHtml(item.happyHourBeers.map((beer) => beer.beerName).join(\", \"))}");
+    expect(businessCss).toContain(".venueHappyHourBeerChoices");
+    expect(businessCss).toContain(".venueHappyHourBeerChoice");
+    expect(html).toContain("function happyHourMatchesBeerQuery");
+    expect(html).toContain("function happyHourBeerMatchesSearch");
+    expect(html).toContain("function normalizeHappyHourBeerItems");
+    expect(html).toContain("renderHappyHourField(\"Included beers\", details.happyHourBeerNames?.join(\", \"))");
+    expect(html).toContain("happy_hour_beers: happyHourRecords[0].happyHourBeers || []");
+    expect(html).toContain('const hasHappyHourFilter = viewState.filters.includes("happy_hour_active_now") || viewState.filters.includes("happy_hour_near_me");');
+    expect(html).toContain("const matchingHappyHourBeer = hasHappyHourFilter && happyHourMatchesBeerQuery(row, viewState.beerQuery, viewState.onTapOnly);");
+    expect(html).toContain('if (viewState.filters.includes("happy_hour_active_now") && viewState.beerQuery && !happyHourMatchesBeerQuery(row, viewState.beerQuery, viewState.onTapOnly))');
+    expect(html).toContain('if (viewState.beerQuery && !happyHourMatchesBeerQuery(row, viewState.beerQuery, viewState.onTapOnly))');
+  });
+
   it("moves venue discount redemption into a focused code workspace", () => {
     expect(venuePortalHtml).toContain('data-tab="redemption"');
     expect(venuePortalHtml).toContain('data-panel="redemption"');

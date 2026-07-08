@@ -4775,6 +4775,15 @@ describe("business demo contribution model", () => {
       startTime: "16:00",
       endTime: "18:00",
       description: "$9 house pints, selected taps only.",
+      happyHourBeers: [{
+        beerId: beer.beer.id,
+        beerName: "Carlton Draught",
+        normalizedBeerId: "carlton_draught",
+        servingSize: "pint",
+        price: 13,
+        onTap: true,
+        inStock: true,
+      }],
       active: true,
     });
     const special = service.upsertBarSpecial(managerAccount, "bar-1", {
@@ -4798,6 +4807,11 @@ describe("business demo contribution model", () => {
       message: "Beer row saved.",
     }));
     expect(happyHourPending).toEqual(expect.objectContaining({ status: "pending", changeType: "happy_hour", action: "upsert" }));
+    expect(happyHourPending.payload).toEqual(expect.objectContaining({
+      happyHourBeers: expect.arrayContaining([
+        expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 13 }),
+      ]),
+    }));
     expect(special).toEqual(expect.objectContaining({
       special: expect.objectContaining({ title: "Thursday burger and pint", active: true }),
       message: "Pint Path special saved.",
@@ -4848,6 +4862,9 @@ describe("business demo contribution model", () => {
     expect(approvedPortal.profile.highlightedName).toBe(true);
     expect(approvedPortal.inventory.beers).toHaveLength(1);
     expect(approvedPortal.inventory.happyHours).toHaveLength(1);
+    expect(approvedPortal.inventory.happyHours[0].happyHourBeers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 13 }),
+    ]));
     expect(approvedPortal.inventory.specials).toHaveLength(1);
     expect(approvedPortal.pendingChanges).toHaveLength(0);
     expect(approvedPortal.tier.analyticsLocked).toBe(false);
@@ -4870,6 +4887,9 @@ describe("business demo contribution model", () => {
         happyHourDetails: "$9 house pints, selected taps only.",
         happyHourStartTime: "16:00",
         happyHourEndTime: "18:00",
+        happyHourBeers: expect.arrayContaining([
+          expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 13 }),
+        ]),
         sourceType: "venue_manager_portal",
         freePreviewIncluded: true,
       }),
@@ -4904,6 +4924,9 @@ describe("business demo contribution model", () => {
         happyHourDetails: "$9 house pints, selected taps only.",
         happyHourStartTime: "16:00",
         happyHourEndTime: "18:00",
+        happyHourBeers: expect.arrayContaining([
+          expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 13 }),
+        ]),
       }),
     ]));
     expect(revealed.records).toEqual(expect.arrayContaining([

@@ -5191,6 +5191,9 @@
       }
 
       const exists = happyHour.exists === true;
+      const title = typeof happyHour.title === "string" && happyHour.title.trim()
+        ? happyHour.title.trim()
+        : null;
       const days = typeof happyHour.days === "string" && happyHour.days.trim()
         ? happyHour.days.trim()
         : null;
@@ -5210,6 +5213,10 @@
       const specials = typeof happyHour.specials === "string" && happyHour.specials.trim()
         ? happyHour.specials.trim()
         : null;
+      const happyHourBeers = normalizeHappyHourBeerItems(
+        happyHour.happy_hour_beers || happyHour.selected_beers || happyHour.beers,
+      );
+      const happyHourBeerNames = happyHourBeers.map((item) => item.beerName).filter(Boolean);
       const confidence = Number(happyHour.confidence);
       const confidenceText = Number.isFinite(confidence) && confidence > 0
         ? `${Math.round(confidence * 100)}% confidence`
@@ -5239,6 +5246,7 @@
 
       return {
         exists,
+        title,
         days,
         daysTimes,
         start,
@@ -5246,6 +5254,8 @@
         when,
         priceText,
         specials,
+        happyHourBeers,
+        happyHourBeerNames,
         confidenceText,
         needsReview,
         capturedDate,
@@ -5296,6 +5306,7 @@
       ].filter(Boolean).join(" · ");
       const rows = [
         renderHappyHourField("When", details.when),
+        renderHappyHourField("Included beers", details.happyHourBeerNames?.join(", ")),
         renderHappyHourField("Specials", details.specials),
         renderHappyHourField("Price", details.priceText),
         renderHappyHourField("Quality", quality),
@@ -5424,6 +5435,9 @@
             freePreviewIncluded: Boolean(source.free_preview_included),
             priceRecordId: source.price_record_id || null,
             servingSize: source.serving_size || source.serve_size || null,
+            id: source.id || key,
+            normalizedBeerId: source.normalized_beer_id || source.normalizedBeerId || null,
+            normalized_beer_id: source.normalized_beer_id || source.normalizedBeerId || null,
             confidenceLabel: source.confidence_label || null,
             sourceType: source.source_type || null,
             lastVerifiedAt: source.last_verified_at || null,
@@ -5993,12 +6007,14 @@
               happy_hour: {
                 ...(isObjectRecord(cleaned.happy_hour) ? cleaned.happy_hour : {}),
                 exists: true,
+                title: happyHourRecords[0].happyHourTitle || null,
                 days: Array.isArray(happyHourRecords[0].happyHourDays)
                   ? happyHourRecords[0].happyHourDays.map((day) => day.toUpperCase()).join(", ")
                   : null,
                 start: happyHourRecords[0].happyHourStartTime || null,
                 end: happyHourRecords[0].happyHourEndTime || null,
                 specials: happyHourRecords[0].happyHourDetails || null,
+                happy_hour_beers: happyHourRecords[0].happyHourBeers || [],
                 confidence: happyHourRecords[0].confidence === "venue_confirmed" ? 0.9 : 0.6,
                 needs_review: happyHourRecords[0].confidence !== "venue_confirmed",
                 captured_at: happyHourRecords[0].lastVerifiedAt,
@@ -6173,6 +6189,86 @@
       return candidates;
     }
 
+    function normalizeHappyHourBeerItems(value) {
+      if (!Array.isArray(value)) {
+        return [];
+      }
+
+      return value
+        .filter((item) => item && typeof item === "object")
+        .map((item) => ({
+          beerId: item.beerId || item.beer_id || null,
+          beerName: item.beerName || item.beer_name || item.label || "",
+          normalizedBeerId: item.normalizedBeerId || item.normalized_beer_id || null,
+          servingSize: item.servingSize || item.serving_size || null,
+          price: normalizePositiveNumber(item.price),
+          onTap: Boolean(item.onTap ?? item.on_tap ?? item.available_on_tap),
+          inStock: item.inStock == null && item.in_stock == null ? true : Boolean(item.inStock ?? item.in_stock),
+        }))
+        .filter((item) => String(item.beerName || "").trim().length > 0);
+    }
+
+    function happyHourBeerMatchesSearch(item, queryKey, onTapOnly = false) {
+      if (!item || !queryKey) {
+        return false;
+      }
+
+      if (onTapOnly && !item.onTap) {
+        return false;
+      }
+
+      const trackedBeer = getTrackedBeerMeta(item.beerName) || getTrackedBeerMeta(item.normalizedBeerId);
+      const candidates = [
+        item.beerName,
+        item.normalizedBeerId,
+        item.beerId,
+        trackedBeer?.key,
+        trackedBeer?.name,
+        ...(trackedBeer?.aliases || []),
+      ].filter(Boolean);
+
+      return candidates.some((candidate) => {
+        const candidateKey = toSearchKey(candidate);
+        return candidateKey && (candidateKey.includes(queryKey) || queryKey.includes(candidateKey));
+      });
+    }
+
+    function happyHourTextMatchesBeer(row, queryKey) {
+      const details = getHappyHourDetails(row);
+      if (!details || !queryKey) {
+        return false;
+      }
+
+      return [
+        details.title,
+        details.specials,
+        details.summary,
+        details.when,
+      ].some((value) => {
+        const candidateKey = toSearchKey(value);
+        return candidateKey && (candidateKey.includes(queryKey) || queryKey.includes(candidateKey));
+      });
+    }
+
+    function happyHourMatchesBeerQuery(row, beerQuery, onTapOnly = false) {
+      const queryKey = toSearchKey(beerQuery);
+      if (!queryKey) {
+        return true;
+      }
+
+      const details = getHappyHourDetails(row);
+      if (!details || !details.exists) {
+        return false;
+      }
+
+      const selectedBeers = normalizeHappyHourBeerItems(details.happyHourBeers);
+      if (selectedBeers.length > 0) {
+        return selectedBeers.some((item) => happyHourBeerMatchesSearch(item, queryKey, onTapOnly));
+      }
+
+      return happyHourTextMatchesBeer(row, queryKey);
+    }
+
     function beerMatchesSearchQuery(beer, queryKey) {
       return getBeerSearchCandidates(beer).some((candidate) => {
         const candidateKey = toSearchKey(candidate);
@@ -6333,13 +6429,16 @@
 
     function rowMatchesView(row, viewState) {
       const venueSearchKey = toSearchKey(viewState.venueQuery);
+      const hasHappyHourFilter = viewState.filters.includes("happy_hour_active_now") || viewState.filters.includes("happy_hour_near_me");
 
       if (venueSearchKey && !toSearchKey(getVenueSearchText(row)).includes(venueSearchKey)) {
         return false;
       }
 
       if (viewState.beerQuery) {
-        if (getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly).length === 0) {
+        const matchingBeerItems = getMatchingBeerItems(row, viewState.beerQuery, viewState.onTapOnly);
+        const matchingHappyHourBeer = hasHappyHourFilter && happyHourMatchesBeerQuery(row, viewState.beerQuery, viewState.onTapOnly);
+        if (matchingBeerItems.length === 0 && !matchingHappyHourBeer) {
           return false;
         }
       }
@@ -6356,6 +6455,10 @@
         return false;
       }
 
+      if (viewState.filters.includes("happy_hour_active_now") && viewState.beerQuery && !happyHourMatchesBeerQuery(row, viewState.beerQuery, viewState.onTapOnly)) {
+        return false;
+      }
+
       if (viewState.filters.includes("open_now") && !isVenueOpenNow(row)) {
         return false;
       }
@@ -6366,6 +6469,9 @@
 
       if (viewState.filters.includes("happy_hour_near_me")) {
         if (!hasActiveHappyHourNow(row) || !isWithinSelectedRadius(row)) {
+          return false;
+        }
+        if (viewState.beerQuery && !happyHourMatchesBeerQuery(row, viewState.beerQuery, viewState.onTapOnly)) {
           return false;
         }
       }

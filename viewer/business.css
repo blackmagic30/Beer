@@ -834,6 +834,19 @@ h3 {
   align-self: start;
 }
 
+.venueHappyHourBeerChoices {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: start;
+}
+
+.venueHappyHourBeerChoice {
+  justify-content: flex-start;
+  min-height: 42px;
+  border-radius: 14px;
+  white-space: normal;
+  line-height: 1.25;
+}
+
 .priceRefreshPanel {
   display: grid;
   gap: 14px;

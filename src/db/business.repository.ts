@@ -244,6 +244,16 @@ export interface LocalVenueLookup {
   isUserSubmittedVenue?: boolean;
 }
 
+export interface BarHappyHourBeer {
+  beerId: string | null;
+  beerName: string;
+  normalizedBeerId: string | null;
+  servingSize: ServingSize | null;
+  price: number | null;
+  onTap: boolean;
+  inStock: boolean;
+}
+
 export interface PublicVenuePriceRecord {
   id: string;
   venueId: string;
@@ -266,6 +276,7 @@ export interface PublicVenuePriceRecord {
   happyHourDays?: string[];
   happyHourStartTime?: string | null;
   happyHourEndTime?: string | null;
+  happyHourBeers?: BarHappyHourBeer[];
   displayKind?: "beer" | "happy_hour" | "special";
   specialTitle?: string | null;
   specialDescription?: string | null;
@@ -501,6 +512,7 @@ export interface BarHappyHour {
   startTime: string;
   endTime: string;
   description: string;
+  happyHourBeers: BarHappyHourBeer[];
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -1218,6 +1230,7 @@ interface BarHappyHourRow {
   start_time: string;
   end_time: string;
   description: string;
+  happy_hour_beers_json: string;
   active: number;
   created_at: string;
   updated_at: string;
@@ -1698,6 +1711,35 @@ function parseJsonArray(value: string): string[] {
   }
 }
 
+function parseHappyHourBeers(value: string | null): BarHappyHourBeer[] {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+      .map((item) => ({
+        beerId: typeof item.beerId === "string" && item.beerId.trim() ? item.beerId.trim() : null,
+        beerName: typeof item.beerName === "string" ? item.beerName.trim() : "",
+        normalizedBeerId: typeof item.normalizedBeerId === "string" && item.normalizedBeerId.trim() ? item.normalizedBeerId.trim() : null,
+        servingSize: typeof item.servingSize === "string" && item.servingSize.trim() ? item.servingSize.trim() as ServingSize : null,
+        price: typeof item.price === "number" && Number.isFinite(item.price) ? item.price : null,
+        onTap: typeof item.onTap === "boolean" ? item.onTap : false,
+        inStock: typeof item.inStock === "boolean" ? item.inStock : true,
+      }))
+      .filter((item) => item.beerName.length > 0)
+      .slice(0, 60);
+  } catch {
+    return [];
+  }
+}
+
 function parseJsonObject(value: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value);
@@ -2088,6 +2130,7 @@ function toBarHappyHour(row: BarHappyHourRow): BarHappyHour {
     startTime: row.start_time,
     endTime: row.end_time,
     description: row.description,
+    happyHourBeers: parseHappyHourBeers(row.happy_hour_beers_json),
     active: Boolean(row.active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -5271,6 +5314,7 @@ export class BusinessRepository {
         happyHourDays: parseJsonArray(row.days_of_week_json),
         happyHourStartTime: row.start_time,
         happyHourEndTime: row.end_time,
+        happyHourBeers: parseHappyHourBeers(row.happy_hour_beers_json),
         displayKind: "happy_hour" as const,
         isOnTap: "unknown" as const,
         confidence: "venue_confirmed" as const,
@@ -6115,20 +6159,22 @@ export class BusinessRepository {
     startTime: string;
     endTime: string;
     description: string;
+    happyHourBeers: BarHappyHourBeer[];
     active: boolean;
     now: string;
   }): BarHappyHour {
     this.database
       .prepare(
         `INSERT INTO venue_happy_hours (
-          id, venue_id, title, days_of_week_json, start_time, end_time, description, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, venue_id, title, days_of_week_json, start_time, end_time, description, happy_hour_beers_json, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
           days_of_week_json = excluded.days_of_week_json,
           start_time = excluded.start_time,
           end_time = excluded.end_time,
           description = excluded.description,
+          happy_hour_beers_json = excluded.happy_hour_beers_json,
           active = excluded.active,
           updated_at = excluded.updated_at
         WHERE venue_happy_hours.venue_id = excluded.venue_id`,
@@ -6141,6 +6187,7 @@ export class BusinessRepository {
         input.startTime,
         input.endTime,
         input.description,
+        JSON.stringify(input.happyHourBeers),
         input.active ? 1 : 0,
         input.now,
         input.now,

@@ -1191,6 +1191,26 @@ function booleanFromUnknown(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function happyHourBeersFromUnknown(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+    .map((item) => ({
+      beerId: stringOrNull(item.beerId),
+      beerName: stringOrNull(item.beerName) ?? "",
+      normalizedBeerId: stringOrNull(item.normalizedBeerId),
+      servingSize: stringOrNull(item.servingSize) as BarBeerInput["serveSize"],
+      price: numberOrNull(item.price),
+      onTap: booleanFromUnknown(item.onTap, false),
+      inStock: booleanFromUnknown(item.inStock, true),
+    }))
+    .filter((item) => item.beerName.length > 0)
+    .slice(0, 60);
+}
+
 function tierFlags(tier: BarMembershipTier) {
   return {
     highlightedName: tier === "pro",
@@ -2804,6 +2824,7 @@ export class BusinessService {
         startTime: stringOrNull(payload.startTime) ?? "00:00",
         endTime: stringOrNull(payload.endTime) ?? "00:00",
         description: stringOrNull(payload.description) ?? "Details pending.",
+        happyHourBeers: happyHourBeersFromUnknown(payload.happyHourBeers),
         active: booleanFromUnknown(payload.active, true),
         now,
       });
@@ -7842,6 +7863,7 @@ export class BusinessService {
       startTime: input.startTime,
       endTime: input.endTime,
       description: input.description,
+      happyHourBeers: input.happyHourBeers,
       active: input.active,
       now: nowIso(),
     });
@@ -7876,6 +7898,7 @@ export class BusinessService {
         daysOfWeek: existing.daysOfWeek,
         startTime: existing.startTime,
         endTime: existing.endTime,
+        happyHourBeers: existing.happyHourBeers,
       },
       suburb: assignment?.suburb ?? null,
     });

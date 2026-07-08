@@ -690,7 +690,8 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
         },
       });
       expect(beerUpdate.response.status).toBe(201);
-      expect((beerUpdate.json?.data as { beer: { beerName: string; price: number } }).beer)
+      const savedBeer = (beerUpdate.json?.data as { beer: { id: string; beerName: string; price: number } }).beer;
+      expect(savedBeer)
         .toMatchObject({ beerName: "Carlton Draught", price: 12.5 });
 
       const happyHourUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/happy-hours", {
@@ -703,12 +704,27 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
           startTime: "17:00",
           endTime: "19:00",
           description: "$10 selected pints after work.",
+          happyHourBeers: [{
+            beerId: savedBeer.id,
+            beerName: savedBeer.beerName,
+            normalizedBeerId: "carlton_draught",
+            servingSize: "pint",
+            price: savedBeer.price,
+            onTap: true,
+            inStock: true,
+          }],
           active: true,
         },
       });
       expect(happyHourUpdate.response.status).toBe(201);
-      expect((happyHourUpdate.json?.data as { pendingChange: { status: string; changeType: string } }).pendingChange)
+      expect((happyHourUpdate.json?.data as { pendingChange: { status: string; changeType: string; payload: unknown } }).pendingChange)
         .toMatchObject({ status: "pending", changeType: "happy_hour" });
+      expect((happyHourUpdate.json?.data as { pendingChange: { payload: unknown } }).pendingChange.payload)
+        .toEqual(expect.objectContaining({
+          happyHourBeers: expect.arrayContaining([
+            expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 12.5 }),
+          ]),
+        }));
 
       const specialUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/specials", {
         method: "POST",
