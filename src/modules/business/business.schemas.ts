@@ -13,6 +13,19 @@ const nullableTrimmedStringSchema = z.preprocess((value) => {
   return trimmed.length > 0 ? trimmed : null;
 }, z.string().min(1).nullable());
 
+const nullableOfferTextSchema = z.preprocess((value) => {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}, z.string().min(1).max(160).nullable());
+
 const optionalTrimmedStringSchema = z.preprocess((value) => {
   if (typeof value !== "string") {
     return value;
@@ -616,7 +629,8 @@ const happyHourBeerSchema = z.object({
   beerName: z.string().trim().min(1).max(160),
   normalizedBeerId: nullableTrimmedStringSchema.default(null),
   servingSize: servingSizeSchema.nullable().default(null),
-  price: nullablePriceSchema.default(null),
+  happyHourPrice: nullablePriceSchema.default(null),
+  offerText: nullableOfferTextSchema.default(null),
   onTap: z.boolean().default(false),
   inStock: z.boolean().default(true),
 });

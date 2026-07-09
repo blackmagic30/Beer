@@ -2946,7 +2946,7 @@
             <div>
               <strong>${escapeHtml(item.title)}</strong>
               <div class="muted">${escapeHtml(item.daysOfWeek.join(", ").toUpperCase())} · ${escapeHtml(item.startTime)}-${escapeHtml(item.endTime)} · ${item.active ? "Active" : "Inactive"}</div>
-              ${item.happyHourBeers?.length ? `<div class="muted">Includes ${escapeHtml(item.happyHourBeers.map((beer) => beer.beerName).join(", "))}</div>` : ""}
+              ${item.happyHourBeers?.length ? `<div class="muted">Includes ${escapeHtml(formatHappyHourBeerList(item.happyHourBeers))}</div>` : ""}
               <p class="helperCopy">${escapeHtml(item.description)}</p>
             </div>
             <div class="rowActions">
@@ -2972,11 +2972,23 @@
         .toLowerCase();
     }
 
+    function formatHappyHourBeerSummary(beer) {
+      return [
+        beer.beerName,
+        beer.happyHourPrice != null ? money(beer.happyHourPrice) : null,
+        beer.offerText || null,
+      ].filter(Boolean).join(" ");
+    }
+
+    function formatHappyHourBeerList(beers = []) {
+      return beers.map(formatHappyHourBeerSummary).filter(Boolean).join(", ");
+    }
+
     function happyHourBeerChoiceCopy(beer) {
       return [
         beer.beerName,
         beer.serveSize ? `(${beer.serveSize})` : null,
-        beer.price != null ? money(beer.price) : null,
+        beer.price != null ? `stock ${money(beer.price)}` : null,
         beer.onTap ? "on tap" : null,
       ].filter(Boolean).join(" ");
     }
@@ -2985,16 +2997,33 @@
       const container = document.getElementById("happyHourBeerChoices");
       if (!container) return;
 
-      const selectedKeys = new Set((selectedBeers || []).map(happyHourBeerKey).filter(Boolean));
+      const selectedByKey = new Map(
+        (selectedBeers || [])
+          .map((beer) => [happyHourBeerKey(beer), beer])
+          .filter(([key]) => Boolean(key)),
+      );
       const beers = currentPortal?.inventory?.beers || [];
       container.innerHTML = beers.length
         ? beers.map((beer) => {
             const key = happyHourBeerKey(beer);
+            const selectedBeer = selectedByKey.get(key) || {};
+            const happyHourPrice = selectedBeer.happyHourPrice ?? "";
+            const offerText = selectedBeer.offerText || "";
             return `
-              <label class="dayChip venueHappyHourBeerChoice">
-                <input type="checkbox" value="${escapeHtml(beer.id || "")}" ${selectedKeys.has(key) ? "checked" : ""} />
-                ${escapeHtml(happyHourBeerChoiceCopy(beer))}
-              </label>
+              <div class="venueHappyHourBeerChoice" data-hh-beer-row>
+                <label class="venueHappyHourBeerToggle">
+                  <input data-hh-beer type="checkbox" value="${escapeHtml(beer.id || "")}" ${selectedByKey.has(key) ? "checked" : ""} />
+                  <span>${escapeHtml(happyHourBeerChoiceCopy(beer))}</span>
+                </label>
+                <div class="venueHappyHourBeerOffer">
+                  <label>HH price
+                    <input data-hh-price type="text" inputmode="decimal" placeholder="$ optional" value="${escapeHtml(happyHourPrice)}" />
+                  </label>
+                  <label>Offer note
+                    <input data-hh-offer type="text" maxlength="160" placeholder="e.g. $9 pints" value="${escapeHtml(offerText)}" />
+                  </label>
+                </div>
+              </div>
             `;
           }).join("")
         : '<div class="notice">Add beers in Beers / stock first.</div>';
@@ -3005,15 +3034,27 @@
       const beers = currentPortal?.inventory?.beers || [];
       if (!container) return [];
 
-      return Array.from(container.querySelectorAll("input:checked"))
-        .map((input) => beers.find((beer) => beer.id === input.value))
+      return Array.from(container.querySelectorAll("[data-hh-beer]:checked"))
+        .map((input) => {
+          const beer = beers.find((item) => item.id === input.value);
+          const row = input.closest("[data-hh-beer-row]");
+          if (!beer || !row) return null;
+          const priceRaw = row.querySelector("[data-hh-price]")?.value || "";
+          const parsedPrice = nullableNumber(String(priceRaw).replace(/[$,\s]/g, ""));
+          return {
+            beer,
+            happyHourPrice: Number.isFinite(parsedPrice) && parsedPrice >= 0 ? parsedPrice : null,
+            offerText: row.querySelector("[data-hh-offer]")?.value.trim() || null,
+          };
+        })
         .filter(Boolean)
-        .map((beer) => ({
+        .map(({ beer, happyHourPrice, offerText }) => ({
           beerId: beer.id || null,
           beerName: beer.beerName,
           normalizedBeerId: beer.normalizedBeerId || null,
           servingSize: beer.serveSize || null,
-          price: beer.price ?? null,
+          happyHourPrice,
+          offerText,
           onTap: Boolean(beer.onTap),
           inStock: Boolean(beer.inStock),
         }));

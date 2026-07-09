@@ -4780,7 +4780,8 @@ describe("business demo contribution model", () => {
         beerName: "Carlton Draught",
         normalizedBeerId: "carlton_draught",
         servingSize: "pint",
-        price: 13,
+        happyHourPrice: 9,
+        offerText: "House pint",
         onTap: true,
         inStock: true,
       }],
@@ -4809,7 +4810,7 @@ describe("business demo contribution model", () => {
     expect(happyHourPending).toEqual(expect.objectContaining({ status: "pending", changeType: "happy_hour", action: "upsert" }));
     expect(happyHourPending.payload).toEqual(expect.objectContaining({
       happyHourBeers: expect.arrayContaining([
-        expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 13 }),
+        expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 9, offerText: "House pint" }),
       ]),
     }));
     expect(special).toEqual(expect.objectContaining({
@@ -4863,7 +4864,7 @@ describe("business demo contribution model", () => {
     expect(approvedPortal.inventory.beers).toHaveLength(1);
     expect(approvedPortal.inventory.happyHours).toHaveLength(1);
     expect(approvedPortal.inventory.happyHours[0].happyHourBeers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 13 }),
+      expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 9, offerText: "House pint" }),
     ]));
     expect(approvedPortal.inventory.specials).toHaveLength(1);
     expect(approvedPortal.pendingChanges).toHaveLength(0);
@@ -4888,7 +4889,7 @@ describe("business demo contribution model", () => {
         happyHourStartTime: "16:00",
         happyHourEndTime: "18:00",
         happyHourBeers: expect.arrayContaining([
-          expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 13 }),
+          expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 9, offerText: "House pint" }),
         ]),
         sourceType: "venue_manager_portal",
         freePreviewIncluded: true,
@@ -4904,6 +4905,13 @@ describe("business demo contribution model", () => {
         sourceType: "venue_manager_portal:special",
       }),
     ]));
+    const previewHappyHour = publicPreview.records.find((record) => record.displayKind === "happy_hour");
+    expect(previewHappyHour?.happyHourBeers?.[0]).toMatchObject({
+      beerName: "Carlton Draught",
+      happyHourPrice: 9,
+      offerText: "House pint",
+    });
+    expect(previewHappyHour?.happyHourBeers?.[0]).not.toHaveProperty("price");
 
     const revealed = service.listPriceRecords(null, {
       limit: 20,
@@ -4925,7 +4933,7 @@ describe("business demo contribution model", () => {
         happyHourStartTime: "16:00",
         happyHourEndTime: "18:00",
         happyHourBeers: expect.arrayContaining([
-          expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 13 }),
+          expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 9, offerText: "House pint" }),
         ]),
       }),
     ]));
@@ -5061,11 +5069,24 @@ describe("business demo contribution model", () => {
         notes: null,
       });
     }
+    const happyHour = service.upsertBarHappyHour(admin, "delete-guard-bar", {
+      id: null,
+      title: "Delete guard happy hour",
+      daysOfWeek: ["fri"],
+      startTime: "16:00",
+      endTime: "18:00",
+      description: "$10 selected pints.",
+      happyHourBeers: [],
+      active: true,
+    });
 
     for (const beerId of beerIds.slice(0, 3)) {
       expect(service.deleteBarBeer(managerAccount, "delete-guard-bar", beerId))
         .toEqual(expect.objectContaining({ deleted: true, message: "Beer row removed." }));
     }
+
+    expect(service.deleteBarHappyHour(managerAccount, "delete-guard-bar", happyHour.happyHour.id))
+      .toEqual(expect.objectContaining({ deleted: true, message: "Happy hour removed." }));
 
     const heldDelete = service.deleteBarBeer(managerAccount, "delete-guard-bar", beerIds[3]);
     const pendingDelete = pendingBarChangeFrom(heldDelete);

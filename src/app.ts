@@ -324,6 +324,7 @@ export function createApp() {
             "https://maps.gstatic.com",
             "https://cdn.jsdelivr.net",
           ],
+          "script-src-attr": ["'none'"],
           "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
           "img-src": [
             "'self'",

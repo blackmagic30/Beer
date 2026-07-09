@@ -69,7 +69,7 @@ describe("error handler logging", () => {
     expect(logLine).not.toContain("abc123");
   });
 
-  it("keeps not-found responses path-only", () => {
+  it("keeps not-found responses path-only outside production", () => {
     const response = mockResponse();
 
     notFoundHandler(
@@ -83,6 +83,34 @@ describe("error handler logging", () => {
 
     expect(response.statusCode).toBe(404);
     expect(JSON.stringify(response.body)).toContain("GET /missing");
+    expect(JSON.stringify(response.body)).not.toContain("secret");
+  });
+
+  it("keeps production not-found API responses generic", () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    const response = mockResponse();
+
+    try {
+      notFoundHandler(
+        {
+          method: "GET",
+          path: "/missing",
+          originalUrl: "/missing?token=secret",
+        } as never,
+        response as never,
+      );
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = previousNodeEnv;
+      }
+    }
+
+    expect(response.statusCode).toBe(404);
+    expect(JSON.stringify(response.body)).toContain("Route not found.");
+    expect(JSON.stringify(response.body)).not.toContain("GET /missing");
     expect(JSON.stringify(response.body)).not.toContain("secret");
   });
 

@@ -3,6 +3,7 @@ import { Router, type Request } from "express";
 import type { AdminIngestionStatus } from "../../db/models.js";
 import { success } from "../../lib/http.js";
 import { parseWithSchema } from "../../lib/validation.js";
+import { createRateLimiter } from "../../middleware/rate-limit.js";
 
 import {
   adminBulkRejectQueuedIngestionsSchema,
@@ -16,9 +17,52 @@ import {
 import type { AdminService } from "./admin.service.js";
 import type { BusinessService } from "../business/business.service.js";
 
-function requireRoleAdmin(req: Request, businessService: BusinessService): void {
-  businessService.requireAdmin(req.header("authorization") ?? undefined);
+function getAuthorization(req: Request): string | undefined {
+  return req.header("authorization") ?? undefined;
 }
+
+function getRequestContext(req: Request) {
+  return {
+    ip: req.ip ?? req.socket.remoteAddress ?? null,
+    userAgent: req.get("user-agent") ?? null,
+  };
+}
+
+function requireRoleAdmin(req: Request, businessService: BusinessService): void {
+  businessService.requireAdmin(getAuthorization(req), getRequestContext(req));
+}
+
+function rateLimitIdentity(req: Request): string {
+  return req.ip ?? req.socket.remoteAddress ?? "unknown-ip";
+}
+
+const adminLookupLimiter = createRateLimiter({
+  keyPrefix: "admin:lookups",
+  windowMs: 10 * 60_000,
+  max: 60,
+  keyGenerator: rateLimitIdentity,
+});
+
+const adminOcrLimiter = createRateLimiter({
+  keyPrefix: "admin:ocr",
+  windowMs: 10 * 60_000,
+  max: 12,
+  keyGenerator: rateLimitIdentity,
+});
+
+const adminReviewLimiter = createRateLimiter({
+  keyPrefix: "admin:review",
+  windowMs: 10 * 60_000,
+  max: 180,
+  keyGenerator: rateLimitIdentity,
+});
+
+const adminWriteLimiter = createRateLimiter({
+  keyPrefix: "admin:writes",
+  windowMs: 10 * 60_000,
+  max: 60,
+  keyGenerator: rateLimitIdentity,
+});
 
 function parseIngestionStatus(value: unknown): AdminIngestionStatus | undefined {
   if (typeof value !== "string") {
@@ -50,6 +94,18 @@ function parseBoundedInteger(value: unknown, fallback: number, max: number): num
   return Math.min(Math.max(parsed, 0), max);
 }
 
+function stringParam(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value) && typeof value[0] === "string") {
+    return value[0];
+  }
+
+  return "";
+}
+
 export function createAdminRouter(adminService: AdminService, businessService: BusinessService): Router {
   const router = Router();
 
@@ -66,7 +122,7 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     res.json(success(adminService.getStatus()));
   });
 
-  router.get("/places/search", async (req, res, next) => {
+  router.get("/places/search", adminLookupLimiter, async (req, res, next) => {
     try {
       const query = typeof req.query.q === "string" ? req.query.q : "";
       res.json(success(await adminService.searchGoogleVenuePlaces(query)));
@@ -75,9 +131,9 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     }
   });
 
-  router.get("/places/:placeId", async (req, res, next) => {
+  router.get("/places/:placeId", adminLookupLimiter, async (req, res, next) => {
     try {
-      res.json(success(await adminService.getGoogleVenuePlace(req.params.placeId)));
+      res.json(success(await adminService.getGoogleVenuePlace(stringParam(req.params.placeId))));
     } catch (error) {
       next(error);
     }
@@ -96,7 +152,7 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     }
   });
 
-  router.post("/venues", async (req, res, next) => {
+  router.post("/venues", adminWriteLimiter, async (req, res, next) => {
     try {
       const body = parseWithSchema(adminVenueSchema, req.body, "Invalid admin venue payload");
       const venue = await adminService.createVenue(body);
@@ -106,7 +162,7 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     }
   });
 
-  router.post("/captures/manual", async (req, res, next) => {
+  router.post("/captures/manual", adminWriteLimiter, async (req, res, next) => {
     try {
       const body = parseWithSchema(
         adminManualCaptureSchema,
@@ -120,7 +176,7 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     }
   });
 
-  router.post("/captures/menu-photo-ocr", async (req, res, next) => {
+  router.post("/captures/menu-photo-ocr", adminOcrLimiter, async (req, res, next) => {
     try {
       const body = parseWithSchema(
         adminMenuPhotoOcrSchema,
@@ -134,7 +190,7 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     }
   });
 
-  router.post("/ingestions/queue", async (req, res, next) => {
+  router.post("/ingestions/queue", adminOcrLimiter, async (req, res, next) => {
     try {
       const body = parseWithSchema(
         adminSourceIngestionQueueSchema,
@@ -148,7 +204,7 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     }
   });
 
-  router.post("/ingestions/reject", async (req, res, next) => {
+  router.post("/ingestions/reject", adminReviewLimiter, async (req, res, next) => {
     try {
       const body = parseWithSchema(
         adminBulkRejectQueuedIngestionsSchema,
@@ -162,28 +218,28 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     }
   });
 
-  router.post("/ingestions/:id/publish", async (req, res, next) => {
+  router.post("/ingestions/:id/publish", adminReviewLimiter, async (req, res, next) => {
     try {
       const body = parseWithSchema(
         adminPublishQueuedIngestionSchema,
         req.body,
         "Invalid source review publish payload",
       );
-      const result = await adminService.publishQueuedIngestion(req.params.id, body);
+      const result = await adminService.publishQueuedIngestion(stringParam(req.params.id), body);
       res.status(201).json(success(result));
     } catch (error) {
       next(error);
     }
   });
 
-  router.post("/ingestions/:id/reject", async (req, res, next) => {
+  router.post("/ingestions/:id/reject", adminReviewLimiter, async (req, res, next) => {
     try {
       const body = parseWithSchema(
         adminRejectQueuedIngestionSchema,
         req.body,
         "Invalid source review reject payload",
       );
-      const result = adminService.rejectQueuedIngestion(req.params.id, body);
+      const result = adminService.rejectQueuedIngestion(stringParam(req.params.id), body);
       res.json(success(result));
     } catch (error) {
       next(error);

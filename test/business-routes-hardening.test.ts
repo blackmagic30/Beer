@@ -7,6 +7,10 @@ function routesSource() {
   return fs.readFileSync(path.resolve(process.cwd(), "src/modules/business/business.routes.ts"), "utf8");
 }
 
+function adminRoutesSource() {
+  return fs.readFileSync(path.resolve(process.cwd(), "src/modules/admin/admin.routes.ts"), "utf8");
+}
+
 describe("business route hardening", () => {
   it("rate limits admin mutation routes", () => {
     const source = routesSource();
@@ -65,5 +69,40 @@ describe("business route hardening", () => {
     expect(identityFunction).not.toContain("getAuthorization");
     expect(identityFunction).not.toContain("req.query");
     expect(identityFunction).not.toContain("req.body");
+  });
+
+  it("rate limits signed source-evidence creation and delivery", () => {
+    const source = routesSource();
+
+    expect(source).toContain('const sourceEvidenceLimiter = createRateLimiter({');
+    expect(source).toContain('router.get("/submissions/:id/source-evidence-url", sourceEvidenceLimiter');
+    expect(source).toContain('router.get("/source-evidence/:id", sourceEvidenceLimiter');
+  });
+
+  it("rate limits admin source-ingestion, OCR, review, and lookup routes", () => {
+    const source = adminRoutesSource();
+
+    expect(source).toContain('const adminLookupLimiter = createRateLimiter({');
+    expect(source).toContain('const adminOcrLimiter = createRateLimiter({');
+    expect(source).toContain('const adminReviewLimiter = createRateLimiter({');
+    expect(source).toContain('const adminWriteLimiter = createRateLimiter({');
+    [
+      'router.get("/places/search", adminLookupLimiter',
+      'router.get("/places/:placeId", adminLookupLimiter',
+      'router.post("/venues", adminWriteLimiter',
+      'router.post("/captures/manual", adminWriteLimiter',
+      'router.post("/captures/menu-photo-ocr", adminOcrLimiter',
+      'router.post("/ingestions/queue", adminOcrLimiter',
+      'router.post("/ingestions/reject", adminReviewLimiter',
+      'router.post("/ingestions/:id/publish", adminReviewLimiter',
+      'router.post("/ingestions/:id/reject", adminReviewLimiter',
+    ].forEach((route) => expect(source).toContain(route));
+  });
+
+  it("passes request context into standalone admin authorization checks", () => {
+    const source = adminRoutesSource();
+
+    expect(source).toContain("function getRequestContext");
+    expect(source).toContain("businessService.requireAdmin(getAuthorization(req), getRequestContext(req));");
   });
 });

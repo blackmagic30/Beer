@@ -106,6 +106,122 @@
     return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
   }
 
+  function normalizeSearchKey(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/&/g, " and ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .replace(/\s+/g, " ");
+  }
+
+  function normalizeHappyHourBeerItems(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+      .map((item) => ({
+        beerId: item.beerId || item.beer_id || null,
+        beerName: item.beerName || item.beer_name || item.label || "",
+        normalizedBeerId: item.normalizedBeerId || item.normalized_beer_id || null,
+        servingSize: item.servingSize || item.serving_size || null,
+        happyHourPrice: normalizePositivePrice(
+          item.happyHourPrice ?? item.happy_hour_price ?? item.offerPrice ?? item.offer_price,
+        ),
+        offerText: typeof (item.offerText ?? item.offer_text) === "string"
+          ? String(item.offerText ?? item.offer_text).trim() || null
+          : null,
+        onTap: Boolean(item.onTap ?? item.on_tap ?? item.available_on_tap),
+        inStock: item.inStock == null && item.in_stock == null ? true : Boolean(item.inStock ?? item.in_stock),
+      }))
+      .filter((item) => String(item.beerName || "").trim().length > 0);
+  }
+
+  function happyHourBeerMatchesSearch(item, beerQuery, options = {}) {
+    const queryKey = normalizeSearchKey(beerQuery);
+    if (!item || !queryKey) {
+      return false;
+    }
+
+    if (options.onTapOnly && !item.onTap) {
+      return false;
+    }
+
+    const getTrackedBeerMeta = typeof options.getTrackedBeerMeta === "function"
+      ? options.getTrackedBeerMeta
+      : null;
+    const trackedBeer = getTrackedBeerMeta
+      ? getTrackedBeerMeta(item.beerName) || getTrackedBeerMeta(item.normalizedBeerId)
+      : null;
+    const candidates = [
+      item.beerName,
+      item.normalizedBeerId,
+      item.beerId,
+      trackedBeer && trackedBeer.key,
+      trackedBeer && trackedBeer.name,
+      ...((trackedBeer && trackedBeer.aliases) || []),
+    ].filter(Boolean);
+
+    return candidates.some((candidate) => {
+      const candidateKey = normalizeSearchKey(candidate);
+      return candidateKey && (candidateKey.includes(queryKey) || queryKey.includes(candidateKey));
+    });
+  }
+
+  function happyHourTextMatchesBeer(details, beerQuery) {
+    const queryKey = normalizeSearchKey(beerQuery);
+    if (!details || !queryKey) {
+      return false;
+    }
+
+    return [
+      details.title,
+      details.specials,
+      details.summary,
+      details.when,
+    ].some((value) => {
+      const candidateKey = normalizeSearchKey(value);
+      return candidateKey && (candidateKey.includes(queryKey) || queryKey.includes(candidateKey));
+    });
+  }
+
+  function resolveHappyHourDetails(row, options = {}) {
+    if (typeof options.getHappyHourDetails === "function") {
+      return options.getHappyHourDetails(row);
+    }
+
+    return row && typeof row === "object"
+      ? row.happyHourDetails || row.happy_hour_details || row
+      : null;
+  }
+
+  function happyHourMatchesBeerQuery(row, beerQuery, options = {}) {
+    const queryKey = normalizeSearchKey(beerQuery);
+    if (!queryKey) {
+      return true;
+    }
+
+    const details = resolveHappyHourDetails(row, options);
+    if (!details || details.exists === false) {
+      return false;
+    }
+
+    const selectedBeers = normalizeHappyHourBeerItems(
+      details.happyHourBeers ||
+      details.happy_hour_beers ||
+      details.selectedBeers ||
+      details.selected_beers ||
+      details.beers,
+    );
+    if (selectedBeers.length > 0) {
+      return selectedBeers.some((item) => happyHourBeerMatchesSearch(item, queryKey, options));
+    }
+
+    return happyHourTextMatchesBeer(details, queryKey);
+  }
+
   function normalizeBeerPriceNumeric(source) {
     const availabilityStatus =
       source && typeof source.availability_status === "string"
@@ -496,6 +612,11 @@
     getAvailabilityLabel,
     getBeerPriceText,
     getAvailabilityTone,
+    normalizeSearchKey,
+    normalizeHappyHourBeerItems,
+    happyHourBeerMatchesSearch,
+    happyHourTextMatchesBeer,
+    happyHourMatchesBeerQuery,
     hasNumericPrice,
     getLowestKnownPrice,
     getPriceTier,

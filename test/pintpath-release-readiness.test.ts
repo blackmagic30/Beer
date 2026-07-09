@@ -709,7 +709,8 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
             beerName: savedBeer.beerName,
             normalizedBeerId: "carlton_draught",
             servingSize: "pint",
-            price: savedBeer.price,
+            happyHourPrice: 10,
+            offerText: "Selected pints",
             onTap: true,
             inStock: true,
           }],
@@ -722,7 +723,7 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       expect((happyHourUpdate.json?.data as { pendingChange: { payload: unknown } }).pendingChange.payload)
         .toEqual(expect.objectContaining({
           happyHourBeers: expect.arrayContaining([
-            expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", price: 12.5 }),
+            expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 10, offerText: "Selected pints" }),
           ]),
         }));
 

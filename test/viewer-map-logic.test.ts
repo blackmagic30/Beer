@@ -56,6 +56,15 @@ describe("viewer map price logic", () => {
       value: { lat?: number; lng?: number; latitude?: number; longitude?: number },
       bounds: { south: number; north: number; west: number; east: number },
     ) => boolean;
+    normalizeHappyHourBeerItems: (value: unknown) => Array<Record<string, unknown>>;
+    happyHourMatchesBeerQuery: (
+      row: Record<string, unknown>,
+      beerQuery: string,
+      options?: {
+        onTapOnly?: boolean;
+        getTrackedBeerMeta?: (value: string | null | undefined) => Record<string, unknown> | null;
+      },
+    ) => boolean;
   };
 
   it("does not convert unknown, zero, unavailable, or off-tap prices into cheap numeric prices", () => {
@@ -137,6 +146,55 @@ describe("viewer map price logic", () => {
     expect(logic.getMarkerVisual(null, { needsData: true }).state).toBe("needs_data");
     expect(logic.getMarkerVisual(null, { needsData: true }).fillColor).toBe("#475569");
     expect(logic.getMarkerVisual(null, { needsData: true }).labelText).toBe("?");
+  });
+
+  it("matches beer-specific happy hours without treating stock prices as happy-hour prices", () => {
+    const getTrackedBeerMeta = (value: string | null | undefined) => {
+      const key = String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (key === "guinness" || key === "guinness stout") {
+        return { key: "guinness", name: "Guinness", aliases: ["Guinness Stout"] };
+      }
+      if (key === "stone and wood" || key === "stone wood pacific ale") {
+        return { key: "stone_and_wood_pacific_ale", name: "Stone & Wood Pacific Ale", aliases: ["Stone and Wood"] };
+      }
+      return null;
+    };
+    const selectedBeers = logic.normalizeHappyHourBeerItems([
+      { beerName: "Guinness", normalizedBeerId: "guinness", price: 15, happyHourPrice: 9, onTap: true },
+      { beerName: "Stone & Wood Pacific Ale", normalizedBeerId: "stone_and_wood_pacific_ale", onTap: false },
+    ]);
+    const row = {
+      happyHourDetails: {
+        exists: true,
+        happyHourBeers: selectedBeers,
+      },
+    };
+
+    expect(selectedBeers[0]).toMatchObject({ beerName: "Guinness", happyHourPrice: 9 });
+    expect(selectedBeers[0]).not.toHaveProperty("price");
+    expect(logic.normalizeHappyHourBeerItems([{ beerName: "Guinness", price: 15 }])[0].happyHourPrice).toBeNull();
+    expect(logic.happyHourMatchesBeerQuery(row, "Guinness", { getTrackedBeerMeta, onTapOnly: true })).toBe(true);
+    expect(logic.happyHourMatchesBeerQuery(row, "Stone and Wood", { getTrackedBeerMeta, onTapOnly: true })).toBe(false);
+    expect(logic.happyHourMatchesBeerQuery(row, "Stone and Wood", { getTrackedBeerMeta, onTapOnly: false })).toBe(true);
+    expect(logic.happyHourMatchesBeerQuery(row, "Carlton Draught", { getTrackedBeerMeta })).toBe(false);
+  });
+
+  it("falls back to happy-hour text matching only when no beer list is attached", () => {
+    expect(logic.happyHourMatchesBeerQuery({
+      happyHourDetails: {
+        exists: true,
+        specials: "$9 Guinness pints",
+        happyHourBeers: [],
+      },
+    }, "Guinness")).toBe(true);
+
+    expect(logic.happyHourMatchesBeerQuery({
+      happyHourDetails: {
+        exists: true,
+        specials: "$9 house pints",
+        happyHourBeers: [{ beerName: "Carlton Draught", onTap: true }],
+      },
+    }, "Guinness")).toBe(false);
   });
 
   it("gives selected markers a stronger gold ring without changing unknown into cheap", () => {
@@ -356,15 +414,19 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain('id="happyHourBeerChoices"');
     expect(venuePortalHtml).toContain("function renderHappyHourBeerChoices");
     expect(venuePortalHtml).toContain("function collectHappyHourBeers");
+    expect(venuePortalHtml).toContain("data-hh-price");
+    expect(venuePortalHtml).toContain("data-hh-offer");
     expect(venuePortalHtml).toContain("happyHourBeers: collectHappyHourBeers()");
     expect(venuePortalHtml).toContain("renderHappyHourBeerChoices(item.happyHourBeers || [])");
-    expect(venuePortalHtml).toContain("Includes ${escapeHtml(item.happyHourBeers.map((beer) => beer.beerName).join(\", \"))}");
+    expect(venuePortalHtml).toContain("Includes ${escapeHtml(formatHappyHourBeerList(item.happyHourBeers))}");
+    expect(venuePortalHtml).not.toContain("price: beer.price ?? null");
     expect(businessCss).toContain(".venueHappyHourBeerChoices");
     expect(businessCss).toContain(".venueHappyHourBeerChoice");
+    expect(businessCss).toContain(".venueHappyHourBeerOffer");
     expect(html).toContain("function happyHourMatchesBeerQuery");
     expect(html).toContain("function happyHourBeerMatchesSearch");
     expect(html).toContain("function normalizeHappyHourBeerItems");
-    expect(html).toContain("renderHappyHourField(\"Included beers\", details.happyHourBeerNames?.join(\", \"))");
+    expect(html).toContain("details.happyHourBeerSummaries?.join(\", \") || details.happyHourBeerNames?.join(\", \")");
     expect(html).toContain("happy_hour_beers: happyHourRecords[0].happyHourBeers || []");
     expect(html).toContain('const hasHappyHourFilter = viewState.filters.includes("happy_hour_active_now") || viewState.filters.includes("happy_hour_near_me");');
     expect(html).toContain("const matchingHappyHourBeer = hasHappyHourFilter && happyHourMatchesBeerQuery(row, viewState.beerQuery, viewState.onTapOnly);");

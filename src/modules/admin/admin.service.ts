@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type BetterSqlite3 from "better-sqlite3";
 
+import { SUBMISSION_LIMITS } from "../../config/business-rules.js";
 import type { AdminIngestionQueueRepository } from "../../db/admin-ingestion-queue.repository.js";
 import { BeerCatalogRepository, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
 import type {
@@ -21,6 +22,13 @@ import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { selectLabeledPintPrice } from "../../lib/menu-price-selection.js";
 import { redactSecrets } from "../../lib/redact.js";
+import {
+  assertResolvedSafeImageSourceHost,
+  normalizeImageMimeType,
+  parseSafeImageSourceUrl,
+  validateImageBytes,
+  validateImageDataUrl,
+} from "../../lib/source-image-safety.js";
 import {
   type GoogleAddressComponent,
   type GooglePlaceCandidate,
@@ -86,6 +94,9 @@ const ADMIN_GOOGLE_VENUE_TYPE_SET = new Set<string>(ADMIN_GOOGLE_VENUE_TYPES);
 const MENU_PHOTO_OCR_MODEL = process.env.OPENAI_MENU_OCR_MODEL?.trim() || "gpt-4.1";
 const MENU_PHOTO_OCR_REVIEW_PASS_ENABLED =
   (process.env.OPENAI_MENU_OCR_REVIEW_PASS ?? "true").trim().toLowerCase() !== "false";
+const SOURCE_INGESTION_IMAGE_FETCH_TIMEOUT_MS = 6_500;
+const SOURCE_INGESTION_MAX_IMAGE_BYTES = SUBMISSION_LIMITS.maxPhotoBytes;
+const SOURCE_INGESTION_ALLOWED_MIME_TYPES = SUBMISSION_LIMITS.allowedImageMimeTypes;
 
 type MenuPhotoOcrInput = AdminMenuPhotoOcrInput | { venueNameHint: string | null; imageDataUrl: string };
 
@@ -164,6 +175,51 @@ function getExternalErrorMessage(error: unknown): string {
   }
 
   return "unknown";
+}
+
+function validateAdminMenuImageDataUrl(imageDataUrl: string): string {
+  const { mimeType, bytes } = validateImageDataUrl(imageDataUrl, {
+    allowedMimeTypes: SOURCE_INGESTION_ALLOWED_MIME_TYPES,
+    maxBytes: SOURCE_INGESTION_MAX_IMAGE_BYTES,
+    invalidMimeMessage: "Menu photo must be a JPEG, PNG, WebP, HEIC, or HEIF image.",
+    tooLargeMessage: "Menu photo must be 6MB or smaller.",
+    activePayloadMessage: "Menu photo must be a safe image file, not SVG, HTML, XML, script, or style content.",
+    mismatchMessage: "Menu photo content does not match the declared file type.",
+  });
+
+  return `data:${mimeType};base64,${bytes.toString("base64")}`;
+}
+
+async function readImageResponseBodyWithLimit(response: Response, maxBytes: number): Promise<Buffer> {
+  if (!response.body) {
+    return Buffer.alloc(0);
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      const chunk = Buffer.from(value);
+      totalBytes += chunk.length;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new AppError("Source image must be 6MB or smaller.", 400);
+      }
+
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return Buffer.concat(chunks, totalBytes);
 }
 
 function normalizeConfidence(value: unknown, fallback: number | null = null): number | null {
@@ -1370,36 +1426,59 @@ export class AdminService {
   }
 
   private async fetchImageDataUrlFromSourceUrl(sourceUrl: string): Promise<string> {
-    let url: URL;
+    const url = parseSafeImageSourceUrl(sourceUrl, "Source URL");
+    await assertResolvedSafeImageSourceHost(url, "Source URL");
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SOURCE_INGESTION_IMAGE_FETCH_TIMEOUT_MS);
+    let response: Response;
     try {
-      url = new URL(sourceUrl);
-    } catch {
-      throw new AppError("Source URL must be a valid HTTP or HTTPS URL.", 400);
+      response = await fetch(url, {
+        headers: {
+          "Accept": "image/avif,image/webp,image/png,image/jpeg,image/heic,image/heif;q=0.9,*/*;q=0.1",
+          "User-Agent": "pint-path-source-ingestion/1.0",
+        },
+        redirect: "manual",
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new ExternalServiceError("Timed out fetching source image. Try uploading the image instead.", undefined, 504);
+      }
+
+      throw new ExternalServiceError("Failed to fetch source image. Try uploading the image instead.", {
+        message: getExternalErrorMessage(error),
+      });
+    } finally {
+      clearTimeout(timeout);
     }
 
-    if (!["http:", "https:"].includes(url.protocol)) {
-      throw new AppError("Source URL must be a valid HTTP or HTTPS URL.", 400);
+    if (response.status >= 300 && response.status < 400) {
+      throw new AppError("Source URL must point directly to the image, not through a redirect.", 400);
     }
-
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "pint-path-source-ingestion/1.0",
-      },
-    });
 
     if (!response.ok) {
       throw new ExternalServiceError(`Failed to fetch source image (${response.status})`);
     }
 
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().startsWith("image/")) {
-      throw new AppError("For now, source URLs must point directly to an image.", 400);
+    const contentType = normalizeImageMimeType(response.headers.get("content-type") ?? "");
+    if (!SOURCE_INGESTION_ALLOWED_MIME_TYPES.includes(contentType as never)) {
+      throw new AppError("For now, source URLs must point directly to a JPEG, PNG, WebP, HEIC, or HEIF image.", 400);
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString("base64");
-    return `data:${contentType};base64,${base64}`;
+    const contentLength = Number(response.headers.get("content-length") ?? Number.NaN);
+    if (Number.isFinite(contentLength) && contentLength > SOURCE_INGESTION_MAX_IMAGE_BYTES) {
+      throw new AppError("Source image must be 6MB or smaller.", 400);
+    }
+
+    const bytes = await readImageResponseBodyWithLimit(response, SOURCE_INGESTION_MAX_IMAGE_BYTES);
+    const validated = validateImageBytes(bytes, contentType, {
+      allowedMimeTypes: SOURCE_INGESTION_ALLOWED_MIME_TYPES,
+      invalidMimeMessage: "For now, source URLs must point directly to a JPEG, PNG, WebP, HEIC, or HEIF image.",
+      activePayloadMessage: "Source image must be a safe image file, not SVG, HTML, XML, script, or style content.",
+      mismatchMessage: "Source image content does not match the declared file type.",
+    });
+    return `data:${validated.mimeType};base64,${bytes.toString("base64")}`;
   }
 
   private async requestMenuPhotoOcrModel(
@@ -1518,6 +1597,10 @@ export class AdminService {
   }
 
   private async extractMenuPhoto(input: MenuPhotoOcrInput): Promise<NormalizedOcrExtraction> {
+    const safeInput = {
+      ...input,
+      imageDataUrl: validateAdminMenuImageDataUrl(input.imageDataUrl),
+    };
     const prompt = [
       "Extract useful beer menu information from this pub or bar menu photo.",
       "Return JSON only.",
@@ -1561,11 +1644,11 @@ export class AdminService {
       "Do not include category headings such as Lager, IPA, Sour Beer, Red Wine, or White Wine as beer rows.",
       "If the row price/name pairing is ambiguous after checking the row, heading, and nearby detail line, omit the row instead of guessing.",
       "If tap or package format is not clear, use availability_status 'unknown'.",
-      input.venueNameHint ? `Venue hint: ${input.venueNameHint}` : "Venue hint: none",
+      safeInput.venueNameHint ? `Venue hint: ${safeInput.venueNameHint}` : "Venue hint: none",
     ].join("\n");
 
-    const firstPass = await this.requestMenuPhotoOcrModel(input, prompt);
-    const parsed = await this.reviewMenuPhotoOcrExtraction(input, firstPass);
+    const firstPass = await this.requestMenuPhotoOcrModel(safeInput, prompt);
+    const parsed = await this.reviewMenuPhotoOcrExtraction(safeInput, firstPass);
     const rawBeers = parsed.beers.filter((beer) => isLikelyBeerName(beer.name)).map((beer) => {
       const normalizedPrice = normalizedOcrBeerPrice(beer);
       const normalized = buildManualBeerEntry({

@@ -5,6 +5,10 @@ import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
 
+const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46,
+]).toString("base64")}`;
+
 describe("admin Google Places venue lookup", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -177,7 +181,7 @@ describe("admin Google Places venue lookup", () => {
 
     await expect(service.ocrMenuPhoto({
       venueNameHint: "Test Venue",
-      imageDataUrl: "data:image/jpeg;base64,AAAA",
+      imageDataUrl: JPEG_DATA_URL,
     })).rejects.toMatchObject({
       statusCode: 502,
       message: "Menu OCR provider failed. Try a clearer or smaller photo, or enter the beer rows manually.",
@@ -242,7 +246,7 @@ describe("admin Google Places venue lookup", () => {
 
       const result = await service.ocrMenuPhoto({
         venueNameHint: "Test Venue",
-        imageDataUrl: "data:image/jpeg;base64,AAAA",
+        imageDataUrl: JPEG_DATA_URL,
       });
 
       expect(create).toHaveBeenCalledWith(expect.objectContaining({

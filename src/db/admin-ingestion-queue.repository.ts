@@ -259,6 +259,7 @@ export class AdminIngestionQueueRepository {
          SET status = 'published',
              review_beers_json = @reviewBeersJson,
              crawler_feedback_json = @crawlerFeedbackJson,
+             image_data_url = NULL,
              note = COALESCE(@note, note),
              updated_at = @updatedAt,
              published_at = @updatedAt
@@ -283,6 +284,7 @@ export class AdminIngestionQueueRepository {
       .prepare(
         `UPDATE admin_ingestion_queue
          SET status = 'rejected',
+             image_data_url = NULL,
              note = COALESCE(@note, note),
              crawler_feedback_json = @crawlerFeedbackJson,
              updated_at = @updatedAt,

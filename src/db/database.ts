@@ -532,6 +532,17 @@ function deletePendingNonBeerCatalogItems(database: BetterSqlite3.Database): voi
   cleanup();
 }
 
+function redactCompletedAdminIngestionImages(database: BetterSqlite3.Database): void {
+  database
+    .prepare(
+      `UPDATE admin_ingestion_queue
+       SET image_data_url = NULL
+       WHERE status IN ('published', 'rejected', 'failed')
+         AND image_data_url IS NOT NULL`,
+    )
+    .run();
+}
+
 export function initializeDatabaseSchema(database: BetterSqlite3.Database): void {
   const schema = fs.readFileSync(resolveSchemaPath(), "utf8");
 
@@ -548,6 +559,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "feedback", feedbackColumns);
   ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
   ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
+  redactCompletedAdminIngestionImages(database);
   ensureColumns(database, "venue_beers", venueBeersColumns);
   syncStaticBeerCatalog(database);
   deletePendingNonBeerCatalogItems(database);

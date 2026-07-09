@@ -16,6 +16,12 @@ describe("application security headers", () => {
     expect(source).toContain('"connect-src": cspConnectSources');
   });
 
+  it("blocks inline script attributes in CSP", () => {
+    const source = appSource();
+
+    expect(source).toContain(`"script-src-attr": ["'none'"]`);
+  });
+
   it("publishes security contact discovery without exposing secrets", () => {
     const source = appSource();
     const securityTxt = fs.readFileSync(path.resolve(process.cwd(), "viewer/security.txt"), "utf8");

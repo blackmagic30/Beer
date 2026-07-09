@@ -175,6 +175,10 @@ if (parsedEnv.data.NODE_ENV === "production") {
     throw new Error("GOOGLE_MAPS_MAP_ID is required in production for Google AdvancedMarkerElement/vector map styling.");
   }
 
+  if (!parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET) {
+    throw new Error("SOURCE_EVIDENCE_SIGNING_SECRET is required in production so OCR and source-evidence review links work.");
+  }
+
 }
 
 export const env = {

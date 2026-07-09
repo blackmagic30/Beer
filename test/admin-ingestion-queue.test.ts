@@ -1,5 +1,5 @@
 import BetterSqlite3 from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminIngestionQueueRepository } from "../src/db/admin-ingestion-queue.repository.js";
 import { BusinessRepository } from "../src/db/business.repository.js";
@@ -8,8 +8,12 @@ import type { AdminIngestionStatus } from "../src/db/models.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
 
 let database: BetterSqlite3.Database | null = null;
+const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46,
+]).toString("base64")}`;
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   database?.close();
   database = null;
 });
@@ -168,9 +172,128 @@ describe("AdminIngestionQueueRepository", () => {
     expect(repository.count("rejected")).toBe(2);
     expect(repository.getById(first.id)).toEqual(expect.objectContaining({
       status: "rejected",
+      imageDataUrl: null,
       note: "Fast rejected during admin source cleanup.",
       rejectedAt: expect.any(String),
     }));
+  });
+
+  it("redacts completed source images while keeping pending review previews", () => {
+    const repository = createRepository();
+    const pending = repository.create({
+      venueId: "venue-pending",
+      venueName: "Pending Venue",
+      sourceType: "menu_photo_upload",
+      sourceUrl: null,
+      imageDataUrl: JPEG_DATA_URL,
+      note: null,
+      status: "pending_review",
+      venueNameGuess: null,
+      capturedNotes: null,
+      overallConfidence: 0.9,
+      extractedBeers: [],
+      errorMessage: null,
+    });
+    const published = repository.create({
+      venueId: "venue-published",
+      venueName: "Published Venue",
+      sourceType: "menu_photo_upload",
+      sourceUrl: null,
+      imageDataUrl: JPEG_DATA_URL,
+      note: null,
+      status: "pending_review",
+      venueNameGuess: null,
+      capturedNotes: null,
+      overallConfidence: 0.9,
+      extractedBeers: [],
+      errorMessage: null,
+    });
+
+    repository.markPublished(
+      published.id,
+      [],
+      "Approved.",
+      {
+        outcome: "published",
+        rewardScore: 1,
+        acceptedRowCount: 0,
+        extractedRowCount: 0,
+        rejectedRowCount: 0,
+        correctedRowCount: 0,
+        cleanRowCount: 0,
+        note: "Approved.",
+        generatedAt: "2026-06-30T00:00:00.000Z",
+        signals: [],
+      },
+      "2026-06-30T00:00:00.000Z",
+    );
+
+    expect(repository.getById(pending.id)?.imageDataUrl).toBe(JPEG_DATA_URL);
+    expect(repository.getById(published.id)).toEqual(expect.objectContaining({
+      status: "published",
+      imageDataUrl: null,
+    }));
+  });
+
+  it("redacts older completed source-review images during schema initialization", () => {
+    const repository = createRepository();
+    const item = repository.create({
+      venueId: "venue-old-complete",
+      venueName: "Old Complete Venue",
+      sourceType: "menu_photo_upload",
+      sourceUrl: null,
+      imageDataUrl: JPEG_DATA_URL,
+      note: null,
+      status: "published",
+      venueNameGuess: null,
+      capturedNotes: null,
+      overallConfidence: 0.9,
+      extractedBeers: [],
+      errorMessage: null,
+    });
+
+    expect(repository.getById(item.id)?.imageDataUrl).toBe(JPEG_DATA_URL);
+    initializeDatabaseSchema(database!);
+
+    expect(repository.getById(item.id)?.imageDataUrl).toBeNull();
+  });
+
+  it("rejects unsafe admin source image URLs before fetch or OCR", async () => {
+    const repository = createRepository();
+    const service = new AdminService(repository);
+    attachFakeSupabase(service, "venue-private-url");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(service.queueSourceIngestion({
+      venueId: "venue-private-url",
+      sourceType: "source_image_url",
+      sourceUrl: "http://127.0.0.1:8080/menu.jpg",
+      imageDataUrl: null,
+      note: null,
+    })).rejects.toThrow("local, private, or metadata network hosts");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized admin source images before OCR", async () => {
+    const repository = createRepository();
+    const service = new AdminService(repository);
+    attachFakeSupabase(service, "venue-oversized-url");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(Buffer.from([0xff, 0xd8, 0xff]), {
+      status: 200,
+      headers: {
+        "content-type": "image/jpeg",
+        "content-length": String(7 * 1024 * 1024),
+      },
+    })));
+
+    await expect(service.queueSourceIngestion({
+      venueId: "venue-oversized-url",
+      sourceType: "source_image_url",
+      sourceUrl: "https://93.184.216.34/menu.jpg",
+      imageDataUrl: null,
+      note: null,
+    })).rejects.toThrow("6MB or smaller");
   });
 
   it("publishes approved source ingestion rows to live map records and removes them from pending review", async () => {

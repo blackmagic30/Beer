@@ -15,7 +15,9 @@ export function notFoundHandler(req: Request, res: Response): void {
     return;
   }
 
-  res.status(404).json(
-    failure(`Route not found: ${req.method} ${req.path || req.originalUrl?.split("?")[0] || ""}`),
-  );
+  const message = process.env.NODE_ENV === "production"
+    ? "Route not found."
+    : `Route not found: ${req.method} ${req.path || req.originalUrl?.split("?")[0] || ""}`;
+
+  res.status(404).json(failure(message));
 }

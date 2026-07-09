@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { isIP } from "node:net";
 import path from "node:path";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -46,6 +45,10 @@ import {
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
 import { redactSecrets } from "../../lib/redact.js";
+import {
+  parseSafeImageSourceUrl,
+  validateImageDataUrl,
+} from "../../lib/source-image-safety.js";
 import {
   DEFAULT_REPORT_TIMEZONE,
   getPreviousZonedMonthKey,
@@ -665,123 +668,8 @@ export function canAccessAgeGatedRewards(input: {
   return true;
 }
 
-function getSourcePhotoBytes(dataUrl: string): number {
-  const commaIndex = dataUrl.indexOf(",");
-  if (commaIndex === -1) {
-    return 0;
-  }
-
-  return Buffer.byteLength(dataUrl.slice(commaIndex + 1), "base64");
-}
-
-function getSourcePhotoBuffer(dataUrl: string): Buffer {
-  const commaIndex = dataUrl.indexOf(",");
-  if (commaIndex === -1) {
-    return Buffer.alloc(0);
-  }
-
-  return Buffer.from(dataUrl.slice(commaIndex + 1), "base64");
-}
-
-function getSourcePhotoMimeType(dataUrl: string): string | null {
-  const match = dataUrl.match(/^data:([^;]+);base64,/i);
-  return match?.[1]?.toLowerCase() ?? null;
-}
-
-const BLOCKED_SOURCE_URL_EXTENSIONS = /\.(?:svg|html?|xhtml|xml|js|mjs|css)(?:[?#].*)?$/i;
 const PRIVATE_EVIDENCE_PREFIX = "private:evidence:";
 const FILESYSTEM_EVIDENCE_PROVIDER = "filesystem_private";
-const BLOCKED_SOURCE_URL_HOSTNAMES = new Set([
-  "localhost",
-  "localhost.localdomain",
-  "ip6-localhost",
-  "ip6-loopback",
-]);
-
-function detectImageMimeType(bytes: Buffer): string | null {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return "image/jpeg";
-  }
-
-  if (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0d &&
-    bytes[5] === 0x0a &&
-    bytes[6] === 0x1a &&
-    bytes[7] === 0x0a
-  ) {
-    return "image/png";
-  }
-
-  if (
-    bytes.length >= 12 &&
-    bytes.toString("ascii", 0, 4) === "RIFF" &&
-    bytes.toString("ascii", 8, 12) === "WEBP"
-  ) {
-    return "image/webp";
-  }
-
-  if (bytes.length >= 12 && bytes.toString("ascii", 4, 12).includes("ftyphei")) {
-    return "image/heic";
-  }
-
-  return null;
-}
-
-function looksLikeActiveTextPayload(bytes: Buffer): boolean {
-  const head = bytes.toString("utf8", 0, Math.min(bytes.length, 512)).trimStart().toLowerCase();
-  return /^(?:<!doctype\s+html|<html|<script|<svg|<\?xml|@import|body\s*\{|\/\*)/.test(head);
-}
-
-function isPrivateIpv4(hostname: string): boolean {
-  const parts = hostname.split(".").map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-    return false;
-  }
-
-  const first = parts[0]!;
-  const second = parts[1]!;
-  return (
-    first === 0 ||
-    first === 10 ||
-    first === 127 ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168)
-  );
-}
-
-function isPrivateIpv6(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  return (
-    normalized === "::1" ||
-    normalized === "0:0:0:0:0:0:0:1" ||
-    normalized.startsWith("fc") ||
-    normalized.startsWith("fd") ||
-    normalized.startsWith("fe80:")
-  );
-}
-
-function isBlockedSourcePhotoHost(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
-  if (!normalized || BLOCKED_SOURCE_URL_HOSTNAMES.has(normalized) || normalized.endsWith(".localhost")) {
-    return true;
-  }
-
-  const ipType = isIP(normalized);
-  if (ipType === 4) {
-    return isPrivateIpv4(normalized);
-  }
-  if (ipType === 6) {
-    return isPrivateIpv6(normalized);
-  }
-
-  return false;
-}
 
 function getBearerToken(header: string | undefined): string | null {
   if (!header) {
@@ -1010,6 +898,7 @@ function redactPriceRecord(record: PublicVenuePriceRecord): PublicVenuePriceReco
     happyHourDays: [],
     happyHourStartTime: null,
     happyHourEndTime: null,
+    happyHourBeers: [],
     specialTitle: isSpecial
       ? record.specialExclusive
         ? "Pint Path special"
@@ -1203,7 +1092,8 @@ function happyHourBeersFromUnknown(value: unknown) {
       beerName: stringOrNull(item.beerName) ?? "",
       normalizedBeerId: stringOrNull(item.normalizedBeerId),
       servingSize: stringOrNull(item.servingSize) as BarBeerInput["serveSize"],
-      price: numberOrNull(item.price),
+      happyHourPrice: numberOrNull(item.happyHourPrice),
+      offerText: stringOrNull(item.offerText),
       onTap: booleanFromUnknown(item.onTap, false),
       inStock: booleanFromUnknown(item.inStock, true),
     }))
@@ -2670,11 +2560,16 @@ export class BusinessService {
       return null;
     }
 
+    if (input.changeType !== "beer") {
+      return null;
+    }
+
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const recentDeletes = this.repository.countRecentVenueManagerDeletes({
       userId: input.account.id,
       venueId: input.venueId,
       since: oneHourAgo,
+      changeType: input.changeType,
     });
     if (recentDeletes < 3) {
       return null;
@@ -4975,24 +4870,14 @@ export class BusinessService {
     input: Pick<CreateSubmissionInput, "sourcePhotoDataUrl" | "sourcePhotoUrl">,
   ): string | null {
     if (input.sourcePhotoDataUrl) {
-      const mimeType = getSourcePhotoMimeType(input.sourcePhotoDataUrl);
-      if (!mimeType || !SUBMISSION_LIMITS.allowedImageMimeTypes.includes(mimeType as never)) {
-        throw new AppError("Upload must be a JPEG, PNG, WebP, HEIC, or HEIF image.", 400);
-      }
-
-      if (getSourcePhotoBytes(input.sourcePhotoDataUrl) > SUBMISSION_LIMITS.maxPhotoBytes) {
-        throw new AppError("Upload image must be 6MB or smaller.", 400);
-      }
-
-      const bytes = getSourcePhotoBuffer(input.sourcePhotoDataUrl);
-      if (looksLikeActiveTextPayload(bytes)) {
-        throw new AppError("Upload must be a safe image file, not SVG, HTML, XML, script, or style content.", 400);
-      }
-
-      const detectedMimeType = detectImageMimeType(bytes);
-      if (!detectedMimeType || detectedMimeType !== mimeType) {
-        throw new AppError("Upload image content does not match the declared file type.", 400);
-      }
+      const { mimeType, bytes } = validateImageDataUrl(input.sourcePhotoDataUrl, {
+        allowedMimeTypes: SUBMISSION_LIMITS.allowedImageMimeTypes,
+        maxBytes: SUBMISSION_LIMITS.maxPhotoBytes,
+        invalidMimeMessage: "Upload must be a JPEG, PNG, WebP, HEIC, or HEIF image.",
+        tooLargeMessage: "Upload image must be 6MB or smaller.",
+        activePayloadMessage: "Upload must be a safe image file, not SVG, HTML, XML, script, or style content.",
+        mismatchMessage: "Upload image content does not match the declared file type.",
+      });
 
       if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
         const evidence = this.createFilesystemSourceEvidence(account, bytes, mimeType);
@@ -5017,24 +4902,7 @@ export class BusinessService {
       return null;
     }
 
-    let parsed: URL;
-    try {
-      parsed = new URL(input.sourcePhotoUrl);
-    } catch {
-      throw new AppError("Source photo URL must be a valid HTTP or HTTPS URL.", 400);
-    }
-
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      throw new AppError("Source photo URL must use HTTP or HTTPS.", 400);
-    }
-
-    if (isBlockedSourcePhotoHost(parsed.hostname)) {
-      throw new AppError("Source photo URL must not target local, private, or metadata network hosts.", 400);
-    }
-
-    if (BLOCKED_SOURCE_URL_EXTENSIONS.test(parsed.pathname)) {
-      throw new AppError("Source photo URL must point to a safe image source, not HTML, SVG, script, or style content.", 400);
-    }
+    const parsed = parseSafeImageSourceUrl(input.sourcePhotoUrl, "Source photo URL");
 
     const evidence = this.repository.createSourceEvidenceObject({
       id: crypto.randomUUID(),
@@ -7824,7 +7692,7 @@ export class BusinessService {
       venueId,
       beerId,
       suburb: assignment?.suburb ?? null,
-      metadata: { section: "beer_inventory", action: "delete" },
+      metadata: { section: "beer_inventory", action: "delete", changeType: "beer" },
     });
 
     return { deleted: true, message: "Beer row removed." };
@@ -7917,7 +7785,7 @@ export class BusinessService {
       venueId,
       beerId: null,
       suburb: assignment?.suburb ?? null,
-      metadata: { section: "happy_hours", action: "delete" },
+      metadata: { section: "happy_hours", action: "delete", changeType: "happy_hour" },
     });
 
     return { deleted: true, message: "Happy hour removed." };
@@ -8004,7 +7872,7 @@ export class BusinessService {
       venueId,
       beerId: null,
       suburb: assignment?.suburb ?? null,
-      metadata: { section: "specials", action: "delete" },
+      metadata: { section: "specials", action: "delete", changeType: "special" },
     });
 
     return { deleted: true, message: "Pint Path special removed." };

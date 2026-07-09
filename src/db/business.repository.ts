@@ -249,7 +249,8 @@ export interface BarHappyHourBeer {
   beerName: string;
   normalizedBeerId: string | null;
   servingSize: ServingSize | null;
-  price: number | null;
+  happyHourPrice: number | null;
+  offerText: string | null;
   onTap: boolean;
   inStock: boolean;
 }
@@ -1729,7 +1730,8 @@ function parseHappyHourBeers(value: string | null): BarHappyHourBeer[] {
         beerName: typeof item.beerName === "string" ? item.beerName.trim() : "",
         normalizedBeerId: typeof item.normalizedBeerId === "string" && item.normalizedBeerId.trim() ? item.normalizedBeerId.trim() : null,
         servingSize: typeof item.servingSize === "string" && item.servingSize.trim() ? item.servingSize.trim() as ServingSize : null,
-        price: typeof item.price === "number" && Number.isFinite(item.price) ? item.price : null,
+        happyHourPrice: typeof item.happyHourPrice === "number" && Number.isFinite(item.happyHourPrice) ? item.happyHourPrice : null,
+        offerText: typeof item.offerText === "string" && item.offerText.trim() ? item.offerText.trim() : null,
         onTap: typeof item.onTap === "boolean" ? item.onTap : false,
         inStock: typeof item.inStock === "boolean" ? item.inStock : true,
       }))
@@ -6728,18 +6730,37 @@ export class BusinessRepository {
     userId: string;
     venueId: string;
     since: string;
+    changeType?: Exclude<BarPendingChangeType, "profile"> | undefined;
   }): number {
+    const legacySectionByChangeType: Record<Exclude<BarPendingChangeType, "profile">, string> = {
+      beer: "beer_inventory",
+      happy_hour: "happy_hours",
+      special: "specials",
+    };
+    const changeType = input.changeType ?? null;
+    const legacySection = changeType ? legacySectionByChangeType[changeType] : null;
     const row = this.database
       .prepare(
         `SELECT count(*) AS count
          FROM events
-         WHERE user_id = ?
-           AND venue_id = ?
+         WHERE user_id = @userId
+           AND venue_id = @venueId
            AND event_type = 'venue_update_submitted'
-           AND created_at >= ?
-           AND json_extract(metadata_json, '$.action') = 'delete'`,
+           AND created_at >= @since
+           AND json_extract(metadata_json, '$.action') = 'delete'
+           AND (
+             @changeType IS NULL
+             OR json_extract(metadata_json, '$.changeType') = @changeType
+             OR json_extract(metadata_json, '$.section') = @legacySection
+           )`,
       )
-      .get(input.userId, input.venueId, input.since) as { count: number } | undefined;
+      .get({
+        userId: input.userId,
+        venueId: input.venueId,
+        since: input.since,
+        changeType,
+        legacySection,
+      }) as { count: number } | undefined;
     return Number(row?.count ?? 0);
   }
 

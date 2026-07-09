@@ -150,6 +150,13 @@ const lookupLimiter = createRateLimiter({
   keyGenerator: rateLimitIdentity,
 });
 
+const sourceEvidenceLimiter = createRateLimiter({
+  keyPrefix: "business:source-evidence",
+  windowMs: 60_000,
+  max: 120,
+  keyGenerator: rateLimitIdentity,
+});
+
 export function createBusinessRouter(businessService: BusinessService): Router {
   const router = Router();
 
@@ -326,12 +333,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success({ submissions }));
   });
 
-  router.get("/submissions/:id/source-evidence-url", (req, res) => {
+  router.get("/submissions/:id/source-evidence-url", sourceEvidenceLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     res.json(success(businessService.getSubmissionSourceEvidenceUrl(account, String(req.params.id ?? ""))));
   });
 
-  router.get("/source-evidence/:id", (req, res) => {
+  router.get("/source-evidence/:id", sourceEvidenceLimiter, (req, res) => {
     const evidence = businessService.getSourceEvidenceForSignedRequest({
       evidenceId: String(req.params.id ?? ""),
       expires: typeof req.query.expires === "string" ? req.query.expires : undefined,

@@ -41,7 +41,7 @@
       }
     }
   </script>
-  <script src="./map-logic.js?v=20260619-coordinate-guard"></script>
+  <script src="./map-logic.js?v=20260709-happy-hour-filter"></script>
   <script src="./config.js"></script>
   <script src="./business.js" defer></script>
   <style>
@@ -5217,6 +5217,13 @@
         happyHour.happy_hour_beers || happyHour.selected_beers || happyHour.beers,
       );
       const happyHourBeerNames = happyHourBeers.map((item) => item.beerName).filter(Boolean);
+      const happyHourBeerSummaries = happyHourBeers
+        .map((item) => [
+          item.beerName,
+          item.happyHourPrice != null ? formatPriceValue(item.happyHourPrice) : null,
+          item.offerText,
+        ].filter(Boolean).join(" "))
+        .filter(Boolean);
       const confidence = Number(happyHour.confidence);
       const confidenceText = Number.isFinite(confidence) && confidence > 0
         ? `${Math.round(confidence * 100)}% confidence`
@@ -5256,6 +5263,7 @@
         specials,
         happyHourBeers,
         happyHourBeerNames,
+        happyHourBeerSummaries,
         confidenceText,
         needsReview,
         capturedDate,
@@ -5306,7 +5314,7 @@
       ].filter(Boolean).join(" · ");
       const rows = [
         renderHappyHourField("When", details.when),
-        renderHappyHourField("Included beers", details.happyHourBeerNames?.join(", ")),
+        renderHappyHourField("Included beers", details.happyHourBeerSummaries?.join(", ") || details.happyHourBeerNames?.join(", ")),
         renderHappyHourField("Specials", details.specials),
         renderHappyHourField("Price", details.priceText),
         renderHappyHourField("Quality", quality),
@@ -6190,83 +6198,26 @@
     }
 
     function normalizeHappyHourBeerItems(value) {
-      if (!Array.isArray(value)) {
-        return [];
-      }
-
-      return value
-        .filter((item) => item && typeof item === "object")
-        .map((item) => ({
-          beerId: item.beerId || item.beer_id || null,
-          beerName: item.beerName || item.beer_name || item.label || "",
-          normalizedBeerId: item.normalizedBeerId || item.normalized_beer_id || null,
-          servingSize: item.servingSize || item.serving_size || null,
-          price: normalizePositiveNumber(item.price),
-          onTap: Boolean(item.onTap ?? item.on_tap ?? item.available_on_tap),
-          inStock: item.inStock == null && item.in_stock == null ? true : Boolean(item.inStock ?? item.in_stock),
-        }))
-        .filter((item) => String(item.beerName || "").trim().length > 0);
+      return window.MelbBeerMapLogic.normalizeHappyHourBeerItems(value);
     }
 
     function happyHourBeerMatchesSearch(item, queryKey, onTapOnly = false) {
-      if (!item || !queryKey) {
-        return false;
-      }
-
-      if (onTapOnly && !item.onTap) {
-        return false;
-      }
-
-      const trackedBeer = getTrackedBeerMeta(item.beerName) || getTrackedBeerMeta(item.normalizedBeerId);
-      const candidates = [
-        item.beerName,
-        item.normalizedBeerId,
-        item.beerId,
-        trackedBeer?.key,
-        trackedBeer?.name,
-        ...(trackedBeer?.aliases || []),
-      ].filter(Boolean);
-
-      return candidates.some((candidate) => {
-        const candidateKey = toSearchKey(candidate);
-        return candidateKey && (candidateKey.includes(queryKey) || queryKey.includes(candidateKey));
+      return window.MelbBeerMapLogic.happyHourBeerMatchesSearch(item, queryKey, {
+        onTapOnly,
+        getTrackedBeerMeta,
       });
     }
 
     function happyHourTextMatchesBeer(row, queryKey) {
-      const details = getHappyHourDetails(row);
-      if (!details || !queryKey) {
-        return false;
-      }
-
-      return [
-        details.title,
-        details.specials,
-        details.summary,
-        details.when,
-      ].some((value) => {
-        const candidateKey = toSearchKey(value);
-        return candidateKey && (candidateKey.includes(queryKey) || queryKey.includes(candidateKey));
-      });
+      return window.MelbBeerMapLogic.happyHourTextMatchesBeer(getHappyHourDetails(row), queryKey);
     }
 
     function happyHourMatchesBeerQuery(row, beerQuery, onTapOnly = false) {
-      const queryKey = toSearchKey(beerQuery);
-      if (!queryKey) {
-        return true;
-      }
-
-      const details = getHappyHourDetails(row);
-      if (!details || !details.exists) {
-        return false;
-      }
-
-      const selectedBeers = normalizeHappyHourBeerItems(details.happyHourBeers);
-      if (selectedBeers.length > 0) {
-        return selectedBeers.some((item) => happyHourBeerMatchesSearch(item, queryKey, onTapOnly));
-      }
-
-      return happyHourTextMatchesBeer(row, queryKey);
+      return window.MelbBeerMapLogic.happyHourMatchesBeerQuery(row, beerQuery, {
+        onTapOnly,
+        getHappyHourDetails,
+        getTrackedBeerMeta,
+      });
     }
 
     function beerMatchesSearchQuery(beer, queryKey) {

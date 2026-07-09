@@ -835,16 +835,66 @@ h3 {
 }
 
 .venueHappyHourBeerChoices {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   align-items: start;
 }
 
 .venueHappyHourBeerChoice {
-  justify-content: flex-start;
-  min-height: 42px;
-  border-radius: 14px;
-  white-space: normal;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background: rgba(21, 31, 52, 0.62);
+  padding: 12px;
+}
+
+.venueHappyHourBeerToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 850;
   line-height: 1.25;
+}
+
+.venueHappyHourBeerToggle input {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent-neon-cyan);
+}
+
+.venueHappyHourBeerOffer {
+  display: grid;
+  grid-template-columns: minmax(86px, 0.45fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.venueHappyHourBeerOffer label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.venueHappyHourBeerOffer input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background: rgba(7, 12, 24, 0.78);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font: inherit;
 }
 
 .priceRefreshPanel {
