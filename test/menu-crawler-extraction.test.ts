@@ -673,7 +673,7 @@ describe("menu crawler extraction", () => {
       expect(source).toContain("choose the PINT price");
       expect(source).toContain("Read the whole image first");
       expect(source).toContain("Do not include gin, vodka, whisky");
-      expect(source).toContain('detail: "high"');
+      expect(source).toMatch(/detail:\s*"high"|"original" as const : "high" as const/);
       expect(source).toContain("second-pass quality check");
       expect(source).toContain("Proposed first-pass extraction JSON");
       expect(source).toContain("temperature: 0");
@@ -693,6 +693,14 @@ describe("menu crawler extraction", () => {
     expect(selectLabeledPintPrice("$6 / $9 / $12")).toEqual({
       priceNumeric: 12,
       priceText: "$12",
+    });
+    expect(selectLabeledPintPrice("James Squire 150 Lashes 5% $7 / $10 / $13")).toEqual({
+      priceNumeric: 13,
+      priceText: "$13",
+    });
+    expect(selectLabeledPintPrice("Pots / Pints / Jugs Carlton Draught 7.5 / 14.5 / 29")).toEqual({
+      priceNumeric: 14.5,
+      priceText: "$14.50",
     });
     expect(selectLabeledPintPrice("9/16.5")).toEqual({
       priceNumeric: 16.5,

@@ -149,7 +149,7 @@ Venue owner TODOs before paid partner rollout:
 - Add stronger claim verification such as business email, phone, or document checks.
 - Integrate a real report email provider after staging verifies recipient scoping; current report delivery is disabled/mock-only.
 - Expand generated monthly reports from the aggregate `events` pipeline as production search/click volume grows.
-- Decide whether trusted venue-manager updates can publish as `venue_confirmed` automatically, or should remain admin-reviewed.
+- Assigned venue-manager profile, beer, and happy-hour updates publish directly as venue-managed data; a venue-wide burst guard holds the fourth beer deletion in an hour for admin review.
 - Replace suburb-based analytics with custom Pint Path areas such as Melbourne CBD, Fitzroy, Richmond, or Chapel Street once those boundaries are defined.
 
 Responsible-alcohol guardrails:
@@ -276,7 +276,7 @@ HOST=0.0.0.0
 PORT=3000
 PUBLIC_BASE_URL=https://your-ngrok-subdomain.ngrok-free.app
 DATABASE_PATH=./data/pint-path.sqlite
-TRUST_PROXY=true
+TRUST_PROXY_HOPS=1
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_publishable_or_legacy_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
@@ -287,6 +287,10 @@ SUPABASE_MENU_CAPTURE_TABLE=venue_menu_captures
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 GOOGLE_MAPS_MAP_ID=your_google_vector_map_id
 GOOGLE_PLACES_API_KEY=your_server_side_google_places_api_key
+OPENAI_API_KEY=your_openai_api_key_for_menu_ocr
+OPENAI_MENU_OCR_MODEL=gpt-5.5
+OPENAI_MENU_OCR_FALLBACK_MODEL=gpt-4.1
+OPENAI_MENU_OCR_REVIEW_PASS=true
 ADMIN_EMAILS=you@example.com
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
@@ -329,6 +333,10 @@ What each one does:
 - `GOOGLE_MAPS_API_KEY`: browser-safe Google Maps key used by the hosted viewer.
 - `GOOGLE_MAPS_MAP_ID`: production-required JavaScript/vector Google Maps Map ID for branded map styling and AdvancedMarkerElement support. Local development can fall back to `DEMO_MAP_ID`.
 - `GOOGLE_PLACES_API_KEY`: server-side key used by venue imports and mission area geocoding. Enable Places API and Geocoding API on this key. If absent, server lookups fall back to `GOOGLE_MAPS_API_KEY` where possible.
+- `OPENAI_API_KEY`: server-only key used to extract structured beer rows from submitted menu photos. Photo evidence is never exposed through browser configuration.
+- `OPENAI_MENU_OCR_MODEL`: primary vision model for menu-photo extraction. Defaults to `gpt-5.5`.
+- `OPENAI_MENU_OCR_FALLBACK_MODEL`: model used only if the primary OCR request fails. Defaults to `gpt-4.1`.
+- `OPENAI_MENU_OCR_REVIEW_PASS`: when `true`, asks the vision model to review its first structured extraction before deterministic beer, food/noise, package-size, and catalogue checks run.
 - `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup. In production this can be left blank while the official ABN/admin email is pending; the public site will still boot, but admin routes will return `403` until the allowlist is configured.
 - `SESSION_TTL_DAYS`: normal account bearer-session lifetime. Defaults to `60`.
 - `ADMIN_SESSION_TTL_DAYS`: shorter admin bearer-session lifetime. Defaults to `7`.

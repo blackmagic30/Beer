@@ -1,6 +1,7 @@
-import { Router, type Request } from "express";
+import { Router, type Request, type Response } from "express";
 
 import { success } from "../../lib/http.js";
+import { getSessionAuthorization, SESSION_COOKIE_NAME } from "../../lib/session-cookie.js";
 import { parseWithSchema } from "../../lib/validation.js";
 import { createRateLimiter } from "../../middleware/rate-limit.js";
 
@@ -68,7 +69,26 @@ import {
 import type { BusinessService } from "./business.service.js";
 
 function getAuthorization(req: Request): string | undefined {
-  return req.header("authorization") ?? undefined;
+  return getSessionAuthorization(req);
+}
+
+function setSessionCookie(res: Response, token: string, expiresAt: string): void {
+  res.cookie(SESSION_COOKIE_NAME, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    expires: new Date(expiresAt),
+  });
+}
+
+function clearSessionCookie(res: Response): void {
+  res.clearCookie(SESSION_COOKIE_NAME, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+  });
 }
 
 function getOptionalAccount(req: Request, businessService: BusinessService) {
@@ -164,33 +184,63 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getPublicConfig()));
   });
 
-  router.post("/auth/signup", authLimiter, (req, res) => {
-    const body = parseWithSchema(authSignupSchema, req.body, "Invalid signup payload");
-    res.status(201).json(success(businessService.signup(body, getRequestContext(req))));
-  });
-
-  router.post("/auth/login", authLimiter, (req, res) => {
-    const body = parseWithSchema(authLoginSchema, req.body, "Invalid login payload");
-    res.json(success(businessService.login(body, getRequestContext(req))));
-  });
-
-  router.post("/auth/supabase-session", authLimiter, async (req, res, next) => {
+  router.post("/auth/signup", authLimiter, async (req, res, next) => {
     try {
-      const body = parseWithSchema(authSupabaseSessionSchema, req.body, "Invalid Supabase auth payload");
-      const result = await businessService.loginWithSupabaseAccessToken(body, getRequestContext(req));
+      const body = parseWithSchema(authSignupSchema, req.body, "Invalid signup payload");
+      const result = await businessService.signup(body, getRequestContext(req));
+      setSessionCookie(res, result.token, result.expiresAt);
+      res.status(201).json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/auth/login", authLimiter, async (req, res, next) => {
+    try {
+      const body = parseWithSchema(authLoginSchema, req.body, "Invalid login payload");
+      const result = await businessService.login(body, getRequestContext(req));
+      setSessionCookie(res, result.token, result.expiresAt);
       res.json(success(result));
     } catch (error) {
       next(error);
     }
   });
 
+  router.post("/auth/supabase-session", authLimiter, async (req, res, next) => {
+    try {
+      const body = parseWithSchema(authSupabaseSessionSchema, req.body, "Invalid Supabase auth payload");
+      const result = await businessService.loginWithSupabaseAccessToken(body, getRequestContext(req));
+      setSessionCookie(res, result.token, result.expiresAt);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/auth/session-cookie", authLimiter, (req, res) => {
+    const authorization = getAuthorization(req);
+    requireAccount(req, businessService);
+    const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
+    const expiresAt = businessService.getSessionExpiresAt(authorization);
+    if (!token || !expiresAt) {
+      res.status(401).json({ ok: false, error: { message: "Login required." } });
+      return;
+    }
+    setSessionCookie(res, token, expiresAt);
+    res.json(success({ migrated: true, expiresAt }));
+  });
+
   router.post("/auth/logout", authLimiter, (req, res) => {
-    res.json(success(businessService.logout(getAuthorization(req), getRequestContext(req))));
+    const result = businessService.logout(getAuthorization(req), getRequestContext(req));
+    clearSessionCookie(res);
+    res.json(success(result));
   });
 
   router.post("/auth/logout-all", authLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
-    res.json(success(businessService.logoutAll(account, getRequestContext(req))));
+    const result = businessService.logoutAll(account, getRequestContext(req));
+    clearSessionCookie(res);
+    res.json(success(result));
   });
 
   router.get("/account", (req, res) => {
@@ -258,6 +308,20 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.requestAccountDeletion(account, body)));
   });
 
+  router.get("/admin/account-deletions", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    res.json(success(businessService.listAccountDeletionRequests(admin)));
+  });
+
+  router.post("/admin/account-deletions/:id/execute", adminReviewLimiter, async (req, res, next) => {
+    try {
+      const admin = requireAdmin(req, businessService);
+      res.json(success(await businessService.executeAccountDeletion(admin, String(req.params.id ?? ""))));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post("/account/saved-items", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(saveItemSchema, req.body, "Invalid saved item payload");
@@ -308,10 +372,14 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.status(201).json(success(businessService.submitFeedback(account, body)));
   });
 
-  router.post("/wrong-price-reports", writeLimiter, (req, res) => {
-    const account = getOptionalAccount(req, businessService);
-    const body = parseWithSchema(wrongPriceReportSchema, req.body, "Invalid wrong price report payload");
-    res.status(201).json(success(businessService.reportWrongPrice(account, body)));
+  router.post("/wrong-price-reports", writeLimiter, async (req, res, next) => {
+    try {
+      const account = getOptionalAccount(req, businessService);
+      const body = parseWithSchema(wrongPriceReportSchema, req.body, "Invalid wrong price report payload");
+      res.status(201).json(success(await businessService.reportWrongPrice(account, body)));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/requests", writeLimiter, (req, res) => {
@@ -338,32 +406,31 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.getSubmissionSourceEvidenceUrl(account, String(req.params.id ?? ""))));
   });
 
-  router.get("/source-evidence/:id", sourceEvidenceLimiter, (req, res) => {
+  router.get("/source-evidence/:id", sourceEvidenceLimiter, async (req, res, next) => {
+    try {
     const evidence = businessService.getSourceEvidenceForSignedRequest({
       evidenceId: String(req.params.id ?? ""),
       expires: typeof req.query.expires === "string" ? req.query.expires : undefined,
       signature: typeof req.query.signature === "string" ? req.query.signature : undefined,
     });
 
-    const delivery = businessService.getSourceEvidenceDelivery(evidence);
+    const delivery = await businessService.getSourceEvidenceDelivery(evidence);
     if (!delivery) {
       res.sendStatus(404);
       return;
     }
 
     res.setHeader("Cache-Control", "private, no-store");
-    if (delivery.kind === "redirect") {
-      res.redirect(delivery.url);
-      return;
-    }
-
     res.type(delivery.mimeType).send(delivery.bytes);
+    } catch (error) {
+      next(error);
+    }
   });
 
-  router.post("/submissions/:id/review", (req, res) => {
+  router.post("/submissions/:id/review", adminReviewLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(reviewSubmissionSchema, req.body, "Invalid review payload");
-    const result = businessService.reviewSubmission(admin, req.params.id, body);
+    const result = businessService.reviewSubmission(admin, String(req.params.id ?? ""), body);
     res.json(success(result));
   });
 
@@ -489,11 +556,15 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.status(201).json(success(businessService.createVenueClaimRequest(account, body)));
   });
 
-  router.post("/venue-portal/:venueId/submissions", writeLimiter, (req, res) => {
-    const account = requireAccount(req, businessService);
-    const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid venue update payload");
-    const venueId = String(req.params.venueId ?? "");
-    res.status(201).json(success(businessService.createVenueManagerSubmission(account, venueId, body)));
+  router.post("/venue-portal/:venueId/submissions", writeLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      const body = parseWithSchema(createSubmissionSchema, req.body, "Invalid venue update payload");
+      const venueId = String(req.params.venueId ?? "");
+      res.status(201).json(success(await businessService.createVenueManagerSubmission(account, venueId, body)));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/venue-portal/:venueId/profile", writeLimiter, (req, res) => {
@@ -563,6 +634,12 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const account = requireAccount(req, businessService);
     const venueId = String(req.params.venueId ?? "");
     res.json(success(businessService.getVenuePosIntegration(account, venueId)));
+  });
+
+  router.post("/venue-portal/:venueId/pos-integration/rotate", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const venueId = String(req.params.venueId ?? "");
+    res.json(success(businessService.rotateVenuePosIntegrationToken(account, venueId)));
   });
 
   router.delete("/venue-portal/:venueId/specials/:specialId", writeLimiter, (req, res) => {

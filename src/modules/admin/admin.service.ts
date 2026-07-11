@@ -20,6 +20,7 @@ import {
 } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import type { MenuPhotoOcrResult } from "../../lib/menu-photo-ocr.js";
 import { selectLabeledPintPrice } from "../../lib/menu-price-selection.js";
 import { redactSecrets } from "../../lib/redact.js";
 import {
@@ -91,17 +92,35 @@ interface GooglePlacesSearchResponse {
 
 const ADMIN_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const ADMIN_GOOGLE_VENUE_TYPE_SET = new Set<string>(ADMIN_GOOGLE_VENUE_TYPES);
-const MENU_PHOTO_OCR_MODEL = process.env.OPENAI_MENU_OCR_MODEL?.trim() || "gpt-4.1";
+const MENU_PHOTO_OCR_MODEL = process.env.OPENAI_MENU_OCR_MODEL?.trim() || "gpt-5.5";
+const MENU_PHOTO_OCR_FALLBACK_MODEL = process.env.OPENAI_MENU_OCR_FALLBACK_MODEL?.trim() || "gpt-4.1";
 const MENU_PHOTO_OCR_REVIEW_PASS_ENABLED =
   (process.env.OPENAI_MENU_OCR_REVIEW_PASS ?? "true").trim().toLowerCase() !== "false";
 const SOURCE_INGESTION_IMAGE_FETCH_TIMEOUT_MS = 6_500;
 const SOURCE_INGESTION_MAX_IMAGE_BYTES = SUBMISSION_LIMITS.maxPhotoBytes;
 const SOURCE_INGESTION_ALLOWED_MIME_TYPES = SUBMISSION_LIMITS.allowedImageMimeTypes;
 
-type MenuPhotoOcrInput = AdminMenuPhotoOcrInput | { venueNameHint: string | null; imageDataUrl: string };
+interface MenuPhotoOcrInput {
+  venueNameHint: string | null;
+  imageDataUrls: string[];
+}
+
+type MenuPhotoProductCategory =
+  | "beer"
+  | "cider"
+  | "rtd"
+  | "non_alcoholic_beer"
+  | "food"
+  | "wine"
+  | "spirit"
+  | "cocktail"
+  | "other";
 
 interface MenuPhotoOcrModelItem {
   name: string;
+  product_category: MenuPhotoProductCategory;
+  brewery: string | null;
+  abv: number | null;
   price_numeric: number | null;
   price_text: string | null;
   availability_status: "on_tap" | "package_only" | "unavailable" | "unknown";
@@ -109,7 +128,14 @@ interface MenuPhotoOcrModelItem {
   available_package_only: boolean;
   unavailable_reason: "cans_only" | "bottles_only" | "cans_or_bottles" | "no_pints" | "not_on_tap" | "not_stocked" | "unknown" | null;
   notes: string | null;
+  source_text: string | null;
   confidence: number | null;
+}
+
+interface MenuPhotoOcrRejectedCandidate {
+  source_text: string;
+  product_category: MenuPhotoProductCategory;
+  reason: string;
 }
 
 interface MenuPhotoOcrModelResponse {
@@ -117,14 +143,120 @@ interface MenuPhotoOcrModelResponse {
   captured_notes: string | null;
   overall_confidence: number | null;
   beers: MenuPhotoOcrModelItem[];
+  rejected_candidates: MenuPhotoOcrRejectedCandidate[];
+}
+
+interface MenuPhotoOcrModelResult {
+  model: string;
+  payload: MenuPhotoOcrModelResponse;
 }
 
 interface NormalizedOcrExtraction {
+  model: string;
+  imageCount: number;
   venueNameGuess: string | null;
   capturedNotes: string | null;
   overallConfidence: number | null;
-  beers: AdminIngestionBeerRecord[];
+  rejectedCandidateCount: number;
+  beers: Array<AdminIngestionBeerRecord & {
+    brewery: string | null;
+    abv: number | null;
+    sourceText: string | null;
+  }>;
 }
+
+const MENU_PHOTO_ALLOWED_CATEGORIES = new Set<MenuPhotoProductCategory>([
+  "beer",
+  "cider",
+  "rtd",
+  "non_alcoholic_beer",
+]);
+
+const MENU_PHOTO_PRODUCT_CATEGORIES = new Set<MenuPhotoProductCategory>([
+  ...MENU_PHOTO_ALLOWED_CATEGORIES,
+  "food",
+  "wine",
+  "spirit",
+  "cocktail",
+  "other",
+]);
+
+const MENU_PHOTO_OCR_RESPONSE_FORMAT = {
+  type: "json_schema" as const,
+  name: "pint_path_menu_photo_ocr",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      venue_name_guess: { type: ["string", "null"] },
+      captured_notes: { type: ["string", "null"] },
+      overall_confidence: { type: ["number", "null"], minimum: 0, maximum: 1 },
+      beers: {
+        type: "array",
+        maxItems: 80,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            name: { type: "string" },
+            product_category: {
+              type: "string",
+              enum: ["beer", "cider", "rtd", "non_alcoholic_beer", "food", "wine", "spirit", "cocktail", "other"],
+            },
+            brewery: { type: ["string", "null"] },
+            abv: { type: ["number", "null"], minimum: 0, maximum: 30 },
+            price_numeric: { type: ["number", "null"], minimum: 0, maximum: 250 },
+            price_text: { type: ["string", "null"] },
+            availability_status: { type: "string", enum: ["on_tap", "package_only", "unavailable", "unknown"] },
+            available_on_tap: { type: ["boolean", "null"] },
+            available_package_only: { type: "boolean" },
+            unavailable_reason: {
+              type: ["string", "null"],
+              enum: ["cans_only", "bottles_only", "cans_or_bottles", "no_pints", "not_on_tap", "not_stocked", "unknown", null],
+            },
+            notes: { type: ["string", "null"] },
+            source_text: { type: ["string", "null"] },
+            confidence: { type: ["number", "null"], minimum: 0, maximum: 1 },
+          },
+          required: [
+            "name",
+            "product_category",
+            "brewery",
+            "abv",
+            "price_numeric",
+            "price_text",
+            "availability_status",
+            "available_on_tap",
+            "available_package_only",
+            "unavailable_reason",
+            "notes",
+            "source_text",
+            "confidence",
+          ],
+        },
+      },
+      rejected_candidates: {
+        type: "array",
+        maxItems: 80,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            source_text: { type: "string" },
+            product_category: {
+              type: "string",
+              enum: ["beer", "cider", "rtd", "non_alcoholic_beer", "food", "wine", "spirit", "cocktail", "other"],
+            },
+            reason: { type: "string" },
+          },
+          required: ["source_text", "product_category", "reason"],
+        },
+      },
+    },
+    required: ["venue_name_guess", "captured_notes", "overall_confidence", "beers", "rejected_candidates"],
+  },
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -235,6 +367,28 @@ function normalizeConfidence(value: unknown, fallback: number | null = null): nu
   return Math.min(1, Math.max(0, numeric));
 }
 
+function normalizeProductCategory(value: unknown, name: string): MenuPhotoProductCategory {
+  if (typeof value === "string" && MENU_PHOTO_PRODUCT_CATEGORIES.has(value as MenuPhotoProductCategory)) {
+    return value as MenuPhotoProductCategory;
+  }
+
+  return isLikelyBeerName(name) ? "beer" : "other";
+}
+
+function normalizeNullableText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim().replace(/\s+/g, " ") : null;
+}
+
+function sanitizeOcrBeerName(value: string): string {
+  return value
+    .replace(/\s+\d{2,4}\s*ml\b.*$/i, "")
+    .replace(/\s+\d+(?:\.\d+)?\s*%\s*(?:abv)?\b.*$/i, "")
+    .replace(/\s+abv\s*\d+(?:\.\d+)?\s*%?.*$/i, "")
+    .replace(/\s+(?:A\$|AUD\s*|\$)\s*\d+(?:\.\d+)?(?:\s*\/.*)?$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function normalizeOcrResponse(value: unknown): MenuPhotoOcrModelResponse {
   if (!isRecord(value)) {
     throw new AppError("Menu OCR returned an invalid payload", 502);
@@ -243,33 +397,53 @@ function normalizeOcrResponse(value: unknown): MenuPhotoOcrModelResponse {
   const beers = Array.isArray(value.beers)
     ? value.beers
         .filter(isRecord)
-        .map((beer) => ({
-          name: typeof beer.name === "string" ? beer.name.trim() : "",
-          price_numeric:
-            beer.price_numeric == null || Number.isNaN(Number(beer.price_numeric))
-              ? null
-              : Number(beer.price_numeric),
-          price_text: typeof beer.price_text === "string" ? beer.price_text.trim() : null,
-          availability_status:
-            typeof beer.availability_status === "string" &&
-            ["on_tap", "package_only", "unavailable", "unknown"].includes(beer.availability_status)
-              ? (beer.availability_status as MenuPhotoOcrModelItem["availability_status"])
-              : "unknown",
-          available_on_tap:
-            beer.available_on_tap == null ? null : Boolean(beer.available_on_tap),
-          available_package_only: Boolean(beer.available_package_only),
-          unavailable_reason:
-            typeof beer.unavailable_reason === "string" &&
-            ["cans_only", "bottles_only", "cans_or_bottles", "no_pints", "not_on_tap", "not_stocked", "unknown"].includes(beer.unavailable_reason)
-              ? (beer.unavailable_reason as MenuPhotoOcrModelItem["unavailable_reason"])
-              : null,
-          notes: typeof beer.notes === "string" ? beer.notes.trim() : null,
-          confidence: normalizeConfidence(beer.confidence, null),
-        }))
+        .map((beer) => {
+          const rawName = typeof beer.name === "string" ? beer.name.trim() : "";
+          const name = sanitizeOcrBeerName(rawName);
+          return {
+            name,
+            product_category: normalizeProductCategory(beer.product_category, name),
+            brewery: normalizeNullableText(beer.brewery),
+            abv:
+              beer.abv == null || Number.isNaN(Number(beer.abv))
+                ? null
+                : Math.min(30, Math.max(0, Number(beer.abv))),
+            price_numeric:
+              beer.price_numeric == null || Number.isNaN(Number(beer.price_numeric))
+                ? null
+                : Number(beer.price_numeric),
+            price_text: typeof beer.price_text === "string" ? beer.price_text.trim() : null,
+            availability_status:
+              typeof beer.availability_status === "string" &&
+              ["on_tap", "package_only", "unavailable", "unknown"].includes(beer.availability_status)
+                ? (beer.availability_status as MenuPhotoOcrModelItem["availability_status"])
+                : "unknown",
+            available_on_tap:
+              beer.available_on_tap == null ? null : Boolean(beer.available_on_tap),
+            available_package_only: Boolean(beer.available_package_only),
+            unavailable_reason:
+              typeof beer.unavailable_reason === "string" &&
+              ["cans_only", "bottles_only", "cans_or_bottles", "no_pints", "not_on_tap", "not_stocked", "unknown"].includes(beer.unavailable_reason)
+                ? (beer.unavailable_reason as MenuPhotoOcrModelItem["unavailable_reason"])
+                : null,
+            notes: normalizeNullableText(beer.notes),
+            source_text: normalizeNullableText(beer.source_text),
+            confidence: normalizeConfidence(beer.confidence, null),
+          };
+        })
         .filter((beer) => beer.name.length > 0)
         .map((beer) => ({
           ...beer,
           name: canonicalizeTrackedBeerName(beer.name),
+        }))
+    : [];
+  const rejectedCandidates = Array.isArray(value.rejected_candidates)
+    ? value.rejected_candidates
+        .filter(isRecord)
+        .map((candidate) => ({
+          source_text: normalizeNullableText(candidate.source_text) ?? "Unreadable candidate",
+          product_category: normalizeProductCategory(candidate.product_category, ""),
+          reason: normalizeNullableText(candidate.reason) ?? "Excluded from beer extraction",
         }))
     : [];
 
@@ -284,6 +458,7 @@ function normalizeOcrResponse(value: unknown): MenuPhotoOcrModelResponse {
         : null,
     overall_confidence: normalizeConfidence(value.overall_confidence, beers.length > 0 ? 0.7 : null),
     beers,
+    rejected_candidates: rejectedCandidates,
   };
 }
 
@@ -291,7 +466,18 @@ function normalizedOcrBeerPrice(beer: MenuPhotoOcrModelItem): {
   priceNumeric: number | null;
   priceText: string | null;
 } {
-  const selectedPint = selectLabeledPintPrice(beer.price_text);
+  const canSafelyInferPint = (value: string | null): boolean => {
+    if (!value) return false;
+    const slashCount = (value.match(/\//g) ?? []).length;
+    return /\bpints?\b/i.test(value) || slashCount <= 1 || /^\s*\//.test(value);
+  };
+  const sourcePint = canSafelyInferPint(beer.source_text)
+    ? selectLabeledPintPrice(beer.source_text)
+    : null;
+  const modelPint = canSafelyInferPint(beer.price_text)
+    ? selectLabeledPintPrice(beer.price_text)
+    : null;
+  const selectedPint = sourcePint ?? modelPint;
   if (selectedPint) {
     return {
       priceNumeric: selectedPint.priceNumeric,
@@ -300,7 +486,7 @@ function normalizedOcrBeerPrice(beer: MenuPhotoOcrModelItem): {
   }
 
   const priceText = beer.price_text?.trim() || null;
-  const evidence = `${beer.name} ${priceText ?? ""} ${beer.notes ?? ""}`;
+  const evidence = `${beer.name} ${priceText ?? ""} ${beer.notes ?? ""} ${beer.source_text ?? ""}`;
   const priceNumeric = beer.price_numeric == null ? null : Number(beer.price_numeric);
   if (priceNumeric == null || !Number.isFinite(priceNumeric)) {
     return { priceNumeric: null, priceText };
@@ -315,6 +501,16 @@ function normalizedOcrBeerPrice(beer: MenuPhotoOcrModelItem): {
 
   if (priceNumeric > 80 || /\b(?:330|335|355|375|440|500|570)\s?ml\b/i.test(priceText ?? "")) {
     return { priceNumeric: null, priceText };
+  }
+
+  const sourceText = beer.source_text ?? "";
+  const packageVolume = sourceText.match(/\b(\d{3,4})\s*ml\b/i)?.[1] ?? null;
+  const sourceHasActualPrice = /(?:A\$|AUD\s*|\$)\s*\d{1,2}(?:\.\d{1,2})?|\b\d{1,2}(?:\.\d{1,2})?\s*(?:each|ea)\b/i.test(sourceText);
+  if (packageVolume && !sourceHasActualPrice) {
+    const volumeSuffix = Number(packageVolume.slice(-2));
+    if (priceNumeric === volumeSuffix || priceNumeric === Number(packageVolume)) {
+      return { priceNumeric: null, priceText: null };
+    }
   }
 
   return { priceNumeric, priceText };
@@ -899,6 +1095,8 @@ export class AdminService {
     source: string;
     now: string;
     createIfMissing?: boolean;
+    brewery?: string | null;
+    abv?: number | null;
   }): ResolvedBeerCatalogItem {
     if (this.beerCatalogRepository) {
       return this.beerCatalogRepository.resolveBeerName(input);
@@ -941,18 +1139,21 @@ export class AdminService {
     });
   }
 
-  private standardizeIngestionBeerRecords(
-    beers: AdminIngestionBeerRecord[],
+  private standardizeIngestionBeerRecords<T extends AdminIngestionBeerRecord>(
+    beers: T[],
     source: string,
     now: string,
     createIfMissing = true,
-  ): AdminIngestionBeerRecord[] {
+  ): T[] {
     return beers.map((beer) => {
+      const catalogMetadata = beer as T & { brewery?: string | null; abv?: number | null };
       const resolved = this.resolveSystemBeer({
         name: beer.name,
         source,
         now,
         createIfMissing,
+        ...(catalogMetadata.brewery !== undefined ? { brewery: catalogMetadata.brewery } : {}),
+        ...(catalogMetadata.abv !== undefined ? { abv: catalogMetadata.abv } : {}),
       });
       const systemNote =
         resolved.created
@@ -966,7 +1167,7 @@ export class AdminService {
         name: resolved.name,
         needsReview: beer.needsReview || resolved.status === "pending_review" || resolved.created,
         notes: [beer.notes, systemNote].filter(Boolean).join(" ") || null,
-      };
+      } as T;
     });
   }
 
@@ -1484,39 +1685,59 @@ export class AdminService {
   private async requestMenuPhotoOcrModel(
     input: MenuPhotoOcrInput,
     prompt: string,
-  ): Promise<MenuPhotoOcrModelResponse> {
+    reasoningEffort: "low" | "medium" = "low",
+  ): Promise<MenuPhotoOcrModelResult> {
     if (!this.openai) {
       throw new AppError("Menu OCR is not configured. Set OPENAI_API_KEY on the server.", 503);
     }
 
-    let response: Awaited<ReturnType<OpenAI["responses"]["create"]>>;
-    try {
-      response = await this.openai.responses.create({
-        model: MENU_PHOTO_OCR_MODEL,
-        temperature: 0,
-        input: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "input_text",
-                text: prompt,
-              },
-              {
-                type: "input_image",
-                image_url: input.imageDataUrl,
-                detail: "high",
-              },
-            ],
-          },
-        ],
-      });
-    } catch (error) {
-      const details = getOcrProviderErrorDetails(error);
-      logger.warn("Menu OCR provider request failed", details);
+    const models = Array.from(new Set([MENU_PHOTO_OCR_MODEL, MENU_PHOTO_OCR_FALLBACK_MODEL].filter(Boolean)));
+    let response: Awaited<ReturnType<OpenAI["responses"]["create"]>> | null = null;
+    let selectedModel = models[0] ?? MENU_PHOTO_OCR_MODEL;
+    let lastError: unknown = null;
+    for (const model of models) {
+      const supportsOriginalDetail = /^gpt-5\.(?:[4-9]|\d{2,})/i.test(model);
+      try {
+        response = await this.openai.responses.create({
+          model,
+          store: false,
+          ...(model.startsWith("gpt-5")
+            ? { reasoning: { effort: reasoningEffort } }
+            : { temperature: 0 }),
+          text: { format: MENU_PHOTO_OCR_RESPONSE_FORMAT },
+          input: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "input_text",
+                  text: prompt,
+                },
+                ...input.imageDataUrls.map((imageDataUrl) => ({
+                  type: "input_image" as const,
+                  image_url: imageDataUrl,
+                  detail: supportsOriginalDetail ? "original" as const : "high" as const,
+                })),
+              ],
+            },
+          ],
+        });
+        selectedModel = model;
+        break;
+      } catch (error) {
+        lastError = error;
+        logger.warn("Menu OCR provider request failed", {
+          ...getOcrProviderErrorDetails(error),
+          model,
+          fallbackAvailable: model !== models.at(-1),
+        });
+      }
+    }
+
+    if (!response) {
       throw new ExternalServiceError(
         "Menu OCR provider failed. Try a clearer or smaller photo, or enter the beer rows manually.",
-        details,
+        getOcrProviderErrorDetails(lastError),
       );
     }
 
@@ -1533,20 +1754,23 @@ export class AdminService {
       });
     }
 
-    return normalizeOcrResponse(parsedPayload);
+    return {
+      model: selectedModel,
+      payload: normalizeOcrResponse(parsedPayload),
+    };
   }
 
   private async reviewMenuPhotoOcrExtraction(
     input: MenuPhotoOcrInput,
-    firstPass: MenuPhotoOcrModelResponse,
-  ): Promise<MenuPhotoOcrModelResponse> {
+    firstPass: MenuPhotoOcrModelResult,
+  ): Promise<MenuPhotoOcrModelResult> {
     if (!MENU_PHOTO_OCR_REVIEW_PASS_ENABLED) {
       return firstPass;
     }
 
     const prompt = [
       "You are doing a second-pass quality check on beer menu OCR for Pint Path.",
-      "Compare the proposed JSON extraction against the image itself. Return corrected JSON only, using the same schema.",
+      "Compare the proposed structured extraction against every supplied image. Return corrected data using the required schema.",
       "Be stricter than the first pass. If a proposed row is not clearly visible in the image as beer, cider, or RTD, remove it.",
       "Remove spirits, gin, whisky, vodka, cocktails, wine, food, steak, welcome copy, category descriptions, promos, happy-hour/event prices, and venue marketing copy.",
       "Correct any row where the first pass used ABV, millilitres, package size, year, count, pot price, or schooner price as the pint price.",
@@ -1555,6 +1779,8 @@ export class AdminService {
       "If a beer/cider/RTD row is clearly readable in the image and missing from the proposed JSON, add it.",
       "If a name, price, or availability cannot be verified from the image, remove the row instead of guessing.",
       "Set confidence below 0.8 for corrected rows, below 0.65 for layout-ambiguous rows, and below 0.5 only when the row should normally be omitted.",
+      "Classify every retained product as beer, cider, RTD, or non-alcoholic beer. Put rejected food, wine, spirit, cocktail, marketing, heading, and unreadable candidates in rejected_candidates.",
+      "Keep source_text as the exact short row or nearby text used for the result. Never invent source text.",
       "Keep notes concise and include ABV/brewery text only when visible.",
       "Schema:",
       "{",
@@ -1564,6 +1790,9 @@ export class AdminService {
       '  "beers": [',
       "    {",
       '      "name": string,',
+      '      "product_category": "beer" | "cider" | "rtd" | "non_alcoholic_beer" | "food" | "wine" | "spirit" | "cocktail" | "other",',
+      '      "brewery": string | null,',
+      '      "abv": number | null,',
       '      "price_numeric": number | null,',
       '      "price_text": string | null,',
       '      "availability_status": "on_tap" | "package_only" | "unavailable" | "unknown",',
@@ -1571,22 +1800,27 @@ export class AdminService {
       '      "available_package_only": boolean,',
       '      "unavailable_reason": "cans_only" | "bottles_only" | "cans_or_bottles" | "no_pints" | "not_on_tap" | "not_stocked" | "unknown" | null,',
       '      "notes": string | null,',
+      '      "source_text": string | null,',
       '      "confidence": number | null',
       "    }",
-      "  ]",
+      "  ],",
+      '  "rejected_candidates": [{ "source_text": string, "product_category": string, "reason": string }]',
       "}",
       `Canonical tracked beer names to prefer when clearly matched: ${this.getTrackedBeerNamesForOcrPrompt()}.`,
       input.venueNameHint ? `Venue hint: ${input.venueNameHint}` : "Venue hint: none",
-      `Proposed first-pass extraction JSON: ${JSON.stringify(firstPass)}`,
+      `Proposed first-pass extraction JSON: ${JSON.stringify(firstPass.payload)}`,
     ].join("\n");
 
     try {
-      const reviewed = await this.requestMenuPhotoOcrModel(input, prompt);
+      const reviewed = await this.requestMenuPhotoOcrModel(input, prompt, "medium");
       return {
-        ...reviewed,
-        venue_name_guess: reviewed.venue_name_guess ?? firstPass.venue_name_guess,
-        captured_notes: reviewed.captured_notes ?? firstPass.captured_notes,
-        overall_confidence: reviewed.overall_confidence ?? firstPass.overall_confidence,
+        model: reviewed.model,
+        payload: {
+          ...reviewed.payload,
+          venue_name_guess: reviewed.payload.venue_name_guess ?? firstPass.payload.venue_name_guess,
+          captured_notes: reviewed.payload.captured_notes ?? firstPass.payload.captured_notes,
+          overall_confidence: reviewed.payload.overall_confidence ?? firstPass.payload.overall_confidence,
+        },
       };
     } catch (error) {
       logger.warn("Menu OCR review pass failed; using first pass extraction", {
@@ -1597,13 +1831,18 @@ export class AdminService {
   }
 
   private async extractMenuPhoto(input: MenuPhotoOcrInput): Promise<NormalizedOcrExtraction> {
+    if (!input.imageDataUrls.length || input.imageDataUrls.length > 6) {
+      throw new AppError("Menu OCR needs between 1 and 6 source images.", 400);
+    }
+
     const safeInput = {
       ...input,
-      imageDataUrl: validateAdminMenuImageDataUrl(input.imageDataUrl),
+      imageDataUrls: input.imageDataUrls.map(validateAdminMenuImageDataUrl),
     };
     const prompt = [
-      "Extract useful beer menu information from this pub or bar menu photo.",
-      "Return JSON only.",
+      "Extract accurate beer, cider, RTD, and non-alcoholic beer information from all supplied pub/bar menu, tap-board, receipt, or shelf images.",
+      `There ${safeInput.imageDataUrls.length === 1 ? "is 1 image" : `are ${safeInput.imageDataUrls.length} images`}. Read every image, every column, and all lower sections before returning the structured result.`,
+      "Return only data that conforms to the supplied response schema.",
       "Schema:",
       "{",
       '  "venue_name_guess": string | null,',
@@ -1612,6 +1851,9 @@ export class AdminService {
       '  "beers": [',
       "    {",
       '      "name": string,',
+      '      "product_category": "beer" | "cider" | "rtd" | "non_alcoholic_beer" | "food" | "wine" | "spirit" | "cocktail" | "other",',
+      '      "brewery": string | null,',
+      '      "abv": number | null,',
       '      "price_numeric": number | null,',
       '      "price_text": string | null,',
       '      "availability_status": "on_tap" | "package_only" | "unavailable" | "unknown",',
@@ -1619,14 +1861,18 @@ export class AdminService {
       '      "available_package_only": boolean,',
       '      "unavailable_reason": "cans_only" | "bottles_only" | "cans_or_bottles" | "no_pints" | "not_on_tap" | "not_stocked" | "unknown" | null,',
       '      "notes": string | null,',
+      '      "source_text": string | null,',
       '      "confidence": number | null',
       "    }",
-      "  ]",
+      "  ],",
+      '  "rejected_candidates": [{ "source_text": string, "product_category": string, "reason": string }]',
       "}",
       "Read the whole image first, including all columns and lower sections, before returning JSON. Do not stop after the first readable row.",
-      "Only include beer, cider, and RTD products that appear under beer/cider/RTD/on tap/tins/cans/bottles sections and are useful for a regular pub beer map.",
-      "Do not include gin, vodka, whisky, bourbon, tequila, cocktails, wine, food, steak, venue welcome copy, promo copy, category descriptions, or event text as beer rows.",
+      "Only put genuine beer, cider, RTD, and non-alcoholic beer products in beers. The product name must be visibly supported by source_text.",
+      "Do not include gin, vodka, whisky, bourbon, tequila, cocktails, wine, food, steaks, meals, headings, venue welcome copy, promo copy, category descriptions, event text, or unreadable OCR fragments as beer rows; put them in rejected_candidates instead.",
+      "Never turn a sentence, heading, serving instruction, package volume, ABV, price, venue slogan, or number of taps into a product name.",
       `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${this.getTrackedBeerNamesForOcrPrompt()}.`,
+      "Correct only obvious OCR punctuation, spacing, and character errors. Do not guess a tracked beer merely because its name is similar.",
       "Use confidence values from 0 to 1 based on how readable and reliable each beer item looks.",
       "If a beer has a visible price, put the numeric value in price_numeric and preserve the menu wording in price_text.",
       "Never use package volume, serving size, ABV, years, counts, or measurements such as 330ml, 335ml, 355ml, 375ml, 440ml, 500ml, 4.2%, 2025, 4 pack, grams, or litres as price_numeric.",
@@ -1648,8 +1894,21 @@ export class AdminService {
     ].join("\n");
 
     const firstPass = await this.requestMenuPhotoOcrModel(safeInput, prompt);
-    const parsed = await this.reviewMenuPhotoOcrExtraction(safeInput, firstPass);
-    const rawBeers = parsed.beers.filter((beer) => isLikelyBeerName(beer.name)).map((beer) => {
+    const reviewed = await this.reviewMenuPhotoOcrExtraction(safeInput, firstPass);
+    const parsed = reviewed.payload;
+    let deterministicRejectionCount = 0;
+    const acceptedCandidates = parsed.beers.filter((beer) => {
+      const accepted =
+        MENU_PHOTO_ALLOWED_CATEGORIES.has(beer.product_category) &&
+        isLikelyBeerName(beer.name) &&
+        (beer.confidence == null || beer.confidence >= 0.58) &&
+        (beer.price_numeric != null || beer.availability_status !== "unknown" || Boolean(findTrackedBeerByName(beer.name)));
+      if (!accepted) {
+        deterministicRejectionCount += 1;
+      }
+      return accepted;
+    });
+    const rawBeers = acceptedCandidates.map((beer) => {
       const normalizedPrice = normalizedOcrBeerPrice(beer);
       const normalized = buildManualBeerEntry({
         name: beer.name,
@@ -1667,6 +1926,12 @@ export class AdminService {
         }),
       });
 
+      const detailNotes = [
+        beer.notes,
+        beer.brewery ? `Brewery: ${beer.brewery}.` : null,
+        beer.abv != null ? `ABV: ${beer.abv}%.` : null,
+      ].filter(Boolean).join(" ") || null;
+
       return {
         name: normalized.label,
         servingSize: "pint",
@@ -1678,8 +1943,15 @@ export class AdminService {
         unavailableReason: normalized.unavailable_reason,
         confidence: normalizeConfidence(beer.confidence, parsed.overall_confidence ?? 0.7) ?? 0.7,
         needsReview: normalized.needs_review,
-        notes: beer.notes,
-      } satisfies AdminIngestionBeerRecord;
+        notes: detailNotes,
+        brewery: beer.brewery,
+        abv: beer.abv,
+        sourceText: beer.source_text,
+      } satisfies AdminIngestionBeerRecord & {
+        brewery: string | null;
+        abv: number | null;
+        sourceText: string | null;
+      };
     });
     const beers = this.standardizeIngestionBeerRecords(
       rawBeers,
@@ -1689,6 +1961,8 @@ export class AdminService {
     );
 
     return {
+      model: reviewed.model,
+      imageCount: safeInput.imageDataUrls.length,
       venueNameGuess: parsed.venue_name_guess,
       capturedNotes: parsed.captured_notes,
       overallConfidence: normalizeConfidence(
@@ -1697,6 +1971,7 @@ export class AdminService {
           ? beers.reduce((sum, beer) => sum + beer.confidence, 0) / beers.length
           : null,
       ),
+      rejectedCandidateCount: parsed.rejected_candidates.length + deterministicRejectionCount,
       beers,
     };
   }
@@ -1764,21 +2039,30 @@ export class AdminService {
     return this.persistManualCapture(input);
   }
 
-  async ocrMenuPhoto(input: AdminMenuPhotoOcrInput): Promise<{
-    venueNameGuess: string | null;
-    capturedNotes: string | null;
-    overallConfidence: number | null;
-    beers: Array<AdminBeerInput & { confidence: number }>;
-  }> {
+  async ocrMenuPhoto(input: AdminMenuPhotoOcrInput): Promise<MenuPhotoOcrResult> {
+    return this.ocrMenuPhotos({
+      venueNameHint: input.venueNameHint,
+      imageDataUrls: [input.imageDataUrl],
+    });
+  }
+
+  async ocrMenuPhotos(input: MenuPhotoOcrInput): Promise<MenuPhotoOcrResult> {
     const extracted = await this.extractMenuPhoto(input);
 
     return {
+      model: extracted.model,
+      imageCount: extracted.imageCount,
       venueNameGuess: extracted.venueNameGuess,
       capturedNotes: extracted.capturedNotes,
       overallConfidence: extracted.overallConfidence,
+      rejectedCandidateCount: extracted.rejectedCandidateCount,
       beers: extracted.beers.map((beer) => ({
         ...toAdminBeerInput(beer),
+        brewery: beer.brewery,
+        abv: beer.abv,
         confidence: beer.confidence,
+        notes: beer.notes,
+        sourceText: beer.sourceText,
       })),
     };
   }
@@ -1796,7 +2080,7 @@ export class AdminService {
 
     const extracted = await this.extractMenuPhoto({
       venueNameHint: venue.name,
-      imageDataUrl,
+      imageDataUrls: [imageDataUrl],
     });
     const extractedBeers = this.standardizeIngestionBeerRecords(
       extracted.beers,

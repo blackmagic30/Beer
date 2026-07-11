@@ -30,7 +30,7 @@
   <main class="pageShell">
     <div id="nav"></div>
 
-    <section class="venuePortalHero" aria-label="Venue dashboard header">
+    <section class="venuePortalHero venuePortalHero--operational" aria-label="Venue dashboard header">
       <div class="venuePortalHero__inner">
         <div class="eyebrow">Venue portal</div>
         <h1 id="venuePortalTitle">Venue portal</h1>
@@ -63,6 +63,19 @@
             <select id="venueSelect"></select>
           </label>
           <div id="selectedVenueSummary" class="venueSummaryCard"></div>
+          <label class="mobileSectionPicker" for="venueMobileTabSelect">Dashboard section
+            <select id="venueMobileTabSelect">
+              <option value="overview">Overview</option>
+              <option value="redemption">Redeem code</option>
+              <option value="profile">Profile</option>
+              <option value="beers">Beers / stock</option>
+              <option value="happy-hours">Happy hours</option>
+              <option value="specials" data-specials-only>Specials planner</option>
+              <option value="pending-reviews">Pending reviews</option>
+              <option value="report">Monthly report</option>
+              <option value="support">Support</option>
+            </select>
+          </label>
           <nav class="tabNav" role="tablist" aria-label="Bar dashboard sections">
             <button class="tabButton is-active" type="button" data-tab="overview">Overview</button>
             <button class="tabButton" type="button" data-tab="redemption">Redeem code</button>
@@ -120,7 +133,7 @@
           <section class="tabPanel is-hidden" data-panel="pending-reviews">
             <article class="panel" style="margin-top:16px;">
               <h2>Pending review</h2>
-              <p class="helperCopy">Beer rows and prices save straight to your assigned venue. Profile and promotion changes may still wait for Pint Path admin approval.</p>
+              <p class="helperCopy">Beer, price, profile, and happy-hour edits save straight to your assigned venue. Only controlled subscription, promotion, and bulk-deletion actions require admin review.</p>
               <div id="pendingChanges" class="list"></div>
             </article>
           </section>
@@ -1122,6 +1135,8 @@
         panel.classList.toggle("is-hidden", !active);
         panel.hidden = !active;
       });
+      const mobileSelect = document.getElementById("venueMobileTabSelect");
+      if (mobileSelect) mobileSelect.value = nextName;
     }
 
     function clearStatus(element) {
@@ -2563,6 +2578,7 @@
           <div class="actionRow actionRow--compact" style="margin-top:12px;">
             <button class="button button--small" type="button" data-copy-pos-endpoint="true" ${pos.endpoint ? "" : "disabled"}>Copy endpoint</button>
             <button class="button button--small button--primary" type="button" data-copy-pos-token="true" ${pos.token ? "" : "disabled"}>Copy token</button>
+            <button class="button button--small button--danger" type="button" data-rotate-pos-token="true" ${pos.enabled ? "" : "disabled"}>Rotate token</button>
           </div>
           <div class="discountRedemptionList" style="margin-top:12px;">
             ${recent.length ? recent.slice(0, 4).map((item) => `
@@ -3334,7 +3350,7 @@
       const token = MelbBeerBusiness.getAuthToken();
       const response = await fetch(
         `/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/reports/${encodeURIComponent(month)}/export?format=${encodeURIComponent(format)}`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: "same-origin" },
       );
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
@@ -3428,27 +3444,24 @@
         if (row) syncOpeningHoursRow(row);
       });
 
-      if (MelbBeerBusiness.hasAuthenticatedSessionHint()) {
-        try {
-          MelbBeerBusiness.setStatus(portalAccess, "Loading your venue dashboard...");
-          await loadPortal(urlParams.get("venueId"));
-          if (requestedTab || discountCodeFromQr) {
-            jumpToPortalTarget(requestedTab || "redemption");
-          }
-        } catch (error) {
-          claimPanel.classList.add("is-hidden");
-          const message = /login required/i.test(error.message || "")
-            ? "Log in with an assigned venue-manager account to view this dashboard."
-            : error.message || "Bar dashboard unavailable. Log in, confirm 18+, or ask admin to assign your account to a venue.";
-          MelbBeerBusiness.setStatus(portalAccess, message, true);
+      try {
+        MelbBeerBusiness.setStatus(portalAccess, "Loading your venue dashboard...");
+        await loadPortal(urlParams.get("venueId"));
+        if (requestedTab || discountCodeFromQr) {
+          jumpToPortalTarget(requestedTab || "redemption");
         }
-      } else {
-        MelbBeerBusiness.setStatus(portalAccess, "Log in with an assigned venue-manager account to view this dashboard.", true);
+      } catch (error) {
+        claimPanel.classList.add("is-hidden");
+        const message = /login required/i.test(error.message || "")
+          ? "Log in with an assigned venue-manager account to view this dashboard."
+          : error.message || "Bar dashboard unavailable. Log in, confirm 18+, or ask admin to assign your account to a venue.";
+        MelbBeerBusiness.setStatus(portalAccess, message, true);
       }
 
       document.querySelectorAll(".tabButton").forEach((button) => {
         button.addEventListener("click", () => showTab(button.dataset.tab));
       });
+      document.getElementById("venueMobileTabSelect")?.addEventListener("change", (event) => showTab(event.target.value));
       document.querySelectorAll("[data-jump-tab]").forEach((button) => {
         button.addEventListener("click", () => jumpToPortalTarget(button.dataset.jumpTab));
       });
@@ -3865,6 +3878,20 @@
             MelbBeerBusiness.setStatus(discountRedemptionStatus, "POS token copied. Keep it private and only add it to the venue POS integration.");
           } catch {
             MelbBeerBusiness.setStatus(discountRedemptionStatus, "Could not copy POS token automatically. Try again from the venue portal.");
+          }
+          return;
+        }
+
+        if (target.dataset.rotatePosToken) {
+          if (!currentVenueId || !window.confirm("Rotate this POS token now? The old token will stop working immediately.")) return;
+          target.disabled = true;
+          try {
+            await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(currentVenueId)}/pos-integration/rotate`, { method: "POST", body: "{}" });
+            await loadPortal(currentVenueId);
+            MelbBeerBusiness.setStatus(discountRedemptionStatus, "POS token rotated. Update the venue POS integration with the new token.");
+          } catch (error) {
+            MelbBeerBusiness.setStatus(discountRedemptionStatus, error.message || "Could not rotate the POS token.", true);
+            target.disabled = false;
           }
           return;
         }

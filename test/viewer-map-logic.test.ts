@@ -57,6 +57,13 @@ describe("viewer map price logic", () => {
       bounds: { south: number; north: number; west: number; east: number },
     ) => boolean;
     normalizeHappyHourBeerItems: (value: unknown) => Array<Record<string, unknown>>;
+    beerCandidatesMatchSearch: (
+      candidates: unknown[],
+      beerQuery: string,
+      options?: {
+        getTrackedBeerMeta?: (value: string | null | undefined) => Record<string, unknown> | null;
+      },
+    ) => boolean;
     happyHourMatchesBeerQuery: (
       row: Record<string, unknown>,
       beerQuery: string,
@@ -177,6 +184,57 @@ describe("viewer map price logic", () => {
     expect(logic.happyHourMatchesBeerQuery(row, "Stone and Wood", { getTrackedBeerMeta, onTapOnly: true })).toBe(false);
     expect(logic.happyHourMatchesBeerQuery(row, "Stone and Wood", { getTrackedBeerMeta, onTapOnly: false })).toBe(true);
     expect(logic.happyHourMatchesBeerQuery(row, "Carlton Draught", { getTrackedBeerMeta })).toBe(false);
+  });
+
+  it("keeps Guinness 0.0 separate from alcoholic Guinness filters", () => {
+    const getTrackedBeerMeta = (value: string | null | undefined) => {
+      const key = String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (["guinness", "guinness draught"].includes(key)) {
+        return { key: "guinness", name: "Guinness", aliases: ["Guinness Draught"] };
+      }
+      if (["guinness 0 0", "guinness zero", "guinness non alcoholic stout"].includes(key)) {
+        return {
+          key: "guinness_non_alcoholic_stout",
+          name: "Guinness 0.0",
+          aliases: ["Guinness Zero", "Guinness Non Alcoholic Stout"],
+        };
+      }
+      return null;
+    };
+
+    expect(logic.beerCandidatesMatchSearch(
+      ["Guinness", "guinness"],
+      "Guinness 0.0",
+      { getTrackedBeerMeta },
+    )).toBe(false);
+    expect(logic.beerCandidatesMatchSearch(
+      ["Guinness 0.0", "guinness_non_alcoholic_stout"],
+      "Guinness 0.0",
+      { getTrackedBeerMeta },
+    )).toBe(true);
+    expect(logic.beerCandidatesMatchSearch(
+      ["Guinness 0.0", "guinness_non_alcoholic_stout"],
+      "Guinness",
+      { getTrackedBeerMeta },
+    )).toBe(false);
+    expect(logic.beerCandidatesMatchSearch(
+      ["Guinness", "guinness"],
+      "Guinness Draught",
+      { getTrackedBeerMeta },
+    )).toBe(true);
+
+    const nonAlcoholicHappyHour = {
+      happyHourDetails: {
+        exists: true,
+        happyHourBeers: [{
+          beerName: "Guinness 0.0",
+          normalizedBeerId: "guinness_non_alcoholic_stout",
+          onTap: true,
+        }],
+      },
+    };
+    expect(logic.happyHourMatchesBeerQuery(nonAlcoholicHappyHour, "Guinness 0.0", { getTrackedBeerMeta })).toBe(true);
+    expect(logic.happyHourMatchesBeerQuery(nonAlcoholicHappyHour, "Guinness", { getTrackedBeerMeta })).toBe(false);
   });
 
   it("falls back to happy-hour text matching only when no beer list is attached", () => {
@@ -544,10 +602,10 @@ describe("viewer map UI wiring", () => {
   });
 
   it("renders the simplified public header, primary controls, and shared advanced filters", () => {
-    expect(html).toContain('class="mapNavCard" aria-label="Primary"');
+    expect(html).toContain('class="mapNavCard topNav" aria-label="Primary"');
     expect(html).toContain('class="mapBrand" href="/"');
     expect(html).toContain('class="mapHeroCard" aria-label="Map overview"');
-    expect(html.indexOf('class="mapHeroCard"')).toBeLessThan(html.indexOf('class="mapNavCard"'));
+    expect(html.indexOf('class="mapHeroCard"')).toBeLessThan(html.indexOf('class="mapNavCard topNav"'));
     expect(html).toContain('<strong>Pint Path</strong>');
     expect(html).toContain('<div class="topbar__eyebrow">Melbourne beer map <span class="fieldTestBadge">Beta</span></div>');
     expect(html).toContain("<h1>Pint Path</h1>");
@@ -565,7 +623,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('class="controlDeck"');
     expect(html).toContain("Find a venue fast");
     expect(html).toContain('placeholder="Area or venue"');
-    expect(html).toContain('<select id="beerSearch" class="controlInput beerSelect">');
+    expect(html).toContain('<select id="beerSearch" class="controlInput beerSelect" aria-label="Beer filter">');
     expect(html).toContain('<option value="">Beer</option>');
     expect(html).toContain("function isBeerDropdownLabel(label)");
     expect(html).toContain("BEER_DROPDOWN_EXCLUDED_KEYS");
@@ -627,6 +685,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('disableUserLocation("use_location_button_off")');
     expect(html).toContain("navigator.geolocation.getCurrentPosition");
     expect(html).not.toContain("watchPosition");
+    expect(html).toContain('if (googleMapsAuthFailed) {\n          throw new Error("Google Maps authentication failed");');
   });
 
   it("limits public beer shortcut chips to the free preview beers", () => {
@@ -635,8 +694,9 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('label: "Stone & Wood Pacific Ale", query: "Stone & Wood Pacific Ale"');
     expect(html).toContain("FREE_PREVIEW_BEER_CHIPS");
     expect(html).toContain("FREE_PREVIEW_BEER_KEYS");
-    expect(html).toContain('optgroup label="Unlock full beer search"');
-    expect(html).toContain('Locked - ');
+    expect(html).toContain('value="__upgrade_beer_search__">Unlock all beer search');
+    expect(html).toContain("const selectableLabels = hasFullBeerAccess ? allLabels : freeLabels");
+    expect(html).not.toContain('optgroup label="Unlock full beer search"');
     expect(html).not.toContain("Search for more beers");
   });
 
@@ -653,7 +713,11 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("-webkit-line-clamp: 2");
     expect(html).toContain("font-size: 16px");
     expect(html).toContain(".mapBrand {\n        display: inline-flex;");
-    expect(html).toContain(".mapBrandText {\n        display: none;");
+    expect(html).toContain(".mapBrandText {\n        display: grid;");
+    expect(html).toContain('aria-controls="topbarBusinessLinks" data-mobile-nav-toggle');
+    expect(html).toContain(".mapNavCard.is-mobile-nav-open .topbar__actions");
+    expect(html).toContain("grid-template-columns: repeat(2, minmax(0, 1fr));");
+    expect(html).toContain("min-height: 44px;");
     expect(html).toContain("grid-template-columns: minmax(0, 1fr) minmax(118px, 0.82fr);");
     expect(html).toContain("flex-wrap: nowrap;");
     expect(html).toContain(".specialsFilterRow,\n      .popularBeerRow");

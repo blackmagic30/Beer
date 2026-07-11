@@ -20,10 +20,10 @@
 <body>
   <main class="pageShell">
     <div id="nav"></div>
-    <section class="hero">
+    <section class="hero hero--operational">
       <div class="eyebrow">Admin review</div>
-      <h1>Review submissions, protect data quality, and watch aggregate demand.</h1>
-      <p class="lead">This page uses account role checks. Admin content only loads after a valid admin session is confirmed.</p>
+      <h1>Pint Path admin</h1>
+      <p class="lead">Review public data, venue access, and system readiness.</p>
     </section>
 
     <div id="adminContent" hidden>
@@ -36,6 +36,16 @@
         <button class="adminTabButton" type="button" data-admin-tab-target="leaderboard" aria-controls="adminLeaderboard" aria-selected="false">Prizes</button>
         <button class="adminTabButton" type="button" data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false">Analytics</button>
       </nav>
+      <label class="mobileSectionPicker" for="adminMobileTabSelect">Admin section
+        <select id="adminMobileTabSelect">
+          <option value="dashboard">Dashboard</option>
+          <option value="review">Review</option>
+          <option value="capture">Data capture</option>
+          <option value="partners">Partners</option>
+          <option value="leaderboard">Prizes</option>
+          <option value="analytics">Analytics</option>
+        </select>
+      </label>
 
       <div class="adminUtilityBar">
         <div class="adminUtilityBar__status">
@@ -149,6 +159,17 @@
             <p class="muted">Plain-English readiness for the tools admins depend on during field tests.</p>
             <div id="adminHealthPanel" class="list"></div>
           </div>
+        </div>
+
+        <div class="panel adminPanelSpan">
+          <div class="sectionHeader">
+            <div>
+              <h2>Account deletion requests</h2>
+              <p class="muted">Execute requests after the seven-day safety window. This removes private evidence and anonymises local account data.</p>
+            </div>
+            <button id="refreshAccountDeletionsButton" class="button button--small" type="button">Refresh</button>
+          </div>
+          <div id="accountDeletionRequests" class="list"></div>
         </div>
 
         <div class="panel adminPanelSpan adminSourceReviewPanel">
@@ -816,6 +837,8 @@
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
       });
+      const mobileSelect = document.getElementById("adminMobileTabSelect");
+      if (mobileSelect) mobileSelect.value = activeTarget;
 
       const activeLabel = document.getElementById("adminActiveSectionLabel");
       if (activeLabel) {
@@ -1958,6 +1981,47 @@
       return data;
     }
 
+    function renderAccountDeletionRequests(data) {
+      const container = document.getElementById("accountDeletionRequests");
+      if (!container) return;
+      const requests = data?.requests || [];
+      container.innerHTML = requests.length
+        ? requests.map((request) => {
+            const executeAfter = new Date(request.execute_after || request.requested_at || 0);
+            const due = Number.isFinite(executeAfter.getTime()) && executeAfter.getTime() <= Date.now();
+            const pending = ["pending_review", "approved"].includes(request.status);
+            return `
+              <article class="listItem dataRow">
+                <div>
+                  <strong>${escapeHtml(request.user_id || "Account")}</strong>
+                  <div class="muted">Requested ${MelbBeerBusiness.formatDate(request.requested_at)} · ${pending ? `Eligible ${MelbBeerBusiness.formatDate(request.execute_after)}` : escapeHtml(request.status)}</div>
+                  ${request.user_message ? `<div class="muted">${escapeHtml(request.user_message)}</div>` : ""}
+                </div>
+                <button class="button button--small button--danger" type="button" data-execute-account-deletion="${escapeHtml(request.id)}" ${!pending || !due ? "disabled" : ""}>${pending && !due ? "Safety window" : pending ? "Delete account" : "Completed"}</button>
+              </article>`;
+          }).join("")
+        : '<div class="listItem muted">No account deletion requests.</div>';
+      container.querySelectorAll("[data-execute-account-deletion]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          if (!window.confirm("Permanently anonymise this account and delete its private evidence?")) return;
+          button.disabled = true;
+          try {
+            await MelbBeerBusiness.apiFetch(`/api/business/admin/account-deletions/${encodeURIComponent(button.dataset.executeAccountDeletion)}/execute`, { method: "POST", body: "{}" });
+            await loadAccountDeletionRequests();
+          } catch (error) {
+            MelbBeerBusiness.setStatus(statusEl, error.message || "Account deletion failed.", true);
+            button.disabled = false;
+          }
+        });
+      });
+    }
+
+    async function loadAccountDeletionRequests() {
+      const data = await MelbBeerBusiness.apiFetch("/api/business/admin/account-deletions");
+      renderAccountDeletionRequests(data);
+      return data;
+    }
+
     async function rejectPendingBeerCatalogJunk() {
       const keys = Array.from(pendingBeerCatalog.querySelectorAll("[data-catalog-beer]"))
         .map((item) => item.dataset.catalogBeer)
@@ -2127,12 +2191,27 @@
       if (Array.isArray(submission.items) && submission.items.length) {
         badges.push(`${submission.items.length} row${submission.items.length === 1 ? "" : "s"}`);
       }
+      if (submission.ocrStatus && submission.ocrStatus !== "not_requested") {
+        badges.push(submission.ocrStatus === "processed" ? "OCR processed" : "OCR manual review");
+      }
+      const pendingCatalogCount = Array.isArray(submission.items)
+        ? submission.items.filter((item) => item.requiresCatalogApproval).length
+        : 0;
+      if (pendingCatalogCount) {
+        badges.push(`${pendingCatalogCount} catalogue approval${pendingCatalogCount === 1 ? "" : "s"}`);
+      }
       return badges;
     }
 
     function isPhotoEvidenceOnlySubmission(submission) {
       return submission?.submissionType === "photo_upload"
         && !(Array.isArray(submission.items) && submission.items.length);
+    }
+
+    function pendingCatalogApprovalCount(submission) {
+      return Array.isArray(submission?.items)
+        ? submission.items.filter((item) => item.requiresCatalogApproval).length
+        : 0;
     }
 
     function formatSubmissionItemPrice(item) {
@@ -2174,9 +2253,12 @@
                     formatSubmissionTapStatus(item.isOnTap),
                     item.isHappyHourPrice ? "Happy-hour price" : null,
                     item.confidence != null ? `${formatPercent(item.confidence)} capture confidence` : null,
+                    item.captureSource === "photo_ocr" ? "Photo OCR" : null,
+                    item.requiresCatalogApproval ? "Catalogue approval required" : null,
                   ].filter(Boolean).join(" · "))}
                 </div>
                 ${item.happyHourDetails ? `<div class="muted">${escapeHtml(item.happyHourDetails)}</div>` : ""}
+                ${item.sourceText ? `<div class="adminSubmissionSourceText"><strong>Read from image:</strong> ${escapeHtml(item.sourceText)}</div>` : ""}
               </div>
             </div>
           `).join("")}
@@ -2196,6 +2278,12 @@
           </div>
           <div class="adminSubmissionOcrPanel">
             <div class="eyebrow">Captured rows for review</div>
+            ${submission.ocrSummary ? `<div class="muted">${escapeHtml([
+              submission.ocrSummary.model ? `Model ${submission.ocrSummary.model}` : null,
+              `${submission.ocrSummary.imageCount || 0} image${submission.ocrSummary.imageCount === 1 ? "" : "s"}`,
+              `${submission.ocrSummary.rejectedCandidateCount || 0} rejected noise candidate${submission.ocrSummary.rejectedCandidateCount === 1 ? "" : "s"}`,
+              submission.ocrSummary.message || null,
+            ].filter(Boolean).join(" · "))}</div>` : ""}
             ${renderSubmissionCapturedRows(submission)}
           </div>
         </div>
@@ -2210,17 +2298,24 @@
         if (!submissionId) return;
         try {
           const result = await MelbBeerBusiness.apiFetch(`/api/business/submissions/${encodeURIComponent(submissionId)}/source-evidence-url`);
-          if (!result.signedUrl) {
+          const signedUrls = Array.isArray(result.signedUrls) && result.signedUrls.length
+            ? result.signedUrls
+            : result.signedUrl
+              ? [result.signedUrl]
+              : [];
+          if (!signedUrls.length) {
             preview.innerHTML = '<div class="adminSubmissionEvidencePreview__placeholder">Source image unavailable</div>';
             return;
           }
-          const signedUrl = escapeHtml(result.signedUrl);
-          preview.innerHTML = `
-            <a class="adminSubmissionEvidencePreview__link" href="${signedUrl}" target="_blank" rel="noopener">
-              <img src="${signedUrl}" alt="Submission source evidence" loading="lazy" />
-              <span>Open full evidence</span>
-            </a>
-          `;
+          preview.innerHTML = signedUrls.map((value, index) => {
+            const signedUrl = escapeHtml(value);
+            return `
+              <a class="adminSubmissionEvidencePreview__link" href="${signedUrl}" target="_blank" rel="noopener">
+                <img src="${signedUrl}" alt="Submission source evidence ${index + 1}" loading="lazy" />
+                <span>Open image ${index + 1}</span>
+              </a>
+            `;
+          }).join("");
         } catch {
           preview.innerHTML = '<div class="adminSubmissionEvidencePreview__placeholder">Could not load source image</div>';
         }
@@ -2927,6 +3022,7 @@
         loadAdminStatus(),
         loadAdminVenues(),
         loadAdminIngestionQueue(),
+        loadAccountDeletionRequests(),
       ]);
       renderAdminFocusRail();
     }
@@ -3621,6 +3717,15 @@
       if (!submission?.id || !status) return;
       const reasonKey = status;
       const approve = status === "approved";
+      const catalogApprovalCount = pendingCatalogApprovalCount(submission);
+      if (approve && catalogApprovalCount) {
+        MelbBeerBusiness.setStatus(
+          statusEl,
+          `Approve, merge, or reject the ${catalogApprovalCount} pending beer catalogue ${catalogApprovalCount === 1 ? "name" : "names"} before publishing this submission.`,
+          true,
+        );
+        return;
+      }
       const evidenceOnlyApproval = approve && isPhotoEvidenceOnlySubmission(submission);
       const titleByStatus = {
         approved: submission.pendingVenue ? "Approve and publish venue" : evidenceOnlyApproval ? "Approve evidence only" : "Approve submission",
@@ -3816,7 +3921,11 @@
         ? prioritySubmissions.map((submission) => {
           const priority = submissionPriorityLabel(submission);
           const evidenceOnlySubmission = isPhotoEvidenceOnlySubmission(submission);
-          const approveLabel = submission.pendingVenue
+          const catalogApprovalCount = pendingCatalogApprovalCount(submission);
+          const approvalBlocked = catalogApprovalCount > 0;
+          const approveLabel = approvalBlocked
+            ? "Approve catalogue first"
+            : submission.pendingVenue
             ? "Approve + publish venue"
             : evidenceOnlySubmission
               ? "Approve evidence only"
@@ -3843,10 +3952,11 @@
             </div>
             <div class="muted">Points location: ${submission.pointsEligibleByLocation ? "within 200m" : "not eligible"}${submission.distanceToVenueMeters != null ? ` · ${Math.round(Number(submission.distanceToVenueMeters))}m from venue` : ""}${submission.pointsEligibilityReason ? ` · ${escapeHtml(submission.pointsEligibilityReason)}` : ""}</div>
             ${evidenceOnlySubmission ? '<div class="muted">Photo evidence only; approval will not publish live beer rows.</div>' : ""}
+            ${approvalBlocked ? `<div class="muted">Resolve ${catalogApprovalCount} pending beer catalogue ${catalogApprovalCount === 1 ? "name" : "names"} above before this submission can publish.</div>` : ""}
             <div class="muted">${escapeHtml(submission.notes || "No notes")}</div>
             ${renderSubmissionEvidencePanel(submission)}
             <div class="actionRow adminReviewActionBar">
-              <button class="button button--primary" type="button" data-approve="${escapeHtml(submission.id)}">${escapeHtml(approveLabel)}</button>
+              <button class="button button--primary" type="button" data-approve="${escapeHtml(submission.id)}"${approvalBlocked ? ' disabled title="Resolve pending beer catalogue names first"' : ""}>${escapeHtml(approveLabel)}</button>
               <button class="button" type="button" data-evidence="${escapeHtml(submission.id)}">Needs evidence</button>
               <button class="button button--danger" type="button" data-reject="${escapeHtml(submission.id)}">Reject</button>
               <button class="button button--danger" type="button" data-fraud="${escapeHtml(submission.id)}">Flag fraud</button>
@@ -3936,6 +4046,11 @@
       document.querySelectorAll("[data-admin-tab-target]").forEach((button) => {
         button.addEventListener("click", () => showAdminTab(button.dataset.adminTabTarget));
       });
+      document.getElementById("adminMobileTabSelect")?.addEventListener("change", (event) => {
+        showAdminTab(event.target.value);
+        document.querySelector(`[data-admin-tab-panel="${event.target.value}"]`)?.scrollIntoView({ block: "start" });
+      });
+      document.getElementById("refreshAccountDeletionsButton")?.addEventListener("click", loadAccountDeletionRequests);
       showAdminTab(requestedAdminTab());
       wireAdminJumpActions(adminContentEl);
       renderAdminFocusRail();

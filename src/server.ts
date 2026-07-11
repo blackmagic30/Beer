@@ -1,11 +1,8 @@
 import type { Server } from "node:http";
-import { networkInterfaces } from "node:os";
 
 import { redactSecrets } from "./lib/redact.js";
 
 let server: Server | undefined;
-let heartbeatInterval: NodeJS.Timeout | undefined;
-let selfCheckInterval: NodeJS.Timeout | undefined;
 
 function getDeployMeta(): Record<string, string> {
   return {
@@ -24,41 +21,6 @@ function getBoundAddress(): string {
   return typeof address === "object" && address !== null
     ? `${address.address}:${address.port}`
     : String(address ?? "unknown");
-}
-
-function getNetworkTargets(port: number, boundHost?: string): Array<{ name: string; url: string }> {
-  if (boundHost && !["::", "0.0.0.0"].includes(boundHost)) {
-    const host = boundHost.includes(":") ? `[${boundHost}]` : boundHost;
-    return [{ name: `bound-host-${boundHost}`, url: `http://${host}:${port}/health` }];
-  }
-
-  const targets: Array<{ name: string; url: string }> = [
-    { name: "loopback-ipv4", url: `http://127.0.0.1:${port}/health` },
-    { name: "loopback-ipv6", url: `http://[::1]:${port}/health` },
-  ];
-
-  const interfaces = networkInterfaces();
-  for (const [name, entries] of Object.entries(interfaces)) {
-    for (const entry of entries ?? []) {
-      if (entry.internal) {
-        continue;
-      }
-
-      if (entry.family === "IPv4") {
-        targets.push({
-          name: `${name}-ipv4-${entry.address}`,
-          url: `http://${entry.address}:${port}/health`,
-        });
-      } else if (entry.family === "IPv6") {
-        targets.push({
-          name: `${name}-ipv6-${entry.address}`,
-          url: `http://[${entry.address}]:${port}/health`,
-        });
-      }
-    }
-  }
-
-  return targets;
 }
 
 async function boot(): Promise<void> {
@@ -100,30 +62,6 @@ async function boot(): Promise<void> {
         ? app.listen(env.PORT, listenHost, onListening)
         : app.listen(env.PORT, onListening);
 
-    heartbeatInterval = setInterval(() => {
-      logger.info(
-        `pint-path heartbeat listening=${server?.listening ?? false} bound=${getBoundAddress()}`,
-        getDeployMeta(),
-      );
-    }, 30_000);
-
-    selfCheckInterval = setInterval(async () => {
-      for (const target of getNetworkTargets(env.PORT, listenHost)) {
-        try {
-          const response = await fetch(target.url);
-          logger.info(
-            `pint-path self-check target=${target.name} status=${response.status} ok=${response.ok}`,
-            getDeployMeta(),
-          );
-        } catch (error) {
-          logger.error(
-            `pint-path self-check target=${target.name} failed=${error instanceof Error ? error.message : String(error)}`,
-            getDeployMeta(),
-          );
-        }
-      }
-    }, 30_000);
-
     server.on("error", (error) => {
       if (
         typeof error === "object" &&
@@ -159,16 +97,6 @@ void boot();
 
 function shutdown(signal: string): void {
   console.info("Shutting down server", { signal });
-
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = undefined;
-  }
-
-  if (selfCheckInterval) {
-    clearInterval(selfCheckInterval);
-    selfCheckInterval = undefined;
-  }
 
   if (!server) {
     process.exit(0);

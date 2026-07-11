@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import path from "node:path";
 
 import express from "express";
@@ -59,8 +60,15 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
     database,
   );
-  const businessService = new BusinessService(businessRepository, env, beerCatalogRepository);
+  const businessService = new BusinessService(businessRepository, env, beerCatalogRepository, {
+    extract: (input) => adminService.ocrMenuPhotos(input),
+  });
   businessService.logStartupSummary();
+  void businessService.purgeExpiredSourceEvidence().then((result) => {
+    if (result.purged || result.failed) {
+      console.info("Source evidence retention maintenance completed", result);
+    }
+  });
 
   console.info("Backend services initialized.");
 
@@ -115,7 +123,10 @@ function setStaticAssetHeaders(res: Response, filePath: string): void {
   res.setHeader("Cache-Control", getStaticAssetCacheControl(filePath));
 }
 
-function renderPublicVenuePage(venue: Awaited<ReturnType<BusinessService["getPublicVenueById"]>>): string {
+function renderPublicVenuePage(
+  venue: Awaited<ReturnType<BusinessService["getPublicVenueById"]>>,
+  nonce: string,
+): string {
   if (!venue) {
     throw new AppError("Venue not found.", 404);
   }
@@ -172,8 +183,8 @@ function renderPublicVenuePage(venue: Awaited<ReturnType<BusinessService["getPub
   <meta name="twitter:title" content="${escapeHtml(title)}" />
   <meta name="twitter:description" content="${escapeHtml(description)}" />
   <meta name="twitter:image" content="${escapeHtml(imageUrl)}" />
-  <script type="application/ld+json">${safeJsonForHtml(structuredData)}</script>
-  <style>
+  <script nonce="${escapeHtml(nonce)}" type="application/ld+json">${safeJsonForHtml(structuredData)}</script>
+  <style nonce="${escapeHtml(nonce)}">
     :root { color-scheme: dark; --bg:#070a12; --panel:#121a2c; --text:#f8fafc; --muted:#cbd5e1; --cyan:#22d3ee; --gold:#f5c542; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 18% 0%, rgba(34,211,238,.14), transparent 30%), radial-gradient(circle at 90% 10%, rgba(139,92,246,.16), transparent 28%), var(--bg); color: var(--text); font-family: "Avenir Next", "Segoe UI", sans-serif; }
@@ -298,7 +309,11 @@ export function createApp() {
     cspConnectSources.push(new URL(env.SUPABASE_URL).origin);
   }
 
-  app.set("trust proxy", env.TRUST_PROXY);
+  app.set("trust proxy", env.TRUST_PROXY_HOPS);
+  app.use((_req, res, next) => {
+    res.locals.cspNonce = crypto.randomBytes(18).toString("base64");
+    next();
+  });
   app.use(
     helmet({
       crossOriginEmbedderPolicy: false,
@@ -312,20 +327,21 @@ export function createApp() {
           "form-action": ["'self'", "https://checkout.stripe.com"],
           "script-src": [
             "'self'",
-            "'unsafe-inline'",
+            (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`,
             "https://maps.googleapis.com",
             "https://maps.gstatic.com",
             "https://cdn.jsdelivr.net",
           ],
           "script-src-elem": [
             "'self'",
-            "'unsafe-inline'",
+            (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`,
             "https://maps.googleapis.com",
             "https://maps.gstatic.com",
             "https://cdn.jsdelivr.net",
           ],
           "script-src-attr": ["'none'"],
-          "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          "style-src": ["'self'", (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`, "https://fonts.googleapis.com"],
+          "style-src-attr": ["'unsafe-inline'"],
           "img-src": [
             "'self'",
             "data:",
@@ -397,8 +413,16 @@ export function createApp() {
     }
     next();
   });
-  app.use(express.json({ limit: "12mb", verify: captureRawBody }));
-  app.use(express.urlencoded({ extended: true, limit: "12mb", verify: captureRawBody }));
+  const standardJsonParser = express.json({ limit: "1mb", verify: captureRawBody });
+  const imageJsonParser = express.json({ limit: "50mb", verify: captureRawBody });
+  app.use((req, res, next) => {
+    const acceptsImagePayload =
+      req.path === "/api/business/submissions" ||
+      req.path === "/api/admin/ocr" ||
+      req.path.startsWith("/api/admin/ingestions");
+    (acceptsImagePayload ? imageJsonParser : standardJsonParser)(req, res, next);
+  });
+  app.use(express.urlencoded({ extended: true, limit: "1mb", verify: captureRawBody }));
 
   app.get("/health", (_req, res) => {
     res.json(
@@ -477,14 +501,53 @@ export function createApp() {
       res
         .type("html")
         .setHeader("Cache-Control", env.NODE_ENV === "production" ? "public, max-age=300" : "no-store")
-        .send(renderPublicVenuePage(venue));
+        .send(renderPublicVenuePage(venue, String(res.locals.cspNonce)));
     } catch (error) {
       next(error);
     }
   });
-  app.get("/auth/callback", (_req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    res.sendFile(path.join(viewerDirectory, "auth", "callback.html"));
+  app.use(async (req, res, next) => {
+    if (!['GET', 'HEAD'].includes(req.method)) {
+      next();
+      return;
+    }
+
+    const relativePath = req.path === "/"
+      ? "index.html"
+      : req.path === "/venue-portal"
+        ? "venue-portal.html"
+        : req.path === "/auth/callback"
+          ? "auth/callback.html"
+          : req.path.endsWith(".html")
+            ? req.path.slice(1)
+            : null;
+    if (!relativePath) {
+      next();
+      return;
+    }
+
+    const filePath = path.resolve(viewerDirectory, relativePath);
+    if (!filePath.startsWith(`${viewerDirectory}${path.sep}`)) {
+      next();
+      return;
+    }
+
+    try {
+      const nonce = String(res.locals.cspNonce);
+      const html = (await import("node:fs/promises")).readFile(filePath, "utf8");
+      const rendered = (await html).replace(
+        /<(script|style)(?![^>]*\bnonce=)/gi,
+        `<$1 nonce="${escapeHtml(nonce)}"`,
+      );
+      setStaticAssetHeaders(res, filePath);
+      res.type("html").send(req.method === "HEAD" ? "" : rendered);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        next();
+        return;
+      }
+      next(error);
+    }
   });
   app.get(["/.well-known/security.txt", "/security.txt"], (_req, res) => {
     res
@@ -493,16 +556,9 @@ export function createApp() {
       .sendFile(path.join(viewerDirectory, "security.txt"));
   });
   app.use(express.static(viewerDirectory, {
+    index: false,
     setHeaders: setStaticAssetHeaders,
   }));
-  app.get("/", (_req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    res.sendFile(path.join(viewerDirectory, "index.html"));
-  });
-  app.get("/venue-portal", (_req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    res.sendFile(path.join(viewerDirectory, "venue-portal.html"));
-  });
 
   app.use(notFoundHandler);
   app.use(errorHandler);

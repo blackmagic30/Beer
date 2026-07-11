@@ -45,7 +45,8 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 - Source evidence stays behind private references and signed URLs.
 - Obvious localhost/private/metadata source-photo URLs are rejected before storage.
 - The authenticated owner portal route path covers login, assigned venue access, profile, beer/stock, happy-hour, Pro special, support, cross-owner blocking, and pending-review state.
-- Venue-manager edits create pending changes and do not publish to the public map/API until admin approval.
+- Assigned venue managers publish profile, beer, and happy-hour edits directly for their venue. Tier, code acceptance, and listing activation remain admin-controlled.
+- A venue-wide fourth beer deletion within an hour is held for admin approval, even when multiple managers perform the earlier deletes.
 - Pending venue changes are visible to the owning venue manager and admins, but not another venue manager.
 - Rejected venue-manager changes do not publish.
 - Basic venue tier remains analytics-locked after approved public data changes.

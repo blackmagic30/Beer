@@ -139,6 +139,45 @@
       .filter((item) => String(item.beerName || "").trim().length > 0);
   }
 
+  function beerCandidatesMatchSearch(candidates, beerQuery, options = {}) {
+    const queryKey = normalizeSearchKey(beerQuery);
+    if (!queryKey) {
+      return false;
+    }
+
+    const getTrackedBeerMeta = typeof options.getTrackedBeerMeta === "function"
+      ? options.getTrackedBeerMeta
+      : null;
+    const queryBeer = getTrackedBeerMeta ? getTrackedBeerMeta(beerQuery) : null;
+    const queryBeerKey = queryBeer ? normalizeSearchKey(queryBeer.key || queryBeer.name) : "";
+    const queryIdentityKeys = new Set(
+      queryBeer
+        ? [queryBeer.key, queryBeer.name, ...(queryBeer.aliases || [])]
+            .map(normalizeSearchKey)
+            .filter(Boolean)
+        : [queryKey],
+    );
+
+    return (Array.isArray(candidates) ? candidates : []).some((candidate) => {
+      const candidateKey = normalizeSearchKey(candidate);
+      if (!candidateKey) {
+        return false;
+      }
+      if (candidateKey === queryKey) {
+        return true;
+      }
+      if (!queryBeer || !getTrackedBeerMeta) {
+        return false;
+      }
+
+      const candidateBeer = getTrackedBeerMeta(candidate);
+      if (candidateBeer) {
+        return normalizeSearchKey(candidateBeer.key || candidateBeer.name) === queryBeerKey;
+      }
+      return queryIdentityKeys.has(candidateKey);
+    });
+  }
+
   function happyHourBeerMatchesSearch(item, beerQuery, options = {}) {
     const queryKey = normalizeSearchKey(beerQuery);
     if (!item || !queryKey) {
@@ -164,10 +203,7 @@
       ...((trackedBeer && trackedBeer.aliases) || []),
     ].filter(Boolean);
 
-    return candidates.some((candidate) => {
-      const candidateKey = normalizeSearchKey(candidate);
-      return candidateKey && (candidateKey.includes(queryKey) || queryKey.includes(candidateKey));
-    });
+    return beerCandidatesMatchSearch(candidates, queryKey, { getTrackedBeerMeta });
   }
 
   function happyHourTextMatchesBeer(details, beerQuery) {
@@ -220,6 +256,87 @@
     }
 
     return happyHourTextMatchesBeer(details, queryKey);
+  }
+
+  const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const DAY_ALIASES = Object.freeze({
+    sunday: "sun", sun: "sun",
+    monday: "mon", mon: "mon",
+    tuesday: "tue", tues: "tue", tue: "tue",
+    wednesday: "wed", weds: "wed", wed: "wed",
+    thursday: "thu", thurs: "thu", thu: "thu",
+    friday: "fri", fri: "fri",
+    saturday: "sat", sat: "sat",
+  });
+
+  function happyHourTimeToMinutes(value) {
+    const match = String(value || "").trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+    if (!match) return null;
+    let hour = Number(match[1]);
+    const minute = Number(match[2] || 0);
+    const meridiem = match[3];
+    if (meridiem && (hour < 1 || hour > 12)) return null;
+    if (meridiem === "pm" && hour !== 12) hour += 12;
+    if (meridiem === "am" && hour === 12) hour = 0;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return hour * 60 + minute;
+  }
+
+  function parseHappyHourDays(value) {
+    const values = Array.isArray(value) ? value : [value];
+    const text = values.filter(Boolean).join(" ").toLowerCase();
+    if (!text.trim()) return new Set();
+    if (/\b(?:daily|every\s*day|everyday|all\s*week)\b/.test(text)) return new Set(DAY_KEYS);
+    if (/\bweekdays?\b/.test(text)) return new Set(["mon", "tue", "wed", "thu", "fri"]);
+    if (/\bweekends?\b/.test(text)) return new Set(["sat", "sun"]);
+
+    const days = new Set();
+    const rangePattern = /\b(sun(?:day)?|mon(?:day)?|tue(?:sday|s)?|wed(?:nesday|s)?|thu(?:rsday|rs)?|fri(?:day)?|sat(?:urday)?)\s*(?:-|–|—|to)\s*(sun(?:day)?|mon(?:day)?|tue(?:sday|s)?|wed(?:nesday|s)?|thu(?:rsday|rs)?|fri(?:day)?|sat(?:urday)?)/g;
+    for (const match of text.matchAll(rangePattern)) {
+      const start = DAY_ALIASES[match[1]];
+      const end = DAY_ALIASES[match[2]];
+      if (!start || !end) continue;
+      let index = DAY_KEYS.indexOf(start);
+      for (let count = 0; count < DAY_KEYS.length; count += 1) {
+        const day = DAY_KEYS[index];
+        days.add(day);
+        if (day === end) break;
+        index = (index + 1) % DAY_KEYS.length;
+      }
+    }
+    for (const token of text.match(/\b(?:sun(?:day)?|mon(?:day)?|tue(?:sday|s)?|wed(?:nesday|s)?|thu(?:rsday|rs)?|fri(?:day)?|sat(?:urday)?)\b/g) || []) {
+      const day = DAY_ALIASES[token];
+      if (day) days.add(day);
+    }
+    return days;
+  }
+
+  function isHappyHourActiveNow(details, now = new Date()) {
+    if (!details || details.exists === false || !(now instanceof Date) || Number.isNaN(now.getTime())) {
+      return false;
+    }
+    const freeText = String(details.daysTimes || details.days_times || details.when || "");
+    const times = freeText.match(/\d{1,2}(?::\d{2})?\s*(?:am|pm)?/gi) || [];
+    const startMinutes = happyHourTimeToMinutes(details.start || details.startTime || details.start_time || times[0]);
+    const endMinutes = happyHourTimeToMinutes(details.end || details.endTime || details.end_time || times[1]);
+    if (startMinutes == null || endMinutes == null || startMinutes === endMinutes) {
+      return false;
+    }
+
+    const activeDays = parseHappyHourDays(details.daysOfWeek || details.days_of_week || details.days || freeText);
+    if (activeDays.size === 0) {
+      return false;
+    }
+
+    const currentDayIndex = now.getDay();
+    const currentDay = DAY_KEYS[currentDayIndex];
+    const previousDay = DAY_KEYS[(currentDayIndex + 6) % 7];
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    if (endMinutes > startMinutes) {
+      return activeDays.has(currentDay) && nowMinutes >= startMinutes && nowMinutes < endMinutes;
+    }
+    return (activeDays.has(currentDay) && nowMinutes >= startMinutes) ||
+      (activeDays.has(previousDay) && nowMinutes < endMinutes);
   }
 
   function normalizeBeerPriceNumeric(source) {
@@ -614,9 +731,11 @@
     getAvailabilityTone,
     normalizeSearchKey,
     normalizeHappyHourBeerItems,
+    beerCandidatesMatchSearch,
     happyHourBeerMatchesSearch,
     happyHourTextMatchesBeer,
     happyHourMatchesBeerQuery,
+    isHappyHourActiveNow,
     hasNumericPrice,
     getLowestKnownPrice,
     getPriceTier,

@@ -259,6 +259,8 @@ export async function getVenueLikelyOpenMap(
 
     await Promise.all(
       batch.map(async (googlePlaceId) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5_000);
         try {
           const response = await fetch(
             `${GOOGLE_PLACE_DETAILS_API_URL}/places/${encodeURIComponent(googlePlaceId)}`,
@@ -267,6 +269,7 @@ export async function getVenueLikelyOpenMap(
                 "X-Goog-Api-Key": options.apiKey!,
                 "X-Goog-FieldMask": PLACE_DETAILS_FIELD_MASK,
               },
+              signal: controller.signal,
             },
           );
 
@@ -290,6 +293,8 @@ export async function getVenueLikelyOpenMap(
           freshEntries.set(googlePlaceId, entry);
         } catch {
           // Ignore transient Google fetch errors; unknown hours should not block a venue.
+        } finally {
+          clearTimeout(timeout);
         }
       }),
     );

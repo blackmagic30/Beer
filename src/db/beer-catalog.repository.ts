@@ -57,6 +57,10 @@ interface BeerCatalogAliasRow {
   alias: string;
 }
 
+interface BeerCatalogFuzzyRow extends BeerCatalogRow {
+  alias: string;
+}
+
 function cleanBeerDisplayName(value: string): string {
   return value
     .trim()
@@ -65,6 +69,43 @@ function cleanBeerDisplayName(value: string): string {
 
 function fallbackBeerKey(value: string): string {
   return normalizeBeerSearchKey(value) || "unknown_beer";
+}
+
+function cleanOptionalCatalogText(value: string | null | undefined): string | null {
+  const cleaned = value?.trim().replace(/\s+/g, " ") ?? "";
+  return cleaned ? cleaned.slice(0, 160) : null;
+}
+
+function cleanOptionalCatalogAbv(value: number | null | undefined): number | null {
+  if (value == null) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 30 ? numeric : null;
+}
+
+function compactBeerSearchKey(value: string): string {
+  return normalizeBeerSearchKey(value).replaceAll("_", "");
+}
+
+function levenshteinDistance(left: string, right: string): number {
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      const substitutionCost = left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1;
+      current[rightIndex] = Math.min(
+        (current[rightIndex - 1] ?? 0) + 1,
+        (previous[rightIndex] ?? 0) + 1,
+        (previous[rightIndex - 1] ?? 0) + substitutionCost,
+      );
+    }
+    previous = current;
+  }
+
+  return previous[right.length] ?? Math.max(left.length, right.length);
 }
 
 function rowToResolved(row: BeerCatalogRow, created: boolean): ResolvedBeerCatalogItem {
@@ -89,6 +130,9 @@ export class BeerCatalogRepository {
     source: string;
     now: string;
     createIfMissing?: boolean;
+    matchMode?: "exact" | "ocr";
+    brewery?: string | null;
+    abv?: number | null;
   }): ResolvedBeerCatalogItem {
     const cleaned = cleanBeerDisplayName(canonicalizeTrackedBeerName(input.name));
     const tracked = findTrackedBeerByName(cleaned);
@@ -110,7 +154,30 @@ export class BeerCatalogRepository {
 
     const existing = this.findByAliasKey(aliasKey) ?? (tracked ? this.findByKey(tracked.key) : null);
     if (existing) {
+      if (existing.status === "pending_review" && (input.brewery != null || input.abv != null)) {
+        this.db
+          .prepare(
+            `UPDATE beer_catalog_items
+                SET brewery = COALESCE(brewery, ?),
+                    abv = COALESCE(abv, ?),
+                    updated_at = ?
+              WHERE key = ?
+                AND status = 'pending_review'`,
+          )
+          .run(
+            cleanOptionalCatalogText(input.brewery),
+            cleanOptionalCatalogAbv(input.abv),
+            input.now,
+            existing.key,
+          );
+        return rowToResolved(this.findByKey(existing.key) ?? existing, false);
+      }
       return rowToResolved(existing, false);
+    }
+
+    const fuzzyMatch = input.matchMode === "ocr" ? this.findActiveFuzzyMatch(cleaned) : null;
+    if (fuzzyMatch) {
+      return rowToResolved(fuzzyMatch, false);
     }
 
     if (!tracked && !isLikelyBeerName(cleaned)) {
@@ -144,9 +211,9 @@ export class BeerCatalogRepository {
     const row = {
       key: this.uniqueKey(tracked?.key ?? fallbackBeerKey(cleaned)),
       name: tracked?.name ?? cleaned,
-      brewery: tracked?.brewery ?? null,
+      brewery: tracked?.brewery ?? cleanOptionalCatalogText(input.brewery),
       style: tracked?.style ?? null,
-      abv: tracked?.abv ?? null,
+      abv: tracked?.abv ?? cleanOptionalCatalogAbv(input.abv),
       status: (tracked ? "active" : "pending_review") as BeerCatalogStatus,
       source: tracked ? "system_catalog" : input.source,
     };
@@ -213,6 +280,59 @@ export class BeerCatalogRepository {
       )
       .get(key) as BeerCatalogRow | undefined;
     return row ?? null;
+  }
+
+  private findActiveFuzzyMatch(value: string): BeerCatalogRow | null {
+    const inputKey = compactBeerSearchKey(value);
+    if (inputKey.length < 7) {
+      return null;
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT item.key, item.name, item.brewery, item.style, item.abv, item.status, item.source,
+                alias.alias
+           FROM beer_catalog_items item
+           JOIN beer_catalog_aliases alias ON alias.beer_key = item.key
+          WHERE item.status = 'active'`,
+      )
+      .all() as BeerCatalogFuzzyRow[];
+    const scoreByKey = new Map<string, { score: number; row: BeerCatalogRow }>();
+
+    for (const row of rows) {
+      const candidateKey = compactBeerSearchKey(row.alias);
+      if (candidateKey.length < 7) continue;
+      const styleKey = row.style ? compactBeerSearchKey(row.style) : "";
+      const candidateVariants = Array.from(new Set([
+        candidateKey,
+        styleKey && !candidateKey.endsWith(styleKey) ? `${candidateKey}${styleKey}` : candidateKey,
+      ]));
+      for (const candidateVariant of candidateVariants) {
+        const maxLength = Math.max(inputKey.length, candidateVariant.length);
+        const distance = levenshteinDistance(inputKey, candidateVariant);
+        const allowedDistance = maxLength >= 18 ? 2 : 1;
+        if (distance > allowedDistance) continue;
+        const score = 1 - distance / maxLength;
+        if (score < 0.91) continue;
+
+        const current = scoreByKey.get(row.key);
+        if (!current || score > current.score) {
+          scoreByKey.set(row.key, { score, row });
+        }
+      }
+    }
+
+    const matches = Array.from(scoreByKey.values()).sort((left, right) => right.score - left.score);
+    const best = matches[0];
+    if (!best || (matches[1] && best.score - matches[1].score < 0.03)) {
+      return null;
+    }
+    return best.row;
+  }
+
+  isActiveBeer(key: string | null | undefined): boolean {
+    if (!key) return false;
+    return this.findByKey(key)?.status === "active";
   }
 
   private findAdminByKey(key: string): BeerCatalogAdminRow | null {
@@ -344,6 +464,9 @@ export class BeerCatalogRepository {
         source: "admin_catalog_review",
         now: input.now,
       });
+      this.db
+        .prepare("UPDATE submission_items SET requires_catalog_approval = 0 WHERE normalized_beer_id = ?")
+        .run(input.key);
     });
 
     approve();
@@ -389,6 +512,9 @@ export class BeerCatalogRepository {
           .prepare(`UPDATE ${table} SET beer_name = ?, normalized_beer_id = ? WHERE normalized_beer_id = ?`)
           .run(targetRow.name, targetRow.key, sourceRow.key);
       }
+      this.db
+        .prepare("UPDATE submission_items SET requires_catalog_approval = 0 WHERE normalized_beer_id = ?")
+        .run(targetRow.key);
 
       this.db
         .prepare(
@@ -424,6 +550,14 @@ export class BeerCatalogRepository {
     };
 
     const reject = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `DELETE FROM submission_items
+            WHERE normalized_beer_id = ?
+              AND capture_source = 'photo_ocr'
+              AND requires_catalog_approval = 1`,
+        )
+        .run(row.key);
       this.db.prepare("DELETE FROM beer_catalog_aliases WHERE beer_key = ?").run(row.key);
       this.db.prepare("DELETE FROM beer_catalog_items WHERE key = ? AND status = 'pending_review'").run(row.key);
     });

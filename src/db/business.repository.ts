@@ -22,6 +22,8 @@ export type SubmissionStatus =
   | "disputed"
   | "fraud_flagged";
 export type SubmissionType = "single_beer_price" | "full_venue_update" | "happy_hour_update" | "photo_upload";
+export type SubmissionOcrStatus = "not_requested" | "processed" | "manual_review_required" | "failed";
+export type SubmissionItemCaptureSource = "manual" | "photo_ocr";
 export type ServingSize = "pint" | "pot" | "schooner" | "jug" | "bottle" | "can" | "other";
 export type TapStatus = "yes" | "no" | "unknown";
 export type SavedItemType = "venue" | "beer" | "suburb" | "night_plan";
@@ -65,6 +67,7 @@ export interface BusinessAccount {
   emailVerifiedAt: string | null;
   mfaLevel: string;
   mfaVerifiedAt: string | null;
+  stripeEventCreatedAt: string | null;
   role: AccountRole;
   ageConfirmedAt: string | null;
   termsAcceptedAt: string | null;
@@ -123,6 +126,8 @@ export interface SourceEvidenceObject {
   byteSize: number | null;
   dataBase64: string | null;
   externalUrl: string | null;
+  retentionExpiresAt: string | null;
+  deletedAt: string | null;
   createdAt: string;
 }
 
@@ -144,6 +149,8 @@ export interface BusinessSubmission {
   submissionType: SubmissionType;
   observedAt: string;
   sourcePhotoUrl: string | null;
+  ocrStatus: SubmissionOcrStatus;
+  ocrSummary: SubmissionOcrSummary | null;
   notes: string | null;
   pointsAwarded: number;
   uploadLatitude: number | null;
@@ -162,6 +169,15 @@ export interface BusinessSubmission {
   updatedAt: string;
 }
 
+export interface SubmissionOcrSummary {
+  model: string | null;
+  imageCount: number;
+  extractedRowCount: number;
+  rejectedCandidateCount: number;
+  pendingCatalogCount: number;
+  message: string | null;
+}
+
 export interface BusinessSubmissionItem {
   id: string;
   submissionId: string;
@@ -173,6 +189,9 @@ export interface BusinessSubmissionItem {
   happyHourDetails: string | null;
   isOnTap: TapStatus;
   confidence: number;
+  captureSource: SubmissionItemCaptureSource;
+  sourceText: string | null;
+  requiresCatalogApproval: boolean;
   createdAt: string;
 }
 
@@ -313,6 +332,8 @@ export interface AccountPrivacySettings {
   venueReportInclusionEnabled: boolean;
   productResearchEnabled: boolean;
   emailUpdatesEnabled: boolean;
+  consentVersion: string;
+  consentedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -457,6 +478,8 @@ export interface BarProfile {
   subscriptionStatus: string | null;
   tierManualOverride: boolean;
   acceptsPintPathCodes: boolean;
+  stripeEventCreatedAt: string | null;
+  posWebhookTokenVersion: number;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -710,6 +733,7 @@ export interface DiscountRedemption {
   estimatedSavingsCents: number;
   discountPassId: string | null;
   redeemedByUserId: string | null;
+  idempotencyKey: string | null;
   redeemedAt: string;
   metadata: Record<string, unknown>;
   createdAt: string;
@@ -738,9 +762,11 @@ export interface PintPointDrinkRecord {
   beverageCategory: string;
   quantity: number;
   isAlcoholic: boolean;
+  pointsAwarded: number;
   source: string;
   rewardCodeId: string | null;
   recordedByUserId: string | null;
+  idempotencyKey: string | null;
   recordedAt: string;
   metadata: Record<string, unknown>;
   createdAt: string;
@@ -806,6 +832,7 @@ interface AccountRow {
   email_verified_at: string | null;
   mfa_level: string;
   mfa_verified_at: string | null;
+  stripe_event_created_at: string | null;
   role: AccountRole;
   age_confirmed_at: string | null;
   terms_accepted_at: string | null;
@@ -865,6 +892,8 @@ interface SourceEvidenceObjectRow {
   byte_size: number | null;
   data_base64: string | null;
   external_url: string | null;
+  retention_expires_at: string | null;
+  deleted_at: string | null;
   created_at: string;
 }
 
@@ -963,6 +992,8 @@ interface SubmissionRow {
   submission_type: SubmissionType;
   observed_at: string;
   source_photo_url: string | null;
+  ocr_status: SubmissionOcrStatus;
+  ocr_summary_json: string | null;
   notes: string | null;
   points_awarded: number;
   upload_latitude: number | null;
@@ -992,6 +1023,9 @@ interface SubmissionItemRow {
   happy_hour_details: string | null;
   is_on_tap: TapStatus;
   confidence: number;
+  capture_source: SubmissionItemCaptureSource;
+  source_text: string | null;
+  requires_catalog_approval: number;
   created_at: string;
 }
 
@@ -1056,6 +1090,8 @@ interface AccountPrivacySettingsRow {
   venue_report_inclusion_enabled: number;
   product_research_enabled: number;
   email_updates_enabled: number;
+  consent_version: string;
+  consented_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1183,6 +1219,8 @@ interface BarProfileRow {
   subscription_status: string | null;
   tier_manual_override: number;
   accepts_pint_path_codes: number;
+  stripe_event_created_at: string | null;
+  pos_webhook_token_version: number;
   active: number;
   created_at: string;
   updated_at: string;
@@ -1305,6 +1343,7 @@ interface DiscountRedemptionRow {
   estimated_savings_cents: number;
   discount_pass_id: string | null;
   redeemed_by_user_id: string | null;
+  idempotency_key: string | null;
   redeemed_at: string;
   metadata_json: string;
   created_at: string;
@@ -1320,9 +1359,11 @@ interface PintPointDrinkRecordRow {
   beverage_category: string;
   quantity: number;
   is_alcoholic: number;
+  points_awarded: number;
   source: string;
   reward_code_id: string | null;
   recorded_by_user_id: string | null;
+  idempotency_key: string | null;
   recorded_at: string;
   metadata_json: string;
   created_at: string;
@@ -1389,6 +1430,7 @@ function toAccount(row: AccountRow): BusinessAccount {
     emailVerifiedAt: row.email_verified_at,
     mfaLevel: row.mfa_level,
     mfaVerifiedAt: row.mfa_verified_at,
+    stripeEventCreatedAt: row.stripe_event_created_at,
     role: row.role,
     ageConfirmedAt: row.age_confirmed_at,
     termsAcceptedAt: row.terms_accepted_at,
@@ -1421,6 +1463,8 @@ function toSourceEvidenceObject(row: SourceEvidenceObjectRow): SourceEvidenceObj
     byteSize: row.byte_size,
     dataBase64: row.data_base64,
     externalUrl: row.external_url,
+    retentionExpiresAt: row.retention_expires_at,
+    deletedAt: row.deleted_at,
     createdAt: row.created_at,
   };
 }
@@ -1526,6 +1570,7 @@ function toDiscountRedemption(row: DiscountRedemptionRow): DiscountRedemption {
     estimatedSavingsCents: row.estimated_savings_cents,
     discountPassId: row.discount_pass_id,
     redeemedByUserId: row.redeemed_by_user_id,
+    idempotencyKey: row.idempotency_key,
     redeemedAt: row.redeemed_at,
     metadata: parseJsonObject(row.metadata_json),
     createdAt: row.created_at,
@@ -1543,9 +1588,11 @@ function toPintPointDrinkRecord(row: PintPointDrinkRecordRow): PintPointDrinkRec
     beverageCategory: row.beverage_category,
     quantity: row.quantity,
     isAlcoholic: Boolean(row.is_alcoholic),
+    pointsAwarded: Number(row.points_awarded ?? 0),
     source: row.source,
     rewardCodeId: row.reward_code_id,
     recordedByUserId: row.recorded_by_user_id,
+    idempotencyKey: row.idempotency_key,
     recordedAt: row.recorded_at,
     metadata: parseJsonObject(row.metadata_json),
     createdAt: row.created_at,
@@ -1605,6 +1652,19 @@ function toFreePintRewardRedemption(row: FreePintRewardRedemptionRow): FreePintR
   };
 }
 
+function parseSubmissionOcrSummary(value: string | null): SubmissionOcrSummary | null {
+  if (!value) return null;
+  const parsed = parseJsonObject(value);
+  return {
+    model: typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : null,
+    imageCount: Math.max(0, Number(parsed.imageCount) || 0),
+    extractedRowCount: Math.max(0, Number(parsed.extractedRowCount) || 0),
+    rejectedCandidateCount: Math.max(0, Number(parsed.rejectedCandidateCount) || 0),
+    pendingCatalogCount: Math.max(0, Number(parsed.pendingCatalogCount) || 0),
+    message: typeof parsed.message === "string" && parsed.message.trim() ? parsed.message.trim() : null,
+  };
+}
+
 function toSubmission(row: SubmissionRow): BusinessSubmission {
   return {
     id: row.id,
@@ -1617,6 +1677,8 @@ function toSubmission(row: SubmissionRow): BusinessSubmission {
     submissionType: row.submission_type,
     observedAt: row.observed_at,
     sourcePhotoUrl: row.source_photo_url,
+    ocrStatus: row.ocr_status,
+    ocrSummary: parseSubmissionOcrSummary(row.ocr_summary_json),
     notes: row.notes,
     pointsAwarded: row.points_awarded,
     uploadLatitude: row.upload_latitude,
@@ -1648,6 +1710,9 @@ function toSubmissionItem(row: SubmissionItemRow): BusinessSubmissionItem {
     happyHourDetails: row.happy_hour_details,
     isOnTap: row.is_on_tap,
     confidence: row.confidence,
+    captureSource: row.capture_source,
+    sourceText: row.source_text,
+    requiresCatalogApproval: Boolean(row.requires_catalog_approval),
     createdAt: row.created_at,
   };
 }
@@ -1935,6 +2000,8 @@ function toAccountPrivacySettings(row: AccountPrivacySettingsRow): AccountPrivac
     venueReportInclusionEnabled: Boolean(row.venue_report_inclusion_enabled),
     productResearchEnabled: Boolean(row.product_research_enabled),
     emailUpdatesEnabled: Boolean(row.email_updates_enabled),
+    consentVersion: row.consent_version,
+    consentedAt: row.consented_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2097,6 +2164,8 @@ function toBarProfile(row: BarProfileRow): BarProfile {
     subscriptionStatus: row.subscription_status,
     tierManualOverride: Boolean(row.tier_manual_override),
     acceptsPintPathCodes: Boolean(row.accepts_pint_path_codes),
+    stripeEventCreatedAt: row.stripe_event_created_at,
+    posWebhookTokenVersion: Number(row.pos_webhook_token_version || 1),
     active: Boolean(row.active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -2658,6 +2727,19 @@ export class BusinessRepository {
     return row ? toAccount(row) : null;
   }
 
+  getSessionExpiresAt(tokenHash: string, now: string): string | null {
+    const row = this.database
+      .prepare(
+        `SELECT expires_at
+         FROM auth_sessions
+         WHERE token_hash = ?
+           AND expires_at > ?
+           AND revoked_at IS NULL`,
+      )
+      .get(tokenHash, now) as { expires_at: string } | undefined;
+    return row?.expires_at ?? null;
+  }
+
   touchSession(input: {
     tokenHash: string;
     lastUsedAt: string;
@@ -2822,6 +2904,7 @@ export class BusinessRepository {
     stripeCustomerId?: string | null;
     premiumUntil?: string | null;
     now: string;
+    stripeEventCreatedAt?: string | null;
   }): BusinessAccount {
     this.database
       .prepare(
@@ -2829,10 +2912,21 @@ export class BusinessRepository {
          SET subscription_status = ?,
              stripe_customer_id = COALESCE(?, stripe_customer_id),
              premium_until = ?,
+             stripe_event_created_at = COALESCE(?, stripe_event_created_at),
              updated_at = ?
-         WHERE id = ?`,
+         WHERE id = ?
+           AND (? IS NULL OR stripe_event_created_at IS NULL OR stripe_event_created_at <= ?)`,
       )
-      .run(input.subscriptionStatus, input.stripeCustomerId ?? null, input.premiumUntil ?? null, input.now, input.userId);
+      .run(
+        input.subscriptionStatus,
+        input.stripeCustomerId ?? null,
+        input.premiumUntil ?? null,
+        input.stripeEventCreatedAt ?? null,
+        input.now,
+        input.userId,
+        input.stripeEventCreatedAt ?? null,
+        input.stripeEventCreatedAt ?? null,
+      );
     return this.getAccountById(input.userId)!;
   }
 
@@ -2880,6 +2974,9 @@ export class BusinessRepository {
     submissionType: SubmissionType;
     observedAt: string;
     sourcePhotoUrl: string | null;
+    sourceEvidenceIds?: string[];
+    ocrStatus?: SubmissionOcrStatus;
+    ocrSummary?: SubmissionOcrSummary | null;
     notes: string | null;
     uploadLatitude?: number | null;
     uploadLongitude?: number | null;
@@ -2899,6 +2996,9 @@ export class BusinessRepository {
       happyHourDetails: string | null;
       isOnTap: TapStatus;
       confidence: number;
+      captureSource?: SubmissionItemCaptureSource;
+      sourceText?: string | null;
+      requiresCatalogApproval?: boolean;
     }>;
     now: string;
   }): BusinessSubmission {
@@ -2907,10 +3007,10 @@ export class BusinessRepository {
         .prepare(
           `INSERT INTO submissions (
           id, client_submission_id, user_id, venue_id, venue_name, suburb, status, submission_type, observed_at,
-          source_photo_url, notes, upload_latitude, upload_longitude, upload_accuracy_meters,
+          source_photo_url, ocr_status, ocr_summary_json, notes, upload_latitude, upload_longitude, upload_accuracy_meters,
           upload_location_captured_at, distance_to_venue_meters, points_eligible_by_location,
           points_eligibility_reason, pending_venue_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
@@ -2922,6 +3022,8 @@ export class BusinessRepository {
           input.submissionType,
           input.observedAt,
           input.sourcePhotoUrl,
+          input.ocrStatus ?? "not_requested",
+          input.ocrSummary ? JSON.stringify(input.ocrSummary) : null,
           input.notes,
           input.uploadLatitude ?? null,
           input.uploadLongitude ?? null,
@@ -2938,8 +3040,9 @@ export class BusinessRepository {
       const insertItem = this.database.prepare(
         `INSERT INTO submission_items (
           id, submission_id, beer_name, normalized_beer_id, serving_size, price,
-          is_happy_hour_price, happy_hour_details, is_on_tap, confidence, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          is_happy_hour_price, happy_hour_details, is_on_tap, confidence, capture_source,
+          source_text, requires_catalog_approval, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
 
       for (const item of input.items) {
@@ -2954,8 +3057,20 @@ export class BusinessRepository {
           item.happyHourDetails,
           item.isOnTap,
           item.confidence,
+          item.captureSource ?? "manual",
+          item.sourceText ?? null,
+          item.requiresCatalogApproval ? 1 : 0,
           input.now,
         );
+      }
+
+      const linkEvidence = this.database.prepare(
+        `INSERT INTO submission_source_evidence (submission_id, evidence_id, sort_order, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(submission_id, evidence_id) DO NOTHING`,
+      );
+      for (const [sortOrder, evidenceId] of (input.sourceEvidenceIds ?? []).entries()) {
+        linkEvidence.run(input.id, evidenceId, sortOrder, input.now);
       }
     });
 
@@ -3485,6 +3600,7 @@ export class BusinessRepository {
     estimatedSavingsCents: number;
     discountPassId: string | null;
     redeemedByUserId: string | null;
+    idempotencyKey: string;
     redeemedAt: string;
     metadata: Record<string, unknown>;
   }): DiscountRedemption {
@@ -3492,9 +3608,9 @@ export class BusinessRepository {
       .prepare(
         `INSERT INTO discount_redemptions (
           id, user_id, public_account_id, venue_id, venue_name, suburb, special_id, item_name,
-          quantity, estimated_savings_cents, discount_pass_id, redeemed_by_user_id,
+          quantity, estimated_savings_cents, discount_pass_id, redeemed_by_user_id, idempotency_key,
           redeemed_at, metadata_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -3509,6 +3625,7 @@ export class BusinessRepository {
         input.estimatedSavingsCents,
         input.discountPassId,
         input.redeemedByUserId,
+        input.idempotencyKey,
         input.redeemedAt,
         JSON.stringify(redactSecrets(input.metadata)),
         input.redeemedAt,
@@ -3522,6 +3639,24 @@ export class BusinessRepository {
       .prepare("SELECT * FROM discount_redemptions WHERE id = ?")
       .get(id) as DiscountRedemptionRow | undefined;
     return row ? toDiscountRedemption(row) : null;
+  }
+
+  getDiscountRedemptionByIdempotencyKey(input: { venueId: string; idempotencyKey: string }): DiscountRedemption | null {
+    const row = this.database
+      .prepare("SELECT * FROM discount_redemptions WHERE venue_id = ? AND idempotency_key = ? LIMIT 1")
+      .get(input.venueId, input.idempotencyKey) as DiscountRedemptionRow | undefined;
+    return row ? toDiscountRedemption(row) : null;
+  }
+
+  rotateBarPosWebhookToken(input: { barId: string; now: string }): BarProfile {
+    this.database
+      .prepare(
+        `UPDATE venue_profiles
+         SET pos_webhook_token_version = pos_webhook_token_version + 1, updated_at = ?
+         WHERE venue_id = ?`,
+      )
+      .run(input.now, input.barId);
+    return this.getBarProfile(input.barId)!;
   }
 
   listDiscountRedemptionsForUser(userId: string, limit: number): DiscountRedemption[] {
@@ -3855,20 +3990,22 @@ export class BusinessRepository {
     beverageCategory: string;
     quantity: number;
     isAlcoholic: boolean;
+    pointsAwarded?: number;
     source: string;
     recordedByUserId: string | null;
+    idempotencyKey: string;
     recordedAt: string;
     metadata: Record<string, unknown>;
   }): PintPointDrinkRecord {
-    const pointsAwarded = input.isAlcoholic ? input.quantity : 0;
+    const pointsAwarded = Math.max(0, Math.min(input.quantity, input.pointsAwarded ?? (input.isAlcoholic ? input.quantity : 0)));
     const create = this.database.transaction(() => {
       this.database
         .prepare(
           `INSERT INTO pint_point_drink_records (
             id, user_id, venue_id, venue_name, suburb, item_name, beverage_category,
-            quantity, is_alcoholic, source, reward_code_id, recorded_by_user_id,
-            recorded_at, metadata_json, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+            quantity, is_alcoholic, points_awarded, source, reward_code_id, recorded_by_user_id,
+            idempotency_key, recorded_at, metadata_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
@@ -3880,8 +4017,10 @@ export class BusinessRepository {
           input.beverageCategory,
           input.quantity,
           input.isAlcoholic ? 1 : 0,
+          pointsAwarded,
           input.source,
           input.recordedByUserId,
+          input.idempotencyKey,
           input.recordedAt,
           JSON.stringify(redactSecrets(input.metadata)),
           input.recordedAt,
@@ -3924,6 +4063,17 @@ export class BusinessRepository {
       .prepare("SELECT * FROM pint_point_drink_records WHERE user_id = ? ORDER BY recorded_at DESC LIMIT ?")
       .all(userId, limit) as PintPointDrinkRecordRow[];
     return rows.map(toPintPointDrinkRecord);
+  }
+
+  countPintPointsAwardedSince(input: { userId: string; since: string }): number {
+    const row = this.database
+      .prepare(
+        `SELECT COALESCE(sum(points_awarded), 0) AS points
+         FROM pint_point_drink_records
+         WHERE user_id = ? AND recorded_at >= ?`,
+      )
+      .get(input.userId, input.since) as { points: number } | undefined;
+    return Number(row?.points ?? 0);
   }
 
   createPintPointLedgerEntry(input: {
@@ -4498,6 +4648,17 @@ export class BusinessRepository {
       let awarded = 0;
 
       if (input.status === "approved") {
+        const unresolvedCatalogItem = current.items.find((item) => {
+          if (!item.requiresCatalogApproval || !item.normalizedBeerId) return false;
+          const row = this.database
+            .prepare("SELECT status FROM beer_catalog_items WHERE key = ? LIMIT 1")
+            .get(item.normalizedBeerId) as { status: string } | undefined;
+          return row?.status !== "active";
+        });
+        if (unresolvedCatalogItem) {
+          throw new Error(`OCR beer requires catalogue approval: ${unresolvedCatalogItem.beerName}`);
+        }
+
         awarded = submitter.status === "suspended" ? 0 : this.insertContributionLedger({
           userId: submitter.id,
           submissionId: current.submission.id,
@@ -5418,10 +5579,12 @@ export class BusinessRepository {
   getDefaultAccountPrivacySettings(userId: string, now = new Date().toISOString()): AccountPrivacySettings {
     return {
       userId,
-      optionalAnalyticsEnabled: true,
-      venueReportInclusionEnabled: true,
-      productResearchEnabled: true,
+      optionalAnalyticsEnabled: false,
+      venueReportInclusionEnabled: false,
+      productResearchEnabled: false,
       emailUpdatesEnabled: false,
+      consentVersion: "2026-07-11",
+      consentedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -5433,6 +5596,7 @@ export class BusinessRepository {
     venueReportInclusionEnabled: boolean;
     productResearchEnabled: boolean;
     emailUpdatesEnabled: boolean;
+    consentVersion: string;
     now: string;
   }): AccountPrivacySettings {
     const existing = this.getAccountPrivacySettings(input.userId);
@@ -5440,13 +5604,15 @@ export class BusinessRepository {
       .prepare(
         `INSERT INTO account_privacy_settings (
           user_id, optional_analytics_enabled, venue_report_inclusion_enabled,
-          product_research_enabled, email_updates_enabled, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          product_research_enabled, email_updates_enabled, consent_version, consented_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           optional_analytics_enabled = excluded.optional_analytics_enabled,
           venue_report_inclusion_enabled = excluded.venue_report_inclusion_enabled,
           product_research_enabled = excluded.product_research_enabled,
           email_updates_enabled = excluded.email_updates_enabled,
+          consent_version = excluded.consent_version,
+          consented_at = excluded.consented_at,
           updated_at = excluded.updated_at`,
       )
       .run(
@@ -5455,6 +5621,8 @@ export class BusinessRepository {
         input.venueReportInclusionEnabled ? 1 : 0,
         input.productResearchEnabled ? 1 : 0,
         input.emailUpdatesEnabled ? 1 : 0,
+        input.consentVersion,
+        input.now,
         existing?.createdAt ?? input.now,
         input.now,
       );
@@ -5854,9 +6022,19 @@ export class BusinessRepository {
   }
 
   revokeVenueManager(input: { userId: string; venueId: string; now: string }): VenueManagerAssignment | null {
-    this.database
-      .prepare("UPDATE venue_manager_assignments SET status = 'revoked', updated_at = ? WHERE user_id = ? AND venue_id = ?")
-      .run(input.now, input.userId, input.venueId);
+    this.database.transaction(() => {
+      this.database
+        .prepare("UPDATE venue_manager_assignments SET status = 'revoked', updated_at = ? WHERE user_id = ? AND venue_id = ?")
+        .run(input.now, input.userId, input.venueId);
+      const active = this.database
+        .prepare("SELECT 1 FROM venue_manager_assignments WHERE user_id = ? AND status = 'active' LIMIT 1")
+        .get(input.userId);
+      if (!active) {
+        this.database
+          .prepare("UPDATE accounts SET role = 'user', updated_at = ? WHERE id = ? AND role = 'venue_manager'")
+          .run(input.now, input.userId);
+      }
+    })();
     const row = this.database
       .prepare("SELECT * FROM venue_manager_assignments WHERE user_id = ? AND venue_id = ?")
       .get(input.userId, input.venueId) as VenueManagerAssignmentRow | undefined;
@@ -6030,6 +6208,7 @@ export class BusinessRepository {
     promoted: boolean;
     featuredSpecialEligible: boolean;
     now: string;
+    stripeEventCreatedAt?: string | null;
   }): BarProfile {
     this.database
       .prepare(
@@ -6042,8 +6221,11 @@ export class BusinessRepository {
              premium_badge = ?,
              promoted = ?,
              featured_special_eligible = ?,
+             stripe_event_created_at = COALESCE(?, stripe_event_created_at),
              updated_at = ?
-         WHERE venue_id = ? AND tier_manual_override = 0`,
+         WHERE venue_id = ?
+           AND tier_manual_override = 0
+           AND (? IS NULL OR stripe_event_created_at IS NULL OR stripe_event_created_at <= ?)`,
       )
       .run(
         input.membershipTier,
@@ -6054,8 +6236,11 @@ export class BusinessRepository {
         input.premiumBadge,
         input.promoted ? 1 : 0,
         input.featuredSpecialEligible ? 1 : 0,
+        input.stripeEventCreatedAt ?? null,
         input.now,
         input.barId,
+        input.stripeEventCreatedAt ?? null,
+        input.stripeEventCreatedAt ?? null,
       );
     return this.getBarProfile(input.barId)!;
   }
@@ -6189,7 +6374,7 @@ export class BusinessRepository {
         input.startTime,
         input.endTime,
         input.description,
-        JSON.stringify(input.happyHourBeers),
+        JSON.stringify(input.happyHourBeers ?? []),
         input.active ? 1 : 0,
         input.now,
         input.now,
@@ -6727,39 +6912,27 @@ export class BusinessRepository {
   }
 
   countRecentVenueManagerDeletes(input: {
-    userId: string;
     venueId: string;
     since: string;
     changeType?: Exclude<BarPendingChangeType, "profile"> | undefined;
   }): number {
-    const legacySectionByChangeType: Record<Exclude<BarPendingChangeType, "profile">, string> = {
-      beer: "beer_inventory",
-      happy_hour: "happy_hours",
-      special: "specials",
-    };
     const changeType = input.changeType ?? null;
-    const legacySection = changeType ? legacySectionByChangeType[changeType] : null;
     const row = this.database
       .prepare(
         `SELECT count(*) AS count
-         FROM events
-         WHERE user_id = @userId
-           AND venue_id = @venueId
-           AND event_type = 'venue_update_submitted'
+         FROM security_audit_log
+         WHERE action = 'venue_manager_delete'
            AND created_at >= @since
-           AND json_extract(metadata_json, '$.action') = 'delete'
+           AND json_extract(metadata_json, '$.venueId') = @venueId
            AND (
              @changeType IS NULL
              OR json_extract(metadata_json, '$.changeType') = @changeType
-             OR json_extract(metadata_json, '$.section') = @legacySection
            )`,
       )
       .get({
-        userId: input.userId,
         venueId: input.venueId,
         since: input.since,
         changeType,
-        legacySection,
       }) as { count: number } | undefined;
     return Number(row?.count ?? 0);
   }
@@ -6813,14 +6986,15 @@ export class BusinessRepository {
     byteSize: number | null;
     dataBase64: string | null;
     externalUrl: string | null;
+    retentionExpiresAt: string;
     createdAt: string;
   }): SourceEvidenceObject {
     this.database
       .prepare(
         `INSERT INTO source_evidence_objects (
           id, owner_user_id, storage_provider, object_path, mime_type, byte_size,
-          data_base64, external_url, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          data_base64, external_url, retention_expires_at, deleted_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
       )
       .run(
         input.id,
@@ -6831,6 +7005,7 @@ export class BusinessRepository {
         input.byteSize,
         input.dataBase64,
         input.externalUrl,
+        input.retentionExpiresAt,
         input.createdAt,
       );
     return this.getSourceEvidenceObject(input.id)!;
@@ -6841,6 +7016,143 @@ export class BusinessRepository {
       .prepare("SELECT * FROM source_evidence_objects WHERE id = ?")
       .get(id) as SourceEvidenceObjectRow | undefined;
     return row ? toSourceEvidenceObject(row) : null;
+  }
+
+  listExpiredSourceEvidence(input: { now: string; limit: number }): SourceEvidenceObject[] {
+    const rows = this.database
+      .prepare(
+        `SELECT evidence.*
+         FROM source_evidence_objects evidence
+         WHERE evidence.deleted_at IS NULL
+           AND evidence.retention_expires_at IS NOT NULL
+           AND evidence.retention_expires_at <= ?
+           AND NOT EXISTS (
+             SELECT 1
+             FROM submission_source_evidence link
+             JOIN submissions submission ON submission.id = link.submission_id
+             WHERE link.evidence_id = evidence.id
+               AND submission.status IN ('pending', 'needs_more_evidence')
+           )
+         ORDER BY evidence.retention_expires_at ASC
+         LIMIT ?`,
+      )
+      .all(input.now, input.limit) as SourceEvidenceObjectRow[];
+    return rows.map(toSourceEvidenceObject);
+  }
+
+  listSourceEvidenceForOwner(ownerUserId: string): SourceEvidenceObject[] {
+    const rows = this.database
+      .prepare(
+        `SELECT *
+         FROM source_evidence_objects
+         WHERE owner_user_id = ? AND deleted_at IS NULL
+         ORDER BY created_at ASC`,
+      )
+      .all(ownerUserId) as SourceEvidenceObjectRow[];
+    return rows.map(toSourceEvidenceObject);
+  }
+
+  markSourceEvidenceDeleted(input: { id: string; deletedAt: string }): void {
+    this.database
+      .prepare(
+        `UPDATE source_evidence_objects
+         SET data_base64 = NULL, external_url = NULL, byte_size = NULL, deleted_at = ?
+         WHERE id = ?`,
+      )
+      .run(input.deletedAt, input.id);
+  }
+
+  createAccountDeletionRequest(input: {
+    id: string;
+    userId: string;
+    userMessage: string | null;
+    requestedAt: string;
+    executeAfter: string;
+  }) {
+    const existing = this.database
+      .prepare(
+        `SELECT * FROM account_deletion_requests
+         WHERE user_id = ? AND status IN ('pending_review', 'approved')
+         ORDER BY requested_at DESC LIMIT 1`,
+      )
+      .get(input.userId) as Record<string, unknown> | undefined;
+    if (existing) {
+      return existing;
+    }
+    this.database
+      .prepare(
+        `INSERT INTO account_deletion_requests (
+          id, user_id, status, user_message, requested_at, execute_after,
+          reviewed_by, reviewed_at, completed_at, result_summary_json, created_at, updated_at
+        ) VALUES (?, ?, 'pending_review', ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
+      )
+      .run(input.id, input.userId, input.userMessage, input.requestedAt, input.executeAfter, input.requestedAt, input.requestedAt);
+    return this.database.prepare("SELECT * FROM account_deletion_requests WHERE id = ?").get(input.id) as Record<string, unknown>;
+  }
+
+  listAccountDeletionRequests(input: { status?: string; limit: number }): Array<Record<string, unknown>> {
+    const rows = input.status
+      ? this.database.prepare("SELECT * FROM account_deletion_requests WHERE status = ? ORDER BY requested_at DESC LIMIT ?").all(input.status, input.limit)
+      : this.database.prepare("SELECT * FROM account_deletion_requests ORDER BY requested_at DESC LIMIT ?").all(input.limit);
+    return rows as Array<Record<string, unknown>>;
+  }
+
+  executeAccountAnonymisation(input: { requestId: string; reviewedBy: string; now: string }): Record<string, unknown> {
+    return this.database.transaction(() => {
+      const request = this.database
+        .prepare("SELECT * FROM account_deletion_requests WHERE id = ?")
+        .get(input.requestId) as { user_id: string; status: string; execute_after: string } | undefined;
+      if (!request) throw new Error("Deletion request not found");
+      if (!['pending_review', 'approved'].includes(request.status)) throw new Error("Deletion request is already closed");
+
+      const userId = request.user_id;
+      const evidenceRows = this.database
+        .prepare("SELECT * FROM source_evidence_objects WHERE owner_user_id = ? AND deleted_at IS NULL")
+        .all(userId) as SourceEvidenceObjectRow[];
+
+      this.database.prepare("DELETE FROM auth_sessions WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM account_discount_passes WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM account_preferences WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM account_privacy_settings WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM saved_items WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM user_activity_events WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM events WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE feedback SET user_id = NULL WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE wrong_price_reports SET user_id = NULL WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE venue_requests SET user_id = NULL WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE submissions SET client_submission_id = NULL, notes = NULL, source_photo_url = NULL, upload_latitude = NULL, upload_longitude = NULL, upload_accuracy_meters = NULL, upload_location_captured_at = NULL WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM submission_source_evidence WHERE submission_id IN (SELECT id FROM submissions WHERE user_id = ?)").run(userId);
+      this.database.prepare("UPDATE source_evidence_objects SET owner_user_id = NULL WHERE owner_user_id = ?").run(userId);
+      this.database.prepare("UPDATE profiles SET email = ?, username = NULL, avatar_url = NULL, display_name = NULL, display_name_key = NULL, updated_at = ? WHERE id = ?").run(`deleted-${userId}@invalid.pintpath.local`, input.now, userId);
+      this.database.prepare(
+        `UPDATE accounts
+         SET email = ?, password_hash = 'deleted', display_name = NULL, display_name_key = NULL,
+             avatar_url = NULL, supabase_user_id = NULL, role = 'user', subscription_status = 'free',
+             stripe_customer_id = NULL, status = 'suspended', updated_at = ?
+         WHERE id = ?`,
+      ).run(`deleted-${userId}@invalid.pintpath.local`, input.now, userId);
+
+      const summary = { anonymisedUserId: userId, evidenceIds: evidenceRows.map((row) => row.id) };
+      this.database.prepare(
+        `UPDATE account_deletion_requests
+         SET status = 'completed', reviewed_by = ?, reviewed_at = ?, completed_at = ?,
+             result_summary_json = ?, updated_at = ?
+         WHERE id = ?`,
+      ).run(input.reviewedBy, input.now, input.now, JSON.stringify(summary), input.now, input.requestId);
+      return summary;
+    })();
+  }
+
+  listSubmissionSourceEvidenceIds(submissionId: string): string[] {
+    const rows = this.database
+      .prepare(
+        `SELECT evidence_id
+           FROM submission_source_evidence
+          WHERE submission_id = ?
+          ORDER BY sort_order ASC`,
+      )
+      .all(submissionId) as Array<{ evidence_id: string }>;
+    return rows.map((row) => row.evidence_id);
   }
 
   countEvents(input: {
@@ -7469,12 +7781,71 @@ export class BusinessRepository {
     });
   }
 
-  rememberStripeEvent(input: { id: string; eventType: string; processedAt: string }): boolean {
-    const result = this.database
+  beginStripeEvent(input: {
+    id: string;
+    eventType: string;
+    eventCreatedAt: string | null;
+    payload: Record<string, unknown>;
+    receivedAt: string;
+  }): boolean {
+    const inserted = this.database
       .prepare(
-        "INSERT OR IGNORE INTO stripe_webhook_events (id, event_type, processed_at) VALUES (?, ?, ?)",
+        `INSERT OR IGNORE INTO stripe_webhook_events (
+          id, event_type, status, event_created_at, payload_json, attempts,
+          last_error, received_at, applied_at, processed_at
+        ) VALUES (?, ?, 'pending', ?, ?, 1, NULL, ?, NULL, ?)`,
       )
-      .run(input.id, input.eventType, input.processedAt);
-    return result.changes > 0;
+      .run(
+        input.id,
+        input.eventType,
+        input.eventCreatedAt,
+        JSON.stringify(redactSecrets(input.payload)),
+        input.receivedAt,
+        input.receivedAt,
+      );
+    if (inserted.changes > 0) {
+      return true;
+    }
+
+    const row = this.database
+      .prepare("SELECT status FROM stripe_webhook_events WHERE id = ?")
+      .get(input.id) as { status: string } | undefined;
+    if (row?.status === "applied") {
+      return false;
+    }
+
+    this.database
+      .prepare(
+        `UPDATE stripe_webhook_events
+         SET status = 'pending', attempts = attempts + 1, last_error = NULL,
+             received_at = ?, payload_json = ?, event_created_at = COALESCE(?, event_created_at)
+         WHERE id = ?`,
+      )
+      .run(input.receivedAt, JSON.stringify(redactSecrets(input.payload)), input.eventCreatedAt, input.id);
+    return true;
+  }
+
+  markStripeEventApplied(input: { id: string; appliedAt: string }): void {
+    this.database
+      .prepare(
+        `UPDATE stripe_webhook_events
+         SET status = 'applied', applied_at = ?, processed_at = ?, last_error = NULL
+         WHERE id = ?`,
+      )
+      .run(input.appliedAt, input.appliedAt, input.id);
+  }
+
+  markStripeEventFailed(input: { id: string; failedAt: string; error: string }): void {
+    this.database
+      .prepare(
+        `UPDATE stripe_webhook_events
+         SET status = 'failed', processed_at = ?, last_error = ?
+         WHERE id = ?`,
+      )
+      .run(input.failedAt, input.error.slice(0, 500), input.id);
+  }
+
+  runInTransaction<T>(operation: () => T): T {
+    return this.database.transaction(operation)();
   }
 }

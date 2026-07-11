@@ -209,10 +209,6 @@
         MelbBeerBusiness.renderNav("account");
         MelbBeerBusiness.installAccessibilityChrome();
         await MelbBeerBusiness.syncSupabaseSession();
-        if (!MelbBeerBusiness.getAuthToken()) {
-          showLoggedOut("Sign in to see uploads, points, leaderboard rank, savings, and discount redemptions.");
-          return;
-        }
         const result = await MelbBeerBusiness.apiFetch("/api/business/account");
         renderStats(result);
       } catch (error) {

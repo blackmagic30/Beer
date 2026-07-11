@@ -137,6 +137,16 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).toContain("create index if not exists idx_discount_redemptions_redeemed_by_user_id");
   });
 
+  it("retires legacy analytics RPCs after their backing table was removed", () => {
+    const sql = migration("20260711023641_retire_legacy_bar_analytics_rpcs.sql");
+
+    expect(sql).toContain("drop function if exists public.get_bar_dashboard_analytics(");
+    expect(sql).toContain("drop function if exists public.track_bar_analytics_event(");
+    expect(sql).toContain("timestamp with time zone");
+    expect(sql).toContain("jsonb");
+    expect(sql).not.toContain("create table public.bar_analytics_events");
+  });
+
   it("tunes remaining live RLS policies without widening owner/admin access", () => {
     const sql = migration("20260603114139_tune_remaining_rls_advisor_policies.sql");
 

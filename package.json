@@ -21,6 +21,8 @@
     "readiness:providers": "tsx scripts/provider-readiness-check.ts",
     "reports:generate": "tsx scripts/generate-monthly-reports.ts",
     "reports:deliver:mock": "REPORT_EMAIL_MODE=mock tsx scripts/generate-monthly-reports.ts --deliver",
+    "data:backup": "tsx scripts/backup-data.ts",
+    "data:backup:verify": "tsx scripts/verify-data-backup.ts",
     "test:seed:pintpath": "ALLOW_FAKE_SEED=true PINTPATH_TEST_DATABASE_PATH=data/pintpath-release-test.sqlite tsx scripts/seed-pintpath-fake-data.ts",
     "test:reset:pintpath": "ALLOW_FAKE_SEED=true PINTPATH_TEST_DATABASE_PATH=data/pintpath-release-test.sqlite tsx scripts/reset-pintpath-test-data.ts",
     "test:e2e:pintpath": "vitest run test/pintpath-release-readiness.test.ts",

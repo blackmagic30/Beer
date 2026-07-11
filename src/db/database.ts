@@ -24,6 +24,8 @@ const venueProfilesColumns = [
   { name: "subscription_status", definition: "TEXT" },
   { name: "tier_manual_override", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "accepts_pint_path_codes", definition: "INTEGER NOT NULL DEFAULT 0" },
+  { name: "stripe_event_created_at", definition: "TEXT" },
+  { name: "pos_webhook_token_version", definition: "INTEGER NOT NULL DEFAULT 1" },
 ] as const;
 
 const venueAnalyticsEventsColumns = [
@@ -46,6 +48,15 @@ const authSessionsColumns = [
   { name: "user_agent_hash", definition: "TEXT" },
 ] as const;
 
+const discountRedemptionColumns = [
+  { name: "idempotency_key", definition: "TEXT" },
+] as const;
+
+const pintPointDrinkRecordColumns = [
+  { name: "points_awarded", definition: "INTEGER NOT NULL DEFAULT 0" },
+  { name: "idempotency_key", definition: "TEXT" },
+] as const;
+
 const accountsColumns = [
   { name: "public_account_id", definition: "TEXT" },
   { name: "display_name", definition: "TEXT" },
@@ -62,6 +73,17 @@ const accountsColumns = [
   { name: "privacy_version", definition: "TEXT" },
   { name: "age_verification_status", definition: "TEXT NOT NULL DEFAULT 'not_started'" },
   { name: "is_over_18_verified", definition: "INTEGER NOT NULL DEFAULT 0" },
+  { name: "stripe_event_created_at", definition: "TEXT" },
+] as const;
+
+const stripeWebhookEventColumns = [
+  { name: "status", definition: "TEXT NOT NULL DEFAULT 'applied'" },
+  { name: "event_created_at", definition: "TEXT" },
+  { name: "payload_json", definition: "TEXT" },
+  { name: "attempts", definition: "INTEGER NOT NULL DEFAULT 1" },
+  { name: "last_error", definition: "TEXT" },
+  { name: "received_at", definition: "TEXT" },
+  { name: "applied_at", definition: "TEXT" },
 ] as const;
 
 const profilesColumns = [
@@ -71,6 +93,8 @@ const profilesColumns = [
 
 const submissionColumns = [
   { name: "client_submission_id", definition: "TEXT" },
+  { name: "ocr_status", definition: "TEXT NOT NULL DEFAULT 'not_requested'" },
+  { name: "ocr_summary_json", definition: "TEXT" },
   { name: "upload_latitude", definition: "REAL" },
   { name: "upload_longitude", definition: "REAL" },
   { name: "upload_accuracy_meters", definition: "REAL" },
@@ -81,9 +105,25 @@ const submissionColumns = [
   { name: "pending_venue_json", definition: "TEXT" },
 ] as const;
 
+const submissionItemColumns = [
+  { name: "capture_source", definition: "TEXT NOT NULL DEFAULT 'manual'" },
+  { name: "source_text", definition: "TEXT" },
+  { name: "requires_catalog_approval", definition: "INTEGER NOT NULL DEFAULT 0" },
+] as const;
+
 const feedbackColumns = [
   { name: "priority", definition: "TEXT NOT NULL DEFAULT 'normal'" },
   { name: "triage_reason", definition: "TEXT" },
+] as const;
+
+const accountPrivacySettingsColumns = [
+  { name: "consent_version", definition: "TEXT NOT NULL DEFAULT '2026-07-11'" },
+  { name: "consented_at", definition: "TEXT" },
+] as const;
+
+const sourceEvidenceColumns = [
+  { name: "retention_expires_at", definition: "TEXT" },
+  { name: "deleted_at", definition: "TEXT" },
 ] as const;
 
 const venuePartnerOutreachColumns = [
@@ -172,6 +212,10 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE INDEX IF NOT EXISTS idx_discount_redemptions_suburb
       ON discount_redemptions (suburb, redeemed_at DESC);
 
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_discount_redemptions_idempotency
+      ON discount_redemptions (venue_id, idempotency_key)
+      WHERE idempotency_key IS NOT NULL;
+
     CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_user
       ON pint_point_drink_records (user_id, recorded_at DESC);
 
@@ -180,6 +224,10 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_suburb
       ON pint_point_drink_records (suburb, recorded_at DESC);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pint_point_drink_records_idempotency
+      ON pint_point_drink_records (venue_id, idempotency_key)
+      WHERE idempotency_key IS NOT NULL;
 
     CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_user
       ON free_pint_reward_codes (user_id, status, expires_at DESC);
@@ -208,6 +256,9 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE INDEX IF NOT EXISTS idx_source_evidence_owner
       ON source_evidence_objects (owner_user_id, created_at DESC);
 
+    CREATE INDEX IF NOT EXISTS idx_source_evidence_retention
+      ON source_evidence_objects (deleted_at, retention_expires_at);
+
     CREATE UNIQUE INDEX IF NOT EXISTS idx_submissions_user_client_submission
       ON submissions (user_id, client_submission_id)
       WHERE client_submission_id IS NOT NULL;
@@ -223,6 +274,60 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_feedback_priority_created
       ON feedback (priority, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_status
+      ON stripe_webhook_events (status, received_at);
+
+    CREATE INDEX IF NOT EXISTS idx_discount_redemptions_redeemed_by
+      ON discount_redemptions (redeemed_by_user_id);
+    CREATE INDEX IF NOT EXISTS idx_discount_redemptions_pass
+      ON discount_redemptions (discount_pass_id);
+    CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_recorded_by
+      ON pint_point_drink_records (recorded_by_user_id);
+    CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_reward
+      ON pint_point_drink_records (reward_code_id);
+    CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_redeemed_by
+      ON free_pint_reward_codes (redeemed_by_user_id);
+    CREATE INDEX IF NOT EXISTS idx_free_pint_reward_redemptions_redeemed_by
+      ON free_pint_reward_redemptions (redeemed_by_user_id);
+    CREATE INDEX IF NOT EXISTS idx_free_pint_reward_redemptions_reward
+      ON free_pint_reward_redemptions (reward_code_id);
+    CREATE INDEX IF NOT EXISTS idx_pint_point_ledger_reward
+      ON pint_point_ledger (reward_code_id);
+    CREATE INDEX IF NOT EXISTS idx_pint_point_ledger_drink
+      ON pint_point_ledger (drink_record_id);
+    CREATE INDEX IF NOT EXISTS idx_leaderboard_prize_awards_voucher
+      ON leaderboard_prize_awards (voucher_id);
+    CREATE INDEX IF NOT EXISTS idx_submissions_reviewed_by
+      ON submissions (reviewed_by);
+    CREATE INDEX IF NOT EXISTS idx_submission_source_evidence_evidence
+      ON submission_source_evidence (evidence_id);
+    CREATE INDEX IF NOT EXISTS idx_verifications_upload
+      ON verifications (upload_id);
+    CREATE INDEX IF NOT EXISTS idx_venue_price_records_source_submission
+      ON venue_price_records (source_submission_id);
+    CREATE INDEX IF NOT EXISTS idx_contribution_ledger_submission
+      ON contribution_ledger (submission_id);
+    CREATE INDEX IF NOT EXISTS idx_events_user
+      ON events (user_id);
+    CREATE INDEX IF NOT EXISTS idx_account_deletion_requests_reviewed_by
+      ON account_deletion_requests (reviewed_by);
+    CREATE INDEX IF NOT EXISTS idx_feedback_user
+      ON feedback (user_id);
+    CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_user
+      ON wrong_price_reports (user_id);
+    CREATE INDEX IF NOT EXISTS idx_venue_requests_mission
+      ON venue_requests (mission_id);
+    CREATE INDEX IF NOT EXISTS idx_venue_requests_user
+      ON venue_requests (user_id);
+    CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_user
+      ON venue_interest_requests (user_id);
+    CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_approved_by
+      ON venue_manager_assignments (approved_by);
+    CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_reviewed_by
+      ON venue_pending_changes (reviewed_by);
+    CREATE INDEX IF NOT EXISTS idx_venue_partner_outreach_updated_by
+      ON venue_partner_outreach (updated_by);
   `);
 }
 
@@ -553,10 +658,16 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "venue_happy_hours", venueHappyHoursColumns);
   ensureColumns(database, "venue_specials", venueSpecialsColumns);
   ensureColumns(database, "accounts", accountsColumns);
+  ensureColumns(database, "stripe_webhook_events", stripeWebhookEventColumns);
   ensureColumns(database, "profiles", profilesColumns);
   ensureColumns(database, "auth_sessions", authSessionsColumns);
+  ensureColumns(database, "discount_redemptions", discountRedemptionColumns);
+  ensureColumns(database, "pint_point_drink_records", pintPointDrinkRecordColumns);
   ensureColumns(database, "submissions", submissionColumns);
+  ensureColumns(database, "submission_items", submissionItemColumns);
   ensureColumns(database, "feedback", feedbackColumns);
+  ensureColumns(database, "account_privacy_settings", accountPrivacySettingsColumns);
+  ensureColumns(database, "source_evidence_objects", sourceEvidenceColumns);
   ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
   ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
   redactCompletedAdminIngestionImages(database);

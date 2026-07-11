@@ -22,10 +22,11 @@ describe("website performance loading", () => {
     expect(html).toContain('window.addEventListener("DOMContentLoaded", () => {');
   });
 
-  it("avoids avoidable signed-out dashboard and auth-page work", () => {
+  it("probes cookie-backed venue sessions without depending on readable browser tokens", () => {
     const venuePortalHtml = readFile("viewer/venue-portal.html");
 
-    expect(venuePortalHtml).toContain("if (MelbBeerBusiness.hasAuthenticatedSessionHint())");
+    expect(venuePortalHtml).toContain('await loadPortal(urlParams.get("venueId"))');
+    expect(venuePortalHtml).not.toContain("if (MelbBeerBusiness.hasAuthenticatedSessionHint())");
     [
       "viewer/account.html",
       "viewer/reset-password.html",

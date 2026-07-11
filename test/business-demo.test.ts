@@ -13,6 +13,8 @@ import { BusinessRepository, type BarPendingChange, type SubmissionType, type Su
 import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
 import { errorHandler } from "../src/middleware/error-handler.js";
+import { createAdminRouter } from "../src/modules/admin/admin.routes.js";
+import type { AdminService } from "../src/modules/admin/admin.service.js";
 import { authSignupSchema, barHappyHourSchema, createSubmissionSchema, normalizeHappyHourTime } from "../src/modules/business/business.schemas.js";
 import { createBusinessRouter } from "../src/modules/business/business.routes.js";
 import { BusinessService, canAccessAgeGatedRewards, sanitizePostgrestIlikeTerm } from "../src/modules/business/business.service.js";
@@ -54,6 +56,7 @@ function createRepository() {
 function createBusinessService(
   repository: BusinessRepository,
   overrides: Partial<ConstructorParameters<typeof BusinessService>[1]> = {},
+  menuPhotoOcr?: ConstructorParameters<typeof BusinessService>[3],
 ) {
   const evidenceStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-evidence-"));
   evidenceStorageDirs.push(evidenceStorageDir);
@@ -93,7 +96,7 @@ function createBusinessService(
     GOOGLE_MAPS_API_KEY: undefined,
     GOOGLE_PLACES_API_KEY: undefined,
     ...overrides,
-  }, new BeerCatalogRepository(repositoryDatabases.get(repository)!));
+  }, new BeerCatalogRepository(repositoryDatabases.get(repository)!), menuPhotoOcr);
 }
 
 function createAccount(repository: BusinessRepository, id: string, role: "user" | "admin" = "user") {
@@ -552,6 +555,18 @@ describe("Supabase account and verification foundation", () => {
 
   it("exchanges a Supabase Auth session for the local Pint Path session", async () => {
     const { repository } = createRepository();
+    const totpVerifiedAtSeconds = Math.floor(new Date(NOW).getTime() / 1000) - 300;
+    const accessToken = [
+      Buffer.from("{}").toString("base64url"),
+      Buffer.from(JSON.stringify({
+        aal: "aal2",
+        amr: [
+          { method: "password", timestamp: totpVerifiedAtSeconds - 60 },
+          { method: "totp", timestamp: totpVerifiedAtSeconds },
+        ],
+      })).toString("base64url"),
+      "test-signature-value",
+    ].join(".");
     const service = createBusinessService(repository, {
       SUPABASE_URL: "https://example.supabase.co",
       SUPABASE_ANON_KEY: "placeholder-anon-key",
@@ -580,7 +595,7 @@ describe("Supabase account and verification foundation", () => {
       },
     };
 
-    const result = await service.loginWithSupabaseAccessToken({ accessToken: "x".repeat(32) });
+    const result = await service.loginWithSupabaseAccessToken({ accessToken });
     const linkedAccount = repository.getAccountBySupabaseUserId("supabase-user-1");
     const profile = repository.getProfileById(result.account.id);
 
@@ -590,6 +605,8 @@ describe("Supabase account and verification foundation", () => {
     expect(linkedAccount?.ageConfirmedAt).toBeNull();
     expect(linkedAccount?.termsAcceptedAt).toBeNull();
     expect(linkedAccount?.privacyAcceptedAt).toBeNull();
+    expect(linkedAccount?.mfaLevel).toBe("aal2");
+    expect(linkedAccount?.mfaVerifiedAt).toBe(new Date(totpVerifiedAtSeconds * 1000).toISOString());
     expect(profile).toEqual(expect.objectContaining({
       id: result.account.id,
       email: "oauth-user@example.com",
@@ -823,7 +840,7 @@ describe("Supabase account and verification foundation", () => {
     expect(serialized).toContain("hasPrivateEvidence");
     expect(serialized).not.toContain("private:evidence");
     expect(serialized).not.toContain("sourcePhotoUrl");
-    expect(serialized).not.toContain("uploadLatitude");
+    expect(serialized).toContain("uploadLatitude");
     expect(repository.listUserActivityEvents(account.id, 10).map((event) => event.eventType))
       .toContain("account_data_exported");
   });
@@ -855,9 +872,9 @@ describe("Supabase account and verification foundation", () => {
       priority: "high",
       triageReason: expect.stringContaining("Sensitive account/security"),
     }));
-    expect(deletion.feedback).toEqual(expect.objectContaining({
-      feedbackType: "account_deletion_request",
-      priority: "high",
+    expect(deletion.request).toEqual(expect.objectContaining({
+      user_id: account.id,
+      status: "pending_review",
     }));
     expect(partnerInterest.feedback).toEqual(expect.objectContaining({
       feedbackType: "venue_partner_interest",
@@ -865,9 +882,70 @@ describe("Supabase account and verification foundation", () => {
       triageReason: expect.stringContaining("Venue partner wants to join"),
     }));
     expect(repository.listFeedback(10).map((item) => item.feedbackType))
-      .toEqual(expect.arrayContaining(["security_report", "account_deletion_request", "venue_partner_interest"]));
+      .toEqual(expect.arrayContaining(["security_report", "venue_partner_interest"]));
     expect(repository.listUserActivityEvents(account.id, 10).map((event) => event.eventType))
       .toContain("account_deletion_requested");
+  });
+
+  it("enforces the deletion safety window before anonymising the account and purging evidence", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const account = createAccount(repository, "deletion-workflow-user");
+    const admin = createAccount(repository, "deletion-workflow-admin", "admin");
+    createSession(repository, account.id, "deletion-workflow-session-token");
+
+    const submission = service.createSubmission(account, createSubmissionSchema.parse({
+      venueId: "deletion-workflow-venue",
+      venueName: "Deletion Workflow Venue",
+      suburb: "Melbourne",
+      submissionType: "single_beer_price",
+      observedAt: NOW,
+      sourcePhotoDataUrl: PNG_DATA_URL,
+      sourcePhotoUrl: null,
+      notes: "Remove this private note.",
+      items: [{
+        beerName: "Guinness",
+        servingSize: "pint",
+        price: 13,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
+    })).submission;
+    const evidenceId = submission.sourcePhotoUrl!.replace("private:evidence:", "");
+    const deletion = service.requestAccountDeletion(account, { message: "Delete my account." });
+    const requestId = String(deletion.request.id);
+
+    await expect(service.executeAccountDeletion(admin, requestId)).rejects.toThrow(
+      "seven-day account deletion safety window",
+    );
+
+    database
+      .prepare("UPDATE account_deletion_requests SET execute_after = ? WHERE id = ?")
+      .run("2026-05-03T08:00:00.000Z", requestId);
+    const result = await service.executeAccountDeletion(admin, requestId);
+
+    expect(result).toEqual(expect.objectContaining({ requestId, status: "completed" }));
+    expect(repository.getAccountById(account.id)).toEqual(expect.objectContaining({
+      email: `deleted-${account.id}@invalid.pintpath.local`,
+      status: "suspended",
+      subscriptionStatus: "free",
+    }));
+    expect(repository.getSourceEvidenceObject(evidenceId)).toEqual(expect.objectContaining({
+      dataBase64: null,
+      deletedAt: NOW,
+    }));
+    expect(repository.getSubmissionById(submission.id)?.submission).toEqual(expect.objectContaining({
+      notes: null,
+      sourcePhotoUrl: null,
+      uploadLatitude: null,
+      uploadLongitude: null,
+    }));
+    expect(database.prepare("SELECT COUNT(*) AS count FROM auth_sessions WHERE user_id = ?").get(account.id))
+      .toEqual({ count: 0 });
+    expect(repository.listAccountDeletionRequests({ limit: 10 })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: requestId, status: "completed", reviewed_by: admin.id }),
+    ]));
   });
 
   it("saves account privacy settings and suppresses opted-out optional analytics", () => {
@@ -876,9 +954,9 @@ describe("Supabase account and verification foundation", () => {
     const account = createAccount(repository, "privacy-settings-user");
 
     expect(service.getAccountDashboard(account).privacySettings).toEqual(expect.objectContaining({
-      optionalAnalyticsEnabled: true,
-      venueReportInclusionEnabled: true,
-      productResearchEnabled: true,
+      optionalAnalyticsEnabled: false,
+      venueReportInclusionEnabled: false,
+      productResearchEnabled: false,
       emailUpdatesEnabled: false,
     }));
 
@@ -1137,6 +1215,8 @@ describe("production hardening", () => {
     );
 
     expect(service.getAccessState(freeUser, null)).toMatchObject({
+      isAuthenticated: true,
+      accountRole: "user",
       hasFullAccess: false,
       canViewSpecialDiscounts: false,
       freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
@@ -1268,7 +1348,7 @@ describe("production hardening", () => {
     })).toThrow("You must accept the Privacy Policy");
   });
 
-  it("requires production admin email verification and MFA step-up", () => {
+  it("requires production admin email verification and MFA step-up", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, {
       NODE_ENV: "production",
@@ -1277,14 +1357,14 @@ describe("production hardening", () => {
       REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
       SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
     });
-    const adminSession = service.signup({
+    const adminSession = await service.signup({
       email: "prod-admin@example.com",
       password: "password123",
       ageConfirmed: true,
       termsAccepted: true,
       privacyAccepted: true,
     });
-    const userSession = service.signup({
+    const userSession = await service.signup({
       email: "prod-user@example.com",
       password: "password123",
       ageConfirmed: true,
@@ -1312,7 +1392,7 @@ describe("production hardening", () => {
     expect(service.requireAdmin(`Bearer ${adminSession.token}`).id).toBe(adminSession.account.id);
   });
 
-  it("allows verified allowlisted production admins without MFA when the field-test flag disables it", () => {
+  it("allows verified allowlisted production admins without MFA when the field-test flag disables it", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, {
       NODE_ENV: "production",
@@ -1321,7 +1401,7 @@ describe("production hardening", () => {
       REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
       SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
     });
-    const adminSession = service.signup({
+    const adminSession = await service.signup({
       email: "field-admin@example.com",
       password: "password123",
       ageConfirmed: true,
@@ -1340,7 +1420,7 @@ describe("production hardening", () => {
     expect(service.requireAdmin(`Bearer ${adminSession.token}`).id).toBe(adminSession.account.id);
   });
 
-  it("keeps production admin routes locked until an admin email allowlist is configured", () => {
+  it("keeps production admin routes locked until an admin email allowlist is configured", async () => {
     const { repository } = createRepository();
     const serviceWithAllowlist = createBusinessService(repository, {
       NODE_ENV: "production",
@@ -1349,7 +1429,7 @@ describe("production hardening", () => {
       REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
       SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
     });
-    const adminSession = serviceWithAllowlist.signup({
+    const adminSession = await serviceWithAllowlist.signup({
       email: "pending-admin@example.com",
       password: "password123",
       ageConfirmed: true,
@@ -1443,7 +1523,7 @@ describe("production hardening", () => {
       .toBe(submission.id);
   });
 
-  it("validates source photo type and size before storing demo uploads", () => {
+  it("validates source photo type and size before storing demo uploads", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const user = createAccount(repository, "photo-user");
@@ -1503,20 +1583,20 @@ describe("production hardening", () => {
       ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
       SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
     });
-    const productionStored = productionFileService.createSubmission(
+    const productionStored = (await productionFileService.createUserSubmission(
       verifiedProductionUser,
       createSubmissionSchema.parse({
         ...baseSubmission,
         venueId: "venue-photo-prod-file",
         sourcePhotoDataUrl: PNG_DATA_URL,
       }),
-    ).submission;
+    )).submission;
     expect(productionStored.sourcePhotoUrl).toMatch(/^private:evidence:/);
     const productionEvidenceId = productionStored.sourcePhotoUrl!.replace("private:evidence:", "");
     const productionEvidence = repository.getSourceEvidenceObject(productionEvidenceId)!;
     expect(productionEvidence.storageProvider).toBe("filesystem_private");
     expect(productionEvidence.dataBase64).toBeNull();
-    expect(productionFileService.getSourceEvidenceDelivery(productionEvidence)).toMatchObject({
+    expect(await productionFileService.getSourceEvidenceDelivery(productionEvidence)).toMatchObject({
       kind: "bytes",
       mimeType: "image/png",
     });
@@ -1560,10 +1640,10 @@ describe("production hardening", () => {
       sourcePhotoUrl: "https://example.com/menu.svg",
     }))).toThrow("safe image source");
 
-    expect(service.createSubmission(user, createSubmissionSchema.parse({
+    expect(() => service.createSubmission(user, createSubmissionSchema.parse({
       ...baseSubmission,
       sourcePhotoUrl: "https://example.com/menu-photo.jpg",
-    })).submission.sourcePhotoUrl).toMatch(/^private:evidence:/);
+    }))).toThrow("upload the source image directly");
   });
 
   it("lets admins review their own submissions and returns clean errors for already-reviewed submissions", () => {
@@ -2175,6 +2255,171 @@ describe("production hardening", () => {
     })).toThrow("Invalid source evidence signature");
   });
 
+  it("extracts multi-image photo submissions, matches catalogue names, and quarantines new OCR beers", async () => {
+    const { repository } = createRepository();
+    const menuPhotoOcr: NonNullable<ConstructorParameters<typeof BusinessService>[3]> = {
+      extract: vi.fn(async ({ imageDataUrls }) => ({
+        model: "gpt-5.5",
+        imageCount: imageDataUrls.length,
+        venueNameGuess: "OCR Review Bar",
+        capturedNotes: null,
+        overallConfidence: 0.93,
+        rejectedCandidateCount: 1,
+        beers: [
+          {
+            name: "Carlton Draughr",
+            brewery: "Carlton & United Breweries",
+            abv: 4.6,
+            servingSize: "pint",
+            priceNumeric: 14,
+            priceText: "$7 / $10 / $14",
+            availabilityStatus: "on_tap",
+            availableOnTap: true,
+            availablePackageOnly: false,
+            unavailableReason: null,
+            needsReview: false,
+            confidence: 0.95,
+            notes: "ABV: 4.6%.",
+            sourceText: "Carlton Draughr 4.6% $7 / $10 / $14",
+          },
+          {
+            name: "Moonbeam Rice Lager",
+            brewery: "Moonbeam Brewing",
+            abv: 5.1,
+            servingSize: "pint",
+            priceNumeric: 16,
+            priceText: "$16 pint",
+            availabilityStatus: "on_tap",
+            availableOnTap: true,
+            availablePackageOnly: false,
+            unavailableReason: null,
+            needsReview: true,
+            confidence: 0.9,
+            notes: null,
+            sourceText: "Moonbeam Rice Lager - pint $16",
+          },
+          {
+            name: "Decorative House Lager",
+            brewery: null,
+            abv: null,
+            servingSize: "pint",
+            priceNumeric: 15,
+            priceText: "$15",
+            availabilityStatus: "on_tap",
+            availableOnTap: true,
+            availablePackageOnly: false,
+            unavailableReason: null,
+            needsReview: true,
+            confidence: 0.86,
+            notes: null,
+            sourceText: "Decorative House Lager $15",
+          },
+          {
+            name: "Premium Northern Victorian T bone",
+            brewery: null,
+            abv: null,
+            servingSize: "pint",
+            priceNumeric: 30,
+            priceText: "$30",
+            availabilityStatus: "unknown",
+            availableOnTap: null,
+            availablePackageOnly: false,
+            unavailableReason: null,
+            needsReview: true,
+            confidence: 0.88,
+            notes: null,
+            sourceText: "Premium Northern Victorian T bone $30",
+          },
+        ],
+      })),
+    };
+    const service = createBusinessService(repository, {
+      PUBLIC_BASE_URL: "https://beer.example.test",
+    }, menuPhotoOcr);
+    const owner = createAccount(repository, "photo-ocr-owner");
+    const admin = createAccount(repository, "photo-ocr-admin", "admin");
+
+    const result = await service.createUserSubmission(owner, createSubmissionSchema.parse({
+      clientSubmissionId: "photo-ocr-submission-1",
+      venueId: "venue-photo-ocr",
+      venueName: "OCR Review Bar",
+      suburb: "Melbourne",
+      submissionType: "photo_upload",
+      observedAt: NOW,
+      sourcePhotoDataUrl: null,
+      sourcePhotoDataUrls: [PNG_DATA_URL, JPEG_DATA_URL],
+      sourcePhotoUrl: null,
+      notes: null,
+      items: [],
+    }));
+
+    expect(menuPhotoOcr.extract).toHaveBeenCalledWith(expect.objectContaining({
+      imageDataUrls: [PNG_DATA_URL, JPEG_DATA_URL],
+    }));
+    expect(result.ocrStatus).toBe("processed");
+    expect(result.submission.ocrSummary).toEqual(expect.objectContaining({
+      model: "gpt-5.5",
+      imageCount: 2,
+      extractedRowCount: 3,
+      pendingCatalogCount: 2,
+    }));
+    const detail = repository.getSubmissionById(result.submission.id)!;
+    expect(detail.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        beerName: "Carlton Draught",
+        normalizedBeerId: "carlton_draft",
+        captureSource: "photo_ocr",
+        requiresCatalogApproval: false,
+      }),
+      expect.objectContaining({
+        beerName: "Moonbeam Rice Lager",
+        normalizedBeerId: "moonbeam_rice_lager",
+        requiresCatalogApproval: true,
+        sourceText: "Moonbeam Rice Lager - pint $16",
+      }),
+    ]));
+    expect(detail.items.map((item) => item.beerName)).not.toContain("Premium Northern Victorian T bone");
+    expect(service.getAdminBeerCatalog(admin).pending).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        key: "moonbeam_rice_lager",
+        name: "Moonbeam Rice Lager",
+        brewery: "Moonbeam Brewing",
+        abv: 5.1,
+      }),
+      expect.objectContaining({ key: "decorative_house_lager", name: "Decorative House Lager" }),
+    ]));
+    expect(service.getAdminBeerCatalog(admin).pending).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: expect.stringMatching(/T bone/i) }),
+    ]));
+
+    const signedEvidence = service.getSubmissionSourceEvidenceUrl(owner, result.submission.id);
+    expect(signedEvidence.signedUrls).toHaveLength(2);
+    expect(() => service.reviewSubmission(admin, result.submission.id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      confidence: "photo_verified",
+    })).toThrow("Approve or merge every new OCR beer");
+
+    service.rejectBeerCatalogItem(admin, "decorative_house_lager", { reviewNote: "Decorative OCR copy, not a beer." });
+    expect(repository.getSubmissionById(result.submission.id)!.items.map((item) => item.beerName))
+      .not.toContain("Decorative House Lager");
+    service.approveBeerCatalogItem(admin, "moonbeam_rice_lager", { reviewNote: "Verified from source image." });
+    expect(repository.getSubmissionById(result.submission.id)!.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ beerName: "Moonbeam Rice Lager", requiresCatalogApproval: false }),
+    ]));
+    expect(service.reviewSubmission(admin, result.submission.id, {
+      status: "approved",
+      rejectionReason: null,
+      fraudFlagged: false,
+      confidence: "photo_verified",
+    }).submission.status).toBe("approved");
+    expect(repository.listLatestPriceRecords(20, "venue-photo-ocr").map((record) => record.beerName))
+      .toEqual(expect.arrayContaining(["Carlton Draught", "Moonbeam Rice Lager"]));
+    expect(repository.listLatestPriceRecords(20, "venue-photo-ocr").map((record) => record.beerName))
+      .not.toContain("Decorative House Lager");
+  });
+
   it("supports demo billing without Stripe keys and requires Stripe config when demo billing is off", async () => {
     const { repository } = createRepository();
     const user = createAccount(repository, "billing-user");
@@ -2338,10 +2583,10 @@ describe("production hardening", () => {
     }
   });
 
-  it("rejects expired, revoked, and suspended sessions and supports logout flows", () => {
+  it("rejects expired, revoked, and suspended sessions and supports logout flows", async () => {
     const { database, repository } = createRepository();
     const service = createBusinessService(repository);
-    const signup = service.signup({
+    const signup = await service.signup({
       email: "session-user@example.com",
       password: "password123",
       ageConfirmed: true,
@@ -2367,23 +2612,82 @@ describe("production hardening", () => {
     expect(service.logout(authHeader).revoked).toBe(true);
     expect(service.getAccountFromAuthorization(authHeader)).toBeNull();
 
-    const second = service.login({ email: "session-user@example.com", password: "password123" });
+    const second = await service.login({ email: "session-user@example.com", password: "password123" });
     expect(service.logoutAll(service.requireAccount(`Bearer ${second.token}`)).revokedCount).toBeGreaterThanOrEqual(1);
     expect(service.getAccountFromAuthorization(`Bearer ${second.token}`)).toBeNull();
 
-    const expired = service.login({ email: "session-user@example.com", password: "password123" });
+    const expired = await service.login({ email: "session-user@example.com", password: "password123" });
     database
       .prepare("UPDATE auth_sessions SET expires_at = ? WHERE token_hash = ?")
       .run("2020-01-01T00:00:00.000Z", crypto.createHash("sha256").update(expired.token).digest("hex"));
     expect(service.getAccountFromAuthorization(`Bearer ${expired.token}`)).toBeNull();
 
-    const suspended = service.login({ email: "session-user@example.com", password: "password123" });
+    const suspended = await service.login({ email: "session-user@example.com", password: "password123" });
     repository.overrideUserStatus({
       userId: signup.account.id,
       status: "suspended",
       now: NOW,
     });
     expect(service.getAccountFromAuthorization(`Bearer ${suspended.token}`)).toBeNull();
+  });
+
+  it("migrates bearer sessions into HttpOnly cookies and clears them on logout", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const account = createAccount(repository, "session-cookie-user", "admin");
+    const token = "session-cookie-token-with-enough-entropy-123456789";
+    createSession(repository, account.id, token);
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use("/api/admin", createAdminRouter({
+      getStatus: () => ({ status: "ok" }),
+    } as unknown as AdminService, service));
+    app.use(errorHandler);
+
+    await withHttpServer(app, async (baseUrl) => {
+      const migration = await fetch(`${baseUrl}/api/business/auth/session-cookie`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const setCookie = migration.headers.get("set-cookie") ?? "";
+      const cookie = setCookie.split(";", 1)[0] ?? "";
+
+      expect(migration.status).toBe(200);
+      expect(setCookie).toContain("pint_path_session=");
+      expect(setCookie).toContain("HttpOnly");
+      expect(setCookie).toContain("SameSite=Lax");
+      expect(setCookie).toContain("Path=/");
+      expect(setCookie).toContain("Expires=");
+
+      const accountResponse = await fetch(`${baseUrl}/api/business/account`, {
+        headers: { cookie },
+      });
+      expect(accountResponse.status).toBe(200);
+      expect(await accountResponse.json()).toEqual(expect.objectContaining({
+        ok: true,
+        data: expect.objectContaining({ account: expect.objectContaining({ id: account.id }) }),
+      }));
+
+      const adminResponse = await fetch(`${baseUrl}/api/admin/status`, {
+        headers: { cookie },
+      });
+      expect(adminResponse.status).toBe(200);
+      expect(await adminResponse.json()).toEqual(expect.objectContaining({
+        ok: true,
+        data: { status: "ok" },
+      }));
+
+      const logout = await fetch(`${baseUrl}/api/business/auth/logout`, {
+        method: "POST",
+        headers: { cookie },
+      });
+      const clearedCookie = logout.headers.get("set-cookie") ?? "";
+      expect(logout.status).toBe(200);
+      expect(clearedCookie).toContain("pint_path_session=");
+      expect(clearedCookie).toContain("Expires=Thu, 01 Jan 1970");
+      expect(service.getAccountFromAuthorization(`Bearer ${token}`)).toBeNull();
+    });
   });
 
   it("verifies Stripe webhook signatures before updating subscriptions", () => {
@@ -2454,6 +2758,55 @@ describe("production hardening", () => {
       DEMO_BILLING_MODE: false,
       STRIPE_WEBHOOK_SECRET: undefined,
     }).handleStripeWebhook(signed.body, signed.header)).toThrow("Stripe webhook secret is not configured");
+  });
+
+  it("retries failed Stripe events and ignores older events after a newer subscription update", () => {
+    const { database, repository } = createRepository();
+    const webhookSecret = "test-stripe-retry-webhook-secret";
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_WEBHOOK_SECRET: webhookSecret, // security-scan allow: generated test fixture only
+    });
+    const created = Math.floor(new Date(NOW).getTime() / 1000);
+    const checkoutPayload = {
+      id: "evt_retry_checkout",
+      type: "checkout.session.completed",
+      created,
+      data: {
+        object: {
+          customer: "cus_retry_test",
+          metadata: {
+            user_id: "stripe-retry-user",
+            subscription_status: "premium_monthly",
+          },
+        },
+      },
+    };
+    const checkoutSigned = createStripeSignature(checkoutPayload, webhookSecret);
+
+    expect(() => service.handleStripeWebhook(checkoutSigned.body, checkoutSigned.header)).toThrow();
+    expect(database.prepare("SELECT status, attempts FROM stripe_webhook_events WHERE id = ?").get(checkoutPayload.id))
+      .toEqual({ status: "failed", attempts: 1 });
+
+    createAccount(repository, "stripe-retry-user");
+    expect(service.handleStripeWebhook(checkoutSigned.body, checkoutSigned.header)).toEqual({ received: true });
+    expect(repository.getAccountById("stripe-retry-user")).toEqual(expect.objectContaining({
+      subscriptionStatus: "premium_monthly",
+      stripeCustomerId: "cus_retry_test",
+      stripeEventCreatedAt: new Date(created * 1000).toISOString(),
+    }));
+    expect(database.prepare("SELECT status, attempts FROM stripe_webhook_events WHERE id = ?").get(checkoutPayload.id))
+      .toEqual({ status: "applied", attempts: 2 });
+
+    const olderFailurePayload = {
+      id: "evt_older_invoice_failure",
+      type: "invoice.payment_failed",
+      created: created - 60,
+      data: { object: { customer: "cus_retry_test", subscription: "sub_retry_test" } },
+    };
+    const olderFailureSigned = createStripeSignature(olderFailurePayload, webhookSecret);
+    expect(service.handleStripeWebhook(olderFailureSigned.body, olderFailureSigned.header)).toEqual({ received: true });
+    expect(repository.getAccountById("stripe-retry-user")?.subscriptionStatus).toBe("premium_monthly");
   });
 });
 
@@ -2783,6 +3136,21 @@ describe("business demo contribution model", () => {
       venueName: "Discount Venue B",
       suburb: "Brunswick",
     });
+    service.upsertBarProfile(admin, "discount-venue-a", {
+      name: "Discount Venue A",
+      address: null,
+      suburb: "Fitzroy",
+      area: "Fitzroy",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      acceptsPintPathCodes: true,
+      active: true,
+    });
 
     const premiumUser = updateSubscription(
       repository,
@@ -2816,16 +3184,15 @@ describe("business demo contribution model", () => {
       estimatedSavingsCents: 600,
       notes: "Staff confirmed at till.",
     });
-    expect(() =>
-      service.redeemDiscountPass(assignedManager, "discount-venue-a", {
+    const replay = service.redeemDiscountPass(assignedManager, "discount-venue-a", {
         code: pass.code,
         specialId: "special-1",
         itemName: "Second attempt",
         quantity: 1,
         estimatedSavingsCents: 300,
         notes: "Replay attempt",
-      }),
-    ).toThrow("Discount code expired or not found.");
+      });
+    expect(replay).toEqual(expect.objectContaining({ idempotentReplay: true, pointsEarned: 2 }));
 
     const dashboard = service.getAccountDashboard(premiumUser);
     expect(redemption.accountId).toBe(premiumUser.publicAccountId);
@@ -2900,6 +3267,7 @@ describe("business demo contribution model", () => {
       openingHours: {},
       venueTags: [],
       membershipTier: "pro",
+      acceptsPintPathCodes: true,
       active: true,
     });
 
@@ -2913,6 +3281,7 @@ describe("business demo contribution model", () => {
       beverageCategory: "alcoholic",
       quantity: 2,
       isAlcoholic: undefined,
+      transactionReference: "receipt-points-1",
       notes: null,
     });
     expect(firstDrink.pointsEarned).toBe(2);
@@ -2925,12 +3294,13 @@ describe("business demo contribution model", () => {
       beverageCategory: "food",
       quantity: 3,
       isAlcoholic: undefined,
+      transactionReference: "receipt-food-1",
       notes: "Food should not earn points.",
     });
     expect(zeroPointDrink.pointsEarned).toBe(0);
     expect(zeroPointDrink.wallet.available).toBe(2);
 
-    for (const quantity of [20, 20, 8]) {
+    for (const [index, quantity] of [4, 4].entries()) {
       service.recordPintPointDrink(assignedManager, "pint-points-venue", {
         accountId: user.publicAccountId,
         code: undefined,
@@ -2938,9 +3308,24 @@ describe("business demo contribution model", () => {
         beverageCategory: "alcoholic",
         quantity,
         isAlcoholic: undefined,
+        transactionReference: `receipt-points-${index + 2}`,
         notes: null,
       });
     }
+
+    repository.createPintPointLedgerEntry({
+      id: "pint-points-historical-credit",
+      userId: user.id,
+      venueId: null,
+      drinkRecordId: null,
+      rewardCodeId: null,
+      type: "admin_adjustment",
+      pointsDelta: 42,
+      pointsReservedDelta: 0,
+      description: "Historical verified Pint Points imported for reward-flow testing.",
+      createdAt: "2026-05-01T08:00:00.000Z",
+      metadata: { testFixture: true },
+    });
 
     const dashboardBeforeReward = service.getAccountDashboard(repository.getAccountById(user.id)!);
     expect(dashboardBeforeReward.pintPoints).toEqual(expect.objectContaining({
@@ -3015,9 +3400,9 @@ describe("business demo contribution model", () => {
 
     const portal = service.getVenuePortal(assignedManager, { venueId: "pint-points-venue" });
     expect(portal.pintPoints.today).toEqual(expect.objectContaining({
-      pointsIssued: 50,
-      drinkRecords: 5,
-      alcoholicDrinks: 50,
+      pointsIssued: 8,
+      drinkRecords: 4,
+      alcoholicDrinks: 10,
       freeRewardsRedeemed: 1,
       expiredOrRejectedCodes: 1,
     }));
@@ -3048,6 +3433,7 @@ describe("business demo contribution model", () => {
       openingHours: {},
       venueTags: ["sports bar"],
       membershipTier: "pro",
+      acceptsPintPathCodes: true,
       active: true,
     });
     service.upsertBarProfile(admin, "pos-basic-venue", {
@@ -3143,7 +3529,7 @@ describe("business demo contribution model", () => {
     }));
     const basicVenueToken = crypto
       .createHmac("sha256", "test-pos-webhook-signing-secret-32-bytes")
-      .update("pint-path-pos-redemption:pos-basic-venue")
+      .update("pint-path-pos-redemption:pos-basic-venue:v1")
       .digest("hex");
     const secondPass = await service.getDiscountPass(
       premiumUser,
@@ -3564,7 +3950,7 @@ describe("business demo contribution model", () => {
     }
   });
 
-  it("publishes Google-verified user venues immediately but gates beer rows until community confirmation", async () => {
+  it("publishes Google-verified venues immediately but keeps beer rows admin-gated after community confirmation", async () => {
     const { repository, database } = createRepository();
     const service = createBusinessService(repository, {
       GOOGLE_PLACES_API_KEY: "test-google-places-key",
@@ -3572,6 +3958,7 @@ describe("business demo contribution model", () => {
     const user = createAccount(repository, "locked-venue-submit-user");
     const firstVerifier = createAccount(repository, "google-venue-first-verifier");
     const secondVerifier = createAccount(repository, "google-venue-second-verifier");
+    const admin = createAccount(repository, "google-venue-review-admin", "admin");
     const googlePlace = {
       id: "google-place-locked-venue",
       displayName: { text: "Locked Google Bar" },
@@ -3696,7 +4083,16 @@ describe("business demo contribution model", () => {
         result: "confirmed",
         notes: "Same pint price seen tonight.",
       });
-      expect(secondVerification.autoApproved).toBe(true);
+      expect(secondVerification.autoApproved).toBe(false);
+      expect(secondVerification.confirmedCount).toBe(2);
+      expect(repository.getSubmissionById(result.submission.id)?.submission.status).toBe("pending");
+      expect(repository.listVenueManagerPriceRecords(20, result.submission.venueId)).toEqual([]);
+
+      service.reviewSubmission(admin, result.submission.id, {
+        status: "approved",
+        rejectionReason: null,
+        reviewNote: "Two independent confirmations reviewed by admin.",
+      });
       expect(repository.getSubmissionById(result.submission.id)?.submission.status).toBe("approved");
       expect(repository.listVenueManagerPriceRecords(20, result.submission.venueId))
         .toEqual([expect.objectContaining({
@@ -4412,7 +4808,7 @@ describe("business demo contribution model", () => {
     }));
   });
 
-  it("supports venue partner interest, manager assignments, and assigned-venue portal access", () => {
+  it("supports venue partner interest, manager assignments, and assigned-venue portal access", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const admin = createAccount(repository, "venue-admin", "admin");
@@ -4476,7 +4872,7 @@ describe("business demo contribution model", () => {
     expect(portal.privacyCopy).toContain("privacy-safe");
     expect(() => service.getVenuePortal(managerAccount, { venueId: "venue-2" })).toThrow("assigned venues");
 
-    const update = service.createVenueManagerSubmission(managerAccount, "venue-1", {
+    const update = await service.createVenueManagerSubmission(managerAccount, "venue-1", {
       venueId: "venue-1",
       venueName: "Rooftop Bar",
       suburb: "Melbourne",
@@ -4720,10 +5116,11 @@ describe("business demo contribution model", () => {
       membershipTier: "pro",
       active: true,
     });
-    const profilePending = pendingBarChangeFrom(profile);
-    expect(profilePending.status).toBe("pending");
-    expect(profilePending.changeType).toBe("profile");
-    expect(repository.getBarProfile("bar-1")).toBeNull();
+    expect(profile).toEqual(expect.objectContaining({
+      profile: expect.objectContaining({ name: "Corner Hotel", membershipTier: "basic" }),
+      message: "Bar profile saved.",
+    }));
+    expect(repository.getBarProfile("bar-1")).toEqual(expect.objectContaining({ name: "Corner Hotel", membershipTier: "basic" }));
 
     expect(() => service.upsertBarSpecial(managerAccount, "bar-1", {
       id: null,
@@ -4802,16 +5199,18 @@ describe("business demo contribution model", () => {
       active: true,
     });
 
-    const happyHourPending = pendingBarChangeFrom(happyHour);
     expect(beer).toEqual(expect.objectContaining({
       beer: expect.objectContaining({ beerName: "Carlton Draught", price: 13 }),
       message: "Beer row saved.",
     }));
-    expect(happyHourPending).toEqual(expect.objectContaining({ status: "pending", changeType: "happy_hour", action: "upsert" }));
-    expect(happyHourPending.payload).toEqual(expect.objectContaining({
-      happyHourBeers: expect.arrayContaining([
-        expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 9, offerText: "House pint" }),
-      ]),
+    expect(happyHour).toEqual(expect.objectContaining({
+      happyHour: expect.objectContaining({
+        title: "Weekday happy hour",
+        happyHourBeers: expect.arrayContaining([
+          expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 9, offerText: "House pint" }),
+        ]),
+      }),
+      message: "Happy hour saved.",
     }));
     expect(special).toEqual(expect.objectContaining({
       special: expect.objectContaining({ title: "Thursday burger and pint", active: true }),
@@ -4819,16 +5218,15 @@ describe("business demo contribution model", () => {
     }));
 
     const portal = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
-    expect(portal.pendingChanges).toHaveLength(2);
-    expect(portal.pendingChanges.map((change) => change.changeType)).toEqual(expect.arrayContaining(["profile", "happy_hour"]));
+    expect(portal.pendingChanges).toHaveLength(0);
     expect(portal.inventory.beers).toHaveLength(1);
-    expect(portal.inventory.happyHours).toHaveLength(0);
+    expect(portal.inventory.happyHours).toHaveLength(1);
     expect(portal.inventory.specials).toHaveLength(1);
     expect(portal.tier.analyticsLocked).toBe(false);
 
     const adminPortal = service.getVenuePortal(admin, { venueId: "bar-1" });
-    expect(adminPortal.pendingChanges).toHaveLength(2);
-    expect(service.getVenuePartnerAdmin(admin).pendingChanges).toHaveLength(2);
+    expect(adminPortal.pendingChanges).toHaveLength(0);
+    expect(service.getVenuePartnerAdmin(admin).pendingChanges).toHaveLength(0);
     expect(service.getVenuePortal(otherManagerAccount, { venueId: "bar-2" }).pendingChanges).toHaveLength(0);
     expect(() => service.getVenuePortal(otherManagerAccount, { venueId: "bar-1" })).toThrow("assigned venues");
 
@@ -4851,12 +5249,7 @@ describe("business demo contribution model", () => {
         sourceType: "venue_manager_portal:special",
       }),
     ]));
-    expect(publicBeforeApproval.records.some((record) => record.displayKind === "happy_hour")).toBe(false);
-
-    for (const change of [profilePending, happyHourPending]) {
-      const review = service.reviewBarPendingChange(admin, change.id, { status: "approved", rejectionReason: null });
-      expect(review.pendingChange?.status).toBe("approved");
-    }
+    expect(publicBeforeApproval.records.some((record) => record.displayKind === "happy_hour")).toBe(true);
 
     const approvedPortal = service.getVenuePortal(managerAccount, { venueId: "bar-1" });
     expect(approvedPortal.profile.membershipTier).toBe("pro");
@@ -4978,8 +5371,7 @@ describe("business demo contribution model", () => {
       membershipTier: "pro",
       active: false,
     });
-    const hidePending = pendingBarChangeFrom(hideAttempt);
-    expect(hidePending.status).toBe("pending");
+    expect(hideAttempt.profile).toEqual(expect.objectContaining({ active: true }));
 
     expect(service.listPriceRecords(null, {
       limit: 20,
@@ -4988,11 +5380,6 @@ describe("business demo contribution model", () => {
       reveal: true,
     }).records.length).toBeGreaterThan(0);
 
-    const rejected = service.reviewBarPendingChange(admin, hidePending.id, {
-      status: "rejected",
-      rejectionReason: "Keep listing live until confirmed by admin.",
-    });
-    expect(rejected.pendingChange?.status).toBe("rejected");
     expect(service.listPriceRecords(null, {
       limit: 20,
       venueId: "bar-1",
@@ -5029,7 +5416,7 @@ describe("business demo contribution model", () => {
 
     expect(service.deleteBarBeer(managerAccount, "bar-1", approvedBeerId))
       .toEqual(expect.objectContaining({ deleted: true, message: "Beer row removed." }));
-    expect(service.deleteBarHappyHour(managerAccount, "bar-1", happyHourPending.targetId!))
+    expect(service.deleteBarHappyHour(managerAccount, "bar-1", happyHour.happyHour.id))
       .toEqual(expect.objectContaining({ deleted: true, message: "Happy hour removed." }));
     expect(service.deleteBarSpecial(managerAccount, "bar-1", special.special.id))
       .toEqual(expect.objectContaining({ deleted: true, message: "Pint Path special removed." }));
@@ -5170,7 +5557,7 @@ describe("business demo contribution model", () => {
       endTime: "18:00",
       description: "$9 pints.",
       active: true,
-    })).toEqual(expect.objectContaining({ pendingChange: expect.objectContaining({ changeType: "happy_hour" }) }));
+    })).toEqual(expect.objectContaining({ happyHour: expect.objectContaining({ title: "Weekday happy hour" }) }));
     expect(() => service.upsertBarSpecial(managerAccount, "free-bar-1", {
       id: null,
       title: "Free tier special attempt",
@@ -5850,26 +6237,34 @@ describe("business demo contribution model", () => {
       active: true,
     });
 
-    service.upsertBarHappyHour(repository.getAccountById(proManager.id)!, "priority-pro-bar", {
-      id: null,
-      title: "Pro queue happy hour",
-      daysOfWeek: ["fri"],
-      startTime: "16:00",
-      endTime: "18:00",
-      description: "$10 pro pints.",
-      active: true,
-    });
-    service.upsertBarHappyHour(repository.getAccountById(basicManager.id)!, "priority-basic-bar", {
-      id: null,
-      title: "Basic queue happy hour",
-      daysOfWeek: ["fri"],
-      startTime: "16:00",
-      endTime: "18:00",
-      description: "$11 basic pints.",
-      active: true,
-    });
+    const queueFourthDelete = (managerId: string, venueId: string) => {
+      const manager = repository.getAccountById(managerId)!;
+      const beers = Array.from({ length: 4 }, (_, index) => service.upsertBarBeer(manager, venueId, {
+        id: null,
+        beerName: "Carlton Draught",
+        brewery: "Carlton & United Breweries",
+        style: "Lager",
+        abv: 4.6,
+        serveSize: index % 2 ? "pot" : "pint",
+        price: 10 + index,
+        onTap: true,
+        inStock: true,
+        notes: `Delete guard row ${index + 1}`,
+      }).beer);
+      beers.slice(0, 3).forEach((beer) => {
+        expect(service.deleteBarBeer(manager, venueId, beer.id)).toEqual(expect.objectContaining({ deleted: true }));
+      });
+      return service.deleteBarBeer(manager, venueId, beers[3]!.id);
+    };
 
-    expect(service.getVenuePartnerAdmin(admin).pendingChanges[0]?.barId).toBe("priority-pro-bar");
+    expect(queueFourthDelete(basicManager.id, "priority-basic-bar"))
+      .toEqual(expect.objectContaining({ pendingChange: expect.objectContaining({ changeType: "beer", action: "delete" }) }));
+    expect(queueFourthDelete(proManager.id, "priority-pro-bar"))
+      .toEqual(expect.objectContaining({ pendingChange: expect.objectContaining({ changeType: "beer", action: "delete" }) }));
+
+    const pending = service.getVenuePartnerAdmin(admin).pendingChanges;
+    expect(pending).toHaveLength(2);
+    expect(pending[0]?.barId).toBe("priority-pro-bar");
   });
 
   it("exposes only public tier metadata on venue discovery rows", async () => {

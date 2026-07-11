@@ -228,6 +228,10 @@ a {
   min-width: 0;
 }
 
+.mobileNavToggle {
+  display: none;
+}
+
 .navLinks a,
 .button {
   appearance: none;
@@ -410,6 +414,21 @@ a {
 .hero--compact {
   margin-bottom: 18px;
   padding-block: clamp(22px, 4vw, 40px);
+}
+
+.hero--operational {
+  min-height: 0;
+  padding: 22px 24px;
+}
+
+.hero--operational h1 {
+  max-width: 760px;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  line-height: 1.05;
+}
+
+.mobileSectionPicker {
+  display: none;
 }
 
 .heroCard {
@@ -2050,9 +2069,14 @@ button.adminFocusRail__item:focus-visible {
 
 .adminSubmissionEvidencePreview {
   min-height: 170px;
+  max-height: 520px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 8px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
-  overflow: hidden;
+  overflow: auto;
   background: rgba(2, 6, 23, 0.5);
 }
 
@@ -2110,6 +2134,13 @@ button.adminFocusRail__item:focus-visible {
   border: 1px solid rgba(148, 163, 184, 0.12);
   border-radius: 8px;
   background: rgba(2, 6, 23, 0.28);
+}
+
+.adminSubmissionSourceText {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .adminSubmissionOcrRow__index {
@@ -3777,6 +3808,26 @@ button.adminFocusRail__item:focus-visible {
   font-weight: 850;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.venuePortalHero--operational {
+  min-height: 0;
+  place-items: start;
+  padding: 20px 24px;
+}
+
+.venuePortalHero--operational::before {
+  display: none;
+}
+
+.venuePortalHero--operational .venuePortalHero__inner {
+  justify-items: start;
+  text-align: left;
+}
+
+.venuePortalHero--operational h1 {
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  line-height: 1.05;
 }
 
 .premiumVenueDashboard {
@@ -8055,6 +8106,8 @@ body.discountPassModalOpen {
   }
 
   .topNav {
+    position: sticky;
+    justify-content: space-between;
     gap: 6px;
     top: 8px;
     margin-bottom: 16px;
@@ -8063,16 +8116,17 @@ body.discountPassModalOpen {
     background: rgba(13, 18, 32, 0.96);
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
     backdrop-filter: none;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .brand {
     display: inline-flex;
-    justify-content: center;
-    width: 38px;
-    min-width: 38px;
-    min-height: 38px;
-    gap: 0;
+    justify-content: flex-start;
+    width: auto;
+    min-width: 0;
+    min-height: 44px;
+    gap: 8px;
+    padding: 0 6px;
   }
 
   .brandLogo {
@@ -8082,7 +8136,11 @@ body.discountPassModalOpen {
   }
 
   .brandText {
-    display: none;
+    display: grid;
+  }
+
+  .brand strong {
+    font-size: 17px;
   }
 
   .betaPill {
@@ -8090,20 +8148,77 @@ body.discountPassModalOpen {
   }
 
   .navLinks {
-    display: flex;
-    flex: 1 1 auto;
-    flex-wrap: nowrap;
-    gap: 4px;
-    width: auto;
-    border-radius: 18px;
-    overflow-x: auto;
-    padding-bottom: 0;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    left: 0;
+    display: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    padding: 10px;
+    background: rgba(13, 18, 32, 0.985);
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.48);
+    backdrop-filter: blur(22px);
   }
 
-  .navLinks::-webkit-scrollbar {
+  .topNav.is-mobile-nav-open .navLinks {
+    display: grid;
+  }
+
+  .mobileNavToggle {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 88px;
+    min-height: 44px;
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-pill);
+    padding: 8px 12px;
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.025)),
+      rgba(21, 31, 52, 0.78);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+  }
+
+  .mobileNavToggle:focus-visible {
+    outline: 2px solid rgba(34, 211, 238, 0.84);
+    outline-offset: 3px;
+  }
+
+  .mobileNavToggle__icon {
+    width: 18px;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+  }
+
+  .mobileNavToggle__icon--close {
     display: none;
+    font-size: 22px;
+  }
+
+  .topNav.is-mobile-nav-open .mobileNavToggle {
+    border-color: rgba(34, 211, 238, 0.44);
+    background: rgba(34, 211, 238, 0.12);
+  }
+
+  .topNav.is-mobile-nav-open .mobileNavToggle__icon--menu {
+    display: none;
+  }
+
+  .topNav.is-mobile-nav-open .mobileNavToggle__icon--close {
+    display: inline-block;
   }
 
   .button {
@@ -8114,10 +8229,10 @@ body.discountPassModalOpen {
   }
 
   .navLinks a {
-    flex: 0 0 auto;
-    min-height: 40px;
-    padding: 8px 9px;
-    font-size: 11px;
+    width: 100%;
+    min-height: 44px;
+    padding: 9px 10px;
+    font-size: 13px;
     white-space: nowrap;
   }
 
@@ -8349,6 +8464,8 @@ body.discountPassModalOpen {
 
   .dashboardSidebar {
     position: static;
+    gap: 10px;
+    padding: 12px;
   }
 
   .priceRefreshList {
@@ -8382,15 +8499,22 @@ body.discountPassModalOpen {
     justify-content: stretch;
   }
 
-  .tabNav {
-    display: flex;
-    overflow-x: auto;
-    padding-bottom: 4px;
+  .mobileSectionPicker {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 900;
+    text-transform: uppercase;
   }
 
-  .tabButton {
-    flex: 0 0 auto;
-    white-space: nowrap;
+  .mobileSectionPicker select {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .tabNav {
+    display: none;
   }
 
   .sectionHeader,
@@ -8843,7 +8967,7 @@ body.discountPassModalOpen {
   }
 
   .adminFocusRail {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .adminFocusRail__item {
@@ -8917,23 +9041,7 @@ body.discountPassModalOpen {
   }
 
   .adminJumpNav {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    border-radius: 18px;
-    padding: 8px;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .adminJumpNav::-webkit-scrollbar {
     display: none;
-  }
-
-  .adminTabButton {
-    flex: 0 0 auto;
-    min-height: 34px;
-    padding: 7px 11px;
-    font-size: 11px;
   }
 
   .adminSection {

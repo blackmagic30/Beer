@@ -231,12 +231,10 @@
     const SUBMISSION_QUEUE_DB_NAME = "pintPathSubmissionQueue";
     const SUBMISSION_QUEUE_DB_VERSION = 1;
     const SUBMISSION_QUEUE_STORE_NAME = "queuedSubmissions";
-    const SOURCE_PHOTO_MAX_EDGE = 1600;
+    const SOURCE_PHOTO_MAX_EDGE = 2200;
     const SOURCE_PHOTO_MAX_FILES = 6;
-    const SOURCE_PHOTO_COMPOSITE_MAX_WIDTH = 1400;
-    const SOURCE_PHOTO_COMPOSITE_GAP = 14;
     const SOURCE_PHOTO_OUTPUT_TYPE = "image/jpeg";
-    const SOURCE_PHOTO_OUTPUT_QUALITY = 0.76;
+    const SOURCE_PHOTO_OUTPUT_QUALITY = 0.86;
     const UPLOAD_LOCATION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
     const FIELD_DRAFT_MAX_AGE_MS = 18 * 60 * 60 * 1000;
     const SUBMISSION_QUEUE_MAX_ITEMS = 20;
@@ -541,7 +539,7 @@
       lastKnownSubmissionQueueCount = count;
 
       submissionQueuePanel.classList.toggle("is-hidden", count === 0);
-      retryQueuedSubmissionsButton.disabled = count === 0 || !navigator.onLine || isFlushingSubmissionQueue || !MelbBeerBusiness.getAuthToken();
+      retryQueuedSubmissionsButton.disabled = count === 0 || !navigator.onLine || isFlushingSubmissionQueue || !MelbBeerBusiness.hasAuthenticatedSessionHint();
       clearQueuedSubmissionsButton.disabled = count === 0 || isFlushingSubmissionQueue;
       submissionQueueSummary.textContent = count === 0
         ? "No uploads waiting to send."
@@ -1738,70 +1736,17 @@
       }
     }
 
-    function loadImageFromDataUrl(dataUrl) {
-      return new Promise((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve(image);
-        image.onerror = () => reject(new Error("Could not prepare the selected source images."));
-        image.src = dataUrl;
-      });
-    }
-
-    async function combinePhotoDataUrls(dataUrls) {
-      const images = await Promise.all(dataUrls.map(loadImageFromDataUrl));
-      const sourceSizes = images.map((image) => ({
-        width: image.naturalWidth || image.width || 1,
-        height: image.naturalHeight || image.height || 1,
-      }));
-      const targetWidth = Math.min(
-        SOURCE_PHOTO_COMPOSITE_MAX_WIDTH,
-        Math.max(...sourceSizes.map((size) => size.width)),
-      );
-      const scaledImages = images.map((image, index) => {
-        const size = sourceSizes[index];
-        const scale = Math.min(1, targetWidth / size.width);
-        return {
-          image,
-          width: Math.max(1, Math.round(size.width * scale)),
-          height: Math.max(1, Math.round(size.height * scale)),
-        };
-      });
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, ...scaledImages.map((item) => item.width));
-      canvas.height = scaledImages.reduce((total, item) => total + item.height, 0) +
-        SOURCE_PHOTO_COMPOSITE_GAP * Math.max(0, scaledImages.length - 1);
-      const context = canvas.getContext("2d");
-      if (!context) {
-        throw new Error("Could not prepare source photo compression in this browser.");
-      }
-
-      context.fillStyle = "#ffffff";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      let offsetY = 0;
-      scaledImages.forEach((item) => {
-        const offsetX = Math.round((canvas.width - item.width) / 2);
-        context.drawImage(item.image, offsetX, offsetY, item.width, item.height);
-        offsetY += item.height + SOURCE_PHOTO_COMPOSITE_GAP;
-      });
-
-      const blob = await canvasToBlob(canvas, SOURCE_PHOTO_OUTPUT_TYPE, SOURCE_PHOTO_OUTPUT_QUALITY);
-      return blobToDataUrl(blob);
-    }
-
-    async function readSourcePhotoSelectionDataUrl(files) {
+    async function readSourcePhotoSelectionDataUrls(files) {
       const sourceFiles = Array.from(files || []).slice(0, SOURCE_PHOTO_MAX_FILES);
       if (!sourceFiles.length) {
-        return null;
-      }
-      if (sourceFiles.length === 1) {
-        return readPhotoDataUrl(sourceFiles[0]);
+        return [];
       }
 
       const dataUrls = [];
       for (const file of sourceFiles) {
         dataUrls.push(await readPhotoDataUrl(file));
       }
-      return combinePhotoDataUrls(dataUrls);
+      return dataUrls;
     }
 
     function formatAccuracy(meters) {
@@ -1927,7 +1872,7 @@
     }
 
     async function flushQueuedSubmissions() {
-      if (isFlushingSubmissionQueue || !navigator.onLine || !MelbBeerBusiness.getAuthToken()) {
+      if (isFlushingSubmissionQueue || !navigator.onLine || !MelbBeerBusiness.hasAuthenticatedSessionHint()) {
         await updateNetworkStatus();
         return;
       }
@@ -2023,18 +1968,7 @@
       loginToSubmitLink.href = loginUrl;
 
       try {
-        if (!MelbBeerBusiness.getAuthToken()) {
-          await MelbBeerBusiness.syncSupabaseSession();
-        }
-
-        if (!MelbBeerBusiness.getAuthToken()) {
-          MelbBeerBusiness.setStatus(authGateStatus, "Log in or create an account to submit venue data.");
-          loginRequiredPanel.classList.remove("is-hidden");
-          submissionPanel.classList.add("is-hidden");
-          window.location.assign(loginUrl);
-          return false;
-        }
-
+        await MelbBeerBusiness.syncSupabaseSession();
         const accountResult = await MelbBeerBusiness.apiFetch("/api/business/account");
         if (accountResult?.account?.role === "venue_manager") {
           MelbBeerBusiness.setStatus(authGateStatus, "Venue accounts use the venue dashboard instead of reward submissions.");
@@ -2242,7 +2176,7 @@
 
       submissionForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        if (!MelbBeerBusiness.getAuthToken()) {
+        if (!MelbBeerBusiness.hasAuthenticatedSessionHint()) {
           MelbBeerBusiness.setStatus(statusEl, "Log in before submitting venue data.", true);
           loginRequiredPanel.classList.remove("is-hidden");
           submissionPanel.classList.add("is-hidden");
@@ -2259,9 +2193,9 @@
               selectedSourcePhotoFiles.length === 1 ? "Preparing photo for review..." : `Preparing ${selectedSourcePhotoFiles.length} photos for review...`,
             );
           }
-          const sourcePhotoDataUrl = submissionTypeSelect.value === "photo_upload"
-            ? await readSourcePhotoSelectionDataUrl(selectedSourcePhotoFiles)
-            : null;
+          const sourcePhotoDataUrls = submissionTypeSelect.value === "photo_upload"
+            ? await readSourcePhotoSelectionDataUrls(selectedSourcePhotoFiles)
+            : [];
           const items = collectItems();
           const newVenue = collectNewVenue();
           const newVenueError = validateNewVenue(newVenue);
@@ -2274,7 +2208,7 @@
             MelbBeerBusiness.setStatus(statusEl, "Search and choose a venue first, or tick that the venue is not on Pint Path yet.", true);
             return;
           }
-          const validationError = validateSubmission(items, Boolean(sourcePhotoDataUrl));
+          const validationError = validateSubmission(items, sourcePhotoDataUrls.length > 0);
           if (validationError) {
             MelbBeerBusiness.setStatus(statusEl, validationError, true);
             return;
@@ -2293,7 +2227,8 @@
             newVenue,
             submissionType: formData.get("submissionType"),
             observedAt,
-            sourcePhotoDataUrl,
+            sourcePhotoDataUrl: null,
+            sourcePhotoDataUrls,
             uploadLocation,
             notes,
             items,

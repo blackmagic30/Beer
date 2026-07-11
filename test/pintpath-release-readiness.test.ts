@@ -135,12 +135,12 @@ async function requestJson(
   return { response, json: json as { ok: boolean; data?: unknown; error?: { message: string } } | null };
 }
 
-function signup(
+async function signup(
   harness: Harness,
   email: string,
   input: { ageConfirmed?: boolean | undefined; termsAccepted?: boolean | undefined; privacyAccepted?: boolean | undefined } = {},
-): { token: string; account: BusinessAccount } {
-  const session = harness.service.signup({
+): Promise<{ token: string; account: BusinessAccount }> {
+  const session = await harness.service.signup({
     email,
     password: PASSWORD,
     ageConfirmed: input.ageConfirmed ?? true,
@@ -217,8 +217,8 @@ function recordSearchEvents(
 describe("Pint Path release-readiness security gates", () => {
   it("requires login for uploads and prevents submission ownership/verification bypasses", async () => {
     const harness = createHarness();
-    const uploader = signup(harness, "uploader@pintpath.test");
-    const verifier = signup(harness, "verifier@pintpath.test");
+    const uploader = await signup(harness, "uploader@pintpath.test");
+    const verifier = await signup(harness, "verifier@pintpath.test");
 
     await withHttpServer(harness.app, async (baseUrl) => {
       const anonymousUpload = await requestJson(baseUrl, "/api/business/submissions", {
@@ -269,10 +269,10 @@ describe("Pint Path release-readiness security gates", () => {
 
   it("runs a dummy upload-to-publication journey through admin and community approval", async () => {
     const harness = createHarness();
-    const uploader = signup(harness, "dummy-uploader@pintpath.test");
-    const admin = signup(harness, "admin@pintpath.test");
-    const verifierOne = signup(harness, "dummy-verifier-one@pintpath.test");
-    const verifierTwo = signup(harness, "dummy-verifier-two@pintpath.test");
+    const uploader = await signup(harness, "dummy-uploader@pintpath.test");
+    const admin = await signup(harness, "admin@pintpath.test");
+    const verifierOne = await signup(harness, "dummy-verifier-one@pintpath.test");
+    const verifierTwo = await signup(harness, "dummy-verifier-two@pintpath.test");
 
     await withHttpServer(harness.app, async (baseUrl) => {
       const photoUpload = await requestJson(baseUrl, "/api/business/submissions", {
@@ -292,7 +292,7 @@ describe("Pint Path release-readiness security gates", () => {
       expect(photoUpload.response.status).toBe(201);
       expect((photoUpload.json?.data as { ocrStatus: string; submission: { status: string; sourcePhotoUrl: string } }))
         .toMatchObject({
-          ocrStatus: "queued_for_review",
+          ocrStatus: "manual_review_required",
           submission: {
             status: "pending",
             sourcePhotoUrl: expect.stringMatching(/^private:evidence:/),
@@ -421,10 +421,23 @@ describe("Pint Path release-readiness security gates", () => {
         body: { result: "confirmed", notes: "Dummy second verifier saw the same price." },
       });
       expect(secondVerification.response.status).toBe(201);
-      expect((secondVerification.json?.data as { autoApproved: boolean; message: string })).toMatchObject({
-        autoApproved: true,
-        message: "Verification saved. This price has enough community confirmations and is now live.",
+      expect((secondVerification.json?.data as { autoApproved: boolean; confirmedCount: number; message: string })).toMatchObject({
+        autoApproved: false,
+        confirmedCount: 2,
+        message: "Verification saved for admin review. Community confirmations never publish a price automatically.",
       });
+
+      const adminPublication = await requestJson(baseUrl, `/api/business/submissions/${communitySubmission.id}/review`, {
+        method: "POST",
+        token: admin.token,
+        body: {
+          status: "approved",
+          rejectionReason: null,
+          fraudFlagged: false,
+          confidence: "community_confirmed",
+        },
+      });
+      expect(adminPublication.response.status).toBe(200);
 
       const publishedByCommunity = await requestJson(
         baseUrl,
@@ -455,8 +468,8 @@ describe("Pint Path release-readiness security gates", () => {
 
   it("keeps admin and analytics APIs protected from anonymous and normal users", async () => {
     const harness = createHarness();
-    const user = signup(harness, "normal@pintpath.test");
-    const admin = signup(harness, "admin@pintpath.test");
+    const user = await signup(harness, "normal@pintpath.test");
+    const admin = await signup(harness, "admin@pintpath.test");
 
     await withHttpServer(harness.app, async (baseUrl) => {
       const anonymous = await requestJson(baseUrl, "/api/business/admin/kpis");
@@ -481,8 +494,8 @@ describe("Pint Path release-readiness security gates", () => {
 
   it("keeps source evidence private and rejects obvious SSRF source URLs", async () => {
     const harness = createHarness();
-    const owner = signup(harness, "evidence-owner@pintpath.test");
-    const other = signup(harness, "evidence-other@pintpath.test");
+    const owner = await signup(harness, "evidence-owner@pintpath.test");
+    const other = await signup(harness, "evidence-other@pintpath.test");
 
     expect(() => harness.service.createSubmission(owner.account, validSubmission({
       sourcePhotoUrl: "http://127.0.0.1:8080/menu.jpg",
@@ -514,11 +527,11 @@ describe("Pint Path release-readiness security gates", () => {
 });
 
 describe("Pint Path release-readiness venue-manager approval workflow", () => {
-  it("keeps scoped manager access while publishing beer rows directly and holding reviewed changes", () => {
+  it("keeps scoped manager access while publishing assigned venue edits directly", async () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
-    const admin = signup(harness, "admin@pintpath.test").account;
-    const managerA = signup(harness, "manager-a@pintpath.test").account;
-    const managerB = signup(harness, "manager-b@pintpath.test").account;
+    const admin = (await signup(harness, "admin@pintpath.test")).account;
+    const managerA = (await signup(harness, "manager-a@pintpath.test")).account;
+    const managerB = (await signup(harness, "manager-b@pintpath.test")).account;
 
     harness.service.assignVenueManager(admin, {
       userId: managerA.id,
@@ -562,7 +575,7 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     expect(() => harness.service.getVenuePortal(updatedManagerB, { venueId: "venue-a" }))
       .toThrow("assigned venues");
 
-    const pendingHappyHour = harness.service.upsertBarHappyHour(updatedManagerA, "venue-a", {
+    const savedHappyHour = harness.service.upsertBarHappyHour(updatedManagerA, "venue-a", {
       id: null,
       title: "Synthetic reviewed happy hour",
       daysOfWeek: ["fri"],
@@ -570,19 +583,10 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       endTime: "18:00",
       description: "$10 selected pints.",
       active: true,
-    }) as { pendingChange: { id: string; status: string; submittedBy: string } };
+    }) as { happyHour: { id: string; title: string } };
 
-    expect(pendingHappyHour.pendingChange).toMatchObject({
-      status: "pending",
-      submittedBy: managerA.id,
-    });
-    expect(harness.service.getVenuePartnerAdmin(admin).pendingChanges.map((change) => change.id))
-      .toContain(pendingHappyHour.pendingChange.id);
-
-    harness.service.reviewBarPendingChange(admin, pendingHappyHour.pendingChange.id, {
-      status: "approved",
-      rejectionReason: null,
-    });
+    expect(savedHappyHour.happyHour).toMatchObject({ title: "Synthetic reviewed happy hour" });
+    expect(harness.service.getVenuePartnerAdmin(admin).pendingChanges).toHaveLength(0);
     const publishedRecords = harness.service.listPriceRecords(admin, {
       venueId: "venue-a",
       anonymousSessionId: null,
@@ -616,9 +620,9 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
 
   it("exercises the authenticated owner portal HTTP journey with safe pending-review boundaries", async () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
-    const admin = signup(harness, "admin@pintpath.test");
-    const owner = signup(harness, "owner-journey@pintpath.test");
-    const otherOwner = signup(harness, "owner-journey-other@pintpath.test");
+    const admin = await signup(harness, "admin@pintpath.test");
+    const owner = await signup(harness, "owner-journey@pintpath.test");
+    const otherOwner = await signup(harness, "owner-journey-other@pintpath.test");
 
     harness.service.assignVenueManager(admin.account, {
       userId: owner.account.id,
@@ -670,8 +674,8 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
         }),
       });
       expect(profileUpdate.response.status).toBe(200);
-      expect((profileUpdate.json?.data as { pendingChange: { status: string; changeType: string } }).pendingChange)
-        .toMatchObject({ status: "pending", changeType: "profile" });
+      expect((profileUpdate.json?.data as { profile: { name: string; membershipTier: string } }).profile)
+        .toMatchObject({ name: "Owner Journey Bar", membershipTier: "pro" });
 
       const beerUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/beers", {
         method: "POST",
@@ -718,10 +722,9 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
         },
       });
       expect(happyHourUpdate.response.status).toBe(201);
-      expect((happyHourUpdate.json?.data as { pendingChange: { status: string; changeType: string; payload: unknown } }).pendingChange)
-        .toMatchObject({ status: "pending", changeType: "happy_hour" });
-      expect((happyHourUpdate.json?.data as { pendingChange: { payload: unknown } }).pendingChange.payload)
+      expect((happyHourUpdate.json?.data as { happyHour: { title: string; happyHourBeers: unknown } }).happyHour)
         .toEqual(expect.objectContaining({
+          title: "After-work pints",
           happyHourBeers: expect.arrayContaining([
             expect.objectContaining({ beerName: "Carlton Draught", servingSize: "pint", happyHourPrice: 10, offerText: "Selected pints" }),
           ]),
@@ -771,11 +774,7 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
         token: ownerToken,
       });
       const pendingChanges = (afterUpdates.json?.data as { pendingChanges: Array<{ changeType: string }> }).pendingChanges;
-      expect(pendingChanges.map((change) => change.changeType)).toEqual(expect.arrayContaining([
-        "profile",
-        "happy_hour",
-      ]));
-      expect(pendingChanges.map((change) => change.changeType)).not.toContain("beer");
+      expect(pendingChanges).toEqual([]);
       expect((afterUpdates.json?.data as { inventory: { beers: Array<{ beerName: string; price: number }> } }).inventory.beers)
         .toEqual(expect.arrayContaining([
           expect.objectContaining({ beerName: "Carlton Draught", price: 12.5 }),
@@ -789,10 +788,10 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
 });
 
 describe("Pint Path release-readiness analytics and report privacy", () => {
-  it("suppresses low-count admin analytics buckets and redacts sensitive event metadata", () => {
+  it("suppresses low-count admin analytics buckets and redacts sensitive event metadata", async () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
-    const admin = signup(harness, "admin@pintpath.test").account;
-    const user = signup(harness, "privacy-user@pintpath.test").account;
+    const admin = (await signup(harness, "admin@pintpath.test")).account;
+    const user = (await signup(harness, "privacy-user@pintpath.test")).account;
 
     recordSearchEvents(harness.repository, {
       count: 4,
@@ -837,10 +836,10 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     expect(metadataJson).not.toContain("longitude");
   });
 
-  it("gates venue analytics by tier and hides suburb trends until the privacy floor is met", () => {
+  it("gates venue analytics by tier and hides suburb trends until the privacy floor is met", async () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
-    const admin = signup(harness, "admin@pintpath.test").account;
-    const manager = signup(harness, "pro-manager@pintpath.test").account;
+    const admin = (await signup(harness, "admin@pintpath.test")).account;
+    const manager = (await signup(harness, "pro-manager@pintpath.test")).account;
 
     harness.service.assignVenueManager(admin, {
       userId: manager.id,
@@ -918,11 +917,11 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     expect(atFloorPortal.analytics?.areaStyleSearches).toEqual([{ key: "lager", count: 11 }]);
   });
 
-  it("keeps monthly reports scoped to the exact month, assigned owner, and privacy-safe fields", () => {
+  it("keeps monthly reports scoped to the exact month, assigned owner, and privacy-safe fields", async () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
-    const admin = signup(harness, "admin@pintpath.test").account;
-    const owner = signup(harness, "report-owner@pintpath.test").account;
-    const otherOwner = signup(harness, "report-other-owner@pintpath.test").account;
+    const admin = (await signup(harness, "admin@pintpath.test")).account;
+    const owner = (await signup(harness, "report-owner@pintpath.test")).account;
+    const otherOwner = (await signup(harness, "report-other-owner@pintpath.test")).account;
 
     harness.service.assignVenueManager(admin, {
       userId: owner.id,
@@ -1057,10 +1056,10 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
 
   it("generates, mock-delivers, and exports monthly reports only to authorised venue owners", async () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5, REPORT_EMAIL_MODE: "mock" });
-    const admin = signup(harness, "admin@pintpath.test");
-    const owner = signup(harness, "http-report-owner@pintpath.test");
-    const otherOwner = signup(harness, "http-report-other-owner@pintpath.test");
-    const basicOwner = signup(harness, "http-report-basic-owner@pintpath.test");
+    const admin = await signup(harness, "admin@pintpath.test");
+    const owner = await signup(harness, "http-report-owner@pintpath.test");
+    const otherOwner = await signup(harness, "http-report-other-owner@pintpath.test");
+    const basicOwner = await signup(harness, "http-report-basic-owner@pintpath.test");
 
     harness.service.assignVenueManager(admin.account, {
       userId: owner.account.id,

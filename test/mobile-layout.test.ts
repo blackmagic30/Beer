@@ -23,6 +23,8 @@ describe("mobile layout guardrails", () => {
 
   it("keeps shared navigation, buttons, and form chips at phone-friendly tap sizes", () => {
     const css = viewerFile("business.css");
+    const mobileCss = css.slice(css.indexOf("@media (max-width: 760px)"));
+    const mobileNavLinksBlock = mobileCss.match(/\.navLinks\s*\{([^}]*)\}/)?.[1] || "";
 
     expect(css).toMatch(/\.navLinks a,\s*\.button\s*\{[\s\S]*min-height:\s*42px;/);
     expect(css).toMatch(/\.dayChip\s*\{[\s\S]*min-height:\s*44px;/);
@@ -30,9 +32,11 @@ describe("mobile layout guardrails", () => {
     expect(css).toMatch(/\.field input\[type="checkbox"\]\s*\{[\s\S]*width:\s*20px;[\s\S]*height:\s*20px;/);
     expect(css).toMatch(/\.cookieConsent__actions \.button\s*\{[\s\S]*min-height:\s*44px;/);
     expect(css).not.toContain(".footerCopy a");
-    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.brand\s*\{[\s\S]*display:\s*none;/);
-    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.navLinks\s*\{[\s\S]*flex-wrap:\s*nowrap;[\s\S]*overflow-x:\s*auto;/);
-    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.navLinks a\s*\{[\s\S]*min-height:\s*40px;[\s\S]*font-size:\s*11px;/);
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.brand\s*\{[\s\S]*min-height:\s*44px;/);
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.navLinks\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.mobileNavToggle\s*\{[\s\S]*min-height:\s*44px;/);
+    expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.navLinks a\s*\{[\s\S]*min-height:\s*44px;[\s\S]*font-size:\s*13px;/);
+    expect(mobileNavLinksBlock).not.toContain("overflow-x");
     expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.button\s*\{[\s\S]*white-space:\s*normal;/);
   });
 
@@ -44,5 +48,11 @@ describe("mobile layout guardrails", () => {
     expect(html).toMatch(/\.venueRail__sortChip\s*\{[\s\S]*min-height:\s*38px;/);
     expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.filterChip\s*\{[\s\S]*min-height:\s*40px;/);
     expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.venueRail__sortChip\s*\{[\s\S]*min-height:\s*40px;/);
+    expect(html).toContain('class="mapNavCard topNav"');
+    expect(html).toContain('aria-controls="topbarBusinessLinks" data-mobile-nav-toggle');
+    expect(html).toContain('id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation" data-mobile-nav-panel');
+    expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.topbar__businessLinks\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
+    expect(html).toContain("#topbar .mapNavCard.is-mobile-nav-open {\n        z-index: 30;");
+    expect(html).not.toMatch(/\.topbar__businessLinks\s*\{[^}]*overflow-x:\s*auto;/);
   });
 });

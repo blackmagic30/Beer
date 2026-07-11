@@ -11,7 +11,7 @@ const nullableTrimmedStringSchema = z.preprocess((value) => {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}, z.string().min(1).nullable());
+}, z.string().min(1).max(2_000).nullable());
 
 const nullableOfferTextSchema = z.preprocess((value) => {
   if (value == null) {
@@ -33,7 +33,7 @@ const optionalTrimmedStringSchema = z.preprocess((value) => {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}, z.string().min(1).optional());
+}, z.string().min(1).max(2_000).optional());
 
 const servingSizeSchema = z.enum(["pint", "pot", "schooner", "jug", "bottle", "can", "other"]);
 const tapStatusSchema = z.enum(["yes", "no", "unknown"]);
@@ -122,7 +122,7 @@ const nullableUrlSchema = z.preprocess((value) => {
 
 export const authSignupSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
-  password: z.string().min(8),
+  password: z.string().min(8).max(128),
   displayName: nullableTrimmedStringSchema.default(null),
   ageConfirmed: z.boolean().refine((value) => value === true, "You must confirm you are 18+."),
   termsAccepted: z.boolean().refine((value) => value === true, "You must accept the Terms and Conditions."),
@@ -131,7 +131,7 @@ export const authSignupSchema = z.object({
 
 export const authLoginSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
-  password: z.string().min(1),
+  password: z.string().min(1).max(128),
 });
 
 export const authSupabaseSessionSchema = z.object({
@@ -170,10 +170,11 @@ export const accountPreferencesSchema = z.object({
 });
 
 export const accountPrivacySettingsSchema = z.object({
-  optionalAnalyticsEnabled: z.boolean().default(true),
-  venueReportInclusionEnabled: z.boolean().default(true),
-  productResearchEnabled: z.boolean().default(true),
+  optionalAnalyticsEnabled: z.boolean().default(false),
+  venueReportInclusionEnabled: z.boolean().default(false),
+  productResearchEnabled: z.boolean().default(false),
   emailUpdatesEnabled: z.boolean().default(false),
+  consentVersion: z.string().trim().min(1).max(40).default("2026-07-11"),
 });
 
 export const accountDeletionRequestSchema = z.object({
@@ -232,12 +233,13 @@ export const createSubmissionSchema = z.object({
   submissionType: z.enum(["single_beer_price", "full_venue_update", "happy_hour_update", "photo_upload"]),
   observedAt: z.string().datetime({ offset: true }),
   sourcePhotoDataUrl: dataImageUrlSchema.nullable().default(null),
+  sourcePhotoDataUrls: z.array(dataImageUrlSchema).max(6).default([]),
   sourcePhotoUrl: nullableTrimmedStringSchema.default(null),
   uploadLocation: uploadLocationSchema,
   notes: nullableTrimmedStringSchema.default(null),
   items: z.array(submissionItemSchema).max(20).default([]),
 }).superRefine((value, ctx) => {
-  const hasPhoto = Boolean(value.sourcePhotoDataUrl || value.sourcePhotoUrl);
+  const hasPhoto = Boolean(value.sourcePhotoDataUrl || value.sourcePhotoDataUrls.length || value.sourcePhotoUrl);
 
   if (value.newVenue) {
     if (!value.newVenue.address && (value.newVenue.latitude == null || value.newVenue.longitude == null)) {
@@ -768,7 +770,7 @@ export const discountRedemptionSchema = z.object({
     .transform((value) => value.toUpperCase()),
   specialId: nullableTrimmedStringSchema.default(null),
   itemName: nullableTrimmedStringSchema.default(null),
-  quantity: z.coerce.number().int().min(1).max(20).default(1),
+  quantity: z.coerce.number().int().min(1).max(4).default(1),
   estimatedSavingsCents: z.coerce.number().int().min(0).max(100_000).default(0),
   notes: nullableTrimmedStringSchema.default(null),
 });
@@ -781,9 +783,13 @@ export const pintPointDrinkRecordSchema = z.object({
   accountId: nullableTrimmedStringSchema.default(null),
   itemName: nullableTrimmedStringSchema.default(null),
   beverageCategory: z.enum(["alcoholic", "non_alcoholic", "food"]).default("alcoholic"),
-  quantity: z.coerce.number().int().min(1).max(20).default(1),
+  quantity: z.coerce.number().int().min(1).max(4).default(1),
   isAlcoholic: z.boolean().optional(),
+  transactionReference: z.string().trim().min(4).max(120),
   notes: nullableTrimmedStringSchema.default(null),
+}).refine((value) => Boolean(value.code || value.accountId), {
+  message: "Enter a Pint Path code or public account ID.",
+  path: ["code"],
 });
 
 export const freePintRewardCodeSchema = z.object({
@@ -805,10 +811,10 @@ export const posDiscountRedemptionSchema = z.object({
     .transform((value) => value.toUpperCase()),
   specialId: nullableTrimmedStringSchema.default(null),
   itemName: z.string().trim().min(1).max(180),
-  quantity: z.coerce.number().int().min(1).max(20).default(1),
+  quantity: z.coerce.number().int().min(1).max(4).default(1),
   discountAmountCents: z.coerce.number().int().min(0).max(100_000).default(0),
   estimatedSavingsCents: z.coerce.number().int().min(0).max(100_000).optional(),
-  posReference: nullableTrimmedStringSchema.default(null),
+  posReference: z.string().trim().min(4).max(120),
   terminalId: nullableTrimmedStringSchema.default(null),
   redeemedAt: z.string().datetime({ offset: true }).optional(),
   metadata: z.record(z.string(), z.unknown()).default({}),

@@ -57,11 +57,14 @@ HOST=0.0.0.0
 PORT=8080
 PUBLIC_BASE_URL=https://pintpath.au
 DATABASE_PATH=/app/data/pint-path.sqlite
-TRUST_PROXY=true
+TRUST_PROXY_HOPS=1
 GOOGLE_MAPS_API_KEY=restricted_browser_key
 GOOGLE_MAPS_MAP_ID=javascript_vector_map_id
 GOOGLE_PLACES_API_KEY=restricted_server_places_key
 OPENAI_API_KEY=your_server_openai_key_for_menu_ocr
+OPENAI_MENU_OCR_MODEL=gpt-5.5
+OPENAI_MENU_OCR_FALLBACK_MODEL=gpt-4.1
+OPENAI_MENU_OCR_REVIEW_PASS=true
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
 REDIS_URL=redis://default:replace_me@host:6379
@@ -165,6 +168,17 @@ Before public launch:
 - Confirm protected auth/upload/feedback/checkout endpoints rate limit through Redis.
 - Confirm production is not using `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true`.
 
+## Backups And Restore Drills
+
+Back up the SQLite database with its private source-evidence directory as one unit. The backup command uses SQLite's online backup API, copies private evidence, and writes SHA-256 checksums:
+
+```bash
+npm run data:backup -- --output=/secure/offsite/pint-path-$(date +%F)
+npm run data:backup:verify -- --backup=/secure/offsite/pint-path-$(date +%F)
+```
+
+Store the resulting directory outside the Railway volume with encryption and restricted access. Schedule daily backups, retain at least 30 days, and run the verification command after every backup. Once per quarter, restore the verified directory into an isolated staging service, set `DATABASE_PATH` and `SOURCE_EVIDENCE_STORAGE_DIR` to the restored paths, and confirm `/ready`, login, map prices, and review evidence before recording the drill result.
+
 ## No-Go Conditions
 
 Do not launch public production if any of these are true:
@@ -176,3 +190,4 @@ Do not launch public production if any of these are true:
 - Report email mode is presented as real delivery while still disabled/mock-only.
 - Redis is missing for broad public traffic.
 - Supabase source-evidence Storage is public or untested.
+- There is no recent off-volume backup that passes `data:backup:verify`, or the quarterly restore drill has not been completed.

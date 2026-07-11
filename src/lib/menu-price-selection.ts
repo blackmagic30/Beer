@@ -28,22 +28,36 @@ function selectSlashSeparatedAustralianPintPrice(text: string): SelectedPintPric
     return null;
   }
 
-  const prices = Array.from(text.matchAll(/(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)(?!\s*%)/gi))
-    .map((match) => Number(match[1]))
-    .filter((value) => Number.isFinite(value) && value > 0 && value <= 80);
-
-  if (prices.length === 0) {
-    return null;
+  const priceToken = "(?:A\\$|AUD\\s*|\\$)?\\s*\\d{1,2}(?:\\.\\d{1,2})?";
+  const sequencePattern = new RegExp(
+    `(?<![\\d.])(${priceToken}(?:\\s*\\/\\s*${priceToken}){1,2})(?![\\d.])`,
+    "gi",
+  );
+  const sequence = sequencePattern.exec(text);
+  if (!sequence?.[1]) {
+    const leadingSlash = text.match(/^\s*\/\s*(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)(?![\d.])/i);
+    const value = leadingSlash?.[1] ? Number(leadingSlash[1]) : null;
+    return value != null && Number.isFinite(value) && value > 0 && value <= 80
+      ? { priceNumeric: value, priceText: formatCurrencyPrice(value) }
+      : null;
   }
 
-  const selected =
-    prices.length >= 3
+  const prices = Array.from(sequence[1].matchAll(/(?:A\$|AUD\s*|\$)?\s*(\d{1,2}(?:\.\d{1,2})?)/gi))
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value) && value > 0 && value <= 80);
+  if (prices.length < 2) return null;
+
+  const labelsBeforeSequence = Array.from(text.slice(0, sequence.index).matchAll(/\b(pot|pots|schooner|schooners|pint|pints|jug|jugs)\b/gi))
+    .map((match) => normalizePourLabel(match[1] ?? "pot"))
+    .slice(-prices.length);
+  const labeledPintIndex = labelsBeforeSequence.length === prices.length
+    ? labelsBeforeSequence.indexOf("pint")
+    : -1;
+  const selected = labeledPintIndex >= 0
+    ? prices[labeledPintIndex]
+    : prices.length >= 3
       ? prices[2]
-      : prices.length === 2
-        ? prices[1]
-        : /^\s*\/\s*(?:A\$|AUD\s*|\$)?\s*\d/.test(text)
-          ? prices[0]
-          : null;
+      : prices[1];
 
   return selected == null
     ? null

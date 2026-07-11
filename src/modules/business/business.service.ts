@@ -30,6 +30,9 @@ import {
   type PublicVenuePriceRecord,
   type SavedItem,
   type ServingSize,
+  type SubmissionItemCaptureSource,
+  type SubmissionOcrStatus,
+  type SubmissionOcrSummary,
   type SourceEvidenceObject,
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
@@ -44,6 +47,7 @@ import {
 } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import type { MenuPhotoOcrBeer, MenuPhotoOcrProcessor, MenuPhotoOcrResult } from "../../lib/menu-photo-ocr.js";
 import { redactSecrets } from "../../lib/redact.js";
 import {
   parseSafeImageSourceUrl,
@@ -190,11 +194,11 @@ const AUTO_MISSION_TARGET_BEERS = [
 const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
-const COMMUNITY_SUBMISSION_CONFIRMATIONS_REQUIRED = 2;
 
 interface StripeEvent {
   id: string;
   type: string;
+  created?: number;
   data?: {
     object?: Record<string, unknown>;
   };
@@ -219,6 +223,16 @@ export interface SessionRequestContext {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+async function fetchWithTimeout(url: string | URL, init: RequestInit = {}, timeoutMs = 8_000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function addDays(baseIso: string, days: number): string {
@@ -519,6 +533,53 @@ function shouldCatalogBeerName(value: string | null | undefined, isHappyHour = f
   return !isHappyHour && isLikelyBeerName(value);
 }
 
+type PreparedSubmissionItem = CreateSubmissionInput["items"][number] & {
+  captureSource: SubmissionItemCaptureSource;
+  sourceText: string | null;
+  confidence: number;
+  catalogBrewery: string | null;
+  catalogAbv: number | null;
+};
+
+interface PreparedPhotoOcr {
+  status: SubmissionOcrStatus;
+  summary: SubmissionOcrSummary;
+  items: PreparedSubmissionItem[];
+}
+
+function submissionServingSizeForOcrBeer(beer: MenuPhotoOcrBeer): ServingSize {
+  if (beer.availabilityStatus !== "package_only") return "pint";
+  if (beer.unavailableReason === "cans_only") return "can";
+  if (beer.unavailableReason === "bottles_only") return "bottle";
+  return "other";
+}
+
+function submissionTapStatusForOcrBeer(beer: MenuPhotoOcrBeer): "yes" | "no" | "unknown" {
+  if (beer.availabilityStatus === "on_tap" || beer.availableOnTap === true) return "yes";
+  if (beer.availabilityStatus === "package_only" || beer.availabilityStatus === "unavailable") return "no";
+  return "unknown";
+}
+
+function preparedSubmissionItemFromOcr(beer: MenuPhotoOcrBeer): PreparedSubmissionItem | null {
+  if (!isLikelyBeerName(beer.name) || beer.confidence < 0.58) return null;
+  const isOnTap = submissionTapStatusForOcrBeer(beer);
+  if (beer.priceNumeric == null && isOnTap === "unknown") return null;
+
+  return {
+    beerName: beer.name,
+    servingSize: submissionServingSizeForOcrBeer(beer),
+    price: beer.priceNumeric,
+    isHappyHourPrice: false,
+    happyHourDetails: null,
+    isOnTap,
+    captureSource: "photo_ocr",
+    sourceText: beer.sourceText?.slice(0, 800) ?? null,
+    confidence: beer.confidence,
+    catalogBrewery: beer.brewery,
+    catalogAbv: beer.abv,
+  };
+}
+
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
@@ -526,6 +587,7 @@ function hashToken(token: string): string {
 const DISCOUNT_PASS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const FREE_PINT_REWARD_POINTS = 50;
 const FREE_PINT_REWARD_CODE_MINUTES = 10;
+const PINT_POINTS_DAILY_CAP = 8;
 
 function generateDiscountCode(): string {
   return Array.from({ length: 6 }, () =>
@@ -537,10 +599,10 @@ function hashDiscountCode(code: string): string {
   return crypto.createHash("sha256").update(code.trim().toUpperCase()).digest("hex");
 }
 
-function createPosWebhookToken(secret: string, venueId: string): string {
+function createPosWebhookToken(secret: string, venueId: string, version: number): string {
   return crypto
     .createHmac("sha256", secret)
-    .update(`pint-path-pos-redemption:${venueId.trim()}`)
+    .update(`pint-path-pos-redemption:${venueId.trim()}:v${version}`)
     .digest("hex");
 }
 
@@ -559,9 +621,18 @@ function hashRequestFingerprint(value: string | null | undefined): string | null
   return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 32);
 }
 
-function hashPassword(password: string): string {
+function derivePasswordHash(password: string, salt: string, length: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, length, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolve(derivedKey);
+    });
+  });
+}
+
+async function hashPassword(password: string): Promise<string> {
   const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  const hash = (await derivePasswordHash(password, salt, 64)).toString("hex");
   return `scrypt:${salt}:${hash}`;
 }
 
@@ -603,7 +674,7 @@ function describeStripeCheckoutFailure(status: number, stripeMessage?: string | 
   return "Stripe checkout session failed. Check the Stripe Dashboard request log for the exact setup issue.";
 }
 
-function verifyPassword(password: string, stored: string): boolean {
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [scheme, salt, hash] = stored.split(":");
 
   if (scheme !== "scrypt" || !salt || !hash) {
@@ -611,7 +682,7 @@ function verifyPassword(password: string, stored: string): boolean {
   }
 
   const expected = Buffer.from(hash, "hex");
-  const actual = crypto.scryptSync(password, salt, expected.length);
+  const actual = await derivePasswordHash(password, salt, expected.length);
   return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
@@ -736,12 +807,25 @@ function getSupabaseEmailVerifiedAt(user: unknown): string | null {
   return typeof value === "string" && value ? value : null;
 }
 
-function getSupabaseMfaClaims(accessToken: string, now: string): { mfaLevel: string; mfaVerifiedAt: string | null } {
+function getSupabaseMfaClaims(accessToken: string): { mfaLevel: string; mfaVerifiedAt: string | null } {
   const payload = decodeJwtPayload(accessToken);
   const aal = typeof payload?.aal === "string" ? payload.aal : "aal1";
+  const amr = Array.isArray(payload?.amr) ? payload.amr : [];
+  const latestTotpTimestamp = amr.reduce<number | null>((latest, entry) => {
+    if (!entry || typeof entry !== "object") {
+      return latest;
+    }
+    const record = entry as Record<string, unknown>;
+    if (record.method !== "totp" || typeof record.timestamp !== "number" || !Number.isSafeInteger(record.timestamp)) {
+      return latest;
+    }
+    return latest == null || record.timestamp > latest ? record.timestamp : latest;
+  }, null);
   return {
     mfaLevel: aal,
-    mfaVerifiedAt: aal === "aal2" ? now : null,
+    mfaVerifiedAt: aal === "aal2" && latestTotpTimestamp != null
+      ? new Date(latestTotpTimestamp * 1000).toISOString()
+      : null,
   };
 }
 
@@ -1856,6 +1940,7 @@ export class BusinessService {
       | "SOURCE_EVIDENCE_STORAGE_DIR"
       | "SOURCE_EVIDENCE_SIGNING_SECRET"
       | "SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS"
+      | "SOURCE_EVIDENCE_RETENTION_DAYS"
       | "POS_WEBHOOK_SIGNING_SECRET"
       | "NODE_ENV"
       | "STRIPE_SECRET_KEY"
@@ -1873,6 +1958,7 @@ export class BusinessService {
       | "GOOGLE_PLACES_API_KEY"
     >,
     private readonly beerCatalogRepository?: BeerCatalogRepository,
+    private readonly menuPhotoOcr?: MenuPhotoOcrProcessor,
   ) {
     const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
     if (config.SUPABASE_URL && supabaseServerKey) {
@@ -1894,6 +1980,9 @@ export class BusinessService {
     source: string;
     now: string;
     createIfMissing?: boolean;
+    matchMode?: "exact" | "ocr";
+    brewery?: string | null;
+    abv?: number | null;
   }): ResolvedBeerCatalogItem {
     if (this.beerCatalogRepository) {
       return this.beerCatalogRepository.resolveBeerName(input);
@@ -1920,12 +2009,18 @@ export class BusinessService {
     now: string;
     isHappyHour?: boolean;
     createIfMissing?: boolean;
+    matchMode?: "exact" | "ocr";
+    brewery?: string | null;
+    abv?: number | null;
   }): {
     key: string | null;
     name: string;
     brewery: string | null;
     style: string | null;
     abv: number | null;
+    status: "active" | "pending_review";
+    created: boolean;
+    matchedExisting: boolean;
   } {
     const fallbackName = canonicalizeTrackedBeerName(input.name);
     if (!shouldCatalogBeerName(fallbackName, input.isHappyHour === true)) {
@@ -1935,6 +2030,9 @@ export class BusinessService {
         brewery: null,
         style: null,
         abv: null,
+        status: "pending_review",
+        created: false,
+        matchedExisting: false,
       };
     }
 
@@ -1942,7 +2040,18 @@ export class BusinessService {
       name: fallbackName,
       source: input.source,
       now: input.now,
-    } as { name: string; source: string; now: string; createIfMissing?: boolean };
+      matchMode: input.matchMode,
+      brewery: input.brewery,
+      abv: input.abv,
+    } as {
+      name: string;
+      source: string;
+      now: string;
+      createIfMissing?: boolean;
+      matchMode?: "exact" | "ocr";
+      brewery?: string | null;
+      abv?: number | null;
+    };
     if (input.createIfMissing !== undefined) {
       resolveInput.createIfMissing = input.createIfMissing;
     }
@@ -1954,6 +2063,9 @@ export class BusinessService {
       brewery: resolved.brewery,
       style: resolved.style,
       abv: resolved.abv,
+      status: resolved.status,
+      created: resolved.created,
+      matchedExisting: resolved.matchedExisting,
     };
   }
 
@@ -2409,6 +2521,8 @@ export class BusinessService {
       subscriptionStatus: null,
       tierManualOverride: false,
       acceptsPintPathCodes: false,
+      stripeEventCreatedAt: null,
+      posWebhookTokenVersion: 1,
       active: true,
       createdAt: now,
       updatedAt: now,
@@ -2566,7 +2680,6 @@ export class BusinessService {
 
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const recentDeletes = this.repository.countRecentVenueManagerDeletes({
-      userId: input.account.id,
       venueId: input.venueId,
       since: oneHourAgo,
       changeType: input.changeType,
@@ -2768,7 +2881,7 @@ export class BusinessService {
     throw new AppError("Unsupported pending venue change type.", 400);
   }
 
-  signup(input: AuthSignupInput, context?: SessionRequestContext | undefined) {
+  async signup(input: AuthSignupInput, context?: SessionRequestContext | undefined) {
     const email = normalizeEmail(input.email);
 
     if (this.repository.getAccountByEmail(email)) {
@@ -2782,7 +2895,7 @@ export class BusinessService {
     const account = this.repository.createAccount({
       id: crypto.randomUUID(),
       email,
-      passwordHash: hashPassword(input.password),
+      passwordHash: await hashPassword(input.password),
       displayName,
       displayNameKey,
       role: adminEmails.has(email) ? "admin" : "user",
@@ -2829,10 +2942,10 @@ export class BusinessService {
     return this.createSessionResponse(confirmed, context);
   }
 
-  login(input: AuthLoginInput, context?: SessionRequestContext | undefined) {
+  async login(input: AuthLoginInput, context?: SessionRequestContext | undefined) {
     const account = this.repository.getAccountByEmail(normalizeEmail(input.email));
 
-    if (!account || !verifyPassword(input.password, account.passwordHash)) {
+    if (!account || !await verifyPassword(input.password, account.passwordHash)) {
       throw new AppError("Invalid email or password.", 401);
     }
 
@@ -2891,7 +3004,7 @@ export class BusinessService {
     let account = this.repository.getAccountBySupabaseUserId(supabaseUser.id) ?? this.repository.getAccountByEmail(email);
     const now = nowIso();
     const emailVerifiedAt = getSupabaseEmailVerifiedAt(supabaseUser);
-    const mfaClaims = getSupabaseMfaClaims(input.accessToken, now);
+    const mfaClaims = getSupabaseMfaClaims(input.accessToken);
 
     if (!account) {
       const adminEmails = this.getAdminEmailAllowlist();
@@ -3050,11 +3163,12 @@ export class BusinessService {
       : this.config.SESSION_TTL_DAYS;
     const requestHashes = this.getRequestHashes(context);
 
+    const expiresAt = addDays(now, ttlDays);
     this.repository.createSession({
       tokenHash: hashToken(token),
       userId: account.id,
       createdAt: now,
-      expiresAt: addDays(now, ttlDays),
+      expiresAt,
       lastUsedAt: now,
       lastIpHash: requestHashes.ipHash,
       userAgentHash: requestHashes.userAgentHash,
@@ -3062,9 +3176,15 @@ export class BusinessService {
 
     return {
       token,
+      expiresAt,
       account: sanitizeAccount(account),
       access: this.getAccessState(account, null),
     };
+  }
+
+  getSessionExpiresAt(authorizationHeader: string | undefined): string | null {
+    const token = getBearerToken(authorizationHeader);
+    return token ? this.repository.getSessionExpiresAt(hashToken(token), nowIso()) : null;
   }
 
   logout(authorizationHeader: string | undefined, context?: SessionRequestContext | undefined) {
@@ -3130,6 +3250,8 @@ export class BusinessService {
 
     return {
       status: account?.subscriptionStatus ?? "free",
+      isAuthenticated: Boolean(account),
+      accountRole: account?.role ?? null,
       hasFullAccess,
       isAdmin: account?.role === "admin" || account?.subscriptionStatus === "admin",
       ageConfirmed: Boolean(account?.ageConfirmedAt),
@@ -3652,6 +3774,30 @@ export class BusinessService {
     context?: SessionRequestContext | undefined;
   }) {
     const now = nowIso();
+    const profile = this.repository.getBarProfile(input.venueId);
+    if (!profile?.acceptsPintPathCodes) {
+      throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
+    }
+    const idempotencyKey = input.source === "pos_webhook"
+      ? `pos:${String(input.posReference ?? "").trim()}`
+      : `pass:${hashDiscountCode(input.code)}`;
+    const existingRedemption = this.repository.getDiscountRedemptionByIdempotencyKey({
+      venueId: input.venueId,
+      idempotencyKey,
+    });
+    if (existingRedemption) {
+      return {
+        redemption: existingRedemption,
+        accountId: existingRedemption.publicAccountId,
+        venueId: existingRedemption.venueId,
+        venueName: existingRedemption.venueName,
+        suburb: existingRedemption.suburb,
+        estimatedSavingsDollars: Number((existingRedemption.estimatedSavingsCents / 100).toFixed(2)),
+        pointsEarned: Number(existingRedemption.metadata.pointsEarned ?? 0),
+        idempotentReplay: true,
+        copy: "This transaction was already recorded. No duplicate Pint Points were added.",
+      };
+    }
     const pass = this.repository.getActiveDiscountPassByCodeHash({
       codeHash: hashDiscountCode(input.code),
       now,
@@ -3666,57 +3812,67 @@ export class BusinessService {
       throw new AppError("This account does not currently have discount access.", 403);
     }
 
-    const redemption = this.repository.createDiscountRedemption({
-      id: crypto.randomUUID(),
+    const dailyPoints = this.repository.countPintPointsAwardedSince({
       userId: user.id,
-      publicAccountId: user.publicAccountId,
-      venueId: input.venueId,
-      venueName: input.venueName,
-      suburb: input.suburb,
-      specialId: input.specialId,
-      itemName: input.itemName,
-      quantity: input.quantity,
-      estimatedSavingsCents: input.estimatedSavingsCents,
-      discountPassId: pass.id,
-      redeemedByUserId: input.actor?.id ?? null,
-      redeemedAt: now,
-      metadata: sanitizeEventMetadata(redactSecrets({
-        ...input.metadata,
-        notes: input.notes,
-        source: input.source,
-        redeemedByRole: input.redeemedByRole,
-        posReference: input.posReference,
-        terminalId: input.terminalId,
-        posRedeemedAt: input.posRedeemedAt,
-      })),
+      since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
     });
-
-    const pintPointRecord = this.repository.createPintPointDrinkRecord({
-      id: crypto.randomUUID(),
-      userId: user.id,
-      venueId: input.venueId,
-      venueName: input.venueName,
-      suburb: input.suburb,
-      itemName: input.itemName,
-      beverageCategory: "alcoholic",
-      quantity: input.quantity,
-      isAlcoholic: true,
-      source: input.source,
-      recordedByUserId: input.actor?.id ?? null,
-      recordedAt: now,
-      metadata: sanitizeEventMetadata(redactSecrets({
-        discountRedemptionId: redemption.id,
-        discountPassId: pass.id,
+    const pointsEarned = Math.min(input.quantity, Math.max(0, PINT_POINTS_DAILY_CAP - dailyPoints));
+    const { redemption, pintPointRecord } = this.repository.runInTransaction(() => {
+      const redemption = this.repository.createDiscountRedemption({
+        id: crypto.randomUUID(),
+        userId: user.id,
+        publicAccountId: user.publicAccountId,
+        venueId: input.venueId,
+        venueName: input.venueName,
+        suburb: input.suburb,
         specialId: input.specialId,
+        itemName: input.itemName,
+        quantity: input.quantity,
+        estimatedSavingsCents: input.estimatedSavingsCents,
+        discountPassId: pass.id,
+        redeemedByUserId: input.actor?.id ?? null,
+        idempotencyKey,
+        redeemedAt: now,
+        metadata: sanitizeEventMetadata(redactSecrets({
+          ...input.metadata,
+          notes: input.notes,
+          source: input.source,
+          redeemedByRole: input.redeemedByRole,
+          posReference: input.posReference,
+          terminalId: input.terminalId,
+          posRedeemedAt: input.posRedeemedAt,
+          pointsEarned,
+        })),
+      });
+      const pintPointRecord = this.repository.createPintPointDrinkRecord({
+        id: crypto.randomUUID(),
+        userId: user.id,
+        venueId: input.venueId,
+        venueName: input.venueName,
+        suburb: input.suburb,
+        itemName: input.itemName,
+        beverageCategory: "alcoholic",
+        quantity: input.quantity,
+        isAlcoholic: true,
+        pointsAwarded: pointsEarned,
         source: input.source,
-        redeemedByRole: input.redeemedByRole,
-        posReference: input.posReference,
-        terminalId: input.terminalId,
-      })),
+        recordedByUserId: input.actor?.id ?? null,
+        idempotencyKey,
+        recordedAt: now,
+        metadata: sanitizeEventMetadata(redactSecrets({
+          discountRedemptionId: redemption.id,
+          discountPassId: pass.id,
+          specialId: input.specialId,
+          source: input.source,
+          redeemedByRole: input.redeemedByRole,
+          posReference: input.posReference,
+          terminalId: input.terminalId,
+          dailyCap: PINT_POINTS_DAILY_CAP,
+        })),
+      });
+      this.repository.markDiscountPassUsed({ id: pass.id, lastUsedAt: now });
+      return { redemption, pintPointRecord };
     });
-    const pointsEarned = input.quantity;
-
-    this.repository.markDiscountPassUsed({ id: pass.id, lastUsedAt: now });
     this.recordUserActivity({
       account: user,
       eventType: "discount_redeemed",
@@ -3801,8 +3957,10 @@ export class BusinessService {
     const endpoint = new URL("/api/business/pos/discount-redemptions", this.config.PUBLIC_BASE_URL).toString();
     const membershipTier = this.repository.getBarProfile(venueId)?.membershipTier ?? "basic";
     const tierCapabilities = getBarTierCapabilities(membershipTier);
+    const profile = this.repository.getBarProfile(venueId);
+    const tokenVersion = profile?.posWebhookTokenVersion ?? 1;
     const token = this.config.POS_WEBHOOK_SIGNING_SECRET && tierCapabilities.posWebhookIntegration
-      ? createPosWebhookToken(this.config.POS_WEBHOOK_SIGNING_SECRET, venueId)
+      ? createPosWebhookToken(this.config.POS_WEBHOOK_SIGNING_SECRET, venueId, tokenVersion)
       : null;
 
     return {
@@ -3817,6 +3975,7 @@ export class BusinessService {
       authHeader: "X-Pint-Path-POS-Token",
       token,
       tokenPreview: token ? `${token.slice(0, 8)}...${token.slice(-8)}` : null,
+      tokenVersion,
       payloadExample: {
         venueId,
         code: "ABC123",
@@ -3835,6 +3994,23 @@ export class BusinessService {
     };
   }
 
+  rotateVenuePosIntegrationToken(account: BusinessAccount, venueId: string) {
+    this.requireAssignedVenue(account, venueId);
+    const profile = this.repository.getBarProfile(venueId);
+    if (!profile) {
+      throw new AppError("Venue profile not found.", 404);
+    }
+    this.repository.rotateBarPosWebhookToken({ barId: venueId, now: nowIso() });
+    this.auditSecurity({
+      actor: account,
+      action: "venue_pos_token_rotated",
+      targetType: "venue",
+      targetId: venueId,
+      metadata: { previousVersion: profile.posWebhookTokenVersion },
+    });
+    return this.getVenuePosIntegration(account, venueId);
+  }
+
   redeemDiscountPassFromPos(
     input: PosDiscountRedemptionInput,
     token: string | undefined,
@@ -3846,7 +4022,8 @@ export class BusinessService {
     }
 
     const suppliedToken = token?.trim() ?? "";
-    const expectedToken = createPosWebhookToken(secret, input.venueId);
+    const profile = this.repository.getBarProfile(input.venueId);
+    const expectedToken = createPosWebhookToken(secret, input.venueId, profile?.posWebhookTokenVersion ?? 1);
     if (!suppliedToken || !timingSafeStringEqual(expectedToken, suppliedToken)) {
       this.auditSecurity({
         actor: null,
@@ -4039,6 +4216,10 @@ export class BusinessService {
   recordPintPointDrink(account: BusinessAccount, venueId: string, input: PintPointDrinkRecordInput) {
     const assignment = this.requireAssignedVenue(account, venueId);
     const venue = this.getDiscountVenueIdentity(venueId, assignment);
+    const profile = this.repository.getBarProfile(venueId);
+    if (!profile?.acceptsPintPathCodes) {
+      throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
+    }
     const now = nowIso();
     const user = this.resolvePintPointUser({
       code: input.code,
@@ -4051,6 +4232,14 @@ export class BusinessService {
     }
 
     const isAlcoholic = input.isAlcoholic ?? input.beverageCategory === "alcoholic";
+    const idempotencyKey = `manual:${input.transactionReference.trim().toLowerCase()}`;
+    const dailyPoints = this.repository.countPintPointsAwardedSince({
+      userId: user.id,
+      since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+    });
+    const pointsEarned = isAlcoholic
+      ? Math.min(input.quantity, Math.max(0, PINT_POINTS_DAILY_CAP - dailyPoints))
+      : 0;
     const record = this.repository.createPintPointDrinkRecord({
       id: crypto.randomUUID(),
       userId: user.id,
@@ -4061,8 +4250,10 @@ export class BusinessService {
       beverageCategory: input.beverageCategory,
       quantity: input.quantity,
       isAlcoholic,
+      pointsAwarded: pointsEarned,
       source: "venue_portal",
       recordedByUserId: account.id,
+      idempotencyKey,
       recordedAt: now,
       metadata: {
         notes: input.notes,
@@ -4071,7 +4262,6 @@ export class BusinessService {
     });
 
     const wallet = this.getPintPointWalletForAccount(user, now);
-    const pointsEarned = isAlcoholic ? input.quantity : 0;
     this.recordUserActivity({
       account: user,
       eventType: "pint_point_drink_recorded",
@@ -4435,7 +4625,7 @@ export class BusinessService {
         canIDrive: {
           enabled: hasFullAccess,
           sourceDrinkLimit: 25,
-          copy: "Estimate standard drinks and a rough BAC from recent Pint Point drink records. This never provides a driving clearance.",
+          copy: "Review standard drinks only when exact ABV and serving volume are available. Pint Path does not estimate BAC or provide driving clearance.",
         },
       },
       ageVerification: {
@@ -4454,6 +4644,14 @@ export class BusinessService {
       this.repository.getDefaultAccountPrivacySettings(account.id);
     const submissions = this.repository.listSubmissions({ userId: account.id, limit: 1000 }).map((submission) => {
       const detail = this.repository.getSubmissionById(submission.id);
+      let sourceEvidence: ReturnType<BusinessService["getSubmissionSourceEvidenceUrl"]> | null = null;
+      if (submission.sourcePhotoUrl) {
+        try {
+          sourceEvidence = this.getSubmissionSourceEvidenceUrl(account, submission.id);
+        } catch (error) {
+          if (!(error instanceof AppError) || error.statusCode !== 404) throw error;
+        }
+      }
       return {
         id: submission.id,
         venueId: submission.venueId,
@@ -4469,7 +4667,10 @@ export class BusinessService {
         distanceToVenueMeters: submission.distanceToVenueMeters,
         uploadLocationCapturedAt: submission.uploadLocationCapturedAt,
         uploadAccuracyMeters: submission.uploadAccuracyMeters,
+        uploadLatitude: submission.uploadLatitude,
+        uploadLongitude: submission.uploadLongitude,
         hasPrivateEvidence: Boolean(submission.sourcePhotoUrl),
+        sourceEvidence,
         reviewedAt: submission.reviewedAt,
         rejectionReason: submission.rejectionReason,
         fraudFlagged: submission.fraudFlagged,
@@ -4731,13 +4932,136 @@ export class BusinessService {
     return Boolean(pendingVenue?.googlePlaceId);
   }
 
-  async createUserSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
-    this.assertAccountCanSubmit(account);
-    const verifiedInput = await this.withVerifiedPendingGoogleVenue(account, input);
-    return this.createSubmission(account, verifiedInput);
+  private validatedSubmissionImageDataUrls(input: CreateSubmissionInput): string[] {
+    const candidates = [input.sourcePhotoDataUrl, ...(input.sourcePhotoDataUrls ?? [])].filter(
+      (value): value is string => Boolean(value),
+    );
+    const uniqueCandidates = Array.from(new Set(candidates));
+    let totalBytes = 0;
+    const validated = uniqueCandidates.map((imageDataUrl) => {
+      const { mimeType, bytes } = validateImageDataUrl(imageDataUrl, {
+        allowedMimeTypes: SUBMISSION_LIMITS.allowedImageMimeTypes,
+        maxBytes: SUBMISSION_LIMITS.maxPhotoBytes,
+        invalidMimeMessage: "Upload must be a JPEG, PNG, WebP, HEIC, or HEIF image.",
+        tooLargeMessage: "Each upload image must be 6MB or smaller.",
+        activePayloadMessage: "Upload must be a safe image file, not SVG, HTML, XML, script, or style content.",
+        mismatchMessage: "Upload image content does not match the declared file type.",
+      });
+      totalBytes += bytes.length;
+      return `data:${mimeType};base64,${bytes.toString("base64")}`;
+    });
+
+    // Base64 adds roughly one third to the request size; stay below Express' 12MB body limit.
+    if (totalBytes > 8 * 1024 * 1024) {
+      throw new AppError("Source images must be 8MB or smaller in total after compression.", 400);
+    }
+    return validated;
   }
 
-  createSubmission(account: BusinessAccount, input: CreateSubmissionInput, options: { allowVenueManager?: boolean; rewardEligible?: boolean } = {}) {
+  private async preparePhotoOcr(input: CreateSubmissionInput): Promise<PreparedPhotoOcr | null> {
+    if (input.submissionType !== "photo_upload") return null;
+    const imageDataUrls = input.sourcePhotoDataUrls ?? [];
+    if (!imageDataUrls.length || !this.menuPhotoOcr) {
+      return {
+        status: "manual_review_required",
+        summary: {
+          model: null,
+          imageCount: imageDataUrls.length || (input.sourcePhotoUrl ? 1 : 0),
+          extractedRowCount: 0,
+          rejectedCandidateCount: 0,
+          pendingCatalogCount: 0,
+          message: this.menuPhotoOcr
+            ? "The source is attached for admin review, but it could not be sent to OCR."
+            : "OCR is unavailable on this deployment. The source is attached for manual admin review.",
+        },
+        items: [],
+      };
+    }
+
+    try {
+      const result: MenuPhotoOcrResult = await this.menuPhotoOcr.extract({
+        venueNameHint: input.newVenue?.name ?? input.venueName,
+        imageDataUrls,
+      });
+      const items = result.beers
+        .map(preparedSubmissionItemFromOcr)
+        .filter((item): item is PreparedSubmissionItem => Boolean(item));
+      const deduplicated = Array.from(new Map(items.map((item) => [
+        [normalizeBeerSearchKey(item.beerName), item.servingSize, item.price ?? "none", item.isOnTap].join(":"),
+        item,
+      ])).values()).slice(0, 60);
+
+      return {
+        status: deduplicated.length ? "processed" : "manual_review_required",
+        summary: {
+          model: result.model,
+          imageCount: result.imageCount,
+          extractedRowCount: deduplicated.length,
+          rejectedCandidateCount: result.rejectedCandidateCount + Math.max(0, result.beers.length - items.length),
+          pendingCatalogCount: 0,
+          message: deduplicated.length
+            ? "OCR rows are attached for admin verification before publication."
+            : "No reliable beer rows were found. The images remain attached for manual admin review.",
+        },
+        items: deduplicated,
+      };
+    } catch (error) {
+      logger.warn("User submission photo OCR failed; preserving evidence for manual review", {
+        venueId: input.venueId,
+        imageCount: imageDataUrls.length,
+        error: error instanceof Error ? redactSecrets(error.message) : "unknown",
+      });
+      return {
+        status: "failed",
+        summary: {
+          model: null,
+          imageCount: imageDataUrls.length,
+          extractedRowCount: 0,
+          rejectedCandidateCount: 0,
+          pendingCatalogCount: 0,
+          message: "Automatic reading failed. The original images are attached for manual admin review.",
+        },
+        items: [],
+      };
+    }
+  }
+
+  async createUserSubmission(account: BusinessAccount, input: CreateSubmissionInput) {
+    this.assertAccountCanSubmit(account);
+    if (input.clientSubmissionId) {
+      const existing = this.repository.getSubmissionByClientSubmissionId(account.id, input.clientSubmissionId);
+      if (existing) {
+        return {
+          submission: existing.submission,
+          statusCopy: `${existing.submission.venueName} is already saved for review from this device.`,
+          ocrStatus: existing.submission.ocrStatus,
+          idempotentReplay: true,
+        };
+      }
+    }
+
+    const imageDataUrls = this.validatedSubmissionImageDataUrls(input);
+    const normalizedInput: CreateSubmissionInput = {
+      ...input,
+      sourcePhotoDataUrl: null,
+      sourcePhotoDataUrls: imageDataUrls,
+    };
+    const verifiedInput = await this.withVerifiedPendingGoogleVenue(account, normalizedInput);
+    const photoOcr = await this.preparePhotoOcr(verifiedInput);
+    const sourcePhotoRefs = await this.resolveSubmissionSourcePhotos(account, verifiedInput);
+    return this.createSubmission(account, verifiedInput, { photoOcr, sourcePhotoRefs });
+  }
+
+  createSubmission(
+    account: BusinessAccount,
+    input: CreateSubmissionInput,
+    options: {
+      allowVenueManager?: boolean;
+      rewardEligible?: boolean;
+      photoOcr?: PreparedPhotoOcr | null;
+      sourcePhotoRefs?: string[];
+    } = {},
+  ) {
     this.assertAccountCanSubmit(account, { allowVenueManager: options.allowVenueManager === true });
     const rewardEligible = options.rewardEligible ?? true;
 
@@ -4747,7 +5071,7 @@ export class BusinessService {
         return {
           submission: existingSubmission.submission,
           statusCopy: `${existingSubmission.submission.venueName} is already saved for review from this device.`,
-          ocrStatus: existingSubmission.submission.sourcePhotoUrl ? "queued_for_review" : "not_requested",
+          ocrStatus: existingSubmission.submission.ocrStatus,
           idempotentReplay: true,
         };
       }
@@ -4756,7 +5080,8 @@ export class BusinessService {
     const now = nowIso();
     const pendingVenue = this.normalizePendingVenue(input);
     this.assertPendingVenueIsNotKnownDuplicate(pendingVenue);
-    const sourcePhotoUrl = this.resolveSourcePhoto(account, input);
+    const sourcePhotoRefs = options.sourcePhotoRefs ?? this.resolveInlineSubmissionSourcePhotos(account, input);
+    const sourcePhotoUrl = sourcePhotoRefs[0] ?? null;
     const rawLocationEligibility = this.getSubmissionLocationEligibility(input);
     const locationEligibility = rewardEligible
       ? rawLocationEligibility
@@ -4765,19 +5090,65 @@ export class BusinessService {
           pointsEligibleByLocation: false,
           pointsEligibilityReason: "venue_manager_not_reward_eligible",
         };
-    const standardizedItems = input.items.map((item) => {
+    const preparedItems: PreparedSubmissionItem[] = [
+      ...input.items.map((item) => ({
+        ...item,
+        captureSource: "manual" as const,
+        sourceText: null,
+        confidence: sourcePhotoUrl ? 0.72 : 0.52,
+        catalogBrewery: null,
+        catalogAbv: null,
+      })),
+      ...(options.photoOcr?.items ?? []),
+    ];
+    const standardizedCandidates = preparedItems.map((item) => {
+      const isPhotoOcr = item.captureSource === "photo_ocr";
       const beer = this.standardizeBeerReference({
         name: item.beerName,
-        source: item.isHappyHourPrice ? "happy_hour_submission" : "user_submission",
+        source: isPhotoOcr
+          ? "user_photo_ocr"
+          : item.isHappyHourPrice
+            ? "happy_hour_submission"
+            : "user_submission",
         now,
         isHappyHour: item.isHappyHourPrice,
+        matchMode: isPhotoOcr ? "ocr" : "exact",
+        brewery: item.catalogBrewery,
+        abv: item.catalogAbv,
       });
       return {
         ...item,
         beerName: beer.name,
         normalizedBeerId: beer.key,
+        requiresCatalogApproval: isPhotoOcr && beer.status !== "active",
       };
     });
+    const standardizedItems = Array.from(standardizedCandidates.reduce((byKey, item) => {
+      const key = [
+        item.normalizedBeerId ?? normalizeBeerSearchKey(item.beerName),
+        item.servingSize,
+        item.price ?? "none",
+        item.isOnTap,
+      ].join(":");
+      const existing = byKey.get(key);
+      if (!existing || item.confidence > existing.confidence) {
+        byKey.set(key, item);
+      }
+      return byKey;
+    }, new Map<string, (typeof standardizedCandidates)[number]>()).values());
+    const pendingCatalogCount = new Set(
+      standardizedItems
+        .filter((item) => item.requiresCatalogApproval)
+        .map((item) => item.normalizedBeerId)
+        .filter((key): key is string => Boolean(key)),
+    ).size;
+    const ocrSummary = options.photoOcr
+      ? {
+          ...options.photoOcr.summary,
+          extractedRowCount: standardizedItems.filter((item) => item.captureSource === "photo_ocr").length,
+          pendingCatalogCount,
+        }
+      : null;
     const submission = this.repository.createSubmission({
       id: crypto.randomUUID(),
       clientSubmissionId: input.clientSubmissionId,
@@ -4788,6 +5159,11 @@ export class BusinessService {
       submissionType: input.submissionType,
       observedAt: input.observedAt,
       sourcePhotoUrl,
+      sourceEvidenceIds: sourcePhotoRefs
+        .map(getPrivateEvidenceId)
+        .filter((id): id is string => Boolean(id)),
+      ocrStatus: options.photoOcr?.status ?? "not_requested",
+      ocrSummary,
       notes: input.notes,
       now,
       ...locationEligibility,
@@ -4801,7 +5177,10 @@ export class BusinessService {
         isHappyHourPrice: item.isHappyHourPrice,
         happyHourDetails: item.happyHourDetails,
         isOnTap: item.isOnTap,
-        confidence: sourcePhotoUrl ? 0.72 : 0.52,
+        confidence: item.confidence,
+        captureSource: item.captureSource,
+        sourceText: item.sourceText,
+        requiresCatalogApproval: item.requiresCatalogApproval,
       })),
     });
     const publishedVenueImmediately = this.shouldPublishSubmittedVenueImmediately(pendingVenue);
@@ -4826,8 +5205,10 @@ export class BusinessService {
       metadata: {
         submissionId: submission.id,
         submissionType: submission.submissionType,
-        itemCount: input.items.length,
+        itemCount: standardizedItems.length,
         hasSourcePhoto: Boolean(sourcePhotoUrl),
+        ocrStatus: submission.ocrStatus,
+        pendingCatalogCount,
         pointsEligibleByLocation: submission.pointsEligibleByLocation,
         rewardEligible,
         newVenue: Boolean(pendingVenue),
@@ -4842,7 +5223,9 @@ export class BusinessService {
       metadata: {
         submissionType: submission.submissionType,
         venueId: submission.venueId,
-        itemCount: input.items.length,
+        itemCount: standardizedItems.length,
+        ocrStatus: submission.ocrStatus,
+        pendingCatalogCount,
         pointsEligibleByLocation: submission.pointsEligibleByLocation,
         rewardEligible,
         newVenue: Boolean(pendingVenue),
@@ -4852,7 +5235,11 @@ export class BusinessService {
 
     return {
       submission,
-      statusCopy: publishedVenueImmediately
+      statusCopy: options.photoOcr
+        ? standardizedItems.length
+          ? `OCR read ${standardizedItems.length} beer row${standardizedItems.length === 1 ? "" : "s"}. ${pendingCatalogCount ? `${pendingCatalogCount} new beer name${pendingCatalogCount === 1 ? " needs" : "s need"} catalogue approval. ` : ""}Everything remains pending admin review before publication.`
+          : options.photoOcr.summary.message ?? "Images attached for manual admin review."
+        : publishedVenueImmediately
         ? "Venue added to the public map. Drink data is saved for review before prices appear publicly."
         : pendingVenue
         ? "New venue and drink data submitted for admin review. It will appear on the global map only after approval."
@@ -4861,14 +5248,85 @@ export class BusinessService {
         : submission.pointsEligibleByLocation
         ? "Submitted for review. If approved, this can earn points toward this month's contributor unlock."
         : "Submitted for review. Points need a saved upload location within 200m of the venue.",
-      ocrStatus: sourcePhotoUrl ? "queued_for_review" : "not_requested",
+      ocrStatus: submission.ocrStatus,
     };
   }
 
-  private resolveSourcePhoto(
+  private async resolveSubmissionSourcePhotos(
+    account: Pick<BusinessAccount, "id">,
+    input: CreateSubmissionInput,
+  ): Promise<string[]> {
+    const refs: string[] = [];
+    const dataUrls = Array.from(new Set([
+      input.sourcePhotoDataUrl,
+      ...(input.sourcePhotoDataUrls ?? []),
+    ].filter((value): value is string => Boolean(value))));
+    for (const sourcePhotoDataUrl of dataUrls) {
+      const ref = await this.resolveSourcePhoto(account, {
+        sourcePhotoDataUrl,
+        sourcePhotoUrl: null,
+      });
+      if (ref) refs.push(ref);
+    }
+
+    if (input.sourcePhotoUrl) {
+      const ref = await this.resolveSourcePhoto(account, {
+        sourcePhotoDataUrl: null,
+        sourcePhotoUrl: input.sourcePhotoUrl,
+      });
+      if (ref) refs.push(ref);
+    }
+
+    return refs;
+  }
+
+  private resolveInlineSubmissionSourcePhotos(
+    account: Pick<BusinessAccount, "id">,
+    input: CreateSubmissionInput,
+  ): string[] {
+    const refs: string[] = [];
+    const dataUrls = Array.from(new Set([
+      input.sourcePhotoDataUrl,
+      ...(input.sourcePhotoDataUrls ?? []),
+    ].filter((value): value is string => Boolean(value))));
+    for (const sourcePhotoDataUrl of dataUrls) {
+      const { mimeType, bytes } = validateImageDataUrl(sourcePhotoDataUrl, {
+        allowedMimeTypes: SUBMISSION_LIMITS.allowedImageMimeTypes,
+        maxBytes: SUBMISSION_LIMITS.maxPhotoBytes,
+        invalidMimeMessage: "Upload must be a JPEG, PNG, WebP, HEIC, or HEIF image.",
+        tooLargeMessage: "Upload image must be 6MB or smaller.",
+        activePayloadMessage: "Upload must be a safe image file, not SVG, HTML, XML, script, or style content.",
+        mismatchMessage: "Upload image content does not match the declared file type.",
+      });
+      if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
+        throw new AppError("Production evidence uploads must use the asynchronous submission endpoint.", 500, undefined, false);
+      }
+      const createdAt = nowIso();
+      const evidence = this.repository.createSourceEvidenceObject({
+        id: crypto.randomUUID(),
+        ownerUserId: account.id,
+        storageProvider: "sqlite_private",
+        objectPath: `evidence/${crypto.randomUUID()}`,
+        mimeType,
+        byteSize: bytes.length,
+        dataBase64: bytes.toString("base64"),
+        externalUrl: null,
+        retentionExpiresAt: addDays(createdAt, this.config.SOURCE_EVIDENCE_RETENTION_DAYS ?? 90),
+        createdAt,
+      });
+      refs.push(privateEvidenceRef(evidence.id));
+    }
+    if (input.sourcePhotoUrl) {
+      parseSafeImageSourceUrl(input.sourcePhotoUrl, "Source photo URL");
+      throw new AppError("For reviewer safety, upload the source image directly instead of linking to an external site.", 400);
+    }
+    return refs;
+  }
+
+  private async resolveSourcePhoto(
     account: Pick<BusinessAccount, "id"> | null,
     input: Pick<CreateSubmissionInput, "sourcePhotoDataUrl" | "sourcePhotoUrl">,
-  ): string | null {
+  ): Promise<string | null> {
     if (input.sourcePhotoDataUrl) {
       const { mimeType, bytes } = validateImageDataUrl(input.sourcePhotoDataUrl, {
         allowedMimeTypes: SUBMISSION_LIMITS.allowedImageMimeTypes,
@@ -4880,10 +5338,11 @@ export class BusinessService {
       });
 
       if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
-        const evidence = this.createFilesystemSourceEvidence(account, bytes, mimeType);
+        const evidence = await this.createFilesystemSourceEvidence(account, bytes, mimeType);
         return privateEvidenceRef(evidence.id);
       }
 
+      const createdAt = nowIso();
       const evidence = this.repository.createSourceEvidenceObject({
         id: crypto.randomUUID(),
         ownerUserId: account?.id ?? null,
@@ -4893,7 +5352,8 @@ export class BusinessService {
         byteSize: bytes.length,
         dataBase64: bytes.toString("base64"),
         externalUrl: null,
-        createdAt: nowIso(),
+        retentionExpiresAt: addDays(createdAt, this.config.SOURCE_EVIDENCE_RETENTION_DAYS ?? 90),
+        createdAt,
       });
       return privateEvidenceRef(evidence.id);
     }
@@ -4902,20 +5362,8 @@ export class BusinessService {
       return null;
     }
 
-    const parsed = parseSafeImageSourceUrl(input.sourcePhotoUrl, "Source photo URL");
-
-    const evidence = this.repository.createSourceEvidenceObject({
-      id: crypto.randomUUID(),
-      ownerUserId: account?.id ?? null,
-      storageProvider: "external_private_reference",
-      objectPath: `external/${crypto.randomUUID()}`,
-      mimeType: null,
-      byteSize: null,
-      dataBase64: null,
-      externalUrl: parsed.toString(),
-      createdAt: nowIso(),
-    });
-    return privateEvidenceRef(evidence.id);
+    parseSafeImageSourceUrl(input.sourcePhotoUrl, "Source photo URL");
+    throw new AppError("For reviewer safety, upload the source image directly instead of linking to an external site.", 400);
   }
 
   private getSourceEvidenceStorageRoot(): string {
@@ -4936,19 +5384,19 @@ export class BusinessService {
     return filePath;
   }
 
-  private createFilesystemSourceEvidence(
+  private async createFilesystemSourceEvidence(
     account: Pick<BusinessAccount, "id"> | null,
     bytes: Buffer,
     mimeType: string,
-  ): SourceEvidenceObject {
+  ): Promise<SourceEvidenceObject> {
     const id = crypto.randomUUID();
     const monthKey = getZonedMonthKey(new Date(nowIso()), this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
     const objectPath = `evidence/${monthKey}/${id}.${sourceEvidenceExtensionForMimeType(mimeType)}`;
     const filePath = this.getSourceEvidenceFilePath(objectPath);
 
     try {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(filePath, bytes, { flag: "wx", mode: 0o600 });
+      await fs.promises.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+      await fs.promises.writeFile(filePath, bytes, { flag: "wx", mode: 0o600 });
     } catch (error) {
       logger.error("Failed to store private source evidence file", {
         provider: FILESYSTEM_EVIDENCE_PROVIDER,
@@ -4958,6 +5406,7 @@ export class BusinessService {
       throw new AppError("Source evidence storage is unavailable. Keep the upload queued and retry shortly.", 503);
     }
 
+    const createdAt = nowIso();
     return this.repository.createSourceEvidenceObject({
       id,
       ownerUserId: account?.id ?? null,
@@ -4967,16 +5416,20 @@ export class BusinessService {
       byteSize: bytes.length,
       dataBase64: null,
       externalUrl: null,
-      createdAt: nowIso(),
+      retentionExpiresAt: addDays(createdAt, this.config.SOURCE_EVIDENCE_RETENTION_DAYS ?? 90),
+      createdAt,
     });
   }
 
-  getSourceEvidenceDelivery(evidence: SourceEvidenceObject):
-    | { kind: "redirect"; url: string }
+  async getSourceEvidenceDelivery(evidence: SourceEvidenceObject): Promise<
     | { kind: "bytes"; mimeType: string; bytes: Buffer }
-    | null {
+    | null
+  > {
+    if (evidence.deletedAt) {
+      return null;
+    }
     if (evidence.externalUrl) {
-      return { kind: "redirect", url: evidence.externalUrl };
+      return null;
     }
 
     if (evidence.dataBase64 && evidence.mimeType) {
@@ -4993,7 +5446,7 @@ export class BusinessService {
         return {
           kind: "bytes",
           mimeType: evidence.mimeType,
-          bytes: fs.readFileSync(filePath),
+          bytes: await fs.promises.readFile(filePath),
         };
       } catch (error) {
         logger.warn("Private source evidence file missing or unreadable", {
@@ -5038,32 +5491,41 @@ export class BusinessService {
       throw new AppError("You can only access your own source evidence.", 403);
     }
 
-    const evidenceId = getPrivateEvidenceId(submission.submission.sourcePhotoUrl);
-    if (!evidenceId) {
-      return { signedUrl: null, expiresAt: null };
-    }
-
-    const evidence = this.repository.getSourceEvidenceObject(evidenceId);
-    if (!evidence) {
-      throw new AppError("Source evidence not found.", 404);
+    const linkedEvidenceIds = this.repository.listSubmissionSourceEvidenceIds(submissionId);
+    const legacyEvidenceId = getPrivateEvidenceId(submission.submission.sourcePhotoUrl);
+    const evidenceIds = linkedEvidenceIds.length
+      ? linkedEvidenceIds
+      : legacyEvidenceId
+        ? [legacyEvidenceId]
+        : [];
+    if (!evidenceIds.length) {
+      return { signedUrl: null, signedUrls: [], expiresAt: null };
     }
 
     const expiresAt = Math.floor(Date.now() / 1000) + this.config.SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS;
-    const signature = this.signEvidenceUrl(evidence.id, expiresAt);
-    const signedUrl = new URL(`/api/business/source-evidence/${encodeURIComponent(evidence.id)}`, this.config.PUBLIC_BASE_URL);
-    signedUrl.searchParams.set("expires", String(expiresAt));
-    signedUrl.searchParams.set("signature", signature);
+    const signedUrls = evidenceIds.map((evidenceId) => {
+      const evidence = this.repository.getSourceEvidenceObject(evidenceId);
+      if (!evidence) {
+        throw new AppError("Source evidence not found.", 404);
+      }
+      const signature = this.signEvidenceUrl(evidence.id, expiresAt);
+      const signedUrl = new URL(`/api/business/source-evidence/${encodeURIComponent(evidence.id)}`, this.config.PUBLIC_BASE_URL);
+      signedUrl.searchParams.set("expires", String(expiresAt));
+      signedUrl.searchParams.set("signature", signature);
 
-    this.auditSecurity({
-      actor: account,
-      action: "source_evidence_signed_url_created",
-      targetType: "source_evidence",
-      targetId: evidence.id,
-      metadata: { submissionId },
+      this.auditSecurity({
+        actor: account,
+        action: "source_evidence_signed_url_created",
+        targetType: "source_evidence",
+        targetId: evidence.id,
+        metadata: { submissionId },
+      });
+      return signedUrl.toString();
     });
 
     return {
-      signedUrl: signedUrl.toString(),
+      signedUrl: signedUrls[0] ?? null,
+      signedUrls,
       expiresAt: new Date(expiresAt * 1000).toISOString(),
     };
   }
@@ -5117,6 +5579,7 @@ export class BusinessService {
       venueReportInclusionEnabled: input.venueReportInclusionEnabled,
       productResearchEnabled: input.productResearchEnabled,
       emailUpdatesEnabled: input.emailUpdatesEnabled,
+      consentVersion: input.consentVersion ?? "2026-07-11",
       now,
     });
     this.recordUserActivity({
@@ -5280,37 +5743,113 @@ export class BusinessService {
   }
 
   requestAccountDeletion(account: BusinessAccount, input: { message?: string | null | undefined }) {
-    const message = [
-      "Account deletion request from signed-in account.",
-      input.message ? `User note: ${input.message}` : null,
-      "Admin must verify ownership, retain legally required moderation/billing/security records, and confirm deletion manually.",
-    ].filter(Boolean).join("\n\n");
-
-    const result = this.submitFeedback(account, {
-      anonymousSessionId: null,
-      feedbackType: "account_deletion_request",
-      message,
-      venueId: null,
-      venueName: null,
+    const requestedAt = nowIso();
+    const request = this.repository.createAccountDeletionRequest({
+      id: crypto.randomUUID(),
+      userId: account.id,
+      userMessage: input.message ?? null,
+      requestedAt,
+      executeAfter: addDays(requestedAt, 7),
     });
 
     this.recordUserActivity({
       account,
       eventType: "account_deletion_requested",
-      relatedEntityType: "feedback",
-      relatedEntityId: result.feedback.id,
+      relatedEntityType: "account_deletion_request",
+      relatedEntityId: String(request.id),
       metadata: { requestType: "account_deletion_request" },
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "account_deletion_requested",
+      targetType: "account_deletion_request",
+      targetId: String(request.id),
+      metadata: { executeAfter: request.execute_after },
     });
 
     return {
-      ...result,
-      message: "Deletion request saved. An admin will review retention requirements before removing account data.",
+      request,
+      message: "Deletion request saved with a seven-day review window. An admin can execute the documented anonymisation workflow after checking legal retention requirements.",
     };
   }
 
-  reportWrongPrice(account: BusinessAccount | null, input: WrongPriceReportInput) {
+  async purgeExpiredSourceEvidence(limit = 100): Promise<{ purged: number; failed: number }> {
+    const expired = this.repository.listExpiredSourceEvidence({ now: nowIso(), limit });
+    let purged = 0;
+    let failed = 0;
+    for (const evidence of expired) {
+      try {
+        if (evidence.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
+          await fs.promises.rm(this.getSourceEvidenceFilePath(evidence.objectPath), { force: true });
+        }
+        this.repository.markSourceEvidenceDeleted({ id: evidence.id, deletedAt: nowIso() });
+        purged += 1;
+      } catch (error) {
+        failed += 1;
+        logger.warn("Source evidence retention purge failed", {
+          evidenceId: evidence.id,
+          error: error instanceof Error ? redactSecrets(error.message) : "unknown",
+        });
+      }
+    }
+    return { purged, failed };
+  }
+
+  listAccountDeletionRequests(admin: BusinessAccount) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    return { requests: this.repository.listAccountDeletionRequests({ limit: 100 }) };
+  }
+
+  async executeAccountDeletion(admin: BusinessAccount, requestId: string) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    const requests = this.repository.listAccountDeletionRequests({ limit: 500 });
+    const request = requests.find((item) => item.id === requestId);
+    if (!request) throw new AppError("Deletion request not found.", 404);
+    if (!['pending_review', 'approved'].includes(String(request.status))) {
+      throw new AppError("This account deletion request has already been processed.", 409);
+    }
+    if (new Date(String(request.execute_after)).getTime() > Date.now()) {
+      throw new AppError("The seven-day account deletion safety window has not finished yet.", 409);
+    }
+    const account = this.repository.getAccountById(String(request.user_id));
+    if (!account) throw new AppError("Account not found.", 404);
+
+    if (account.supabaseUserId && this.supabase) {
+      const { error } = await this.supabase.auth.admin.deleteUser(account.supabaseUserId);
+      if (error) {
+        throw new ExternalServiceError("Supabase account deletion failed; local data was left unchanged.", {
+          message: redactSecrets(error.message),
+        });
+      }
+    }
+
+    const evidence = this.repository.listSourceEvidenceForOwner(account.id);
+    for (const item of evidence) {
+      if (item.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
+        await fs.promises.rm(this.getSourceEvidenceFilePath(item.objectPath), { force: true });
+      }
+    }
+    const summary = this.repository.executeAccountAnonymisation({
+      requestId,
+      reviewedBy: admin.id,
+      now: nowIso(),
+    });
+    for (const evidenceId of (summary.evidenceIds as string[] | undefined) ?? []) {
+      this.repository.markSourceEvidenceDeleted({ id: evidenceId, deletedAt: nowIso() });
+    }
+    this.auditSecurity({
+      actor: admin,
+      action: "account_deletion_executed",
+      targetType: "account_deletion_request",
+      targetId: requestId,
+      metadata: { anonymisedUserId: account.id },
+    });
+    return { requestId, status: "completed", summary };
+  }
+
+  async reportWrongPrice(account: BusinessAccount | null, input: WrongPriceReportInput) {
     const now = nowIso();
-    const sourcePhotoUrl = this.resolveSourcePhoto(account, input);
+    const sourcePhotoUrl = await this.resolveSourcePhoto(account, input);
     const result = this.repository.createWrongPriceReport({
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
@@ -5444,6 +5983,12 @@ export class BusinessService {
     });
   }
 
+  private hasUnapprovedPhotoOcrCatalogItems(items: BusinessSubmissionItem[]): boolean {
+    return items.some(
+      (item) => item.requiresCatalogApproval && !this.beerCatalogRepository?.isActiveBeer(item.normalizedBeerId),
+    );
+  }
+
   verifySubmission(account: BusinessAccount, submissionId: string, input: VerificationInput) {
     if (account.status === "suspended") {
       throw new AppError("Suspended accounts cannot verify venue data.", 403);
@@ -5503,85 +6048,18 @@ export class BusinessService {
       },
     });
 
-    const communityReview = input.result === "confirmed"
-      ? this.maybeApproveSubmissionByCommunityConsensus(submissionId, account)
-      : null;
+    const confirmedCount = input.result === "confirmed"
+      ? this.repository.countConfirmedVerificationsForSubmission(submissionId)
+      : 0;
 
     return {
       verification,
-      autoApproved: Boolean(communityReview),
-      message: communityReview
-        ? "Verification saved. This price has enough community confirmations and is now live."
-        : "Verification saved. Community confirmations help improve data confidence.",
+      autoApproved: false,
+      confirmedCount,
+      message: input.result === "confirmed"
+        ? "Verification saved for admin review. Community confirmations never publish a price automatically."
+        : "Verification saved for admin review.",
     };
-  }
-
-  private maybeApproveSubmissionByCommunityConsensus(submissionId: string, verifier: BusinessAccount) {
-    const confirmedCount = this.repository.countConfirmedVerificationsForSubmission(submissionId);
-    if (confirmedCount < COMMUNITY_SUBMISSION_CONFIRMATIONS_REQUIRED) {
-      return null;
-    }
-
-    const submission = this.repository.getSubmissionById(submissionId);
-    if (!submission) {
-      return null;
-    }
-
-    if (submission.submission.status !== "pending" && submission.submission.status !== "needs_more_evidence") {
-      return null;
-    }
-
-    const suggestedPoints = this.calculatePoints(submission.submission, submission.items);
-    const points = submission.submission.pointsEligibleByLocation
-      ? roundPoints(suggestedPoints)
-      : 0;
-    const reviewedAt = nowIso();
-    const result = this.repository.reviewSubmission({
-      submissionId,
-      reviewerId: verifier.id,
-      status: "approved",
-      rejectionReason: null,
-      fraudFlagged: false,
-      pointsAwarded: points,
-      confidence: "community_confirmed",
-      now: reviewedAt,
-      monthKey: monthKeyFromIso(submission.submission.observedAt),
-      premiumUntil: endOfMonthIso(reviewedAt),
-      contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
-    });
-
-    this.trackEvent(result.account, {
-      anonymousSessionId: null,
-      eventType: "submission_approved",
-      venueId: result.submission.venueId,
-      beerId: submission.items[0]?.normalizedBeerId ?? null,
-      suburb: result.submission.suburb,
-      metadata: {
-        submissionId,
-        reviewedByAdmin: false,
-        reviewSource: "community_consensus",
-        confirmedVerifications: confirmedCount,
-        pointsAwarded: result.pointsAwarded,
-        suggestedPoints,
-      },
-    });
-
-    if (result.account.subscriptionStatus === "contributor_unlocked" && result.pointsAwarded > 0) {
-      this.trackEvent(result.account, {
-        anonymousSessionId: null,
-        eventType: "contributor_access_unlocked",
-        venueId: result.submission.venueId,
-        beerId: null,
-        suburb: result.submission.suburb,
-        metadata: {
-          pointsThisMonth: result.account.contributionPointsCurrentMonth,
-          premiumUntil: result.account.premiumUntil,
-          reviewSource: "community_consensus",
-        },
-      });
-    }
-
-    return result;
   }
 
   reviewSubmission(admin: BusinessAccount, submissionId: string, input: ReviewSubmissionInput) {
@@ -5603,12 +6081,26 @@ export class BusinessService {
       throw new AppError("Submission has already been reviewed.", 409);
     }
 
+    if (input.status === "approved" && this.hasUnapprovedPhotoOcrCatalogItems(submission.items)) {
+      throw new AppError(
+        "Approve or merge every new OCR beer in the beer catalogue before publishing this submission.",
+        409,
+      );
+    }
+
     const suggestedPoints = this.calculatePoints(submission.submission, submission.items);
     const requestedPoints = input.pointsAwarded ?? suggestedPoints;
     const points = submission.submission.pointsEligibleByLocation
       ? roundPoints(Math.min(requestedPoints, suggestedPoints))
       : 0;
     const reviewedAt = nowIso();
+    const reviewConfidence = input.confidence ?? (
+      this.repository.countConfirmedVerificationsForSubmission(submissionId) >= 2
+        ? "community_confirmed"
+        : submission.submission.sourcePhotoUrl
+          ? "photo_verified"
+          : "venue_confirmed"
+    );
     const result = this.repository.reviewSubmission({
       submissionId,
       reviewerId: admin.id,
@@ -5616,7 +6108,7 @@ export class BusinessService {
       rejectionReason: input.rejectionReason,
       fraudFlagged: input.fraudFlagged || input.status === "fraud_flagged",
       pointsAwarded: input.status === "approved" ? points : 0,
-      confidence: input.confidence,
+      confidence: reviewConfidence,
       now: reviewedAt,
       monthKey: monthKeyFromIso(submission.submission.observedAt),
       premiumUntil: endOfMonthIso(reviewedAt),
@@ -7512,20 +8004,21 @@ export class BusinessService {
     return this.createBarClaimRequest(account, input);
   }
 
-  createVenueManagerSubmission(account: BusinessAccount, venueId: string, input: CreateSubmissionInput) {
+  async createVenueManagerSubmission(account: BusinessAccount, venueId: string, input: CreateSubmissionInput) {
     const assignment = this.requireAssignedVenue(account, venueId);
 
     if (input.venueId !== venueId) {
       throw new AppError("Venue update must match the assigned venue.", 403);
     }
 
+    const sourcePhotoRefs = await this.resolveSubmissionSourcePhotos(account, input);
     const result = this.createSubmission(account, {
       ...input,
       notes: [
         input.notes,
         "Venue manager submitted update. Keep pending for admin/data-quality review unless manually approved.",
       ].filter(Boolean).join(" "),
-    }, { allowVenueManager: true, rewardEligible: false });
+    }, { allowVenueManager: true, rewardEligible: false, sourcePhotoRefs });
 
     this.trackEvent(account, {
       anonymousSessionId: null,
@@ -7553,24 +8046,6 @@ export class BusinessService {
     const acceptsPintPathCodes = this.isAdmin(account)
       ? input.acceptsPintPathCodes ?? existing?.acceptsPintPathCodes ?? false
       : existing?.acceptsPintPathCodes ?? false;
-    if (!this.isAdmin(account)) {
-      return this.createPendingBarChange({
-        account,
-        venueId,
-        changeType: "profile",
-        action: "upsert",
-        targetId: venueId,
-        payload: {
-          ...input,
-          membershipTier,
-          acceptsPintPathCodes,
-          venueTags: cleanStringList(input.venueTags),
-          area: input.area ?? input.suburb ?? assignment?.suburb ?? existing?.area ?? existing?.suburb ?? null,
-        },
-        suburb: input.suburb ?? assignment?.suburb ?? existing?.suburb ?? null,
-      });
-    }
-
     const flags = tierFlags(membershipTier);
     const now = nowIso();
     const profile = this.repository.upsertBarProfile({
@@ -7587,7 +8062,7 @@ export class BusinessService {
       venueTags: cleanStringList(input.venueTags),
       membershipTier,
       acceptsPintPathCodes,
-      active: input.active,
+      active: this.isAdmin(account) ? input.active : existing?.active ?? true,
       tierManualOverride: this.isAdmin(account) && input.membershipTier !== undefined ? true : existing?.tierManualOverride ?? false,
       now,
       ...flags,
@@ -7686,6 +8161,16 @@ export class BusinessService {
       throw new AppError("Beer row not found for this venue.", 404);
     }
 
+    if (!this.isAdmin(account)) {
+      this.auditSecurity({
+        actor: account,
+        action: "venue_manager_delete",
+        targetType: "venue_beer",
+        targetId: beerId,
+        metadata: { venueId, changeType: "beer" },
+      });
+    }
+
     this.trackEvent(account, {
       anonymousSessionId: null,
       eventType: "venue_update_submitted",
@@ -7703,19 +8188,6 @@ export class BusinessService {
     const existing = input.id ? this.repository.getBarHappyHourById(input.id) : null;
     if (existing && existing.barId !== venueId) {
       throw new AppError("Happy-hour row belongs to another venue.", 403);
-    }
-
-    if (!this.isAdmin(account)) {
-      const targetId = input.id ?? crypto.randomUUID();
-      return this.createPendingBarChange({
-        account,
-        venueId,
-        changeType: "happy_hour",
-        action: "upsert",
-        targetId,
-        payload: { ...input, id: targetId },
-        suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
-      });
     }
 
     const profile = this.ensureBarProfile({
@@ -8267,7 +8739,7 @@ export class BusinessService {
     successUrl.searchParams.set("session_id", "{CHECKOUT_SESSION_ID}");
     const successUrlWithSession = successUrl.toString().replace("%7BCHECKOUT_SESSION_ID%7D", "{CHECKOUT_SESSION_ID}");
     const cancelUrl = new URL("/pricing.html?checkout=cancelled", this.config.PUBLIC_BASE_URL).toString();
-    const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+    const response = await fetchWithTimeout("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
@@ -8313,7 +8785,7 @@ export class BusinessService {
       throw new AppError("Stripe checkout confirmation is not configured.", 503);
     }
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(input.sessionId)}`,
       {
         method: "GET",
@@ -8437,7 +8909,7 @@ export class BusinessService {
 
     const successUrl = new URL(`/venue-portal?checkout=success&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
     const cancelUrl = new URL(`/venue-portal?checkout=cancelled&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
-    const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+    const response = await fetchWithTimeout("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
@@ -8529,17 +9001,38 @@ export class BusinessService {
       });
       throw error;
     }
-    const inserted = this.repository.rememberStripeEvent({
+    if (!event.id || !event.type) {
+      throw new AppError("Invalid Stripe webhook event.", 400);
+    }
+    const receivedAt = nowIso();
+    const eventCreatedAt = Number.isSafeInteger(event.created)
+      ? new Date(Number(event.created) * 1000).toISOString()
+      : null;
+    const shouldProcess = this.repository.beginStripeEvent({
       id: event.id,
       eventType: event.type,
-      processedAt: nowIso(),
+      eventCreatedAt,
+      payload: event as unknown as Record<string, unknown>,
+      receivedAt,
     });
 
-    if (!inserted) {
+    if (!shouldProcess) {
       return { received: true };
     }
 
-    this.applyStripeEvent(event);
+    try {
+      this.repository.runInTransaction(() => {
+        this.applyStripeEvent(event, eventCreatedAt);
+        this.repository.markStripeEventApplied({ id: event.id, appliedAt: nowIso() });
+      });
+    } catch (error) {
+      this.repository.markStripeEventFailed({
+        id: event.id,
+        failedAt: nowIso(),
+        error: error instanceof Error ? redactSecrets(error.message) : "Stripe event application failed",
+      });
+      throw error;
+    }
     return { received: true };
   }
 
@@ -8589,7 +9082,7 @@ export class BusinessService {
     return JSON.parse(rawBody.toString("utf8")) as StripeEvent;
   }
 
-  private applyStripeEvent(event: StripeEvent): void {
+  private applyStripeEvent(event: StripeEvent, eventCreatedAt: string | null): void {
     const object = event.data?.object;
     if (!object) {
       return;
@@ -8609,6 +9102,10 @@ export class BusinessService {
       const customer = typeof object.customer === "string" ? object.customer : null;
 
       if ((billingContext === "venue" || billingContext === "bar") && barId && barMembershipTier) {
+        const currentProfile = this.repository.getBarProfile(barId);
+        if (eventCreatedAt && currentProfile?.stripeEventCreatedAt && currentProfile.stripeEventCreatedAt > eventCreatedAt) {
+          return;
+        }
         const flags = tierFlags(barMembershipTier);
         this.repository.updateBarSubscription({
           barId,
@@ -8617,6 +9114,7 @@ export class BusinessService {
           stripeSubscriptionId: subscriptionId,
           subscriptionStatus: "active",
           now: nowIso(),
+          stripeEventCreatedAt: eventCreatedAt,
           ...flags,
         });
         this.trackEvent(null, {
@@ -8637,12 +9135,17 @@ export class BusinessService {
       }
 
       if (userId && subscriptionStatus) {
+        const currentAccount = this.repository.getAccountById(userId);
+        if (eventCreatedAt && currentAccount?.stripeEventCreatedAt && currentAccount.stripeEventCreatedAt > eventCreatedAt) {
+          return;
+        }
         const updated = this.repository.updateSubscription({
           userId,
           subscriptionStatus,
           stripeCustomerId: customer,
           premiumUntil: null,
           now: nowIso(),
+          stripeEventCreatedAt: eventCreatedAt,
         });
         this.trackEvent(updated, {
           anonymousSessionId: null,
@@ -8680,6 +9183,9 @@ export class BusinessService {
         ["canceled", "cancelled", "past_due", "unpaid", "incomplete_expired"].includes(stripeStatus ?? "");
       const barProfile = subscriptionId ? this.repository.getBarProfileByStripeSubscriptionId(subscriptionId) : null;
       if (barProfile) {
+        if (eventCreatedAt && barProfile.stripeEventCreatedAt && barProfile.stripeEventCreatedAt > eventCreatedAt) {
+          return;
+        }
         const nextTier = shouldDowngrade ? "basic" : barProfile.membershipTier;
         const flags = tierFlags(nextTier);
         this.repository.updateBarSubscription({
@@ -8689,6 +9195,7 @@ export class BusinessService {
           stripeSubscriptionId: subscriptionId,
           subscriptionStatus: shouldDowngrade ? "cancelled_or_past_due" : stripeStatus ?? "active",
           now: nowIso(),
+          stripeEventCreatedAt: eventCreatedAt,
           ...flags,
         });
         this.trackEvent(null, {
@@ -8711,11 +9218,15 @@ export class BusinessService {
       const account = customer ? this.repository.getAccountByStripeCustomerId(customer) : null;
 
       if (account) {
+        if (eventCreatedAt && account.stripeEventCreatedAt && account.stripeEventCreatedAt > eventCreatedAt) {
+          return;
+        }
         const updated = this.repository.updateSubscription({
           userId: account.id,
           subscriptionStatus: shouldDowngrade ? "free" : account.subscriptionStatus,
           premiumUntil: null,
           now: nowIso(),
+          stripeEventCreatedAt: eventCreatedAt,
         });
         this.trackEvent(updated, {
           anonymousSessionId: null,

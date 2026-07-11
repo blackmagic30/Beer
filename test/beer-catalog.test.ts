@@ -119,6 +119,28 @@ describe("Pint Path beer catalogue", () => {
         created: false,
         matchedExisting: true,
       }));
+      expect(repository.resolveBeerName({
+        name: "Guinness Stout",
+        source: "manual_test",
+        now: "2026-06-30T00:00:00.000Z",
+        createIfMissing: false,
+      })).toEqual(expect.objectContaining({
+        key: "guinness_stout",
+        status: "pending_review",
+        matchedExisting: false,
+      }));
+      expect(repository.resolveBeerName({
+        name: "Guinness Stout",
+        source: "photo_ocr_test",
+        now: "2026-06-30T00:00:00.000Z",
+        createIfMissing: false,
+        matchMode: "ocr",
+      })).toEqual(expect.objectContaining({
+        key: "guinness",
+        name: "Guinness",
+        status: "active",
+        matchedExisting: true,
+      }));
     } finally {
       database.close();
     }

@@ -250,12 +250,16 @@ describe("admin Google Places venue lookup", () => {
       });
 
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
-        model: "gpt-4.1",
-        temperature: 0,
+        model: "gpt-5.5",
+        store: false,
+        reasoning: { effort: "low" },
+        text: expect.objectContaining({
+          format: expect.objectContaining({ type: "json_schema", strict: true }),
+        }),
         input: expect.arrayContaining([
           expect.objectContaining({
             content: expect.arrayContaining([
-              expect.objectContaining({ type: "input_image", detail: "high" }),
+              expect.objectContaining({ type: "input_image", detail: "original" }),
             ]),
           }),
         ]),
@@ -273,5 +277,97 @@ describe("admin Google Places venue lookup", () => {
     } finally {
       database.close();
     }
+  });
+
+  it("rejects food rows and does not turn package volume into a beer price", async () => {
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      "test-openai-key",
+      undefined,
+    );
+    const create = vi.fn(async () => ({
+      output_text: JSON.stringify({
+        venue_name_guess: "Test Venue",
+        captured_notes: null,
+        overall_confidence: 0.9,
+        beers: [
+          {
+            name: "Guinness Stout 440ml 4.2%",
+            product_category: "beer",
+            brewery: "Guinness",
+            abv: 4.2,
+            price_numeric: 40,
+            price_text: "$40",
+            availability_status: "package_only",
+            available_on_tap: false,
+            available_package_only: true,
+            unavailable_reason: "cans_or_bottles",
+            notes: null,
+            source_text: "Guinness Stout 440ml 4.2%",
+            confidence: 0.92,
+          },
+          {
+            name: "Premium Northern Victorian T bone",
+            product_category: "food",
+            brewery: null,
+            abv: null,
+            price_numeric: 30,
+            price_text: "$30",
+            availability_status: "unknown",
+            available_on_tap: null,
+            available_package_only: false,
+            unavailable_reason: null,
+            notes: null,
+            source_text: "Premium Northern Victorian T bone 30 day aged, MSA 6 grade $30",
+            confidence: 0.95,
+          },
+          {
+            name: "Carlton Draught",
+            product_category: "beer",
+            brewery: "Carlton & United Breweries",
+            abv: 4.6,
+            price_numeric: 29,
+            price_text: "$29",
+            availability_status: "on_tap",
+            available_on_tap: true,
+            available_package_only: false,
+            unavailable_reason: null,
+            notes: null,
+            source_text: "Pots / Pints / Jugs Carlton Draught 7.5 / 14.5 / 29",
+            confidence: 0.9,
+          },
+        ],
+        rejected_candidates: [],
+      }),
+    }));
+    (service as unknown as {
+      openai: { responses: { create: typeof create } };
+    }).openai = {
+      responses: { create },
+    };
+
+    const result = await service.ocrMenuPhoto({
+      venueNameHint: "Test Venue",
+      imageDataUrl: JPEG_DATA_URL,
+    });
+
+    expect(result.beers).toHaveLength(2);
+    expect(result.beers).toContainEqual(expect.objectContaining({
+      name: "Guinness Stout",
+      brewery: "Guinness",
+      abv: 4.2,
+      priceNumeric: null,
+      availabilityStatus: "package_only",
+    }));
+    expect(result.beers).toContainEqual(expect.objectContaining({
+      name: "Carlton Draught",
+      priceNumeric: 14.5,
+      priceText: "$14.50 pint",
+      availabilityStatus: "on_tap",
+    }));
+    expect(result.rejectedCandidateCount).toBe(1);
   });
 });

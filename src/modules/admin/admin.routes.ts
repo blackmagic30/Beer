@@ -2,6 +2,7 @@ import { Router, type Request } from "express";
 
 import type { AdminIngestionStatus } from "../../db/models.js";
 import { success } from "../../lib/http.js";
+import { getSessionAuthorization } from "../../lib/session-cookie.js";
 import { parseWithSchema } from "../../lib/validation.js";
 import { createRateLimiter } from "../../middleware/rate-limit.js";
 
@@ -17,10 +18,6 @@ import {
 import type { AdminService } from "./admin.service.js";
 import type { BusinessService } from "../business/business.service.js";
 
-function getAuthorization(req: Request): string | undefined {
-  return req.header("authorization") ?? undefined;
-}
-
 function getRequestContext(req: Request) {
   return {
     ip: req.ip ?? req.socket.remoteAddress ?? null,
@@ -29,7 +26,7 @@ function getRequestContext(req: Request) {
 }
 
 function requireRoleAdmin(req: Request, businessService: BusinessService): void {
-  businessService.requireAdmin(getAuthorization(req), getRequestContext(req));
+  businessService.requireAdmin(getSessionAuthorization(req), getRequestContext(req));
 }
 
 function rateLimitIdentity(req: Request): string {

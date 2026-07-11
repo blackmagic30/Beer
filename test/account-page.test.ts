@@ -243,8 +243,8 @@ describe("account page shell", () => {
   it("does not show logged-out confirmation when no session existed", () => {
     const html = accountHtml();
 
-    expect(html).toContain("const hadApiToken = Boolean(MelbBeerBusiness.getAuthToken())");
-    expect(html).toContain("hadApiToken || hadSupabaseSession ? \"You have been logged out.\" : \"Enter your details to continue.\"");
+    expect(html).toContain("const hadApiSession = MelbBeerBusiness.hasAuthenticatedSessionHint()");
+    expect(html).toContain("hadApiSession || hadSupabaseSession ? \"You have been logged out.\" : \"Enter your details to continue.\"");
   });
 
   it("can resume premium checkout after account session refresh", () => {
@@ -416,31 +416,31 @@ describe("account page shell", () => {
     expect(css).toContain(".canIDrivePanel");
   });
 
-  it("adds a guarded Can I Drive beta calculator without giving driving clearance", () => {
+  it("provides a standard-drink log without estimating BAC or giving driving clearance", () => {
     const html = accountHtml();
     const css = businessCss();
     const service = businessServiceTs();
 
     expect(html).toContain('id="betaFeatureCanIDrive"');
     expect(html).toContain('data-beta-feature-panel="can-i-drive"');
-    expect(html).toContain("Can I Drive?");
-    expect(html).toContain("No calculator can tell you that.");
-    expect(html).toContain("This is not legal advice, medical advice, or a real breath test.");
-    expect(html).toContain("Pint Path does not approve drinking and driving.");
-    expect(html).toContain("Pint Path is not responsible for decisions made from this fun calculator.");
+    expect(html).toContain("Standard drink log");
+    expect(html).toContain("Unknown drinks stay unknown.");
+    expect(html).toContain("This is not a BAC estimate, breath test, driving clearance, legal advice, or medical advice.");
     expect(html).toContain("Do not drive after drinking.");
-    expect(html).toContain('name="heightCm"');
-    expect(html).toContain('name="weightKg"');
+    expect(html).not.toContain('name="heightCm"');
+    expect(html).not.toContain('name="weightKg"');
     expect(html).toContain('name="extraStandardDrinks"');
     expect(html).toContain("CAN_I_DRIVE_PROFILE_KEY");
     expect(html).toContain("AU_STANDARD_DRINK_GRAMS");
-    expect(html).toContain("BAC_ELIMINATION_PER_HOUR");
+    expect(html).not.toContain("BAC_ELIMINATION_PER_HOUR");
+    expect(html).toContain("function recordStandardDrinksPerUnit");
     expect(html).toContain("function estimateStandardDrinksForRecord");
-    expect(html).toContain("function calculateEstimatedBac");
+    expect(html).not.toContain("function calculateEstimatedBac");
     expect(html).toContain("function calculateCanIDriveEstimate");
     expect(html).toContain("renderCanIDrivePanel(result)");
     expect(html).toContain("renderCanIDriveEstimate(estimate)");
-    expect(html).toContain("No calculator can say yes.");
+    expect(html).toContain("It does not calculate BAC.");
+    expect(html).toContain("calculated only from stored serving volume and ABV");
     expect(html).not.toContain("Safe to drive");
 
     expect(css).toContain(".canIDriveWarningStack");
@@ -450,7 +450,7 @@ describe("account page shell", () => {
     expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.canIDriveMetricGrid\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
     expect(service).toContain("listPintPointDrinkRecordsForUser(account.id, 25)");
     expect(service).toContain("canIDrive");
-    expect(service).toContain("This never provides a driving clearance.");
+    expect(service).toContain("Pint Path does not estimate BAC or provide driving clearance.");
   });
 
   it("opens account settings sections on demand instead of rendering every panel open", () => {
@@ -558,6 +558,7 @@ describe("account page shell", () => {
     expect(script).toContain("function isVenueManagerContext");
     expect(script).toContain("function isAdminContext");
     expect(script).toContain("function canUseVenuePortalContext");
+    expect(script).toContain("function installNavigationChrome");
     expect(script).toContain("subscriptionStatus: account.subscriptionStatus || null");
     expect(script).not.toContain("email: account.email || null");
     expect(script).not.toContain("email: session?.user?.email");
@@ -581,6 +582,8 @@ describe("account page shell", () => {
     expect(script).toContain('{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }');
     expect(script).toContain('{ key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: venueManagerNav ? "Bar FAQ" : "FAQ" }');
     expect(script).toContain('{ key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: venueManagerNav ? "Support" : "Contact us" }');
+    expect(script).toContain('aria-controls="primaryNavLinks" data-mobile-nav-toggle');
+    expect(script).toContain('id="primaryNavLinks" class="navLinks" data-mobile-nav-panel');
     expect(script).not.toContain("const authenticatedLinks");
     expect(html).toContain('id="venueDashboardLink" href="/venue-portal.html" hidden>Dashboard');
     expect(html).toContain('href="/submit.html">Submit');
@@ -957,7 +960,7 @@ describe("account page shell", () => {
     expect(html).toContain('id="downloadAccountDataButton"');
     expect(html).toContain('id="requestAccountDeletionButton"');
     expect(html).toContain("Deletion is a review request, not an instant switch.");
-    expect(html).toContain("The quick account export is JSON");
+    expect(html).toContain("The JSON export includes exact stored upload coordinates");
     expect(html).not.toContain('id="requestForm"');
     expect(html).not.toContain('class="panel supportSubmitCard"');
     expect(html).not.toContain("Add venue data");

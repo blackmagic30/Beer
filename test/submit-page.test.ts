@@ -259,22 +259,20 @@ describe("submit page auth gate", () => {
 
     expect(html).toContain("SOURCE_PHOTO_MAX_EDGE");
     expect(html).toContain("SOURCE_PHOTO_MAX_FILES");
-    expect(html).toContain("SOURCE_PHOTO_COMPOSITE_MAX_WIDTH");
     expect(html).toContain("SOURCE_PHOTO_OUTPUT_TYPE");
     expect(html).toContain("SOURCE_PHOTO_OUTPUT_QUALITY");
     expect(html).toContain("function loadImageFromFile");
-    expect(html).toContain("function loadImageFromDataUrl");
     expect(html).toContain("function canvasToBlob");
     expect(html).toContain("function blobToDataUrl");
     expect(html).toContain("async function readPhotoDataUrl");
-    expect(html).toContain("async function combinePhotoDataUrls");
-    expect(html).toContain("async function readSourcePhotoSelectionDataUrl");
+    expect(html).toContain("async function readSourcePhotoSelectionDataUrls");
     expect(html).toContain('document.createElement("canvas")');
     expect(html).toContain("context.drawImage(image, 0, 0, width, height)");
-    expect(html).toContain("context.drawImage(item.image, offsetX, offsetY, item.width, item.height)");
     expect(html).toContain("canvasToBlob(canvas, SOURCE_PHOTO_OUTPUT_TYPE, SOURCE_PHOTO_OUTPUT_QUALITY)");
     expect(html).toContain("await readPhotoDataUrl(file)");
-    expect(html).toContain("await readSourcePhotoSelectionDataUrl(selectedSourcePhotoFiles)");
+    expect(html).toContain("await readSourcePhotoSelectionDataUrls(selectedSourcePhotoFiles)");
+    expect(html).toContain("sourcePhotoDataUrls,");
+    expect(html).not.toContain("combinePhotoDataUrls");
     expect(html).toContain("Attach a real photo or screenshot image");
     expect(html).toContain("clientSubmissionId: createQueuedSubmissionId()");
   });

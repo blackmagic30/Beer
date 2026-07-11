@@ -13,10 +13,8 @@ function getAuthToken() {
 }
 
 function setAuthToken(token) {
-  if (token) {
-    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
-  } else {
-    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  window.localStorage.removeItem(AUTH_TOKEN_KEY);
+  if (!token) {
     setAccountContext(null);
   }
 }
@@ -83,7 +81,7 @@ function hasCachedSupabaseSession() {
 }
 
 function hasAuthenticatedSessionHint() {
-  return Boolean(getAuthToken() || hasCachedSupabaseSession());
+  return Boolean(getAccountContext() || getAuthToken() || hasCachedSupabaseSession());
 }
 
 function getAnonymousSessionId() {
@@ -316,6 +314,7 @@ function isFieldTestMode() {
 }
 
 async function apiFetch(path, options = {}) {
+  await migrateLegacySessionCookie(path);
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
@@ -329,6 +328,7 @@ async function apiFetch(path, options = {}) {
   const response = await fetch(path, {
     ...options,
     headers,
+    credentials: "same-origin",
   });
   const payload = await response.json().catch(() => null);
 
@@ -336,7 +336,29 @@ async function apiFetch(path, options = {}) {
     throw new Error(payload?.error?.message || payload?.error || `Request failed (${response.status})`);
   }
 
-  return payload.data;
+  const data = payload.data;
+  if (String(path).split("?", 1)[0] === "/api/business/account" && data?.account) {
+    setAccountContext(data.account);
+  }
+  return data;
+}
+
+let legacySessionMigrationPromise = null;
+
+async function migrateLegacySessionCookie(path = "") {
+  const token = getAuthToken();
+  if (!token || path === "/api/business/auth/session-cookie") return;
+  if (!legacySessionMigrationPromise) {
+    legacySessionMigrationPromise = fetch("/api/business/auth/session-cookie", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: "{}",
+    }).then((response) => {
+      if (response.ok) window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    }).catch(() => null);
+  }
+  await legacySessionMigrationPromise;
 }
 
 async function syncSupabaseSession() {
@@ -571,18 +593,86 @@ function renderNav(active = "") {
     .join("");
   return `
     <nav class="topNav" aria-label="Primary">
-      <a class="brand" href="/">
+      <a class="brand" href="/" aria-label="Pint Path home">
         <img class="brandLogo" src="/assets/pint-path-icon-192.png" alt="" width="36" height="36" aria-hidden="true" />
         <span class="brandText">
           <strong>Pint Path</strong>
         </span>
       </a>
       ${betaPill}
-      <div class="navLinks">
+      <button class="mobileNavToggle" type="button" aria-expanded="false" aria-controls="primaryNavLinks" data-mobile-nav-toggle>
+        <span data-mobile-nav-label>Menu</span>
+        <span class="mobileNavToggle__icon mobileNavToggle__icon--menu" aria-hidden="true">&#9776;</span>
+        <span class="mobileNavToggle__icon mobileNavToggle__icon--close" aria-hidden="true">&times;</span>
+      </button>
+      <div id="primaryNavLinks" class="navLinks" data-mobile-nav-panel>
         ${navLinks}
       </div>
     </nav>
   `;
+}
+
+function setMobileNavOpen(nav, open, restoreFocus = false) {
+  const toggle = nav?.querySelector("[data-mobile-nav-toggle]");
+  if (!toggle) {
+    return;
+  }
+
+  nav.classList.toggle("is-mobile-nav-open", open);
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  const label = toggle.querySelector("[data-mobile-nav-label]");
+  if (label) {
+    label.textContent = open ? "Close" : "Menu";
+  }
+  if (restoreFocus) {
+    toggle.focus();
+  }
+}
+
+function installNavigationChrome() {
+  if (document.documentElement.dataset.navigationChromeReady === "true") {
+    return;
+  }
+  document.documentElement.dataset.navigationChromeReady = "true";
+
+  document.addEventListener("click", (event) => {
+    const toggle = event.target.closest?.("[data-mobile-nav-toggle]");
+    if (toggle) {
+      const nav = toggle.closest(".topNav");
+      const shouldOpen = toggle.getAttribute("aria-expanded") !== "true";
+      document.querySelectorAll(".topNav.is-mobile-nav-open").forEach((openNav) => {
+        if (openNav !== nav) {
+          setMobileNavOpen(openNav, false);
+        }
+      });
+      setMobileNavOpen(nav, shouldOpen);
+      return;
+    }
+
+    document.querySelectorAll(".topNav.is-mobile-nav-open").forEach((nav) => {
+      if (!nav.contains(event.target)) {
+        setMobileNavOpen(nav, false);
+      }
+    });
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+    document.querySelectorAll(".topNav.is-mobile-nav-open").forEach((nav) => {
+      setMobileNavOpen(nav, false, true);
+    });
+  });
+
+  const mobileNavQuery = window.matchMedia?.("(max-width: 760px)");
+  mobileNavQuery?.addEventListener?.("change", (event) => {
+    if (!event.matches) {
+      document.querySelectorAll(".topNav.is-mobile-nav-open").forEach((nav) => {
+        setMobileNavOpen(nav, false);
+      });
+    }
+  });
 }
 
 function installFieldTestChrome() {
@@ -746,6 +836,7 @@ window.MelbBeerBusiness = {
   requestPasswordReset,
   updatePassword,
   renderNav,
+  installNavigationChrome,
   installFieldTestChrome,
   installAccessibilityChrome,
   installCookieConsent,
@@ -756,6 +847,7 @@ window.MelbBeerBusiness = {
 
 window.addEventListener("DOMContentLoaded", () => {
   installAccessibilityChrome();
+  installNavigationChrome();
   installFieldTestChrome();
   installCookieConsent();
 });

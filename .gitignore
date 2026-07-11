@@ -18,6 +18,7 @@ build
 viewer/config.js
 exports/
 reports/
+backups/
 uploads/
 transcripts/
 call-review/
