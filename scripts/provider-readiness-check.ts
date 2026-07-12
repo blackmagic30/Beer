@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
@@ -90,6 +91,62 @@ function checkSupabaseProviderCallbackUrl(): ProviderCheck {
   };
 }
 
+async function checkPrivateStorageBucket(input: {
+  id: string;
+  label: string;
+  bucketName: string;
+}): Promise<ProviderCheck> {
+  if (!isProduction()) {
+    return { id: input.id, label: input.label, status: "pass", action: null };
+  }
+
+  const supabaseUrl = getValue("SUPABASE_URL");
+  const serviceRoleKey = getValue("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceRoleKey) {
+    return {
+      id: input.id,
+      label: input.label,
+      status: "fail",
+      action: `Configure Supabase server credentials and create the private ${input.bucketName} bucket.`,
+    };
+  }
+
+  try {
+    const client = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data, error } = await client.storage.getBucket(input.bucketName);
+    const privateBucket = !error && data && data.public === false;
+    return {
+      id: input.id,
+      label: input.label,
+      status: privateBucket ? "pass" : "fail",
+      action: privateBucket
+        ? null
+        : `Create ${input.bucketName} in Supabase Storage and keep public access disabled.`,
+    };
+  } catch {
+    return {
+      id: input.id,
+      label: input.label,
+      status: "fail",
+      action: `Confirm ${input.bucketName} exists, is private, and is reachable with the service-role key.`,
+    };
+  }
+}
+
+const sourceEvidenceBucketCheck = await checkPrivateStorageBucket({
+  id: "SOURCE_EVIDENCE_BUCKET",
+  label: "Private source-evidence bucket",
+  bucketName: "beermap-source-evidence",
+});
+const offsiteBackupBucketName = getValue("OFFSITE_BACKUP_BUCKET") || "pintpath-backups";
+const offsiteBackupBucketCheck = await checkPrivateStorageBucket({
+  id: "OFFSITE_BACKUP_BUCKET",
+  label: "Private off-site backup bucket",
+  bucketName: offsiteBackupBucketName,
+});
+
 const checks: ProviderCheck[] = [
   checkRequired("GOOGLE_MAPS_API_KEY", "Google Maps browser API key", "Create/restrict a browser key and set GOOGLE_MAPS_API_KEY."),
   checkRequired("GOOGLE_MAPS_MAP_ID", "Google Maps JavaScript vector map ID", "Create a JavaScript Map ID in Google Maps Platform and set GOOGLE_MAPS_MAP_ID."),
@@ -97,7 +154,9 @@ const checks: ProviderCheck[] = [
   checkRequired("OPENAI_API_KEY", "OpenAI menu OCR key", "Set OPENAI_API_KEY on the Railway app service and redeploy so menu photo OCR can initialise."),
   checkRequired("SUPABASE_URL", "Supabase project URL", "Set SUPABASE_URL for OAuth and provider-backed auth."),
   checkRequired("SUPABASE_ANON_KEY", "Supabase publishable/anon key", "Set the browser-safe Supabase publishable/anon key."),
+  checkRequired("SUPABASE_SERVICE_ROLE_KEY", "Supabase server service-role key", "Set SUPABASE_SERVICE_ROLE_KEY for private capture history and off-site backups."),
   checkSupabaseProviderCallbackUrl(),
+  sourceEvidenceBucketCheck,
   checkRequired("REDIS_URL", "Redis-backed rate limiter", "Provision Railway Redis/Upstash and set REDIS_URL before broad production."),
   checkRequired("SOURCE_EVIDENCE_SIGNING_SECRET", "Source evidence signing secret", "Generate a unique 32+ character secret for signed evidence URLs."),
   checkRequired("STRIPE_SECRET_KEY", "Stripe secret key", "Use Stripe test mode first; set STRIPE_SECRET_KEY before paid checkout."),
@@ -110,6 +169,23 @@ const checks: ProviderCheck[] = [
   checkNoTestKeyInProduction("STRIPE_SECRET_KEY", "Stripe secret key is live-mode in production", "sk_test_"),
   checkNoTestKeyInProduction("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", "Stripe publishable key is live-mode in production", "pk_test_"),
   checkRequired("ADMIN_EMAILS", "Production admin allowlist", "Set ADMIN_EMAILS to the verified owner/admin email before enabling admin access."),
+  {
+    id: "REQUIRE_ADMIN_MFA_IN_PRODUCTION",
+    label: "Admin MFA enforced in production",
+    status: isProduction() && process.env.REQUIRE_ADMIN_MFA_IN_PRODUCTION !== "true" ? "fail" : "pass",
+    action: isProduction() && process.env.REQUIRE_ADMIN_MFA_IN_PRODUCTION !== "true"
+      ? "Enroll the admin TOTP factor, verify an AAL2 login, then set REQUIRE_ADMIN_MFA_IN_PRODUCTION=true."
+      : null,
+  },
+  {
+    id: "FIELD_TEST_MODE",
+    label: "Field-test mode disabled for full launch",
+    status: isProduction() && process.env.FIELD_TEST_MODE === "true" ? "warn" : "pass",
+    action: isProduction() && process.env.FIELD_TEST_MODE === "true"
+      ? "Set FIELD_TEST_MODE=false after the final pilot smoke test."
+      : null,
+  },
+  offsiteBackupBucketCheck,
   {
     id: "REPORT_TIMEZONE",
     label: "Monthly report timezone",
@@ -141,7 +217,7 @@ const checks: ProviderCheck[] = [
     label: "Inline demo image storage disabled for production",
     status: isProduction() && process.env.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION === "true" ? "fail" : "pass",
     action: isProduction() && process.env.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION === "true"
-      ? "Set ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false and use SOURCE_EVIDENCE_STORAGE_DIR for private field-upload evidence."
+      ? "Set ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false and use the private Supabase evidence bucket for field uploads."
       : null,
   },
 ];

@@ -69,6 +69,18 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       console.info("Source evidence retention maintenance completed", result);
     }
   });
+  if (env.NODE_ENV === "production" && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+    const { scheduleOffsiteBackups } = await import("./lib/offsite-backup.js");
+    scheduleOffsiteBackups({
+      databasePath: env.DATABASE_PATH,
+      evidencePath: env.SOURCE_EVIDENCE_STORAGE_DIR,
+      supabaseUrl: env.SUPABASE_URL,
+      serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+      bucketName: env.OFFSITE_BACKUP_BUCKET,
+      intervalHours: env.OFFSITE_BACKUP_INTERVAL_HOURS,
+      retentionDays: env.OFFSITE_BACKUP_RETENTION_DAYS,
+    });
+  }
 
   console.info("Backend services initialized.");
 

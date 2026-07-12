@@ -428,6 +428,34 @@
               <a class="button" href="/community.html">Community rules</a>
               <button id="logoutAllButton" class="button button--danger securityLogoutAll" type="button">Log out all sessions</button>
             </div>
+            <section id="mfaSetup" class="mfaSetup" aria-labelledby="mfaSetupTitle">
+              <div class="mfaSetupHeader">
+                <div>
+                  <h3 id="mfaSetupTitle">Authenticator app</h3>
+                  <p class="muted">Protect sensitive account and admin actions with a six-digit code.</p>
+                </div>
+                <span id="mfaStatusBadge" class="statusPill">Checking</span>
+              </div>
+              <p id="mfaStatus" class="helperCopy" role="status" aria-live="polite">Checking your authenticator status...</p>
+              <div id="mfaVerification" class="mfaVerification" hidden>
+                <img id="mfaQrImage" class="mfaQrImage" alt="QR code for adding Pint Path to an authenticator app" hidden />
+                <div class="mfaVerificationFields">
+                  <p id="mfaVerificationInstructions" class="helperCopy"></p>
+                  <div id="mfaSecretWrap" class="mfaSecretWrap" hidden>
+                    <span>Manual setup key</span>
+                    <code id="mfaSecret"></code>
+                  </div>
+                  <label class="field">Six-digit code
+                    <input id="mfaCode" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" aria-describedby="mfaStatus" />
+                  </label>
+                  <div class="actionRow mfaVerificationActions">
+                    <button id="verifyMfaButton" class="button button--primary" type="button">Verify code</button>
+                    <button id="cancelMfaButton" class="button" type="button">Cancel</button>
+                  </div>
+                </div>
+              </div>
+              <button id="startMfaButton" class="button" type="button" hidden>Set up authenticator</button>
+            </section>
           </article>
         </div>
       </section>
@@ -464,6 +492,10 @@
       oauthLoginOpening: false,
       checkoutResumeStarted: false,
       checkoutReconcileStarted: false,
+      mfaFactorId: null,
+      mfaEnrollmentFactorId: null,
+      mfaVerificationMode: null,
+      mfaPendingRequest: false,
       activeBetaFeature: "pub-golf",
       googleMapsLoader: null,
       pubGolfAutocompleteReady: false,
@@ -981,6 +1013,183 @@
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
       });
+      if (activeTarget === "security" && state.accountData) {
+        void loadMfaState();
+      }
+    }
+
+    function setMfaStatus(message, tone = "neutral") {
+      const status = $("mfaStatus");
+      const badge = $("mfaStatusBadge");
+      status.textContent = message;
+      status.classList.toggle("noticeText--error", tone === "error");
+      badge.textContent = tone === "secure" ? "Protected" : tone === "action" ? "Action needed" : tone === "error" ? "Unavailable" : "Not set up";
+      badge.dataset.tone = tone;
+    }
+
+    function hideMfaVerification() {
+      $("mfaVerification").hidden = true;
+      $("mfaQrImage").hidden = true;
+      $("mfaQrImage").removeAttribute("src");
+      $("mfaSecretWrap").hidden = true;
+      $("mfaSecret").textContent = "";
+      $("mfaCode").value = "";
+      state.mfaVerificationMode = null;
+    }
+
+    function showMfaCodeEntry({ mode, factorId, qrCode = null, secret = null }) {
+      state.mfaFactorId = factorId;
+      state.mfaVerificationMode = mode;
+      $("mfaVerification").hidden = false;
+      $("mfaVerificationInstructions").textContent = mode === "enroll"
+        ? "Scan the QR code with your authenticator app, then enter the six-digit code it creates."
+        : "Enter the current six-digit code from your authenticator app to unlock sensitive actions.";
+      const qrImage = $("mfaQrImage");
+      if (mode === "enroll" && typeof qrCode === "string" && qrCode.startsWith("data:image/")) {
+        qrImage.src = qrCode;
+        qrImage.hidden = false;
+      } else {
+        qrImage.hidden = true;
+        qrImage.removeAttribute("src");
+      }
+      $("mfaSecret").textContent = secret || "";
+      $("mfaSecretWrap").hidden = !secret;
+      $("startMfaButton").hidden = true;
+      $("cancelMfaButton").textContent = mode === "enroll" ? "Cancel setup" : "Not now";
+      $("mfaCode").focus();
+    }
+
+    async function loadMfaState(force = false) {
+      if (state.mfaPendingRequest && !force) return;
+      const client = MelbBeerBusiness.getSupabaseClient();
+      if (!client) {
+        $("mfaSetup").hidden = true;
+        return;
+      }
+
+      $("mfaSetup").hidden = false;
+      setMfaStatus("Checking your authenticator status...");
+      try {
+        const [{ data: sessionData, error: sessionError }, { data: factorData, error: factorError }, { data: assuranceData, error: assuranceError }] = await Promise.all([
+          client.auth.getSession(),
+          client.auth.mfa.listFactors(),
+          client.auth.mfa.getAuthenticatorAssuranceLevel(),
+        ]);
+        if (sessionError || factorError || assuranceError) {
+          throw sessionError || factorError || assuranceError;
+        }
+        if (!sessionData.session) {
+          hideMfaVerification();
+          $("startMfaButton").hidden = true;
+          setMfaStatus("Sign in again before changing authenticator settings.", "error");
+          return;
+        }
+
+        const factors = Array.isArray(factorData?.all) ? factorData.all : [];
+        const verifiedFactor = factors.find((factor) => factor.factor_type === "totp" && factor.status === "verified");
+        state.mfaFactorId = verifiedFactor?.id || null;
+        state.mfaEnrollmentFactorId = null;
+        hideMfaVerification();
+        if (!verifiedFactor) {
+          $("startMfaButton").hidden = false;
+          setMfaStatus("No authenticator is connected yet.", "action");
+          return;
+        }
+
+        $("startMfaButton").hidden = true;
+        if (assuranceData?.currentLevel === "aal2") {
+          setMfaStatus("Authenticator verified for this session.", "secure");
+          return;
+        }
+
+        setMfaStatus("Authenticator is enrolled. Verify a code for sensitive actions.", "action");
+        showMfaCodeEntry({ mode: "challenge", factorId: verifiedFactor.id });
+      } catch (error) {
+        hideMfaVerification();
+        $("startMfaButton").hidden = true;
+        setMfaStatus(error.message || "Could not read authenticator status.", "error");
+      }
+    }
+
+    async function beginMfaEnrollment() {
+      const client = MelbBeerBusiness.getSupabaseClient();
+      if (!client || state.mfaPendingRequest) return;
+      state.mfaPendingRequest = true;
+      setLoading($("startMfaButton"), true, "Starting...");
+      try {
+        const { data: existingData, error: listError } = await client.auth.mfa.listFactors();
+        if (listError) throw listError;
+        const staleFactors = (existingData?.all || []).filter((factor) => factor.factor_type === "totp" && factor.status !== "verified");
+        for (const factor of staleFactors) {
+          const { error: removeError } = await client.auth.mfa.unenroll({ factorId: factor.id });
+          if (removeError) throw removeError;
+        }
+
+        const { data, error } = await client.auth.mfa.enroll({
+          factorType: "totp",
+          friendlyName: "Pint Path authenticator",
+        });
+        if (error || !data?.id || !data?.totp) throw error || new Error("Authenticator setup did not return a factor.");
+        state.mfaEnrollmentFactorId = data.id;
+        setMfaStatus("Finish setup by verifying the first code.", "action");
+        showMfaCodeEntry({
+          mode: "enroll",
+          factorId: data.id,
+          qrCode: data.totp.qr_code,
+          secret: data.totp.secret,
+        });
+      } catch (error) {
+        setMfaStatus(error.message || "Could not start authenticator setup.", "error");
+      } finally {
+        state.mfaPendingRequest = false;
+        setLoading($("startMfaButton"), false);
+      }
+    }
+
+    async function verifyMfaCode() {
+      const client = MelbBeerBusiness.getSupabaseClient();
+      if (!client || !state.mfaFactorId || state.mfaPendingRequest) return;
+      const code = $("mfaCode").value.replace(/\D/g, "");
+      if (!/^\d{6}$/.test(code)) {
+        setMfaStatus("Enter the six-digit code from your authenticator app.", "error");
+        $("mfaCode").focus();
+        return;
+      }
+
+      state.mfaPendingRequest = true;
+      setLoading($("verifyMfaButton"), true, "Verifying...");
+      try {
+        const { error } = await client.auth.mfa.challengeAndVerify({ factorId: state.mfaFactorId, code });
+        if (error) throw error;
+        state.mfaEnrollmentFactorId = null;
+        await MelbBeerBusiness.syncSupabaseSession();
+        await loadMfaState(true);
+      } catch (error) {
+        setMfaStatus(error.message || "That code could not be verified.", "error");
+        $("mfaCode").select();
+      } finally {
+        state.mfaPendingRequest = false;
+        setLoading($("verifyMfaButton"), false);
+      }
+    }
+
+    async function cancelMfaVerification() {
+      const client = MelbBeerBusiness.getSupabaseClient();
+      if (!client || state.mfaPendingRequest) return;
+      state.mfaPendingRequest = true;
+      try {
+        if (state.mfaVerificationMode === "enroll" && state.mfaEnrollmentFactorId) {
+          const { error } = await client.auth.mfa.unenroll({ factorId: state.mfaEnrollmentFactorId });
+          if (error) throw error;
+        }
+        state.mfaEnrollmentFactorId = null;
+        hideMfaVerification();
+        await loadMfaState(true);
+      } catch (error) {
+        setMfaStatus(error.message || "Could not cancel authenticator setup.", "error");
+      } finally {
+        state.mfaPendingRequest = false;
+      }
     }
 
     function clearAuthFieldErrors(form) {
@@ -2063,6 +2272,7 @@
       renderAccountStatsPanel(result);
       renderDisplayNameForm(account);
       renderBetaTestingPanel(result);
+      void loadMfaState();
     }
 
     async function resumeCheckoutIfRequested(result) {
@@ -2570,6 +2780,18 @@
           showLoggedOut("All Pint Path sessions have been logged out.");
         } catch (error) {
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
+        }
+      });
+      $("startMfaButton").addEventListener("click", () => void beginMfaEnrollment());
+      $("verifyMfaButton").addEventListener("click", () => void verifyMfaCode());
+      $("cancelMfaButton").addEventListener("click", () => void cancelMfaVerification());
+      $("mfaCode").addEventListener("input", (event) => {
+        event.currentTarget.value = event.currentTarget.value.replace(/\D/g, "").slice(0, 6);
+      });
+      $("mfaCode").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void verifyMfaCode();
         }
       });
       await MelbBeerBusiness.syncSupabaseSession()

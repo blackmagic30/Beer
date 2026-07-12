@@ -11,6 +11,7 @@ const productionRequiredEnv = {
   GOOGLE_MAPS_MAP_ID: "test-vector-map-id",
   SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
   REDIS_URL: "redis://localhost:6379",
+  DEMO_BILLING_MODE: "",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
 };
 
@@ -113,10 +114,13 @@ describe("environment safety defaults", () => {
     expect(readinessScript).toContain('checkRequired("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"');
     expect(readinessScript).toContain('checkRequired("GOOGLE_PLACES_API_KEY"');
     expect(readinessScript).toContain('checkRequired("OPENAI_API_KEY"');
+    expect(readinessScript).toContain('checkRequired("SUPABASE_SERVICE_ROLE_KEY"');
     expect(readinessScript).toContain('checkRequired("POS_WEBHOOK_SIGNING_SECRET"');
     expect(readinessScript).toContain("SUPABASE_PROVIDER_CALLBACK_URL");
     expect(readinessScript).toContain("/auth/v1/callback");
     expect(readinessScript).toContain("ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION");
+    expect(readinessScript).toContain("REQUIRE_ADMIN_MFA_IN_PRODUCTION");
+    expect(readinessScript).toContain("OFFSITE_BACKUP_BUCKET");
     expect(readinessScript).toContain("LAUNCH_READINESS_STRICT");
     expect(readinessScript).toContain("blockingWarnings");
     expect(packageJson.scripts["readiness:launch"]).toContain("LAUNCH_READINESS_STRICT=true NODE_ENV=production");

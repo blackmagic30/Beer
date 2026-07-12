@@ -170,14 +170,30 @@ Before public launch:
 
 ## Backups And Restore Drills
 
-Back up the SQLite database with its private source-evidence directory as one unit. The backup command uses SQLite's online backup API, copies private evidence, and writes SHA-256 checksums:
+Production automatically backs up the SQLite database and legacy volume-backed source evidence to the private `pintpath-backups` Supabase Storage bucket. Each run uses SQLite's online backup API, writes SHA-256 manifests, uploads every object, downloads and verifies every object, and only then advances `latest.json`.
+
+Configure the schedule and retention with:
+
+```dotenv
+OFFSITE_BACKUP_BUCKET=pintpath-backups
+OFFSITE_BACKUP_INTERVAL_HOURS=24
+OFFSITE_BACKUP_RETENTION_DAYS=30
+```
+
+Run an immediate off-volume backup with:
+
+```bash
+npm run data:backup:offsite
+```
+
+For a local or operator-managed backup, use:
 
 ```bash
 npm run data:backup -- --output=/secure/offsite/pint-path-$(date +%F)
 npm run data:backup:verify -- --backup=/secure/offsite/pint-path-$(date +%F)
 ```
 
-Store the resulting directory outside the Railway volume with encryption and restricted access. Schedule daily backups, retain at least 30 days, and run the verification command after every backup. Once per quarter, restore the verified directory into an isolated staging service, set `DATABASE_PATH` and `SOURCE_EVIDENCE_STORAGE_DIR` to the restored paths, and confirm `/ready`, login, map prices, and review evidence before recording the drill result.
+Keep both backup buckets private. Once per quarter, restore the latest verified directory into an isolated staging service, set `DATABASE_PATH` and `SOURCE_EVIDENCE_STORAGE_DIR` to the restored paths, and confirm `/ready`, login, map prices, and review evidence before recording the drill result.
 
 ## No-Go Conditions
 

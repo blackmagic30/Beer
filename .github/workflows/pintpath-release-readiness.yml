@@ -14,7 +14,6 @@ jobs:
       NODE_ENV: test
       PUBLIC_BASE_URL: http://localhost:3000
       DATABASE_PATH: ./data/ci-release-readiness.sqlite
-      DEMO_BILLING_MODE: "true"
       ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "true"
 
     steps:

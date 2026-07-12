@@ -8,6 +8,18 @@ import { env } from "../config/env.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 
+const CURRENT_DATABASE_SCHEMA_VERSION = 1;
+const MIGRATION_BACKUP_RETENTION = 3;
+
+function splitSchemaIndexes(schema: string): { baseSchema: string; indexSchema: string } {
+  const indexPattern = /CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\b[\s\S]*?;\s*/gi;
+  const indexes = schema.match(indexPattern) ?? [];
+  return {
+    baseSchema: schema.replace(indexPattern, ""),
+    indexSchema: indexes.join("\n"),
+  };
+}
+
 function resolveSchemaPath(): string | URL {
   const bundledSchemaPath = new URL("./schema.sql", import.meta.url);
 
@@ -650,8 +662,11 @@ function redactCompletedAdminIngestionImages(database: BetterSqlite3.Database): 
 
 export function initializeDatabaseSchema(database: BetterSqlite3.Database): void {
   const schema = fs.readFileSync(resolveSchemaPath(), "utf8");
+  const { baseSchema, indexSchema } = splitSchemaIndexes(schema);
 
-  database.exec(schema);
+  // Existing databases can be missing columns referenced by newer indexes.
+  // Create tables first, upgrade columns second, then build every index.
+  database.exec(baseSchema);
   migrateLegacyVenuePartnerTables(database);
   ensureColumns(database, "venue_profiles", venueProfilesColumns);
   ensureColumns(database, "venue_analytics_events", venueAnalyticsEventsColumns);
@@ -672,6 +687,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
   redactCompletedAdminIngestionImages(database);
   ensureColumns(database, "venue_beers", venueBeersColumns);
+  database.exec(indexSchema);
   syncStaticBeerCatalog(database);
   deletePendingNonBeerCatalogItems(database);
   backfillBeerNames(database);
@@ -679,6 +695,51 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   backfillPublicAccountIds(database);
   backfillDisplayNameKeys(database);
   ensureIndexes(database);
+  database.pragma(`user_version = ${CURRENT_DATABASE_SCHEMA_VERSION}`);
+}
+
+function currentDatabaseSchemaVersion(database: BetterSqlite3.Database): number {
+  return Number(database.pragma("user_version", { simple: true }) ?? 0);
+}
+
+function hasApplicationTables(database: BetterSqlite3.Database): boolean {
+  return Boolean(
+    database
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1")
+      .get(),
+  );
+}
+
+function createPreMigrationBackup(database: BetterSqlite3.Database, databasePath: string, fromVersion: number): string | null {
+  if (databasePath === ":memory:" || !hasApplicationTables(database)) {
+    return null;
+  }
+
+  const backupDirectory = path.join(path.dirname(databasePath), "migration-backups");
+  fs.mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = path.join(
+    backupDirectory,
+    `schema-${fromVersion}-to-${CURRENT_DATABASE_SCHEMA_VERSION}-${timestamp}.sqlite`,
+  );
+
+  database.prepare("VACUUM INTO ?").run(backupPath);
+  fs.chmodSync(backupPath, 0o600);
+
+  const backups = fs
+    .readdirSync(backupDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^schema-\d+-to-\d+-.*\.sqlite$/.test(entry.name))
+    .map((entry) => ({
+      path: path.join(backupDirectory, entry.name),
+      modifiedAt: fs.statSync(path.join(backupDirectory, entry.name)).mtimeMs,
+    }))
+    .sort((first, second) => second.modifiedAt - first.modifiedAt);
+
+  for (const staleBackup of backups.slice(MIGRATION_BACKUP_RETENTION)) {
+    fs.rmSync(staleBackup.path, { force: true });
+  }
+
+  return backupPath;
 }
 
 export function createDatabase(): BetterSqlite3.Database {
@@ -688,6 +749,23 @@ export function createDatabase(): BetterSqlite3.Database {
 
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
+  const schemaVersion = currentDatabaseSchemaVersion(database);
+  if (schemaVersion > CURRENT_DATABASE_SCHEMA_VERSION) {
+    database.close();
+    throw new Error(
+      `Database schema version ${schemaVersion} is newer than this app supports (${CURRENT_DATABASE_SCHEMA_VERSION}).`,
+    );
+  }
+  if (schemaVersion < CURRENT_DATABASE_SCHEMA_VERSION) {
+    const backupPath = createPreMigrationBackup(database, env.DATABASE_PATH, schemaVersion);
+    if (backupPath) {
+      console.info("Created pre-migration database backup", {
+        fromVersion: schemaVersion,
+        toVersion: CURRENT_DATABASE_SCHEMA_VERSION,
+        backupPath,
+      });
+    }
+  }
   initializeDatabaseSchema(database);
 
   return database;

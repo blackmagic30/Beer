@@ -347,6 +347,21 @@ function timestampForFile(): string {
   return new Date().toISOString().replaceAll(":", "").replace(/\.\d{3}Z$/, "Z");
 }
 
+function pruneDiscoveryRunHistory(runsDir: string, retainRuns = 3): void {
+  const pattern = /^(menu-source-discovery-\d{4}-\d{2}-\d{2}T\d{6}Z)\.(json|csv)$/;
+  const runIds = Array.from(new Set(
+    fs.readdirSync(runsDir)
+      .map((name) => pattern.exec(name)?.[1] ?? null)
+      .filter((name): name is string => Boolean(name)),
+  )).sort((first, second) => second.localeCompare(first));
+
+  for (const staleRunId of runIds.slice(retainRuns)) {
+    for (const extension of ["json", "csv"]) {
+      fs.rmSync(path.join(runsDir, `${staleRunId}.${extension}`), { force: true });
+    }
+  }
+}
+
 function csvCell(value: unknown): string {
   const text = String(value ?? "");
   return `"${text.replaceAll('"', '""')}"`;
@@ -3287,6 +3302,7 @@ async function main(): Promise<void> {
 
   const latestCsvPath = path.join(runsDir, "menu-source-discovery-latest.csv");
   fs.writeFileSync(latestCsvPath, `${candidatesToCsv(report.candidates)}\n`);
+  pruneDiscoveryRunHistory(runsDir);
 
   console.info("Menu source discovery complete");
   console.info(`Output: ${outputPath}`);

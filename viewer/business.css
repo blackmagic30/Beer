@@ -6669,6 +6669,92 @@ body.discountPassModalOpen {
   font-size: 1rem;
 }
 
+.mfaSetup {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding-top: 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.mfaSetupHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mfaSetupHeader h3,
+.mfaSetupHeader p {
+  margin: 0;
+}
+
+.mfaSetupHeader p {
+  margin-top: 5px;
+}
+
+.mfaSetup .statusPill[data-tone="secure"] {
+  border-color: rgba(52, 211, 153, 0.42);
+  color: #a7f3d0;
+}
+
+.mfaSetup .statusPill[data-tone="action"] {
+  border-color: rgba(245, 199, 107, 0.42);
+  color: var(--gold);
+}
+
+.mfaSetup .statusPill[data-tone="error"],
+.noticeText--error {
+  color: #fca5a5;
+}
+
+.mfaVerification {
+  display: grid;
+  grid-template-columns: minmax(168px, 210px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.mfaQrImage {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 10px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.mfaVerificationFields {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mfaSecretWrap {
+  display: grid;
+  gap: 5px;
+}
+
+.mfaSecretWrap span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.mfaSecretWrap code {
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.mfaVerificationActions {
+  margin-top: 0;
+}
+
+#startMfaButton {
+  justify-self: start;
+}
+
 .accountSupportGrid {
   align-items: stretch;
   grid-template-columns: minmax(0, 1fr);
@@ -8844,6 +8930,23 @@ body.discountPassModalOpen {
   .accountSecurityPanel {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .mfaSetupHeader,
+  .mfaVerification {
+    grid-template-columns: 1fr;
+  }
+
+  .mfaSetupHeader {
+    display: grid;
+  }
+
+  .mfaSetupHeader .statusPill {
+    justify-self: start;
+  }
+
+  .mfaQrImage {
+    max-width: 220px;
   }
 
   .submitPanel {

@@ -57,6 +57,7 @@ function createBusinessService(
   repository: BusinessRepository,
   overrides: Partial<ConstructorParameters<typeof BusinessService>[1]> = {},
   menuPhotoOcr?: ConstructorParameters<typeof BusinessService>[3],
+  supabaseClientOverride?: ConstructorParameters<typeof BusinessService>[4],
 ) {
   const evidenceStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-evidence-"));
   evidenceStorageDirs.push(evidenceStorageDir);
@@ -96,7 +97,7 @@ function createBusinessService(
     GOOGLE_MAPS_API_KEY: undefined,
     GOOGLE_PLACES_API_KEY: undefined,
     ...overrides,
-  }, new BeerCatalogRepository(repositoryDatabases.get(repository)!), menuPhotoOcr);
+  }, new BeerCatalogRepository(repositoryDatabases.get(repository)!), menuPhotoOcr, supabaseClientOverride);
 }
 
 function createAccount(repository: BusinessRepository, id: string, role: "user" | "admin" = "user") {
@@ -536,6 +537,72 @@ describe("Supabase account and verification foundation", () => {
 
     expect(feedbackColumns).toEqual(expect.arrayContaining(["priority", "triage_reason"]));
     expect(feedbackIndexes).toContain("idx_feedback_priority_created");
+  });
+
+  it("adds idempotency columns before creating their indexes on legacy production tables", () => {
+    const database = new BetterSqlite3(":memory:");
+    openDatabases.push(database);
+    database.exec(`
+      CREATE TABLE discount_redemptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        public_account_id TEXT NOT NULL,
+        venue_id TEXT NOT NULL,
+        venue_name TEXT NOT NULL,
+        suburb TEXT,
+        special_id TEXT,
+        item_name TEXT,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        estimated_savings_cents INTEGER NOT NULL DEFAULT 0,
+        discount_pass_id TEXT,
+        redeemed_by_user_id TEXT,
+        redeemed_at TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE pint_point_drink_records (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        venue_id TEXT NOT NULL,
+        venue_name TEXT NOT NULL,
+        suburb TEXT,
+        item_name TEXT,
+        beverage_category TEXT NOT NULL DEFAULT 'alcoholic',
+        quantity INTEGER NOT NULL DEFAULT 1,
+        is_alcoholic INTEGER NOT NULL DEFAULT 1,
+        source TEXT NOT NULL DEFAULT 'venue_portal',
+        reward_code_id TEXT,
+        recorded_by_user_id TEXT,
+        recorded_at TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    initializeDatabaseSchema(database);
+
+    const redemptionColumns = database
+      .prepare("PRAGMA table_info(discount_redemptions)")
+      .all()
+      .map((column: { name: string }) => column.name);
+    const drinkColumns = database
+      .prepare("PRAGMA table_info(pint_point_drink_records)")
+      .all()
+      .map((column: { name: string }) => column.name);
+    const redemptionIndexes = database
+      .prepare("PRAGMA index_list(discount_redemptions)")
+      .all()
+      .map((index: { name: string }) => index.name);
+    const drinkIndexes = database
+      .prepare("PRAGMA index_list(pint_point_drink_records)")
+      .all()
+      .map((index: { name: string }) => index.name);
+
+    expect(redemptionColumns).toContain("idempotency_key");
+    expect(drinkColumns).toEqual(expect.arrayContaining(["points_awarded", "idempotency_key"]));
+    expect(redemptionIndexes).toContain("idx_discount_redemptions_idempotency");
+    expect(drinkIndexes).toContain("idx_pint_point_drink_records_idempotency");
+    expect(database.pragma("user_version", { simple: true })).toBe(1);
   });
 
   it("creates an app-facing profile row when an account is created", () => {
@@ -1597,6 +1664,50 @@ describe("production hardening", () => {
     expect(productionEvidence.storageProvider).toBe("filesystem_private");
     expect(productionEvidence.dataBase64).toBeNull();
     expect(await productionFileService.getSourceEvidenceDelivery(productionEvidence)).toMatchObject({
+      kind: "bytes",
+      mimeType: "image/png",
+    });
+
+    const supabaseObjects = new Map<string, Buffer>();
+    const supabaseStorageClient = {
+      storage: {
+        from: () => ({
+          upload: vi.fn(async (objectPath: string, bytes: Buffer) => {
+            supabaseObjects.set(objectPath, Buffer.from(bytes));
+            return { data: { path: objectPath }, error: null };
+          }),
+          download: vi.fn(async (objectPath: string) => ({
+            data: supabaseObjects.has(objectPath) ? new Blob([supabaseObjects.get(objectPath)!]) : null,
+            error: supabaseObjects.has(objectPath) ? null : { message: "missing" },
+          })),
+          remove: vi.fn(async (objectPaths: string[]) => {
+            objectPaths.forEach((objectPath) => supabaseObjects.delete(objectPath));
+            return { data: [], error: null };
+          }),
+        }),
+      },
+    } as unknown as ConstructorParameters<typeof BusinessService>[4];
+    const productionSupabaseService = createBusinessService(repository, {
+      NODE_ENV: "production",
+      ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
+      SOURCE_EVIDENCE_SIGNING_SECRET: "production-source-evidence-signing-secret-32",
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-test-key",
+    }, undefined, supabaseStorageClient);
+    const supabaseStored = (await productionSupabaseService.createUserSubmission(
+      verifiedProductionUser,
+      createSubmissionSchema.parse({
+        ...baseSubmission,
+        venueId: "venue-photo-prod-supabase",
+        sourcePhotoDataUrl: PNG_DATA_URL,
+      }),
+    )).submission;
+    const supabaseEvidenceId = supabaseStored.sourcePhotoUrl!.replace("private:evidence:", "");
+    const supabaseEvidence = repository.getSourceEvidenceObject(supabaseEvidenceId)!;
+    expect(supabaseEvidence.storageProvider).toBe("supabase_private");
+    expect(supabaseEvidence.dataBase64).toBeNull();
+    expect(supabaseObjects.get(supabaseEvidence.objectPath)).toEqual(Buffer.from(PNG_DATA_URL.split(",")[1]!, "base64"));
+    expect(await productionSupabaseService.getSourceEvidenceDelivery(supabaseEvidence)).toMatchObject({
       kind: "bytes",
       mimeType: "image/png",
     });

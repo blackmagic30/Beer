@@ -741,6 +741,8 @@ export function canAccessAgeGatedRewards(input: {
 
 const PRIVATE_EVIDENCE_PREFIX = "private:evidence:";
 const FILESYSTEM_EVIDENCE_PROVIDER = "filesystem_private";
+const SUPABASE_EVIDENCE_PROVIDER = "supabase_private";
+const SUPABASE_EVIDENCE_BUCKET = "beermap-source-evidence";
 
 function getBearerToken(header: string | undefined): string | null {
   if (!header) {
@@ -1917,6 +1919,7 @@ function getMonthlyReportFilename(input: { venueId: string; month: string; forma
 
 export class BusinessService {
   private readonly supabase?: SupabaseClient;
+  private readonly useSupabaseEvidenceStorage: boolean;
 
   constructor(
     private readonly repository: BusinessRepository,
@@ -1959,9 +1962,12 @@ export class BusinessService {
     >,
     private readonly beerCatalogRepository?: BeerCatalogRepository,
     private readonly menuPhotoOcr?: MenuPhotoOcrProcessor,
+    supabaseClientOverride?: SupabaseClient,
   ) {
     const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
-    if (config.SUPABASE_URL && supabaseServerKey) {
+    if (supabaseClientOverride) {
+      this.supabase = supabaseClientOverride;
+    } else if (config.SUPABASE_URL && supabaseServerKey) {
       this.supabase = createClient(config.SUPABASE_URL, supabaseServerKey, {
         auth: {
           persistSession: false,
@@ -1969,6 +1975,7 @@ export class BusinessService {
         },
       });
     }
+    this.useSupabaseEvidenceStorage = Boolean(this.supabase && config.SUPABASE_SERVICE_ROLE_KEY);
   }
 
   private getTrackedBeerCatalogForViewer() {
@@ -5338,6 +5345,10 @@ export class BusinessService {
       });
 
       if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
+        if (this.useSupabaseEvidenceStorage) {
+          const evidence = await this.createSupabaseSourceEvidence(account, bytes, mimeType);
+          return privateEvidenceRef(evidence.id);
+        }
         const evidence = await this.createFilesystemSourceEvidence(account, bytes, mimeType);
         return privateEvidenceRef(evidence.id);
       }
@@ -5421,6 +5432,58 @@ export class BusinessService {
     });
   }
 
+  private async createSupabaseSourceEvidence(
+    account: Pick<BusinessAccount, "id"> | null,
+    bytes: Buffer,
+    mimeType: string,
+  ): Promise<SourceEvidenceObject> {
+    if (!this.supabase || !this.useSupabaseEvidenceStorage) {
+      throw new AppError("Source evidence storage is unavailable. Keep the upload queued and retry shortly.", 503);
+    }
+
+    const id = crypto.randomUUID();
+    const monthKey = getZonedMonthKey(new Date(nowIso()), this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
+    const ownerPath = account?.id ?? "anonymous";
+    const objectPath = `${ownerPath}/${monthKey}/${id}.${sourceEvidenceExtensionForMimeType(mimeType)}`;
+    const { error: uploadError } = await this.supabase.storage
+      .from(SUPABASE_EVIDENCE_BUCKET)
+      .upload(objectPath, bytes, { contentType: mimeType, upsert: false });
+    if (uploadError) {
+      logger.error("Failed to store private source evidence file", {
+        provider: SUPABASE_EVIDENCE_PROVIDER,
+        error: redactSecrets(uploadError.message),
+      });
+      throw new AppError("Source evidence storage is unavailable. Keep the upload queued and retry shortly.", 503);
+    }
+
+    const createdAt = nowIso();
+    try {
+      return this.repository.createSourceEvidenceObject({
+        id,
+        ownerUserId: account?.id ?? null,
+        storageProvider: SUPABASE_EVIDENCE_PROVIDER,
+        objectPath,
+        mimeType,
+        byteSize: bytes.length,
+        dataBase64: null,
+        externalUrl: null,
+        retentionExpiresAt: addDays(createdAt, this.config.SOURCE_EVIDENCE_RETENTION_DAYS ?? 90),
+        createdAt,
+      });
+    } catch (error) {
+      await this.supabase.storage.from(SUPABASE_EVIDENCE_BUCKET).remove([objectPath]).catch(() => null);
+      throw error;
+    }
+  }
+
+  private async removeSupabaseSourceEvidence(objectPath: string): Promise<void> {
+    if (!this.supabase || !this.useSupabaseEvidenceStorage) {
+      throw new AppError("Source evidence storage is unavailable.", 503);
+    }
+    const { error } = await this.supabase.storage.from(SUPABASE_EVIDENCE_BUCKET).remove([objectPath]);
+    if (error) throw new Error(redactSecrets(error.message));
+  }
+
   async getSourceEvidenceDelivery(evidence: SourceEvidenceObject): Promise<
     | { kind: "bytes"; mimeType: string; bytes: Buffer }
     | null
@@ -5457,6 +5520,28 @@ export class BusinessService {
         });
         throw new AppError("Source evidence not found.", 404);
       }
+    }
+
+    if (evidence.storageProvider === SUPABASE_EVIDENCE_PROVIDER && evidence.mimeType) {
+      if (!this.supabase || !this.useSupabaseEvidenceStorage) {
+        throw new AppError("Source evidence storage is unavailable.", 503);
+      }
+      const { data, error } = await this.supabase.storage
+        .from(SUPABASE_EVIDENCE_BUCKET)
+        .download(evidence.objectPath);
+      if (error || !data) {
+        logger.warn("Private source evidence file missing or unreadable", {
+          evidenceId: evidence.id,
+          provider: evidence.storageProvider,
+          error: error ? redactSecrets(error.message) : "missing_object",
+        });
+        throw new AppError("Source evidence not found.", 404);
+      }
+      return {
+        kind: "bytes",
+        mimeType: evidence.mimeType,
+        bytes: Buffer.from(await data.arrayBuffer()),
+      };
     }
 
     return null;
@@ -5781,6 +5866,8 @@ export class BusinessService {
       try {
         if (evidence.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
           await fs.promises.rm(this.getSourceEvidenceFilePath(evidence.objectPath), { force: true });
+        } else if (evidence.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
+          await this.removeSupabaseSourceEvidence(evidence.objectPath);
         }
         this.repository.markSourceEvidenceDeleted({ id: evidence.id, deletedAt: nowIso() });
         purged += 1;
@@ -5827,6 +5914,8 @@ export class BusinessService {
     for (const item of evidence) {
       if (item.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
         await fs.promises.rm(this.getSourceEvidenceFilePath(item.objectPath), { force: true });
+      } else if (item.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
+        await this.removeSupabaseSourceEvidence(item.objectPath);
       }
     }
     const summary = this.repository.executeAccountAnonymisation({

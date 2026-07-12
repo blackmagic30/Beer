@@ -8,6 +8,18 @@ function migration(name: string) {
 }
 
 describe("Supabase auth/upload RLS migrations", () => {
+  it("removes broad browser table grants and legacy public reads", () => {
+    const sql = migration("20260712013512_harden_browser_table_grants.sql");
+
+    expect(sql).toContain('drop policy if exists "public read" on public.call_results');
+    expect(sql).toContain('drop policy if exists "public read venues" on public.venues');
+    expect(sql).toContain("revoke all on table public.venues from anon, authenticated");
+    expect(sql).toContain("revoke all on table public.venue_menu_captures from anon, authenticated");
+    expect(sql).toContain("grant select on table public.profiles to authenticated");
+    expect(sql).toContain("grant update (display_name, username, avatar_url, updated_at) on table public.profiles to authenticated");
+    expect(sql).not.toContain("grant truncate");
+  });
+
   it("keeps user uploads private and prevents normal users from self-verifying uploads", () => {
     const sql = migration("20260520000000_harden_auth_upload_rls.sql");
 
