@@ -602,7 +602,7 @@ describe("Supabase account and verification foundation", () => {
     expect(drinkColumns).toEqual(expect.arrayContaining(["points_awarded", "idempotency_key"]));
     expect(redemptionIndexes).toContain("idx_discount_redemptions_idempotency");
     expect(drinkIndexes).toContain("idx_pint_point_drink_records_idempotency");
-    expect(database.pragma("user_version", { simple: true })).toBe(1);
+    expect(database.pragma("user_version", { simple: true })).toBe(2);
   });
 
   it("creates an app-facing profile row when an account is created", () => {
@@ -2510,7 +2510,7 @@ describe("production hardening", () => {
       rejectionReason: null,
       fraudFlagged: false,
       confidence: "photo_verified",
-    })).toThrow("Approve or merge every new OCR beer");
+    })).toThrow("Approve, merge, or reject every new beer name");
 
     service.rejectBeerCatalogItem(admin, "decorative_house_lager", { reviewNote: "Decorative OCR copy, not a beer." });
     expect(repository.getSubmissionById(result.submission.id)!.items.map((item) => item.beerName))
@@ -2864,7 +2864,7 @@ describe("production hardening", () => {
     };
     const failedSigned = createStripeSignature(failedPayload, "whsec_test");
     expect(service.handleStripeWebhook(failedSigned.body, failedSigned.header)).toEqual({ received: true });
-    expect(repository.getAccountById(user.id)?.subscriptionStatus).toBe("free");
+    expect(repository.getAccountById(user.id)?.subscriptionStatus).toBe("premium_monthly");
     expect(() => createBusinessService(repository, {
       DEMO_BILLING_MODE: false,
       STRIPE_WEBHOOK_SECRET: undefined,
@@ -3352,7 +3352,12 @@ describe("business demo contribution model", () => {
     const admin = createAccount(repository, "pint-points-admin", "admin");
     const manager = createAccount(repository, "pint-points-manager");
     const otherManager = createAccount(repository, "pint-points-other-manager");
-    const user = createAccount(repository, "pint-points-user");
+    const user = updateSubscription(
+      repository,
+      createAccount(repository, "pint-points-user").id,
+      "premium_monthly",
+      PREMIUM_UNTIL,
+    );
 
     service.assignVenueManager(admin, {
       userId: manager.id,
@@ -3384,10 +3389,28 @@ describe("business demo contribution model", () => {
 
     const assignedManager = repository.getAccountById(manager.id)!;
     const unassignedManager = repository.getAccountById(otherManager.id)!;
+    const memberSession = createSession(repository, user.id, "pint-points-member-session");
+    const memberPass = await service.getDiscountPass(user, memberSession);
+    const memberPreview = service.previewPintPointMember(assignedManager, "pint-points-venue", {
+      code: memberPass.code,
+    });
+    expect(memberPreview).toEqual(expect.objectContaining({
+      accountId: user.publicAccountId,
+      eligible: true,
+      pointsToday: 0,
+      pointsRemainingToday: 8,
+      wallet: expect.objectContaining({ available: 0, threshold: 50 }),
+    }));
+    expect(memberPreview).not.toHaveProperty("userId");
+    expect(memberPreview).not.toHaveProperty("email");
+    expect(memberPreview).not.toHaveProperty("displayName");
+    expect(() => service.previewPintPointMember(unassignedManager, "pint-points-venue", {
+      code: memberPass.code,
+    })).toThrow("You can only access assigned venues.");
 
     const firstDrink = service.recordPintPointDrink(assignedManager, "pint-points-venue", {
-      accountId: user.publicAccountId,
-      code: undefined,
+      accountId: null,
+      code: memberPass.code,
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
@@ -3397,6 +3420,33 @@ describe("business demo contribution model", () => {
     });
     expect(firstDrink.pointsEarned).toBe(2);
     expect(firstDrink.wallet.available).toBe(2);
+    expect(firstDrink.idempotentReplay).toBe(false);
+    expect(firstDrink.record).not.toHaveProperty("userId");
+    expect(firstDrink.record).not.toHaveProperty("recordedByUserId");
+
+    const firstDrinkRetry = service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+      accountId: null,
+      code: memberPass.code,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 2,
+      isAlcoholic: undefined,
+      transactionReference: "receipt-points-1",
+      notes: null,
+    });
+    expect(firstDrinkRetry.idempotentReplay).toBe(true);
+    expect(firstDrinkRetry.record.id).toBe(firstDrink.record.id);
+    expect(firstDrinkRetry.wallet.available).toBe(2);
+    expect(() => service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+      accountId: null,
+      code: memberPass.code,
+      itemName: "Different purchase",
+      beverageCategory: "alcoholic",
+      quantity: 1,
+      isAlcoholic: undefined,
+      transactionReference: "receipt-points-1",
+      notes: null,
+    })).toThrow("already attached to a different purchase");
 
     const zeroPointDrink = service.recordPintPointDrink(assignedManager, "pint-points-venue", {
       accountId: user.publicAccountId,
@@ -3518,6 +3568,13 @@ describe("business demo contribution model", () => {
       expiredOrRejectedCodes: 1,
     }));
     expect(portal.pintPoints.copy).toContain("Free Pint Rewards do not earn another point");
+    expect(portal.pintPoints.recentActivity).toContainEqual(expect.objectContaining({
+      publicAccountId: user.publicAccountId,
+      itemName: "Guinness pint",
+      quantity: 2,
+      pointsAwarded: 2,
+    }));
+    expect(JSON.stringify(portal.pintPoints.recentActivity)).not.toContain(user.id);
   });
 
   it("supports Pro venue POS discount webhooks with scoped tokens and privacy-safe venue stats", async () => {
@@ -4214,7 +4271,7 @@ describe("business demo contribution model", () => {
       const publishedRecord = database
         .prepare("SELECT confidence FROM venue_price_records WHERE source_submission_id = ?")
         .get(result.submission.id) as { confidence: string } | undefined;
-      expect(publishedRecord?.confidence).toBe("community_confirmed");
+      expect(publishedRecord?.confidence).toBe("admin_verified");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -4442,17 +4499,19 @@ describe("business demo contribution model", () => {
       points: 5,
       reason: "New or empty venue - add first verified beer prices",
     }));
-    expect(byId.get("auto:venue:auto-fresh:beer:guinness")).toEqual(expect.objectContaining({
-      points: 0.1,
-      reason: expect.stringContaining("recently updated"),
-    }));
+    expect(Array.from(byId.keys()).some((id) => id.startsWith("auto:venue:auto-fresh:beer:guinness"))).toBe(false);
     expect(byId.get("auto:venue:auto-fresh:beer:carlton_draft")).toEqual(expect.objectContaining({
       points: 5,
       reason: "Missing Carlton Draught price - add this drink",
     }));
-    expect(byId.get("auto:venue:auto-stale:menu-freshness")).toEqual(expect.objectContaining({
+    const staleMenuMission = missions.find((mission) => mission.id.startsWith("auto:venue:auto-stale:menu-freshness:"));
+    expect(staleMenuMission).toEqual(expect.objectContaining({
       points: 1,
       reason: expect.stringContaining("Stale drink menu"),
+    }));
+    expect(byId.get("auto:venue:auto-fresh:happy-hour")).toEqual(expect.objectContaining({
+      points: 5,
+      reason: "Missing happy-hour details - add current specials",
     }));
   });
 

@@ -64,10 +64,29 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     extract: (input) => adminService.ocrMenuPhotos(input),
   });
   businessService.logStartupSummary();
+  const recordOperationalState = (key: string, value: Record<string, unknown>) => {
+    const recordedAt = new Date().toISOString();
+    businessRepository.setSystemState(`job:${key}`, { ...value, recordedAt }, recordedAt);
+  };
+  const evidenceMaintenanceStartedAt = new Date().toISOString();
+  recordOperationalState("evidence_retention", { state: "running", startedAt: evidenceMaintenanceStartedAt });
   void businessService.purgeExpiredSourceEvidence().then((result) => {
+    recordOperationalState("evidence_retention", {
+      state: result.failed ? "failed" : "succeeded",
+      startedAt: evidenceMaintenanceStartedAt,
+      completedAt: new Date().toISOString(),
+      ...result,
+    });
     if (result.purged || result.failed) {
       console.info("Source evidence retention maintenance completed", result);
     }
+  }).catch((error) => {
+    recordOperationalState("evidence_retention", {
+      state: "failed",
+      startedAt: evidenceMaintenanceStartedAt,
+      completedAt: new Date().toISOString(),
+      error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Evidence retention failed",
+    });
   });
   if (env.NODE_ENV === "production" && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
     const { scheduleOffsiteBackups } = await import("./lib/offsite-backup.js");
@@ -79,6 +98,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       bucketName: env.OFFSITE_BACKUP_BUCKET,
       intervalHours: env.OFFSITE_BACKUP_INTERVAL_HOURS,
       retentionDays: env.OFFSITE_BACKUP_RETENTION_DAYS,
+      onStatus: (status) => recordOperationalState("offsite_backup", status),
     });
   }
 
@@ -474,7 +494,6 @@ export function createApp() {
         supabaseOauthProviders: env.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
         trackedBeers: publicConfig.trackedBeers,
         business: {
-          freePriceRevealsPerDay: env.FREE_PRICE_REVEALS_PER_DAY,
           publicBaseUrl: env.PUBLIC_BASE_URL,
           contributorUnlockPoints: env.CONTRIBUTOR_UNLOCK_POINTS,
           contributorUnlockDays: env.CONTRIBUTOR_UNLOCK_DAYS,

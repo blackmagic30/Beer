@@ -115,6 +115,14 @@ struct BeerMapAPI {
         )
     }
 
+    func discountPass(token: String) async throws -> RotatingCodeResult {
+        try await send("/api/business/account/discount-pass", method: "POST", body: EmptyResponse(), token: token)
+    }
+
+    func freePintRewardCode(token: String) async throws -> RotatingCodeResult {
+        try await send("/api/business/account/free-pint-reward-code", method: "POST", body: EmptyResponse(), token: token)
+    }
+
     func listVenues(query: String? = nil, limit: Int = 80) async throws -> [Venue] {
         var items = [URLQueryItem(name: "limit", value: "\(limit)")]
         if let query = query?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {

@@ -3233,10 +3233,15 @@
       }
 
       .filterChip {
-        min-height: 40px;
+        min-height: 44px;
         padding: 9px 12px;
         font-size: 12px;
         white-space: nowrap;
+      }
+
+      .overlayPanel__close {
+        width: 44px;
+        height: 44px;
       }
 
       #mapLegend {
@@ -3277,7 +3282,7 @@
 
       .venueRail__sortChip {
         flex: 0 0 auto;
-        min-height: 40px;
+        min-height: 44px;
         padding: 9px 12px;
         font-size: 11px;
       }
@@ -3319,8 +3324,8 @@
       }
 
       .venueDetailOverlay__close {
-        width: 42px;
-        height: 42px;
+        width: 44px;
+        height: 44px;
         font-size: 26px;
       }
 
@@ -3849,10 +3854,8 @@
       hasFullAccess: false,
       isAdmin: false,
       ageConfirmed: false,
-      freePriceRevealsPerDay: BUSINESS_CONFIG.freePriceRevealsPerDay || 5,
-      freePriceRevealsUsedToday: 0,
-      freePriceRevealsRemainingToday: BUSINESS_CONFIG.freePriceRevealsPerDay || 5,
-      canRevealPrice: true,
+      priceAccessModel: "fixed_preview",
+      canRevealPrice: false,
       canUseCheapestSort: false,
       canUseBeerSearch: false,
       canUseHappyHourActiveNow: false,
@@ -6112,36 +6115,32 @@
       if (!window.MelbBeerBusiness) {
         return { records: [], access: null, revealed: false, blocked: false };
       }
-
-      const query = new URLSearchParams();
-      query.set("anonymousSessionId", window.MelbBeerBusiness.getAnonymousSessionId());
-      query.set("limit", String(options.limit || 500));
-
-      if (options.venueId) {
-        query.set("venueId", options.venueId);
+      const records = [];
+      let cursor = null;
+      let response = { records: [], access: null, revealed: false, blocked: false, nextCursor: null };
+      for (let page = 0; page < 20; page += 1) {
+        const query = new URLSearchParams();
+        query.set("anonymousSessionId", window.MelbBeerBusiness.getAnonymousSessionId());
+        query.set("limit", String(options.limit || 500));
+        if (options.venueId) query.set("venueId", options.venueId);
+        if (options.reveal) query.set("reveal", "true");
+        if (cursor) query.set("cursor", cursor);
+        response = await window.MelbBeerBusiness.apiFetch(`/api/business/price-records?${query.toString()}`);
+        records.push(...(Array.isArray(response.records) ? response.records : []));
+        cursor = response.nextCursor || null;
+        if (!cursor || options.venueId) break;
       }
-
-      if (options.reveal) {
-        query.set("reveal", "true");
-      }
-
-      const response = await window.MelbBeerBusiness.apiFetch(`/api/business/price-records?${query.toString()}`);
-      return {
-        ...response,
-        records: Array.isArray(response.records) ? response.records : [],
-      };
+      return { ...response, records };
     }
 
     async function loadBusinessVenueRows() {
       const rows = [];
       let businessPriceRecords = [];
-      const [allVenues, priceRecordResponse] = await Promise.all([
-        fetchBusinessViewerVenues(),
-        fetchBusinessPriceRecords().catch((error) => {
-          console.warn("Approved submission price records unavailable", error);
-          return null;
-        }),
-      ]);
+      const allVenues = await fetchBusinessViewerVenues();
+      const priceRecordResponse = await fetchBusinessPriceRecords().catch((error) => {
+        console.warn("Approved submission price records unavailable", error);
+        return null;
+      });
 
       if (priceRecordResponse) {
         businessPriceRecords = Array.isArray(priceRecordResponse.records) ? priceRecordResponse.records : [];
@@ -6386,6 +6385,30 @@
       const tier = getVenueTier(rowOrVenue);
       if (tier === "pro") return -0.35;
       return 0;
+    }
+
+    function getBestMatchSortWeight(beer, distanceKm, discoveryBoost = 0) {
+      if (!beer) return 80 + discoveryBoost;
+      const availabilityPenalty = beer.availabilityLabel === "On tap"
+        ? 0
+        : beer.availabilityLabel === "Unknown"
+          ? 4
+          : 8;
+      const pricePenalty = hasNumericPrice(beer) ? Math.min(30, Number(beer.priceNumeric)) * 0.12 : 5;
+      const confidencePenalty = {
+        admin_verified: 0,
+        venue_confirmed: 0.2,
+        photo_verified: 0.5,
+        community_confirmed: 0.8,
+        user_reported_pending: 3,
+        stale: 4,
+        disputed: 8,
+      }[beer.confidenceLabel] ?? 1.5;
+      const verifiedAt = beer.lastVerifiedAt ? new Date(beer.lastVerifiedAt).getTime() : Number.NaN;
+      const ageDays = Number.isFinite(verifiedAt) ? Math.max(0, (Date.now() - verifiedAt) / 86_400_000) : 90;
+      const freshnessPenalty = Math.min(5, ageDays * 0.08);
+      const distancePenalty = distanceKm == null ? 0 : Math.min(4, distanceKm * 0.15);
+      return availabilityPenalty + pricePenalty + confidencePenalty + freshnessPenalty + distancePenalty + discoveryBoost;
     }
 
     function applyVenueTierToMarkerVisual(visual, rowOrVenue) {
@@ -7020,7 +7043,7 @@
             `${featuredBeer.label} · ${featuredBeer.availabilityLabel}`,
             happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
           ]),
-          sortWeight: (canSortByPrice ? -featuredBeer.priceNumeric : 0) + discoveryBoost,
+          sortWeight: getBestMatchSortWeight(featuredBeer, distanceKm, discoveryBoost),
           numericPrice: canSortByPrice ? featuredBeer.priceNumeric : null,
           priceTier: getVisibleBeerPriceTier(featuredBeer, record.id),
           distanceKm,
@@ -7040,7 +7063,7 @@
             `${featuredBeer.availabilityLabel} · ${displayPrice}`,
             happyHourBrief ? `Happy hour: ${happyHourBrief}` : null,
           ]),
-          sortWeight: (canSortByPrice ? -featuredBeer.priceNumeric : 0) + discoveryBoost,
+          sortWeight: getBestMatchSortWeight(featuredBeer, distanceKm, discoveryBoost),
           numericPrice: canSortByPrice ? featuredBeer.priceNumeric : null,
           priceTier: getVisibleBeerPriceTier(featuredBeer, record.id),
           distanceKm,

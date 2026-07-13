@@ -10,21 +10,14 @@ struct RootView: View {
                     DiscoverView()
                 }
                 .tabItem {
-                    Label("Discover", systemImage: "map.fill")
-                }
-
-                NavigationStack {
-                    AccountView()
-                }
-                .tabItem {
-                    Label("Account", systemImage: "person.crop.circle")
+                    Label("Find", systemImage: "map.fill")
                 }
 
                 NavigationStack {
                     ContributeView()
                 }
                 .tabItem {
-                    Label("Add", systemImage: "square.and.arrow.up.fill")
+                    Label("Add", systemImage: "plus.circle.fill")
                 }
 
                 NavigationStack {
@@ -35,10 +28,17 @@ struct RootView: View {
                 }
 
                 NavigationStack {
+                    AccountView()
+                }
+                .tabItem {
+                    Label("Account", systemImage: "person.crop.circle")
+                }
+
+                NavigationStack {
                     SettingsView()
                 }
                 .tabItem {
-                    Label("Settings", systemImage: "gearshape.fill")
+                    Label("Help", systemImage: "questionmark.circle.fill")
                 }
             }
             .task {

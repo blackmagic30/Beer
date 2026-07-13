@@ -279,7 +279,7 @@ describe("manual capture helpers", () => {
         beerName: "Carlton Draught",
         price: 13.5,
         isOnTap: "yes",
-        confidence: "photo_verified",
+        confidence: "admin_verified",
         sourceType: "menu_photo_ocr",
       }),
     ]);

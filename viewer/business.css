@@ -3192,6 +3192,157 @@ button.adminFocusRail__item:focus-visible {
   }
 }
 
+/* Operational polish: compact actions, flatter hierarchy, and consistent phone targets. */
+*,
+*::before,
+*::after {
+  letter-spacing: 0;
+}
+
+.hero {
+  margin: 20px 0 18px;
+  padding: 24px;
+  border-radius: 8px;
+  background: #111827;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+}
+
+.hero h1,
+.hero--operational h1,
+.legalPage .hero h1,
+.faqPage .hero h1 {
+  max-width: 900px;
+  font-size: 2.45rem;
+  line-height: 1.08;
+}
+
+.panel,
+.card,
+.listItem,
+.metricCard,
+.submissionCard,
+.adminReviewCard,
+.adminDashboardHero,
+.premiumDashboardCard,
+.premiumKpiCard {
+  border-radius: 8px;
+}
+
+.feedbackGrid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+}
+
+.feedbackPage #feedbackSupportInfo {
+  margin-top: 16px;
+}
+
+.sourcePhotoItem {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 44px;
+  align-items: center;
+  min-height: 72px;
+}
+
+.sourcePhotoItem__preview,
+.sourcePhotoItem__pdf {
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.sourcePhotoItem__pdf {
+  display: grid;
+  place-items: center;
+  color: var(--gold);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.sourcePhotoRemove {
+  width: 44px;
+  min-height: 44px;
+  font-size: 1.4rem;
+}
+
+.trustQueueGroup {
+  display: grid;
+  gap: 10px;
+  padding-block: 8px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.trustQueueCard,
+.trustQueueCard__header {
+  display: grid;
+  gap: 12px;
+}
+
+.trustQueueCard__header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.trustQueueCard textarea {
+  min-height: 82px;
+}
+
+.adminSubmissionEvidencePreview__document {
+  display: grid;
+  gap: 8px;
+  min-width: min(100%, 420px);
+}
+
+.adminSubmissionEvidencePreview__document iframe {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  background: #fff;
+}
+
+@media (max-width: 760px) {
+  .hero,
+  .hero--operational {
+    margin: 12px 0;
+    padding: 18px;
+  }
+
+  .hero h1,
+  .hero--operational h1,
+  .legalPage .hero h1,
+  .faqPage .hero h1 {
+    font-size: 2rem;
+    line-height: 1.08;
+  }
+
+  .authShell .authCard {
+    order: -1;
+  }
+
+  .settingsNavButton {
+    min-height: 44px;
+    padding: 9px 12px;
+    font-size: 0.82rem;
+  }
+
+  .feedbackGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .button,
+  button,
+  input,
+  select {
+    min-height: 44px;
+  }
+
+  .adminSubmissionEvidencePreview__document iframe {
+    min-height: 320px;
+  }
+}
+
 .adminCrmCard,
 .adminCrmLead__header,
 .adminCrmLead__meta {
@@ -3238,6 +3389,126 @@ button.adminFocusRail__item:focus-visible {
   gap: 16px;
 }
 
+.staffCounterPanel {
+  border-color: rgba(34, 211, 238, 0.34);
+  background:
+    linear-gradient(145deg, rgba(34, 211, 238, 0.09), rgba(245, 197, 66, 0.04)),
+    var(--panel);
+}
+
+.staffCounterForm,
+.staffCounterPurchaseFields {
+  display: grid;
+  gap: 16px;
+}
+
+.staffCounterCodeGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.staffCounterCodeActions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 48px;
+}
+
+.staffCounterPurchaseFields {
+  min-width: 0;
+  margin: 0;
+  padding: 16px 0 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.staffCounterPurchaseFields legend {
+  padding: 0 0 12px;
+  color: var(--text-primary);
+  font-weight: 950;
+}
+
+.staffCounterPurchaseFields:disabled {
+  opacity: 0.48;
+}
+
+.memberPreviewStatus {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(74, 222, 128, 0.32);
+  border-radius: 16px;
+  background: rgba(74, 222, 128, 0.09);
+  color: #d7ffe3;
+}
+
+.memberPreviewStatus__identity,
+.memberPreviewStatus__metrics {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.memberPreviewStatus__identity > div {
+  display: grid;
+  gap: 2px;
+}
+
+.memberPreviewStatus__identity span,
+.memberPreviewStatus small {
+  color: var(--text-secondary);
+}
+
+.memberPreviewStatus__check {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.2);
+  color: #9dffbd;
+  font-weight: 950;
+}
+
+.memberPreviewStatus__metrics {
+  flex-wrap: wrap;
+}
+
+.memberPreviewStatus__metrics span {
+  padding: 8px 10px;
+  border: 1px solid rgba(74, 222, 128, 0.2);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.16);
+  color: var(--text-secondary);
+}
+
+.memberQrScanner {
+  overflow: hidden;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 16px;
+  background: #05070d;
+}
+
+.memberQrScanner video {
+  display: block;
+  width: 100%;
+  max-height: 460px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: #05070d;
+}
+
+.memberQrScanner__footer {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
 .redemptionSelectionStack {
   display: grid;
   gap: 14px;
@@ -3263,6 +3534,10 @@ button.adminFocusRail__item:focus-visible {
 
 .discountOpsPanel {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.posSetupCard--wide {
+  grid-column: 1 / -1;
 }
 
 .discountSpecialChoices {
@@ -3381,6 +3656,17 @@ button.adminFocusRail__item:focus-visible {
     radial-gradient(circle at 12% 0%, rgba(245, 197, 66, 0.12), transparent 34%),
     radial-gradient(circle at 100% 0%, rgba(34, 211, 238, 0.12), transparent 35%),
     var(--panel);
+}
+
+.redemptionGuide > summary {
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-weight: 950;
+}
+
+.redemptionGuide[open] > summary {
+  margin-bottom: 16px;
 }
 
 .redemptionFlowGrid {
@@ -8374,10 +8660,26 @@ body.discountPassModalOpen {
   .venueOverviewDataGrid,
   .openingHoursRow,
   .redemptionFlowGrid,
+  .staffCounterCodeGrid,
   .discountQuickPanel,
   .discountOpsPanel,
   .selectedDiscountSpecial {
     grid-template-columns: 1fr;
+  }
+
+  .staffCounterCodeActions,
+  .memberPreviewStatus__metrics,
+  .memberQrScanner__footer {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .staffCounterCodeActions .button,
+  .memberQrScanner__footer .button,
+  .staffCounterPurchaseFields > .button {
+    width: 100%;
+    justify-content: center;
   }
 
   .openingHoursRow {
@@ -9727,5 +10029,70 @@ body.discountPassModalOpen {
   .adminIngestionPager .muted {
     order: -1;
     flex-basis: 100%;
+  }
+}
+
+/* Final cascade guards for the compact operational system. */
+[class] {
+  letter-spacing: 0;
+}
+
+.hero {
+  margin: 20px 0 18px;
+  padding: 24px;
+  border-radius: 8px;
+  background: #111827;
+}
+
+.hero h1,
+.hero--operational h1,
+.legalPage .hero h1,
+.faqPage .hero h1 {
+  font-size: 2.45rem;
+  line-height: 1.08;
+}
+
+.panel,
+.card,
+.listItem,
+.metricCard,
+.submissionCard,
+.adminReviewCard,
+.adminDashboardHero,
+.premiumDashboardCard,
+.premiumKpiCard {
+  border-radius: 8px;
+}
+
+@media (max-width: 760px) {
+  .hero,
+  .hero--operational {
+    margin: 12px 0;
+    padding: 18px;
+  }
+
+  .hero h1,
+  .hero--operational h1,
+  .legalPage .hero h1,
+  .faqPage .hero h1 {
+    font-size: 2rem;
+  }
+
+  .settingsNavButton {
+    min-height: 44px;
+    padding: 9px 12px;
+    font-size: 0.82rem;
+  }
+
+  .button,
+  .mobileNavToggle,
+  .accountStatsActions .button {
+    min-height: 44px;
+  }
+
+  body .overlayPanel__close,
+  body .venueDetailOverlay__close,
+  body .venueRail__sortChip {
+    min-height: 44px;
   }
 }

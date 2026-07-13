@@ -31,5 +31,6 @@ export interface MenuPhotoOcrProcessor {
   extract(input: {
     venueNameHint: string | null;
     imageDataUrls: string[];
+    documentDataUrls?: string[];
   }): Promise<MenuPhotoOcrResult>;
 }

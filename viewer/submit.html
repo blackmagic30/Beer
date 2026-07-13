@@ -158,8 +158,8 @@
           </label>
           <div id="missionContext" class="notice missionContext is-hidden"></div>
           <label id="sourcePhotoField" class="field is-hidden">Source photo/menu/receipt/happy-hour board
-            <input id="sourcePhoto" type="file" accept="image/*" multiple disabled />
-            <span id="sourcePhotoHint" class="fieldHint">Upload clear menu, tap-list, receipt, or venue board images for review.</span>
+            <input id="sourcePhoto" type="file" accept="image/*,application/pdf" multiple disabled />
+            <span id="sourcePhotoHint" class="fieldHint">Upload up to 6 clear images, or one flat PDF menu. One close crop per menu section gives the best reading.</span>
             <div id="sourcePhotoList" class="sourcePhotoList" aria-live="polite" hidden></div>
           </label>
           <div id="happyHourSection" class="submitModeBlock is-hidden">
@@ -221,6 +221,7 @@
     let draftSaveTimer = null;
     let uploadLocation = null;
     let selectedSourcePhotoFiles = [];
+    const sourcePhotoPreviewUrls = new Map();
     let isNewVenueMode = false;
     let selectedNewVenueGooglePlace = null;
     let submittedNewVenueRequestPlaceId = null;
@@ -233,6 +234,7 @@
     const SUBMISSION_QUEUE_STORE_NAME = "queuedSubmissions";
     const SOURCE_PHOTO_MAX_EDGE = 2200;
     const SOURCE_PHOTO_MAX_FILES = 6;
+    const SOURCE_PDF_MAX_BYTES = 8 * 1024 * 1024;
     const SOURCE_PHOTO_OUTPUT_TYPE = "image/jpeg";
     const SOURCE_PHOTO_OUTPUT_QUALITY = 0.86;
     const UPLOAD_LOCATION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -439,23 +441,51 @@
       ].join(":");
     }
 
+    function isPdfSourceFile(file) {
+      return file?.type === "application/pdf" || /\.pdf$/i.test(file?.name || "");
+    }
+
+    function sourcePreviewUrl(file) {
+      if (isPdfSourceFile(file)) return null;
+      const key = sourcePhotoFileKey(file);
+      if (!sourcePhotoPreviewUrls.has(key)) sourcePhotoPreviewUrls.set(key, URL.createObjectURL(file));
+      return sourcePhotoPreviewUrls.get(key);
+    }
+
+    function revokeUnusedSourcePreviews() {
+      const activeKeys = new Set(selectedSourcePhotoFiles.map(sourcePhotoFileKey));
+      sourcePhotoPreviewUrls.forEach((url, key) => {
+        if (!activeKeys.has(key)) {
+          URL.revokeObjectURL(url);
+          sourcePhotoPreviewUrls.delete(key);
+        }
+      });
+    }
+
     function renderSourcePhotoList(emptyHint = null) {
       const isPhotoOnly = submissionTypeSelect.value === "photo_upload";
       sourcePhoto.required = isPhotoOnly && selectedSourcePhotoFiles.length === 0;
       sourcePhotoList.hidden = selectedSourcePhotoFiles.length === 0;
-      sourcePhotoList.innerHTML = selectedSourcePhotoFiles.map((file, index) => `
+      revokeUnusedSourcePreviews();
+      sourcePhotoList.innerHTML = selectedSourcePhotoFiles.map((file, index) => {
+        const previewUrl = sourcePreviewUrl(file);
+        return `
         <div class="sourcePhotoItem">
+          ${previewUrl ? `<img class="sourcePhotoItem__preview" src="${escapeHtml(previewUrl)}" alt="Preview of ${escapeHtml(file.name || `source image ${index + 1}`)}" />` : '<span class="sourcePhotoItem__pdf" aria-hidden="true">PDF</span>'}
           <span>
-            <strong>${escapeHtml(file.name || `Source image ${index + 1}`)}</strong>
+            <strong>${escapeHtml(file.name || `Source ${index + 1}`)}</strong>
             <small>${escapeHtml(formatFileSize(file.size))}</small>
           </span>
-          <button class="sourcePhotoRemove" type="button" data-remove-source-photo-index="${index}" aria-label="Remove ${escapeHtml(file.name || `source image ${index + 1}`)}">X</button>
+          <button class="sourcePhotoRemove" type="button" data-remove-source-photo-index="${index}" aria-label="Remove ${escapeHtml(file.name || `source ${index + 1}`)}" title="Remove file">&times;</button>
         </div>
-      `).join("");
+      `; }).join("");
 
       if (selectedSourcePhotoFiles.length) {
         const count = selectedSourcePhotoFiles.length;
-        sourcePhotoHint.textContent = `${count} source image${count === 1 ? "" : "s"} attached. Pint Path compresses ${count === 1 ? "it" : "them"} and strips metadata before saving or sending.`;
+        const hasPdf = selectedSourcePhotoFiles.some(isPdfSourceFile);
+        sourcePhotoHint.textContent = hasPdf
+          ? "PDF attached. Pint Path reads its text and page images, then keeps it private for admin verification."
+          : `${count} source image${count === 1 ? "" : "s"} attached. Pint Path compresses ${count === 1 ? "it" : "them"} and strips image metadata before sending.`;
         return;
       }
 
@@ -466,6 +496,7 @@
 
     function clearSelectedSourcePhotos(emptyHint = null) {
       selectedSourcePhotoFiles = [];
+      revokeUnusedSourcePreviews();
       sourcePhoto.value = "";
       renderSourcePhotoList(emptyHint);
     }
@@ -477,11 +508,23 @@
         return;
       }
 
+      const incomingPdf = incomingFiles.find(isPdfSourceFile);
+      if (incomingPdf) {
+        if (incomingPdf.size > SOURCE_PDF_MAX_BYTES) {
+          sourcePhotoHint.textContent = "PDF must be 8MB or smaller.";
+          return;
+        }
+        selectedSourcePhotoFiles = [incomingPdf];
+        sourcePhoto.value = "";
+        renderSourcePhotoList();
+        return;
+      }
+      if (selectedSourcePhotoFiles.some(isPdfSourceFile)) selectedSourcePhotoFiles = [];
       const existingKeys = new Set(selectedSourcePhotoFiles.map(sourcePhotoFileKey));
       const nextFiles = [...selectedSourcePhotoFiles];
       for (const file of incomingFiles) {
         const key = sourcePhotoFileKey(file);
-        if (existingKeys.has(key) || nextFiles.length >= SOURCE_PHOTO_MAX_FILES) {
+        if (!file.type?.startsWith("image/") || /svg/i.test(file.type) || existingKeys.has(key) || nextFiles.length >= SOURCE_PHOTO_MAX_FILES) {
           continue;
         }
         existingKeys.add(key);
@@ -1737,7 +1780,7 @@
     }
 
     async function readSourcePhotoSelectionDataUrls(files) {
-      const sourceFiles = Array.from(files || []).slice(0, SOURCE_PHOTO_MAX_FILES);
+      const sourceFiles = Array.from(files || []).filter((file) => !isPdfSourceFile(file)).slice(0, SOURCE_PHOTO_MAX_FILES);
       if (!sourceFiles.length) {
         return [];
       }
@@ -1747,6 +1790,17 @@
         dataUrls.push(await readPhotoDataUrl(file));
       }
       return dataUrls;
+    }
+
+    function readPdfDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        if (!file) return resolve(null);
+        if (!isPdfSourceFile(file) || file.size > SOURCE_PDF_MAX_BYTES) return reject(new Error("Attach one PDF menu no larger than 8MB."));
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Could not read this PDF menu."));
+        reader.readAsDataURL(file);
+      });
     }
 
     function formatAccuracy(meters) {
@@ -2196,6 +2250,9 @@
           const sourcePhotoDataUrls = submissionTypeSelect.value === "photo_upload"
             ? await readSourcePhotoSelectionDataUrls(selectedSourcePhotoFiles)
             : [];
+          const sourceDocumentDataUrl = submissionTypeSelect.value === "photo_upload"
+            ? await readPdfDataUrl(selectedSourcePhotoFiles.find(isPdfSourceFile))
+            : null;
           const items = collectItems();
           const newVenue = collectNewVenue();
           const newVenueError = validateNewVenue(newVenue);
@@ -2208,7 +2265,7 @@
             MelbBeerBusiness.setStatus(statusEl, "Search and choose a venue first, or tick that the venue is not on Pint Path yet.", true);
             return;
           }
-          const validationError = validateSubmission(items, sourcePhotoDataUrls.length > 0);
+          const validationError = validateSubmission(items, sourcePhotoDataUrls.length > 0 || Boolean(sourceDocumentDataUrl));
           if (validationError) {
             MelbBeerBusiness.setStatus(statusEl, validationError, true);
             return;
@@ -2221,6 +2278,7 @@
 
           submissionPayload = {
             clientSubmissionId: createQueuedSubmissionId(),
+            missionId: missionId || null,
             venueId: newVenue ? createPendingVenueId() : selected.id,
             venueName: newVenue ? newVenue.name : selected.name,
             suburb: newVenue ? newVenue.suburb : selected.suburb || null,
@@ -2229,6 +2287,7 @@
             observedAt,
             sourcePhotoDataUrl: null,
             sourcePhotoDataUrls,
+            sourceDocumentDataUrl,
             uploadLocation,
             notes,
             items,

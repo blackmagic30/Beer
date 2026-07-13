@@ -44,6 +44,7 @@ import {
   monthlyReportDeliverySchema,
   monthlyReportExportQuerySchema,
   monthlyReportGenerateSchema,
+  pintPointMemberPreviewSchema,
   pintPointDrinkRecordSchema,
   posDiscountRedemptionSchema,
   priceRecordsQuerySchema,
@@ -53,6 +54,7 @@ import {
   reviewSubmissionSchema,
   saveItemSchema,
   submissionsQuerySchema,
+  trustWorkflowUpdateSchema,
   venueRequestSchema,
   venueClaimRequestSchema,
   verificationSchema,
@@ -167,6 +169,13 @@ const lookupLimiter = createRateLimiter({
   keyPrefix: "business:lookups",
   windowMs: 10 * 60_000,
   max: 60,
+  keyGenerator: rateLimitIdentity,
+});
+
+const venueCounterLimiter = createRateLimiter({
+  keyPrefix: "business:venue-counter",
+  windowMs: 10 * 60_000,
+  max: 240,
   keyGenerator: rateLimitIdentity,
 });
 
@@ -349,6 +358,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
           ? Math.min(1000, Math.max(1, Number(req.query.limit)))
           : 50;
       const venues = await businessService.listVenues(query, limit);
+      res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
       res.json(success({ venues }));
     } catch (error) {
       next(error);
@@ -443,9 +453,15 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.get("/missions", (req, res) => {
+    const account = getOptionalAccount(req, businessService);
     const query = parseWithSchema(missionsQuerySchema, req.query, "Invalid missions query");
-    const missions = businessService.listMissions(query);
+    const missions = businessService.listMissions(query, account);
     res.json(success({ missions }));
+  });
+
+  router.post("/missions/:id/accept", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    res.json(success(businessService.acceptMission(account, String(req.params.id ?? ""))));
   });
 
   router.get("/geocode", lookupLimiter, async (req, res, next) => {
@@ -609,21 +625,29 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.status(201).json(success(businessService.upsertBarSpecial(account, venueId, body)));
   });
 
-  router.post("/venue-portal/:venueId/discount-redemptions", writeLimiter, (req, res) => {
+  router.post("/venue-portal/:venueId/member-preview", venueCounterLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(pintPointMemberPreviewSchema, req.body, "Invalid Pint Path member code");
+    const venueId = String(req.params.venueId ?? "");
+    res.json(success(businessService.previewPintPointMember(account, venueId, body)));
+  });
+
+  router.post("/venue-portal/:venueId/discount-redemptions", venueCounterLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(discountRedemptionSchema, req.body, "Invalid discount redemption payload");
     const venueId = String(req.params.venueId ?? "");
     res.status(201).json(success(businessService.redeemDiscountPass(account, venueId, body)));
   });
 
-  router.post("/venue-portal/:venueId/pint-point-drinks", writeLimiter, (req, res) => {
+  router.post("/venue-portal/:venueId/pint-point-drinks", venueCounterLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(pintPointDrinkRecordSchema, req.body, "Invalid Pint Points drink payload");
     const venueId = String(req.params.venueId ?? "");
-    res.status(201).json(success(businessService.recordPintPointDrink(account, venueId, body)));
+    const result = businessService.recordPintPointDrink(account, venueId, body);
+    res.status(result.idempotentReplay ? 200 : 201).json(success(result));
   });
 
-  router.post("/venue-portal/:venueId/free-pint-rewards", writeLimiter, (req, res) => {
+  router.post("/venue-portal/:venueId/free-pint-rewards", venueCounterLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(freePintRewardDecisionSchema, req.body, "Invalid Free Pint Reward payload");
     const venueId = String(req.params.venueId ?? "");
@@ -656,6 +680,16 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       const venueId = String(req.params.venueId ?? "");
       const result = await businessService.createBarTierCheckout(account, venueId, body);
       res.status(201).json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/venue-portal/:venueId/billing/portal", billingLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      const venueId = String(req.params.venueId ?? "");
+      res.status(201).json(success(await businessService.createBarBillingPortal(account, venueId)));
     } catch (error) {
       next(error);
     }
@@ -698,6 +732,11 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/admin/queues", (req, res) => {
     const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getAdminQueues(admin)));
+  });
+
+  router.get("/admin/operational-health", (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    res.json(success(businessService.getOperationalHealth(admin)));
   });
 
   router.get("/admin/beer-catalog", (req, res) => {
@@ -798,6 +837,22 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.status(201).json(success(businessService.createMissionFromRequest(admin, requestId)));
   });
 
+  router.post("/admin/trust/:kind/:id", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const kind = String(req.params.kind ?? "");
+    if (!(["feedback", "wrong_price", "venue_request"] as const).includes(kind as never)) {
+      res.status(404).json({ ok: false, error: { message: "Trust queue type not found." } });
+      return;
+    }
+    const body = parseWithSchema(trustWorkflowUpdateSchema, req.body, "Invalid trust queue update");
+    res.json(success(businessService.updateTrustQueueItem(
+      admin,
+      kind as "feedback" | "wrong_price" | "venue_request",
+      String(req.params.id ?? ""),
+      body,
+    )));
+  });
+
   router.post("/billing/checkout", billingLimiter, async (req, res, next) => {
     try {
       const account = requireAccount(req, businessService);
@@ -815,6 +870,15 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       const body = parseWithSchema(checkoutSessionSchema, req.body, "Invalid checkout confirmation payload");
       const result = await businessService.reconcileCheckoutSession(account, body);
       res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/billing/portal", billingLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      res.status(201).json(success(await businessService.createBillingPortal(account)));
     } catch (error) {
       next(error);
     }

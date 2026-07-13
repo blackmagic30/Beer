@@ -93,6 +93,8 @@ struct AccountView: View {
                 )
             }
 
+            specialsCard(dashboard)
+
             privacyCard(dashboard.privacySettings)
 
             if let submissions = dashboard.submissions, !submissions.isEmpty {
@@ -152,12 +154,102 @@ struct AccountView: View {
         )
     }
 
+    private func specialsCard(_ dashboard: AccountDashboard) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(
+                eyebrow: "Member specials",
+                title: "Codes and Pint Points",
+                subtitle: "Generate a short-lived code only when venue staff are ready to redeem it.",
+                systemImage: "qrcode.viewfinder"
+            )
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                MetricPill(
+                    title: "Estimated saved",
+                    value: moneyString(cents: dashboard.discounts?.estimatedSavingsCents),
+                    systemImage: "dollarsign.circle.fill",
+                    tint: BeerMapTheme.leaf
+                )
+                MetricPill(
+                    title: "Pint Points",
+                    value: "\(dashboard.pintPoints?.available ?? 0)/\(dashboard.pintPoints?.threshold ?? 50)",
+                    systemImage: "sparkles",
+                    tint: BeerMapTheme.amber
+                )
+            }
+
+            if let pass = model.discountPass {
+                RotatingCodeCard(title: "Pint Path special", result: pass)
+            }
+
+            if let reward = model.freePintReward {
+                RotatingCodeCard(title: "Free Pint Reward", result: reward)
+            }
+
+            HStack(spacing: 10) {
+                SecondaryButton(title: dashboard.discounts?.eligible == true ? "Generate special" : "Special locked", systemImage: "qrcode") {
+                    Task { await model.generateDiscountPass() }
+                }
+                .disabled(dashboard.discounts?.eligible != true)
+
+                PrimaryButton(
+                    title: dashboard.pintPoints?.rewardAvailable == true ? "Free Pint" : "Reward locked",
+                    systemImage: "gift.fill",
+                    isLoading: model.isLoading
+                ) {
+                    Task { await model.generateFreePintReward() }
+                }
+                .disabled(dashboard.pintPoints?.rewardAvailable != true)
+            }
+        }
+        .beerMapCard()
+    }
+
     private func numberString(_ value: Double?) -> String {
         guard let value else { return "0" }
         if value.rounded() == value {
             return "\(Int(value))"
         }
         return String(format: "%.1f", value)
+    }
+
+    private func moneyString(cents: Int?) -> String {
+        guard let cents else { return "$0" }
+        return "$\(String(format: "%.2f", Double(cents) / 100.0))"
+    }
+}
+
+private struct RotatingCodeCard: View {
+    let title: String
+    let result: RotatingCodeResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.black))
+                .foregroundStyle(BeerMapTheme.amber)
+            Text(result.code)
+                .font(.system(.largeTitle, design: .rounded).weight(.black))
+                .tracking(4)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 10)
+                .background(BeerMapTheme.ink, in: RoundedRectangle(cornerRadius: 8))
+                .foregroundStyle(Color.white)
+                .accessibilityLabel("\(title) code \(result.code)")
+            if let copy = result.copy {
+                Text(copy)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let expiresAt = result.expiresAt {
+                Label("Expires \(expiresAt)", systemImage: "clock.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

@@ -672,7 +672,8 @@ describe("menu crawler extraction", () => {
       expect(source).toContain("omit the row instead of inventing a price from the size");
       expect(source).toContain("choose the PINT price");
       expect(source).toContain("Read the whole image first");
-      expect(source).toContain("Do not include gin, vodka, whisky");
+      expect(source).toContain("Do not include standalone gin, vodka, whisky");
+      expect(source).toContain("Keep a clearly labelled packaged premixed RTD");
       expect(source).toMatch(/detail:\s*"high"|"original" as const : "high" as const/);
       expect(source).toContain("second-pass quality check");
       expect(source).toContain("Proposed first-pass extraction JSON");

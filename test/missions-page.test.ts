@@ -38,6 +38,7 @@ describe("missions page", () => {
     expect(html).toContain("const MISSION_PAGE_SIZE = 5");
     expect(html).toContain("let visibleMissionCount = INITIAL_MISSION_COUNT");
     expect(html).toContain("function orderedMissionsForDisplay");
+    expect(html).not.toContain("rememberMissionOrder");
     expect(html).toContain("const visibleMissions = missions.slice(0, visibleMissionCount)");
     expect(html).toContain('id="loadMoreMissionsButton"');
     expect(html).toContain("visibleMissionCount += MISSION_PAGE_SIZE");

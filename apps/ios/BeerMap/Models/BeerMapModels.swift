@@ -108,6 +108,8 @@ struct AccountDashboard: Codable {
     let privacySettings: PrivacySettings?
     let access: AccessState?
     let leaderboard: LeaderboardContext?
+    let discounts: AccountDiscountSummary?
+    let pintPoints: AccountPintPoints?
 }
 
 struct Account: Codable, Identifiable, Hashable {
@@ -172,6 +174,29 @@ struct AccessState: Codable, Hashable {
 struct LeaderboardContext: Codable, Hashable {
     let accountId: String?
     let rank: Int?
+}
+
+struct AccountDiscountSummary: Codable, Hashable {
+    let eligible: Bool?
+    let estimatedSavingsCents: Int?
+}
+
+struct AccountPintPoints: Codable, Hashable {
+    let available: Int?
+    let threshold: Int?
+    let pointsUntilReward: Int?
+    let rewardAvailable: Bool?
+}
+
+struct RotatingCodeResult: Codable, Hashable {
+    let accountId: String?
+    let code: String
+    let qrDataUrl: String?
+    let redeemUrl: String?
+    let expiresAt: String?
+    let validMinutes: Int?
+    let pointsReserved: Int?
+    let copy: String?
 }
 
 struct VenueListResponse: Codable {
@@ -283,6 +308,7 @@ struct SubmissionResult: Codable, Hashable {
 
 struct CreateSubmissionRequest: Codable {
     let clientSubmissionId: String?
+    let missionId: String?
     let venueId: String
     let venueName: String
     let suburb: String?
@@ -290,6 +316,8 @@ struct CreateSubmissionRequest: Codable {
     let submissionType: String
     let observedAt: String
     let sourcePhotoDataUrl: String?
+    let sourcePhotoDataUrls: [String]
+    let sourceDocumentDataUrl: String?
     let sourcePhotoUrl: String?
     let uploadLocation: UploadLocationRequest?
     let notes: String?
@@ -348,6 +376,7 @@ struct VenueRequestPayload: Codable {
 }
 
 struct VenuePortalData: Codable {
+    let isAdmin: Bool?
     let accessState: String?
     let assignments: [VenueAssignment]?
     let selectedVenue: SelectedVenue?
@@ -360,9 +389,13 @@ struct VenuePortalData: Codable {
     let monthlyReport: JSONValue?
     let businessToolkit: JSONValue?
     let demandDashboard: JSONValue?
+    let dailySpecialsPlanner: DailySpecialsPlanner?
+    let discounts: VenueDiscountSummary?
+    let pintPoints: VenuePintPointSummary?
     let updateLink: String?
     let message: String?
     let privacyCopy: String?
+    let qrCopy: String?
 }
 
 struct VenueAssignment: Codable, Identifiable, Hashable {
@@ -473,6 +506,77 @@ struct VenueAnalytics: Codable, Hashable {
     let directionsClicks: Int?
     let privacyFloorMet: Bool?
     let privacyThreshold: Int?
+}
+
+struct DailySpecialsPlanner: Codable, Hashable {
+    let title: String?
+    let venueName: String?
+    let area: String?
+    let summaryDate: String?
+    let sourcePeriod: String?
+    let privacyFloorMet: Bool?
+    let confidenceCopy: String?
+    let summary: String?
+    let demandSignals: [PlannerSignal]?
+    let popularWindows: [PlannerWindow]?
+    let quietWindows: [PlannerWindow]?
+    let localSearchSignals: [PlannerSignal]?
+    let recommendations: [PlannerRecommendation]?
+}
+
+struct PlannerSignal: Codable, Identifiable, Hashable {
+    let label: String
+    let value: JSONValue?
+    let helper: String?
+
+    var id: String { "\(label)-\(helper ?? "")" }
+    var displayValue: String {
+        switch value {
+        case .string(let value): return value
+        case .number(let value):
+            return value.rounded() == value ? "\(Int(value))" : String(format: "%.1f", value)
+        case .bool(let value): return value ? "Yes" : "No"
+        case .none, .null: return "-"
+        default: return "View"
+        }
+    }
+}
+
+struct PlannerWindow: Codable, Identifiable, Hashable {
+    let label: String
+    let startTime: String?
+    let endTime: String?
+    let count: Int?
+    let helper: String?
+
+    var id: String { "\(label)-\(startTime ?? "")-\(endTime ?? "")" }
+}
+
+struct PlannerRecommendation: Codable, Identifiable, Hashable {
+    let title: String
+    let type: String?
+    let window: String?
+    let startTime: String?
+    let endTime: String?
+    let offerIdea: String?
+    let reason: String?
+    let action: String?
+
+    var id: String { "\(title)-\(window ?? "")" }
+}
+
+struct VenueDiscountSummary: Codable, Hashable {
+    let totalRedemptions: Int?
+    let totalQuantity: Int?
+    let uniqueAccounts: Int?
+    let estimatedSavingsCents: Int?
+}
+
+struct VenuePintPointSummary: Codable, Hashable {
+    let today: JSONValue?
+    let month: JSONValue?
+    let rewardThreshold: Int?
+    let copy: String?
 }
 
 struct AccountDeletionRequest: Codable {

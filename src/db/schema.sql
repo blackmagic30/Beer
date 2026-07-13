@@ -406,6 +406,7 @@ CREATE INDEX IF NOT EXISTS idx_source_evidence_retention
 CREATE TABLE IF NOT EXISTS submissions (
   id TEXT PRIMARY KEY,
   client_submission_id TEXT,
+  mission_id TEXT,
   user_id TEXT NOT NULL,
   venue_id TEXT NOT NULL,
   venue_name TEXT NOT NULL,
@@ -433,7 +434,8 @@ CREATE TABLE IF NOT EXISTS submissions (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES accounts(id),
-  FOREIGN KEY (reviewed_by) REFERENCES accounts(id)
+  FOREIGN KEY (reviewed_by) REFERENCES accounts(id),
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_submissions_status_created
@@ -444,6 +446,9 @@ CREATE INDEX IF NOT EXISTS idx_submissions_user_created
 
 CREATE INDEX IF NOT EXISTS idx_submissions_user_venue_month
   ON submissions (user_id, venue_id, observed_at);
+
+CREATE INDEX IF NOT EXISTS idx_submissions_mission
+  ON submissions (mission_id, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS submission_source_evidence (
   submission_id TEXT NOT NULL,
@@ -584,6 +589,34 @@ CREATE TABLE IF NOT EXISTS missions (
 CREATE INDEX IF NOT EXISTS idx_missions_active_priority
   ON missions (active, priority, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS mission_progress (
+  id TEXT PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  submission_id TEXT,
+  status TEXT NOT NULL DEFAULT 'accepted',
+  accepted_at TEXT NOT NULL,
+  submitted_at TEXT,
+  completed_at TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE,
+  FOREIGN KEY (submission_id) REFERENCES submissions(id) ON DELETE SET NULL,
+  UNIQUE (mission_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mission_progress_user_status
+  ON mission_progress (user_id, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_mission_progress_submission
+  ON mission_progress (submission_id);
+
+CREATE TABLE IF NOT EXISTS system_state (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS contribution_ledger (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -707,11 +740,18 @@ CREATE TABLE IF NOT EXISTS feedback (
   message TEXT NOT NULL,
   venue_id TEXT,
   venue_name TEXT,
+  contact_email TEXT,
   status TEXT NOT NULL DEFAULT 'open',
   priority TEXT NOT NULL DEFAULT 'normal',
   triage_reason TEXT,
+  assigned_to TEXT,
+  resolution_note TEXT,
+  resolved_at TEXT,
+  resolved_by TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (assigned_to) REFERENCES accounts(id) ON DELETE SET NULL,
+  FOREIGN KEY (resolved_by) REFERENCES accounts(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_feedback_status_created
@@ -729,8 +769,14 @@ CREATE TABLE IF NOT EXISTS wrong_price_reports (
   notes TEXT,
   source_photo_url TEXT,
   status TEXT NOT NULL DEFAULT 'open',
+  assigned_to TEXT,
+  resolution_note TEXT,
+  resolved_at TEXT,
+  resolved_by TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (assigned_to) REFERENCES accounts(id) ON DELETE SET NULL,
+  FOREIGN KEY (resolved_by) REFERENCES accounts(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_record
@@ -748,8 +794,14 @@ CREATE TABLE IF NOT EXISTS venue_requests (
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'open',
   mission_id TEXT REFERENCES missions(id) ON DELETE SET NULL,
+  assigned_to TEXT,
+  resolution_note TEXT,
+  resolved_at TEXT,
+  resolved_by TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (assigned_to) REFERENCES accounts(id) ON DELETE SET NULL,
+  FOREIGN KEY (resolved_by) REFERENCES accounts(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_venue_requests_type_status
@@ -769,8 +821,14 @@ CREATE TABLE IF NOT EXISTS venue_interest_requests (
   role TEXT NOT NULL,
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'open',
+  assigned_to TEXT,
+  resolution_note TEXT,
+  resolved_at TEXT,
+  resolved_by TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (assigned_to) REFERENCES accounts(id) ON DELETE SET NULL,
+  FOREIGN KEY (resolved_by) REFERENCES accounts(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_venue_interest_status_created
@@ -881,6 +939,7 @@ CREATE TABLE IF NOT EXISTS venue_specials (
   description TEXT NOT NULL,
   price REAL,
   discount TEXT,
+  savings_amount_cents INTEGER,
   starts_at TEXT,
   ends_at TEXT,
   start_time TEXT,
@@ -894,6 +953,21 @@ CREATE TABLE IF NOT EXISTS venue_specials (
 
 CREATE INDEX IF NOT EXISTS idx_venue_specials_venue
   ON venue_specials (venue_id, active, starts_at, ends_at);
+
+CREATE TABLE IF NOT EXISTS venue_identity_aliases (
+  alias_venue_id TEXT PRIMARY KEY,
+  canonical_venue_id TEXT NOT NULL,
+  identity_key TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'automatic_exact_match',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_venue_identity_aliases_canonical
+  ON venue_identity_aliases (canonical_venue_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_identity_aliases_identity
+  ON venue_identity_aliases (identity_key, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS venue_pending_changes (
   id TEXT PRIMARY KEY,

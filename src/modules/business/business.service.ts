@@ -26,6 +26,7 @@ import {
   type FeedbackPriority,
   type LeaderboardPrizeCampaign,
   type PendingVenueDetails,
+  type PintPointDrinkRecord,
   type PubGolfVenueCandidate,
   type PublicVenuePriceRecord,
   type SavedItem,
@@ -100,6 +101,7 @@ import type {
   MonthlyReportDeliveryInput,
   MonthlyReportExportQuery,
   MonthlyReportGenerateInput,
+  PintPointMemberPreviewInput,
   PintPointDrinkRecordInput,
   PosDiscountRedemptionInput,
   PriceRecordsQuery,
@@ -108,6 +110,7 @@ import type {
   ReviewSubmissionInput,
   RetentionQuery,
   SaveItemInput,
+  TrustWorkflowUpdateInput,
   VenueInterestInput,
   VenueInterestStatusInput,
   VenueManagerAssignmentInput,
@@ -186,6 +189,8 @@ interface UserGoogleVenueLookup {
 }
 
 const AUTO_MISSION_VENUE_LIMIT = 2_000;
+const AUTO_MISSION_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const AUTO_MISSION_REFRESH_STATE_KEY = "auto_missions_refresh";
 const AUTO_MISSION_TARGET_BEERS = [
   SUPPORTED_BEERS.guinness,
   SUPPORTED_BEERS.carlton_draft,
@@ -209,7 +214,7 @@ interface StripeCheckoutSession {
   status?: string | null;
   payment_status?: string | null;
   customer?: string | { id?: string | null } | null;
-  subscription?: string | { id?: string | null } | null;
+  subscription?: string | { id?: string | null; current_period_end?: number | null } | null;
   metadata?: Record<string, string> | null;
   error?: {
     message?: string;
@@ -516,6 +521,41 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function normalizeVenueIdentityPart(value: string | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\b(?:victoria|vic|australia)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function venueIdentityKey(venue: Pick<VenueRow, "name" | "address" | "suburb">): string | null {
+  const name = normalizeVenueIdentityPart(venue.name);
+  if (!name) return null;
+  const address = normalizeVenueIdentityPart(venue.address);
+  if (address) return `${name}|address:${address}`;
+  const suburb = normalizeVenueIdentityPart(venue.suburb);
+  return suburb ? `${name}|suburb:${suburb}` : null;
+}
+
+function encodePriceCursor(record: Pick<PublicVenuePriceRecord, "id" | "lastVerifiedAt">): string {
+  return Buffer.from(JSON.stringify({ id: record.id, verifiedAt: record.lastVerifiedAt })).toString("base64url");
+}
+
+function decodePriceCursor(value: string | undefined): { id: string; verifiedAt: string } | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
+    return typeof parsed.id === "string" && typeof parsed.verifiedAt === "string"
+      ? { id: parsed.id, verifiedAt: parsed.verifiedAt }
+      : null;
+  } catch {
+    throw new AppError("Price cursor is invalid or expired.", 400);
+  }
+}
+
 function normalizeBeerId(value: string): string {
   return value
     .trim()
@@ -718,6 +758,21 @@ function sanitizeAccount(account: BusinessAccount) {
   };
 }
 
+function sanitizeVenuePintPointDrinkRecord(record: PintPointDrinkRecord) {
+  return {
+    id: record.id,
+    venueId: record.venueId,
+    venueName: record.venueName,
+    itemName: record.itemName,
+    beverageCategory: record.beverageCategory,
+    quantity: record.quantity,
+    isAlcoholic: record.isAlcoholic,
+    pointsAwarded: record.pointsAwarded,
+    source: record.source,
+    recordedAt: record.recordedAt,
+  };
+}
+
 export function canAccessAgeGatedRewards(input: {
   account: Pick<BusinessAccount, "isOver18Verified" | "ageVerificationStatus"> | null;
   latestAgeVerification: Pick<AgeVerification, "status" | "isOver18" | "ageThreshold" | "expiresAt"> | null;
@@ -773,9 +828,44 @@ function sourceEvidenceExtensionForMimeType(mimeType: string): string {
       return "heic";
     case "image/heif":
       return "heif";
+    case "application/pdf":
+      return "pdf";
     default:
       return "bin";
   }
+}
+
+function validateSubmissionPdfDataUrl(value: string): { mimeType: "application/pdf"; bytes: Buffer } {
+  const prefix = "data:application/pdf;base64,";
+  if (!value.startsWith(prefix)) {
+    throw new AppError("Menu document must be a PDF.", 400);
+  }
+  const bytes = Buffer.from(value.slice(prefix.length), "base64");
+  if (!bytes.length || bytes.length > 8 * 1024 * 1024) {
+    throw new AppError("Menu PDF must be 8MB or smaller.", 400);
+  }
+  if (bytes.subarray(0, 5).toString("ascii") !== "%PDF-") {
+    throw new AppError("Menu document content does not match the PDF file type.", 400);
+  }
+  const structure = bytes.toString("latin1").toLowerCase();
+  if (["/javascript", "/launch", "/embeddedfile", "/openaction", "/aa"].some((token) => structure.includes(token))) {
+    throw new AppError("Menu PDF contains active or embedded content. Export a flat menu PDF and try again.", 400);
+  }
+  return { mimeType: "application/pdf", bytes };
+}
+
+function validateSubmissionEvidenceDataUrl(value: string): { mimeType: string; bytes: Buffer } {
+  if (value.startsWith("data:application/pdf;base64,")) {
+    return validateSubmissionPdfDataUrl(value);
+  }
+  return validateImageDataUrl(value, {
+    allowedMimeTypes: SUBMISSION_LIMITS.allowedImageMimeTypes,
+    maxBytes: SUBMISSION_LIMITS.maxPhotoBytes,
+    invalidMimeMessage: "Upload must be a JPEG, PNG, WebP, HEIC, HEIF, or PDF file.",
+    tooLargeMessage: "Each upload image must be 6MB or smaller.",
+    activePayloadMessage: "Upload must be a safe image file, not SVG, HTML, XML, script, or style content.",
+    mismatchMessage: "Upload image content does not match the declared file type.",
+  });
 }
 
 function safeRelativeEvidencePath(objectPath: string): string | null {
@@ -1152,6 +1242,21 @@ function stringArrayFromUnknown(value: unknown): string[] {
 
 function objectFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stripePeriodEndIso(value: unknown): string | null {
+  const object = objectFromUnknown(value);
+  const direct = numberOrNull(object.current_period_end)
+    ?? numberOrNull(object.period_end)
+    ?? numberOrNull(object.cancel_at);
+  const items = objectFromUnknown(object.items);
+  const itemRows = Array.isArray(items.data) ? items.data : [];
+  const itemPeriodEnd = itemRows
+    .map((item) => numberOrNull(objectFromUnknown(item).current_period_end))
+    .find((entry): entry is number => entry != null);
+  const timestamp = direct ?? itemPeriodEnd;
+  if (timestamp == null || !Number.isSafeInteger(timestamp) || timestamp <= 0) return null;
+  return new Date(timestamp * 1000).toISOString();
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -1920,6 +2025,7 @@ function getMonthlyReportFilename(input: { venueId: string; month: string; forma
 export class BusinessService {
   private readonly supabase?: SupabaseClient;
   private readonly useSupabaseEvidenceStorage: boolean;
+  private publicVenueCache: { rows: VenueRow[]; fetchedAt: number; fetchLimit: number } | null = null;
 
   constructor(
     private readonly repository: BusinessRepository,
@@ -3245,15 +3351,6 @@ export class BusinessService {
 
   getAccessState(account: BusinessAccount | null, anonymousSessionId: string | null) {
     const hasFullAccess = isFullAccess(account);
-    const used = hasFullAccess
-      ? 0
-      : this.repository.countEvents({
-          eventType: "price_view_revealed",
-          userId: account?.id ?? null,
-          anonymousSessionId,
-          since: startOfTodayIso(),
-        });
-    const remaining = Math.max(0, this.config.FREE_PRICE_REVEALS_PER_DAY - used);
 
     return {
       status: account?.subscriptionStatus ?? "free",
@@ -3262,10 +3359,11 @@ export class BusinessService {
       hasFullAccess,
       isAdmin: account?.role === "admin" || account?.subscriptionStatus === "admin",
       ageConfirmed: Boolean(account?.ageConfirmedAt),
-      freePriceRevealsPerDay: this.config.FREE_PRICE_REVEALS_PER_DAY,
-      freePriceRevealsUsedToday: used,
-      freePriceRevealsRemainingToday: remaining,
-      canRevealPrice: hasFullAccess || remaining > 0,
+      priceAccessModel: hasFullAccess ? "full" : "fixed_preview",
+      freePriceRevealsPerDay: 0,
+      freePriceRevealsUsedToday: 0,
+      freePriceRevealsRemainingToday: 0,
+      canRevealPrice: hasFullAccess,
       canUseCheapestSort: hasFullAccess,
       canUseBeerSearch: hasFullAccess,
       canUseHappyHourActiveNow: true,
@@ -4139,6 +4237,54 @@ export class BusinessService {
     throw new AppError("Enter a Pint Path code or public account ID.", 400);
   }
 
+  previewPintPointMember(account: BusinessAccount, venueId: string, input: PintPointMemberPreviewInput) {
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const venue = this.getDiscountVenueIdentity(venueId, assignment);
+    const profile = this.repository.getBarProfile(venueId);
+    if (!profile?.acceptsPintPathCodes) {
+      throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
+    }
+
+    const now = nowIso();
+    const pass = this.repository.getActiveDiscountPassByCodeHash({
+      codeHash: hashDiscountCode(input.code),
+      now,
+    });
+    if (!pass) {
+      throw new AppError("Pint Path code expired or not found. Ask the user to refresh their code.", 404);
+    }
+    const user = this.repository.getAccountById(pass.userId);
+    if (!user || !isFullAccess(user)) {
+      throw new AppError("This Pint Path account cannot receive Pint Points right now.", 403);
+    }
+
+    const pointsToday = this.repository.countPintPointsAwardedSince({
+      userId: user.id,
+      since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+    });
+    const wallet = this.getPintPointWalletForAccount(user, now);
+
+    return {
+      accountId: user.publicAccountId,
+      eligible: true,
+      expiresAt: pass.expiresAt,
+      pointsToday,
+      pointsRemainingToday: Math.max(0, PINT_POINTS_DAILY_CAP - pointsToday),
+      wallet: {
+        available: wallet.available,
+        threshold: wallet.threshold,
+        progress: wallet.progress,
+        pointsUntilReward: wallet.pointsUntilReward,
+        rewardAvailable: wallet.rewardAvailable,
+      },
+      venue: {
+        venueId,
+        venueName: venue.venueName,
+      },
+      privacyCopy: "Only the public member ID and Pint Points eligibility are shown to venue staff.",
+    };
+  }
+
   async createFreePintRewardCode(account: BusinessAccount, input: FreePintRewardCodeInput) {
     if (account.status !== "active") {
       throw new AppError("Suspended accounts cannot create Free Pint Reward codes.", 403);
@@ -4240,6 +4386,30 @@ export class BusinessService {
 
     const isAlcoholic = input.isAlcoholic ?? input.beverageCategory === "alcoholic";
     const idempotencyKey = `manual:${input.transactionReference.trim().toLowerCase()}`;
+    const existingRecord = this.repository.getPintPointDrinkRecordByIdempotencyKey({ venueId, idempotencyKey });
+    if (existingRecord) {
+      const itemMatches = (existingRecord.itemName ?? "") === (input.itemName ?? "");
+      const payloadMatches = existingRecord.userId === user.id
+        && existingRecord.beverageCategory === input.beverageCategory
+        && existingRecord.quantity === input.quantity
+        && itemMatches;
+      if (!payloadMatches) {
+        throw new AppError("That receipt reference is already attached to a different purchase.", 409);
+      }
+      const wallet = this.getPintPointWalletForAccount(user, now);
+      return {
+        record: sanitizeVenuePintPointDrinkRecord(existingRecord),
+        accountId: user.publicAccountId,
+        pointsEarned: existingRecord.pointsAwarded,
+        wallet,
+        idempotentReplay: true,
+        copy: "Already recorded. No duplicate Pint Points were added.",
+        progressCopy: `You now have ${wallet.available} / ${FREE_PINT_REWARD_POINTS} Pint Points.`,
+        rewardCopy: wallet.pointsUntilReward === 0
+          ? "You have enough Pint Points for a Free Pint Reward."
+          : `${wallet.pointsUntilReward} Pint Point${wallet.pointsUntilReward === 1 ? "" : "s"} until your Free Pint Reward.`,
+      };
+    }
     const dailyPoints = this.repository.countPintPointsAwardedSince({
       userId: user.id,
       since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
@@ -4296,10 +4466,11 @@ export class BusinessService {
     });
 
     return {
-      record,
+      record: sanitizeVenuePintPointDrinkRecord(record),
       accountId: user.publicAccountId,
       pointsEarned,
       wallet,
+      idempotentReplay: false,
       copy: pointsEarned > 0
         ? `Nice — you earned ${pointsEarned} Pint Point${pointsEarned === 1 ? "" : "s"}.`
         : "Recorded. Food and non-alcoholic drinks do not earn Pint Points.",
@@ -4531,6 +4702,25 @@ export class BusinessService {
     const rewardVouchers = this.repository.listAccountRewardVouchers(account.id, 10);
     const pintPointsWallet = this.getPintPointWalletForAccount(account, dashboardNow);
     const hasFullAccess = isFullAccess(account);
+    const missionHistory = this.repository.listMissionProgressForUser(account.id, 12).map((progress) => {
+      const mission = this.repository.getMissionById(progress.missionId);
+      return {
+        id: progress.id,
+        missionId: progress.missionId,
+        submissionId: progress.submissionId,
+        status: progress.status,
+        acceptedAt: progress.acceptedAt,
+        submittedAt: progress.submittedAt,
+        completedAt: progress.completedAt,
+        updatedAt: progress.updatedAt,
+        venueId: mission?.venueId ?? null,
+        venueName: mission?.venueName ?? "Pint Path mission",
+        suburb: mission?.suburb ?? null,
+        reason: mission?.reason ?? "Mission details are no longer active.",
+        points: mission?.points ?? null,
+        multiplier: mission?.multiplier ?? null,
+      };
+    });
 
     return {
       account: sanitizeAccount(account),
@@ -4564,6 +4754,7 @@ export class BusinessService {
       savedItems,
       recentSearches: this.repository.listRecentSearches(account.id, 10),
       suggestedMissions,
+      missionHistory,
       premiumMemberToolkit: buildConsumerPremiumToolkit({
         account,
         savedItems,
@@ -4837,30 +5028,53 @@ export class BusinessService {
   }
 
   private mergeVenueRows(primary: VenueRow[], secondary: VenueRow[], limit: number): VenueRow[] {
-    const primaryIds = new Set(primary.map((venue) => venue.id));
-    const merged = new Map<string, VenueRow>();
-    [...primary, ...secondary].forEach((venue) => {
-      merged.set(venue.id, {
-        ...venue,
-        ...this.getPublicVenueTierMetadata(venue.id),
-      });
-    });
+    const byIdentity = new Map<string, VenueRow>();
+    const byId = new Map<string, VenueRow>();
+    const now = nowIso();
 
-    const orderedIds = [
-      ...secondary.filter((venue) => !primaryIds.has(venue.id)).map((venue) => venue.id),
-      ...primary.map((venue) => venue.id),
-    ];
-    const seen = new Set<string>();
-    return orderedIds
-      .map((id) => merged.get(id))
-      .filter((venue): venue is VenueRow => {
-        if (!venue || seen.has(venue.id)) {
-          return false;
-        }
-        seen.add(venue.id);
-        return true;
-      })
-      .slice(0, limit);
+    for (const venue of [...primary, ...secondary]) {
+      const enriched = { ...venue, ...this.getPublicVenueTierMetadata(venue.id) };
+      const identity = venueIdentityKey(enriched) ?? `id:${enriched.id}`;
+      const existing = byIdentity.get(identity);
+      if (!existing) {
+        byIdentity.set(identity, enriched);
+        byId.set(enriched.id, enriched);
+        this.repository.upsertVenueIdentityAlias({
+          aliasVenueId: enriched.id,
+          canonicalVenueId: enriched.id,
+          identityKey: identity,
+          now,
+        });
+        continue;
+      }
+
+      const canonical = {
+        ...enriched,
+        ...existing,
+        address: existing.address ?? enriched.address,
+        suburb: existing.suburb ?? enriched.suburb,
+        state: existing.state ?? enriched.state,
+        postcode: existing.postcode ?? enriched.postcode,
+        latitude: existing.latitude ?? enriched.latitude,
+        longitude: existing.longitude ?? enriched.longitude,
+        membershipTier: existing.membershipTier === "pro" || enriched.membershipTier === "pro" ? "pro" : "basic",
+        highlightedName: Boolean(existing.highlightedName || enriched.highlightedName),
+        premiumBadge: existing.premiumBadge ?? enriched.premiumBadge ?? null,
+        promoted: Boolean(existing.promoted || enriched.promoted),
+        featuredSpecialEligible: Boolean(existing.featuredSpecialEligible || enriched.featuredSpecialEligible),
+        acceptsPintPathCodes: Boolean(existing.acceptsPintPathCodes || enriched.acceptsPintPathCodes),
+      } satisfies VenueRow;
+      byIdentity.set(identity, canonical);
+      byId.set(existing.id, canonical);
+      this.repository.upsertVenueIdentityAlias({
+        aliasVenueId: enriched.id,
+        canonicalVenueId: existing.id,
+        identityKey: identity,
+        now,
+      });
+    }
+
+    return Array.from(byIdentity.values()).slice(0, limit);
   }
 
   private assertAccountCanSubmit(account: BusinessAccount, options: { allowVenueManager?: boolean } = {}): void {
@@ -4965,15 +5179,29 @@ export class BusinessService {
     return validated;
   }
 
+  private validatedSubmissionDocumentDataUrl(input: CreateSubmissionInput): string | null {
+    if (!input.sourceDocumentDataUrl) return null;
+    const { bytes } = validateSubmissionPdfDataUrl(input.sourceDocumentDataUrl);
+    return `data:application/pdf;base64,${bytes.toString("base64")}`;
+  }
+
+  private decodedDataUrlBytes(dataUrl: string): number {
+    const separatorIndex = dataUrl.indexOf(",");
+    if (separatorIndex < 0) return 0;
+    return Buffer.from(dataUrl.slice(separatorIndex + 1), "base64").length;
+  }
+
   private async preparePhotoOcr(input: CreateSubmissionInput): Promise<PreparedPhotoOcr | null> {
     if (input.submissionType !== "photo_upload") return null;
     const imageDataUrls = input.sourcePhotoDataUrls ?? [];
-    if (!imageDataUrls.length || !this.menuPhotoOcr) {
+    const documentDataUrls = input.sourceDocumentDataUrl ? [input.sourceDocumentDataUrl] : [];
+    const sourceCount = imageDataUrls.length + documentDataUrls.length;
+    if (!sourceCount || !this.menuPhotoOcr) {
       return {
         status: "manual_review_required",
         summary: {
           model: null,
-          imageCount: imageDataUrls.length || (input.sourcePhotoUrl ? 1 : 0),
+          imageCount: sourceCount || (input.sourcePhotoUrl ? 1 : 0),
           extractedRowCount: 0,
           rejectedCandidateCount: 0,
           pendingCatalogCount: 0,
@@ -4986,9 +5214,12 @@ export class BusinessService {
     }
 
     try {
+      const startedAt = nowIso();
+      this.repository.setSystemState("job:menu_ocr", { state: "running", startedAt }, startedAt);
       const result: MenuPhotoOcrResult = await this.menuPhotoOcr.extract({
         venueNameHint: input.newVenue?.name ?? input.venueName,
         imageDataUrls,
+        documentDataUrls,
       });
       const items = result.beers
         .map(preparedSubmissionItemFromOcr)
@@ -4997,6 +5228,15 @@ export class BusinessService {
         [normalizeBeerSearchKey(item.beerName), item.servingSize, item.price ?? "none", item.isOnTap].join(":"),
         item,
       ])).values()).slice(0, 60);
+      const completedAt = nowIso();
+      this.repository.setSystemState("job:menu_ocr", {
+        state: "succeeded",
+        startedAt,
+        completedAt,
+        sourceCount,
+        extractedRowCount: deduplicated.length,
+        rejectedCandidateCount: result.rejectedCandidateCount,
+      }, completedAt);
 
       return {
         status: deduplicated.length ? "processed" : "manual_review_required",
@@ -5013,16 +5253,23 @@ export class BusinessService {
         items: deduplicated,
       };
     } catch (error) {
+      const completedAt = nowIso();
+      this.repository.setSystemState("job:menu_ocr", {
+        state: "failed",
+        completedAt,
+        sourceCount,
+        error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Menu OCR failed",
+      }, completedAt);
       logger.warn("User submission photo OCR failed; preserving evidence for manual review", {
         venueId: input.venueId,
-        imageCount: imageDataUrls.length,
+        imageCount: sourceCount,
         error: error instanceof Error ? redactSecrets(error.message) : "unknown",
       });
       return {
         status: "failed",
         summary: {
           model: null,
-          imageCount: imageDataUrls.length,
+          imageCount: sourceCount,
           extractedRowCount: 0,
           rejectedCandidateCount: 0,
           pendingCatalogCount: 0,
@@ -5048,10 +5295,17 @@ export class BusinessService {
     }
 
     const imageDataUrls = this.validatedSubmissionImageDataUrls(input);
+    const sourceDocumentDataUrl = this.validatedSubmissionDocumentDataUrl(input);
+    const sourceBytes = imageDataUrls.reduce((total, value) => total + this.decodedDataUrlBytes(value), 0) +
+      (sourceDocumentDataUrl ? this.decodedDataUrlBytes(sourceDocumentDataUrl) : 0);
+    if (sourceBytes > 11 * 1024 * 1024) {
+      throw new AppError("Combined menu evidence is too large. Upload fewer images or one smaller PDF.", 400);
+    }
     const normalizedInput: CreateSubmissionInput = {
       ...input,
       sourcePhotoDataUrl: null,
       sourcePhotoDataUrls: imageDataUrls,
+      sourceDocumentDataUrl,
     };
     const verifiedInput = await this.withVerifiedPendingGoogleVenue(account, normalizedInput);
     const photoOcr = await this.preparePhotoOcr(verifiedInput);
@@ -5085,6 +5339,19 @@ export class BusinessService {
     }
 
     const now = nowIso();
+    if (input.missionId) {
+      const mission = this.repository.getMissionById(input.missionId);
+      if (!mission || !mission.active) {
+        throw new AppError("This mission is no longer active. Refresh Missions and choose a current task.", 409);
+      }
+      if (mission.venueId !== input.venueId) {
+        throw new AppError("The selected venue does not match this mission.", 400);
+      }
+      const progress = this.repository.getMissionProgress({ missionId: mission.id, userId: account.id });
+      if (progress?.status === "completed") {
+        throw new AppError("You have already completed this mission.", 409);
+      }
+    }
     const pendingVenue = this.normalizePendingVenue(input);
     this.assertPendingVenueIsNotKnownDuplicate(pendingVenue);
     const sourcePhotoRefs = options.sourcePhotoRefs ?? this.resolveInlineSubmissionSourcePhotos(account, input);
@@ -5127,7 +5394,7 @@ export class BusinessService {
         ...item,
         beerName: beer.name,
         normalizedBeerId: beer.key,
-        requiresCatalogApproval: isPhotoOcr && beer.status !== "active",
+        requiresCatalogApproval: beer.status !== "active",
       };
     });
     const standardizedItems = Array.from(standardizedCandidates.reduce((byKey, item) => {
@@ -5159,6 +5426,7 @@ export class BusinessService {
     const submission = this.repository.createSubmission({
       id: crypto.randomUUID(),
       clientSubmissionId: input.clientSubmissionId,
+      missionId: input.missionId,
       userId: account.id,
       venueId: input.venueId,
       venueName: pendingVenue?.name ?? input.venueName,
@@ -5267,10 +5535,12 @@ export class BusinessService {
     const dataUrls = Array.from(new Set([
       input.sourcePhotoDataUrl,
       ...(input.sourcePhotoDataUrls ?? []),
+      input.sourceDocumentDataUrl,
     ].filter((value): value is string => Boolean(value))));
     for (const sourcePhotoDataUrl of dataUrls) {
       const ref = await this.resolveSourcePhoto(account, {
-        sourcePhotoDataUrl,
+        sourcePhotoDataUrl: sourcePhotoDataUrl.startsWith("data:application/pdf") ? null : sourcePhotoDataUrl,
+        sourceDocumentDataUrl: sourcePhotoDataUrl.startsWith("data:application/pdf") ? sourcePhotoDataUrl : null,
         sourcePhotoUrl: null,
       });
       if (ref) refs.push(ref);
@@ -5279,6 +5549,7 @@ export class BusinessService {
     if (input.sourcePhotoUrl) {
       const ref = await this.resolveSourcePhoto(account, {
         sourcePhotoDataUrl: null,
+        sourceDocumentDataUrl: null,
         sourcePhotoUrl: input.sourcePhotoUrl,
       });
       if (ref) refs.push(ref);
@@ -5295,16 +5566,10 @@ export class BusinessService {
     const dataUrls = Array.from(new Set([
       input.sourcePhotoDataUrl,
       ...(input.sourcePhotoDataUrls ?? []),
+      input.sourceDocumentDataUrl,
     ].filter((value): value is string => Boolean(value))));
     for (const sourcePhotoDataUrl of dataUrls) {
-      const { mimeType, bytes } = validateImageDataUrl(sourcePhotoDataUrl, {
-        allowedMimeTypes: SUBMISSION_LIMITS.allowedImageMimeTypes,
-        maxBytes: SUBMISSION_LIMITS.maxPhotoBytes,
-        invalidMimeMessage: "Upload must be a JPEG, PNG, WebP, HEIC, or HEIF image.",
-        tooLargeMessage: "Upload image must be 6MB or smaller.",
-        activePayloadMessage: "Upload must be a safe image file, not SVG, HTML, XML, script, or style content.",
-        mismatchMessage: "Upload image content does not match the declared file type.",
-      });
+      const { mimeType, bytes } = validateSubmissionEvidenceDataUrl(sourcePhotoDataUrl);
       if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
         throw new AppError("Production evidence uploads must use the asynchronous submission endpoint.", 500, undefined, false);
       }
@@ -5332,17 +5597,13 @@ export class BusinessService {
 
   private async resolveSourcePhoto(
     account: Pick<BusinessAccount, "id"> | null,
-    input: Pick<CreateSubmissionInput, "sourcePhotoDataUrl" | "sourcePhotoUrl">,
+    input: Pick<CreateSubmissionInput, "sourcePhotoDataUrl" | "sourcePhotoUrl"> & {
+      sourceDocumentDataUrl?: string | null;
+    },
   ): Promise<string | null> {
-    if (input.sourcePhotoDataUrl) {
-      const { mimeType, bytes } = validateImageDataUrl(input.sourcePhotoDataUrl, {
-        allowedMimeTypes: SUBMISSION_LIMITS.allowedImageMimeTypes,
-        maxBytes: SUBMISSION_LIMITS.maxPhotoBytes,
-        invalidMimeMessage: "Upload must be a JPEG, PNG, WebP, HEIC, or HEIF image.",
-        tooLargeMessage: "Upload image must be 6MB or smaller.",
-        activePayloadMessage: "Upload must be a safe image file, not SVG, HTML, XML, script, or style content.",
-        mismatchMessage: "Upload image content does not match the declared file type.",
-      });
+    const dataUrl = input.sourceDocumentDataUrl ?? input.sourcePhotoDataUrl;
+    if (dataUrl) {
+      const { mimeType, bytes } = validateSubmissionEvidenceDataUrl(dataUrl);
 
       if (this.config.NODE_ENV === "production" && !this.config.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
         if (this.useSupabaseEvidenceStorage) {
@@ -5584,11 +5845,11 @@ export class BusinessService {
         ? [legacyEvidenceId]
         : [];
     if (!evidenceIds.length) {
-      return { signedUrl: null, signedUrls: [], expiresAt: null };
+      return { signedUrl: null, signedUrls: [], evidence: [], expiresAt: null };
     }
 
     const expiresAt = Math.floor(Date.now() / 1000) + this.config.SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS;
-    const signedUrls = evidenceIds.map((evidenceId) => {
+    const signedEvidence = evidenceIds.map((evidenceId) => {
       const evidence = this.repository.getSourceEvidenceObject(evidenceId);
       if (!evidence) {
         throw new AppError("Source evidence not found.", 404);
@@ -5605,12 +5866,14 @@ export class BusinessService {
         targetId: evidence.id,
         metadata: { submissionId },
       });
-      return signedUrl.toString();
+      return { url: signedUrl.toString(), mimeType: evidence.mimeType };
     });
+    const signedUrls = signedEvidence.map((item) => item.url);
 
     return {
       signedUrl: signedUrls[0] ?? null,
       signedUrls,
+      evidence: signedEvidence,
       expiresAt: new Date(expiresAt * 1000).toISOString(),
     };
   }
@@ -5787,6 +6050,7 @@ export class BusinessService {
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
       anonymousSessionId: input.anonymousSessionId,
+      contactEmail: input.contactEmail ?? account?.email ?? null,
       feedbackType: input.feedbackType,
       message: input.message,
       venueId: input.venueId,
@@ -6072,7 +6336,7 @@ export class BusinessService {
     });
   }
 
-  private hasUnapprovedPhotoOcrCatalogItems(items: BusinessSubmissionItem[]): boolean {
+  private hasUnapprovedCatalogItems(items: BusinessSubmissionItem[]): boolean {
     return items.some(
       (item) => item.requiresCatalogApproval && !this.beerCatalogRepository?.isActiveBeer(item.normalizedBeerId),
     );
@@ -6170,9 +6434,9 @@ export class BusinessService {
       throw new AppError("Submission has already been reviewed.", 409);
     }
 
-    if (input.status === "approved" && this.hasUnapprovedPhotoOcrCatalogItems(submission.items)) {
+    if (input.status === "approved" && this.hasUnapprovedCatalogItems(submission.items)) {
       throw new AppError(
-        "Approve or merge every new OCR beer in the beer catalogue before publishing this submission.",
+        "Approve, merge, or reject every new beer name in the catalogue before publishing this submission.",
         409,
       );
     }
@@ -6183,13 +6447,7 @@ export class BusinessService {
       ? roundPoints(Math.min(requestedPoints, suggestedPoints))
       : 0;
     const reviewedAt = nowIso();
-    const reviewConfidence = input.confidence ?? (
-      this.repository.countConfirmedVerificationsForSubmission(submissionId) >= 2
-        ? "community_confirmed"
-        : submission.submission.sourcePhotoUrl
-          ? "photo_verified"
-          : "venue_confirmed"
-    );
+    const reviewConfidence = input.confidence ?? "admin_verified";
     const result = this.repository.reviewSubmission({
       submissionId,
       reviewerId: admin.id,
@@ -6338,6 +6596,14 @@ export class BusinessService {
       return this.mergeVenueRows(localVenues, missionVenues, limit);
     }
 
+    const normalizedSearch = query?.trim() ?? "";
+    const cachedRows = !normalizedSearch
+      && this.publicVenueCache
+      && Date.now() - this.publicVenueCache.fetchedAt < 60_000
+      && this.publicVenueCache.fetchLimit >= limit
+        ? this.publicVenueCache.rows.slice(0, limit)
+        : null;
+
     let request = this.supabase
       .from("venues")
       .select("id, name, address, suburb, state, postcode, latitude, longitude")
@@ -6352,7 +6618,9 @@ export class BusinessService {
       }
     }
 
-    const { data, error } = await request.order("name", { ascending: true });
+    const { data, error } = cachedRows
+      ? { data: cachedRows, error: null }
+      : await request.order("name", { ascending: true });
 
     if (error) {
       throw new ExternalServiceError("Failed to fetch venues", {
@@ -6364,6 +6632,9 @@ export class BusinessService {
     }
 
     const venues = (data ?? []) as VenueRow[];
+    if (!normalizedSearch && !cachedRows) {
+      this.publicVenueCache = { rows: venues, fetchedAt: Date.now(), fetchLimit: limit };
+    }
     const now = nowIso();
     venues.forEach((venue) => {
       this.repository.upsertVenueLocationCache({
@@ -6376,14 +6647,14 @@ export class BusinessService {
       });
     });
 
-    return this.mergeVenueRows(venues.map((venue) => ({
+    return this.mergeVenueRows(localVenues, venues.map((venue) => ({
       ...venue,
       ...this.getPublicVenueTierMetadata(venue.id),
-    })), localVenues, limit);
+    })), limit);
   }
 
   async getPublicVenueById(venueId: string): Promise<VenueRow | null> {
-    const normalizedVenueId = venueId.trim();
+    const normalizedVenueId = this.repository.getCanonicalVenueId(venueId.trim());
     if (!normalizedVenueId) {
       return null;
     }
@@ -6857,6 +7128,9 @@ export class BusinessService {
     candidate: MissionVenueCandidate,
     now: string,
   ): Array<Omit<BusinessMission, "active" | "sponsorFlag"> & { active?: boolean; sponsorFlag?: boolean }> {
+    const cycleSuffix = (lastVerifiedAt: string | null) => lastVerifiedAt
+      ? `:${lastVerifiedAt.replace(/[^0-9]/g, "").slice(0, 14)}`
+      : "";
     const baseMission = (
       suffix: string,
       reason: string,
@@ -6893,7 +7167,7 @@ export class BusinessService {
 
     const missions = [
       baseMission(
-        "menu-freshness",
+        `menu-freshness${cycleSuffix(candidate.latestVerifiedAt)}`,
         this.missionReasonForFreshness("drink menu", candidate.latestVerifiedAt),
         this.calculateFreshnessPoints(candidate.latestVerifiedAt),
         candidate.latestVerifiedAt,
@@ -6903,6 +7177,7 @@ export class BusinessService {
     for (const beer of AUTO_MISSION_TARGET_BEERS) {
       const lastVerifiedAt = this.repository.getLatestVenueBeerTimestamp({
         venueId: candidate.venueId,
+        venueIds: this.repository.listVenueIdentityIds(candidate.venueId),
         normalizedBeerId: beer.key,
         beerNames: [beer.name, ...beer.aliases],
       });
@@ -6911,15 +7186,17 @@ export class BusinessService {
         ? this.missionReasonForFreshness(`${beer.name} price`, lastVerifiedAt)
         : `Missing ${beer.name} price - add this drink`;
 
-      missions.push(baseMission(`beer:${beer.key}`, reason, points, lastVerifiedAt));
+      missions.push(baseMission(`beer:${beer.key}${cycleSuffix(lastVerifiedAt)}`, reason, points, lastVerifiedAt));
     }
 
-    const happyHourLastVerifiedAt = candidate.happyHourLastVerifiedAt ?? candidate.latestVerifiedAt;
-    const happyHourPoints = this.calculateFreshnessPoints(happyHourLastVerifiedAt);
+    const happyHourLastVerifiedAt = candidate.happyHourLastVerifiedAt;
+    const happyHourPoints = happyHourLastVerifiedAt
+      ? this.calculateFreshnessPoints(happyHourLastVerifiedAt)
+      : CONTRIBUTION_POINTS.newVenue;
     missions.push(baseMission(
-      "happy-hour",
-      candidate.happyHourLastVerifiedAt
-        ? this.missionReasonForFreshness("happy-hour details", candidate.happyHourLastVerifiedAt)
+      `happy-hour${cycleSuffix(happyHourLastVerifiedAt)}`,
+      happyHourLastVerifiedAt
+        ? this.missionReasonForFreshness("happy-hour details", happyHourLastVerifiedAt)
         : "Missing happy-hour details - add current specials",
       happyHourPoints,
       happyHourLastVerifiedAt,
@@ -6928,17 +7205,54 @@ export class BusinessService {
     return missions;
   }
 
-  private refreshAutoMissions(): { candidates: number; generated: number } {
-    const candidates = this.repository.listMissionVenueCandidates(AUTO_MISSION_VENUE_LIMIT);
+  private refreshAutoMissions(force = false): { candidates: number; generated: number; refreshed: boolean } {
+    const state = this.repository.getSystemState<{ refreshedAt?: string }>(AUTO_MISSION_REFRESH_STATE_KEY);
+    const lastRefreshMs = state?.value.refreshedAt ? new Date(state.value.refreshedAt).getTime() : 0;
+    if (!force && Number.isFinite(lastRefreshMs) && Date.now() - lastRefreshMs < AUTO_MISSION_REFRESH_INTERVAL_MS) {
+      return { candidates: this.repository.countMissions(), generated: 0, refreshed: false };
+    }
+    const rawCandidates = this.repository.listMissionVenueCandidates(AUTO_MISSION_VENUE_LIMIT);
+    const candidateByVenue = new Map<string, MissionVenueCandidate>();
+    const newestIso = (left: string | null, right: string | null) => {
+      if (!left) return right;
+      if (!right) return left;
+      return new Date(left).getTime() >= new Date(right).getTime() ? left : right;
+    };
+    for (const candidate of rawCandidates) {
+      const venueId = this.repository.getCanonicalVenueId(candidate.venueId);
+      const existing = candidateByVenue.get(venueId);
+      if (!existing) {
+        candidateByVenue.set(venueId, { ...candidate, venueId });
+        continue;
+      }
+      candidateByVenue.set(venueId, {
+        ...existing,
+        venueName: existing.venueName || candidate.venueName,
+        suburb: existing.suburb ?? candidate.suburb,
+        latestVerifiedAt: newestIso(existing.latestVerifiedAt, candidate.latestVerifiedAt),
+        recordCount: existing.recordCount + candidate.recordCount,
+        happyHourLastVerifiedAt: newestIso(existing.happyHourLastVerifiedAt, candidate.happyHourLastVerifiedAt),
+      });
+    }
+    const candidates = Array.from(candidateByVenue.values());
     if (!candidates.length) {
-      return { candidates: 0, generated: 0 };
+      return { candidates: 0, generated: 0, refreshed: false };
     }
 
     const now = nowIso();
-    const missions = candidates.flatMap((candidate) => this.buildAutoMissionsForVenue(candidate, now));
+    const missions = candidates
+      .flatMap((candidate) => this.buildAutoMissionsForVenue(candidate, now))
+      .filter((mission) => mission.points > CONTRIBUTION_POINTS.veryFreshUpdate);
+    const generated = this.repository.replaceAutoMissions(missions, now);
+    this.repository.setSystemState(AUTO_MISSION_REFRESH_STATE_KEY, {
+      refreshedAt: now,
+      candidates: candidates.length,
+      generated,
+    }, now);
     return {
       candidates: candidates.length,
-      generated: this.repository.replaceAutoMissions(missions, now),
+      generated,
+      refreshed: true,
     };
   }
 
@@ -7036,8 +7350,6 @@ export class BusinessService {
   }
 
   private resolveMissionAreaFromLocalCache(query: string): MissionAreaLookup | null {
-    this.refreshAutoMissions();
-
     const terms = query
       .toLowerCase()
       .split(/\s+/)
@@ -7102,7 +7414,7 @@ export class BusinessService {
     radiusKm?: number | undefined;
     sort?: string | undefined;
     limit: number;
-  }): BusinessMission[] {
+  }, account: BusinessAccount | null = null): BusinessMission[] {
     const refreshed = this.refreshAutoMissions();
     if (refreshed.candidates === 0 && this.repository.countMissions() === 0) {
       this.seedDemoMissions();
@@ -7117,11 +7429,18 @@ export class BusinessService {
       .split(/\s+/)
       .map((term) => term.trim())
       .filter(Boolean);
+    const progressByMission = new Map(
+      account
+        ? this.repository.listMissionProgressForUser(account.id).map((progress) => [progress.missionId, progress.status] as const)
+        : [],
+    );
     const missions = this.repository
       .listMissions({ activeOnly: true, suburb: query.suburb, limit: missionFetchLimit })
       .map((mission) => ({
         ...mission,
-        lastVerifiedAt: this.repository.getLatestVenueDataTimestamp(mission.venueId) ?? mission.lastVerifiedAt,
+        lastVerifiedAt: mission.id.startsWith("auto:")
+          ? mission.lastVerifiedAt
+          : this.repository.getLatestVenueDataTimestamp(mission.venueId) ?? mission.lastVerifiedAt,
         venueAddress: this.repository.getBarProfile(mission.venueId)?.address ?? null,
       }))
       .map((mission) => {
@@ -7142,6 +7461,7 @@ export class BusinessService {
           distanceMeters,
           distanceKm: distanceMeters == null ? null : Math.round((distanceMeters / 1000) * 10) / 10,
           freshnessLabel: this.missionFreshnessLabel(mission.lastVerifiedAt),
+          userProgress: progressByMission.get(mission.id) ?? null,
         };
       })
       .filter((mission) => {
@@ -7235,16 +7555,51 @@ export class BusinessService {
     });
   }
 
+  acceptMission(account: BusinessAccount, missionId: string) {
+    this.assertAccountCanSubmit(account);
+    const mission = this.repository.getMissionById(missionId);
+    if (!mission || !mission.active) {
+      throw new AppError("This mission is no longer active.", 404);
+    }
+    const progress = this.repository.acceptMission({ missionId, userId: account.id, now: nowIso() });
+    const params = new URLSearchParams({
+      missionId: mission.id,
+      venueId: mission.venueId,
+      venueName: mission.venueName,
+      missionReason: mission.reason,
+      type: mission.reason.toLowerCase().includes("happy")
+        ? "happy_hour_update"
+        : !mission.lastVerifiedAt || /no data|empty venue/i.test(mission.reason)
+          ? "full_venue_update"
+          : "single_beer_price",
+    });
+    return {
+      mission: { ...mission, userProgress: progress.status },
+      progress,
+      submitUrl: `/submit.html?${params.toString()}`,
+    };
+  }
+
   listPriceRecords(
     account: BusinessAccount | null,
     input: PriceRecordsQuery & { clientIp?: string | undefined },
   ) {
     const anonymousSessionId = input.anonymousSessionId
       || (account ? null : hashAnonymousFallback(input.clientIp || "unknown-client"));
+    const requestedVenueId = input.venueId ? this.repository.getCanonicalVenueId(input.venueId) : null;
+    const identityVenueIds = requestedVenueId ? this.repository.listVenueIdentityIds(requestedVenueId) : [];
+    const canonicalizeRecord = (record: PublicVenuePriceRecord): PublicVenuePriceRecord => {
+      const canonicalVenueId = this.repository.getCanonicalVenueId(record.venueId);
+      return canonicalVenueId === record.venueId ? record : { ...record, venueId: canonicalVenueId };
+    };
+    const venueManagerRecords = this.repository
+      .listVenueManagerPriceRecords(5_000, null)
+      .filter((record) => !requestedVenueId || this.repository.getCanonicalVenueId(record.venueId) === requestedVenueId);
     const records = [
-      ...this.repository.listLatestPriceRecords(input.limit, input.venueId),
-      ...this.repository.listVenueManagerPriceRecords(input.limit, input.venueId),
+      ...this.repository.listCurrentPriceRecords(identityVenueIds),
+      ...venueManagerRecords,
     ]
+      .map(canonicalizeRecord)
       .filter(shouldExposePriceRecord)
       .filter((record) =>
         !record.sourceType.startsWith("venue_manager_portal") ||
@@ -7268,9 +7623,23 @@ export class BusinessService {
       ...record,
       ...getCachedVenueMetadata(record.venueId),
     });
-    const dedupedRecords = dedupePublicPriceRecords(records.map(addVenueMetadata))
-      .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime())
-      .slice(0, input.limit);
+    const allCurrentRecords = dedupePublicPriceRecords(records.map(addVenueMetadata))
+      .sort((left, right) => {
+        const timestampDifference = new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime();
+        return timestampDifference || right.id.localeCompare(left.id);
+      });
+    const cursor = decodePriceCursor(input.cursor);
+    const cursorIndex = cursor
+      ? allCurrentRecords.findIndex((record) => record.id === cursor.id && record.lastVerifiedAt === cursor.verifiedAt)
+      : -1;
+    if (cursor && cursorIndex < 0) {
+      throw new AppError("Price cursor is no longer current. Refresh the map to continue.", 409);
+    }
+    const recordsAfterCursor = cursorIndex >= 0 ? allCurrentRecords.slice(cursorIndex + 1) : allCurrentRecords;
+    const dedupedRecords = recordsAfterCursor.slice(0, input.limit);
+    const nextCursor = recordsAfterCursor.length > input.limit && dedupedRecords.length
+      ? encodePriceCursor(dedupedRecords[dedupedRecords.length - 1]!)
+      : null;
     const hasFullAccess = isFullAccess(account);
 
     if (hasFullAccess) {
@@ -7279,6 +7648,7 @@ export class BusinessService {
         access: this.getAccessState(account, anonymousSessionId),
         revealed: true,
         blocked: false,
+        nextCursor,
       };
     }
 
@@ -7289,6 +7659,7 @@ export class BusinessService {
         access: this.getAccessState(account, anonymousSessionId),
         revealed: false,
         blocked: false,
+        nextCursor,
       };
     }
 
@@ -7314,6 +7685,7 @@ export class BusinessService {
       access: this.getAccessState(account, anonymousSessionId),
       revealed: visibleCount > 0,
       blocked: lockedCount > 0,
+      nextCursor,
     };
   }
 
@@ -7928,6 +8300,7 @@ export class BusinessService {
       startIso: reportMonthRange.startsAt,
       endIso: reportMonthRange.endsAt,
     });
+    const recentPintPointActivity = this.repository.listPintPointDrinkRecordsForVenue(selectedVenueId, 12);
     const posIntegration = this.getVenuePosIntegration(account, selectedVenueId);
     const monthlyReport = capabilities.monthlyReports
       ? savedMonthlyReport ?? {
@@ -8028,6 +8401,7 @@ export class BusinessService {
       pintPoints: {
         today: pintPointTodayStats,
         month: pintPointMonthStats,
+        recentActivity: recentPintPointActivity,
         rewardThreshold: FREE_PINT_REWARD_POINTS,
         copy: "Pint Points count only paid alcoholic beverages. Free Pint Rewards do not earn another point.",
       },
@@ -8375,6 +8749,7 @@ export class BusinessService {
       description: input.description,
       price: input.price,
       discount: input.discount,
+      savingsAmountCents: input.savingsAmountCents,
       startsAt: input.startsAt,
       endsAt: input.endsAt,
       startTime: input.startTime,
@@ -8757,6 +9132,63 @@ export class BusinessService {
     };
   }
 
+  getOperationalHealth(admin: BusinessAccount) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+    const keys = [
+      "job:offsite_backup",
+      "job:restore_rehearsal",
+      "job:evidence_retention",
+      "job:menu_ocr",
+      "job:stripe_webhook",
+      AUTO_MISSION_REFRESH_STATE_KEY,
+    ];
+    return {
+      checkedAt: nowIso(),
+      jobs: keys.map((key) => {
+        const state = this.repository.getSystemState<Record<string, unknown>>(key);
+        return {
+          key,
+          state: state?.value ?? { state: "not_run" },
+          updatedAt: state?.updatedAt ?? null,
+        };
+      }),
+    };
+  }
+
+  updateTrustQueueItem(
+    admin: BusinessAccount,
+    kind: "feedback" | "wrong_price" | "venue_request",
+    id: string,
+    input: TrustWorkflowUpdateInput,
+  ) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+    const item = this.repository.updateTrustWorkflow({
+      kind,
+      id,
+      status: input.status,
+      assignedTo: input.assignedTo === "self" ? admin.id : input.assignedTo,
+      resolutionNote: input.resolutionNote,
+      resolvedBy: admin.id,
+      now: nowIso(),
+    });
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_trust_queue_update",
+      targetType: kind,
+      targetId: id,
+      metadata: {
+        status: input.status,
+        assigned: Boolean(input.assignedTo),
+        hasResolutionNote: Boolean(input.resolutionNote),
+      },
+    });
+    return { item };
+  }
+
   createMissionFromRequest(admin: BusinessAccount, requestId: string) {
     if (admin.role !== "admin" && admin.subscriptionStatus !== "admin") {
       throw new AppError("Admin access required.", 403);
@@ -8861,6 +9293,78 @@ export class BusinessService {
     };
   }
 
+  private async createStripeBillingPortalSession(customerId: string, returnPath: string) {
+    if (this.config.DEMO_BILLING_MODE) {
+      return {
+        mode: "demo",
+        portalUrl: new URL(returnPath, this.config.PUBLIC_BASE_URL).toString(),
+        message: "Demo billing has no external payment profile.",
+      };
+    }
+    if (!this.config.STRIPE_SECRET_KEY) {
+      throw new AppError("Stripe billing management is not configured.", 503);
+    }
+    if (!customerId) {
+      throw new AppError("This subscription is not linked to a Stripe customer yet. Contact support with your account ID.", 409);
+    }
+
+    const response = await fetchWithTimeout("https://api.stripe.com/v1/billing_portal/sessions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: formEncode({
+        customer: customerId,
+        return_url: new URL(returnPath, this.config.PUBLIC_BASE_URL).toString(),
+      }),
+    });
+    const payload = await response.json().catch(() => null) as { url?: string; error?: { message?: string } } | null;
+    if (!response.ok || !payload?.url) {
+      throw new ExternalServiceError("Stripe billing management could not be opened. Try again shortly.", {
+        status: response.status,
+        message: payload?.error?.message,
+      });
+    }
+    return { mode: "stripe", portalUrl: payload.url };
+  }
+
+  async createBillingPortal(account: BusinessAccount) {
+    if (!["premium_monthly", "premium_yearly"].includes(account.subscriptionStatus)) {
+      throw new AppError("A paid Pint Path subscription is required to manage billing.", 409);
+    }
+    const result = await this.createStripeBillingPortalSession(account.stripeCustomerId ?? "", "/account.html?billing=returned");
+    this.auditSecurity({
+      actor: account,
+      action: "stripe_billing_portal_opened",
+      targetType: "account",
+      targetId: account.id,
+      metadata: { billingContext: "user" },
+    });
+    return result;
+  }
+
+  async createBarBillingPortal(account: BusinessAccount, venueId: string) {
+    this.requireVerifiedBarAccount(account);
+    this.requireAssignedVenue(account, venueId);
+    const profile = this.repository.getBarProfile(venueId);
+    if (!profile || profile.membershipTier !== "pro") {
+      throw new AppError("This venue does not have an active Pro billing profile.", 409);
+    }
+    const result = await this.createStripeBillingPortalSession(
+      profile.stripeCustomerId ?? "",
+      `/venue-portal.html?venueId=${encodeURIComponent(venueId)}&billing=returned`,
+    );
+    this.auditSecurity({
+      actor: account,
+      action: "stripe_billing_portal_opened",
+      targetType: "venue",
+      targetId: venueId,
+      metadata: { billingContext: "venue" },
+    });
+    return result;
+  }
+
   async reconcileCheckoutSession(account: BusinessAccount, input: CheckoutSessionInput) {
     if (this.config.DEMO_BILLING_MODE) {
       return {
@@ -8875,7 +9379,7 @@ export class BusinessService {
     }
 
     const response = await fetchWithTimeout(
-      `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(input.sessionId)}`,
+      `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(input.sessionId)}?expand%5B%5D=subscription`,
       {
         method: "GET",
         headers: {
@@ -8918,7 +9422,7 @@ export class BusinessService {
       userId: account.id,
       subscriptionStatus,
       stripeCustomerId: stripeObjectId(payload.customer),
-      premiumUntil: null,
+      premiumUntil: stripePeriodEndIso(payload.subscription),
       now: nowIso(),
     });
     this.trackEvent(updated, {
@@ -9106,6 +9610,12 @@ export class BusinessService {
     });
 
     if (!shouldProcess) {
+      this.repository.setSystemState("job:stripe_webhook", {
+        state: "succeeded",
+        completedAt: receivedAt,
+        eventType: event.type,
+        replay: true,
+      }, receivedAt);
       return { received: true };
     }
 
@@ -9120,8 +9630,22 @@ export class BusinessService {
         failedAt: nowIso(),
         error: error instanceof Error ? redactSecrets(error.message) : "Stripe event application failed",
       });
+      const failedAt = nowIso();
+      this.repository.setSystemState("job:stripe_webhook", {
+        state: "failed",
+        completedAt: failedAt,
+        eventType: event.type,
+        error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Stripe event application failed",
+      }, failedAt);
       throw error;
     }
+    const completedAt = nowIso();
+    this.repository.setSystemState("job:stripe_webhook", {
+      state: "succeeded",
+      completedAt,
+      eventType: event.type,
+      replay: false,
+    }, completedAt);
     return { received: true };
   }
 
@@ -9268,8 +9792,8 @@ export class BusinessService {
       const stripeStatus = typeof object.status === "string" ? object.status : null;
       const shouldDowngrade =
         event.type === "customer.subscription.deleted" ||
-        event.type === "invoice.payment_failed" ||
         ["canceled", "cancelled", "past_due", "unpaid", "incomplete_expired"].includes(stripeStatus ?? "");
+      const premiumUntil = stripePeriodEndIso(object);
       const barProfile = subscriptionId ? this.repository.getBarProfileByStripeSubscriptionId(subscriptionId) : null;
       if (barProfile) {
         if (eventCreatedAt && barProfile.stripeEventCreatedAt && barProfile.stripeEventCreatedAt > eventCreatedAt) {
@@ -9287,14 +9811,16 @@ export class BusinessService {
           stripeEventCreatedAt: eventCreatedAt,
           ...flags,
         });
-        this.trackEvent(null, {
-          anonymousSessionId: null,
-          eventType: "subscription_cancelled",
-          venueId: barProfile.barId,
-          beerId: null,
-          suburb: barProfile.suburb,
-          metadata: { mode: "stripe", billingContext: "venue" },
-        });
+        if (shouldDowngrade) {
+          this.trackEvent(null, {
+            anonymousSessionId: null,
+            eventType: "subscription_cancelled",
+            venueId: barProfile.barId,
+            beerId: null,
+            suburb: barProfile.suburb,
+            metadata: { mode: "stripe", billingContext: "venue" },
+          });
+        }
         this.auditSecurity({
           action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
           targetType: "venue",
@@ -9313,18 +9839,20 @@ export class BusinessService {
         const updated = this.repository.updateSubscription({
           userId: account.id,
           subscriptionStatus: shouldDowngrade ? "free" : account.subscriptionStatus,
-          premiumUntil: null,
+          premiumUntil,
           now: nowIso(),
           stripeEventCreatedAt: eventCreatedAt,
         });
-        this.trackEvent(updated, {
-          anonymousSessionId: null,
-          eventType: "subscription_cancelled",
-          venueId: null,
-          beerId: null,
-          suburb: null,
-          metadata: { mode: "stripe" },
-        });
+        if (shouldDowngrade) {
+          this.trackEvent(updated, {
+            anonymousSessionId: null,
+            eventType: "subscription_cancelled",
+            venueId: null,
+            beerId: null,
+            suburb: null,
+            metadata: { mode: "stripe" },
+          });
+        }
         this.auditSecurity({
           actor: updated,
           action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",

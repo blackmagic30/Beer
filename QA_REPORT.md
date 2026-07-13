@@ -3,6 +3,48 @@
 Date: 2026-06-30
 Branch: `codex/mobile-apps-ios-android`
 
+## July 2026 App-Store Continuation QA
+
+Date: 2026-07-13
+Branch/worktree: `main`
+
+Scope completed in this pass:
+
+- Continued the existing native iOS and Android apps in `apps/ios` and `apps/android`.
+- Reworked navigation labels/order to `Find`, `Add`, `Bars`, `Account`, `Help`.
+- Added iOS and Android photo/source image upload flows through the native system photo pickers.
+- Added image compression before source upload: iOS resizes/compresses to JPEG; Android decodes/compresses to JPEG when possible.
+- Added iOS and Android happy-hour contribution forms using the existing `happy_hour_update` submission contract.
+- Added account special-code and Free Pint Reward code API calls/cards.
+- Added venue daily specials planner, redemption, and Pint Points summary cards.
+- Did not intentionally edit website UI/routes/styles/backend files in this pass.
+
+Checks run for this pass:
+
+```bash
+swiftc -parse $(rg --files apps/ios/BeerMap -g '*.swift')
+git diff --check -- apps/ios apps/android
+plutil -lint apps/ios/BeerMap.xcodeproj/project.pbxproj apps/ios/BeerMap/Info.plist
+cd apps/android && ./gradlew --version
+kotlinc -version
+```
+
+Results:
+
+- iOS Swift parse passed.
+- iOS project and `Info.plist` lint passed.
+- Mobile diff whitespace check passed.
+- Android Gradle check is blocked because no Java Runtime is installed.
+- Standalone `kotlinc` is not installed in this environment.
+
+Manual device QA still required:
+
+- Submit price update, photo/source upload, and happy-hour update on signed-in iOS and Android devices.
+- Generate Pint Path special and Free Pint Reward codes on both platforms with eligible accounts.
+- Open Bars with a venue-manager account and confirm planner/redemption cards render for Pro/eligible venues.
+- Verify Android image picker/compression against large real camera photos.
+- Verify VoiceOver/TalkBack labels and form focus on small devices.
+
 ## Scope
 
 Continued the existing native mobile apps in:

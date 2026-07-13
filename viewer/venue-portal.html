@@ -50,7 +50,7 @@
       </div>
       <div id="claimStatus" class="notice">If you should manage a venue, ask the Pint Path admin to assign your login to that venue. No public claim form is available.</div>
       <div class="actionRow" style="margin-top:16px;">
-        <a class="button button--primary" href="/account.html">Go to account</a>
+        <a id="venuePortalLoginLink" class="button button--primary" href="/account.html">Go to account</a>
         <a class="button" href="/">Back to map</a>
       </div>
       <div id="claimRequests" class="list is-hidden" style="margin-top:16px;"></div>
@@ -139,38 +139,96 @@
           </section>
 
           <section class="tabPanel is-hidden" data-panel="redemption">
-            <article class="panel redemptionHeroPanel">
+            <article class="panel staffCounterPanel">
               <div class="sectionHeader">
                 <div>
-                  <div class="eyebrow">Pint Path specials</div>
-                  <h2>Redeem a user code</h2>
-                  <p class="muted">The user opens their Pint Path special code, staff enters or scans it here, and the venue records the discount without exposing user details.</p>
+                  <div class="eyebrow">Staff counter</div>
+                  <h2>Record a member purchase</h2>
+                  <p class="muted">Check the rotating member code, then record the item that was purchased.</p>
                 </div>
-                <span class="pill pill--premium">Manual now · POS ready</span>
+                <span class="pill pill--premium">Privacy-safe</span>
               </div>
-              <div class="redemptionFlowGrid" aria-label="Discount redemption workflow">
+
+              <form id="memberPurchaseForm" class="form staffCounterForm">
+                <div class="staffCounterCodeGrid">
+                  <label class="field">Member code
+                    <input name="code" maxlength="6" pattern="[A-Za-z0-9]{6}" inputmode="text" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="ABC123" required />
+                  </label>
+                  <div class="staffCounterCodeActions" aria-label="Member code actions">
+                    <button id="scanMemberQrButton" class="button" type="button">Scan QR</button>
+                    <button id="checkMemberButton" class="button button--primary" type="button">Check member</button>
+                  </div>
+                </div>
+
+                <div id="memberQrScanner" class="memberQrScanner" hidden>
+                  <video id="memberQrVideo" playsinline muted aria-label="QR code camera preview"></video>
+                  <div class="memberQrScanner__footer">
+                    <span id="memberQrScannerStatus" class="muted">Point the camera at the member's Pint Path QR code.</span>
+                    <button id="stopMemberQrButton" class="button button--small" type="button">Stop camera</button>
+                  </div>
+                </div>
+
+                <div id="memberPreviewStatus" class="memberPreviewStatus" role="status" hidden></div>
+
+                <fieldset id="memberPurchaseFields" class="staffCounterPurchaseFields" disabled>
+                  <legend>Purchase</legend>
+                  <div class="grid grid--two">
+                    <label class="field">Item
+                      <input name="itemName" list="memberPurchaseItems" maxlength="120" placeholder="Choose or enter the item" required />
+                      <datalist id="memberPurchaseItems"></datalist>
+                    </label>
+                    <label class="field">Category
+                      <select name="beverageCategory">
+                        <option value="alcoholic">Alcoholic drink</option>
+                        <option value="non_alcoholic">Non-alcoholic drink</option>
+                        <option value="food">Food</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="grid grid--two">
+                    <label class="field">Quantity
+                      <select name="quantity">
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                      </select>
+                    </label>
+                    <label class="field">Receipt or order reference
+                      <input name="transactionReference" maxlength="120" autocomplete="off" placeholder="Optional" />
+                    </label>
+                  </div>
+                  <button id="recordMemberPurchaseButton" class="button button--primary" type="submit">Record purchase</button>
+                </fieldset>
+              </form>
+              <div id="memberPurchaseStatus" class="notice" role="status" hidden></div>
+            </article>
+
+            <details class="panel redemptionHeroPanel redemptionGuide">
+              <summary>How staff codes work</summary>
+              <div class="redemptionFlowGrid" aria-label="Pint Path code workflow">
                 <div class="redemptionFlowStep">
                   <strong>1</strong>
                   <span>User shows code</span>
-                  <small>Premium or contributor users generate a rotating QR or 6-character code.</small>
+                  <small>The rotating code confirms an active Pint Path member.</small>
                 </div>
                 <div class="redemptionFlowStep">
                   <strong>2</strong>
-                  <span>Staff validates</span>
-                  <small>Enter the code and the drink discount. Pint Path checks it server-side.</small>
+                  <span>Staff checks it</span>
+                  <small>Only the public member ID and points eligibility are shown.</small>
                 </div>
                 <div class="redemptionFlowStep">
                   <strong>3</strong>
-                  <span>Discount is logged</span>
-                  <small>Savings, item, quantity and time are stored for venue reporting.</small>
+                  <span>Purchase is saved</span>
+                  <small>The item, quantity, venue, staff account and time are logged.</small>
                 </div>
                 <div class="redemptionFlowStep">
                   <strong>4</strong>
-                  <span>Pro POS webhook</span>
-                  <small>Later, POS can send the same code and discount payload automatically.</small>
+                  <span>Points update</span>
+                  <small>Eligible alcoholic drinks add points without exposing personal details.</small>
                 </div>
               </div>
-            </article>
+            </details>
 
             <article class="panel">
               <div class="sectionHeader">
@@ -194,7 +252,7 @@
                   </label>
                 </div>
                 <label class="field">Quantity
-                  <input name="quantity" type="number" min="1" max="20" value="1" />
+                  <input name="quantity" type="number" min="1" max="4" value="1" />
                 </label>
                 <div class="redemptionSelectionStack">
                   <div id="discountSpecialChoices" class="discountSpecialChoices"></div>
@@ -440,6 +498,10 @@
                     <input name="discount" placeholder="e.g. 20% off selected pints" />
                   </label>
                 </div>
+                <label class="field">Saving per item
+                  <input name="savingsAmountDollars" type="number" min="0" max="1000" step="0.01" placeholder="e.g. 2.00" />
+                  <span class="fieldHint">Used for accurate savings totals when staff redeem this special.</span>
+                </label>
                 <div class="specialScheduleGrid">
                   <div class="specialScheduleDays">
                     <div class="field" style="margin-bottom:8px;">Days</div>
@@ -558,6 +620,9 @@
     let currentDemandPeriod = "today";
     let dashboardPreviewPlan = null;
     let premiumDashboardSection = "action_centre";
+    let activeMemberPreviewCode = "";
+    let memberQrStream = null;
+    let memberQrTimer = null;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
@@ -728,92 +793,40 @@
 
     const PREMIUM_VENUE_MOCK = {
       type: "Pint Path venue",
-      venueSearchesToday: 42,
-      mapViewsToday: 186,
-      profileViewsToday: 74,
-      beerIntentToday: 128,
-      priceRevealsToday: 96,
-      specialViewsToday: 58,
-      redemptionsToday: 12,
-      redemptionsWeek: 43,
-      trackedSavingsToday: 24,
-      trackedSavingsWeek: 128,
-      appValueToday: 1152,
-      appValueWeek: 4128,
-      appValueMonth: 16320,
-      averageSpend: 96,
-      pendingReviews: 10,
-      activeSpecials: 2,
-      happyHours: 3,
-      beerRows: 24,
-      onTapRows: 18,
-      pricedRows: 22,
-      stalePrices: 5,
-      listingQuality: 84,
-      opportunityScore: 76,
-      alerts: [
-        "5 beer rows need a fresh price check.",
-        "Guinness is the top nearby beer search this week.",
-        "2 Pint Path specials are active and ready for staff redemption.",
-      ],
-      appValueBars: [
-        { label: "Today", value: 1152, percent: 46 },
-        { label: "This week", value: 4128, percent: 66 },
-        { label: "This month", value: 16320, percent: 82 },
-      ],
-      demandSignals: [
-        { label: "Exact venue searches", value: 42, helper: "Today" },
-        { label: "Map/detail opens", value: 186, helper: "Today" },
-        { label: "Beer intent", value: 128, helper: "Beer list views + price reveals" },
-        { label: "Specials intent", value: 58, helper: "Special views today" },
-      ],
-      beerDemand: [
-        { label: "Guinness", value: 38, helper: "nearby searches" },
-        { label: "Carlton Draught", value: 24, helper: "nearby searches" },
-        { label: "Stone & Wood Pacific Ale", value: 19, helper: "nearby searches" },
-        { label: "Lager", value: 17, helper: "style searches" },
-      ],
-      customerInterest: [
-        { label: "New interest", value: 64, tone: "info" },
-        { label: "Repeat interest", value: 31, tone: "success" },
-        { label: "Directions clicks", value: 22, tone: "premium" },
-        { label: "Saves/shares", value: 18, tone: "warning" },
-      ],
-      marketing: [
-        { label: "Special views", value: 58 },
-        { label: "Redemptions", value: 43 },
-        { label: "Tracked savings", value: "$128" },
-        { label: "Best offer", value: "$2 off pints" },
-      ],
-      proActions: [
-        "Refresh 5 stale beer prices before the weekend.",
-        "Keep one clear Pint Path special live for tonight.",
-        "Add Guinness if it is currently on tap.",
-        "Review 10 pending changes so the map stays trusted.",
-      ],
-      aiRecommendations: [
-        "Guinness is the strongest nearby search. Keep its price verified and visible.",
-        "Your app special has views but low redemptions. Make the staff prompt simpler.",
-        "Stone & Wood searches are rising nearby. Add or confirm the current pint price.",
-        "Pending reviews are hiding useful updates. Clear them before Friday night.",
-      ],
-      risks: [
-        { label: "Stale prices", value: 5, helper: "Refresh before peak hours" },
-        { label: "Pending reviews", value: 10, helper: "Waiting on Pint Path admin" },
-        { label: "Missing beer demand", value: 3, helper: "High-search beers not confirmed" },
-        { label: "Special friction", value: "Medium", helper: "Low redemption rate" },
-      ],
-      priceFreshness: [
-        { label: "Fresh", value: 19, helper: "verified rows" },
-        { label: "Needs check", value: 5, helper: "older price rows" },
-        { label: "On tap", value: 18, helper: "current tap rows" },
-        { label: "Priced", value: 22, helper: "rows with price" },
-      ],
-      specialsStrategy: [
-        { title: "$2 off selected pints", audience: 58, redemptions: 14, value: "$28 saved" },
-        { title: "$10 Guinness window", audience: 38, redemptions: 9, value: "$18 saved" },
-        { title: "Happy-hour reminder", audience: 31, redemptions: 6, value: "$12 saved" },
-      ],
+      venueSearchesToday: 0,
+      mapViewsToday: 0,
+      profileViewsToday: 0,
+      beerIntentToday: 0,
+      priceRevealsToday: 0,
+      specialViewsToday: 0,
+      redemptionsToday: 0,
+      redemptionsWeek: 0,
+      trackedSavingsToday: 0,
+      trackedSavingsWeek: 0,
+      appValueToday: 0,
+      appValueWeek: 0,
+      appValueMonth: 0,
+      averageSpend: 0,
+      pendingReviews: 0,
+      activeSpecials: 0,
+      happyHours: 0,
+      beerRows: 0,
+      onTapRows: 0,
+      pricedRows: 0,
+      stalePrices: 0,
+      listingQuality: 0,
+      opportunityScore: 0,
+      alerts: [],
+      appValueBars: [],
+      demandSignals: [],
+      beerDemand: [],
+      customerInterest: [],
+      marketing: [],
+      proActions: [],
+      aiRecommendations: [],
+      risks: [],
+      priceFreshness: [],
+      specialsStrategy: [],
       reports: [
         "Search demand",
         "Special performance",
@@ -1125,6 +1138,7 @@
 
     function showTab(name) {
       const nextName = name === "specials" && !portalCanManageSpecials() ? "beers" : name;
+      if (nextName !== "redemption") stopMemberQrScanner();
       document.querySelectorAll(".tabButton").forEach((button) => {
         const active = button.dataset.tab === nextName;
         button.classList.toggle("is-active", active);
@@ -1160,8 +1174,8 @@
         window.requestAnimationFrame(() => {
           const rewardForm = document.getElementById("freePintRewardForm");
           const rewardCode = rewardForm instanceof HTMLFormElement ? field(rewardForm, "code")?.value : "";
-          const form = rewardCode ? rewardForm : document.getElementById("discountRedemptionForm");
-          const status = rewardCode ? document.getElementById("freePintRewardStatus") : document.getElementById("discountRedemptionStatus");
+          const form = rewardCode ? rewardForm : document.getElementById("memberPurchaseForm");
+          const status = rewardCode ? document.getElementById("freePintRewardStatus") : document.getElementById("memberPurchaseStatus");
           form?.scrollIntoView({ behavior: "smooth", block: "start" });
           if (form instanceof HTMLFormElement) {
             field(form, "code")?.focus({ preventScroll: true });
@@ -1306,6 +1320,7 @@
         <strong>${escapeHtml(profile.name)}</strong>
         <span>${escapeHtml(profile.suburb || "Melbourne")}</span>
         <span class="pill">${escapeHtml(prettyTier(profile.membershipTier))}</span>
+        ${profile.membershipTier === "pro" ? '<button class="button button--small" type="button" data-manage-venue-billing>Manage billing</button>' : ""}
       `;
 
       const venuePortalTitle = document.getElementById("venuePortalTitle");
@@ -2506,18 +2521,218 @@
       `;
     }
 
+    function normalizeMemberCode(value) {
+      return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+    }
+
+    function resetMemberPreview(options = {}) {
+      activeMemberPreviewCode = "";
+      const preview = document.getElementById("memberPreviewStatus");
+      const fields = document.getElementById("memberPurchaseFields");
+      if (preview) {
+        preview.hidden = true;
+        preview.innerHTML = "";
+      }
+      if (fields instanceof HTMLFieldSetElement) fields.disabled = true;
+      if (!options.keepStatus) clearStatus(document.getElementById("memberPurchaseStatus"));
+    }
+
+    function renderMemberPreview(result) {
+      const preview = document.getElementById("memberPreviewStatus");
+      const fields = document.getElementById("memberPurchaseFields");
+      if (!preview || !(fields instanceof HTMLFieldSetElement)) return;
+      const wallet = result.wallet || {};
+      preview.hidden = false;
+      preview.innerHTML = `
+        <div class="memberPreviewStatus__identity">
+          <span class="memberPreviewStatus__check" aria-hidden="true">✓</span>
+          <div>
+            <strong>Member ${escapeHtml(result.accountId || "verified")}</strong>
+            <span>Eligible at ${escapeHtml(result.venue?.venueName || currentPortal?.profile?.name || "this venue")}</span>
+          </div>
+        </div>
+        <div class="memberPreviewStatus__metrics">
+          <span><strong>${formatCount(result.pointsRemainingToday || 0)}</strong> points left today</span>
+          <span><strong>${formatCount(wallet.available || 0)} / ${formatCount(wallet.threshold || 50)}</strong> reward progress</span>
+        </div>
+        <small>${escapeHtml(result.privacyCopy || "Only the public member ID and Pint Points eligibility are shown to venue staff.")}</small>
+      `;
+      fields.disabled = false;
+      field(document.getElementById("memberPurchaseForm"), "itemName")?.focus({ preventScroll: true });
+    }
+
+    function generateCounterReference() {
+      if (window.crypto?.randomUUID) return `counter-${window.crypto.randomUUID()}`;
+      return `counter-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+
+    async function checkMemberCode() {
+      const form = document.getElementById("memberPurchaseForm");
+      const status = document.getElementById("memberPurchaseStatus");
+      const button = document.getElementById("checkMemberButton");
+      const venueId = selectedVenueId();
+      if (!(form instanceof HTMLFormElement) || !venueId) return null;
+      const codeInput = field(form, "code");
+      const code = normalizeMemberCode(codeInput?.value);
+      if (codeInput) codeInput.value = code;
+      resetMemberPreview({ keepStatus: true });
+      if (code.length !== 6) {
+        MelbBeerBusiness.setStatus(status, "Enter the current 6-character member code.", true);
+        codeInput?.focus();
+        return null;
+      }
+
+      if (button instanceof HTMLButtonElement) button.disabled = true;
+      MelbBeerBusiness.setStatus(status, "Checking member code...");
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/member-preview`, {
+          method: "POST",
+          body: JSON.stringify({ code }),
+        });
+        activeMemberPreviewCode = code;
+        renderMemberPreview(result);
+        clearStatus(status);
+        return result;
+      } catch (error) {
+        resetMemberPreview({ keepStatus: true });
+        MelbBeerBusiness.setStatus(status, error.message || "Could not check this member code.", true);
+        codeInput?.focus();
+        return null;
+      } finally {
+        if (button instanceof HTMLButtonElement) button.disabled = false;
+      }
+    }
+
+    function stopMemberQrScanner() {
+      if (memberQrTimer) {
+        window.clearTimeout(memberQrTimer);
+        memberQrTimer = null;
+      }
+      if (memberQrStream) {
+        memberQrStream.getTracks().forEach((track) => track.stop());
+        memberQrStream = null;
+      }
+      const scanner = document.getElementById("memberQrScanner");
+      const video = document.getElementById("memberQrVideo");
+      if (video instanceof HTMLVideoElement) video.srcObject = null;
+      if (scanner) scanner.hidden = true;
+    }
+
+    function applyScannedPintPathCode(rawValue) {
+      const raw = String(rawValue || "").trim();
+      let discountCode = "";
+      let freePintCode = "";
+      try {
+        const url = new URL(raw);
+        discountCode = normalizeMemberCode(url.searchParams.get("discountCode"));
+        freePintCode = normalizeMemberCode(url.searchParams.get("freePintCode"));
+      } catch {
+        discountCode = normalizeMemberCode(raw);
+      }
+
+      if (freePintCode.length === 6) {
+        const rewardForm = document.getElementById("freePintRewardForm");
+        if (rewardForm instanceof HTMLFormElement) {
+          field(rewardForm, "code").value = freePintCode;
+          stopMemberQrScanner();
+          rewardForm.scrollIntoView({ behavior: "smooth", block: "center" });
+          field(rewardForm, "code").focus({ preventScroll: true });
+          MelbBeerBusiness.setStatus(document.getElementById("memberPurchaseStatus"), "Free Pint Reward code scanned. Confirm it in the reward section below.");
+          return true;
+        }
+      }
+
+      if (discountCode.length === 6) {
+        const memberForm = document.getElementById("memberPurchaseForm");
+        const discountForm = document.getElementById("discountRedemptionForm");
+        if (memberForm instanceof HTMLFormElement) field(memberForm, "code").value = discountCode;
+        if (discountForm instanceof HTMLFormElement) field(discountForm, "code").value = discountCode;
+        stopMemberQrScanner();
+        void checkMemberCode();
+        return true;
+      }
+
+      return false;
+    }
+
+    async function startMemberQrScanner() {
+      const scanner = document.getElementById("memberQrScanner");
+      const video = document.getElementById("memberQrVideo");
+      const status = document.getElementById("memberQrScannerStatus");
+      const purchaseStatus = document.getElementById("memberPurchaseStatus");
+      if (!scanner || !(video instanceof HTMLVideoElement)) return;
+
+      if (!("BarcodeDetector" in window) || !navigator.mediaDevices?.getUserMedia) {
+        MelbBeerBusiness.setStatus(purchaseStatus, "In-page QR scanning is not available on this browser. Type the code, or scan the member QR with the phone camera to open this page prefilled.", true);
+        return;
+      }
+
+      stopMemberQrScanner();
+      scanner.hidden = false;
+      if (status) status.textContent = "Starting camera...";
+      try {
+        memberQrStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        video.srcObject = memberQrStream;
+        await video.play();
+        if (status) status.textContent = "Point the camera at the member's Pint Path QR code.";
+        const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+
+        const detect = async () => {
+          if (!memberQrStream) return;
+          try {
+            const codes = await detector.detect(video);
+            const rawValue = codes.find((item) => item.rawValue)?.rawValue || "";
+            if (rawValue && applyScannedPintPathCode(rawValue)) return;
+            if (rawValue && status) status.textContent = "That QR is not a Pint Path member code.";
+          } catch {
+            if (status) status.textContent = "Keep the QR steady inside the camera view.";
+          }
+          memberQrTimer = window.setTimeout(detect, 300);
+        };
+        await detect();
+      } catch (error) {
+        stopMemberQrScanner();
+        MelbBeerBusiness.setStatus(purchaseStatus, "Camera access was unavailable. Type the 6-character code instead.", true);
+      }
+    }
+
     function renderDiscountOps(data) {
       const panel = document.getElementById("discountOpsPanel");
       if (!panel) return;
 
       const discounts = data.discounts || {};
       const pos = data.posIntegration || {};
+      const pintPoints = data.pintPoints || {};
+      const recentMemberActivity = pintPoints.recentActivity || [];
       const topItems = discounts.topItems || [];
       const recent = discounts.recentRedemptions || [];
       const totalRedemptions = Number(discounts.totalRedemptions || 0);
       const totalSavings = formatCurrency(discounts.estimatedSavingsDollars || 0);
 
       panel.innerHTML = `
+        <div class="posSetupCard posSetupCard--wide">
+          <div class="sectionHeader" style="margin-bottom:10px;">
+            <div>
+              <div class="eyebrow">Counter activity</div>
+              <h3>Recent member purchases</h3>
+            </div>
+            <span class="pill">${formatCount(pintPoints.today?.drinkRecords || 0)} today</span>
+          </div>
+          <div class="discountRedemptionList">
+            ${recentMemberActivity.length ? recentMemberActivity.slice(0, 8).map((item) => `
+              <div class="listItem dataRow">
+                <div>
+                  <strong>${escapeHtml(item.itemName || "Member purchase")}</strong>
+                  <div class="muted">${escapeHtml(item.publicAccountId || "Pint Path member")} · ${formatCount(item.quantity || 1)} item${Number(item.quantity) === 1 ? "" : "s"} · ${MelbBeerBusiness.formatDate(item.recordedAt)}</div>
+                </div>
+                <span class="pill">+${formatCount(item.pointsAwarded || 0)} point${Number(item.pointsAwarded) === 1 ? "" : "s"}</span>
+              </div>
+            `).join("") : '<div class="listItem muted">Validated member purchases will appear here for staff reconciliation.</div>'}
+          </div>
+        </div>
         <div class="posSetupCard">
           <div class="sectionHeader" style="margin-bottom:10px;">
             <div>
@@ -2596,6 +2811,7 @@
     }
 
     function inferSpecialSavingsDollars(special) {
+      if (Number(special.savingsAmountCents) > 0) return Number(special.savingsAmountCents) / 100;
       const copy = [special.title, special.discount, special.description].filter(Boolean).join(" ");
       const explicitOff = copy.match(/\$?\s?(\d+(?:\.\d{1,2})?)\s*(?:off|discount|saving|savings)/i);
       if (explicitOff) return Number(explicitOff[1]);
@@ -2647,8 +2863,23 @@
       ].filter(Boolean).join(" · ");
     }
 
+    function syncMemberPurchaseCategory() {
+      const form = document.getElementById("memberPurchaseForm");
+      if (!(form instanceof HTMLFormElement)) return;
+      const itemName = String(field(form, "itemName").value || "").trim().toLowerCase();
+      if (!itemName) return;
+      const matchedBeer = (currentPortal?.inventory?.beers || []).find((beer) =>
+        String(beer.beerName || "").trim().toLowerCase() === itemName,
+      );
+      if (!matchedBeer) return;
+      const alcoholFreeName = /(?:\b0(?:\.0)?\b|zero|alcohol[ -]?free|non[ -]?alcohol)/i.test(matchedBeer.beerName || "");
+      const alcoholFreeAbv = matchedBeer.abv != null && Number(matchedBeer.abv) <= 0.5;
+      field(form, "beverageCategory").value = alcoholFreeName || alcoholFreeAbv ? "non_alcoholic" : "alcoholic";
+    }
+
     function renderRedemptionItemOptions(data) {
       const form = document.getElementById("discountRedemptionForm");
+      const memberDatalist = document.getElementById("memberPurchaseItems");
       if (!form) return;
       const select = field(form, "itemName");
       const previousValue = select.value;
@@ -2678,6 +2909,14 @@
         const label = redemptionBeerLabel(beer);
         return `<option value="${escapeHtml(label)}">${escapeHtml(label)}</option>`;
       }).join("");
+
+      if (memberDatalist) {
+        const memberOptions = [
+          ...specials.map((special) => `<option value="${escapeHtml(special.title)}">Pint Path special</option>`),
+          ...beers.map((beer) => `<option value="${escapeHtml(beer.beerName)}">${escapeHtml([beer.serveSize, beer.price != null ? money(beer.price) : "", beer.onTap ? "on tap" : ""].filter(Boolean).join(" · "))}</option>`),
+        ];
+        memberDatalist.innerHTML = [...new Set(memberOptions)].join("");
+      }
 
       select.innerHTML = `
         <option value="">Choose a current drink or special</option>
@@ -3407,6 +3646,9 @@
       renderTimeSuggestions();
       const discountRedemptionFormElement = document.getElementById("discountRedemptionForm");
       const discountRedemptionStatus = document.getElementById("discountRedemptionStatus");
+      const memberPurchaseForm = document.getElementById("memberPurchaseForm");
+      const memberPurchaseStatus = document.getElementById("memberPurchaseStatus");
+      const memberCodeInput = memberPurchaseForm instanceof HTMLFormElement ? field(memberPurchaseForm, "code") : null;
       const freePintRewardForm = document.getElementById("freePintRewardForm");
       const freePintRewardStatus = document.getElementById("freePintRewardStatus");
       const venueSupportFormElement = document.getElementById("venueSupportForm");
@@ -3419,7 +3661,9 @@
       configurePortalTabs();
       showTab("overview");
       if (discountCodeFromQr && discountRedemptionFormElement) {
-        field(discountRedemptionFormElement, "code").value = discountCodeFromQr.toUpperCase();
+        const normalizedCode = normalizeMemberCode(discountCodeFromQr);
+        field(discountRedemptionFormElement, "code").value = normalizedCode;
+        if (memberCodeInput) memberCodeInput.value = normalizedCode;
       }
       if (freePintCodeFromQr && freePintRewardForm instanceof HTMLFormElement) {
         field(freePintRewardForm, "code").value = freePintCodeFromQr.toUpperCase();
@@ -3447,24 +3691,94 @@
       try {
         MelbBeerBusiness.setStatus(portalAccess, "Loading your venue dashboard...");
         await loadPortal(urlParams.get("venueId"));
-        if (requestedTab || discountCodeFromQr) {
+        if (requestedTab || discountCodeFromQr || freePintCodeFromQr) {
           jumpToPortalTarget(requestedTab || "redemption");
+          if (discountCodeFromQr) await checkMemberCode();
         }
       } catch (error) {
         claimPanel.classList.add("is-hidden");
-        const message = /login required/i.test(error.message || "")
+        const loginRequired = /login required/i.test(error.message || "");
+        const message = loginRequired
           ? "Log in with an assigned venue-manager account to view this dashboard."
           : error.message || "Bar dashboard unavailable. Log in, confirm 18+, or ask admin to assign your account to a venue.";
         MelbBeerBusiness.setStatus(portalAccess, message, true);
+        if (loginRequired) {
+          const returnPath = `${window.location.pathname}${window.location.search}`;
+          const loginLink = document.getElementById("venuePortalLoginLink");
+          if (loginLink) loginLink.href = `/account.html?next=${encodeURIComponent(returnPath)}`;
+          claimPanel.classList.remove("is-hidden");
+        }
       }
 
       document.querySelectorAll(".tabButton").forEach((button) => {
         button.addEventListener("click", () => showTab(button.dataset.tab));
       });
       document.getElementById("venueMobileTabSelect")?.addEventListener("change", (event) => showTab(event.target.value));
+      window.addEventListener("pagehide", stopMemberQrScanner, { once: true });
       document.querySelectorAll("[data-jump-tab]").forEach((button) => {
         button.addEventListener("click", () => jumpToPortalTarget(button.dataset.jumpTab));
       });
+
+      if (memberPurchaseForm instanceof HTMLFormElement) {
+        memberCodeInput?.addEventListener("input", () => {
+          const normalizedCode = normalizeMemberCode(memberCodeInput.value);
+          if (memberCodeInput.value !== normalizedCode) memberCodeInput.value = normalizedCode;
+          if (normalizedCode !== activeMemberPreviewCode) resetMemberPreview();
+        });
+        document.getElementById("checkMemberButton")?.addEventListener("click", () => {
+          void checkMemberCode();
+        });
+        document.getElementById("scanMemberQrButton")?.addEventListener("click", () => {
+          void startMemberQrScanner();
+        });
+        document.getElementById("stopMemberQrButton")?.addEventListener("click", stopMemberQrScanner);
+        field(memberPurchaseForm, "itemName").addEventListener("change", syncMemberPurchaseCategory);
+        memberPurchaseForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const venueId = selectedVenueId();
+          if (!venueId) return;
+          const code = normalizeMemberCode(memberCodeInput?.value);
+          if (code.length !== 6 || code !== activeMemberPreviewCode) {
+            MelbBeerBusiness.setStatus(memberPurchaseStatus, "Check the current member code before recording this purchase.", true);
+            await checkMemberCode();
+            return;
+          }
+
+          const referenceInput = field(memberPurchaseForm, "transactionReference");
+          const transactionReference = String(referenceInput.value || "").trim() || generateCounterReference();
+          referenceInput.value = transactionReference;
+          const submitButton = document.getElementById("recordMemberPurchaseButton");
+          if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
+          MelbBeerBusiness.setStatus(memberPurchaseStatus, "Recording member purchase...");
+          try {
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/pint-point-drinks`, {
+              method: "POST",
+              body: JSON.stringify({
+                code,
+                accountId: null,
+                itemName: field(memberPurchaseForm, "itemName").value,
+                beverageCategory: field(memberPurchaseForm, "beverageCategory").value,
+                quantity: Number(field(memberPurchaseForm, "quantity").value || 1),
+                transactionReference,
+                notes: null,
+              }),
+            });
+            const replayCopy = result.idempotentReplay ? " This receipt was already logged; no duplicate points were added." : "";
+            memberPurchaseForm.reset();
+            resetMemberPreview({ keepStatus: true });
+            await loadPortal(venueId);
+            MelbBeerBusiness.setStatus(
+              memberPurchaseStatus,
+              `Purchase recorded for ${result.accountId}. ${formatCount(result.pointsEarned || 0)} Pint Point${Number(result.pointsEarned) === 1 ? "" : "s"} added.${replayCopy}`,
+            );
+            memberCodeInput?.focus({ preventScroll: true });
+          } catch (error) {
+            MelbBeerBusiness.setStatus(memberPurchaseStatus, error.message || "Could not record this member purchase.", true);
+          } finally {
+            if (submitButton instanceof HTMLButtonElement) submitButton.disabled = false;
+          }
+        });
+      }
 
       priceRefreshSearch.addEventListener("input", filterPriceRefreshRows);
       confirmAllPricesButton.addEventListener("click", () => {
@@ -3527,7 +3841,7 @@
           active: field(profileForm, "active").checked,
         };
         try {
-          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/profile`, body, profileStatus, "Profile saved for review. Public listing data updates after Pint Path approval.");
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/profile`, body, profileStatus, "Profile saved to this venue.");
         } catch (error) {
           MelbBeerBusiness.setStatus(profileStatus, error.message || "Could not save profile.", true);
         }
@@ -3598,7 +3912,7 @@
           active: field(happyHourForm, "active").checked,
         };
         try {
-          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/happy-hours`, body, happyHourStatus, "Happy hour saved for review. Users will see it after approval.");
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/happy-hours`, body, happyHourStatus, "Happy hour saved to this venue.");
           resetForm(happyHourForm);
           field(happyHourForm, "active").checked = true;
           renderChecklist(happyHourDays, dayOptions);
@@ -3627,6 +3941,7 @@
           description: specialDescriptionFromForm(),
           price: nullableNumber(field(specialForm, "price").value),
           discount: field(specialForm, "discount").value || null,
+          savingsAmountCents: Math.round(Math.max(0, Number(field(specialForm, "savingsAmountDollars").value || 0)) * 100),
           startsAt: null,
           endsAt: null,
           startTime: specialStartTime,
@@ -3636,7 +3951,7 @@
           active: field(specialForm, "active").checked,
         };
         try {
-          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/specials`, body, specialStatus, "Pint Path special saved for review. Staff can keep using the dashboard while it is checked.");
+          await saveAndReload(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/specials`, body, specialStatus, "Pint Path special saved to this venue.");
           resetSpecialFormState();
         } catch (error) {
           MelbBeerBusiness.setStatus(specialStatus, error.message || "Could not save Pint Path special.", true);
@@ -3780,6 +4095,23 @@
       document.addEventListener("click", async (event) => {
         const target = event.target;
         if (!(target instanceof HTMLElement) || !selectedVenueId()) return;
+
+        if (target.dataset.manageVenueBilling != null) {
+          target.setAttribute("aria-busy", "true");
+          target.textContent = "Opening Stripe...";
+          try {
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/portal`, {
+              method: "POST",
+              body: "{}",
+            });
+            window.location.assign(result.portalUrl);
+          } catch (error) {
+            target.removeAttribute("aria-busy");
+            target.textContent = "Manage billing";
+            MelbBeerBusiness.setStatus(portalAccess, error.message || "Billing management could not be opened.", true);
+          }
+          return;
+        }
 
         const navigationTarget = target.closest("[data-jump-tab], [data-focus-venue-field]");
         if (navigationTarget instanceof HTMLElement && navigationTarget.dataset.jumpTab) {
@@ -3963,6 +4295,7 @@
           field(specialForm, "title").value = item.title || "";
           field(specialForm, "price").value = item.price ?? "";
           field(specialForm, "discount").value = item.discount || "";
+          field(specialForm, "savingsAmountDollars").value = item.savingsAmountCents != null ? (Number(item.savingsAmountCents) / 100).toFixed(2) : "";
           setSpecialScheduleFromNote(item.scheduleNote || "");
           field(specialForm, "startTime").value = normalizeHappyHourTime(item.startTime || field(specialForm, "startTime").value) || "";
           field(specialForm, "endTime").value = normalizeHappyHourTime(item.endTime || field(specialForm, "endTime").value) || "";

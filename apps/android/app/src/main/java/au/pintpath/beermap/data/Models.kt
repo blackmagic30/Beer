@@ -27,7 +27,9 @@ data class AccountDashboard(
     val stats: AccountStats?,
     val savedCount: Int,
     val submissionCount: Int,
-    val privacySettings: PrivacySettings?
+    val privacySettings: PrivacySettings?,
+    val discounts: DiscountSummary?,
+    val pintPoints: PintPoints?
 )
 
 data class AccountStats(
@@ -43,6 +45,29 @@ data class PrivacySettings(
     val venueReportInclusionEnabled: Boolean,
     val productResearchEnabled: Boolean,
     val emailUpdatesEnabled: Boolean
+)
+
+data class DiscountSummary(
+    val eligible: Boolean,
+    val estimatedSavingsCents: Int
+)
+
+data class PintPoints(
+    val available: Int,
+    val threshold: Int,
+    val pointsUntilReward: Int,
+    val rewardAvailable: Boolean
+)
+
+data class RotatingCodeResult(
+    val accountId: String?,
+    val code: String,
+    val qrDataUrl: String?,
+    val redeemUrl: String?,
+    val expiresAt: String?,
+    val validMinutes: Int?,
+    val pointsReserved: Int?,
+    val copy: String?
 )
 
 data class Venue(
@@ -95,6 +120,9 @@ data class PortalData(
     val specials: List<BarSpecial>,
     val pendingCount: Int,
     val analytics: VenueAnalytics?,
+    val dailySpecialsPlanner: DailySpecialsPlanner?,
+    val discounts: VenueDiscountSummary?,
+    val pintPoints: VenuePintPointSummary?,
     val message: String?,
     val privacyCopy: String?
 )
@@ -177,6 +205,44 @@ data class VenueAnalytics(
     val privacyThreshold: Int
 )
 
+data class DailySpecialsPlanner(
+    val area: String?,
+    val summaryDate: String?,
+    val sourcePeriod: String?,
+    val privacyFloorMet: Boolean,
+    val confidenceCopy: String?,
+    val summary: String?,
+    val demandSignals: List<PlannerSignal>,
+    val recommendations: List<PlannerRecommendation>
+)
+
+data class PlannerSignal(
+    val label: String,
+    val value: String,
+    val helper: String?
+)
+
+data class PlannerRecommendation(
+    val title: String,
+    val offerIdea: String?,
+    val reason: String?,
+    val action: String?,
+    val startTime: String?,
+    val endTime: String?
+)
+
+data class VenueDiscountSummary(
+    val totalRedemptions: Int,
+    val totalQuantity: Int,
+    val uniqueAccounts: Int,
+    val estimatedSavingsCents: Int
+)
+
+data class VenuePintPointSummary(
+    val rewardThreshold: Int,
+    val copy: String?
+)
+
 fun JSONObject.stringOrNull(key: String): String? =
     if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null
 
@@ -252,6 +318,20 @@ fun JSONObject.toAccountDashboard(): AccountDashboard = AccountDashboard(
             productResearchEnabled = it.optBoolean("productResearchEnabled", true),
             emailUpdatesEnabled = it.optBoolean("emailUpdatesEnabled", false)
         )
+    },
+    discounts = optJSONObject("discounts")?.let {
+        DiscountSummary(
+            eligible = it.optBoolean("eligible", false),
+            estimatedSavingsCents = it.optInt("estimatedSavingsCents", 0)
+        )
+    },
+    pintPoints = optJSONObject("pintPoints")?.let {
+        PintPoints(
+            available = it.optInt("available", 0),
+            threshold = it.optInt("threshold", 50),
+            pointsUntilReward = it.optInt("pointsUntilReward", 50),
+            rewardAvailable = it.optBoolean("rewardAvailable", false)
+        )
     }
 )
 
@@ -293,9 +373,75 @@ fun JSONObject.toPortalData(): PortalData {
                 privacyThreshold = it.optInt("privacyThreshold", 10)
             )
         },
+        dailySpecialsPlanner = optJSONObject("dailySpecialsPlanner")?.toDailySpecialsPlanner()
+            ?: optJSONObject("businessToolkit")?.optJSONObject("dailySpecialsPlanner")?.toDailySpecialsPlanner(),
+        discounts = optJSONObject("discounts")?.let {
+            VenueDiscountSummary(
+                totalRedemptions = it.optInt("totalRedemptions", 0),
+                totalQuantity = it.optInt("totalQuantity", 0),
+                uniqueAccounts = it.optInt("uniqueAccounts", 0),
+                estimatedSavingsCents = it.optInt("estimatedSavingsCents", 0)
+            )
+        },
+        pintPoints = optJSONObject("pintPoints")?.let {
+            VenuePintPointSummary(
+                rewardThreshold = it.optInt("rewardThreshold", 50),
+                copy = it.stringOrNull("copy")
+            )
+        },
         message = stringOrNull("message"),
         privacyCopy = stringOrNull("privacyCopy")
     )
+}
+
+fun JSONObject.toRotatingCodeResult(): RotatingCodeResult = RotatingCodeResult(
+    accountId = stringOrNull("accountId"),
+    code = optString("code"),
+    qrDataUrl = stringOrNull("qrDataUrl"),
+    redeemUrl = stringOrNull("redeemUrl"),
+    expiresAt = stringOrNull("expiresAt"),
+    validMinutes = intOrNull("validMinutes"),
+    pointsReserved = intOrNull("pointsReserved"),
+    copy = stringOrNull("copy")
+)
+
+fun JSONObject.toDailySpecialsPlanner(): DailySpecialsPlanner = DailySpecialsPlanner(
+    area = stringOrNull("area"),
+    summaryDate = stringOrNull("summaryDate"),
+    sourcePeriod = stringOrNull("sourcePeriod"),
+    privacyFloorMet = optBoolean("privacyFloorMet", false),
+    confidenceCopy = stringOrNull("confidenceCopy"),
+    summary = stringOrNull("summary"),
+    demandSignals = optJSONArray("demandSignals")?.objects()?.map { it.toPlannerSignal() }.orEmpty(),
+    recommendations = optJSONArray("recommendations")?.objects()?.map { it.toPlannerRecommendation() }.orEmpty()
+)
+
+fun JSONObject.toPlannerSignal(): PlannerSignal = PlannerSignal(
+    label = optString("label", "Signal"),
+    value = plannerValue("value"),
+    helper = stringOrNull("helper")
+)
+
+fun JSONObject.toPlannerRecommendation(): PlannerRecommendation = PlannerRecommendation(
+    title = optString("title", "Recommended special"),
+    offerIdea = stringOrNull("offerIdea"),
+    reason = stringOrNull("reason"),
+    action = stringOrNull("action"),
+    startTime = stringOrNull("startTime"),
+    endTime = stringOrNull("endTime")
+)
+
+private fun JSONObject.plannerValue(key: String): String {
+    if (!has(key) || isNull(key)) return "-"
+    val value = opt(key)
+    return when (value) {
+        is Number -> {
+            val double = value.toDouble()
+            if (double % 1.0 == 0.0) double.toInt().toString() else "%.1f".format(double)
+        }
+        is Boolean -> if (value) "Yes" else "No"
+        else -> value.toString()
+    }
 }
 
 fun JSONObject.toVenueAssignment(): VenueAssignment = VenueAssignment(
@@ -406,4 +552,3 @@ fun JSONObject.putNullable(key: String, value: Any?): JSONObject {
     put(key, value ?: JSONObject.NULL)
     return this
 }
-

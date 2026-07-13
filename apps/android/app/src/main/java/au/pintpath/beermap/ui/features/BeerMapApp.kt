@@ -4,6 +4,13 @@ package au.pintpath.beermap.ui.features
 
 import android.app.TimePickerDialog
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,6 +32,7 @@ import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocalBar
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -71,6 +79,7 @@ import au.pintpath.beermap.data.Mission
 import au.pintpath.beermap.data.PortalData
 import au.pintpath.beermap.data.PriceRecord
 import au.pintpath.beermap.data.PrivacySettings
+import au.pintpath.beermap.data.RotatingCodeResult
 import au.pintpath.beermap.data.SessionStore
 import au.pintpath.beermap.data.Venue
 import au.pintpath.beermap.ui.components.AppCard
@@ -91,6 +100,7 @@ import au.pintpath.beermap.ui.theme.Sky
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.util.Locale
 
 class BeerMapState(context: Context) {
@@ -104,6 +114,8 @@ class BeerMapState(context: Context) {
     var missions by mutableStateOf<List<Mission>>(emptyList())
     var accountDashboard by mutableStateOf<AccountDashboard?>(null)
     var portal by mutableStateOf<PortalData?>(null)
+    var discountPass by mutableStateOf<RotatingCodeResult?>(null)
+    var freePintReward by mutableStateOf<RotatingCodeResult?>(null)
     var selectedVenue by mutableStateOf<Venue?>(null)
     var selectedPrices by mutableStateOf<List<PriceRecord>>(emptyList())
     var loading by mutableStateOf(false)
@@ -151,6 +163,8 @@ class BeerMapState(context: Context) {
         token = null
         accountDashboard = null
         portal = null
+        discountPass = null
+        freePintReward = null
         message = "Signed out."
     }
 
@@ -173,6 +187,20 @@ class BeerMapState(context: Context) {
         val current = token ?: error("Login required.")
         api.requestAccountDeletion(current)
         message = "Account deletion review requested."
+    }
+
+    suspend fun generateDiscountPass() = busy {
+        val current = token ?: error("Sign in before generating a Pint Path special code.")
+        discountPass = api.discountPass(current)
+        message = "Pint Path special code generated. Show it only when staff are ready."
+        refreshAccount()
+    }
+
+    suspend fun generateFreePintReward() = busy {
+        val current = token ?: error("Sign in before creating a Free Pint Reward code.")
+        freePintReward = api.freePintRewardCode(current)
+        message = "Free Pint Reward code created. Venue staff still complete age, ID, and RSA checks."
+        refreshAccount()
     }
 
     suspend fun revealPrices(venue: Venue) = busy {
@@ -203,6 +231,33 @@ class BeerMapState(context: Context) {
             ?: error("Add a valid observed price.")
         api.submitPriceUpdate(venue, trimmedBeer, servingSize, price, notes.blankToNull(), current)
         message = "Price update sent for review."
+        track("submission_completed", venue.id, venue.suburb)
+        refreshAccount()
+    }
+
+    suspend fun submitPhotoUpload(venueId: String, sourcePhotoDataUrl: String, notes: String) = busy {
+        val current = token ?: error("Sign in before uploading source evidence.")
+        val venue = venues.firstOrNull { it.id == venueId } ?: error("Choose a venue before uploading.")
+        api.submitPhotoUpload(venue, sourcePhotoDataUrl, notes.blankToNull(), current)
+        message = "Source photo sent for review."
+        track("data_upload_created", venue.id, venue.suburb)
+        refreshAccount()
+    }
+
+    suspend fun submitHappyHourUpdate(
+        venueId: String,
+        days: List<String>,
+        startTime: String,
+        endTime: String,
+        offerText: String,
+        notes: String
+    ) = busy {
+        val current = token ?: error("Sign in before submitting happy-hour updates.")
+        val venue = venues.firstOrNull { it.id == venueId } ?: error("Choose a venue before submitting.")
+        if (days.isEmpty()) error("Choose at least one day.")
+        if (offerText.isBlank()) error("Add the offer details before submitting.")
+        api.submitHappyHourUpdate(venue, days, startTime, endTime, offerText.trim(), notes.blankToNull(), current)
+        message = "Happy-hour update sent for review."
         track("submission_completed", venue.id, venue.suburb)
         refreshAccount()
     }
@@ -293,11 +348,11 @@ class BeerMapState(context: Context) {
 }
 
 private enum class AppTab(val label: String) {
-    Discover("Discover"),
-    Account("Account"),
+    Discover("Find"),
     Contribute("Add"),
     Bars("Bars"),
-    Settings("Settings")
+    Account("Account"),
+    Settings("Help")
 }
 
 @Composable
@@ -321,12 +376,6 @@ fun BeerMapApp() {
                     label = { Text(AppTab.Discover.label) }
                 )
                 NavigationBarItem(
-                    selected = tab == AppTab.Account,
-                    onClick = { tab = AppTab.Account },
-                    icon = { Icon(Icons.Filled.AccountCircle, contentDescription = AppTab.Account.label) },
-                    label = { Text(AppTab.Account.label) }
-                )
-                NavigationBarItem(
                     selected = tab == AppTab.Contribute,
                     onClick = { tab = AppTab.Contribute },
                     icon = { Icon(Icons.Filled.Add, contentDescription = AppTab.Contribute.label) },
@@ -337,6 +386,12 @@ fun BeerMapApp() {
                     onClick = { tab = AppTab.Bars },
                     icon = { Icon(Icons.Filled.Storefront, contentDescription = AppTab.Bars.label) },
                     label = { Text(AppTab.Bars.label) }
+                )
+                NavigationBarItem(
+                    selected = tab == AppTab.Account,
+                    onClick = { tab = AppTab.Account },
+                    icon = { Icon(Icons.Filled.AccountCircle, contentDescription = AppTab.Account.label) },
+                    label = { Text(AppTab.Account.label) }
                 )
                 NavigationBarItem(
                     selected = tab == AppTab.Settings,
@@ -454,17 +509,38 @@ private fun VenueDetailCard(state: BeerMapState, scope: CoroutineScope, venue: V
 
 @Composable
 private fun ContributeScreen(state: BeerMapState, scope: CoroutineScope) {
-    var mode by remember { mutableStateOf("Submit") }
+    val context = LocalContext.current
+    var mode by remember { mutableStateOf("Price") }
     var selectedVenueId by remember { mutableStateOf("") }
     var beerName by remember { mutableStateOf("") }
     var price by remember { mutableStateOf("") }
     var serving by remember { mutableStateOf("pint") }
     var notes by remember { mutableStateOf("") }
+    var sourcePhotoDataUrl by remember { mutableStateOf<String?>(null) }
+    var sourcePhotoStatus by remember { mutableStateOf("Choose a clear menu, receipt, tap-list, or happy-hour board photo.") }
+    var happyOffer by remember { mutableStateOf("") }
+    var happyNotes by remember { mutableStateOf("") }
+    var happyStart by remember { mutableStateOf("16:00") }
+    var happyEnd by remember { mutableStateOf("18:00") }
+    var happyDays by remember { mutableStateOf(setOf("fri")) }
     var requestKind by remember { mutableStateOf("missing_venue") }
     var requestVenue by remember { mutableStateOf("") }
     var requestBeer by remember { mutableStateOf("") }
     var requestSuburb by remember { mutableStateOf("") }
     var requestNotes by remember { mutableStateOf("") }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            runCatching {
+                sourcePhotoDataUrlFromUri(context, uri)
+            }.onSuccess {
+                sourcePhotoDataUrl = it
+                sourcePhotoStatus = "Photo ready for private reviewer evidence."
+            }.onFailure {
+                sourcePhotoDataUrl = null
+                sourcePhotoStatus = it.message ?: "Could not prepare this photo."
+            }
+        }
+    }
 
     LaunchedEffect(state.venues) {
         if (selectedVenueId.isBlank() || state.venues.none { it.id == selectedVenueId }) {
@@ -485,13 +561,42 @@ private fun ContributeScreen(state: BeerMapState, scope: CoroutineScope) {
         }
         item {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(listOf("Submit", "Report", "Request", "Missions")) { label ->
+                items(listOf("Price", "Photo", "Happy hour", "Report", "Request", "Missions")) { label ->
                     FilterChip(selected = mode == label, onClick = { mode = label }, label = { Text(label) })
                 }
             }
         }
         item {
             when (mode) {
+                "Photo" -> PhotoUploadCard(
+                    state = state,
+                    scope = scope,
+                    selectedVenueId = selectedVenueId,
+                    onVenueSelected = { selectedVenueId = it },
+                    sourcePhotoDataUrl = sourcePhotoDataUrl,
+                    sourcePhotoStatus = sourcePhotoStatus,
+                    notes = notes,
+                    onNotes = { notes = it },
+                    onChoosePhoto = {
+                        photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }
+                )
+                "Happy hour" -> HappyHourSubmissionCard(
+                    state = state,
+                    scope = scope,
+                    selectedVenueId = selectedVenueId,
+                    onVenueSelected = { selectedVenueId = it },
+                    selectedDays = happyDays,
+                    onSelectedDays = { happyDays = it },
+                    start = happyStart,
+                    onStart = { happyStart = it },
+                    end = happyEnd,
+                    onEnd = { happyEnd = it },
+                    offer = happyOffer,
+                    onOffer = { happyOffer = it },
+                    notes = happyNotes,
+                    onNotes = { happyNotes = it }
+                )
                 "Report" -> ReportWrongPriceCard(state, scope, selectedVenueId, { selectedVenueId = it }, beerName, { beerName = it }, notes, { notes = it })
                 "Request" -> MissingRequestCard(
                     state = state,
@@ -524,6 +629,93 @@ private fun ContributeScreen(state: BeerMapState, scope: CoroutineScope) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun PhotoUploadCard(
+    state: BeerMapState,
+    scope: CoroutineScope,
+    selectedVenueId: String,
+    onVenueSelected: (String) -> Unit,
+    sourcePhotoDataUrl: String?,
+    sourcePhotoStatus: String,
+    notes: String,
+    onNotes: (String) -> Unit,
+    onChoosePhoto: () -> Unit
+) {
+    AppCard {
+        SectionHeader(
+            eyebrow = "Source photo",
+            title = "Upload a menu or board",
+            subtitle = if (state.signedIn) "The app sends one private reviewer image." else "Sign in first so the source upload can be reviewed.",
+            icon = Icons.Filled.PhotoCamera
+        )
+        VenueChoiceChips(state.venues, selectedVenueId, onVenueSelected)
+        SecondaryAction(if (sourcePhotoDataUrl == null) "Choose photo" else "Replace photo", icon = Icons.Filled.PhotoCamera) {
+            onChoosePhoto()
+        }
+        StatusBanner(sourcePhotoStatus, isError = sourcePhotoStatus.startsWith("Could not"), icon = if (sourcePhotoDataUrl == null) Icons.Filled.PhotoCamera else Icons.Filled.CheckCircle)
+        OutlinedTextField(notes, onNotes, label = { Text("What should reviewers look for?") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+        PrimaryAction("Upload source for review", state.signedIn && selectedVenueId.isNotBlank() && sourcePhotoDataUrl != null, Icons.Filled.Add) {
+            sourcePhotoDataUrl?.let { dataUrl ->
+                scope.launch { state.submitPhotoUpload(selectedVenueId, dataUrl, notes) }
+            }
+        }
+        StatusBanner("Native location proof is not wired yet. Uploads still work, but location-based points depend on backend review rules.")
+    }
+}
+
+@Composable
+private fun HappyHourSubmissionCard(
+    state: BeerMapState,
+    scope: CoroutineScope,
+    selectedVenueId: String,
+    onVenueSelected: (String) -> Unit,
+    selectedDays: Set<String>,
+    onSelectedDays: (Set<String>) -> Unit,
+    start: String,
+    onStart: (String) -> Unit,
+    end: String,
+    onEnd: (String) -> Unit,
+    offer: String,
+    onOffer: (String) -> Unit,
+    notes: String,
+    onNotes: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val days = listOf("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+    AppCard {
+        SectionHeader(
+            eyebrow = "Happy hour",
+            title = "Submit a special you saw",
+            subtitle = if (state.signedIn) "Fast path for signs, boards, and staff-confirmed recurring offers." else "Sign in first to submit happy-hour updates.",
+            icon = Icons.Filled.Timer
+        )
+        VenueChoiceChips(state.venues, selectedVenueId, onVenueSelected)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(days) { day ->
+                FilterChip(
+                    selected = selectedDays.contains(day),
+                    onClick = {
+                        onSelectedDays(
+                            if (selectedDays.contains(day)) selectedDays - day else selectedDays + day
+                        )
+                    },
+                    label = { Text(day.uppercase()) }
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { showTimePicker(context, start, onStart) }, modifier = Modifier.weight(1f)) { Text("Starts $start") }
+            Button(onClick = { showTimePicker(context, end, onEnd) }, modifier = Modifier.weight(1f)) { Text("Ends $end") }
+        }
+        OutlinedTextField(offer, onOffer, label = { Text("Offer details") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(notes, onNotes, label = { Text("Notes, optional") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+        PrimaryAction("Send happy-hour update", state.signedIn && selectedVenueId.isNotBlank() && selectedDays.isNotEmpty() && offer.isNotBlank(), Icons.Filled.Timer) {
+            scope.launch { state.submitHappyHourUpdate(selectedVenueId, selectedDays.sorted(), start, end, offer, notes) }
+        }
+        StatusBanner("If the board has lots of detail, Photo is usually faster and safer.")
     }
 }
 
@@ -729,6 +921,7 @@ private fun AccountScreen(state: BeerMapState, scope: CoroutineScope) {
                     MetricCard("Trust", dashboard.stats?.trustScore?.roundLabel() ?: dashboard.account.trustScore?.roundLabel() ?: "0", Icons.Filled.Lock, Plum)
                 }
             }
+            SpecialAccessCard(state, scope, dashboard)
             PrivacyCard(state, scope, dashboard.privacySettings)
             AppCard {
                 SecondaryAction("Refresh account", icon = Icons.Filled.Refresh) { scope.launch { state.refreshAccount() } }
@@ -736,6 +929,58 @@ private fun AccountScreen(state: BeerMapState, scope: CoroutineScope) {
                 PrimaryAction("Log out", icon = Icons.Filled.AccountCircle) { confirmLogout = true }
             }
         }
+    }
+}
+
+@Composable
+private fun SpecialAccessCard(state: BeerMapState, scope: CoroutineScope, dashboard: AccountDashboard) {
+    AppCard {
+        SectionHeader(
+            eyebrow = "Member specials",
+            title = "Codes and Pint Points",
+            subtitle = "Generate a short-lived code only when venue staff are ready to redeem it.",
+            icon = Icons.Filled.Star
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                MetricCard("Estimated saved", moneyFromCents(dashboard.discounts?.estimatedSavingsCents ?: 0), Icons.Filled.Bookmark, Leaf)
+            }
+            Column(Modifier.weight(1f)) {
+                MetricCard("Pint Points", "${dashboard.pintPoints?.available ?: 0}/${dashboard.pintPoints?.threshold ?: 50}", Icons.Filled.Star, Amber)
+            }
+        }
+        state.discountPass?.let { RotatingCodeCard("Pint Path special", it) }
+        state.freePintReward?.let { RotatingCodeCard("Free Pint Reward", it) }
+        SecondaryAction(if (dashboard.discounts?.eligible == true) "Generate special" else "Special locked", dashboard.discounts?.eligible == true, Icons.Filled.Tag) {
+            scope.launch { state.generateDiscountPass() }
+        }
+        PrimaryAction(if (dashboard.pintPoints?.rewardAvailable == true) "Create Free Pint Reward" else "Reward locked", dashboard.pintPoints?.rewardAvailable == true, Icons.Filled.Star) {
+            scope.launch { state.generateFreePintReward() }
+        }
+    }
+}
+
+@Composable
+private fun RotatingCodeCard(title: String, result: RotatingCodeResult) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(title.uppercase(), style = MaterialTheme.typography.labelSmall, color = Amber, fontWeight = FontWeight.Black)
+        Text(
+            result.code,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                .padding(vertical = 12.dp),
+            color = MaterialTheme.colorScheme.onPrimary
+        )
+        result.copy?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        result.expiresAt?.let { Text("Expires $it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
 }
 
@@ -861,6 +1106,11 @@ private fun PortalDashboardCard(portal: PortalData) {
             Column(Modifier.weight(1f)) { MetricCard("Specials", portal.specials.size.toString(), Icons.Filled.Tag, Plum) }
             Column(Modifier.weight(1f)) { MetricCard("Pending", portal.pendingCount.toString(), Icons.Filled.Refresh, Sky) }
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) { MetricCard("Redemptions", portal.discounts?.totalRedemptions?.toString() ?: "0", Icons.Filled.Bookmark, Leaf) }
+            Column(Modifier.weight(1f)) { MetricCard("Reward pts", portal.pintPoints?.rewardThreshold?.toString() ?: "50", Icons.Filled.Star, Amber) }
+        }
+        portal.dailySpecialsPlanner?.let { DailySpecialsPlannerCard(it) }
         portal.analytics?.let {
             AppCard {
                 SectionHeader("Analytics", if (it.privacyFloorMet) "Demand snapshot" else "Demand snapshot building", "Aggregate venue insights only.", Icons.Filled.Analytics)
@@ -870,6 +1120,53 @@ private fun PortalDashboardCard(portal: PortalData) {
                 }
             }
         } ?: EmptyState("Pro analytics are locked", portal.tier?.upgradeCopy ?: "Pro unlocks privacy-safe analytics and monthly reports.", Icons.Filled.Analytics)
+    }
+}
+
+@Composable
+private fun DailySpecialsPlannerCard(planner: au.pintpath.beermap.data.DailySpecialsPlanner) {
+    AppCard {
+        SectionHeader(
+            eyebrow = "Specials planner",
+            title = "Daily summary for ${planner.area ?: "your area"}",
+            subtitle = planner.summary ?: planner.confidenceCopy,
+            icon = Icons.Filled.Star
+        )
+        if (planner.demandSignals.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                planner.demandSignals.take(2).forEach { signal ->
+                    Column(Modifier.weight(1f)) {
+                        MetricCard(signal.label, signal.value, Icons.Filled.Analytics, Sky)
+                    }
+                }
+            }
+            if (planner.demandSignals.size > 2) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    planner.demandSignals.drop(2).take(2).forEach { signal ->
+                        Column(Modifier.weight(1f)) {
+                            MetricCard(signal.label, signal.value, Icons.Filled.Analytics, Leaf)
+                        }
+                    }
+                }
+            }
+        }
+        if (planner.recommendations.isNotEmpty()) {
+            Text("Recommended specials", style = MaterialTheme.typography.labelMedium, color = Amber, fontWeight = FontWeight.Black)
+            planner.recommendations.take(3).forEach { recommendation ->
+                FeatureCard(
+                    title = recommendation.title,
+                    message = recommendation.offerIdea ?: recommendation.action ?: "Use one clear staff-friendly special.",
+                    icon = Icons.Filled.Tag,
+                    tint = Amber
+                )
+                recommendation.reason?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (!planner.privacyFloorMet && !planner.confidenceCopy.isNullOrBlank()) {
+            StatusBanner(planner.confidenceCopy, icon = Icons.Filled.Lock)
+        }
     }
 }
 
@@ -1079,7 +1376,32 @@ private fun showTimePicker(context: Context, current: String, onPicked: (String)
     }, hour, minute, true).show()
 }
 
+private fun sourcePhotoDataUrlFromUri(context: Context, uri: Uri): String {
+    val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+    require(mimeType.startsWith("image/")) { "Choose an image file for source evidence." }
+    val originalBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        ?: error("Could not read this photo.")
+    require(originalBytes.isNotEmpty()) { "Could not read this photo." }
+
+    val bitmap = BitmapFactory.decodeByteArray(originalBytes, 0, originalBytes.size)
+    val uploadBytes = if (bitmap != null) {
+        ByteArrayOutputStream().use { output ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 84, output)
+            output.toByteArray()
+        }
+    } else {
+        originalBytes
+    }
+    val uploadMimeType = if (bitmap != null) "image/jpeg" else mimeType
+
+    require(uploadBytes.size <= 6 * 1024 * 1024) { "Each upload image must be 6MB or smaller." }
+    return "data:$uploadMimeType;base64,${Base64.encodeToString(uploadBytes, Base64.NO_WRAP)}"
+}
+
 private fun Double.roundLabel(): String =
     if (this % 1.0 == 0.0) toInt().toString() else String.format(Locale.US, "%.1f", this)
+
+private fun moneyFromCents(cents: Int): String =
+    "$" + String.format(Locale.US, "%.2f", cents / 100.0)
 
 private fun String.blankToNull(): String? = trim().takeIf { it.isNotBlank() }

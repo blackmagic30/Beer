@@ -144,9 +144,14 @@ export function isLikelyBeerName(value: string | null | undefined): boolean {
     return false;
   }
 
+  const isClearlyPackagedRtd =
+    /\b(?:rtd|ready\s+to\s+drink|pre[-\s]?mix(?:ed)?|hard\s+seltzer)\b/i.test(normalizedValue) ||
+    /\b(?:gin|vodka|rum|whisk(?:e)?y|bourbon)\s*(?:&|and|\+)\s*(?:dry|cola|coke|soda|lemon|ginger|lime)\b/i.test(normalizedValue) ||
+    /\b(?:canadian\s+club|jim\s+beam|jack\s+daniel'?s|suntory)\b.*\b(?:dry|cola|coke|soda|lemon)\b/i.test(normalizedValue);
+
   if (
     /\b(?:happy\s*hour|included|includes|cocktails?|negronis?|spirits?|house\s*wines?|basic\s*spirits?|selected\s*taps?|weekly\s*specials?|grab\s+a|for\s+just|blogs?|event|source|menu)\b/i.test(normalizedValue) ||
-    /\b(?:gin|vodka|rum|tequila|mezcal|whisk(?:e)?y|bourbon|brandy|cognac|vermouth|liqueur|amaro|aperol|campari|martini|margarita|spritz|mojito|daiquiri|poor\s+tom'?s|archie\s+rose|four\s+pillars|mgc\s+dry|78\s+degrees|hellyer'?s)\b/i.test(normalizedValue) ||
+    (!isClearlyPackagedRtd && /\b(?:gin|vodka|rum|tequila|mezcal|whisk(?:e)?y|bourbon|brandy|cognac|vermouth|liqueur|amaro|aperol|campari|martini|margarita|spritz|mojito|daiquiri|poor\s+tom'?s|archie\s+rose|four\s+pillars|mgc\s+dry|78\s+degrees|hellyer'?s)\b/i.test(normalizedValue)) ||
     /\b(?:wine|shiraz|pinot|chardonnay|sauvignon|riesling|merlot|cabernet|prosecco|champagne|ros[eé]|grigio|moscato)\b/i.test(normalizedValue) ||
     /\b(?:steak|t\s?-?\s?bone|sirloin|ribeye|burger|fries|chips|parma|parmi|schnitzel|oysters?|calamari|prawns?|salad|dessert|chicken|beef|pork|lamb|fish|pizza|pasta|tacos?|sandwich|cheese|wings?|sauce|gravy|garlic\s+bread)\b/i.test(normalizedValue) ||
     /\b(?:welcome|we\s+believe|please\s+ask|ask\s+staff|book\s+a\s+table|available\s+from|served\s+with|our\s+range|tap(?:s)?\s+will\s+pour|for\s+everyone|contact\s+us|learn\s+more|terms\s+and\s+conditions)\b/i.test(normalizedValue) ||

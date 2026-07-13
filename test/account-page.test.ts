@@ -288,15 +288,17 @@ describe("account page shell", () => {
     expect(feedback).toContain("Tell us what you need, or ask about joining as a venue.");
     expect(feedback).toContain("venue_partner_interest");
     expect(feedback).toContain("Account deletion starts as a review request.");
-    expect(feedback).toContain("Use this form until launch contacts are final.");
+    expect(feedback).toContain("Messages enter the private admin support queue with assignment and resolution tracking.");
     expect(feedback).toContain("Do not include passwords, card numbers, private keys, or ID documents");
     expect(feedback).toContain('MelbBeerBusiness.renderNav(isVenueSupport ? "venue-support" : "feedback")');
     expect(feedback).toContain("Ask Pint Path about your venue account.");
     expect(feedback).toContain("Venue support messages are saved into the Pint Path admin support inbox.");
     expect(feedback).toContain('MelbBeerBusiness.apiFetch("/api/business/feedback"');
-    expect(feedback.indexOf("Privacy note")).toBeLessThan(feedback.indexOf('id="feedbackForm"'));
+    expect(feedback).toContain("feedbackGrid.prepend(feedbackForm)");
+    expect(feedback).toContain("feedbackGrid.after(supportInfo)");
+    expect(feedback).toContain("supportInfo.after(feedbackPromise)");
     expect(css).toContain("margin-top: clamp(14px, 2.2vw, 24px);");
-    expect(script).toContain('{ key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: venueManagerNav ? "Support" : "Contact us" }');
+    expect(script).toContain('{ key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: "Contact us" }');
     expect(script).not.toContain('href="/account.html#feedbackForm"');
     expect(script).not.toContain("fieldTestFeedbackButton");
     expect(script).not.toContain("floatingFeedback");
@@ -565,11 +567,12 @@ describe("account page shell", () => {
     const helpers = loadBusinessHelpers();
     const publicNavLabels = ["Map", "Submit", "Missions", "Pricing", "FAQ", "Account", "Contact us"];
 
-    ["", "account", "bar-faq", "faq", "feedback", "missions", "pricing", "submit", "trust", "venue-portal", "venue-support"].forEach((active) => {
+    ["", "account", "bar-faq", "faq", "feedback", "missions", "pricing", "submit", "trust", "venue-support"].forEach((active) => {
       expect(navLinkLabels(helpers.renderNav(active))).toEqual(publicNavLabels);
     });
-    expect(script).toContain('const venueManagerNav = isVenueManagerContext()');
-    expect(script).toContain('const venuePortalNav = canUseVenuePortalContext()');
+    expect(navLinkLabels(helpers.renderNav("venue-portal"))).toEqual(["Map", "Dashboard", "Submit", "Missions", "Pricing", "FAQ", "Account", "Contact us"]);
+    expect(script).toContain('const venueManagerNav = active === "venue-portal" || active === "venue-support" || active === "bar-faq" || isVenueManagerContext()');
+    expect(script).toContain('const venuePortalNav = active === "venue-portal" || canUseVenuePortalContext()');
     expect(script).toContain('const adminNav = active === "admin" || isAdminContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
@@ -580,8 +583,8 @@ describe("account page shell", () => {
     expect(script).toContain('{ key: "admin", href: "/admin.html", label: "Admin" }');
     expect(script).toContain('{ key: "pricing", href: "/pricing.html", label: "Pricing" }');
     expect(script).toContain('{ key: "venue-portal", href: "/venue-portal.html", label: "Dashboard" }');
-    expect(script).toContain('{ key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: venueManagerNav ? "Bar FAQ" : "FAQ" }');
-    expect(script).toContain('{ key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: venueManagerNav ? "Support" : "Contact us" }');
+    expect(script).toContain('{ key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: "FAQ" }');
+    expect(script).toContain('{ key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: "Contact us" }');
     expect(script).toContain('aria-controls="primaryNavLinks" data-mobile-nav-toggle');
     expect(script).toContain('id="primaryNavLinks" class="navLinks" data-mobile-nav-panel');
     expect(script).not.toContain("const authenticatedLinks");
@@ -613,7 +616,7 @@ describe("account page shell", () => {
     });
     const nav = helpers.renderNav("account");
 
-    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Pricing", "Bar FAQ", "Account", "Support"]);
+    expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Pricing", "FAQ", "Account", "Contact us"]);
     expect(navLinkLabels(helpers.renderNav("venue-portal"))).toEqual(navLinkLabels(nav));
     expect(navLinkLabels(helpers.renderNav("venue-support"))).toEqual(navLinkLabels(nav));
     expect(nav).toContain('class="pill" aria-current="page" href="/account.html">Account</a>');
@@ -710,6 +713,8 @@ describe("account page shell", () => {
       'id="partnerLeads"',
       'id="reviewDecisionDialog"',
     ];
+    expect(html).toContain("Restore rehearsal");
+    expect(html).toContain('operationalStatus("job:restore_rehearsal"');
 
     expect(html).toContain('class="adminJumpNav" role="tablist" aria-label="Admin workflow sections"');
     expect(html).toContain('data-admin-tab-target="review" aria-controls="adminReview" aria-selected="false"');
@@ -881,9 +886,12 @@ describe("account page shell", () => {
     expect(terms).toContain("scrape protected data");
     expect(terms).toContain("Display names/usernames must be unique");
     expect(terms).toContain("We do not tolerate rude or discriminatory names");
-    expect(terms).toContain("Final owner contact, billing, refund, cancellation, and jurisdiction details");
-    expect(terms).toContain("Beta legal-review notice");
-    expect(terms).toContain("publish final cancellation, refund, Stripe customer portal");
+    expect(terms).toContain("Last updated: 12 July 2026");
+    expect(terms).toContain("Australian Consumer Law");
+    expect(terms).toContain("Stripe billing management");
+    expect(terms).toContain("Victoria, Australia");
+    expect(terms).not.toContain("Beta legal-review notice");
+    expect(terms).not.toContain("before launch");
     expect(privacy).toContain("Privacy Policy");
     expect(privacy).toContain("Plain-English beta summary");
     expect(privacy).toContain("Service providers and integrations");
@@ -891,7 +899,9 @@ describe("account page shell", () => {
     expect(privacy).toContain("We do not store raw ID documents");
     expect(privacy).toContain("one-time upload-location proof");
     expect(privacy).toContain("Account deletion and export");
-    expect(privacy).toContain("Final owner contact details should be published here");
+    expect(privacy).toContain("Privacy, access, correction, export, and deletion requests");
+    expect(privacy).toContain("Railway for application hosting");
+    expect(privacy).not.toContain("Final owner contact details should be published here");
     expect(privacy).not.toContain("[legal entity name]");
   });
 
@@ -934,7 +944,8 @@ describe("account page shell", () => {
     expect(trust).not.toContain('<a href="/status.html"');
     expect(security).not.toContain('<a href="/status.html"');
     expect(status).toContain("Pint Path status and incident reporting.");
-    expect(status).toContain("Provider checks still need human verification");
+    expect(status).toContain("The service result above is live.");
+    expect(status).toContain("provider incidents still require their own dashboards and alerts");
     expect(status).toContain("Railway");
     expect(status).toContain("Supabase");
     expect(status).toContain("Resend");

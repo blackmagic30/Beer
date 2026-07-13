@@ -492,11 +492,26 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain('if (viewState.beerQuery && !happyHourMatchesBeerQuery(row, viewState.beerQuery, viewState.onTapOnly))');
   });
 
-  it("moves venue discount redemption into a focused code workspace", () => {
+  it("gives venue staff a privacy-safe member purchase and redemption workspace", () => {
     expect(venuePortalHtml).toContain('data-tab="redemption"');
     expect(venuePortalHtml).toContain('data-panel="redemption"');
-    expect(venuePortalHtml).toContain("Redeem a user code");
-    expect(venuePortalHtml).toContain("Manual now · POS ready");
+    expect(venuePortalHtml).toContain("Record a member purchase");
+    expect(venuePortalHtml).toContain('id="memberPurchaseForm"');
+    expect(venuePortalHtml).toContain('id="memberPreviewStatus"');
+    expect(venuePortalHtml).toContain('id="memberQrScanner"');
+    expect(venuePortalHtml).toContain('id="memberPurchaseItems"');
+    expect(venuePortalHtml).toContain("function checkMemberCode");
+    expect(venuePortalHtml).toContain("function startMemberQrScanner");
+    expect(venuePortalHtml).toContain("function stopMemberQrScanner");
+    expect(venuePortalHtml).toContain("function applyScannedPintPathCode");
+    expect(venuePortalHtml).toContain("function syncMemberPurchaseCategory");
+    expect(venuePortalHtml).toContain('"non_alcoholic" : "alcoholic"');
+    expect(venuePortalHtml).toContain("/member-preview");
+    expect(venuePortalHtml).toContain("/pint-point-drinks");
+    expect(venuePortalHtml).toContain("recentActivity");
+    expect(venuePortalHtml).toContain("Only the public member ID and Pint Points eligibility are shown to venue staff.");
+    expect(venuePortalHtml).not.toContain("memberPreview.email");
+    expect(venuePortalHtml).not.toContain("memberPreview.displayName");
     expect(venuePortalHtml).toContain('id="discountSpecialChoices"');
     expect(venuePortalHtml).toContain('id="selectedDiscountSpecial"');
     expect(venuePortalHtml).toContain('name="specialId" type="hidden"');

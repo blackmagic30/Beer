@@ -568,8 +568,8 @@ async function updatePassword(password) {
 }
 
 function renderNav(active = "") {
-  const venueManagerNav = isVenueManagerContext();
-  const venuePortalNav = canUseVenuePortalContext();
+  const venueManagerNav = active === "venue-portal" || active === "venue-support" || active === "bar-faq" || isVenueManagerContext();
+  const venuePortalNav = active === "venue-portal" || canUseVenuePortalContext();
   const adminNav = active === "admin" || isAdminContext();
   const activeKey = active === "trust" || active === "bar-faq"
     ? "faq"
@@ -584,9 +584,9 @@ function renderNav(active = "") {
     { key: "missions", href: "/missions.html", label: "Missions" },
     ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
     { key: "pricing", href: "/pricing.html", label: "Pricing" },
-    { key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: venueManagerNav ? "Bar FAQ" : "FAQ" },
+    { key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: "FAQ" },
     { key: "account", href: "/account.html", label: "Account" },
-    { key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: venueManagerNav ? "Support" : "Contact us" },
+    { key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: "Contact us" },
   ];
   const navLinks = navItems
     .map((item) => `<a ${activeKey === item.key ? 'class="pill" aria-current="page"' : ""} href="${item.href}">${item.label}</a>`)

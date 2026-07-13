@@ -69,6 +69,14 @@ class BeerMapApiClient(
         )
     }
 
+    suspend fun discountPass(token: String): RotatingCodeResult =
+        request("/api/business/account/discount-pass", method = "POST", body = JSONObject(), token = token)
+            .toRotatingCodeResult()
+
+    suspend fun freePintRewardCode(token: String): RotatingCodeResult =
+        request("/api/business/account/free-pint-reward-code", method = "POST", body = JSONObject(), token = token)
+            .toRotatingCodeResult()
+
     suspend fun venues(query: String? = null): List<Venue> {
         val path = buildString {
             append("/api/business/venues?limit=80")
@@ -119,6 +127,8 @@ class BeerMapApiClient(
                 .put("submissionType", "single_beer_price")
                 .put("observedAt", isoNow())
                 .putNullable("sourcePhotoDataUrl", null)
+                .put("sourcePhotoDataUrls", org.json.JSONArray())
+                .putNullable("sourceDocumentDataUrl", null)
                 .putNullable("sourcePhotoUrl", null)
                 .putNullable("uploadLocation", null)
                 .putNullable("notes", notes)
@@ -131,6 +141,79 @@ class BeerMapApiClient(
                             .put("price", price)
                             .put("isHappyHourPrice", false)
                             .putNullable("happyHourDetails", null)
+                            .put("isOnTap", "unknown")
+                    )
+                ),
+            token = token
+        )
+    }
+
+    suspend fun submitPhotoUpload(
+        venue: Venue,
+        sourcePhotoDataUrl: String,
+        notes: String?,
+        token: String
+    ) {
+        request(
+            path = "/api/business/submissions",
+            method = "POST",
+            body = JSONObject()
+                .put("clientSubmissionId", "android-photo-${UUID.randomUUID()}")
+                .putNullable("missionId", null)
+                .put("venueId", venue.id)
+                .put("venueName", venue.name)
+                .putNullable("suburb", venue.suburb)
+                .putNullable("newVenue", null)
+                .put("submissionType", "photo_upload")
+                .put("observedAt", isoNow())
+                .put("sourcePhotoDataUrl", sourcePhotoDataUrl)
+                .put("sourcePhotoDataUrls", org.json.JSONArray())
+                .putNullable("sourceDocumentDataUrl", null)
+                .putNullable("sourcePhotoUrl", null)
+                .putNullable("uploadLocation", null)
+                .putNullable("notes", notes)
+                .put("items", org.json.JSONArray()),
+            token = token
+        )
+    }
+
+    suspend fun submitHappyHourUpdate(
+        venue: Venue,
+        days: List<String>,
+        startTime: String,
+        endTime: String,
+        offerText: String,
+        notes: String?,
+        token: String
+    ) {
+        val detail = "${days.joinToString(", ") { it.uppercase() }} $startTime-$endTime: $offerText"
+        request(
+            path = "/api/business/submissions",
+            method = "POST",
+            body = JSONObject()
+                .put("clientSubmissionId", "android-happy-${UUID.randomUUID()}")
+                .putNullable("missionId", null)
+                .put("venueId", venue.id)
+                .put("venueName", venue.name)
+                .putNullable("suburb", venue.suburb)
+                .putNullable("newVenue", null)
+                .put("submissionType", "happy_hour_update")
+                .put("observedAt", isoNow())
+                .putNullable("sourcePhotoDataUrl", null)
+                .put("sourcePhotoDataUrls", org.json.JSONArray())
+                .putNullable("sourceDocumentDataUrl", null)
+                .putNullable("sourcePhotoUrl", null)
+                .putNullable("uploadLocation", null)
+                .putNullable("notes", notes)
+                .put(
+                    "items",
+                    org.json.JSONArray().put(
+                        JSONObject()
+                            .put("beerName", "Happy-hour offer")
+                            .put("servingSize", "other")
+                            .putNullable("price", null)
+                            .put("isHappyHourPrice", true)
+                            .put("happyHourDetails", detail)
                             .put("isOnTap", "unknown")
                     )
                 ),

@@ -27,7 +27,7 @@
   <script src="./business.js" defer></script>
 </head>
 <body>
-  <main class="pageShell">
+  <main class="pageShell feedbackPage">
     <div id="nav"></div>
 
     <section class="hero hero--split feedbackHero">
@@ -47,7 +47,7 @@
       </div>
     </section>
 
-    <section class="grid grid--three">
+    <section id="feedbackSupportInfo" class="grid grid--three">
       <article class="card">
         <div class="eyebrow">Privacy and deletion</div>
         <h2>Account deletion starts as a review request.</h2>
@@ -55,8 +55,8 @@
       </article>
       <article class="card">
         <div class="eyebrow">Support contact</div>
-        <h2>Use this form until launch contacts are final.</h2>
-        <p class="muted">A dedicated support email, privacy contact, legal entity, service address if required, and expected response window should be published before launch. Do not include passwords, card numbers, private keys, or ID documents in support messages.</p>
+        <h2>Use the tracked support form.</h2>
+        <p class="muted">Messages enter the private admin support queue with assignment and resolution tracking. We aim to review ordinary requests within two business days and prioritise security, privacy, billing, and account-access issues. Do not include passwords, card numbers, private keys, or ID documents.</p>
       </article>
       <article class="card">
         <div class="eyebrow">Security</div>
@@ -120,6 +120,13 @@
     }
 
     window.addEventListener("DOMContentLoaded", async () => {
+      const feedbackGrid = document.querySelector(".feedbackGrid");
+      const feedbackForm = document.getElementById("feedbackForm");
+      const supportInfo = document.getElementById("feedbackSupportInfo");
+      const feedbackPromise = document.querySelector(".feedbackPromise");
+      if (feedbackGrid && feedbackForm) feedbackGrid.prepend(feedbackForm);
+      if (feedbackGrid && supportInfo) feedbackGrid.after(supportInfo);
+      if (supportInfo && feedbackPromise) supportInfo.after(feedbackPromise);
       const params = new URLSearchParams(window.location.search);
       const isVenueSupport = params.get("audience") === "bars" || MelbBeerBusiness.isVenueManagerContext();
       $("nav").innerHTML = MelbBeerBusiness.renderNav(isVenueSupport ? "venue-support" : "feedback");
@@ -152,11 +159,8 @@
         event.preventDefault();
         const button = $("feedbackSubmitButton");
         const body = Object.fromEntries(new FormData($("feedbackForm")).entries());
-        const message = [
-          body.contactEmail ? `Reply email: ${body.contactEmail}` : null,
-          isVenueSupport ? "Venue support request." : null,
-          body.message,
-        ].filter(Boolean).join("\n\n").slice(0, 1200);
+        const message = [isVenueSupport ? "Venue support request." : null, body.message]
+          .filter(Boolean).join("\n\n").slice(0, 1200);
         button.disabled = true;
         MelbBeerBusiness.setStatus($("feedbackStatus"), isVenueSupport ? "Sending to venue support..." : "Sending message...");
 
@@ -169,6 +173,7 @@
               message,
               venueName: body.venueName || null,
               venueId: null,
+              contactEmail: body.contactEmail || null,
             }),
           });
           $("feedbackForm").reset();

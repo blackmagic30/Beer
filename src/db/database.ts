@@ -8,7 +8,7 @@ import { env } from "../config/env.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 
-const CURRENT_DATABASE_SCHEMA_VERSION = 1;
+const CURRENT_DATABASE_SCHEMA_VERSION = 2;
 const MIGRATION_BACKUP_RETENTION = 3;
 
 function splitSchemaIndexes(schema: string): { baseSchema: string; indexSchema: string } {
@@ -47,6 +47,7 @@ const venueAnalyticsEventsColumns = [
 const venueSpecialsColumns = [
   { name: "start_time", definition: "TEXT" },
   { name: "end_time", definition: "TEXT" },
+  { name: "savings_amount_cents", definition: "INTEGER" },
 ] as const;
 
 const venueHappyHoursColumns = [
@@ -105,6 +106,7 @@ const profilesColumns = [
 
 const submissionColumns = [
   { name: "client_submission_id", definition: "TEXT" },
+  { name: "mission_id", definition: "TEXT" },
   { name: "ocr_status", definition: "TEXT NOT NULL DEFAULT 'not_requested'" },
   { name: "ocr_summary_json", definition: "TEXT" },
   { name: "upload_latitude", definition: "REAL" },
@@ -126,6 +128,18 @@ const submissionItemColumns = [
 const feedbackColumns = [
   { name: "priority", definition: "TEXT NOT NULL DEFAULT 'normal'" },
   { name: "triage_reason", definition: "TEXT" },
+  { name: "contact_email", definition: "TEXT" },
+  { name: "assigned_to", definition: "TEXT" },
+  { name: "resolution_note", definition: "TEXT" },
+  { name: "resolved_at", definition: "TEXT" },
+  { name: "resolved_by", definition: "TEXT" },
+] as const;
+
+const trustWorkflowColumns = [
+  { name: "assigned_to", definition: "TEXT" },
+  { name: "resolution_note", definition: "TEXT" },
+  { name: "resolved_at", definition: "TEXT" },
+  { name: "resolved_by", definition: "TEXT" },
 ] as const;
 
 const accountPrivacySettingsColumns = [
@@ -312,6 +326,12 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
       ON leaderboard_prize_awards (voucher_id);
     CREATE INDEX IF NOT EXISTS idx_submissions_reviewed_by
       ON submissions (reviewed_by);
+    CREATE INDEX IF NOT EXISTS idx_submissions_mission
+      ON submissions (mission_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mission_progress_user_status
+      ON mission_progress (user_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mission_progress_submission
+      ON mission_progress (submission_id);
     CREATE INDEX IF NOT EXISTS idx_submission_source_evidence_evidence
       ON submission_source_evidence (evidence_id);
     CREATE INDEX IF NOT EXISTS idx_verifications_upload
@@ -326,14 +346,24 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
       ON account_deletion_requests (reviewed_by);
     CREATE INDEX IF NOT EXISTS idx_feedback_user
       ON feedback (user_id);
+    CREATE INDEX IF NOT EXISTS idx_feedback_workflow
+      ON feedback (status, assigned_to, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_user
       ON wrong_price_reports (user_id);
+    CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_workflow
+      ON wrong_price_reports (status, assigned_to, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_venue_requests_mission
       ON venue_requests (mission_id);
     CREATE INDEX IF NOT EXISTS idx_venue_requests_user
       ON venue_requests (user_id);
+    CREATE INDEX IF NOT EXISTS idx_venue_requests_workflow
+      ON venue_requests (status, assigned_to, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_user
       ON venue_interest_requests (user_id);
+    CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_workflow
+      ON venue_interest_requests (status, assigned_to, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_venue_identity_aliases_canonical
+      ON venue_identity_aliases (canonical_venue_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_approved_by
       ON venue_manager_assignments (approved_by);
     CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_reviewed_by
@@ -681,6 +711,9 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "submissions", submissionColumns);
   ensureColumns(database, "submission_items", submissionItemColumns);
   ensureColumns(database, "feedback", feedbackColumns);
+  ensureColumns(database, "wrong_price_reports", trustWorkflowColumns);
+  ensureColumns(database, "venue_requests", trustWorkflowColumns);
+  ensureColumns(database, "venue_interest_requests", trustWorkflowColumns);
   ensureColumns(database, "account_privacy_settings", accountPrivacySettingsColumns);
   ensureColumns(database, "source_evidence_objects", sourceEvidenceColumns);
   ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);

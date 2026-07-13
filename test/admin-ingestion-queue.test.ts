@@ -350,7 +350,7 @@ describe("AdminIngestionQueueRepository", () => {
         servingSize: "pint",
         price: 13.5,
         isOnTap: "yes",
-        confidence: "photo_verified",
+        confidence: "admin_verified",
         sourceType: "source_ingestion",
         sourceSubmissionId: null,
       }),

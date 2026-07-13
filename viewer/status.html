@@ -34,11 +34,12 @@
       <div>
         <div class="eyebrow">Operational status</div>
         <h1>Pint Path status and incident reporting.</h1>
-        <p class="lead">This beta status page explains how to report outages, privacy issues, account problems, and security concerns while production monitoring is being formalised.</p>
+        <p class="lead">Check the Pint Path web service now, then use the tracked support paths for outages, privacy issues, account problems, or security concerns.</p>
       </div>
       <article class="heroCard">
-        <strong>Current beta posture</strong>
-        <p>Public map browsing, account sign-in, uploads, and private evidence storage should be checked after every deploy. Provider dashboards remain the source of truth for uptime, backups, and mail delivery.</p>
+        <strong id="serviceStatusTitle">Checking Pint Path...</strong>
+        <p id="serviceStatusCopy">Running live liveness and backend-readiness checks.</p>
+        <span id="serviceStatusBadge" class="pill">Checking</span>
       </article>
     </section>
 
@@ -66,25 +67,44 @@
     <section class="panel trustStack">
       <div class="sectionHeader">
         <div>
-          <div class="eyebrow">Launch operations</div>
-          <h2>Provider checks still need human verification</h2>
+          <div class="eyebrow">Operations</div>
+          <h2>Live app checks plus provider verification</h2>
         </div>
-        <p class="muted">This page is not a live external status monitor yet. Use these checks before treating a deploy as production-ready.</p>
+        <p class="muted">The service result above is live. Railway, Supabase, email, Stripe, and Google provider incidents still require their own dashboards and alerts.</p>
       </div>
       <div class="policyMatrix">
         <div class="policyRow"><strong>Railway</strong><span>Confirm health checks, latest deploy, logs, restart policy, and rollback target.</span></div>
         <div class="policyRow"><strong>Supabase</strong><span>Confirm Auth provider health, RLS enabled, private storage bucket is private, and backup/PITR status.</span></div>
         <div class="policyRow"><strong>Resend</strong><span>Confirm domain, DKIM/SPF/DMARC, bounce handling, and delivery for signup/reset emails.</span></div>
-        <div class="policyRow"><strong>Stripe</strong><span>Keep real payments disabled until signed webhook tests and product prices are confirmed.</span></div>
-        <div class="policyRow"><strong>Google Maps</strong><span>Confirm browser key referrer restrictions and server key restrictions before launch.</span></div>
+        <div class="policyRow"><strong>Stripe</strong><span>Confirm signed webhook delivery, active product prices, failed-payment handling, and billing portal availability.</span></div>
+        <div class="policyRow"><strong>Google Maps</strong><span>Confirm browser-key referrer restrictions and server-key API restrictions.</span></div>
       </div>
     </section>
 
   </main>
 
   <script>
-    window.addEventListener("DOMContentLoaded", () => {
+    window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("trust");
+      const title = document.getElementById("serviceStatusTitle");
+      const copy = document.getElementById("serviceStatusCopy");
+      const badge = document.getElementById("serviceStatusBadge");
+      const checkedAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      try {
+        const [healthResponse, readyResponse] = await Promise.all([
+          fetch("/health", { cache: "no-store" }),
+          fetch("/ready", { cache: "no-store" }),
+        ]);
+        if (!healthResponse.ok || !readyResponse.ok) throw new Error("Service check failed");
+        title.textContent = "Pint Path is operational";
+        copy.textContent = `The web process and full backend initialization passed at ${checkedAt}.`;
+        badge.textContent = "Operational";
+        badge.classList.add("pill--success");
+      } catch {
+        title.textContent = "Pint Path needs attention";
+        copy.textContent = `A live service check failed at ${checkedAt}. Report the issue and check Railway logs.`;
+        badge.textContent = "Degraded";
+      }
     });
   </script>
 </body>

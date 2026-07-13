@@ -130,12 +130,14 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain('name="observedAt"');
     expect(html).not.toContain('name="notes" placeholder="Optional notes, conditions, or source details"');
     expect(html).toContain('id="sourcePhotoField" class="field is-hidden"');
-    expect(html).toContain('id="sourcePhoto" type="file" accept="image/*" multiple disabled');
+    expect(html).toContain('id="sourcePhoto" type="file" accept="image/*,application/pdf" multiple disabled');
     expect(html).toContain('id="sourcePhotoList" class="sourcePhotoList" aria-live="polite" hidden');
     expect(html).toContain("let selectedSourcePhotoFiles = [];");
     expect(html).toContain("sourcePhotoField.classList.toggle(\"is-hidden\", !isPhotoOnly)");
     expect(html).toContain("sourcePhoto.disabled = !isPhotoOnly");
     expect(html).toContain("sourcePhoto.required = isPhotoOnly && selectedSourcePhotoFiles.length === 0");
+    expect(html).toContain("Upload up to 6 clear images, or one flat PDF menu.");
+    expect(html).toContain("sourceDocumentDataUrl");
     expect(html).toContain("const observedAt = new Date().toISOString();");
     expect(html).toContain('submissionTypeSelect.value === "photo_upload"');
     expect(html).toContain("const notes = missionNote || null;");
@@ -285,7 +287,8 @@ describe("submit page auth gate", () => {
     expect(html).toContain("function clearSelectedSourcePhotos");
     expect(html).toContain("function renderSourcePhotoList");
     expect(html).toContain("selectedSourcePhotoFiles.splice(index, 1)");
-    expect(html).toContain('aria-label="Remove ${escapeHtml(file.name || `source image ${index + 1}`)}"');
+    expect(html).toContain('aria-label="Remove ${escapeHtml(file.name || `source ${index + 1}`)}"');
+    expect(html).toContain('class="sourcePhotoItem__pdf"');
     expect(html).toContain("Remove one before adding another.");
     expect(html).toContain("selectedSourcePhotoFiles.length === 1 ? \"Preparing photo for review...\"");
     expect(css).toContain("grid-template-columns: minmax(0, 1fr) 34px");
@@ -345,8 +348,9 @@ describe("submit page auth gate", () => {
 
     expect(html).toContain("How do submits work?");
     expect(html).toContain("Google-selected new venues can appear on the map quickly");
-    expect(html).toContain("beer prices stay pending until admin review or matching community confirmations");
-    expect(html).toContain("saves the upload locally in your browser and retries when you are back online");
+    expect(html).toContain("community drink data stays pending until admin review");
+    expect(html).toContain("Matching community confirmations help reviewers but never auto-publish.");
+    expect(html).toContain("Pint Path saves the upload locally and retries when you are back online");
     expect(html).toContain("Why does Submit ask for location services?");
     expect(html).toContain("Location proof helps reviewers confirm that data was uploaded from the venue area.");
     expect(html).toContain("It is optional during field testing");

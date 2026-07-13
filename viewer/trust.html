@@ -48,7 +48,7 @@
           "name": "Can bars edit the map directly?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Verified venue managers can submit beer data, happy-hour data, and eligible specials from the venue portal. Updates stay pending until admin review publishes them."
+            "text": "Verified venue managers can directly maintain profile, beer, stock, price, and happy-hour data for their assigned venue. The fourth deletion within an hour is held for admin review. Pro venues can also manage Pint Path specials."
           }
         }
       ]
@@ -66,7 +66,7 @@
       <div>
         <div id="faqHeroEyebrow" class="eyebrow">FAQ</div>
         <h1 id="faqHeroTitle">Quick answers before you use Pint Path.</h1>
-        <p id="faqHeroLead" class="lead">The short version: search the map, submit what you actually saw, and prices only appear publicly after review or matching community confirmation.</p>
+        <p id="faqHeroLead" class="lead">The short version: search the map, submit what you actually saw, and community submissions only publish after admin review.</p>
       </div>
     </section>
 
@@ -85,11 +85,11 @@
         </details>
         <details class="faqItem">
           <summary>How do submits work?</summary>
-          <p>Choose a venue, add the beer price, happy-hour, or source photo you saw, then submit it. Google-selected new venues can appear on the map quickly, while beer prices stay pending until admin review or matching community confirmations. If reception drops after you finish, Pint Path saves the upload locally in your browser and retries when you are back online.</p>
+          <p>Choose a venue, add the beer price, happy-hour, images, or PDF menu you saw, then submit it. Google-selected new venues can appear on the map quickly, while community drink data stays pending until admin review. Matching community confirmations help reviewers but never auto-publish. If reception drops after you finish, Pint Path saves the upload locally and retries when you are back online.</p>
         </details>
         <details class="faqItem">
           <summary>How do I add a missing venue?</summary>
-          <p>Open Submit, tick that the venue is not on Pint Path yet, search Google Maps, choose the matching bar, pub, restaurant, brewery, or night club, then add the beer or happy-hour data you saw. The venue can appear on the map right away; the price data waits for review or matching community confirmation.</p>
+          <p>Open Submit, tick that the venue is not on Pint Path yet, search Google Maps, choose the matching bar, pub, restaurant, brewery, or night club, then add the beer or happy-hour data you saw. The verified Google venue can appear on the map right away; community price data waits for admin review.</p>
         </details>
         <details class="faqItem">
           <summary>Why do I need an account to submit data?</summary>
@@ -113,11 +113,43 @@
         </details>
         <details class="faqItem">
           <summary>How does premium access work?</summary>
-          <p>Paid users get full map access, exact verified prices, value rings, premium filters, saved-night shortcuts, and discount details where venues offer them.</p>
+          <p>Paid users get full map access, exact verified prices, value rings, premium filters, saved-night shortcuts, and discount details where venues offer them. Monthly and yearly plans renew automatically until cancelled from Stripe billing in Account.</p>
+        </details>
+        <details class="faqItem">
+          <summary>How do missions and contribution points work?</summary>
+          <p>Missions identify missing or stale venue data. Accepting a mission links it to your submission. Points scale up for missing or old data and down for recently checked data. Points are awarded only after admin approval and eligible location proof; approved missions then close until the venue needs a meaningful new check.</p>
+        </details>
+        <details class="faqItem">
+          <summary>What happens when OCR finds a new beer name?</summary>
+          <p>Pint Path reads images or one PDF menu, extracts beer rows, and matches names against the catalogue. An unknown name is quarantined for admin approval or merging. Food, headings, spirits, wine, and OCR noise cannot publish as beer data. Original evidence stays private for the reviewer.</p>
+        </details>
+        <details class="faqItem">
+          <summary>How do QR and 6-character venue codes work?</summary>
+          <p>An eligible user generates a short-lived QR and 6-character code. Staff at a participating venue scan it with the phone camera or enter it in the venue dashboard, choose the current drink or special, and confirm up to four items. Expired, replayed, or wrong-venue codes are rejected.</p>
+        </details>
+        <details class="faqItem">
+          <summary>How do Pint Points and Free Pint Rewards work?</summary>
+          <p>Participating venue staff can record one Pint Point per paid alcoholic drink, subject to the daily cap. Free Pint Rewards require 50 available points, use a shorter-lived code, do not earn another point, and remain subject to age, ID, RSA, stock, and venue checks.</p>
+        </details>
+        <details class="faqItem">
+          <summary>What if there is no happy-hour data?</summary>
+          <p>No result means Pint Path has no current structured happy-hour record matching that search. It does not prove the venue has no offer. Check with the venue, submit current details, or accept a missing happy-hour mission.</p>
+        </details>
+        <details class="faqItem">
+          <summary>Does a paid venue always rank first?</summary>
+          <p>No. Best Match uses drink availability, lower price, confidence, freshness, distance, and a small bounded Pro discovery boost. Paid placement is visibly marked and cannot turn missing, stale, disputed, or expensive data into the best result by itself.</p>
+        </details>
+        <details class="faqItem">
+          <summary>How do cancellation, refunds, and invoices work?</summary>
+          <p>Open Account and choose Manage billing or cancel to use Stripe billing management. Cancellation stops the next renewal and access normally continues to period end. Stripe provides available receipts and invoices. Billing errors and Australian Consumer Law refund requests go through Contact us.</p>
+        </details>
+        <details class="faqItem">
+          <summary>How long does account deletion take?</summary>
+          <p>Deletion starts as an ownership-checked request with a seven-day safety window. Pint Path removes or anonymises account data where practical after checking active billing, moderation, fraud-prevention, security, and legal retention requirements.</p>
         </details>
         <details class="faqItem">
           <summary>Can bars edit the map directly?</summary>
-          <p>Verified venue managers can submit beer data, happy-hour data, and eligible specials from the venue portal. Updates stay pending until admin review publishes them.</p>
+          <p>Verified venue managers directly maintain profile, beer, stock, price, and happy-hour data for their assigned venue. The fourth deletion within an hour is held for admin review as a bulk-deletion safeguard. Pro venues can also manage Pint Path specials directly.</p>
         </details>
         <details class="faqItem">
           <summary>What do paid venues see?</summary>
@@ -152,7 +184,7 @@
       document.title = "Bar FAQ | Pint Path";
       faqHeroEyebrow.textContent = "Bar FAQ";
       faqHeroTitle.textContent = "Answers for venues using Pint Path.";
-      faqHeroLead.textContent = "How bar accounts, venue updates, specials, reports, and review workflows work before anything appears publicly.";
+      faqHeroLead.textContent = "How assigned venue access, direct updates, specials, reports, billing, and safeguards work.";
       faqSectionEyebrow.textContent = "Venue tools";
       faqSectionTitle.textContent = "Simple answers for bar owners and managers.";
       faqList.innerHTML = `
@@ -162,7 +194,7 @@
         </details>
         <details class="faqItem">
           <summary>Do my changes go live immediately?</summary>
-          <p>No. Venue updates are submitted for review first, then approved data publishes to the public map. This keeps user trust high and protects venues from accidental or incorrect edits.</p>
+          <p>Profile, beer, stock, price, happy-hour, and eligible special changes save directly to your assigned venue. The fourth deletion within one hour is held for admin approval to protect the listing from accidental bulk removal. Subscription and promotion controls remain admin or Stripe controlled.</p>
         </details>
         <details class="faqItem">
           <summary>What is the difference between Free and Pro for venues?</summary>
@@ -185,8 +217,16 @@
           <p>No. Venue manager access is scoped to assigned venues only. If you manage multiple venues, each one needs to be assigned to your account.</p>
         </details>
         <details class="faqItem">
-          <summary>Why does Pint Path review venue data?</summary>
-          <p>Review keeps public prices reliable, prevents spam or accidental mistakes, and gives users confidence that venue information is not being changed without oversight.</p>
+          <summary>Which venue actions need review?</summary>
+          <p>Normal assigned-venue edits do not. The fourth beer or happy-hour deletion within an hour is queued, and community/OCR submissions or new catalogue names require admin review. This keeps routine work fast while protecting destructive or untrusted changes.</p>
+        </details>
+        <details class="faqItem">
+          <summary>How do staff redeem a user code?</summary>
+          <p>Open Redemption, enter the six-character code or scan the user's QR with the phone camera, choose the current drink or special, set a quantity from one to four, then confirm. The server checks expiry, venue access, replay protection, and point limits.</p>
+        </details>
+        <details class="faqItem">
+          <summary>How do I manage or cancel Pro billing?</summary>
+          <p>Pro venues have a Manage billing action in the assigned venue dashboard. It opens Stripe to update payment details, view available invoices, or cancel the next renewal.</p>
         </details>
         <details class="faqItem">
           <summary>How do I get help with my bar account?</summary>

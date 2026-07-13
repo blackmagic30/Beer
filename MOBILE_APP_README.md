@@ -24,20 +24,21 @@ Current native API coverage includes:
 - Config: `GET /api/business/config`
 - Auth: `POST /api/business/auth/signup`, `POST /api/business/auth/login`, `POST /api/business/auth/logout`
 - Account: `GET /api/business/account`, privacy settings, deletion request, saved items
+- Rewards: rotating Pint Path special codes and Free Pint Reward codes
 - Public discovery: `GET /api/business/venues`, `GET /api/business/price-records`, `GET /api/business/missions`
-- Contributions: `POST /api/business/submissions`, wrong-price reports, venue/beer requests
-- Venue management: `GET /api/business/venue-portal`, profile, beers/stock, happy hours, Pro specials/deals
+- Contributions: `POST /api/business/submissions`, photo/source uploads, happy-hour updates, wrong-price reports, venue/beer requests
+- Venue management: `GET /api/business/venue-portal`, daily specials planner, redemption/Pint Points summaries, profile, beers/stock, happy hours, Pro specials/deals
 - Analytics and support: `POST /api/business/events`, `POST /api/business/feedback`
 
 Supabase Auth is still a backend/web OAuth bridge. Native Google/Apple OAuth is intentionally documented as future setup work because it needs final bundle IDs, redirect/deep-link URLs, and provider console configuration. Email/password auth works through the existing Express API.
 
 ## Current Native Screens
 
-- Discover: venue search/list, detail price reveal, save venue.
-- Account: login, signup, account stats, privacy controls, deletion request, logout.
-- Add: reviewed beer-price submissions, wrong-price reports, missing venue/beer requests, mission list.
-- Bars: invite-only venue dashboard, profile/contact info, beer stock, happy hours, specials/deals, reports/analytics summary.
-- Settings: backend config visibility, support message, responsible-use notes.
+- Find: venue search/list, detail price reveal, save venue.
+- Add: reviewed price submissions, photo/source uploads, happy-hour updates, wrong-price reports, missing venue/beer requests, mission list.
+- Bars: invite-only venue dashboard, daily specials planner, redemption/Pint Points summary, profile/contact info, beer stock, happy hours, specials/deals, reports/analytics summary.
+- Account: login, signup, account stats, rotating Pint Path special codes, Free Pint Reward codes, privacy controls, deletion request, logout.
+- Help: backend config visibility, support message, responsible-use notes.
 
 ## UI System
 
@@ -120,10 +121,10 @@ cd apps/android
 
 - Native Google/Apple OAuth.
 - Native map with pins/clustering/nearby behavior.
-- Native camera/photo evidence upload.
-- Native one-time location proof.
+- Native camera capture, multi-image/PDF source upload, and offline upload queue.
+- Native one-time location proof for contribution points.
 - Billing/customer portal.
-- Discount pass, Pint Points, Free Pint Rewards, and POS flows.
+- Venue POS/redemption operations beyond mobile display of user reward/special codes and venue redemption metrics.
 - Monthly report CSV/JSON download/share handling.
 - Admin review/beer catalog/admin dashboards.
 - Mobile CI and native UI tests.

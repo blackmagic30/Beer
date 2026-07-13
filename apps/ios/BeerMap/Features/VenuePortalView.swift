@@ -148,6 +148,12 @@ struct PortalDashboard: View {
                 MetricPill(title: "Happy hours", value: "\(portal.inventory?.happyHours?.count ?? 0)", systemImage: "clock.badge.checkmark.fill", tint: BeerMapTheme.leaf)
                 MetricPill(title: "Specials", value: "\(portal.inventory?.specials?.count ?? 0)", systemImage: "tag.fill", tint: BeerMapTheme.plum)
                 MetricPill(title: "Pending", value: "\(portal.pendingChanges?.count ?? 0)", systemImage: "tray.full.fill", tint: BeerMapTheme.sky)
+                MetricPill(title: "Redemptions", value: "\(portal.discounts?.totalRedemptions ?? 0)", systemImage: "qrcode.viewfinder", tint: BeerMapTheme.leaf)
+                MetricPill(title: "Reward pts", value: "\(portal.pintPoints?.rewardThreshold ?? 50)", systemImage: "gift.fill", tint: BeerMapTheme.amber)
+            }
+
+            if let planner = portal.dailySpecialsPlanner {
+                DailySpecialsPlannerCard(planner: planner)
             }
 
             if let analytics = portal.analytics {
@@ -174,6 +180,64 @@ struct PortalDashboard: View {
                 )
             }
         }
+    }
+}
+
+struct DailySpecialsPlannerCard: View {
+    let planner: DailySpecialsPlanner
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(
+                eyebrow: "Specials planner",
+                title: "Daily summary for \(planner.area ?? "your area")",
+                subtitle: planner.summary ?? planner.confidenceCopy,
+                systemImage: "sparkles"
+            )
+
+            if let signals = planner.demandSignals, !signals.isEmpty {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    ForEach(signals.prefix(4)) { signal in
+                        MetricPill(
+                            title: signal.label,
+                            value: signal.displayValue,
+                            systemImage: "chart.bar.fill",
+                            tint: BeerMapTheme.sky
+                        )
+                    }
+                }
+            }
+
+            if let recommendations = planner.recommendations, !recommendations.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Recommended specials")
+                        .font(.caption.weight(.black))
+                        .foregroundStyle(BeerMapTheme.amber)
+                    ForEach(recommendations.prefix(3)) { recommendation in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(recommendation.title)
+                                .font(.headline)
+                            Text(recommendation.offerIdea ?? recommendation.action ?? "Use one clear staff-friendly special.")
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
+                            if let reason = recommendation.reason {
+                                Text(reason)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+
+            if planner.privacyFloorMet == false, let confidence = planner.confidenceCopy {
+                StatusBanner(message: confidence, systemImage: "lock.shield.fill")
+            }
+        }
+        .beerMapCard()
     }
 }
 

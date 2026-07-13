@@ -222,7 +222,7 @@
           </div>
           <div class="panel">
             <h2>Pending venue changes</h2>
-            <p class="muted">Manager edits stay private until approved here.</p>
+            <p class="muted">Only safeguarded actions such as the fourth deletion within an hour appear here. Normal assigned-venue edits save directly.</p>
             <div id="pendingBarChanges" class="list"></div>
           </div>
         </div>
@@ -686,6 +686,7 @@
       queueEnabled: false,
     };
     let adminVenues = [];
+    let adminOperationalHealth = { checkedAt: null, jobs: [] };
     let selectedAdminVenueId = null;
     let adminCaptureSource = "manual_entry";
     let adminGoogleVenueSearchTimer = null;
@@ -1315,6 +1316,8 @@
 
     function renderFieldTestSummary(data, queues) {
       const metrics = data.metrics;
+      const activeRows = (rows) => (Array.isArray(rows) ? rows : [])
+        .filter((row) => ["open", "in_progress"].includes(row.status));
       fieldTestMetrics.innerHTML = [
         renderMetric("Users today", metrics.newUsers, { target: "analytics", selector: "#retentionCohorts", title: "Open analytics retention data" }),
         renderMetric("Searches today", metrics.totalVenueSearches + metrics.totalBeerSearches, { target: "analytics", selector: "#demandSignals", title: "Open search demand signals" }),
@@ -1324,8 +1327,8 @@
         renderMetric("Blocked reveals", metrics.totalBlockedPriceReveals || 0, { target: "analytics", selector: "#demandSignals", title: "Open blocked reveal analytics" }),
         renderMetric("Submissions", metrics.totalSubmissionCompletions, { target: "review", selector: "#pendingSubmissions", title: "Open pending submissions" }),
         renderMetric("Pending approvals", metrics.totalPendingSubmissions, { target: "review", selector: "#pendingSubmissions", title: "Open pending approvals" }),
-        renderMetric("Wrong-price reports", queues.wrongPriceReports.length, { target: "review", selector: "#reviewQueues", title: "Open wrong-price reports" }),
-        renderMetric("Contact", queues.feedback.length, { target: "review", selector: "#reviewQueues", title: "Open contact messages" }),
+        renderMetric("Wrong-price reports", activeRows(queues.wrongPriceReports).length, { target: "review", selector: "#reviewQueues", title: "Open wrong-price reports" }),
+        renderMetric("Contact", activeRows(queues.feedback).length, { target: "review", selector: "#reviewQueues", title: "Open contact messages" }),
       ].join("");
       wireAdminJumpActions(fieldTestMetrics);
       fieldTestSignals.innerHTML = [
@@ -1355,11 +1358,76 @@
     }
 
     function renderQueues(data) {
-      reviewQueues.innerHTML = [
-        `<div class="listItem"><strong>Wrong price reports</strong><div class="muted">${data.wrongPriceReports.length ? data.wrongPriceReports.slice(0, 6).map((row) => `${row.venueName}: ${row.reason}`).join(" · ") : "None open"}</div></div>`,
-        `<div class="listItem"><strong>Venue and beer requests</strong><div class="muted">${data.venueRequests.length ? data.venueRequests.slice(0, 6).map((row) => `${row.requestType}: ${row.venueName || row.beerName || row.suburb || "request"}`).join(" · ") : "None open"}</div></div>`,
-        `<div class="listItem"><strong>Contact messages</strong><div class="muted">${data.feedback.length ? data.feedback.slice(0, 6).map((row) => `${row.feedbackType}: ${row.message.slice(0, 80)}`).join(" · ") : "No contact messages yet"}</div></div>`,
-      ].join("");
+      const groups = [
+        { kind: "wrong_price", title: "Wrong price reports", rows: data.wrongPriceReports || [] },
+        { kind: "venue_request", title: "Venue and beer requests", rows: data.venueRequests || [] },
+        { kind: "feedback", title: "Contact and support", rows: data.feedback || [] },
+      ];
+      const detailFor = (kind, row) => {
+        if (kind === "wrong_price") return [row.venueName, row.beerName, row.reason, row.notes].filter(Boolean).join(" · ");
+        if (kind === "venue_request") return [row.requestType, row.venueName, row.beerName, row.suburb, row.notes].filter(Boolean).join(" · ");
+        return [row.feedbackType, row.venueName, row.message].filter(Boolean).join(" · ");
+      };
+      reviewQueues.innerHTML = groups.map((group) => `
+        <section class="trustQueueGroup" aria-label="${escapeHtml(group.title)}">
+          <div class="sectionHeader sectionHeader--compact">
+            <h3>${escapeHtml(group.title)}</h3>
+            <span class="pill">${group.rows.filter((row) => ["open", "in_progress"].includes(row.status)).length} active</span>
+          </div>
+          <div class="list">
+            ${group.rows.length ? group.rows.map((row) => `
+              <article class="listItem trustQueueCard" data-trust-card="${escapeHtml(group.kind)}:${escapeHtml(row.id)}">
+                <div class="trustQueueCard__header">
+                  <div>
+                    <strong>${escapeHtml(detailFor(group.kind, row) || "Queue item")}</strong>
+                    <div class="muted">Opened ${escapeHtml(MelbBeerBusiness.formatDate(row.createdAt))}${row.assignedTo ? " · Assigned" : " · Unassigned"}</div>
+                  </div>
+                  <span class="pill">${escapeHtml(String(row.status || "open").replaceAll("_", " "))}</span>
+                </div>
+                ${row.triageReason ? `<p class="helperCopy">${escapeHtml(row.triageReason)}</p>` : ""}
+                ${row.contactEmail ? `<a class="button button--small" href="mailto:${escapeHtml(row.contactEmail)}">Reply by email</a>` : ""}
+                <label class="field">Internal resolution note
+                  <textarea data-trust-note maxlength="2000" placeholder="What was checked, changed, or sent to the requester">${escapeHtml(row.resolutionNote || "")}</textarea>
+                </label>
+                <div class="actionRow actionRow--compact">
+                  <button class="button button--small" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-status="in_progress">Assign to me</button>
+                  <button class="button button--small button--primary" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-status="resolved">Resolve</button>
+                  <button class="button button--small button--danger" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-status="rejected">Reject</button>
+                  ${["resolved", "rejected"].includes(row.status) ? `<button class="button button--small" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-status="open">Reopen</button>` : ""}
+                </div>
+              </article>
+            `).join("") : '<div class="listItem muted">Nothing in this queue.</div>'}
+          </div>
+        </section>
+      `).join("");
+
+      reviewQueues.querySelectorAll("[data-trust-status]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const card = button.closest("[data-trust-card]");
+          const note = card?.querySelector("[data-trust-note]")?.value.trim() || null;
+          if (["resolved", "rejected"].includes(button.dataset.trustStatus) && !note) {
+            MelbBeerBusiness.setStatus(statusEl, "Add a short resolution note before closing this item.", true);
+            card?.querySelector("[data-trust-note]")?.focus();
+            return;
+          }
+          button.disabled = true;
+          try {
+            await MelbBeerBusiness.apiFetch(`/api/business/admin/trust/${encodeURIComponent(button.dataset.trustKind)}/${encodeURIComponent(button.dataset.trustId)}`, {
+              method: "POST",
+              body: JSON.stringify({
+                status: button.dataset.trustStatus,
+                assignedTo: button.dataset.trustStatus === "in_progress" ? "self" : null,
+                resolutionNote: note,
+              }),
+            });
+            MelbBeerBusiness.setStatus(statusEl, "Trust queue item updated.");
+            await loadAdmin();
+          } catch (error) {
+            button.disabled = false;
+            MelbBeerBusiness.setStatus(statusEl, error.message || "Queue item could not be updated.", true);
+          }
+        });
+      });
     }
 
     function topPitchLeads(leadsData) {
@@ -1374,14 +1442,16 @@
       const submissions = Array.isArray(payload.submissions) ? payload.submissions : [];
       const pendingChanges = Array.isArray(payload.venuePartners?.pendingChanges) ? payload.venuePartners.pendingChanges : [];
       const sourceItems = Array.isArray(window.__adminIngestionQueueItems) ? window.__adminIngestionQueueItems : [];
+      const activeCount = (rows) => (Array.isArray(rows) ? rows : [])
+        .filter((row) => ["open", "in_progress"].includes(row.status)).length;
       return {
         submissions: submissions.length,
         newVenues: submissions.filter((submission) => submission.pendingVenue).length,
         sourcePending: sourceItems.filter((item) => item.status === "pending_review").length,
         pendingChanges: pendingChanges.length,
-        wrongPriceReports: Array.isArray(queues.wrongPriceReports) ? queues.wrongPriceReports.length : 0,
-        contactMessages: Array.isArray(queues.feedback) ? queues.feedback.length : 0,
-        venueRequests: Array.isArray(queues.venueRequests) ? queues.venueRequests.length : 0,
+        wrongPriceReports: activeCount(queues.wrongPriceReports),
+        contactMessages: activeCount(queues.feedback),
+        venueRequests: activeCount(queues.venueRequests),
       };
     }
 
@@ -1571,8 +1641,8 @@
         },
         {
           label: "Venue changes",
-          value: `${counts.pendingChanges} manager edit${counts.pendingChanges === 1 ? "" : "s"}`,
-          copy: counts.pendingChanges ? "Approve or reject before public data changes" : "No manager edits waiting",
+          value: `${counts.pendingChanges} protected delete${counts.pendingChanges === 1 ? "" : "s"}`,
+          copy: counts.pendingChanges ? "Review deletion bursts held by the three-per-hour safeguard" : "No protected bulk deletions waiting",
           target: "review",
           selector: "#pendingBarChanges",
           tone: counts.pendingChanges ? "warning" : "success",
@@ -2130,6 +2200,20 @@
         return;
       }
 
+      const jobByKey = new Map((adminOperationalHealth.jobs || []).map((job) => [job.key, job]));
+      const operationalStatus = (key, successCopy) => {
+        const job = jobByKey.get(key);
+        const state = job?.state?.state || (key === "auto_missions_refresh" && job?.updatedAt ? "succeeded" : "not_run");
+        const updatedAt = job?.updatedAt ? new Date(job.updatedAt) : null;
+        const ageMinutes = updatedAt && !Number.isNaN(updatedAt.getTime())
+          ? Math.max(0, Math.round((Date.now() - updatedAt.getTime()) / 60000))
+          : null;
+        const ageCopy = ageMinutes == null ? "No run recorded yet." : ageMinutes < 60 ? `${ageMinutes}m ago` : `${Math.round(ageMinutes / 60)}h ago`;
+        if (state === "succeeded") return { label: "Healthy", copy: `${successCopy} Last success ${ageCopy}.`, tone: "success" };
+        if (state === "running") return { label: "Running", copy: `Job started ${ageCopy}.`, tone: "info" };
+        if (state === "failed") return { label: "Failed", copy: `Last run failed ${ageCopy}. Open the relevant workflow and Railway logs.`, tone: "warning" };
+        return { label: "Not run", copy: "No durable run result is recorded on this deployment yet.", tone: "warning" };
+      };
       const rows = [
         {
           label: "Manual captures",
@@ -2160,6 +2244,42 @@
           status: { label: adminVenues.length ? `${adminVenues.length} loaded` : "Empty", copy: adminVenues.length ? "Ready for admin search and capture." : "No venues loaded yet.", tone: adminVenues.length ? "success" : "warning" },
           target: "capture",
           selector: "#adminVenueSearch",
+        },
+        {
+          label: "Off-site backup",
+          status: operationalStatus("job:offsite_backup", "The latest backup uploaded and checksum verification passed."),
+          target: "review",
+          selector: "#adminHealthPanel",
+        },
+        {
+          label: "Restore rehearsal",
+          status: operationalStatus("job:restore_rehearsal", "A verified backup restored into a clean target and passed database and evidence checks."),
+          target: "review",
+          selector: "#adminHealthPanel",
+        },
+        {
+          label: "Evidence retention",
+          status: operationalStatus("job:evidence_retention", "Expired private evidence maintenance completed."),
+          target: "review",
+          selector: "#adminHealthPanel",
+        },
+        {
+          label: "User menu OCR",
+          status: operationalStatus("job:menu_ocr", "The latest user menu OCR request completed."),
+          target: "review",
+          selector: "#pendingSubmissions",
+        },
+        {
+          label: "Stripe webhook",
+          status: operationalStatus("job:stripe_webhook", "The latest signed Stripe event was applied or safely replayed."),
+          target: "partners",
+          selector: "#venueSubscriptions",
+        },
+        {
+          label: "Mission refresh",
+          status: operationalStatus("auto_missions_refresh", "Mission definitions were refreshed from current venue coverage."),
+          target: "analytics",
+          selector: "#coverageList",
         },
       ];
 
@@ -2303,12 +2423,23 @@
             : result.signedUrl
               ? [result.signedUrl]
               : [];
+          const evidence = Array.isArray(result.evidence) && result.evidence.length
+            ? result.evidence
+            : signedUrls.map((url) => ({ url, mimeType: "image/unknown" }));
           if (!signedUrls.length) {
             preview.innerHTML = '<div class="adminSubmissionEvidencePreview__placeholder">Source image unavailable</div>';
             return;
           }
-          preview.innerHTML = signedUrls.map((value, index) => {
-            const signedUrl = escapeHtml(value);
+          preview.innerHTML = evidence.map((item, index) => {
+            const signedUrl = escapeHtml(item.url);
+            if (item.mimeType === "application/pdf") {
+              return `
+                <div class="adminSubmissionEvidencePreview__document">
+                  <iframe src="${signedUrl}" title="Submission PDF menu ${index + 1}" loading="lazy"></iframe>
+                  <a class="button button--small" href="${signedUrl}" target="_blank" rel="noopener">Open PDF menu ${index + 1}</a>
+                </div>
+              `;
+            }
             return `
               <a class="adminSubmissionEvidencePreview__link" href="${signedUrl}" target="_blank" rel="noopener">
                 <img src="${signedUrl}" alt="Submission source evidence ${index + 1}" loading="lazy" />
@@ -2335,7 +2466,9 @@
       const ocrPending = Array.isArray(window.__adminIngestionQueueItems)
         ? window.__adminIngestionQueueItems.filter((item) => item.status === "pending_review").length
         : 0;
-      const trustIssues = Number(queuePayload?.wrongPriceReports?.length || 0) + Number(queuePayload?.feedback?.length || 0);
+      const activeTrustCount = (rows) => (Array.isArray(rows) ? rows : [])
+        .filter((row) => ["open", "in_progress"].includes(row.status)).length;
+      const trustIssues = activeTrustCount(queuePayload?.wrongPriceReports) + activeTrustCount(queuePayload?.feedback);
       const rows = [
         {
           title: `${newVenueCount} new venue ${newVenueCount === 1 ? "request" : "requests"}`,
@@ -3782,7 +3915,7 @@
       const evidenceOnlyApproval = status === "approved" && isPhotoEvidenceOnlySubmission(submission);
       try {
         const body = status === "approved"
-          ? { status, confidence: "photo_verified", rejectionReason: note }
+          ? { status, rejectionReason: note }
           : { status, rejectionReason: note || (status === "fraud_flagged" ? "Fraud flagged by admin." : "Rejected during admin review."), fraudFlagged: status === "fraud_flagged" };
         const result = await MelbBeerBusiness.apiFetch(`/api/business/submissions/${id}/review`, {
           method: "POST",
@@ -3983,7 +4116,7 @@
       });
       await hydrateSubmissionEvidencePreviews();
 
-      const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners, leaderboardPrizes, beerCatalog] = await Promise.all([
+      const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners, leaderboardPrizes, beerCatalog, operationalHealth] = await Promise.all([
         MelbBeerBusiness.apiFetch(`/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`),
         MelbBeerBusiness.apiFetch("/api/business/admin/kpis?range=today"),
         MelbBeerBusiness.apiFetch("/api/business/admin/retention?groupBy=week&limit=12"),
@@ -3993,7 +4126,9 @@
         MelbBeerBusiness.apiFetch("/api/business/admin/venue-partners"),
         MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes"),
         MelbBeerBusiness.apiFetch("/api/business/admin/beer-catalog"),
+        MelbBeerBusiness.apiFetch("/api/business/admin/operational-health"),
       ]);
+      adminOperationalHealth = operationalHealth || { checkedAt: null, jobs: [] };
       renderKpis(kpis);
       renderAdminTodayQueue(todayKpis, queues, submissions.submissions);
       renderFieldTestSummary(todayKpis, queues);

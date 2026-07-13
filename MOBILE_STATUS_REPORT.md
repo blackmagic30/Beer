@@ -1,7 +1,7 @@
 # Mobile Status Report
 
-Date: 2026-06-30
-Branch inspected: `codex/mobile-apps-ios-android`
+Date: 2026-07-13
+Branch inspected: `main`
 Baseline note: before this report was written, `git status --short --branch` showed a clean branch tracking `origin/codex/mobile-apps-ios-android`.
 
 ## Executive Summary
@@ -15,7 +15,36 @@ The repository contains two native mobile projects:
 
 These are not React Native, Expo, Capacitor, or WebView wrappers. They are first-pass native apps that call the existing Pint Path/BeerMap Express API and preserve the current website as the source of truth.
 
-The mobile apps are substantial but not release-complete. They implement native discovery, account auth, account/privacy controls, support feedback, saved venues, price reveal calls, reviewed contribution entry points, and basic venue-manager portal editing. Missing work includes the real map experience, native Google/Apple OAuth, photo/location evidence flows, billing, admin tools, richer venue intelligence, reward/discount flows, native build verification on a fully provisioned machine, mobile CI, final signing, screenshots, store metadata, and several compliance/polish passes.
+The mobile apps are substantial but not release-complete. They implement native discovery, account auth, account/privacy controls, support feedback, saved venues, price reveal calls, reviewed contribution entry points, photo/source uploads through the system picker, happy-hour submissions, rotating member/reward code generation, and venue-manager portal editing with the newer daily specials planner data. Missing work includes the real map experience, native Google/Apple OAuth, camera capture, multi-image/PDF upload, one-time location proof, billing portals, admin tools, mobile POS redemption workflows, native build verification on a fully provisioned machine, mobile CI, final signing, screenshots, and final store metadata.
+
+## July 2026 App-Store Continuation Update
+
+After the web app received significant updates, the existing native apps were continued in place and reshaped around the updated source-of-truth backend.
+
+Completed in this pass:
+
+- Reworked native navigation to task-first tabs: Find, Add, Bars, Account, Help.
+- Added iOS photo/source upload using `PhotosPicker`, resized/compressed JPEG evidence, and `photo_upload` submissions.
+- Added Android photo/source upload using the system photo picker, JPEG compression where possible, and `photo_upload` submissions.
+- Added native happy-hour contribution forms on iOS and Android using the existing `happy_hour_update` submission type.
+- Added account-level rotating Pint Path special code generation through `POST /api/business/account/discount-pass`.
+- Added account-level Free Pint Reward code generation through `POST /api/business/account/free-pint-reward-code`.
+- Added iOS and Android account cards for estimated savings, Pint Points, active code display, reward states, and safety copy.
+- Added iOS and Android parsing/rendering for venue `dailySpecialsPlanner`, venue redemption summary, and venue Pint Points threshold data.
+- Kept changes isolated to existing native app folders and mobile documentation.
+
+Still intentionally unfinished after this pass:
+
+- Native Google/Apple OAuth.
+- Native map with pins/clustering/nearby behavior.
+- Native camera capture, multi-image upload, PDF source upload, and offline upload queue.
+- Native one-time location proof for contribution points.
+- Billing/customer portal and checkout handling.
+- Venue POS redemption actions beyond displaying user codes and venue metrics.
+- Monthly report CSV/JSON download/share handling.
+- Admin review and beer catalog tools.
+- Android encrypted token storage upgrade.
+- Native CI, full Xcode build, Android Gradle build, simulator/emulator QA, and UI tests.
 
 ## Continuation Update
 
@@ -48,19 +77,6 @@ Premium UI/UX polish pass completed afterward:
 - Added clearer empty states for beer stock, happy hours, specials, missions, submissions, and price rows.
 - Improved settings/support/safety presentation and touch-target consistency.
 - Kept the pass isolated to native mobile app files and mobile reporting docs.
-
-Still intentionally unfinished:
-
-- Native Google/Apple OAuth.
-- Native map with pins/clustering/nearby behavior.
-- Native camera/photo evidence upload.
-- Native one-time location proof.
-- Billing/customer portal.
-- Rewards, discount pass, Pint Points, Free Pint Rewards, and POS flows.
-- Monthly report CSV/JSON download/share handling.
-- Admin review and beer catalog tools.
-- Android encrypted token storage upgrade.
-- Native CI and UI tests.
 
 ## 1. Whether An iOS App Already Exists
 
@@ -151,11 +167,12 @@ The existing mobile work is native.
 
 iOS implemented screens and flows:
 
-- Four-tab native navigation:
-  - Discover
-  - Account
+- Five-tab native navigation:
+  - Find
+  - Add
   - Bars
-  - Settings
+  - Account
+  - Help
 - Public app startup load:
   - `GET /api/business/config`
   - `GET /api/business/venues`
@@ -168,9 +185,13 @@ iOS implemented screens and flows:
 - Email/password signup.
 - Bearer token persistence in Keychain.
 - Account dashboard.
+- Rotating Pint Path special code display.
+- Free Pint Reward code display.
 - Privacy settings update.
 - Account deletion review request.
 - Reviewed single beer-price submission.
+- Reviewed photo/source upload submission.
+- Reviewed happy-hour update submission.
 - Wrong-price report.
 - Missing venue/beer request.
 - Mission browsing.
@@ -182,15 +203,18 @@ iOS implemented screens and flows:
 - Happy-hour editor.
 - Pro special editor when allowed by tier.
 - Basic analytics/report cards for venue managers.
+- Daily specials planner cards for venue managers when returned by the backend.
+- Venue redemption and Pint Points summary cards.
 - Optional analytics event tracking through `/api/business/events`.
 
 Android implemented screens and flows:
 
-- Four-tab native navigation:
-  - Discover
-  - Account
+- Five-tab native navigation:
+  - Find
+  - Add
   - Bars
-  - Settings
+  - Account
+  - Help
 - Public app startup load:
   - `GET /api/business/config`
   - `GET /api/business/venues`
@@ -203,9 +227,13 @@ Android implemented screens and flows:
 - Email/password signup.
 - Bearer token persistence.
 - Account dashboard.
+- Rotating Pint Path special code display.
+- Free Pint Reward code display.
 - Privacy settings update.
 - Account deletion review request.
 - Reviewed single beer-price submission.
+- Reviewed photo/source upload submission.
+- Reviewed happy-hour update submission.
 - Wrong-price report.
 - Missing venue/beer request.
 - Mission browsing.
@@ -217,6 +245,8 @@ Android implemented screens and flows:
 - Happy-hour editor.
 - Pro special editor when allowed by tier.
 - Basic analytics/report cards for venue managers.
+- Daily specials planner cards for venue managers when returned by the backend.
+- Venue redemption and Pint Points summary cards.
 - Optional analytics event tracking through `/api/business/events`.
 
 ## 6. Main Screens / Features Missing Compared With The Website
@@ -225,25 +255,24 @@ Missing or only partially represented compared with the current website:
 
 - Real map UI with pins, clustering, overlays, filters, user radius, and Google Maps behavior from `viewer/index.html`.
 - Full venue/detail experience from the website, including all sorting/filtering and map rail behavior.
-- Full contributor submission flow from `viewer/submit.html`; native now covers single beer-price submissions only.
-- Photo/source evidence upload flow.
+- Full contributor submission flow from `viewer/submit.html`; native now covers single beer-price, photo/source image upload, and happy-hour update submissions, but not full multi-row venue updates, PDFs, drafts, offline queueing, or new-venue Google lookup.
+- Camera capture, multi-photo/PDF source evidence upload, and saved source-upload queue.
 - Intentional upload-location proof flow.
 - Full missions board behavior beyond native mission browsing.
 - Native Google/Apple OAuth.
 - Supabase password reset, resend confirmation, and OAuth callback handling.
 - Billing checkout and subscription management.
-- Discount pass generation/redemption flows.
-- Pint Points and Free Pint Rewards flows.
+- Venue-side discount redemption, Pint Points recording, and POS flows.
 - POS integration screens.
 - Venue QR/update-link tooling beyond displaying basic portal information.
 - Monthly report export/download handling.
-- Daily AI/specials planner and richer venue intelligence from the newer venue portal work.
+- Deeper venue intelligence screens beyond the mobile daily specials planner summary.
 - Admin dashboard/review queues.
 - Beer catalog review/admin flows.
 - Account export flow.
 - Delete saved item flows.
 - Saved beers/suburbs/night plans.
-- Native camera/photo picker integration.
+- Native camera capture and PDF picker integration.
 - Native location permission/use flow.
 - Deep links/universal links/app links.
 - App store release metadata and screenshots.
@@ -298,7 +327,7 @@ Backend route compatibility checked:
 
 ## 8. UI Polish Status
 
-Status: solid first pass, not release-polished.
+Status: improved app-store candidate, still needs device QA and native build confirmation.
 
 What is good:
 
@@ -315,9 +344,10 @@ What needs polish:
 - No confirmed VoiceOver/TalkBack pass.
 - No final responsive/device QA.
 - App icon/launch assets appear present but are still treated as placeholders in docs.
-- Signup now requires explicit 18+/Terms/Privacy toggles on both platforms.
-- Android declares camera/location/photo permissions, and iOS has corresponding usage strings, but the matching native feature flows are not implemented yet.
-- Settings screens describe location/photo behavior that is not yet wired into native capture/location workflows.
+- Signup requires explicit 18+/Terms/Privacy toggles on both platforms.
+- Native system photo-picker source upload is wired on both platforms.
+- Camera capture, PDF upload, and one-time location proof are not wired yet.
+- Settings screens describe location behavior that is not yet wired into native location-proof workflows.
 
 ## 9. Build Status
 
@@ -360,8 +390,9 @@ Confirmed by inspection:
 
 - Native Google/Apple OAuth is not implemented.
 - Android token storage is app-private `SharedPreferences`, not encrypted storage.
-- Native contribution flow is partial: single beer-price submissions, wrong-price reports, missing venue/beer requests, and missions exist; photo upload and saved upload-location proof are still missing.
-- Native billing, rewards, discounts, POS, admin, and report export flows are missing.
+- Native contribution flow is partial: single beer-price submissions, photo/source image upload, happy-hour update submissions, wrong-price reports, missing venue/beer requests, and missions exist; full venue updates, PDF/multi-image upload, camera capture, offline queueing, and saved upload-location proof are still missing.
+- Native billing, venue-side POS/redemption, admin, and report export flows are missing.
+- Native account rewards are partial: rotating Pint Path special codes and Free Pint Reward code display are wired, but QR rendering, app deep links, and venue staff redemption workflows still need device testing and product decisions.
 - No native mobile tests were found.
 - No native CI workflow was found.
 - Native builds were attempted but blocked by missing full Xcode/simulator tooling and missing Java Runtime.
@@ -495,11 +526,11 @@ Recommended handling:
 6. Implement native Google/Apple OAuth only after bundle IDs, redirect URLs, provider console settings, and deep links are finalized.
 7. Add the remaining mobile source-of-truth flows in priority order:
    - real map/filter experience
-   - photo/source evidence flow
+   - camera/PDF/multi-image source evidence flow
    - opt-in location flow
    - billing/subscription flow
    - venue report export/download
-   - rewards/discount/POS flows if mobile release scope needs them
+   - venue-side rewards/discount/POS flows if mobile release scope needs them
 8. Add mobile CI for at least Android debug build and iOS simulator build.
 9. Add smoke tests or snapshot/UI tests for critical auth, discovery, contribution, and venue-manager flows.
 10. Finish store prep:

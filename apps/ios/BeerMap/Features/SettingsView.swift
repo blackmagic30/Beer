@@ -54,7 +54,7 @@ struct SettingsView: View {
             .padding()
         }
         .beerMapScreen()
-        .navigationTitle("Settings")
+        .navigationTitle("Help")
     }
 
     private func row(_ title: String, _ value: String) -> some View {

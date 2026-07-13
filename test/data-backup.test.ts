@@ -5,7 +5,7 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createDataBackup, verifyDataBackup } from "../src/lib/data-backup.js";
+import { createDataBackup, rehearseDataRestore, verifyDataBackup } from "../src/lib/data-backup.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -74,6 +74,30 @@ describe("production data backups", () => {
     fs.writeFileSync(path.join(backupPath, "source-evidence", "menu.png"), "tampered-image");
 
     await expect(verifyDataBackup(backupPath)).rejects.toThrow("Backup checksum mismatch");
+  });
+
+  it("rehearses a clean restore and verifies the restored database and evidence", async () => {
+    const root = makeTemporaryDirectory();
+    const databasePath = path.join(root, "live.sqlite");
+    const evidencePath = path.join(root, "source-evidence");
+    const backupPath = path.join(root, "backup");
+    const restorePath = path.join(root, "restore");
+    fs.mkdirSync(evidencePath, { recursive: true });
+    fs.writeFileSync(path.join(evidencePath, "menu.png"), "restorable-image");
+
+    const database = new BetterSqlite3(databasePath);
+    database.exec("CREATE TABLE records (id TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    database.prepare("INSERT INTO records (id, value) VALUES (?, ?)").run("record-1", "restored");
+    database.close();
+
+    await createDataBackup({ sourceDatabase: databasePath, sourceEvidence: evidencePath, backupRoot: backupPath });
+    const restored = await rehearseDataRestore({ backupPath, restoreRoot: restorePath });
+
+    expect(restored.manifest.evidence.fileCount).toBe(1);
+    expect(fs.readFileSync(path.join(restored.evidencePath, "menu.png"), "utf8")).toBe("restorable-image");
+    const restoredDatabase = new BetterSqlite3(restored.databasePath, { readonly: true, fileMustExist: true });
+    expect(restoredDatabase.prepare("SELECT value FROM records WHERE id = ?").pluck().get("record-1")).toBe("restored");
+    restoredDatabase.close();
   });
 
   it("rejects unlisted evidence and refuses to overwrite a backup directory", async () => {

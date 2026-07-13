@@ -22,6 +22,13 @@ export interface BackupManifest {
   };
 }
 
+export interface RestoreRehearsalResult {
+  manifest: BackupManifest;
+  restoreRoot: string;
+  databasePath: string;
+  evidencePath: string;
+}
+
 export async function sha256File(filePath: string): Promise<string> {
   const hash = crypto.createHash("sha256");
   await new Promise<void>((resolve, reject) => {
@@ -126,6 +133,22 @@ async function assertBackupFile(root: string, expected: BackupFile): Promise<voi
   }
 }
 
+function assertSqliteIntegrity(databasePath: string): void {
+  const database = new BetterSqlite3(databasePath, { readonly: true, fileMustExist: true });
+  try {
+    const integrity = database.pragma("integrity_check") as Array<{ integrity_check: string }>;
+    const foreignKeys = database.pragma("foreign_key_check") as unknown[];
+    if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok") {
+      throw new Error(`SQLite integrity check failed: ${JSON.stringify(integrity)}`);
+    }
+    if (foreignKeys.length > 0) {
+      throw new Error(`SQLite foreign-key check failed: ${JSON.stringify(foreignKeys)}`);
+    }
+  } finally {
+    database.close();
+  }
+}
+
 export async function verifyDataBackup(backupPath: string): Promise<BackupManifest> {
   const backupRoot = path.resolve(backupPath);
   const manifest = JSON.parse(
@@ -158,20 +181,46 @@ export async function verifyDataBackup(backupPath: string): Promise<BackupManife
     throw new Error("Backup evidence contents do not match its manifest.");
   }
 
-  const databasePath = path.resolve(backupRoot, manifest.database.path);
-  const database = new BetterSqlite3(databasePath, { readonly: true, fileMustExist: true });
-  try {
-    const integrity = database.pragma("integrity_check") as Array<{ integrity_check: string }>;
-    const foreignKeys = database.pragma("foreign_key_check") as unknown[];
-    if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok") {
-      throw new Error(`SQLite integrity check failed: ${JSON.stringify(integrity)}`);
-    }
-    if (foreignKeys.length > 0) {
-      throw new Error(`SQLite foreign-key check failed: ${JSON.stringify(foreignKeys)}`);
-    }
-  } finally {
-    database.close();
-  }
+  assertSqliteIntegrity(path.resolve(backupRoot, manifest.database.path));
 
   return manifest;
+}
+
+export async function rehearseDataRestore(input: {
+  backupPath: string;
+  restoreRoot: string;
+}): Promise<RestoreRehearsalResult> {
+  const backupRoot = path.resolve(input.backupPath);
+  const restoreRoot = path.resolve(input.restoreRoot);
+  const manifest = await verifyDataBackup(backupRoot);
+
+  if (fs.existsSync(restoreRoot) && (await fs.promises.readdir(restoreRoot)).length > 0) {
+    throw new Error(`Restore rehearsal destination is not empty: ${restoreRoot}`);
+  }
+
+  await fs.promises.mkdir(restoreRoot, { recursive: true, mode: 0o700 });
+  const databasePath = path.join(restoreRoot, "pint-path.sqlite");
+  const evidencePath = path.join(restoreRoot, "source-evidence");
+  await fs.promises.copyFile(path.join(backupRoot, manifest.database.path), databasePath);
+  await fs.promises.chmod(databasePath, 0o600);
+
+  const backupEvidencePath = path.join(backupRoot, manifest.evidence.path);
+  if (fs.existsSync(backupEvidencePath)) {
+    await fs.promises.cp(backupEvidencePath, evidencePath, { recursive: true, errorOnExist: true });
+  }
+
+  await assertBackupFile(restoreRoot, { ...manifest.database, path: path.basename(databasePath) });
+  const restoredEvidenceFiles = fs.existsSync(evidencePath) ? await listBackupFiles(evidencePath) : [];
+  if (
+    restoredEvidenceFiles.length !== manifest.evidence.files.length ||
+    restoredEvidenceFiles.some((file, index) => {
+      const expected = manifest.evidence.files[index];
+      return !expected || file.path !== expected.path || file.bytes !== expected.bytes || file.sha256 !== expected.sha256;
+    })
+  ) {
+    throw new Error("Restored evidence contents do not match the backup manifest.");
+  }
+  assertSqliteIntegrity(databasePath);
+
+  return { manifest, restoreRoot, databasePath, evidencePath };
 }

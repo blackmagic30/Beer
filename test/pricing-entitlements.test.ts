@@ -69,12 +69,14 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Monthly venue reports");
     expect(pricingHtml).toContain("CSV and JSON report exports");
     expect(pricingHtml).toContain("Premium map pin, listing card, badge, and highlighted venue name.");
-    expect(pricingHtml).toContain("Premium Pint Path special treatment after review.");
-    expect(pricingHtml).toContain("Priority admin review queue");
+    expect(pricingHtml).toContain("Premium Pint Path special treatment in discovery.");
+    expect(pricingHtml).not.toContain("Priority admin review queue");
     expect(pricingHtml).toContain("Pro growth studio with premium-placement checklist and weekend playbook.");
     expect(pricingHtml).toContain("Transparent discovery boost");
-    expect(pricingHtml).toContain("do not treat displayed tiers as final billing terms until checkout, refund, cancellation, tax invoice, and venue subscription terms are published");
-    expect(pricingHtml).toContain("Pro placement does not fake popularity or reviews.");
+    expect(pricingHtml).toContain("Subscriptions renew automatically until cancelled.");
+    expect(pricingHtml).toContain("Manage or cancel in the Stripe billing portal");
+    expect(pricingHtml).toContain("Australian Consumer Law");
+    expect(pricingHtml).toContain("Pro placement never fakes popularity or reviews.");
     expect(pricingHtml).toContain('href="/venue-portal.html"');
     expect(pricingHtml).toContain('id="venuePricingSection"');
     expect(pricingHtml).toContain('id="venuePricingSection" class="venuePricingSection" aria-labelledby="venuePricingTitle" hidden');
@@ -111,8 +113,8 @@ describe("premium pricing and entitlements", () => {
     const readme = readRepoFile("README.md");
 
     expect(pricingHtml).toContain("No Pint Path specials on the Free plan.");
-    expect(pricingHtml).toContain("Add reviewed Pint Path specials.");
-    expect(pricingHtml).toContain("Premium Pint Path special treatment after review.");
+    expect(pricingHtml).toContain("Add and manage Pint Path specials directly.");
+    expect(pricingHtml).toContain("Premium Pint Path special treatment in discovery.");
     expect(mapHtml).toContain("Unlock full access to view times, specials, and discount details.");
     expect(mapHtml).toContain("Unlock full access to view the days, times, specials, and discount details.");
     expect(readme).toContain("venue special-discount details");

@@ -29,10 +29,10 @@
 <body>
   <main class="pageShell">
     <div id="nav"></div>
-    <section class="hero">
+    <section class="hero hero--operational">
       <div class="eyebrow">Needs data</div>
-      <h1>Venue missions for a more accurate Melbourne beer map.</h1>
-      <p class="lead">Pick venues with missing, stale, disputed, or high-demand data. Points are weighted by usefulness, not by encouraging more drinking.</p>
+        <h1>Find venue data missions.</h1>
+        <p class="lead">Help update missing or stale Melbourne venue data. Points reflect usefulness, not drinking.</p>
     </section>
 
     <section class="panel">
@@ -88,7 +88,6 @@
     const INITIAL_MISSION_COUNT = 5;
     const MISSION_PAGE_SIZE = 5;
     let visibleMissionCount = INITIAL_MISSION_COUNT;
-    const missionRandomOrder = new Map();
 
     function $(id) {
       return document.getElementById(id);
@@ -116,6 +115,9 @@
     }
 
     function formatDistance(meters) {
+      if (meters == null || meters === "") {
+        return null;
+      }
       const numeric = Number(meters);
       if (!Number.isFinite(numeric)) {
         return null;
@@ -167,34 +169,12 @@
       return [...suburbs, ...venues].filter(Boolean);
     }
 
-    function missionKey(mission) {
-      return String(mission.id || mission.venueId || `${mission.venueName}-${mission.reason}`);
-    }
-
     function resetVisibleMissions() {
       visibleMissionCount = INITIAL_MISSION_COUNT;
     }
 
-    function rememberMissionOrder(missions) {
-      missions.forEach((mission) => {
-        const key = missionKey(mission);
-        if (!missionRandomOrder.has(key)) {
-          missionRandomOrder.set(key, Math.random());
-        }
-      });
-    }
-
     function orderedMissionsForDisplay(missions) {
-      if (missionLocation) {
-        return [...missions].sort((a, b) => {
-          const aDistance = Number.isFinite(Number(a.distanceMeters)) ? Number(a.distanceMeters) : Number.POSITIVE_INFINITY;
-          const bDistance = Number.isFinite(Number(b.distanceMeters)) ? Number(b.distanceMeters) : Number.POSITIVE_INFINITY;
-          return aDistance - bDistance;
-        });
-      }
-
-      rememberMissionOrder(missions);
-      return [...missions].sort((a, b) => (missionRandomOrder.get(missionKey(a)) || 0) - (missionRandomOrder.get(missionKey(b)) || 0));
+      return [...missions];
     }
 
     function renderMissions() {
@@ -237,7 +217,7 @@
               </div>
               <div class="missionCard__actionCopy">${escapeHtml(mission.freshnessLabel || "Freshness unknown")} · Last verified: ${escapeHtml(MelbBeerBusiness.formatDate(mission.lastVerifiedAt))}</div>
               <div class="missionCard__actionCopy">Suggested action: ${escapeHtml(suggestedAction)}</div>
-              <a class="button button--primary missionCard__action" href="${escapeHtml(missionSubmitHref(mission))}" data-mission="${escapeHtml(mission.id)}">Accept mission</a>
+              <a class="button button--primary missionCard__action" href="${escapeHtml(missionSubmitHref(mission))}" data-mission="${escapeHtml(mission.id)}">${mission.userProgress === "submitted" ? "Submission pending" : mission.userProgress === "accepted" ? "Continue mission" : "Accept mission"}</a>
             </article>
           `;
         }).join("") + (hiddenCount ? `
@@ -254,7 +234,28 @@
         `;
 
       missionsList.querySelectorAll("[data-mission]").forEach((link) => {
-        link.addEventListener("click", () => MelbBeerBusiness.trackEvent("mission_opened", { missionId: link.dataset.mission }));
+        link.addEventListener("click", async (event) => {
+          event.preventDefault();
+          const fallbackUrl = link.href;
+          if (!MelbBeerBusiness.hasAuthenticatedSessionHint()) {
+            window.location.assign(`/account.html?next=${encodeURIComponent(new URL(fallbackUrl).pathname + new URL(fallbackUrl).search)}`);
+            return;
+          }
+          link.setAttribute("aria-busy", "true");
+          link.textContent = "Opening...";
+          try {
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/missions/${encodeURIComponent(link.dataset.mission)}/accept`, {
+              method: "POST",
+              body: "{}",
+            });
+            void MelbBeerBusiness.trackEvent("mission_opened", { missionId: link.dataset.mission });
+            window.location.assign(result.submitUrl || fallbackUrl);
+          } catch (error) {
+            link.removeAttribute("aria-busy");
+            link.textContent = "Accept mission";
+            MelbBeerBusiness.setStatus(missionsHelp, error.message || "Mission could not be accepted.", true);
+          }
+        });
       });
       const loadMoreButton = $("loadMoreMissionsButton");
       if (loadMoreButton) {
@@ -299,7 +300,6 @@
       }
       const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?${params.toString()}`);
       missionCache = data.missions || [];
-      rememberMissionOrder(missionCache);
       await MelbBeerBusiness.trackEvent("mission_board_viewed", {
         search: suburbFilter.value || null,
         sort: missionSort.value,

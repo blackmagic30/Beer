@@ -21,6 +21,8 @@ final class BeerMapAppModel: ObservableObject {
     @Published var missions: [Mission] = []
     @Published var selectedVenuePrices: [String: PriceRecordsResponse] = [:]
     @Published var venuePortal: VenuePortalData?
+    @Published var discountPass: RotatingCodeResult?
+    @Published var freePintReward: RotatingCodeResult?
     @Published var isLoading = false
     @Published var notice: String?
     @Published var errorMessage: String?
@@ -113,6 +115,8 @@ final class BeerMapAppModel: ObservableObject {
         sessionToken = nil
         accountDashboard = nil
         venuePortal = nil
+        discountPass = nil
+        freePintReward = nil
         notice = "Signed out."
     }
 
@@ -149,6 +153,38 @@ final class BeerMapAppModel: ObservableObject {
         do {
             _ = try await api.requestAccountDeletion(message: "Self-service deletion review requested from the iOS app.", token: token)
             notice = "Account deletion review requested."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func generateDiscountPass() async {
+        guard let token = sessionToken else {
+            errorMessage = "Sign in before generating a Pint Path special code."
+            return
+        }
+        setLoading(true)
+        defer { setLoading(false) }
+        do {
+            discountPass = try await api.discountPass(token: token)
+            notice = "Pint Path special code generated. Show it only when staff are ready."
+            await refreshAccount()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func generateFreePintReward() async {
+        guard let token = sessionToken else {
+            errorMessage = "Sign in before creating a Free Pint Reward code."
+            return
+        }
+        setLoading(true)
+        defer { setLoading(false) }
+        do {
+            freePintReward = try await api.freePintRewardCode(token: token)
+            notice = "Free Pint Reward code created. Venue staff still complete age, ID, and RSA checks."
+            await refreshAccount()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -283,6 +319,7 @@ final class BeerMapAppModel: ObservableObject {
         do {
             let submission = CreateSubmissionRequest(
                 clientSubmissionId: "ios-\(UUID().uuidString)",
+                missionId: nil,
                 venueId: venue.id,
                 venueName: venue.name,
                 suburb: venue.suburb,
@@ -290,6 +327,8 @@ final class BeerMapAppModel: ObservableObject {
                 submissionType: "single_beer_price",
                 observedAt: isoNow(),
                 sourcePhotoDataUrl: nil,
+                sourcePhotoDataUrls: [],
+                sourceDocumentDataUrl: nil,
                 sourcePhotoUrl: nil,
                 uploadLocation: nil,
                 notes: notes.nilIfBlank,
@@ -307,6 +346,106 @@ final class BeerMapAppModel: ObservableObject {
             _ = try await api.createSubmission(submission, token: token)
             notice = "Price update sent for review."
             await track("submission_completed", venueId: venue.id, suburb: venue.suburb, metadata: ["source": .string("ios_app")])
+            await refreshAccount()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func submitSourcePhotoUpdate(venueId: String, sourcePhotoDataUrl: String, notes: String) async {
+        guard let token = sessionToken else {
+            errorMessage = "Sign in before uploading source evidence."
+            return
+        }
+        guard let venue = venues.first(where: { $0.id == venueId }) else {
+            errorMessage = "Choose a venue before uploading."
+            return
+        }
+
+        setLoading(true)
+        defer { setLoading(false) }
+        do {
+            let submission = CreateSubmissionRequest(
+                clientSubmissionId: "ios-photo-\(UUID().uuidString)",
+                missionId: nil,
+                venueId: venue.id,
+                venueName: venue.name,
+                suburb: venue.suburb,
+                newVenue: nil,
+                submissionType: "photo_upload",
+                observedAt: isoNow(),
+                sourcePhotoDataUrl: sourcePhotoDataUrl,
+                sourcePhotoDataUrls: [],
+                sourceDocumentDataUrl: nil,
+                sourcePhotoUrl: nil,
+                uploadLocation: nil,
+                notes: notes.nilIfBlank,
+                items: []
+            )
+            _ = try await api.createSubmission(submission, token: token)
+            notice = "Source photo sent for review."
+            await track("data_upload_created", venueId: venue.id, suburb: venue.suburb, metadata: ["source": .string("ios_app")])
+            await refreshAccount()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func submitHappyHourUpdate(
+        venueId: String,
+        days: [String],
+        startTime: String,
+        endTime: String,
+        offerText: String,
+        notes: String
+    ) async {
+        guard let token = sessionToken else {
+            errorMessage = "Sign in before submitting happy-hour updates."
+            return
+        }
+        guard let venue = venues.first(where: { $0.id == venueId }) else {
+            errorMessage = "Choose a venue before submitting."
+            return
+        }
+        let trimmedOffer = offerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !days.isEmpty, !trimmedOffer.isEmpty else {
+            errorMessage = "Add the days and offer details before submitting."
+            return
+        }
+
+        setLoading(true)
+        defer { setLoading(false) }
+        do {
+            let detail = "\(days.map { $0.uppercased() }.joined(separator: ", ")) \(startTime)-\(endTime): \(trimmedOffer)"
+            let submission = CreateSubmissionRequest(
+                clientSubmissionId: "ios-happy-\(UUID().uuidString)",
+                missionId: nil,
+                venueId: venue.id,
+                venueName: venue.name,
+                suburb: venue.suburb,
+                newVenue: nil,
+                submissionType: "happy_hour_update",
+                observedAt: isoNow(),
+                sourcePhotoDataUrl: nil,
+                sourcePhotoDataUrls: [],
+                sourceDocumentDataUrl: nil,
+                sourcePhotoUrl: nil,
+                uploadLocation: nil,
+                notes: notes.nilIfBlank,
+                items: [
+                    SubmissionItemRequest(
+                        beerName: "Happy-hour offer",
+                        servingSize: "other",
+                        price: nil,
+                        isHappyHourPrice: true,
+                        happyHourDetails: detail,
+                        isOnTap: "unknown"
+                    )
+                ]
+            )
+            _ = try await api.createSubmission(submission, token: token)
+            notice = "Happy-hour update sent for review."
+            await track("submission_completed", venueId: venue.id, suburb: venue.suburb, metadata: ["source": .string("ios_app"), "submissionType": .string("happy_hour_update")])
             await refreshAccount()
         } catch {
             errorMessage = error.localizedDescription
@@ -402,7 +541,9 @@ final class BeerMapAppModel: ObservableObject {
             submissions: nil,
             privacySettings: nil,
             access: nil,
-            leaderboard: nil
+            leaderboard: nil,
+            discounts: nil,
+            pintPoints: nil
         )
     }
 

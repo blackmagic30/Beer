@@ -99,10 +99,37 @@ const MENU_PHOTO_OCR_REVIEW_PASS_ENABLED =
 const SOURCE_INGESTION_IMAGE_FETCH_TIMEOUT_MS = 6_500;
 const SOURCE_INGESTION_MAX_IMAGE_BYTES = SUBMISSION_LIMITS.maxPhotoBytes;
 const SOURCE_INGESTION_ALLOWED_MIME_TYPES = SUBMISSION_LIMITS.allowedImageMimeTypes;
+const MENU_PDF_MAX_BYTES = 8 * 1024 * 1024;
 
 interface MenuPhotoOcrInput {
   venueNameHint: string | null;
   imageDataUrls: string[];
+  documentDataUrls?: string[];
+}
+
+function validateMenuPdfDataUrl(value: string): string {
+  const prefix = "data:application/pdf;base64,";
+  if (!value.startsWith(prefix)) {
+    throw new AppError("Menu document must be a base64 PDF data URL.", 400);
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(value.slice(prefix.length), "base64");
+  } catch {
+    throw new AppError("Menu PDF could not be decoded.", 400);
+  }
+  if (!bytes.length || bytes.length > MENU_PDF_MAX_BYTES) {
+    throw new AppError("Menu PDF must be 8MB or smaller.", 400);
+  }
+  if (bytes.subarray(0, 5).toString("ascii") !== "%PDF-") {
+    throw new AppError("Menu document content does not match the PDF file type.", 400);
+  }
+  const structure = bytes.toString("latin1").toLowerCase();
+  if (["/javascript", "/launch", "/embeddedfile", "/openaction", "/aa"].some((token) => structure.includes(token))) {
+    throw new AppError("Menu PDF contains active or embedded content. Export a flat menu PDF and try again.", 400);
+  }
+  return `${prefix}${bytes.toString("base64")}`;
 }
 
 type MenuPhotoProductCategory =
@@ -1372,7 +1399,7 @@ export class AdminService {
         source_type, source_submission_id, last_verified_at, created_at, updated_at
       ) VALUES (
         @id, @venueId, @venueName, @suburb, @beerName, @normalizedBeerId, @servingSize,
-        @price, 0, NULL, @isOnTap, 'photo_verified',
+        @price, 0, NULL, @isOnTap, 'admin_verified',
         'source_ingestion', NULL, @lastVerifiedAt, @createdAt, @updatedAt
       )
       ON CONFLICT(id) DO UPDATE SET
@@ -1442,7 +1469,7 @@ export class AdminService {
 
     const now = input.savedAt;
     const sourceType = input.source;
-    const confidence = input.source === "menu_photo_ocr" ? "photo_verified" : "venue_confirmed";
+    const confidence = "admin_verified";
     const upsertPriceRecord = this.priceRecordDatabase.prepare(
       `INSERT INTO venue_price_records (
         id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size,
@@ -1718,6 +1745,11 @@ export class AdminService {
                   image_url: imageDataUrl,
                   detail: supportsOriginalDetail ? "original" as const : "high" as const,
                 })),
+                ...(input.documentDataUrls ?? []).map((documentDataUrl, index) => ({
+                  type: "input_file" as const,
+                  filename: `menu-${index + 1}.pdf`,
+                  file_data: documentDataUrl,
+                })),
               ],
             },
           ],
@@ -1831,17 +1863,20 @@ export class AdminService {
   }
 
   private async extractMenuPhoto(input: MenuPhotoOcrInput): Promise<NormalizedOcrExtraction> {
-    if (!input.imageDataUrls.length || input.imageDataUrls.length > 6) {
-      throw new AppError("Menu OCR needs between 1 and 6 source images.", 400);
+    const documentDataUrls = input.documentDataUrls ?? [];
+    const sourceCount = input.imageDataUrls.length + documentDataUrls.length;
+    if (!sourceCount || input.imageDataUrls.length > 6 || documentDataUrls.length > 1) {
+      throw new AppError("Menu OCR needs up to 6 source images or one PDF menu.", 400);
     }
 
     const safeInput = {
       ...input,
       imageDataUrls: input.imageDataUrls.map(validateAdminMenuImageDataUrl),
+      documentDataUrls: documentDataUrls.map(validateMenuPdfDataUrl),
     };
     const prompt = [
       "Extract accurate beer, cider, RTD, and non-alcoholic beer information from all supplied pub/bar menu, tap-board, receipt, or shelf images.",
-      `There ${safeInput.imageDataUrls.length === 1 ? "is 1 image" : `are ${safeInput.imageDataUrls.length} images`}. Read every image, every column, and all lower sections before returning the structured result.`,
+      `There ${sourceCount === 1 ? "is 1 source" : `are ${sourceCount} sources`}. Read every image or PDF page, every column, and all lower sections before returning the structured result.`,
       "Return only data that conforms to the supplied response schema.",
       "Schema:",
       "{",
@@ -1869,7 +1904,7 @@ export class AdminService {
       "}",
       "Read the whole image first, including all columns and lower sections, before returning JSON. Do not stop after the first readable row.",
       "Only put genuine beer, cider, RTD, and non-alcoholic beer products in beers. The product name must be visibly supported by source_text.",
-      "Do not include gin, vodka, whisky, bourbon, tequila, cocktails, wine, food, steaks, meals, headings, venue welcome copy, promo copy, category descriptions, event text, or unreadable OCR fragments as beer rows; put them in rejected_candidates instead.",
+      "Do not include standalone gin, vodka, whisky, bourbon, tequila, cocktails, wine, food, steaks, meals, headings, venue welcome copy, promo copy, category descriptions, event text, or unreadable OCR fragments as beer rows; put them in rejected_candidates instead. Keep a clearly labelled packaged premixed RTD even when its product name contains a spirit word.",
       "Never turn a sentence, heading, serving instruction, package volume, ABV, price, venue slogan, or number of taps into a product name.",
       `If a beer clearly matches one of these tracked beers, use the exact canonical name: ${this.getTrackedBeerNamesForOcrPrompt()}.`,
       "Correct only obvious OCR punctuation, spacing, and character errors. Do not guess a tracked beer merely because its name is similar.",
@@ -1962,7 +1997,7 @@ export class AdminService {
 
     return {
       model: reviewed.model,
-      imageCount: safeInput.imageDataUrls.length,
+      imageCount: safeInput.imageDataUrls.length + (safeInput.documentDataUrls?.length ?? 0),
       venueNameGuess: parsed.venue_name_guess,
       capturedNotes: parsed.captured_notes,
       overallConfidence: normalizeConfidence(

@@ -42,11 +42,14 @@ export type FeedbackType =
   | "abuse_report"
   | "billing_support";
 export type FeedbackPriority = "low" | "normal" | "medium" | "high";
+export type TrustWorkflowStatus = "open" | "in_progress" | "resolved" | "rejected";
+export type MissionProgressStatus = "accepted" | "submitted" | "completed" | "needs_revision" | "cancelled";
 export type RequestType = "missing_venue" | "missing_beer" | "verify_venue" | "verify_beer_at_venue";
 export type BarMembershipTier = "basic" | "pro";
 type StoredBarMembershipTier = BarMembershipTier | "free" | "plus" | "super_premium";
 export type AgeVerificationStatus = "not_started" | "pending" | "verified" | "rejected" | "expired";
 export type ConfidenceLabel =
+  | "admin_verified"
   | "venue_confirmed"
   | "photo_verified"
   | "community_confirmed"
@@ -141,6 +144,7 @@ export interface VenueDuplicateCandidate {
 export interface BusinessSubmission {
   id: string;
   clientSubmissionId: string | null;
+  missionId: string | null;
   userId: string;
   venueId: string;
   venueName: string;
@@ -215,7 +219,20 @@ export interface BusinessMission {
   distanceMeters?: number | null;
   distanceKm?: number | null;
   freshnessLabel?: string;
+  userProgress?: MissionProgressStatus | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface MissionProgress {
+  id: string;
+  missionId: string;
+  userId: string;
+  submissionId: string | null;
+  status: MissionProgressStatus;
+  acceptedAt: string;
+  submittedAt: string | null;
+  completedAt: string | null;
   updatedAt: string;
 }
 
@@ -357,9 +374,14 @@ export interface FeedbackItem {
   message: string;
   venueId: string | null;
   venueName: string | null;
-  status: string;
+  contactEmail: string | null;
+  status: TrustWorkflowStatus;
   priority: FeedbackPriority;
   triageReason: string | null;
+  assignedTo: string | null;
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -375,7 +397,11 @@ export interface WrongPriceReport {
   reason: string;
   notes: string | null;
   sourcePhotoUrl: string | null;
-  status: string;
+  status: TrustWorkflowStatus;
+  assignedTo: string | null;
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -390,8 +416,12 @@ export interface VenueRequest {
   beerName: string | null;
   suburb: string | null;
   notes: string | null;
-  status: string;
+  status: TrustWorkflowStatus | "mission_created";
   missionId: string | null;
+  assignedTo: string | null;
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -407,6 +437,10 @@ export interface VenueInterestRequest {
   role: string;
   notes: string | null;
   status: string;
+  assignedTo: string | null;
+  resolutionNote: string | null;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -549,6 +583,7 @@ export interface BarSpecial {
   description: string;
   price: number | null;
   discount: string | null;
+  savingsAmountCents: number | null;
   startsAt: string | null;
   endsAt: string | null;
   startTime: string | null;
@@ -772,6 +807,16 @@ export interface PintPointDrinkRecord {
   createdAt: string;
 }
 
+export interface VenuePintPointActivity {
+  publicAccountId: string;
+  itemName: string | null;
+  beverageCategory: string;
+  quantity: number;
+  pointsAwarded: number;
+  source: string;
+  recordedAt: string;
+}
+
 export interface PintPointLedgerEntry {
   id: string;
   userId: string;
@@ -984,6 +1029,7 @@ interface LeaderboardPrizeAwardRow {
 interface SubmissionRow {
   id: string;
   client_submission_id: string | null;
+  mission_id: string | null;
   user_id: string;
   venue_id: string;
   venue_name: string;
@@ -1042,6 +1088,18 @@ interface MissionRow {
   sponsor_flag: number;
   last_verified_at: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+interface MissionProgressRow {
+  id: string;
+  mission_id: string;
+  user_id: string;
+  submission_id: string | null;
+  status: MissionProgressStatus;
+  accepted_at: string;
+  submitted_at: string | null;
+  completed_at: string | null;
   updated_at: string;
 }
 
@@ -1115,9 +1173,14 @@ interface FeedbackRow {
   message: string;
   venue_id: string | null;
   venue_name: string | null;
-  status: string;
+  contact_email: string | null;
+  status: TrustWorkflowStatus;
   priority: FeedbackPriority;
   triage_reason: string | null;
+  assigned_to: string | null;
+  resolution_note: string | null;
+  resolved_at: string | null;
+  resolved_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1133,7 +1196,11 @@ interface WrongPriceReportRow {
   reason: string;
   notes: string | null;
   source_photo_url: string | null;
-  status: string;
+  status: TrustWorkflowStatus;
+  assigned_to: string | null;
+  resolution_note: string | null;
+  resolved_at: string | null;
+  resolved_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1148,8 +1215,12 @@ interface VenueRequestRow {
   beer_name: string | null;
   suburb: string | null;
   notes: string | null;
-  status: string;
+  status: TrustWorkflowStatus | "mission_created";
   mission_id: string | null;
+  assigned_to: string | null;
+  resolution_note: string | null;
+  resolved_at: string | null;
+  resolved_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1165,6 +1236,10 @@ interface VenueInterestRequestRow {
   role: string;
   notes: string | null;
   status: string;
+  assigned_to: string | null;
+  resolution_note: string | null;
+  resolved_at: string | null;
+  resolved_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1282,6 +1357,7 @@ interface BarSpecialRow {
   description: string;
   price: number | null;
   discount: string | null;
+  savings_amount_cents: number | null;
   starts_at: string | null;
   ends_at: string | null;
   start_time: string | null;
@@ -1367,6 +1443,16 @@ interface PintPointDrinkRecordRow {
   recorded_at: string;
   metadata_json: string;
   created_at: string;
+}
+
+interface VenuePintPointActivityRow {
+  public_account_id: string;
+  item_name: string | null;
+  beverage_category: string;
+  quantity: number;
+  points_awarded: number;
+  source: string;
+  recorded_at: string;
 }
 
 interface PintPointLedgerRow {
@@ -1669,6 +1755,7 @@ function toSubmission(row: SubmissionRow): BusinessSubmission {
   return {
     id: row.id,
     clientSubmissionId: row.client_submission_id,
+    missionId: row.mission_id,
     userId: row.user_id,
     venueId: row.venue_id,
     venueName: row.venue_name,
@@ -1694,6 +1781,20 @@ function toSubmission(row: SubmissionRow): BusinessSubmission {
     rejectionReason: row.rejection_reason,
     fraudFlagged: Boolean(row.fraud_flagged),
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toMissionProgress(row: MissionProgressRow): MissionProgress {
+  return {
+    id: row.id,
+    missionId: row.mission_id,
+    userId: row.user_id,
+    submissionId: row.submission_id,
+    status: row.status,
+    acceptedAt: row.accepted_at,
+    submittedAt: row.submitted_at,
+    completedAt: row.completed_at,
     updatedAt: row.updated_at,
   };
 }
@@ -2029,9 +2130,14 @@ function toFeedback(row: FeedbackRow): FeedbackItem {
     message: row.message,
     venueId: row.venue_id,
     venueName: row.venue_name,
+    contactEmail: row.contact_email,
     status: row.status,
     priority: row.priority,
     triageReason: row.triage_reason,
+    assignedTo: row.assigned_to,
+    resolutionNote: row.resolution_note,
+    resolvedAt: row.resolved_at,
+    resolvedBy: row.resolved_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2050,6 +2156,10 @@ function toWrongPriceReport(row: WrongPriceReportRow): WrongPriceReport {
     notes: row.notes,
     sourcePhotoUrl: row.source_photo_url,
     status: row.status,
+    assignedTo: row.assigned_to,
+    resolutionNote: row.resolution_note,
+    resolvedAt: row.resolved_at,
+    resolvedBy: row.resolved_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2068,6 +2178,10 @@ function toVenueRequest(row: VenueRequestRow): VenueRequest {
     notes: row.notes,
     status: row.status,
     missionId: row.mission_id,
+    assignedTo: row.assigned_to,
+    resolutionNote: row.resolution_note,
+    resolvedAt: row.resolved_at,
+    resolvedBy: row.resolved_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2085,6 +2199,10 @@ function toVenueInterestRequest(row: VenueInterestRequestRow): VenueInterestRequ
     role: row.role,
     notes: row.notes,
     status: row.status,
+    assignedTo: row.assigned_to,
+    resolutionNote: row.resolution_note,
+    resolvedAt: row.resolved_at,
+    resolvedBy: row.resolved_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2216,6 +2334,7 @@ function toBarSpecial(row: BarSpecialRow): BarSpecial {
     description: row.description,
     price: row.price,
     discount: row.discount,
+    savingsAmountCents: row.savings_amount_cents,
     startsAt: row.starts_at,
     endsAt: row.ends_at,
     startTime: row.start_time,
@@ -2967,6 +3086,7 @@ export class BusinessRepository {
   createSubmission(input: {
     id: string;
     clientSubmissionId: string | null;
+    missionId?: string | null;
     userId: string;
     venueId: string;
     venueName: string;
@@ -3006,15 +3126,16 @@ export class BusinessRepository {
       this.database
         .prepare(
           `INSERT INTO submissions (
-          id, client_submission_id, user_id, venue_id, venue_name, suburb, status, submission_type, observed_at,
+          id, client_submission_id, mission_id, user_id, venue_id, venue_name, suburb, status, submission_type, observed_at,
           source_photo_url, ocr_status, ocr_summary_json, notes, upload_latitude, upload_longitude, upload_accuracy_meters,
           upload_location_captured_at, distance_to_venue_meters, points_eligible_by_location,
           points_eligibility_reason, pending_venue_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.id,
           input.clientSubmissionId,
+          input.missionId ?? null,
           input.userId,
           input.venueId,
           input.venueName,
@@ -3036,6 +3157,22 @@ export class BusinessRepository {
           input.now,
           input.now,
         );
+
+      if (input.missionId) {
+        this.database
+          .prepare(
+            `INSERT INTO mission_progress (
+              id, mission_id, user_id, submission_id, status, accepted_at, submitted_at, completed_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'submitted', ?, ?, NULL, ?)
+            ON CONFLICT(mission_id, user_id) DO UPDATE SET
+              submission_id = excluded.submission_id,
+              status = 'submitted',
+              submitted_at = excluded.submitted_at,
+              completed_at = NULL,
+              updated_at = excluded.updated_at`,
+          )
+          .run(crypto.randomUUID(), input.missionId, input.userId, input.id, input.now, input.now, input.now);
+      }
 
       const insertItem = this.database.prepare(
         `INSERT INTO submission_items (
@@ -4058,11 +4195,55 @@ export class BusinessRepository {
     return row ? toPintPointDrinkRecord(row) : null;
   }
 
+  getPintPointDrinkRecordByIdempotencyKey(input: {
+    venueId: string;
+    idempotencyKey: string;
+  }): PintPointDrinkRecord | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM pint_point_drink_records
+         WHERE venue_id = ? AND idempotency_key = ?
+         LIMIT 1`,
+      )
+      .get(input.venueId, input.idempotencyKey) as PintPointDrinkRecordRow | undefined;
+    return row ? toPintPointDrinkRecord(row) : null;
+  }
+
   listPintPointDrinkRecordsForUser(userId: string, limit: number): PintPointDrinkRecord[] {
     const rows = this.database
       .prepare("SELECT * FROM pint_point_drink_records WHERE user_id = ? ORDER BY recorded_at DESC LIMIT ?")
       .all(userId, limit) as PintPointDrinkRecordRow[];
     return rows.map(toPintPointDrinkRecord);
+  }
+
+  listPintPointDrinkRecordsForVenue(venueId: string, limit: number): VenuePintPointActivity[] {
+    const rows = this.database
+      .prepare(
+        `SELECT
+           COALESCE(a.public_account_id, 'Pint Path member') AS public_account_id,
+           r.item_name,
+           r.beverage_category,
+           r.quantity,
+           r.points_awarded,
+           r.source,
+           r.recorded_at
+         FROM pint_point_drink_records r
+         LEFT JOIN accounts a ON a.id = r.user_id
+         WHERE r.venue_id = ?
+         ORDER BY r.recorded_at DESC
+         LIMIT ?`,
+      )
+      .all(venueId, Math.max(1, Math.min(limit, 50))) as VenuePintPointActivityRow[];
+
+    return rows.map((row) => ({
+      publicAccountId: row.public_account_id,
+      itemName: row.item_name,
+      beverageCategory: row.beverage_category,
+      quantity: Number(row.quantity),
+      pointsAwarded: Number(row.points_awarded),
+      source: row.source,
+      recordedAt: row.recorded_at,
+    }));
   }
 
   countPintPointsAwardedSince(input: { userId: string; since: string }): number {
@@ -4722,6 +4903,31 @@ export class BusinessRepository {
           input.submissionId,
         );
 
+      if (current.submission.missionId) {
+        const missionStatus: MissionProgressStatus = input.status === "approved" ? "completed" : "needs_revision";
+        this.database
+          .prepare(
+            `UPDATE mission_progress
+             SET status = ?,
+                 completed_at = CASE WHEN ? = 'completed' THEN ? ELSE NULL END,
+                 updated_at = ?
+             WHERE mission_id = ? AND user_id = ?`,
+          )
+          .run(
+            missionStatus,
+            missionStatus,
+            input.now,
+            input.now,
+            current.submission.missionId,
+            current.submission.userId,
+          );
+        if (input.status === "approved") {
+          this.database
+            .prepare("UPDATE missions SET active = 0, updated_at = ? WHERE id = ?")
+            .run(input.now, current.submission.missionId);
+        }
+      }
+
       const currentMonthPoints = this.refreshCurrentMonthPoints(submitter.id, input.monthKey);
       const accountAfterPoints = this.getAccountById(submitter.id)!;
 
@@ -4959,6 +5165,77 @@ export class BusinessRepository {
     return row ? toMission(row) : null;
   }
 
+  acceptMission(input: { missionId: string; userId: string; now: string }): MissionProgress {
+    this.database
+      .prepare(
+        `INSERT INTO mission_progress (
+          id, mission_id, user_id, submission_id, status, accepted_at, submitted_at, completed_at, updated_at
+        ) VALUES (?, ?, ?, NULL, 'accepted', ?, NULL, NULL, ?)
+        ON CONFLICT(mission_id, user_id) DO UPDATE SET
+          status = CASE
+            WHEN mission_progress.status = 'completed' THEN mission_progress.status
+            ELSE 'accepted'
+          END,
+          updated_at = excluded.updated_at`,
+      )
+      .run(crypto.randomUUID(), input.missionId, input.userId, input.now, input.now);
+    return this.getMissionProgress({ missionId: input.missionId, userId: input.userId })!;
+  }
+
+  getMissionProgress(input: { missionId: string; userId: string }): MissionProgress | null {
+    const row = this.database
+      .prepare("SELECT * FROM mission_progress WHERE mission_id = ? AND user_id = ? LIMIT 1")
+      .get(input.missionId, input.userId) as MissionProgressRow | undefined;
+    return row ? toMissionProgress(row) : null;
+  }
+
+  listMissionProgressForUser(userId: string, limit = 200): MissionProgress[] {
+    const rows = this.database
+      .prepare("SELECT * FROM mission_progress WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?")
+      .all(userId, limit) as MissionProgressRow[];
+    return rows.map(toMissionProgress);
+  }
+
+  updateMissionProgressForSubmission(input: {
+    submissionId: string;
+    status: Extract<MissionProgressStatus, "completed" | "needs_revision">;
+    now: string;
+  }): MissionProgress | null {
+    this.database
+      .prepare(
+        `UPDATE mission_progress
+         SET status = ?, completed_at = CASE WHEN ? = 'completed' THEN ? ELSE NULL END, updated_at = ?
+         WHERE submission_id = ?`,
+      )
+      .run(input.status, input.status, input.now, input.now, input.submissionId);
+    const row = this.database
+      .prepare("SELECT * FROM mission_progress WHERE submission_id = ? LIMIT 1")
+      .get(input.submissionId) as MissionProgressRow | undefined;
+    return row ? toMissionProgress(row) : null;
+  }
+
+  setMissionActive(input: { missionId: string; active: boolean; now: string }): void {
+    this.database
+      .prepare("UPDATE missions SET active = ?, updated_at = ? WHERE id = ?")
+      .run(input.active ? 1 : 0, input.now, input.missionId);
+  }
+
+  getSystemState<T extends Record<string, unknown>>(key: string): { value: T; updatedAt: string } | null {
+    const row = this.database
+      .prepare("SELECT value_json, updated_at FROM system_state WHERE key = ?")
+      .get(key) as { value_json: string; updated_at: string } | undefined;
+    return row ? { value: parseJsonObject(row.value_json) as T, updatedAt: row.updated_at } : null;
+  }
+
+  setSystemState(key: string, value: Record<string, unknown>, now: string): void {
+    this.database
+      .prepare(
+        `INSERT INTO system_state (key, value_json, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
+      )
+      .run(key, JSON.stringify(value), now);
+  }
+
   countMissions(): number {
     const row = this.database.prepare("SELECT count(*) AS count FROM missions").get() as { count: number } | undefined;
     return Number(row?.count ?? 0);
@@ -5023,13 +5300,21 @@ export class BusinessRepository {
            (SELECT max(last_verified_at) FROM venue_price_records record WHERE record.venue_id = ids.venue_id) AS latest_verified_at,
            (SELECT count(*) FROM venue_price_records record WHERE record.venue_id = ids.venue_id) AS record_count,
            (
-             SELECT max(last_verified_at)
-             FROM venue_price_records record
-             WHERE record.venue_id = ids.venue_id
-               AND (
-                 record.is_happy_hour_price = 1
-                 OR (record.happy_hour_details IS NOT NULL AND trim(record.happy_hour_details) != '')
-               )
+             SELECT max(happy.verified_at)
+             FROM (
+               SELECT record.last_verified_at AS verified_at
+               FROM venue_price_records record
+               WHERE record.venue_id = ids.venue_id
+                 AND (
+                   record.is_happy_hour_price = 1
+                   OR (record.happy_hour_details IS NOT NULL AND trim(record.happy_hour_details) != '')
+                 )
+               UNION ALL
+               SELECT venue_happy.updated_at AS verified_at
+               FROM venue_happy_hours venue_happy
+               WHERE venue_happy.venue_id = ids.venue_id
+                 AND venue_happy.active = 1
+             ) happy
            ) AS happy_hour_last_verified_at
          FROM known_venue_ids ids
          ORDER BY latest_verified_at IS NOT NULL, latest_verified_at ASC, venue_name ASC
@@ -5056,6 +5341,7 @@ export class BusinessRepository {
 
   getLatestVenueBeerTimestamp(input: {
     venueId: string;
+    venueIds?: readonly string[];
     normalizedBeerId?: string | null;
     beerNames: readonly string[];
   }): string | null {
@@ -5064,7 +5350,10 @@ export class BusinessRepository {
       .map((name) => name.trim().toLowerCase())
       .filter(Boolean)));
     const clauses: string[] = [];
-    const values: unknown[] = [input.venueId];
+    const venueIds = Array.from(new Set((input.venueIds?.length ? input.venueIds : [input.venueId])
+      .map((venueId) => venueId.trim())
+      .filter(Boolean)));
+    const values: unknown[] = [...venueIds];
 
     if (normalizedBeerId) {
       clauses.push("normalized_beer_id = ?");
@@ -5084,7 +5373,7 @@ export class BusinessRepository {
       .prepare(
         `SELECT max(last_verified_at) AS last_verified_at
          FROM venue_price_records
-         WHERE venue_id = ?
+         WHERE venue_id IN (${venueIds.map(() => "?").join(", ")})
            AND (${clauses.join(" OR ")})`,
       )
       .get(...values) as { last_verified_at: string | null } | undefined;
@@ -5151,6 +5440,67 @@ export class BusinessRepository {
       .prepare(`SELECT * FROM venue_price_records ${where} ORDER BY last_verified_at DESC LIMIT ?`)
       .all(...values) as PriceRecordRow[];
     return rows.map(toPriceRecord);
+  }
+
+  listCurrentPriceRecords(venueIds: string[] = []): PublicVenuePriceRecord[] {
+    const normalizedVenueIds = Array.from(new Set(venueIds.map((id) => id.trim()).filter(Boolean)));
+    const venueWhere = normalizedVenueIds.length
+      ? `WHERE venue_id IN (${normalizedVenueIds.map(() => "?").join(", ")})`
+      : "";
+    const rows = this.database
+      .prepare(
+        `WITH ranked AS (
+           SELECT *,
+             row_number() OVER (
+               PARTITION BY venue_id,
+                 COALESCE(NULLIF(normalized_beer_id, ''), lower(trim(beer_name))),
+                 serving_size,
+                 is_happy_hour_price,
+                 COALESCE(happy_hour_details, '')
+               ORDER BY datetime(last_verified_at) DESC, datetime(updated_at) DESC, id DESC
+             ) AS current_rank
+           FROM venue_price_records
+           ${venueWhere}
+         )
+         SELECT * FROM ranked
+         WHERE current_rank = 1
+         ORDER BY datetime(last_verified_at) DESC, id DESC`,
+      )
+      .all(...normalizedVenueIds) as PriceRecordRow[];
+    return rows.map(toPriceRecord);
+  }
+
+  upsertVenueIdentityAlias(input: {
+    aliasVenueId: string;
+    canonicalVenueId: string;
+    identityKey: string;
+    now: string;
+  }): void {
+    this.database
+      .prepare(
+        `INSERT INTO venue_identity_aliases (alias_venue_id, canonical_venue_id, identity_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(alias_venue_id) DO UPDATE SET
+           canonical_venue_id = excluded.canonical_venue_id,
+           identity_key = excluded.identity_key,
+           updated_at = excluded.updated_at`,
+      )
+      .run(input.aliasVenueId, input.canonicalVenueId, input.identityKey, input.now, input.now);
+  }
+
+  getCanonicalVenueId(venueId: string): string {
+    const row = this.database
+      .prepare("SELECT canonical_venue_id FROM venue_identity_aliases WHERE alias_venue_id = ? LIMIT 1")
+      .get(venueId) as { canonical_venue_id: string } | undefined;
+    return row?.canonical_venue_id ?? venueId;
+  }
+
+  listVenueIdentityIds(venueId: string): string[] {
+    const canonicalVenueId = this.getCanonicalVenueId(venueId);
+    const rows = this.database
+      .prepare("SELECT alias_venue_id FROM venue_identity_aliases WHERE canonical_venue_id = ?")
+      .all(canonicalVenueId) as Array<{ alias_venue_id: string }>;
+    return Array.from(new Set([canonicalVenueId, ...rows.map((row) => row.alias_venue_id)]));
   }
 
   getLatestVenueDataTimestamp(venueId: string): string | null {
@@ -5711,6 +6061,7 @@ export class BusinessRepository {
     message: string;
     venueId: string | null;
     venueName: string | null;
+    contactEmail?: string | null;
     priority: FeedbackPriority;
     triageReason: string | null;
     now: string;
@@ -5719,8 +6070,8 @@ export class BusinessRepository {
       .prepare(
         `INSERT INTO feedback (
           id, user_id, anonymous_session_id, feedback_type, message, venue_id, venue_name,
-          priority, triage_reason, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          contact_email, priority, triage_reason, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -5730,6 +6081,7 @@ export class BusinessRepository {
         input.message,
         input.venueId,
         input.venueName,
+        input.contactEmail ?? null,
         input.priority,
         input.triageReason,
         input.now,
@@ -5866,6 +6218,54 @@ export class BusinessRepository {
       .prepare("SELECT * FROM venue_requests ORDER BY created_at DESC LIMIT ?")
       .all(limit) as VenueRequestRow[];
     return rows.map(toVenueRequest);
+  }
+
+  updateTrustWorkflow(input: {
+    kind: "feedback" | "wrong_price" | "venue_request" | "venue_interest";
+    id: string;
+    status: TrustWorkflowStatus;
+    assignedTo: string | null;
+    resolutionNote: string | null;
+    resolvedBy: string;
+    now: string;
+  }): FeedbackItem | WrongPriceReport | VenueRequest | VenueInterestRequest {
+    const tableByKind = {
+      feedback: "feedback",
+      wrong_price: "wrong_price_reports",
+      venue_request: "venue_requests",
+      venue_interest: "venue_interest_requests",
+    } as const;
+    const table = tableByKind[input.kind];
+    const resolved = input.status === "resolved" || input.status === "rejected";
+    const result = this.database
+      .prepare(
+        `UPDATE ${table}
+         SET status = ?,
+             assigned_to = ?,
+             resolution_note = ?,
+             resolved_at = ?,
+             resolved_by = ?,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        input.status,
+        input.assignedTo,
+        input.resolutionNote,
+        resolved ? input.now : null,
+        resolved ? input.resolvedBy : null,
+        input.now,
+        input.id,
+      );
+    if (result.changes !== 1) {
+      throw new Error("Trust queue item not found");
+    }
+
+    const row = this.database.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(input.id);
+    if (input.kind === "feedback") return toFeedback(row as FeedbackRow);
+    if (input.kind === "wrong_price") return toWrongPriceReport(row as WrongPriceReportRow);
+    if (input.kind === "venue_request") return toVenueRequest(row as VenueRequestRow);
+    return toVenueInterestRequest(row as VenueInterestRequestRow);
   }
 
   getVenueRequestById(id: string): VenueRequest | null {
@@ -6412,6 +6812,7 @@ export class BusinessRepository {
     description: string;
     price: number | null;
     discount: string | null;
+    savingsAmountCents?: number | null;
     startsAt: string | null;
     endsAt: string | null;
     startTime: string | null;
@@ -6424,13 +6825,14 @@ export class BusinessRepository {
     this.database
       .prepare(
         `INSERT INTO venue_specials (
-          id, venue_id, title, description, price, discount, starts_at, ends_at, start_time, end_time, schedule_note, exclusive, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, venue_id, title, description, price, discount, savings_amount_cents, starts_at, ends_at, start_time, end_time, schedule_note, exclusive, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
           description = excluded.description,
           price = excluded.price,
           discount = excluded.discount,
+          savings_amount_cents = excluded.savings_amount_cents,
           starts_at = excluded.starts_at,
           ends_at = excluded.ends_at,
           start_time = excluded.start_time,
@@ -6448,6 +6850,7 @@ export class BusinessRepository {
         input.description,
         input.price,
         input.discount,
+        input.savingsAmountCents ?? null,
         input.startsAt,
         input.endsAt,
         input.startTime,
@@ -7346,7 +7749,7 @@ export class BusinessRepository {
     const verifiedVenueCount = count(
       `SELECT count(DISTINCT venue_id) AS count
        FROM venue_price_records
-       WHERE confidence IN ('venue_confirmed', 'photo_verified', 'community_confirmed')`,
+       WHERE confidence IN ('admin_verified', 'venue_confirmed', 'photo_verified', 'community_confirmed')`,
     );
     const staleVenueCount = count(
       `SELECT count(DISTINCT venue_id) AS count
@@ -7468,7 +7871,7 @@ export class BusinessRepository {
       usersTried,
       returnedThirtyDays,
       usersSubmitted: count("SELECT count(DISTINCT user_id) AS count FROM submissions"),
-      verifiedPricesAdded: count("SELECT count(*) AS count FROM venue_price_records WHERE confidence IN ('venue_confirmed', 'photo_verified', 'community_confirmed')"),
+      verifiedPricesAdded: count("SELECT count(*) AS count FROM venue_price_records WHERE confidence IN ('admin_verified', 'venue_confirmed', 'photo_verified', 'community_confirmed')"),
     };
 
     return {
@@ -7557,7 +7960,7 @@ export class BusinessRepository {
       .prepare("SELECT avg(julianday('now') - julianday(last_verified_at)) AS value FROM venue_price_records")
       .get() as { value: number | null } | undefined;
     const venuesWithVerified = count(
-      "SELECT count(DISTINCT venue_id) AS count FROM venue_price_records WHERE confidence IN ('venue_confirmed', 'photo_verified', 'community_confirmed')",
+      "SELECT count(DISTINCT venue_id) AS count FROM venue_price_records WHERE confidence IN ('admin_verified', 'venue_confirmed', 'photo_verified', 'community_confirmed')",
     );
 
     return {
@@ -7568,7 +7971,7 @@ export class BusinessRepository {
          FROM (
            SELECT venue_id
            FROM venue_price_records
-           WHERE confidence IN ('venue_confirmed', 'photo_verified', 'community_confirmed')
+           WHERE confidence IN ('admin_verified', 'venue_confirmed', 'photo_verified', 'community_confirmed')
            GROUP BY venue_id
            HAVING count(*) >= 3
          )`,
@@ -7593,7 +7996,7 @@ export class BusinessRepository {
     };
     const priceRecords = this.listLatestPriceRecords(100, input.venueId);
     const verifiedRecords = priceRecords.filter((record) =>
-      ["venue_confirmed", "photo_verified", "community_confirmed"].includes(record.confidence),
+      ["admin_verified", "venue_confirmed", "photo_verified", "community_confirmed"].includes(record.confidence),
     );
     const beerIds = new Set(priceRecords.map((record) => record.normalizedBeerId).filter(Boolean));
     const wrongPriceReports = this.database

@@ -208,6 +208,15 @@
               </div>
             </section>
             <div id="accountStatsGrid" class="statsGrid accountStatsGrid"></div>
+            <section id="missionHistorySection" class="accountMissionHistory" hidden>
+              <div class="sectionHeader sectionHeader--compact">
+                <div>
+                  <h3>Mission history</h3>
+                  <p class="muted">Accepted work and its review outcome.</p>
+                </div>
+              </div>
+              <div id="missionHistoryList" class="list"></div>
+            </section>
           </section>
         </div>
 
@@ -1426,6 +1435,7 @@
       const ageCopy = result.ageVerification?.copy || "18+ confirmation unlocks future venue-special and reward features.";
       const progressPercent = Math.min(100, Math.round((points / threshold) * 100));
       const unlockReached = pointsNeeded <= 0;
+      const isPaidMember = ["premium_monthly", "premium_yearly"].includes(String(account.subscriptionStatus || ""));
       const unlockCopy = unlockReached
         ? "Contributor access is unlocked for this month. You get the same premium map access as a paid user."
         : `${formatPoints(pointsNeeded)} more approved points unlock the same premium map access as a paid user until month end.`;
@@ -1442,7 +1452,19 @@
       ];
 
       grid.innerHTML = `
-        <article class="metricCard accountStatsProgressCard">
+        ${isPaidMember ? `
+        <article class="metricCard accountStatsProgressCard accountStatsMembershipCard">
+          <div class="accountStatsCardHeader">
+            <div>
+              <div class="metricLabel">Membership</div>
+              <h3>${account.subscriptionStatus === "premium_yearly" ? "Premium Yearly" : "Premium Monthly"}</h3>
+            </div>
+            <span class="tierBadge tierBadge--pro">Active</span>
+          </div>
+          <p class="helperCopy">Full map prices, filters, beta tools, and eligible partner offers are active on this account.${account.premiumUntil ? ` Current paid period: through ${escapeHtml(MelbBeerBusiness.formatDate(account.premiumUntil))}.` : " Stripe shows the next renewal date, invoices, and payment method."}</p>
+          <button class="button button--primary" type="button" data-manage-billing>Manage billing or cancel</button>
+        </article>
+        ` : `<article class="metricCard accountStatsProgressCard">
           <div class="accountStatsCardHeader">
             <div>
               <div class="metricLabel">Contributor unlock</div>
@@ -1458,7 +1480,7 @@
             <div class="progressBar" style="width:${progressPercent}%;"></div>
           </div>
           <p class="helperCopy">${escapeHtml(unlockCopy)}</p>
-        </article>
+        </article>`}
         ${metrics.map(({ label, value, helper, tone }) => `
           <article class="metricCard accountStatCard accountStatCard--${escapeHtml(tone)}">
             <div class="accountStatsCardHeader">
@@ -1470,6 +1492,39 @@
           </article>
         `).join("")}
       `;
+
+      grid.querySelector("[data-manage-billing]")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = "Opening Stripe...";
+        try {
+          const result = await MelbBeerBusiness.apiFetch("/api/business/billing/portal", { method: "POST", body: "{}" });
+          window.location.assign(result.portalUrl);
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = "Manage billing or cancel";
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Billing management could not be opened.", true);
+        }
+      });
+
+      const missionHistory = Array.isArray(result.missionHistory) ? result.missionHistory : [];
+      const missionHistorySection = $("missionHistorySection");
+      const missionHistoryList = $("missionHistoryList");
+      missionHistorySection.hidden = missionHistory.length === 0;
+      missionHistoryList.innerHTML = missionHistory.map((mission) => {
+        const status = String(mission.status || "accepted").replaceAll("_", " ");
+        const points = mission.points == null ? "" : ` · ${formatPoints(Number(mission.points) * Number(mission.multiplier || 1))} pts`;
+        return `
+          <article class="listItem dataRow">
+            <div>
+              <strong>${escapeHtml(mission.venueName)}</strong>
+              <div class="muted">${escapeHtml(mission.reason)}${escapeHtml(points)}</div>
+              <div class="muted">Updated ${escapeHtml(MelbBeerBusiness.formatDate(mission.updatedAt))}</div>
+            </div>
+            <span class="pill ${mission.status === "completed" ? "pill--success" : mission.status === "needs_revision" ? "pill--warning" : ""}">${escapeHtml(status)}</span>
+          </article>
+        `;
+      }).join("");
     }
 
     function renderDisplayNameForm(account) {

@@ -43,11 +43,13 @@ describe("mobile layout guardrails", () => {
   it("keeps map controls usable on iPhone and Android viewport widths", () => {
     const html = viewerFile("index.html");
 
-    expect(html).toMatch(/\.filterChip,\s*\.utilityButton\s*\{[\s\S]*min-height:\s*42px;/);
+    expect(html).toMatch(/\.filterChip,\s*\.utilityButton\s*\{[\s\S]*min-height:\s*44px;/);
     expect(html).toMatch(/\.overlayPanel__close\s*\{[\s\S]*width:\s*40px;[\s\S]*height:\s*40px;/);
     expect(html).toMatch(/\.venueRail__sortChip\s*\{[\s\S]*min-height:\s*38px;/);
-    expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.filterChip\s*\{[\s\S]*min-height:\s*40px;/);
-    expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.venueRail__sortChip\s*\{[\s\S]*min-height:\s*40px;/);
+    expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.filterChip\s*\{[\s\S]*min-height:\s*44px;/);
+    expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.overlayPanel__close\s*\{[\s\S]*width:\s*44px;[\s\S]*height:\s*44px;/);
+    expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.venueRail__sortChip\s*\{[\s\S]*min-height:\s*44px;/);
+    expect(html).toMatch(/@media \(max-width: 640px\)[\s\S]*\.venueDetailOverlay__close\s*\{[\s\S]*width:\s*44px;[\s\S]*height:\s*44px;/);
     expect(html).toContain('class="mapNavCard topNav"');
     expect(html).toContain('aria-controls="topbarBusinessLinks" data-mobile-nav-toggle');
     expect(html).toContain('id="topbarBusinessLinks" class="topbar__businessLinks" aria-label="Business navigation" data-mobile-nav-panel');

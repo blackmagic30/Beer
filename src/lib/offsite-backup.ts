@@ -11,6 +11,7 @@ import {
   verifyDataBackup,
 } from "./data-backup.js";
 import { logger } from "./logger.js";
+import { redactSecrets } from "./redact.js";
 
 interface OffsiteBackupConfig {
   databasePath: string;
@@ -19,6 +20,16 @@ interface OffsiteBackupConfig {
   serviceRoleKey: string;
   bucketName: string;
   retentionDays: number;
+  onStatus?: (status: {
+    state: "running" | "succeeded" | "failed";
+    startedAt: string;
+    completedAt: string | null;
+    backupId?: string;
+    objectCount?: number;
+    bytes?: number;
+    prunedBackups?: number;
+    error?: string;
+  }) => void;
 }
 
 function backupIdFromDate(date: Date): string {
@@ -208,10 +219,24 @@ export function scheduleOffsiteBackups(config: OffsiteBackupConfig & { intervalH
   const execute = async () => {
     if (running) return;
     running = true;
+    const startedAt = new Date().toISOString();
+    config.onStatus?.({ state: "running", startedAt, completedAt: null });
     try {
       const result = await runOffsiteBackup(config);
+      config.onStatus?.({
+        state: "succeeded",
+        startedAt,
+        completedAt: new Date().toISOString(),
+        ...result,
+      });
       logger.info("Off-site production backup completed", result);
     } catch (error) {
+      config.onStatus?.({
+        state: "failed",
+        startedAt,
+        completedAt: new Date().toISOString(),
+        error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Off-site backup failed",
+      });
       logger.error("Off-site production backup failed", {
         error: error instanceof Error ? error.message : String(error),
       });

@@ -75,6 +75,7 @@ const submissionStatusSchema = z.enum([
   "fraud_flagged",
 ]);
 const confidenceSchema = z.enum([
+  "admin_verified",
   "venue_confirmed",
   "photo_verified",
   "community_confirmed",
@@ -95,6 +96,10 @@ const nullablePriceSchema = z.preprocess((value) => {
 const dataImageUrlSchema = z
   .string()
   .regex(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "sourcePhotoDataUrl must be a base64 image data URL");
+
+const dataPdfUrlSchema = z
+  .string()
+  .regex(/^data:application\/pdf;base64,/, "sourceDocumentDataUrl must be a base64 PDF data URL");
 
 const uploadLocationSchema = z.object({
   latitude: z.coerce.number().min(-90).max(90),
@@ -226,6 +231,7 @@ export const createSubmissionSchema = z.object({
     .regex(/^[a-zA-Z0-9._:-]+$/, "clientSubmissionId contains unsupported characters")
     .nullable()
     .default(null),
+  missionId: nullableTrimmedStringSchema.default(null),
   venueId: z.string().min(1),
   venueName: z.string().trim().min(1).max(180),
   suburb: nullableTrimmedStringSchema.default(null),
@@ -234,12 +240,18 @@ export const createSubmissionSchema = z.object({
   observedAt: z.string().datetime({ offset: true }),
   sourcePhotoDataUrl: dataImageUrlSchema.nullable().default(null),
   sourcePhotoDataUrls: z.array(dataImageUrlSchema).max(6).default([]),
+  sourceDocumentDataUrl: dataPdfUrlSchema.nullable().default(null),
   sourcePhotoUrl: nullableTrimmedStringSchema.default(null),
   uploadLocation: uploadLocationSchema,
   notes: nullableTrimmedStringSchema.default(null),
   items: z.array(submissionItemSchema).max(20).default([]),
 }).superRefine((value, ctx) => {
-  const hasPhoto = Boolean(value.sourcePhotoDataUrl || value.sourcePhotoDataUrls.length || value.sourcePhotoUrl);
+  const hasPhoto = Boolean(
+    value.sourcePhotoDataUrl ||
+    value.sourcePhotoDataUrls.length ||
+    value.sourceDocumentDataUrl ||
+    value.sourcePhotoUrl
+  );
 
   if (value.newVenue) {
     if (!value.newVenue.address && (value.newVenue.latitude == null || value.newVenue.longitude == null)) {
@@ -308,7 +320,7 @@ export const reviewSubmissionSchema = z.object({
   rejectionReason: nullableTrimmedStringSchema.default(null),
   fraudFlagged: z.boolean().default(false),
   pointsAwarded: z.coerce.number().min(0).max(25).optional(),
-  confidence: confidenceSchema.default("photo_verified"),
+  confidence: confidenceSchema.optional(),
 });
 
 export const missionsQuerySchema = z.object({
@@ -333,6 +345,7 @@ export const priceRecordsQuerySchema = z.object({
   venueId: optionalTrimmedStringSchema,
   anonymousSessionId: nullableTrimmedStringSchema.default(null),
   reveal: z.preprocess((value) => value === "true" || value === true, z.boolean()).default(false),
+  cursor: optionalTrimmedStringSchema,
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
 
@@ -459,6 +472,16 @@ export const feedbackSchema = z.object({
   message: z.string().trim().min(3).max(1200),
   venueId: nullableTrimmedStringSchema.default(null),
   venueName: nullableTrimmedStringSchema.default(null),
+  contactEmail: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? null : value,
+    z.string().trim().toLowerCase().email().nullable(),
+  ).default(null),
+});
+
+export const trustWorkflowUpdateSchema = z.object({
+  status: z.enum(["open", "in_progress", "resolved", "rejected"]),
+  assignedTo: nullableTrimmedStringSchema.default(null),
+  resolutionNote: nullableTrimmedStringSchema.default(null),
 });
 
 export const wrongPriceReportSchema = z.object({
@@ -654,6 +677,10 @@ export const barSpecialSchema = z.object({
   description: z.string().trim().min(1).max(1000),
   price: nullablePriceSchema.default(null),
   discount: nullableTrimmedStringSchema.default(null),
+  savingsAmountCents: z.preprocess(
+    (value) => value === "" || value == null ? null : value,
+    z.coerce.number().int().min(0).max(100_000).nullable(),
+  ).default(null),
   startsAt: nullableTrimmedStringSchema.default(null),
   endsAt: nullableTrimmedStringSchema.default(null),
   startTime: timeSchema,
@@ -775,6 +802,12 @@ export const discountRedemptionSchema = z.object({
   notes: nullableTrimmedStringSchema.default(null),
 });
 
+export const pintPointMemberPreviewSchema = z.object({
+  code: z.string().trim()
+    .regex(/^[A-Za-z0-9]{6}$/, "Use the current 6-character Pint Path code.")
+    .transform((value) => value.toUpperCase()),
+});
+
 export const pintPointDrinkRecordSchema = z.object({
   code: z.string().trim()
     .regex(/^[A-Za-z0-9]{6}$/, "Use the current 6-character Pint Path code.")
@@ -851,6 +884,7 @@ export type AccountPrivacySettingsInput = z.infer<typeof accountPrivacySettingsS
 export type SaveItemInput = z.infer<typeof saveItemSchema>;
 export type RemoveSavedItemInput = z.infer<typeof removeSavedItemSchema>;
 export type FeedbackInput = z.infer<typeof feedbackSchema>;
+export type TrustWorkflowUpdateInput = z.infer<typeof trustWorkflowUpdateSchema>;
 export type AccountDeletionRequestInput = z.infer<typeof accountDeletionRequestSchema>;
 export type WrongPriceReportInput = z.infer<typeof wrongPriceReportSchema>;
 export type VenueRequestInput = z.infer<typeof venueRequestSchema>;
@@ -882,6 +916,7 @@ export type PubGolfPlanInput = z.infer<typeof pubGolfPlanSchema>;
 export type LeaderboardPrizeCampaignInput = z.infer<typeof leaderboardPrizeCampaignSchema>;
 export type LeaderboardPrizeFinalizeInput = z.infer<typeof leaderboardPrizeFinalizeSchema>;
 export type DiscountRedemptionInput = z.infer<typeof discountRedemptionSchema>;
+export type PintPointMemberPreviewInput = z.infer<typeof pintPointMemberPreviewSchema>;
 export type PintPointDrinkRecordInput = z.infer<typeof pintPointDrinkRecordSchema>;
 export type FreePintRewardCodeInput = z.infer<typeof freePintRewardCodeSchema>;
 export type FreePintRewardDecisionInput = z.infer<typeof freePintRewardDecisionSchema>;

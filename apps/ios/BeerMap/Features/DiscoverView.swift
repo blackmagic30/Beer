@@ -50,7 +50,7 @@ struct DiscoverView: View {
             .padding()
         }
         .beerMapScreen()
-        .navigationTitle("BeerMap")
+        .navigationTitle("Find")
         .refreshable {
             await model.loadHome(search: searchText)
         }
