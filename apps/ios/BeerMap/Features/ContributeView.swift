@@ -172,7 +172,9 @@ struct ContributeView: View {
     }
 
     private var sourcePhotoCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let photoButtonTitle = sourcePhotoData == nil ? "Choose photo" : "Replace photo"
+
+        return VStack(alignment: .leading, spacing: 12) {
             SectionHeader(
                 eyebrow: "Source photo",
                 title: "Upload a menu or board",
@@ -181,7 +183,7 @@ struct ContributeView: View {
             )
             venuePicker
             PhotosPicker(selection: $sourcePhotoItem, matching: .images, photoLibrary: .shared()) {
-                Label(sourcePhotoData == nil ? "Choose photo" : "Replace photo", systemImage: "photo.badge.plus")
+                Label(photoButtonTitle, systemImage: "photo.badge.plus")
                     .font(.headline.weight(.bold))
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: 50)
