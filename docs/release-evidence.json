@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "items": [
+    { "id": "production_public_smoke", "label": "Production public health, readiness, API, and page smoke", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "production_role_smoke", "label": "Production user, venue manager, and admin role smoke", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "ocr_labelled_corpus", "label": "Live OCR meets thresholds on owner-labelled menu images", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "venue_pilot_one", "label": "Venue pilot 1 completed across a real shift", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "venue_pilot_two", "label": "Venue pilot 2 completed across a real shift", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "venue_pilot_three", "label": "Venue pilot 3 completed across a real shift", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "pos_vendor_pilot", "label": "Chosen POS vendor adapter or manual fallback verified at a venue", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "backup_restore", "label": "Production backup restore rehearsal completed and dated", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "accessibility_devices", "label": "Keyboard, screen reader, iPhone Safari, and Android Chrome checks signed off", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "legal_billing", "label": "Privacy, terms, alcohol wording, refund, and cancellation review signed off", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "ios_release", "label": "iOS signing, privacy declarations, screenshots, and TestFlight build approved", "required": false, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "android_release", "label": "Android signing, data safety, screenshots, and internal-test build approved", "required": false, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null }
+  ]
+}

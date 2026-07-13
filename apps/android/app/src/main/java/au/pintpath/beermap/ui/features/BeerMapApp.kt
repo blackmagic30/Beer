@@ -1054,10 +1054,10 @@ private fun VenuePortalScreen(state: BeerMapState, scope: CoroutineScope) {
     val portal = state.portal
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         if (!state.signedIn) {
-            item { EmptyState("Venue dashboard is invite-only", "Sign in with an assigned venue-manager account.", Icons.Filled.Storefront) }
+            item { EmptyState("Venue access is verified", "Sign in, then request access from the Pint Path web venue portal if this venue is not assigned yet.", Icons.Filled.Storefront) }
         } else if (portal == null) {
             item {
-                EmptyState("No venue dashboard yet", "Refresh or ask admin to assign your account to a venue.", Icons.Filled.Storefront)
+                EmptyState("No venue dashboard yet", "Refresh, or request access from the Pint Path web venue portal.", Icons.Filled.Storefront)
                 PrimaryAction("Refresh") { scope.launch { state.refreshPortal() } }
             }
         } else {

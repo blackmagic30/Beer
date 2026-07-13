@@ -206,12 +206,17 @@ CREATE TABLE IF NOT EXISTS pint_point_drink_records (
   reward_code_id TEXT,
   recorded_by_user_id TEXT,
   idempotency_key TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'void')),
+  voided_at TEXT,
+  voided_by_user_id TEXT,
+  void_reason TEXT,
   recorded_at TEXT NOT NULL,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE,
   FOREIGN KEY (reward_code_id) REFERENCES free_pint_reward_codes(id) ON DELETE SET NULL,
-  FOREIGN KEY (recorded_by_user_id) REFERENCES accounts(id) ON DELETE SET NULL
+  FOREIGN KEY (recorded_by_user_id) REFERENCES accounts(id) ON DELETE SET NULL,
+  FOREIGN KEY (voided_by_user_id) REFERENCES accounts(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_user
@@ -843,6 +848,7 @@ CREATE TABLE IF NOT EXISTS venue_manager_assignments (
   venue_id TEXT NOT NULL,
   venue_name TEXT NOT NULL,
   suburb TEXT,
+  access_level TEXT NOT NULL DEFAULT 'manager' CHECK (access_level IN ('manager', 'counter_staff')),
   status TEXT NOT NULL DEFAULT 'active',
   approved_by TEXT REFERENCES accounts(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL,
@@ -1026,6 +1032,9 @@ CREATE TABLE IF NOT EXISTS venue_claim_requests (
   contact_phone TEXT,
   message TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
+  review_note TEXT,
+  reviewed_by TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  reviewed_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

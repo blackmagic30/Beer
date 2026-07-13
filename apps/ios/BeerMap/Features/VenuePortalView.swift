@@ -32,8 +32,8 @@ struct VenuePortalView: View {
             VStack(spacing: 16) {
                 if !model.isSignedIn {
                     EmptyStateView(
-                        title: "Venue dashboard is invite-only",
-                        message: "Sign in with an assigned venue-manager account to manage a bar.",
+                        title: "Venue access is verified",
+                        message: "Sign in, then request access from the Pint Path web venue portal if this venue is not assigned yet.",
                         systemImage: "building.2.crop.circle"
                     )
                 } else if let portal = model.venuePortal {
@@ -41,7 +41,7 @@ struct VenuePortalView: View {
                 } else {
                     EmptyStateView(
                         title: "No venue dashboard yet",
-                        message: "Pull to refresh or ask admin to assign your account to a venue.",
+                        message: "Pull to refresh, or request access from the Pint Path web venue portal.",
                         systemImage: "person.2.badge.key.fill"
                     )
                 }

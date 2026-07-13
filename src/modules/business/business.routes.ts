@@ -46,6 +46,7 @@ import {
   monthlyReportGenerateSchema,
   pintPointMemberPreviewSchema,
   pintPointDrinkRecordSchema,
+  pintPointDrinkVoidSchema,
   posDiscountRedemptionSchema,
   priceRecordsQuerySchema,
   pubGolfPlanSchema,
@@ -57,12 +58,14 @@ import {
   trustWorkflowUpdateSchema,
   venueRequestSchema,
   venueClaimRequestSchema,
+  venueClaimReviewSchema,
   verificationSchema,
   venuePendingChangeReviewSchema,
   venueInterestSchema,
   venueInterestStatusSchema,
   venueManagerAssignmentSchema,
   venueManagerRevokeSchema,
+  venueCounterStaffAssignmentSchema,
   venueOutreachSchema,
   venuePortalQuerySchema,
   venuePlaceSearchQuerySchema,
@@ -567,9 +570,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.post("/venue-claim-requests", writeLimiter, (req, res) => {
-    const account = requireAdmin(req, businessService);
+    const account = requireAccount(req, businessService);
     const body = parseWithSchema(venueClaimRequestSchema, req.body, "Invalid venue claim request payload");
-    res.status(201).json(success(businessService.createVenueClaimRequest(account, body)));
+    const result = businessService.createVenueClaimRequest(account, body);
+    res.status(result.duplicate ? 200 : 201).json(success(result));
   });
 
   router.post("/venue-portal/:venueId/submissions", writeLimiter, async (req, res, next) => {
@@ -645,6 +649,28 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const venueId = String(req.params.venueId ?? "");
     const result = businessService.recordPintPointDrink(account, venueId, body);
     res.status(result.idempotentReplay ? 200 : 201).json(success(result));
+  });
+
+  router.post("/venue-portal/:venueId/pint-point-drinks/:recordId/void", venueCounterLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(pintPointDrinkVoidSchema, req.body, "Invalid Pint Points correction payload");
+    const venueId = String(req.params.venueId ?? "");
+    const recordId = String(req.params.recordId ?? "");
+    res.json(success(businessService.voidPintPointDrink(account, venueId, recordId, body)));
+  });
+
+  router.post("/venue-portal/:venueId/counter-staff", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(venueCounterStaffAssignmentSchema, req.body, "Invalid counter-staff assignment payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.status(201).json(success(businessService.assignVenueCounterStaff(account, venueId, body)));
+  });
+
+  router.post("/venue-portal/:venueId/counter-staff/revoke", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(venueCounterStaffAssignmentSchema, req.body, "Invalid counter-staff revoke payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.json(success(businessService.revokeVenueCounterStaff(account, venueId, body)));
   });
 
   router.post("/venue-portal/:venueId/free-pint-rewards", venueCounterLimiter, (req, res) => {
@@ -774,6 +800,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/admin/venue-partners", (req, res) => {
     const admin = requireAdmin(req, businessService);
     res.json(success(businessService.getVenuePartnerAdmin(admin)));
+  });
+
+  router.post("/admin/venue-claims/:id/review", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(venueClaimReviewSchema, req.body, "Invalid venue claim review payload");
+    const claimId = String(req.params.id ?? "");
+    res.json(success(businessService.reviewVenueClaimRequest(admin, claimId, body)));
   });
 
   router.get("/admin/leaderboard-prizes", (req, res) => {

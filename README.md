@@ -54,6 +54,7 @@
 - `POST /api/business/wrong-price-reports`
 - `POST /api/business/requests`
 - `POST /api/business/venue-interest`
+- `POST /api/business/venue-claim-requests`
 - `GET /api/business/venue-portal`
 - `POST /api/business/venue-portal/:venueId/submissions`
 - `POST /api/business/venue-portal/:venueId/discount-redemptions`
@@ -68,6 +69,7 @@
 - `GET /api/business/admin/venue-partners`
 - `POST /api/business/admin/venue-managers`
 - `POST /api/business/admin/venue-managers/revoke`
+- `POST /api/business/admin/venue-claims/:id/review`
 - `POST /api/business/admin/reports/monthly/generate`
 - `POST /api/business/admin/reports/monthly/deliver`
 - `POST /api/business/admin/venue-interest/:id/status`
@@ -111,7 +113,7 @@ Business demo pages:
 - `/trust.html`: public trust centre explaining verification, private evidence, aggregate venue insights, and support paths.
 - `/community.html`: contributor community standards, moderation rules, anti-abuse expectations, and appeal paths.
 - `/security.html`: security/privacy support page for account controls, data requests, abuse reports, and responsible disclosure.
-- `/venue-portal`: invite-only, admin-assigned venue dashboard for profile details, beer stock/on-tap rows, prices, happy hours, tier-gated specials, listing quality, tier-gated analytics, generated monthly reports, exports, and pending review updates. `/for-bars` redirects here so public users do not see venue-owner operating details.
+- `/venue-portal`: manually verified venue-access workflow and dashboard for profile details, beer stock/on-tap rows, prices, happy hours, tier-gated specials, listing quality, tier-gated analytics, generated monthly reports, exports, counter-staff access, and pending review updates. A claim never grants access until admin approval. `/for-bars` redirects here so public users do not see venue-owner operating details.
 - `/admin.html`: admin-only submission review, KPI dashboard, cohorts, coverage, partner leads, and review queues.
 
 Supabase auth/account foundation:
@@ -133,7 +135,7 @@ Supabase auth/account foundation:
 
 Venue partner demo layer:
 
-- Public self-claiming is disabled during beta. Admin assigns verified venue managers from `/admin.html`; `/for-bars` redirects to the invite-only `/venue-portal` access screen.
+- Verified account holders can request access to a known Pint Path venue. Admin independently verifies and approves or rejects the claim; only approval assigns manager access.
 - Admin can assign or revoke venue managers from `/admin.html`.
 - Venue managers can only access assigned venues on `/venue-portal`.
 - Free/Basic venue accounts can add beer data and happy-hour data only; Pint Path specials, venue analytics, and monthly reports stay locked.

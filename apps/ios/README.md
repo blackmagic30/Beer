@@ -40,7 +40,7 @@ The native app stores only the Pint Path bearer session token in Keychain. It do
 - Bars
 - Settings
 
-The Add tab covers reviewed beer-price submissions, wrong-price reports, missing venue/beer requests, and mission browsing. Photo evidence, one-time location proof, native OAuth, billing, and reward/POS flows are not wired yet.
+The Add tab covers reviewed beer-price submissions, wrong-price reports, missing venue/beer requests, and mission browsing. Photo evidence, one-time location proof, native OAuth, billing, venue claims, and reward/POS flows remain web-only. Native CI builds an unsigned simulator app; signing, privacy declarations, screenshots, TestFlight, and a real-device pass remain release-owner steps.
 
 ## Release Notes
 

@@ -681,7 +681,7 @@
       const records = result?.pintPoints?.recentDrinkRecords || [];
       const cutoff = Date.now() - Math.max(1, Number(windowHours || 4)) * 60 * 60 * 1000;
       return records
-        .filter((record) => record?.isAlcoholic)
+        .filter((record) => record?.isAlcoholic && record?.status !== "void")
         .map((record) => ({ record, recordedAt: canIDriveRecordDate(record) }))
         .filter((entry) => entry.recordedAt && entry.recordedAt.getTime() >= cutoff)
         .slice(0, CAN_I_DRIVE_MAX_RECENT_DRINKS);

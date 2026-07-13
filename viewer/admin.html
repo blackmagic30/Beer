@@ -372,7 +372,7 @@
         <div class="adminGrid adminGrid--two">
           <div class="panel">
             <h2>Venue partner interest</h2>
-            <p class="muted">Venue partner interest and invite-only venue manager assignments. Public self-claiming is disabled during beta.</p>
+            <p class="muted">Venue partner interest and manually verified venue claims. Claims never grant access until an admin approves them.</p>
             <div id="venueInterestRequests" class="list"></div>
             <h3>Authenticated venue claims</h3>
             <div id="barClaimRequests" class="list"></div>
@@ -386,7 +386,7 @@
 
         <div class="adminGrid adminGrid--two">
           <form id="managerAssignForm" class="panel form">
-            <h2>Assign venue manager</h2>
+            <h2>Assign venue access</h2>
             <label class="field">Staff account
               <input id="managerUserSearch" type="search" placeholder="Search email, name, or public account ID" autocomplete="off" />
             </label>
@@ -401,8 +401,14 @@
             <input id="managerVenueId" name="venueId" type="hidden" />
             <input id="managerVenueName" name="venueName" type="hidden" />
             <input id="managerVenueSuburb" name="suburb" type="hidden" />
+            <label class="field">Access level
+              <select id="managerAccessLevel" name="accessLevel">
+                <option value="manager">Venue manager</option>
+                <option value="counter_staff">Counter staff only</option>
+              </select>
+            </label>
             <div id="managerAssignPreview" class="notice">Pick a staff account and a venue. Pint Path fills the IDs automatically.</div>
-            <button class="button button--primary" type="submit">Assign manager</button>
+            <button class="button button--primary" type="submit">Assign access</button>
           </form>
           <form id="outreachForm" class="panel form">
             <h2>Partner outreach note</h2>
@@ -758,6 +764,16 @@
         "OCR or website copy noise",
         "Food or non-beer drink item",
         "Duplicate with no clear canonical match",
+      ],
+      venue_claim_approved: [
+        "Venue ownership or employment verified",
+        "Verified venue email or phone contact",
+        "Existing Pint Path partner confirmed claimant",
+      ],
+      venue_claim_rejected: [
+        "Could not verify venue connection",
+        "Claim details do not match venue",
+        "Duplicate or inappropriate access request",
       ],
     };
     const OUTREACH_STAGES = [
@@ -2934,10 +2950,11 @@
       managerVenueName.value = venue?.name || "";
       managerVenueSuburb.value = venue?.suburb || "";
       const ready = Boolean(selectedManagerAccount && venue);
+      const accessLabel = managerAccessLevel?.value === "counter_staff" ? "use the counter only at" : "manage";
       setLocalNotice(
         managerAssignPreview,
         ready
-          ? `Ready: ${describeAdminAccount(selectedManagerAccount)} will manage ${describeManagerVenue(venue)}.`
+          ? `Ready: ${describeAdminAccount(selectedManagerAccount)} will ${accessLabel} ${describeManagerVenue(venue)}.`
           : "Pick a staff account and a venue. Pint Path fills the IDs automatically.",
         !ready,
       );
@@ -3760,9 +3777,22 @@
             <span class="pill">${escapeHtml(claim.status)}</span>
             <div class="muted">${escapeHtml(claim.suburb || "Area not supplied")} · ${escapeHtml(claim.requesterName)} · ${escapeHtml(claim.requesterRole)} · ${escapeHtml(claim.contactEmail)}${claim.contactPhone ? ` · ${escapeHtml(claim.contactPhone)}` : ""}</div>
             <div class="muted">${escapeHtml(claim.message || claim.address || "No message supplied")}</div>
+            ${claim.reviewNote ? `<div class="muted">Review note: ${escapeHtml(claim.reviewNote)}</div>` : ""}
+            ${claim.status === "pending" ? `
+              <div class="actionRow">
+                <button class="button button--small button--primary" type="button" data-review-claim="${escapeHtml(claim.id)}" data-claim-status="approved">Approve and assign</button>
+                <button class="button button--small button--danger" type="button" data-review-claim="${escapeHtml(claim.id)}" data-claim-status="rejected">Reject</button>
+              </div>
+            ` : ""}
           </article>
         `).join("")
         : '<div class="listItem muted">No authenticated venue claims yet.</div>';
+      barClaimRequests.querySelectorAll("[data-review-claim]").forEach((button) => {
+        button.addEventListener("click", () => promptVenueClaimReview(
+          claimRequests.find((claim) => claim.id === button.dataset.reviewClaim),
+          button.dataset.claimStatus,
+        ));
+      });
 
       venueManagerAssignments.innerHTML = data.assignments.length
         ? data.assignments.map((assignment) => {
@@ -3774,6 +3804,7 @@
           <article class="listItem">
             <strong>${escapeHtml(assignment.venueName)}</strong>
             <span class="pill">${escapeHtml(assignment.status)}</span>
+            <span class="pill ${assignment.accessLevel === "manager" ? "pill--premium" : ""}">${escapeHtml(assignment.accessLevel === "counter_staff" ? "counter staff" : "manager")}</span>
             <div class="muted">${escapeHtml(assignment.suburb || "Melbourne")} · ${escapeHtml(managerLabel)}</div>
             <div class="muted">${escapeHtml(managerMeta)}</div>
             <button class="button button--danger" type="button" data-revoke-user="${escapeHtml(assignment.userId)}" data-revoke-venue="${escapeHtml(assignment.venueId)}">Revoke</button>
@@ -3963,6 +3994,31 @@
       }
     }
 
+    function promptVenueClaimReview(claim, status) {
+      if (!claim?.id || !status) return;
+      const approved = status === "approved";
+      openReviewDecision({
+        eyebrow: "Venue access claim",
+        title: `${approved ? "Approve" : "Reject"} ${claim.barName}`,
+        copy: approved
+          ? "Approval immediately assigns full manager access to this venue. Confirm the claimant's connection first."
+          : "Rejection grants no access and keeps the reason in the audit trail.",
+        confirmLabel: approved ? "Approve and assign" : "Reject claim",
+        tone: approved ? "default" : "danger",
+        reasons: REVIEW_REASON_OPTIONS[approved ? "venue_claim_approved" : "venue_claim_rejected"],
+        onConfirm: ({ combinedNote }) => reviewVenueClaim(claim.id, status, combinedNote),
+      });
+    }
+
+    async function reviewVenueClaim(id, status, reviewNote) {
+      const result = await MelbBeerBusiness.apiFetch(`/api/business/admin/venue-claims/${encodeURIComponent(id)}/review`, {
+        method: "POST",
+        body: JSON.stringify({ status, reviewNote }),
+      });
+      MelbBeerBusiness.setStatus(statusEl, result.message || "Venue claim reviewed.");
+      await loadAdmin();
+    }
+
     async function revokeVenueManager(userId, venueId) {
       if (!userId || !venueId) return;
       try {
@@ -4000,7 +4056,7 @@
         selectedManagerVenueId = null;
         renderManagerUserResults();
         renderManagerVenueOptions();
-        MelbBeerBusiness.setStatus(statusEl, "Venue manager assigned.");
+        MelbBeerBusiness.setStatus(statusEl, body.accessLevel === "counter_staff" ? "Counter-staff access assigned." : "Venue manager assigned.");
         await loadAdmin();
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message, true);
@@ -4197,6 +4253,7 @@
         selectedManagerVenueId = managerVenueSelect.value || null;
         syncManagerAssignPreview();
       });
+      managerAccessLevel?.addEventListener("change", syncManagerAssignPreview);
       outreachForm.addEventListener("submit", handleOutreach);
       leaderboardPrizeForm.addEventListener("submit", handleLeaderboardPrizeSave);
       finalizeLeaderboardPrizeButton.addEventListener("click", handleLeaderboardPrizeFinalize);

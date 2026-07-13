@@ -9,6 +9,9 @@ Run before every release candidate:
 ```bash
 npm run check
 npm run test:release:pintpath
+npm run ocr:benchmark
+npm run smoke:production
+npm run release:evidence
 git diff --check
 ```
 
@@ -16,6 +19,8 @@ Run after real production provider env is configured:
 
 ```bash
 npm run readiness:launch
+npm run smoke:production:auth
+npm run release:evidence:strict
 ```
 
 `readiness:launch` runs the provider check with production semantics and treats warnings as launch-blocking. It should return zero failures and zero blocking warnings before broad public traffic.

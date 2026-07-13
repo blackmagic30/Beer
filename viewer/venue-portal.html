@@ -43,14 +43,42 @@
     <section id="claimPanel" class="panel is-hidden">
       <div class="sectionHeader">
         <div>
-          <div class="eyebrow">Invite-only access</div>
-          <h2>Venue portal access is assigned by Pint Path admin</h2>
+          <div class="eyebrow">Verified venue access</div>
+          <h2>Request access to your venue</h2>
         </div>
-        <p class="muted">For this beta, venue-manager accounts are created manually after we verify the venue contact. This keeps venue information and management tools private.</p>
+        <p class="muted">Every claim is checked manually. Submitting this form never grants immediate dashboard access.</p>
       </div>
-      <div id="claimStatus" class="notice">If you should manage a venue, ask the Pint Path admin to assign your login to that venue. No public claim form is available.</div>
+      <div id="claimStatus" class="notice">Choose the venue you work for and use the verified email on your signed-in Pint Path account.</div>
+      <form id="venueClaimForm" class="form venueClaimForm" style="margin-top:16px;">
+        <label class="field">Pint Path venue
+          <select name="barId" required>
+            <option value="">Loading venues...</option>
+          </select>
+        </label>
+        <input name="barName" type="hidden" />
+        <input name="address" type="hidden" />
+        <input name="suburb" type="hidden" />
+        <div class="formGrid">
+          <label class="field">Your name
+            <input name="requesterName" autocomplete="name" maxlength="120" required />
+          </label>
+          <label class="field">Role at venue
+            <input name="requesterRole" placeholder="Owner, manager, duty manager" maxlength="120" required />
+          </label>
+          <label class="field">Verified account email
+            <input name="contactEmail" type="email" autocomplete="email" required />
+          </label>
+          <label class="field">Phone (optional)
+            <input name="contactPhone" type="tel" autocomplete="tel" />
+          </label>
+        </div>
+        <label class="field">Verification note (optional)
+          <textarea name="message" rows="3" placeholder="How can Pint Path verify your connection to this venue?"></textarea>
+        </label>
+        <button class="button button--primary" type="submit">Submit venue claim</button>
+      </form>
       <div class="actionRow" style="margin-top:16px;">
-        <a id="venuePortalLoginLink" class="button button--primary" href="/account.html">Go to account</a>
+        <a id="venuePortalLoginLink" class="button" href="/account.html">Go to account</a>
         <a class="button" href="/">Back to map</a>
       </div>
       <div id="claimRequests" class="list is-hidden" style="margin-top:16px;"></div>
@@ -65,27 +93,29 @@
           <div id="selectedVenueSummary" class="venueSummaryCard"></div>
           <label class="mobileSectionPicker" for="venueMobileTabSelect">Dashboard section
             <select id="venueMobileTabSelect">
-              <option value="overview">Overview</option>
+              <option value="overview" data-manager-only>Overview</option>
               <option value="redemption">Redeem code</option>
-              <option value="profile">Profile</option>
-              <option value="beers">Beers / stock</option>
-              <option value="happy-hours">Happy hours</option>
-              <option value="specials" data-specials-only>Specials planner</option>
-              <option value="pending-reviews">Pending reviews</option>
-              <option value="report">Monthly report</option>
-              <option value="support">Support</option>
+              <option value="profile" data-manager-only>Profile</option>
+              <option value="beers" data-manager-only>Beers / stock</option>
+              <option value="happy-hours" data-manager-only>Happy hours</option>
+              <option value="specials" data-specials-only data-manager-only>Specials planner</option>
+              <option value="staff-access" data-manager-only>Staff access</option>
+              <option value="pending-reviews" data-manager-only>Pending reviews</option>
+              <option value="report" data-manager-only>Monthly report</option>
+              <option value="support" data-manager-only>Support</option>
             </select>
           </label>
           <nav class="tabNav" role="tablist" aria-label="Bar dashboard sections">
-            <button class="tabButton is-active" type="button" data-tab="overview">Overview</button>
+            <button class="tabButton is-active" type="button" data-tab="overview" data-manager-only>Overview</button>
             <button class="tabButton" type="button" data-tab="redemption">Redeem code</button>
-            <button class="tabButton" type="button" data-tab="profile">Profile</button>
-            <button class="tabButton" type="button" data-tab="beers">Beers / stock</button>
-            <button class="tabButton" type="button" data-tab="happy-hours">Happy hours</button>
-            <button class="tabButton" type="button" data-tab="specials" data-specials-only>Specials planner</button>
-            <button class="tabButton" type="button" data-tab="pending-reviews">Pending reviews</button>
-            <button class="tabButton" type="button" data-tab="report">Monthly report</button>
-            <button class="tabButton" type="button" data-tab="support">Support</button>
+            <button class="tabButton" type="button" data-tab="profile" data-manager-only>Profile</button>
+            <button class="tabButton" type="button" data-tab="beers" data-manager-only>Beers / stock</button>
+            <button class="tabButton" type="button" data-tab="happy-hours" data-manager-only>Happy hours</button>
+            <button class="tabButton" type="button" data-tab="specials" data-specials-only data-manager-only>Specials planner</button>
+            <button class="tabButton" type="button" data-tab="staff-access" data-manager-only>Staff access</button>
+            <button class="tabButton" type="button" data-tab="pending-reviews" data-manager-only>Pending reviews</button>
+            <button class="tabButton" type="button" data-tab="report" data-manager-only>Monthly report</button>
+            <button class="tabButton" type="button" data-tab="support" data-manager-only>Support</button>
           </nav>
           <button id="venueLogoutButton" class="button button--danger venueLogoutButton" type="button">Log out</button>
         </aside>
@@ -135,6 +165,27 @@
               <h2>Pending review</h2>
               <p class="helperCopy">Beer, price, profile, and happy-hour edits save straight to your assigned venue. Only controlled subscription, promotion, and bulk-deletion actions require admin review.</p>
               <div id="pendingChanges" class="list"></div>
+            </article>
+          </section>
+
+          <section class="tabPanel is-hidden" data-panel="staff-access">
+            <article class="panel">
+              <div class="sectionHeader">
+                <div>
+                  <div class="eyebrow">Counter permissions</div>
+                  <h2>Staff access</h2>
+                  <p class="muted">Counter staff can scan codes, record purchases, and reverse their own recent entries. They cannot see analytics, billing, POS credentials, or edit the venue.</p>
+                </div>
+                <span class="pill">Venue scoped</span>
+              </div>
+              <form id="counterStaffForm" class="form staffAccessForm">
+                <label class="field">Staff member public account ID
+                  <input name="accountId" maxlength="32" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="PP-XXXXXXXX" required />
+                </label>
+                <button class="button button--primary" type="submit">Add counter staff</button>
+              </form>
+              <div id="counterStaffStatus" class="notice" role="status" hidden></div>
+              <div id="counterStaffList" class="list" style="margin-top:16px;"></div>
             </article>
           </section>
 
@@ -202,6 +253,7 @@
                 </fieldset>
               </form>
               <div id="memberPurchaseStatus" class="notice" role="status" hidden></div>
+              <div id="pendingCounterReceipts" class="pendingCounterReceipts" hidden></div>
             </article>
 
             <details class="panel redemptionHeroPanel redemptionGuide">
@@ -615,14 +667,36 @@
     <p class="footerCopy">Venue insights are aggregate and directional while the beta grows. We do not expose individual user clickstream or exact user location to venues. Prices may change. Drink responsibly.</p>
   </main>
 
+  <dialog id="voidPintPointDialog" class="reviewDecisionDialog">
+    <form id="voidPintPointForm" class="reviewDecisionDialog__panel" method="dialog">
+      <div>
+        <div class="eyebrow">Audited correction</div>
+        <h2>Reverse Pint Points</h2>
+        <p class="muted">Use this only for a mistaken or cancelled entry. The original record remains in the audit history.</p>
+      </div>
+      <label class="field">Reason
+        <input name="reason" minlength="4" maxlength="240" placeholder="e.g. Wrong member selected" required />
+      </label>
+      <div class="reviewDecisionDialog__actions">
+        <button class="button" type="button" data-cancel-pint-point-void>Cancel</button>
+        <button class="button button--danger" type="submit">Reverse points</button>
+      </div>
+    </form>
+  </dialog>
+
   <script>
     let currentPortal = null;
     let currentDemandPeriod = "today";
     let dashboardPreviewPlan = null;
     let premiumDashboardSection = "action_centre";
     let activeMemberPreviewCode = "";
+    let activeMemberPreviewAccountId = "";
+    let pendingVoidRecordId = "";
     let memberQrStream = null;
     let memberQrTimer = null;
+    const COUNTER_RECEIPT_QUEUE_KEY = "pintPath.counterReceiptQueue.v1";
+    const COUNTER_RECEIPT_QUEUE_TTL_MS = 24 * 60 * 60 * 1000;
+    const COUNTER_RECEIPT_QUEUE_LIMIT = 20;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
       ? viewerConfig.trackedBeers
@@ -1137,7 +1211,9 @@
     }
 
     function showTab(name) {
-      const nextName = name === "specials" && !portalCanManageSpecials() ? "beers" : name;
+      const counterOnly = currentPortal?.accessLevel === "counter_staff";
+      const requestedName = counterOnly ? "redemption" : name;
+      const nextName = requestedName === "specials" && !portalCanManageSpecials() ? "beers" : requestedName;
       if (nextName !== "redemption") stopMemberQrScanner();
       document.querySelectorAll(".tabButton").forEach((button) => {
         const active = button.dataset.tab === nextName;
@@ -1151,6 +1227,16 @@
       });
       const mobileSelect = document.getElementById("venueMobileTabSelect");
       if (mobileSelect) mobileSelect.value = nextName;
+    }
+
+    function syncPortalAccessControls(data) {
+      const counterOnly = data?.accessLevel === "counter_staff";
+      document.body.classList.toggle("venuePortalCounterMode", counterOnly);
+      document.querySelectorAll("[data-manager-only]").forEach((element) => {
+        element.hidden = counterOnly;
+        if ("disabled" in element) element.disabled = counterOnly;
+      });
+      if (counterOnly) showTab("redemption");
     }
 
     function clearStatus(element) {
@@ -1292,11 +1378,16 @@
         portalContent.classList.add("is-hidden");
         portalAccess.classList.add("is-hidden");
         claimPanel.classList.remove("is-hidden");
+        const claimForm = document.getElementById("venueClaimForm");
+        if (claimForm instanceof HTMLFormElement) claimForm.hidden = false;
+        const loginLink = document.getElementById("venuePortalLoginLink");
+        if (loginLink) loginLink.textContent = "Go to account";
         MelbBeerBusiness.setStatus(
           claimStatus,
-          data.message || "Venue portal access is invite-only during beta.",
+          data.message || "Request access to a known Pint Path venue.",
         );
-        claimRequests.innerHTML = "";
+        renderVenueClaimRequests(data.claimRequests || []);
+        void loadClaimVenueOptions(new URLSearchParams(window.location.search).get("venueId"));
         return;
       }
 
@@ -1315,12 +1406,13 @@
 
       const profile = data.profile;
       const tier = data.tier || { tier: profile.membershipTier, analyticsLocked: true };
+      syncPortalAccessControls(data);
       syncTierControls(data);
       selectedVenueSummary.innerHTML = `
         <strong>${escapeHtml(profile.name)}</strong>
         <span>${escapeHtml(profile.suburb || "Melbourne")}</span>
         <span class="pill">${escapeHtml(prettyTier(profile.membershipTier))}</span>
-        ${profile.membershipTier === "pro" ? '<button class="button button--small" type="button" data-manage-venue-billing>Manage billing</button>' : ""}
+        ${data.accessLevel !== "counter_staff" && profile.membershipTier === "pro" ? '<button class="button button--small" type="button" data-manage-venue-billing>Manage billing</button>' : ""}
       `;
 
       const venuePortalTitle = document.getElementById("venuePortalTitle");
@@ -1331,7 +1423,7 @@
       if (venuePortalMeta) {
         const metaParts = [
           profile.suburb || data.selectedVenue?.suburb || null,
-          prettyTier(profile.membershipTier),
+          data.accessLevel === "counter_staff" ? "Counter staff" : prettyTier(profile.membershipTier),
         ].filter(Boolean);
         venuePortalMeta.textContent = metaParts.join(" · ");
         venuePortalMeta.classList.toggle("is-hidden", !metaParts.length);
@@ -1340,6 +1432,15 @@
       const beers = data.inventory?.beers || [];
       const happyHours = data.inventory?.happyHours || [];
       const specials = data.inventory?.specials || [];
+
+      if (data.accessLevel === "counter_staff") {
+        renderDiscountOps(data);
+        renderPendingCounterReceipts();
+        renderDiscountSpecialChoices(data);
+        renderRedemptionItemOptions(data);
+        showTab("redemption");
+        return;
+      }
 
       renderProfileForm(profile);
       renderBeerList(beers);
@@ -1357,8 +1458,10 @@
       renderBusinessToolkit(data);
       renderOverviewData(data);
       renderDiscountOps(data);
+      renderPendingCounterReceipts();
       renderDiscountSpecialChoices(data);
       renderRedemptionItemOptions(data);
+      renderCounterStaff(data);
       renderPendingChanges(data.pendingChanges || []);
       renderAnalytics(data);
       renderMonthlyReport(data);
@@ -1378,6 +1481,41 @@
       acceptsCodesControl.disabled = !currentPortal?.isAdmin;
       document.getElementById("acceptsPintPathCodesField")?.classList.toggle("is-disabled", !currentPortal?.isAdmin);
       renderChecklist(venueTags, tagOptions, profile.venueTags || []);
+    }
+
+    function renderCounterStaff(data) {
+      const list = document.getElementById("counterStaffList");
+      if (!list) return;
+      const staff = Array.isArray(data.staffAssignments) ? data.staffAssignments : [];
+      list.innerHTML = staff.length ? staff.map((assignment) => `
+        <div class="listItem dataRow">
+          <div>
+            <strong>${escapeHtml(assignment.displayName || assignment.publicAccountId || "Counter staff")}</strong>
+            <div class="muted">${escapeHtml(assignment.publicAccountId || "Public account ID unavailable")} · added ${MelbBeerBusiness.formatDate(assignment.createdAt)}</div>
+          </div>
+          ${assignment.publicAccountId ? `<button class="button button--small button--danger" type="button" data-revoke-counter-staff="${escapeHtml(assignment.publicAccountId)}">Remove</button>` : ""}
+        </div>
+      `).join("") : '<div class="listItem muted">No counter-only staff accounts have been added for this venue.</div>';
+      list.querySelectorAll("[data-revoke-counter-staff]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const venueId = selectedVenueId();
+          if (!venueId || !window.confirm(`Remove counter access for ${button.dataset.revokeCounterStaff}?`)) return;
+          const status = document.getElementById("counterStaffStatus");
+          try {
+            button.disabled = true;
+            await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/counter-staff/revoke`, {
+              method: "POST",
+              body: JSON.stringify({ accountId: button.dataset.revokeCounterStaff }),
+            });
+            await loadPortal(venueId);
+            MelbBeerBusiness.setStatus(status, "Counter access removed.");
+          } catch (error) {
+            MelbBeerBusiness.setStatus(status, error.message || "Could not remove counter access.", true);
+          } finally {
+            button.disabled = false;
+          }
+        });
+      });
     }
 
     function premiumKpiCard(item) {
@@ -2527,6 +2665,7 @@
 
     function resetMemberPreview(options = {}) {
       activeMemberPreviewCode = "";
+      activeMemberPreviewAccountId = "";
       const preview = document.getElementById("memberPreviewStatus");
       const fields = document.getElementById("memberPurchaseFields");
       if (preview) {
@@ -2566,6 +2705,124 @@
       return `counter-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     }
 
+    function readPendingCounterReceipts() {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(COUNTER_RECEIPT_QUEUE_KEY) || "[]");
+        const now = Date.now();
+        return (Array.isArray(parsed) ? parsed : [])
+          .filter((entry) => entry && typeof entry === "object")
+          .filter((entry) => Number.isFinite(Date.parse(entry.createdAt)) && now - Date.parse(entry.createdAt) <= COUNTER_RECEIPT_QUEUE_TTL_MS)
+          .slice(-COUNTER_RECEIPT_QUEUE_LIMIT);
+      } catch {
+        window.localStorage.removeItem(COUNTER_RECEIPT_QUEUE_KEY);
+        return [];
+      }
+    }
+
+    function writePendingCounterReceipts(entries) {
+      try {
+        window.localStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, JSON.stringify(entries.slice(-COUNTER_RECEIPT_QUEUE_LIMIT)));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    function queuePendingCounterReceipt(venueId, payload) {
+      const id = `${venueId}:${String(payload.transactionReference || "").toLowerCase()}`;
+      const entries = readPendingCounterReceipts().filter((entry) => entry.id !== id);
+      entries.push({
+        id,
+        venueId,
+        venueName: currentPortal?.selectedVenue?.venueName || currentPortal?.profile?.name || venueId,
+        accountId: payload.accountId,
+        payload,
+        createdAt: new Date().toISOString(),
+        attempts: 0,
+        lastError: null,
+      });
+      const saved = writePendingCounterReceipts(entries);
+      renderPendingCounterReceipts();
+      return { id, saved };
+    }
+
+    function removePendingCounterReceipt(id) {
+      writePendingCounterReceipts(readPendingCounterReceipts().filter((entry) => entry.id !== id));
+      renderPendingCounterReceipts();
+    }
+
+    function markPendingCounterReceiptError(id, message) {
+      const entries = readPendingCounterReceipts().map((entry) => entry.id === id
+        ? { ...entry, attempts: Number(entry.attempts || 0) + 1, lastError: String(message || "Could not reach Pint Path").slice(0, 180) }
+        : entry);
+      writePendingCounterReceipts(entries);
+      renderPendingCounterReceipts();
+    }
+
+    async function retryPendingCounterReceipt(id) {
+      const entry = readPendingCounterReceipts().find((item) => item.id === id);
+      const status = document.getElementById("memberPurchaseStatus");
+      if (!entry) return;
+      MelbBeerBusiness.setStatus(status, `Retrying receipt ${entry.payload?.transactionReference || ""}...`);
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(entry.venueId)}/pint-point-drinks`, {
+          method: "POST",
+          body: JSON.stringify(entry.payload),
+        });
+        removePendingCounterReceipt(id);
+        await loadPortal(entry.venueId);
+        MelbBeerBusiness.setStatus(status, result.idempotentReplay
+          ? "Receipt was already recorded. No duplicate points were added."
+          : `Pending receipt recorded for ${result.accountId}.`);
+      } catch (error) {
+        markPendingCounterReceiptError(id, error.message);
+        MelbBeerBusiness.setStatus(status, `${error.message || "Retry failed."} The receipt is still saved on this device.`, true);
+      }
+    }
+
+    function renderPendingCounterReceipts() {
+      const container = document.getElementById("pendingCounterReceipts");
+      if (!container) return;
+      const venueId = selectedVenueId();
+      const entries = readPendingCounterReceipts().filter((entry) => entry.venueId === venueId);
+      container.hidden = entries.length === 0;
+      container.innerHTML = entries.length ? `
+        <div class="sectionHeader">
+          <div>
+            <div class="eyebrow">Saved on this device</div>
+            <h3>Pending receipts</h3>
+            <p class="muted">Retry with the same receipt reference when the connection returns. Rotating member codes are never stored.</p>
+          </div>
+          <span class="pill">${formatCount(entries.length)} pending</span>
+        </div>
+        <div class="list">
+          ${entries.map((entry) => `
+            <div class="listItem dataRow">
+              <div>
+                <strong>${escapeHtml(entry.payload?.itemName || "Member purchase")}</strong>
+                <div class="muted">${escapeHtml(entry.accountId || "Member")} · ${escapeHtml(entry.payload?.transactionReference || "No reference")} · ${MelbBeerBusiness.formatDate(entry.createdAt)}</div>
+                ${entry.lastError ? `<small class="fieldHint fieldHint--error">${escapeHtml(entry.lastError)}</small>` : ""}
+              </div>
+              <div class="actionRow actionRow--compact">
+                <button class="button button--small button--primary" type="button" data-retry-counter-receipt="${escapeHtml(entry.id)}">Retry</button>
+                <button class="button button--small" type="button" data-remove-counter-receipt="${escapeHtml(entry.id)}">Dismiss</button>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      ` : "";
+      container.querySelectorAll("[data-retry-counter-receipt]").forEach((button) => {
+        button.addEventListener("click", () => void retryPendingCounterReceipt(button.dataset.retryCounterReceipt));
+      });
+      container.querySelectorAll("[data-remove-counter-receipt]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (window.confirm("Dismiss this local receipt only after checking whether it was recorded in Pint Path.")) {
+            removePendingCounterReceipt(button.dataset.removeCounterReceipt);
+          }
+        });
+      });
+    }
+
     async function checkMemberCode() {
       const form = document.getElementById("memberPurchaseForm");
       const status = document.getElementById("memberPurchaseStatus");
@@ -2590,6 +2847,7 @@
           body: JSON.stringify({ code }),
         });
         activeMemberPreviewCode = code;
+        activeMemberPreviewAccountId = String(result.accountId || "");
         renderMemberPreview(result);
         clearStatus(status);
         return result;
@@ -2711,6 +2969,7 @@
       const recent = discounts.recentRedemptions || [];
       const totalRedemptions = Number(discounts.totalRedemptions || 0);
       const totalSavings = formatCurrency(discounts.estimatedSavingsDollars || 0);
+      const counterOnly = data.accessLevel === "counter_staff";
 
       panel.innerHTML = `
         <div class="posSetupCard posSetupCard--wide">
@@ -2719,21 +2978,25 @@
               <div class="eyebrow">Counter activity</div>
               <h3>Recent member purchases</h3>
             </div>
-            <span class="pill">${formatCount(pintPoints.today?.drinkRecords || 0)} today</span>
+            <span class="pill">${counterOnly ? "Counter log" : `${formatCount(pintPoints.today?.drinkRecords || 0)} today`}</span>
           </div>
           <div class="discountRedemptionList">
             ${recentMemberActivity.length ? recentMemberActivity.slice(0, 8).map((item) => `
-              <div class="listItem dataRow">
+              <div class="listItem dataRow ${item.status === "void" ? "is-voided" : ""}">
                 <div>
                   <strong>${escapeHtml(item.itemName || "Member purchase")}</strong>
                   <div class="muted">${escapeHtml(item.publicAccountId || "Pint Path member")} · ${formatCount(item.quantity || 1)} item${Number(item.quantity) === 1 ? "" : "s"} · ${MelbBeerBusiness.formatDate(item.recordedAt)}</div>
+                  ${item.status === "void" ? `<small>Reversed${item.voidReason ? ` · ${escapeHtml(item.voidReason)}` : ""}</small>` : ""}
                 </div>
-                <span class="pill">+${formatCount(item.pointsAwarded || 0)} point${Number(item.pointsAwarded) === 1 ? "" : "s"}</span>
+                <div class="actionRow actionRow--compact">
+                  <span class="pill ${item.status === "void" ? "pill--danger" : ""}">${item.status === "void" ? "Voided" : `+${formatCount(item.pointsAwarded || 0)} point${Number(item.pointsAwarded) === 1 ? "" : "s"}`}</span>
+                  ${item.canVoid ? `<button class="button button--small button--danger" type="button" data-void-pint-point="${escapeHtml(item.id)}">Reverse</button>` : ""}
+                </div>
               </div>
             `).join("") : '<div class="listItem muted">Validated member purchases will appear here for staff reconciliation.</div>'}
           </div>
         </div>
-        <div class="posSetupCard">
+        <div class="posSetupCard" data-manager-ops>
           <div class="sectionHeader" style="margin-bottom:10px;">
             <div>
               <div class="eyebrow">Discount proof</div>
@@ -2764,7 +3027,7 @@
             `).join("") : '<div class="listItem muted">No discount redemptions logged yet.</div>'}
           </div>
         </div>
-        <div class="posSetupCard">
+        <div class="posSetupCard" data-manager-ops>
           <div class="sectionHeader" style="margin-bottom:10px;">
             <div>
               <div class="eyebrow">POS webhook</div>
@@ -2808,6 +3071,22 @@
           </div>
         </div>
       `;
+      panel.querySelectorAll("[data-manager-ops]").forEach((element) => {
+        element.hidden = counterOnly;
+      });
+      panel.querySelectorAll("[data-void-pint-point]").forEach((button) => {
+        button.addEventListener("click", () => openPintPointVoidDialog(button.dataset.voidPintPoint));
+      });
+    }
+
+    function openPintPointVoidDialog(recordId) {
+      const dialog = document.getElementById("voidPintPointDialog");
+      const form = document.getElementById("voidPintPointForm");
+      if (!(dialog instanceof HTMLDialogElement) || !(form instanceof HTMLFormElement)) return;
+      pendingVoidRecordId = String(recordId || "");
+      form.reset();
+      dialog.showModal();
+      window.setTimeout(() => field(form, "reason")?.focus(), 0);
     }
 
     function inferSpecialSavingsDollars(special) {
@@ -3615,6 +3894,75 @@
       renderPortal(data);
     }
 
+    function syncClaimVenueFields() {
+      const form = document.getElementById("venueClaimForm");
+      if (!(form instanceof HTMLFormElement)) return;
+      const option = field(form, "barId").selectedOptions[0];
+      field(form, "barName").value = option?.dataset.venueName || "";
+      field(form, "address").value = option?.dataset.venueAddress || "";
+      field(form, "suburb").value = option?.dataset.venueSuburb || "";
+    }
+
+    async function loadClaimVenueOptions(preferredVenueId = null) {
+      const form = document.getElementById("venueClaimForm");
+      if (!(form instanceof HTMLFormElement) || form.dataset.venuesLoaded === "true") return;
+      const select = field(form, "barId");
+      try {
+        const result = await MelbBeerBusiness.apiFetch("/api/business/venues?limit=1000");
+        const venues = Array.isArray(result.venues) ? result.venues : [];
+        select.innerHTML = '<option value="">Choose your venue</option>' + venues.map((venue) => `
+          <option value="${escapeHtml(venue.id)}"
+            data-venue-name="${escapeHtml(venue.name)}"
+            data-venue-address="${escapeHtml(venue.address || "")}"
+            data-venue-suburb="${escapeHtml(venue.suburb || "")}">
+            ${escapeHtml(venue.name)}${venue.suburb ? ` · ${escapeHtml(venue.suburb)}` : ""}
+          </option>
+        `).join("");
+        if (preferredVenueId && venues.some((venue) => venue.id === preferredVenueId)) {
+          select.value = preferredVenueId;
+        }
+        form.dataset.venuesLoaded = "true";
+        syncClaimVenueFields();
+      } catch (error) {
+        select.innerHTML = '<option value="">Venue list unavailable</option>';
+        MelbBeerBusiness.setStatus(claimStatus, error.message || "Could not load the venue list.", true);
+      }
+    }
+
+    function renderVenueClaimRequests(requests) {
+      if (!Array.isArray(requests) || requests.length === 0) {
+        claimRequests.innerHTML = "";
+        claimRequests.classList.add("is-hidden");
+        return;
+      }
+      claimRequests.classList.remove("is-hidden");
+      claimRequests.innerHTML = requests.map((claim) => `
+        <article class="listItem">
+          <strong>${escapeHtml(claim.barName)}</strong>
+          <span class="pill">${escapeHtml(claim.status)}</span>
+          <div class="muted">${escapeHtml(claim.suburb || "Area unavailable")} · submitted ${escapeHtml(MelbBeerBusiness.formatDate(claim.createdAt))}</div>
+          ${claim.reviewNote ? `<div class="muted">Admin note: ${escapeHtml(claim.reviewNote)}</div>` : ""}
+        </article>
+      `).join("");
+    }
+
+    async function submitVenueClaim(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      syncClaimVenueFields();
+      const body = Object.fromEntries(new FormData(form).entries());
+      try {
+        const result = await MelbBeerBusiness.apiFetch("/api/business/venue-claim-requests", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        MelbBeerBusiness.setStatus(claimStatus, result.message || "Venue claim submitted for manual review.");
+        await loadPortal(body.barId || null);
+      } catch (error) {
+        MelbBeerBusiness.setStatus(claimStatus, error.message || "Could not submit the venue claim.", true);
+      }
+    }
+
     function selectedVenueId() {
       return currentPortal?.selectedVenue?.venueId;
     }
@@ -3658,6 +4006,11 @@
       const discountCodeFromQr = urlParams.get("discountCode");
       const freePintCodeFromQr = urlParams.get("freePintCode");
       const requestedTab = urlParams.get("tab");
+      const venueClaimForm = document.getElementById("venueClaimForm");
+      if (venueClaimForm instanceof HTMLFormElement) {
+        venueClaimForm.addEventListener("submit", submitVenueClaim);
+        field(venueClaimForm, "barId").addEventListener("change", syncClaimVenueFields);
+      }
       configurePortalTabs();
       showTab("overview");
       if (discountCodeFromQr && discountRedemptionFormElement) {
@@ -3705,7 +4058,15 @@
         if (loginRequired) {
           const returnPath = `${window.location.pathname}${window.location.search}`;
           const loginLink = document.getElementById("venuePortalLoginLink");
-          if (loginLink) loginLink.href = `/account.html?next=${encodeURIComponent(returnPath)}`;
+          if (loginLink) {
+            loginLink.href = `/account.html?next=${encodeURIComponent(returnPath)}`;
+            loginLink.textContent = "Log in to request access";
+          }
+          if (venueClaimForm instanceof HTMLFormElement) venueClaimForm.hidden = true;
+          MelbBeerBusiness.setStatus(
+            claimStatus,
+            "Log in first, then choose your venue and submit a verified access request.",
+          );
           claimPanel.classList.remove("is-hidden");
         }
       }
@@ -3747,22 +4108,28 @@
           const referenceInput = field(memberPurchaseForm, "transactionReference");
           const transactionReference = String(referenceInput.value || "").trim() || generateCounterReference();
           referenceInput.value = transactionReference;
+          const payload = {
+            accountId: activeMemberPreviewAccountId,
+            itemName: field(memberPurchaseForm, "itemName").value,
+            beverageCategory: field(memberPurchaseForm, "beverageCategory").value,
+            quantity: Number(field(memberPurchaseForm, "quantity").value || 1),
+            transactionReference,
+            notes: null,
+          };
+          if (!payload.accountId) {
+            MelbBeerBusiness.setStatus(memberPurchaseStatus, "Check the current member code before recording this purchase.", true);
+            return;
+          }
+          const queuedReceipt = queuePendingCounterReceipt(venueId, payload);
           const submitButton = document.getElementById("recordMemberPurchaseButton");
           if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
           MelbBeerBusiness.setStatus(memberPurchaseStatus, "Recording member purchase...");
           try {
             const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/pint-point-drinks`, {
               method: "POST",
-              body: JSON.stringify({
-                code,
-                accountId: null,
-                itemName: field(memberPurchaseForm, "itemName").value,
-                beverageCategory: field(memberPurchaseForm, "beverageCategory").value,
-                quantity: Number(field(memberPurchaseForm, "quantity").value || 1),
-                transactionReference,
-                notes: null,
-              }),
+              body: JSON.stringify(payload),
             });
+            removePendingCounterReceipt(queuedReceipt.id);
             const replayCopy = result.idempotentReplay ? " This receipt was already logged; no duplicate points were added." : "";
             memberPurchaseForm.reset();
             resetMemberPreview({ keepStatus: true });
@@ -3773,7 +4140,72 @@
             );
             memberCodeInput?.focus({ preventScroll: true });
           } catch (error) {
-            MelbBeerBusiness.setStatus(memberPurchaseStatus, error.message || "Could not record this member purchase.", true);
+            if (queuedReceipt.saved) markPendingCounterReceiptError(queuedReceipt.id, error.message);
+            MelbBeerBusiness.setStatus(
+              memberPurchaseStatus,
+              queuedReceipt.saved
+                ? `${error.message || "Could not record this member purchase."} The receipt is saved on this device for a safe retry.`
+                : `${error.message || "Could not record this member purchase."} This browser could not save the receipt. Keep reference ${transactionReference} and retry before serving another member.`,
+              true,
+            );
+          } finally {
+            if (submitButton instanceof HTMLButtonElement) submitButton.disabled = false;
+          }
+        });
+      }
+
+      const voidDialog = document.getElementById("voidPintPointDialog");
+      const voidForm = document.getElementById("voidPintPointForm");
+      document.querySelector("[data-cancel-pint-point-void]")?.addEventListener("click", () => {
+        pendingVoidRecordId = "";
+        if (voidDialog instanceof HTMLDialogElement) voidDialog.close();
+      });
+      if (voidForm instanceof HTMLFormElement) {
+        voidForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const venueId = selectedVenueId();
+          const recordId = pendingVoidRecordId;
+          const status = document.getElementById("memberPurchaseStatus");
+          if (!venueId || !recordId) return;
+          const submitButton = voidForm.querySelector('button[type="submit"]');
+          try {
+            if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/pint-point-drinks/${encodeURIComponent(recordId)}/void`, {
+              method: "POST",
+              body: JSON.stringify({ reason: field(voidForm, "reason").value }),
+            });
+            pendingVoidRecordId = "";
+            if (voidDialog instanceof HTMLDialogElement) voidDialog.close();
+            await loadPortal(venueId);
+            MelbBeerBusiness.setStatus(status, result.copy || "Pint Points reversed with an audit record.");
+          } catch (error) {
+            MelbBeerBusiness.setStatus(status, error.message || "Could not reverse this purchase.", true);
+          } finally {
+            if (submitButton instanceof HTMLButtonElement) submitButton.disabled = false;
+          }
+        });
+      }
+
+      const counterStaffForm = document.getElementById("counterStaffForm");
+      if (counterStaffForm instanceof HTMLFormElement) {
+        counterStaffForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const venueId = selectedVenueId();
+          const status = document.getElementById("counterStaffStatus");
+          if (!venueId) return;
+          const submitButton = counterStaffForm.querySelector('button[type="submit"]');
+          try {
+            if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
+            const accountId = String(field(counterStaffForm, "accountId").value || "").trim().toUpperCase();
+            await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/counter-staff`, {
+              method: "POST",
+              body: JSON.stringify({ accountId }),
+            });
+            counterStaffForm.reset();
+            await loadPortal(venueId);
+            MelbBeerBusiness.setStatus(status, `Counter access added for ${accountId}.`);
+          } catch (error) {
+            MelbBeerBusiness.setStatus(status, error.message || "Could not add counter access.", true);
           } finally {
             if (submitButton instanceof HTMLButtonElement) submitButton.disabled = false;
           }

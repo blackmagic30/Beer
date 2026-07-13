@@ -3434,6 +3434,39 @@ button.adminFocusRail__item:focus-visible {
   opacity: 0.48;
 }
 
+.pendingCounterReceipts {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.pendingCounterReceipts[hidden] {
+  display: none;
+}
+
+.staffAccessForm {
+  max-width: 640px;
+}
+
+.discountRedemptionList .is-voided {
+  border-color: rgba(239, 68, 68, 0.22);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.discountRedemptionList .is-voided > div:first-child {
+  opacity: 0.72;
+}
+
+.venuePortalCounterMode .dashboardMain {
+  max-width: 920px;
+}
+
+.venuePortalCounterMode .dashboardSidebar .tabNav {
+  min-height: 0;
+}
+
 .memberPreviewStatus {
   display: grid;
   gap: 12px;

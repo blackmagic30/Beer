@@ -27,6 +27,8 @@ import {
   type LeaderboardPrizeCampaign,
   type PendingVenueDetails,
   type PintPointDrinkRecord,
+  type VenueManagerAssignment,
+  type VenuePintPointActivity,
   type PubGolfVenueCandidate,
   type PublicVenuePriceRecord,
   type SavedItem,
@@ -79,6 +81,7 @@ import type {
   AuthSupabaseSessionInput,
   BarBeerInput,
   BarClaimRequestInput,
+  VenueClaimReviewInput,
   BarHappyHourInput,
   BarPendingChangeReviewInput,
   BarProfileInput,
@@ -103,6 +106,7 @@ import type {
   MonthlyReportGenerateInput,
   PintPointMemberPreviewInput,
   PintPointDrinkRecordInput,
+  PintPointDrinkVoidInput,
   PosDiscountRedemptionInput,
   PriceRecordsQuery,
   PubGolfPlanInput,
@@ -115,6 +119,7 @@ import type {
   VenueInterestStatusInput,
   VenueManagerAssignmentInput,
   VenueManagerRevokeInput,
+  VenueCounterStaffAssignmentInput,
   VenueOutreachInput,
   VenuePortalQuery,
   VenueRequestInput,
@@ -628,6 +633,7 @@ const DISCOUNT_PASS_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const FREE_PINT_REWARD_POINTS = 50;
 const FREE_PINT_REWARD_CODE_MINUTES = 10;
 const PINT_POINTS_DAILY_CAP = 8;
+const COUNTER_STAFF_VOID_WINDOW_MINUTES = 15;
 
 function generateDiscountCode(): string {
   return Array.from({ length: 6 }, () =>
@@ -769,6 +775,9 @@ function sanitizeVenuePintPointDrinkRecord(record: PintPointDrinkRecord) {
     isAlcoholic: record.isAlcoholic,
     pointsAwarded: record.pointsAwarded,
     source: record.source,
+    status: record.status,
+    voidedAt: record.voidedAt,
+    voidReason: record.voidReason,
     recordedAt: record.recordedAt,
   };
 }
@@ -2561,7 +2570,11 @@ export class BusinessService {
     return account.role === "admin" || account.subscriptionStatus === "admin";
   }
 
-  private requireAssignedVenue(account: BusinessAccount, venueId: string) {
+  private requireAssignedVenue(
+    account: BusinessAccount,
+    venueId: string,
+    requiredAccess: "manager" | "counter" = "manager",
+  ) {
     if (this.isAdmin(account)) {
       return null;
     }
@@ -2589,7 +2602,58 @@ export class BusinessService {
       throw new AppError("You can only access assigned venues.", 403);
     }
 
+    if (requiredAccess === "manager" && assignment.accessLevel !== "manager") {
+      this.auditSecurity({
+        actor: account,
+        action: "venue_counter_staff_privilege_blocked",
+        targetType: "venue",
+        targetId: venueId,
+        metadata: { accessLevel: assignment.accessLevel },
+      });
+      throw new AppError("Venue manager access required for this action.", 403);
+    }
+
     return assignment;
+  }
+
+  private canVoidVenuePintPointActivity(
+    account: BusinessAccount,
+    assignment: VenueManagerAssignment | null,
+    activity: VenuePintPointActivity,
+    now = Date.now(),
+  ): boolean {
+    if (activity.status !== "active") {
+      return false;
+    }
+    if (this.isAdmin(account) || assignment?.accessLevel === "manager") {
+      return true;
+    }
+    const recordedAt = Date.parse(activity.recordedAt);
+    return activity.recordedByUserId === account.id
+      && Number.isFinite(recordedAt)
+      && now - recordedAt >= 0
+      && now - recordedAt <= COUNTER_STAFF_VOID_WINDOW_MINUTES * 60_000;
+  }
+
+  private sanitizeVenuePintPointActivity(
+    account: BusinessAccount,
+    assignment: VenueManagerAssignment | null,
+    activity: VenuePintPointActivity,
+  ) {
+    return {
+      id: activity.id,
+      publicAccountId: activity.publicAccountId,
+      itemName: activity.itemName,
+      beverageCategory: activity.beverageCategory,
+      quantity: activity.quantity,
+      pointsAwarded: activity.pointsAwarded,
+      source: activity.source,
+      status: activity.status,
+      voidedAt: activity.voidedAt,
+      voidReason: activity.voidReason,
+      recordedAt: activity.recordedAt,
+      canVoid: this.canVoidVenuePintPointActivity(account, assignment, activity),
+    };
   }
 
   private requireBarSpecialsTier(account: BusinessAccount, venueId: string): void {
@@ -4038,7 +4102,7 @@ export class BusinessService {
   }
 
   redeemDiscountPass(account: BusinessAccount, venueId: string, input: DiscountRedemptionInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
+    const assignment = this.requireAssignedVenue(account, venueId, "counter");
     const venue = this.getDiscountVenueIdentity(venueId, assignment);
     return this.redeemDiscountPassForVenue({
       actor: account,
@@ -4238,7 +4302,7 @@ export class BusinessService {
   }
 
   previewPintPointMember(account: BusinessAccount, venueId: string, input: PintPointMemberPreviewInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
+    const assignment = this.requireAssignedVenue(account, venueId, "counter");
     const venue = this.getDiscountVenueIdentity(venueId, assignment);
     const profile = this.repository.getBarProfile(venueId);
     if (!profile?.acceptsPintPathCodes) {
@@ -4367,7 +4431,7 @@ export class BusinessService {
   }
 
   recordPintPointDrink(account: BusinessAccount, venueId: string, input: PintPointDrinkRecordInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
+    const assignment = this.requireAssignedVenue(account, venueId, "counter");
     const venue = this.getDiscountVenueIdentity(venueId, assignment);
     const profile = this.repository.getBarProfile(venueId);
     if (!profile?.acceptsPintPathCodes) {
@@ -4481,8 +4545,89 @@ export class BusinessService {
     };
   }
 
+  voidPintPointDrink(
+    account: BusinessAccount,
+    venueId: string,
+    recordId: string,
+    input: PintPointDrinkVoidInput,
+  ) {
+    const assignment = this.requireAssignedVenue(account, venueId, "counter");
+    const record = this.repository.getPintPointDrinkRecordById(recordId);
+    if (!record || record.venueId !== venueId) {
+      throw new AppError("Pint Points purchase record not found for this venue.", 404);
+    }
+
+    const isManager = this.isAdmin(account) || assignment?.accessLevel === "manager";
+    if (!isManager && record.recordedByUserId !== account.id) {
+      throw new AppError("Counter staff can only reverse purchases they recorded themselves.", 403);
+    }
+
+    if (!isManager && record.status === "active") {
+      const recordedAt = Date.parse(record.recordedAt);
+      const ageMs = Date.now() - recordedAt;
+      if (!Number.isFinite(recordedAt) || ageMs < 0 || ageMs > COUNTER_STAFF_VOID_WINDOW_MINUTES * 60_000) {
+        throw new AppError(
+          `Counter staff can reverse a purchase for ${COUNTER_STAFF_VOID_WINDOW_MINUTES} minutes. Ask a venue manager after that.`,
+          403,
+        );
+      }
+    }
+
+    const now = nowIso();
+    const result = this.repository.voidPintPointDrinkRecord({
+      recordId,
+      venueId,
+      actorUserId: account.id,
+      reason: input.reason,
+      voidedAt: now,
+    });
+    if (!result) {
+      throw new AppError("Pint Points purchase record not found for this venue.", 404);
+    }
+
+    const member = this.repository.getAccountById(result.record.userId);
+    const wallet = member ? this.getPintPointWalletForAccount(member, now) : null;
+    if (!result.idempotentReplay) {
+      if (member) {
+        this.recordUserActivity({
+          account: member,
+          eventType: "pint_point_drink_voided",
+          relatedEntityType: "venue",
+          relatedEntityId: venueId,
+          metadata: {
+            drinkRecordId: recordId,
+            pointsReversed: result.record.pointsAwarded,
+          },
+        });
+      }
+      this.auditSecurity({
+        actor: account,
+        action: "pint_point_drink_voided",
+        targetType: "pint_point_drink_record",
+        targetId: recordId,
+        metadata: {
+          venueId,
+          pointsReversed: result.record.pointsAwarded,
+          reason: input.reason,
+          accessLevel: assignment?.accessLevel ?? "admin",
+        },
+      });
+    }
+
+    return {
+      record: sanitizeVenuePintPointDrinkRecord(result.record),
+      accountId: member?.publicAccountId ?? null,
+      pointsReversed: result.record.pointsAwarded,
+      wallet,
+      idempotentReplay: result.idempotentReplay,
+      copy: result.idempotentReplay
+        ? "This purchase was already reversed. No further points changed."
+        : `${result.record.pointsAwarded} Pint Point${result.record.pointsAwarded === 1 ? " was" : "s were"} reversed with an audit record.`,
+    };
+  }
+
   handleFreePintRewardCode(account: BusinessAccount, venueId: string, input: FreePintRewardDecisionInput) {
-    const assignment = this.requireAssignedVenue(account, venueId);
+    const assignment = this.requireAssignedVenue(account, venueId, "counter");
     const venue = this.getDiscountVenueIdentity(venueId, assignment);
     const profile = this.repository.getBarProfile(venueId);
     const tier = profile?.membershipTier ?? "basic";
@@ -8119,8 +8264,21 @@ export class BusinessService {
       : this.repository.listVenueManagerAssignments({ userId: account.id, activeOnly: true, limit: 100 });
 
     if (!isAdmin && assignments.length === 0) {
+      const claimRequests = this.repository
+        .listBarClaimRequests({ userId: account.id, limit: 20 })
+        .map((claim) => ({
+          id: claim.id,
+          barId: claim.barId,
+          barName: claim.barName,
+          suburb: claim.suburb,
+          requesterRole: claim.requesterRole,
+          status: claim.status,
+          reviewNote: claim.reviewNote,
+          createdAt: claim.createdAt,
+          reviewedAt: claim.reviewedAt,
+        }));
       return {
-        accessState: "invite_required",
+        accessState: "claim_required",
         isAdmin,
         assignments: [],
         selectedVenue: null,
@@ -8135,8 +8293,10 @@ export class BusinessService {
         demandDashboard: null,
         dailySpecialsPlanner: null,
         updateLink: null,
-        claimRequests: [],
-        message: "Venue management is invite-only during beta. Ask the Pint Path admin to assign your account to a venue.",
+        claimRequests,
+        message: claimRequests.some((claim) => claim.status === "pending")
+          ? "Your venue claim is waiting for manual verification. You will get dashboard access only after an admin approves it."
+          : "Request access to a known Pint Path venue. Every claim is manually verified before dashboard access is granted.",
         privacyCopy: "Venue insights are aggregated and privacy-safe. Individual user clickstream and exact location are never shown.",
       };
     }
@@ -8159,19 +8319,93 @@ export class BusinessService {
 
     const assignment = isAdmin
       ? assignments.find((item) => item.venueId === selectedVenueId) ?? null
-      : this.requireAssignedVenue(account, selectedVenueId);
+      : this.requireAssignedVenue(account, selectedVenueId, "counter");
     if (!isAdmin && !assignment) {
       throw new AppError("You can only access assigned venues.", 403);
     }
 
     const venueName = assignment?.venueName ?? selectedVenueId;
     const suburb = assignment?.suburb ?? null;
+    const accessLevel = isAdmin ? "manager" : assignment?.accessLevel ?? "counter_staff";
+    const profile = this.getOrBuildBarProfile({ barId: selectedVenueId, name: venueName, suburb });
+
+    if (accessLevel === "counter_staff") {
+      const recentActivity = this.repository
+        .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
+        .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity));
+      const counterBeers = this.repository
+        .listBarBeers(selectedVenueId)
+        .filter((beer) => beer.inStock)
+        .map((beer) => ({
+          id: beer.id,
+          beerName: beer.beerName,
+          serveSize: beer.serveSize,
+          price: beer.price,
+          onTap: beer.onTap,
+          inStock: beer.inStock,
+        }));
+      const counterSpecials = this.repository
+        .listBarSpecials(selectedVenueId)
+        .filter((special) => special.active !== false)
+        .map((special) => ({ id: special.id, title: special.title }));
+
+      this.trackEvent(account, {
+        anonymousSessionId: null,
+        eventType: "venue_portal_viewed",
+        venueId: selectedVenueId,
+        beerId: null,
+        suburb,
+        metadata: { accessLevel },
+      });
+
+      return {
+        accessState: "counter_staff",
+        accessLevel,
+        isAdmin: false,
+        assignments: assignments.map((item) => ({
+          venueId: item.venueId,
+          venueName: item.venueName,
+          suburb: item.suburb,
+          accessLevel: item.accessLevel,
+        })),
+        selectedVenue: { venueId: selectedVenueId, venueName, suburb },
+        profile: {
+          barId: profile.barId,
+          name: profile.name,
+          suburb: profile.suburb,
+          membershipTier: profile.membershipTier,
+          acceptsPintPathCodes: profile.acceptsPintPathCodes,
+        },
+        tier: null,
+        inventory: { beers: counterBeers, happyHours: [], specials: counterSpecials },
+        pendingChanges: [],
+        insights: null,
+        analytics: null,
+        demandDashboard: null,
+        paidVenueIntelligence: null,
+        dailySpecialsPlanner: null,
+        discounts: null,
+        pintPoints: {
+          today: null,
+          month: null,
+          recentActivity,
+          rewardThreshold: FREE_PINT_REWARD_POINTS,
+          copy: "Counter access records member purchases and rewards only. It cannot edit venue data or view private business analytics.",
+        },
+        posIntegration: null,
+        monthlyReport: null,
+        businessToolkit: null,
+        staffAssignments: [],
+        updateLink: null,
+        privacyCopy: "Counter staff see only the public member ID needed to record a purchase.",
+      };
+    }
+
     const rawInsights = this.repository.getVenueManagerInsights({
       venueId: selectedVenueId,
       suburb,
       staleBefore: daysAgoIso(30),
     });
-    const profile = this.getOrBuildBarProfile({ barId: selectedVenueId, name: venueName, suburb });
     const venueArea = profile.suburb ?? suburb ?? profile.area ?? null;
     const capabilities = getBarTierCapabilities(profile.membershipTier, isAdmin);
     const venueInsightPrivacyThreshold = Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE);
@@ -8300,7 +8534,22 @@ export class BusinessService {
       startIso: reportMonthRange.startsAt,
       endIso: reportMonthRange.endsAt,
     });
-    const recentPintPointActivity = this.repository.listPintPointDrinkRecordsForVenue(selectedVenueId, 12);
+    const recentPintPointActivity = this.repository
+      .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
+      .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity));
+    const staffAssignments = this.repository
+      .listVenueManagerAssignments({ venueId: selectedVenueId, activeOnly: true, limit: 100 })
+      .filter((item) => item.accessLevel === "counter_staff")
+      .map((item) => {
+        const staffAccount = this.repository.getAccountById(item.userId);
+        return {
+          id: item.id,
+          publicAccountId: staffAccount?.publicAccountId ?? null,
+          displayName: staffAccount?.displayName ?? null,
+          accessLevel: item.accessLevel,
+          createdAt: item.createdAt,
+        };
+      });
     const posIntegration = this.getVenuePosIntegration(account, selectedVenueId);
     const monthlyReport = capabilities.monthlyReports
       ? savedMonthlyReport ?? {
@@ -8375,6 +8624,7 @@ export class BusinessService {
 
     return {
       isAdmin,
+      accessLevel,
       assignments,
       selectedVenue: {
         venueId: selectedVenueId,
@@ -8406,6 +8656,7 @@ export class BusinessService {
         copy: "Pint Points count only paid alcoholic beverages. Free Pint Rewards do not earn another point.",
       },
       posIntegration,
+      staffAssignments,
       monthlyReport,
       businessToolkit: {
         demandSnapshot,
@@ -8422,23 +8673,149 @@ export class BusinessService {
     };
   }
 
+  assignVenueCounterStaff(
+    account: BusinessAccount,
+    venueId: string,
+    input: VenueCounterStaffAssignmentInput,
+  ) {
+    const managerAssignment = this.requireAssignedVenue(account, venueId);
+    const staffAccount = this.repository.getAccountByPublicAccountId(input.accountId);
+    if (!staffAccount) {
+      throw new AppError("Pint Path account ID not found.", 404);
+    }
+    if (staffAccount.id === account.id) {
+      throw new AppError("Your manager assignment already includes counter access.", 409);
+    }
+    this.requireVerifiedBarAccount(staffAccount);
+
+    const existing = this.repository.getVenueManagerAssignment({
+      userId: staffAccount.id,
+      venueId,
+      activeOnly: true,
+    });
+    if (existing?.accessLevel === "manager") {
+      throw new AppError("That account is already a manager for this venue.", 409);
+    }
+
+    const assignment = this.repository.assignVenueManager({
+      id: crypto.randomUUID(),
+      userId: staffAccount.id,
+      venueId,
+      venueName: managerAssignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
+      suburb: managerAssignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
+      accessLevel: "counter_staff",
+      approvedBy: account.id,
+      now: nowIso(),
+    });
+
+    this.auditSecurity({
+      actor: account,
+      action: "venue_counter_staff_assigned",
+      targetType: "venue_manager_assignment",
+      targetId: assignment.id,
+      metadata: {
+        venueId,
+        staffPublicAccountId: staffAccount.publicAccountId,
+      },
+    });
+
+    return {
+      assignment: {
+        ...assignment,
+        userId: undefined,
+        publicAccountId: staffAccount.publicAccountId,
+        displayName: staffAccount.displayName,
+      },
+    };
+  }
+
+  revokeVenueCounterStaff(
+    account: BusinessAccount,
+    venueId: string,
+    input: VenueCounterStaffAssignmentInput,
+  ) {
+    this.requireAssignedVenue(account, venueId);
+    const staffAccount = this.repository.getAccountByPublicAccountId(input.accountId);
+    if (!staffAccount) {
+      throw new AppError("Pint Path account ID not found.", 404);
+    }
+    const existing = this.repository.getVenueManagerAssignment({
+      userId: staffAccount.id,
+      venueId,
+      activeOnly: true,
+    });
+    if (!existing || existing.accessLevel !== "counter_staff") {
+      throw new AppError("Active counter-staff assignment not found.", 404);
+    }
+    const assignment = this.repository.revokeVenueManager({
+      userId: staffAccount.id,
+      venueId,
+      now: nowIso(),
+    });
+    if (!assignment) {
+      throw new AppError("Counter-staff assignment not found.", 404);
+    }
+
+    this.auditSecurity({
+      actor: account,
+      action: "venue_counter_staff_revoked",
+      targetType: "venue_manager_assignment",
+      targetId: assignment.id,
+      metadata: {
+        venueId,
+        staffPublicAccountId: staffAccount.publicAccountId,
+      },
+    });
+
+    return {
+      assignment: {
+        ...assignment,
+        userId: undefined,
+        publicAccountId: staffAccount.publicAccountId,
+        displayName: staffAccount.displayName,
+      },
+    };
+  }
+
   createBarClaimRequest(account: BusinessAccount, input: BarClaimRequestInput) {
     this.requireVerifiedBarAccount(account);
-    if (!this.isAdmin(account)) {
-      throw new AppError("Venue manager access is invite-only during beta.", 403);
+    const barId = input.barId?.trim();
+    if (!barId) {
+      throw new AppError("Choose a known Pint Path venue before requesting access.", 400);
+    }
+
+    const contactEmail = normalizeEmail(input.contactEmail);
+    if (contactEmail !== normalizeEmail(account.email)) {
+      throw new AppError("Use the verified email address for your signed-in Pint Path account.", 400);
+    }
+
+    const profile = this.repository.getBarProfile(barId);
+    const location = this.repository.getVenueLocationCache(barId);
+    const priceRecord = this.repository.listLatestPriceRecords(1, barId)[0] ?? null;
+    if (!profile && !location && !priceRecord) {
+      throw new AppError("That venue is not in Pint Path yet. Submit it as a missing venue before claiming it.", 404);
+    }
+
+    const existingClaim = this.repository.getPendingBarClaimRequest({ userId: account.id, barId });
+    if (existingClaim) {
+      return {
+        claim: existingClaim,
+        duplicate: true,
+        message: "This venue claim is already waiting for manual verification.",
+      };
     }
 
     const now = nowIso();
     const claim = this.repository.createBarClaimRequest({
       id: crypto.randomUUID(),
       userId: account.id,
-      barId: input.barId,
-      barName: input.barName,
-      address: input.address,
-      suburb: input.suburb,
+      barId,
+      barName: profile?.name ?? location?.venueName ?? priceRecord?.venueName ?? input.barName,
+      address: profile?.address ?? input.address,
+      suburb: profile?.suburb ?? location?.suburb ?? priceRecord?.suburb ?? input.suburb,
       requesterName: input.requesterName,
       requesterRole: input.requesterRole,
-      contactEmail: normalizeEmail(input.contactEmail),
+      contactEmail,
       contactPhone: input.contactPhone,
       message: input.message,
       now,
@@ -8465,6 +8842,84 @@ export class BusinessService {
 
   createVenueClaimRequest(account: BusinessAccount, input: BarClaimRequestInput) {
     return this.createBarClaimRequest(account, input);
+  }
+
+  reviewVenueClaimRequest(admin: BusinessAccount, claimId: string, input: VenueClaimReviewInput) {
+    if (!this.isAdmin(admin)) {
+      throw new AppError("Admin access required.", 403);
+    }
+
+    const claim = this.repository.getBarClaimRequestById(claimId);
+    if (!claim) {
+      throw new AppError("Venue claim not found.", 404);
+    }
+    if (claim.status !== "pending") {
+      if (claim.status === input.status) {
+        return {
+          claim,
+          assignment: claim.status === "approved" && claim.barId
+            ? this.repository.getVenueManagerAssignment({ userId: claim.userId, venueId: claim.barId })
+            : null,
+          duplicate: true,
+          message: `This venue claim was already ${claim.status}.`,
+        };
+      }
+      throw new AppError(`This venue claim was already ${claim.status}.`, 409);
+    }
+
+    const claimant = this.repository.getAccountById(claim.userId);
+    if (!claimant || claimant.status !== "active") {
+      throw new AppError("The claimant account is no longer active.", 409);
+    }
+    if (input.status === "approved" && !claim.barId) {
+      throw new AppError("Choose a known venue before approving this claim.", 400);
+    }
+
+    const reviewedAt = nowIso();
+    const result = this.repository.runInTransaction(() => {
+      const assignment = input.status === "approved" && claim.barId
+        ? this.repository.assignVenueManager({
+            id: crypto.randomUUID(),
+            userId: claim.userId,
+            venueId: claim.barId,
+            venueName: claim.barName,
+            suburb: claim.suburb,
+            accessLevel: "manager",
+            approvedBy: admin.id,
+            now: reviewedAt,
+          })
+        : null;
+      const reviewed = this.repository.reviewBarClaimRequest({
+        id: claim.id,
+        status: input.status,
+        reviewNote: input.reviewNote,
+        reviewedBy: admin.id,
+        reviewedAt,
+      });
+      if (!reviewed) {
+        throw new AppError("Venue claim could not be reviewed.", 409);
+      }
+      return { claim: reviewed, assignment };
+    });
+
+    this.auditSecurity({
+      actor: admin,
+      action: "admin_venue_claim_review",
+      targetType: "venue_claim_request",
+      targetId: claim.id,
+      metadata: {
+        status: input.status,
+        venueId: claim.barId,
+        claimantUserId: claim.userId,
+      },
+    });
+
+    return {
+      ...result,
+      message: input.status === "approved"
+        ? "Venue claim approved and manager access assigned."
+        : "Venue claim rejected without granting venue access.",
+    };
   }
 
   async createVenueManagerSubmission(account: BusinessAccount, venueId: string, input: CreateSubmissionInput) {
@@ -8880,6 +9335,7 @@ export class BusinessService {
       venueId: input.venueId,
       venueName: input.venueName,
       suburb: input.suburb,
+      accessLevel: input.accessLevel ?? "manager",
       approvedBy: admin.id,
       now: nowIso(),
     });
@@ -8892,6 +9348,7 @@ export class BusinessService {
         managerUserId: assignment.userId,
         venueId: assignment.venueId,
         venueName: assignment.venueName,
+        accessLevel: assignment.accessLevel,
       },
     });
 
@@ -8901,7 +9358,11 @@ export class BusinessService {
       venueId: assignment.venueId,
       beerId: null,
       suburb: assignment.suburb,
-      metadata: { managerUserId: assignment.userId, venueName: assignment.venueName },
+      metadata: {
+        managerUserId: assignment.userId,
+        venueName: assignment.venueName,
+        accessLevel: assignment.accessLevel,
+      },
     });
 
     return { assignment };

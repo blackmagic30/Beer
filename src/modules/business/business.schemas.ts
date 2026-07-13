@@ -539,6 +539,7 @@ export const venueManagerAssignmentSchema = z.object({
   venueId: z.string().trim().min(1).max(180),
   venueName: z.string().trim().min(1).max(180),
   suburb: nullableTrimmedStringSchema.default(null),
+  accessLevel: z.enum(["manager", "counter_staff"]).optional(),
 });
 
 export const venueManagerRevokeSchema = z.object({
@@ -825,6 +826,14 @@ export const pintPointDrinkRecordSchema = z.object({
   path: ["code"],
 });
 
+export const pintPointDrinkVoidSchema = z.object({
+  reason: z.string().trim().min(4).max(240),
+});
+
+export const venueCounterStaffAssignmentSchema = z.object({
+  accountId: z.string().trim().min(3).max(32).transform((value) => value.toUpperCase()),
+});
+
 export const freePintRewardCodeSchema = z.object({
   venueId: nullableTrimmedStringSchema.default(null),
 });
@@ -863,6 +872,18 @@ export const barPendingChangeReviewSchema = z.object({
 });
 
 export const venueClaimRequestSchema = barClaimRequestSchema;
+export const venueClaimReviewSchema = z.object({
+  status: z.enum(["approved", "rejected"]),
+  reviewNote: nullableTrimmedStringSchema.default(null),
+}).superRefine((value, ctx) => {
+  if (value.status === "rejected" && (!value.reviewNote || value.reviewNote.length < 4)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Add a short reason when rejecting a venue claim.",
+      path: ["reviewNote"],
+    });
+  }
+});
 export const venuePendingChangeReviewSchema = barPendingChangeReviewSchema;
 
 export const adminUserStatusSchema = z.object({
@@ -901,6 +922,7 @@ export type BarSpecialInput = z.infer<typeof barSpecialSchema>;
 export type BarClaimRequestInput = z.infer<typeof barClaimRequestSchema>;
 export type BarPendingChangeReviewInput = z.infer<typeof barPendingChangeReviewSchema>;
 export type VenueClaimRequestInput = z.infer<typeof venueClaimRequestSchema>;
+export type VenueClaimReviewInput = z.infer<typeof venueClaimReviewSchema>;
 export type VenuePendingChangeReviewInput = z.infer<typeof venuePendingChangeReviewSchema>;
 export type AdminDashboardQuery = z.infer<typeof adminDashboardQuerySchema>;
 export type AdminAccountSearchInput = z.infer<typeof adminAccountSearchSchema>;
@@ -918,6 +940,8 @@ export type LeaderboardPrizeFinalizeInput = z.infer<typeof leaderboardPrizeFinal
 export type DiscountRedemptionInput = z.infer<typeof discountRedemptionSchema>;
 export type PintPointMemberPreviewInput = z.infer<typeof pintPointMemberPreviewSchema>;
 export type PintPointDrinkRecordInput = z.infer<typeof pintPointDrinkRecordSchema>;
+export type PintPointDrinkVoidInput = z.infer<typeof pintPointDrinkVoidSchema>;
+export type VenueCounterStaffAssignmentInput = z.infer<typeof venueCounterStaffAssignmentSchema>;
 export type FreePintRewardCodeInput = z.infer<typeof freePintRewardCodeSchema>;
 export type FreePintRewardDecisionInput = z.infer<typeof freePintRewardDecisionSchema>;
 export type PosDiscountRedemptionInput = z.infer<typeof posDiscountRedemptionSchema>;

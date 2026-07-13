@@ -57,4 +57,4 @@ The Android app stores the Pint Path bearer token in private app preferences. It
 - Bars
 - Settings
 
-The Add tab covers reviewed beer-price submissions, wrong-price reports, missing venue/beer requests, and mission browsing. Photo evidence, one-time location proof, native OAuth, billing, and reward/POS flows are not wired yet.
+The Add tab covers reviewed beer-price submissions, wrong-price reports, missing venue/beer requests, and mission browsing. Photo evidence, one-time location proof, native OAuth, billing, venue claims, and reward/POS flows remain web-only. Native CI builds, lints, and tests the Android debug app; signing, store data-safety declarations, screenshots, and a real-device pass remain release-owner steps.

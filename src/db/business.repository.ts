@@ -445,12 +445,15 @@ export interface VenueInterestRequest {
   updatedAt: string;
 }
 
+export type VenueAccessLevel = "manager" | "counter_staff";
+
 export interface VenueManagerAssignment {
   id: string;
   userId: string;
   venueId: string;
   venueName: string;
   suburb: string | null;
+  accessLevel: VenueAccessLevel;
   status: string;
   approvedBy: string | null;
   createdAt: string;
@@ -486,6 +489,9 @@ export interface BarClaimRequest {
   contactPhone: string | null;
   message: string | null;
   status: "pending" | "approved" | "rejected";
+  reviewNote: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -782,10 +788,13 @@ export type PintPointLedgerType =
   | "reward_redeemed"
   | "reward_cancelled"
   | "reward_rejected"
+  | "drink_void"
   | "admin_adjustment"
   | "fraud_reversal";
 
 export type FreePintRewardCodeStatus = "active" | "used" | "expired" | "cancelled" | "rejected";
+
+export type PintPointDrinkRecordStatus = "active" | "void";
 
 export interface PintPointDrinkRecord {
   id: string;
@@ -802,18 +811,28 @@ export interface PintPointDrinkRecord {
   rewardCodeId: string | null;
   recordedByUserId: string | null;
   idempotencyKey: string | null;
+  status: PintPointDrinkRecordStatus;
+  voidedAt: string | null;
+  voidedByUserId: string | null;
+  voidReason: string | null;
   recordedAt: string;
   metadata: Record<string, unknown>;
   createdAt: string;
 }
 
 export interface VenuePintPointActivity {
+  id: string;
   publicAccountId: string;
   itemName: string | null;
   beverageCategory: string;
   quantity: number;
   pointsAwarded: number;
   source: string;
+  recordedByUserId: string | null;
+  status: PintPointDrinkRecordStatus;
+  voidedAt: string | null;
+  voidedByUserId: string | null;
+  voidReason: string | null;
   recordedAt: string;
 }
 
@@ -1250,6 +1269,7 @@ interface VenueManagerAssignmentRow {
   venue_id: string;
   venue_name: string;
   suburb: string | null;
+  access_level: VenueAccessLevel;
   status: string;
   approved_by: string | null;
   created_at: string;
@@ -1314,6 +1334,9 @@ interface BarClaimRequestRow {
   contact_phone: string | null;
   message: string | null;
   status: "pending" | "approved" | "rejected";
+  review_note: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1440,18 +1463,28 @@ interface PintPointDrinkRecordRow {
   reward_code_id: string | null;
   recorded_by_user_id: string | null;
   idempotency_key: string | null;
+  status: PintPointDrinkRecordStatus;
+  voided_at: string | null;
+  voided_by_user_id: string | null;
+  void_reason: string | null;
   recorded_at: string;
   metadata_json: string;
   created_at: string;
 }
 
 interface VenuePintPointActivityRow {
+  id: string;
   public_account_id: string;
   item_name: string | null;
   beverage_category: string;
   quantity: number;
   points_awarded: number;
   source: string;
+  recorded_by_user_id: string | null;
+  status: PintPointDrinkRecordStatus;
+  voided_at: string | null;
+  voided_by_user_id: string | null;
+  void_reason: string | null;
   recorded_at: string;
 }
 
@@ -1679,6 +1712,10 @@ function toPintPointDrinkRecord(row: PintPointDrinkRecordRow): PintPointDrinkRec
     rewardCodeId: row.reward_code_id,
     recordedByUserId: row.recorded_by_user_id,
     idempotencyKey: row.idempotency_key,
+    status: row.status ?? "active",
+    voidedAt: row.voided_at,
+    voidedByUserId: row.voided_by_user_id,
+    voidReason: row.void_reason,
     recordedAt: row.recorded_at,
     metadata: parseJsonObject(row.metadata_json),
     createdAt: row.created_at,
@@ -2215,6 +2252,7 @@ function toVenueManagerAssignment(row: VenueManagerAssignmentRow): VenueManagerA
     venueId: row.venue_id,
     venueName: row.venue_name,
     suburb: row.suburb,
+    accessLevel: row.access_level ?? "manager",
     status: row.status,
     approvedBy: row.approved_by,
     createdAt: row.created_at,
@@ -2254,6 +2292,9 @@ function toBarClaimRequest(row: BarClaimRequestRow): BarClaimRequest {
     contactPhone: row.contact_phone,
     message: row.message,
     status: row.status,
+    reviewNote: row.review_note,
+    reviewedBy: row.reviewed_by,
+    reviewedAt: row.reviewed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -3964,6 +4005,7 @@ export class BusinessRepository {
     const drinkClauses = [
       "lower(COALESCE(suburb, '')) = lower(?)",
       "is_alcoholic = 1",
+      "status = 'active'",
       "COALESCE(NULLIF(trim(item_name), ''), '') != ''",
     ];
     const drinkValues: unknown[] = [area];
@@ -4211,7 +4253,12 @@ export class BusinessRepository {
 
   listPintPointDrinkRecordsForUser(userId: string, limit: number): PintPointDrinkRecord[] {
     const rows = this.database
-      .prepare("SELECT * FROM pint_point_drink_records WHERE user_id = ? ORDER BY recorded_at DESC LIMIT ?")
+      .prepare(
+        `SELECT * FROM pint_point_drink_records
+         WHERE user_id = ? AND status = 'active'
+         ORDER BY recorded_at DESC
+         LIMIT ?`,
+      )
       .all(userId, limit) as PintPointDrinkRecordRow[];
     return rows.map(toPintPointDrinkRecord);
   }
@@ -4220,12 +4267,18 @@ export class BusinessRepository {
     const rows = this.database
       .prepare(
         `SELECT
+           r.id,
            COALESCE(a.public_account_id, 'Pint Path member') AS public_account_id,
            r.item_name,
            r.beverage_category,
            r.quantity,
            r.points_awarded,
            r.source,
+           r.recorded_by_user_id,
+           r.status,
+           r.voided_at,
+           r.voided_by_user_id,
+           r.void_reason,
            r.recorded_at
          FROM pint_point_drink_records r
          LEFT JOIN accounts a ON a.id = r.user_id
@@ -4236,12 +4289,18 @@ export class BusinessRepository {
       .all(venueId, Math.max(1, Math.min(limit, 50))) as VenuePintPointActivityRow[];
 
     return rows.map((row) => ({
+      id: row.id,
       publicAccountId: row.public_account_id,
       itemName: row.item_name,
       beverageCategory: row.beverage_category,
       quantity: Number(row.quantity),
       pointsAwarded: Number(row.points_awarded),
       source: row.source,
+      recordedByUserId: row.recorded_by_user_id,
+      status: row.status ?? "active",
+      voidedAt: row.voided_at,
+      voidedByUserId: row.voided_by_user_id,
+      voidReason: row.void_reason,
       recordedAt: row.recorded_at,
     }));
   }
@@ -4251,10 +4310,69 @@ export class BusinessRepository {
       .prepare(
         `SELECT COALESCE(sum(points_awarded), 0) AS points
          FROM pint_point_drink_records
-         WHERE user_id = ? AND recorded_at >= ?`,
+         WHERE user_id = ? AND recorded_at >= ? AND status = 'active'`,
       )
       .get(input.userId, input.since) as { points: number } | undefined;
     return Number(row?.points ?? 0);
+  }
+
+  voidPintPointDrinkRecord(input: {
+    recordId: string;
+    venueId: string;
+    actorUserId: string;
+    reason: string;
+    voidedAt: string;
+  }): { record: PintPointDrinkRecord; idempotentReplay: boolean } | null {
+    let idempotentReplay = false;
+    const applyVoid = this.database.transaction(() => {
+      const current = this.getPintPointDrinkRecordById(input.recordId);
+      if (!current || current.venueId !== input.venueId) {
+        return null;
+      }
+      if (current.status === "void") {
+        idempotentReplay = true;
+        return current;
+      }
+
+      const updated = this.database
+        .prepare(
+          `UPDATE pint_point_drink_records
+           SET status = 'void', voided_at = ?, voided_by_user_id = ?, void_reason = ?
+           WHERE id = ? AND venue_id = ? AND status = 'active'`,
+        )
+        .run(input.voidedAt, input.actorUserId, input.reason, input.recordId, input.venueId);
+
+      if (updated.changes !== 1) {
+        idempotentReplay = true;
+        return this.getPintPointDrinkRecordById(input.recordId);
+      }
+
+      if (current.pointsAwarded > 0) {
+        this.createPintPointLedgerEntry({
+          id: crypto.randomUUID(),
+          userId: current.userId,
+          venueId: current.venueId,
+          drinkRecordId: current.id,
+          rewardCodeId: null,
+          type: "drink_void",
+          pointsDelta: -current.pointsAwarded,
+          pointsReservedDelta: 0,
+          description: current.pointsAwarded === 1
+            ? "Voided purchase: 1 Pint Point reversed."
+            : `Voided purchase: ${current.pointsAwarded} Pint Points reversed.`,
+          createdAt: input.voidedAt,
+          metadata: {
+            reason: input.reason,
+            voidedByUserId: input.actorUserId,
+          },
+        });
+      }
+
+      return this.getPintPointDrinkRecordById(input.recordId);
+    });
+
+    const record = applyVoid();
+    return record ? { record, idempotentReplay } : null;
   }
 
   createPintPointLedgerEntry(input: {
@@ -4321,7 +4439,7 @@ export class BusinessRepository {
            COALESCE(sum(points_delta), 0) AS balance,
            COALESCE(sum(points_reserved_delta), 0) AS reserved,
            COALESCE(sum(CASE WHEN points_delta > 0 THEN points_delta ELSE 0 END), 0) AS lifetime_earned,
-           ABS(COALESCE(sum(CASE WHEN points_delta < 0 THEN points_delta ELSE 0 END), 0)) AS lifetime_redeemed
+           ABS(COALESCE(sum(CASE WHEN type = 'reward_redeemed' THEN points_delta ELSE 0 END), 0)) AS lifetime_redeemed
          FROM pint_point_ledger
          WHERE user_id = ?`,
       )
@@ -4657,25 +4775,13 @@ export class BusinessRepository {
     const drinkRow = this.database
       .prepare(
         `SELECT
-           count(*) AS drink_records,
-           COALESCE(sum(CASE WHEN is_alcoholic = 1 THEN quantity ELSE 0 END), 0) AS alcoholic_drinks
+           COALESCE(sum(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS drink_records,
+           COALESCE(sum(CASE WHEN status = 'active' AND is_alcoholic = 1 THEN quantity ELSE 0 END), 0) AS alcoholic_drinks,
+           COALESCE(sum(CASE WHEN status = 'active' THEN points_awarded ELSE 0 END), 0) AS points_issued
          FROM pint_point_drink_records
          WHERE ${drinkClauses.join(" AND ")}`,
       )
-      .get(...drinkValues) as { drink_records: number; alcoholic_drinks: number } | undefined;
-
-    const ledgerRow = this.database
-      .prepare(
-        `SELECT COALESCE(sum(points_delta), 0) AS points_issued
-         FROM pint_point_ledger
-         WHERE venue_id = ?
-           AND points_delta > 0
-           ${input.startIso ? "AND created_at >= ?" : ""}
-           ${input.endIso ? "AND created_at < ?" : ""}`,
-      )
-      .get(...[input.venueId, ...(input.startIso ? [input.startIso] : []), ...(input.endIso ? [input.endIso] : [])]) as {
-        points_issued: number;
-      } | undefined;
+      .get(...drinkValues) as { drink_records: number; alcoholic_drinks: number; points_issued: number } | undefined;
 
     const rewardRow = this.database
       .prepare(
@@ -4688,7 +4794,7 @@ export class BusinessRepository {
       .get(...rewardValues) as { redeemed: number; failed: number } | undefined;
 
     return {
-      pointsIssued: Number(ledgerRow?.points_issued ?? 0),
+      pointsIssued: Number(drinkRow?.points_issued ?? 0),
       drinkRecords: Number(drinkRow?.drink_records ?? 0),
       alcoholicDrinks: Number(drinkRow?.alcoholic_drinks ?? 0),
       freeRewardsRedeemed: Number(rewardRow?.redeemed ?? 0),
@@ -6367,6 +6473,42 @@ export class BusinessRepository {
     return toBarClaimRequest(row);
   }
 
+  getBarClaimRequestById(id: string): BarClaimRequest | null {
+    const row = this.database
+      .prepare("SELECT * FROM venue_claim_requests WHERE id = ?")
+      .get(id) as BarClaimRequestRow | undefined;
+    return row ? toBarClaimRequest(row) : null;
+  }
+
+  getPendingBarClaimRequest(input: { userId: string; barId: string }): BarClaimRequest | null {
+    const row = this.database
+      .prepare(
+        `SELECT * FROM venue_claim_requests
+         WHERE user_id = ? AND venue_id = ? AND status = 'pending'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+      )
+      .get(input.userId, input.barId) as BarClaimRequestRow | undefined;
+    return row ? toBarClaimRequest(row) : null;
+  }
+
+  reviewBarClaimRequest(input: {
+    id: string;
+    status: "approved" | "rejected";
+    reviewNote: string | null;
+    reviewedBy: string;
+    reviewedAt: string;
+  }): BarClaimRequest | null {
+    this.database
+      .prepare(
+        `UPDATE venue_claim_requests
+         SET status = ?, review_note = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ?
+         WHERE id = ? AND status = 'pending'`,
+      )
+      .run(input.status, input.reviewNote, input.reviewedBy, input.reviewedAt, input.reviewedAt, input.id);
+    return this.getBarClaimRequestById(input.id);
+  }
+
   listBarClaimRequests(input: { userId?: string | undefined; status?: string | undefined; limit: number }): BarClaimRequest[] {
     const where: string[] = [];
     const values: unknown[] = [];
@@ -6394,22 +6536,24 @@ export class BusinessRepository {
     venueId: string;
     venueName: string;
     suburb: string | null;
+    accessLevel?: VenueAccessLevel;
     approvedBy: string;
     now: string;
   }): VenueManagerAssignment {
     this.database
       .prepare(
         `INSERT INTO venue_manager_assignments (
-          id, user_id, venue_id, venue_name, suburb, status, approved_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
+          id, user_id, venue_id, venue_name, suburb, access_level, status, approved_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
         ON CONFLICT(user_id, venue_id) DO UPDATE SET
           venue_name = excluded.venue_name,
           suburb = excluded.suburb,
+          access_level = excluded.access_level,
           status = 'active',
           approved_by = excluded.approved_by,
           updated_at = excluded.updated_at`,
       )
-      .run(input.id, input.userId, input.venueId, input.venueName, input.suburb, input.approvedBy, input.now, input.now);
+      .run(input.id, input.userId, input.venueId, input.venueName, input.suburb, input.accessLevel ?? "manager", input.approvedBy, input.now, input.now);
 
     this.database
       .prepare("UPDATE accounts SET role = 'venue_manager', updated_at = ? WHERE id = ? AND role = 'user'")

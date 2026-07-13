@@ -602,7 +602,7 @@ describe("Supabase account and verification foundation", () => {
     expect(drinkColumns).toEqual(expect.arrayContaining(["points_awarded", "idempotency_key"]));
     expect(redemptionIndexes).toContain("idx_discount_redemptions_idempotency");
     expect(drinkIndexes).toContain("idx_pint_point_drink_records_idempotency");
-    expect(database.pragma("user_version", { simple: true })).toBe(2);
+    expect(database.pragma("user_version", { simple: true })).toBe(3);
   });
 
   it("creates an app-facing profile row when an account is created", () => {
@@ -3577,6 +3577,159 @@ describe("business demo contribution model", () => {
     expect(JSON.stringify(portal.pintPoints.recentActivity)).not.toContain(user.id);
   });
 
+  it("scopes counter staff to checkout tools and reverses mistaken Pint Points with an audit trail", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "counter-admin", "admin");
+    const manager = createAccount(repository, "counter-manager");
+    const staff = createAccount(repository, "counter-staff");
+    const secondStaff = createAccount(repository, "counter-staff-two");
+    const member = updateSubscription(
+      repository,
+      createAccount(repository, "counter-member").id,
+      "premium_monthly",
+      PREMIUM_UNTIL,
+    );
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "counter-venue",
+      venueName: "Counter Venue",
+      suburb: "Richmond",
+    });
+    service.upsertBarProfile(admin, "counter-venue", {
+      name: "Counter Venue",
+      address: "1 Swan St",
+      suburb: "Richmond",
+      area: "Richmond",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "pro",
+      acceptsPintPathCodes: true,
+      active: true,
+    });
+
+    const managerAccount = repository.getAccountById(manager.id)!;
+    const staffAssignment = service.assignVenueCounterStaff(managerAccount, "counter-venue", {
+      accountId: staff.publicAccountId,
+    });
+    service.assignVenueCounterStaff(managerAccount, "counter-venue", {
+      accountId: secondStaff.publicAccountId,
+    });
+    expect(staffAssignment.assignment).toEqual(expect.objectContaining({
+      venueId: "counter-venue",
+      accessLevel: "counter_staff",
+      publicAccountId: staff.publicAccountId,
+    }));
+    expect(staffAssignment.assignment.userId).toBeUndefined();
+
+    const staffAccount = repository.getAccountById(staff.id)!;
+    const secondStaffAccount = repository.getAccountById(secondStaff.id)!;
+    const counterPortal = service.getVenuePortal(staffAccount, { venueId: "counter-venue" });
+    expect(counterPortal).toEqual(expect.objectContaining({
+      accessState: "counter_staff",
+      accessLevel: "counter_staff",
+      analytics: null,
+      monthlyReport: null,
+      posIntegration: null,
+      businessToolkit: null,
+    }));
+    expect(counterPortal.profile).toEqual({
+      barId: "counter-venue",
+      name: "Counter Venue",
+      suburb: "Richmond",
+      membershipTier: "pro",
+      acceptsPintPathCodes: true,
+    });
+    expect(JSON.stringify(counterPortal)).not.toContain("posWebhookToken");
+    expect(() => service.upsertBarProfile(staffAccount, "counter-venue", {
+      name: "Escalated Venue",
+      address: null,
+      suburb: "Richmond",
+      area: "Richmond",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      acceptsPintPathCodes: true,
+      active: true,
+    })).toThrow("Venue manager access required");
+
+    const session = createSession(repository, member.id, "counter-member-session");
+    const pass = await service.getDiscountPass(member, session);
+    expect(service.previewPintPointMember(staffAccount, "counter-venue", { code: pass.code }).eligible).toBe(true);
+    const first = service.recordPintPointDrink(staffAccount, "counter-venue", {
+      code: undefined,
+      accountId: member.publicAccountId,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 2,
+      isAlcoholic: undefined,
+      transactionReference: "counter-receipt-1",
+      notes: null,
+    });
+    expect(first.wallet.available).toBe(2);
+    expect(() => service.voidPintPointDrink(secondStaffAccount, "counter-venue", first.record.id, {
+      reason: "Trying another staff record",
+    })).toThrow("only reverse purchases they recorded themselves");
+
+    const reversed = service.voidPintPointDrink(staffAccount, "counter-venue", first.record.id, {
+      reason: "Wrong member selected",
+    });
+    expect(reversed).toEqual(expect.objectContaining({
+      pointsReversed: 2,
+      idempotentReplay: false,
+      wallet: expect.objectContaining({ available: 0, lifetimeRedeemed: 0 }),
+      record: expect.objectContaining({ status: "void", voidReason: "Wrong member selected" }),
+    }));
+    expect(service.voidPintPointDrink(staffAccount, "counter-venue", first.record.id, {
+      reason: "Safe retry",
+    }).idempotentReplay).toBe(true);
+    expect(repository.listPintPointDrinkRecordsForUser(member.id, 25)).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: first.record.id })]),
+    );
+
+    const second = service.recordPintPointDrink(staffAccount, "counter-venue", {
+      code: undefined,
+      accountId: member.publicAccountId,
+      itemName: "Carlton Draught pint",
+      beverageCategory: "alcoholic",
+      quantity: 1,
+      isAlcoholic: undefined,
+      transactionReference: "counter-receipt-2",
+      notes: null,
+    });
+    vi.setSystemTime(new Date("2026-05-04T08:16:00.000Z"));
+    expect(() => service.voidPintPointDrink(staffAccount, "counter-venue", second.record.id, {
+      reason: "Late staff correction",
+    })).toThrow("Ask a venue manager");
+    expect(service.voidPintPointDrink(managerAccount, "counter-venue", second.record.id, {
+      reason: "Manager approved correction",
+    }).idempotentReplay).toBe(false);
+
+    const managerPortal = service.getVenuePortal(managerAccount, { venueId: "counter-venue" });
+    expect(managerPortal.pintPoints.today).toEqual(expect.objectContaining({
+      pointsIssued: 0,
+      drinkRecords: 0,
+      alcoholicDrinks: 0,
+    }));
+    expect(managerPortal.pintPoints.recentActivity).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.record.id, status: "void", canVoid: false }),
+      expect.objectContaining({ id: second.record.id, status: "void", canVoid: false }),
+    ]));
+
+    service.revokeVenueCounterStaff(managerAccount, "counter-venue", { accountId: staff.publicAccountId });
+    expect(service.getVenuePortal(repository.getAccountById(staff.id)!, { venueId: "counter-venue" })).toEqual(
+      expect.objectContaining({ accessState: "claim_required" }),
+    );
+  });
+
   it("supports Pro venue POS discount webhooks with scoped tokens and privacy-safe venue stats", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
@@ -4984,6 +5137,14 @@ describe("business demo contribution model", () => {
     const admin = createAccount(repository, "venue-admin", "admin");
     const manager = createAccount(repository, "venue-manager");
     const normalUser = createAccount(repository, "venue-normal");
+    repository.upsertVenueLocationCache({
+      venueId: "venue-1",
+      venueName: "Rooftop Bar",
+      suburb: "Melbourne",
+      latitude: -37.8136,
+      longitude: 144.9631,
+      now: NOW,
+    });
 
     const interest = service.createVenueInterest(null, {
       anonymousSessionId: "anon-partner",
@@ -4999,21 +5160,49 @@ describe("business demo contribution model", () => {
 
     expect(interest.interest.venueName).toBe("Rooftop Bar");
     expect(service.getVenuePortal(normalUser, { venueId: "venue-1" })).toEqual(expect.objectContaining({
-      accessState: "invite_required",
+      accessState: "claim_required",
       selectedVenue: null,
     }));
-    expect(() => service.createBarClaimRequest(normalUser, {
+    const claimResult = service.createBarClaimRequest(normalUser, {
       barId: "venue-1",
       barName: "Rooftop Bar",
       address: "Level 7, Melbourne",
       suburb: "Melbourne",
       requesterName: "Normal User",
       requesterRole: "Venue manager",
-      contactEmail: "normal@example.com",
+      contactEmail: "venue-normal@example.com",
       contactPhone: null,
       message: "I manage this venue.",
-    })).toThrow("Venue manager access is invite-only");
-    expect(service.getVenuePortal(normalUser, { venueId: "venue-1" }).claimRequests).toHaveLength(0);
+    });
+    expect(claimResult.claim).toEqual(expect.objectContaining({
+      barId: "venue-1",
+      barName: "Rooftop Bar",
+      status: "pending",
+    }));
+    expect(service.getVenuePortal(normalUser, { venueId: "venue-1" }).claimRequests).toHaveLength(1);
+    expect(service.createBarClaimRequest(normalUser, {
+      barId: "venue-1",
+      barName: "Rooftop Bar",
+      address: "Level 7, Melbourne",
+      suburb: "Melbourne",
+      requesterName: "Normal User",
+      requesterRole: "Venue manager",
+      contactEmail: "venue-normal@example.com",
+      contactPhone: null,
+      message: "Retry after a slow connection.",
+    })).toEqual(expect.objectContaining({ duplicate: true }));
+
+    const reviewedClaim = service.reviewVenueClaimRequest(admin, claimResult.claim.id, {
+      status: "approved",
+      reviewNote: "Verified with the venue's published phone number.",
+    });
+    expect(reviewedClaim.assignment).toEqual(expect.objectContaining({
+      userId: normalUser.id,
+      venueId: "venue-1",
+      accessLevel: "manager",
+    }));
+    expect(service.getVenuePortal(repository.getAccountById(normalUser.id)!, { venueId: "venue-1" }))
+      .toEqual(expect.objectContaining({ accessLevel: "manager" }));
 
     const assignment = service.assignVenueManager(admin, {
       userId: manager.id,
@@ -5070,8 +5259,17 @@ describe("business demo contribution model", () => {
 
     const partnerAdmin = service.getVenuePartnerAdmin(admin);
     expect(partnerAdmin.interests[0]).toEqual(expect.objectContaining({ venueName: "Rooftop Bar" }));
-    expect(partnerAdmin.claimRequests).toEqual([]);
-    expect(partnerAdmin.assignments[0]).toEqual(expect.objectContaining({ userId: manager.id, venueId: "venue-1" }));
+    expect(partnerAdmin.claimRequests).toEqual([
+      expect.objectContaining({
+        id: claimResult.claim.id,
+        status: "approved",
+        reviewedBy: admin.id,
+      }),
+    ]);
+    expect(partnerAdmin.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: manager.id, venueId: "venue-1" }),
+      expect.objectContaining({ userId: normalUser.id, venueId: "venue-1" }),
+    ]));
     const outreach = service.upsertVenueOutreach(admin, {
       venueId: "venue-1",
       venueName: "Rooftop Bar",
@@ -5817,12 +6015,20 @@ describe("business demo contribution model", () => {
     });
   });
 
-  it("blocks normal users from direct venue-manager claim API access", async () => {
+  it("accepts authenticated venue claims without granting access before admin review", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
     const user = createAccount(repository, "direct-claim-user");
     const token = "direct-claim-user-token";
     createSession(repository, user.id, token);
+    repository.upsertVenueLocationCache({
+      venueId: "direct-claim-venue",
+      venueName: "Direct Claim Pub",
+      suburb: "Fitzroy",
+      latitude: -37.798,
+      longitude: 144.978,
+      now: NOW,
+    });
 
     const app = express();
     app.use(express.json());
@@ -5830,28 +6036,43 @@ describe("business demo contribution model", () => {
     app.use(errorHandler);
 
     await withHttpServer(app, async (baseUrl) => {
+      const claimPayload = {
+        barId: "direct-claim-venue",
+        barName: "Direct Claim Pub",
+        address: "1 Test Street",
+        suburb: "Fitzroy",
+        requesterName: "Normal User",
+        requesterRole: "Owner",
+        contactEmail: "direct-claim-user@example.com",
+        contactPhone: null,
+        message: "Trying to bypass the invite-only portal.",
+      };
       const response = await fetch(`${baseUrl}/api/business/venue-claim-requests`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          venueName: "Direct Claim Pub",
-          address: "1 Test Street",
-          suburb: "Fitzroy",
-          requesterName: "Normal User",
-          requesterRole: "Owner",
-          contactEmail: "normal@example.com",
-          contactPhone: null,
-          message: "Trying to bypass the invite-only portal.",
-        }),
+        body: JSON.stringify(claimPayload),
       });
 
-      expect(response.status).toBe(403);
-      const body = await response.json() as { error: { message: string } };
-      expect(body.error.message).toContain("Admin access required");
-      expect(repository.listBarClaimRequests({ limit: 10 })).toHaveLength(0);
+      expect(response.status).toBe(201);
+      const body = await response.json() as { data: { claim: { status: string; barId: string } } };
+      expect(body.data.claim).toEqual(expect.objectContaining({ status: "pending", barId: "direct-claim-venue" }));
+      expect(repository.listBarClaimRequests({ limit: 10 })).toHaveLength(1);
+      expect(repository.listVenueManagerAssignments({ userId: user.id, activeOnly: true, limit: 10 })).toHaveLength(0);
+
+      const replay = await fetch(`${baseUrl}/api/business/venue-claim-requests`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(claimPayload),
+      });
+      expect(replay.status).toBe(200);
+      expect((await replay.json()).data.duplicate).toBe(true);
+      expect(repository.listBarClaimRequests({ limit: 10 })).toHaveLength(1);
     });
   });
 

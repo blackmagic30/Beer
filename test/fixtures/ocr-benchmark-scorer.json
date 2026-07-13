@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "mode": "scorer_fixture",
+  "thresholds": {
+    "overall": 0.9,
+    "rowRecall": 0.95,
+    "rowPrecision": 0.98,
+    "canonicalNames": 0.95,
+    "prices": 0.95,
+    "availability": 0.95,
+    "nonBeerRejection": 1
+  },
+  "cases": [
+    {
+      "id": "slash-price-tap-menu",
+      "venueName": "Stray Neighbour",
+      "expected": [
+        { "name": "Stray Lager by Tallboy & Moose", "abv": 4.2, "priceNumeric": 12, "availabilityStatus": "on_tap" },
+        { "name": "Hawkers Stout", "abv": 5.4, "priceNumeric": 14, "availabilityStatus": "on_tap" },
+        { "name": "Stray Pale Ale by Tallboy & Moose", "abv": 4.8, "priceNumeric": 13, "availabilityStatus": "on_tap" }
+      ],
+      "forbiddenNames": ["Pot, schooner and pint available"],
+      "observed": [
+        { "name": "Stray Lager by Tallboy & Moose", "abv": 4.2, "priceNumeric": 12, "availabilityStatus": "on_tap" },
+        { "name": "Hawkers Stout", "abv": 5.4, "priceNumeric": 14, "availabilityStatus": "on_tap" },
+        { "name": "Stray Pale Ale by Tallboy & Moose", "abv": 4.8, "priceNumeric": 13, "availabilityStatus": "on_tap" }
+      ]
+    },
+    {
+      "id": "section-aware-menu",
+      "venueName": "Saving Grace",
+      "expected": [
+        { "name": "Stone & Wood Pacific Ale", "brewery": "Stone & Wood", "abv": 4.4, "priceNumeric": 16.5, "availabilityStatus": "on_tap" },
+        { "name": "Mountain Culture Cult IPA", "brewery": "Mountain Culture", "abv": 6.2, "priceNumeric": 17.5, "availabilityStatus": "on_tap" },
+        { "name": "Guinness", "brewery": "Guinness", "abv": 4.2, "priceNumeric": 16, "availabilityStatus": "on_tap" },
+        { "name": "Asahi Super Dry", "brewery": "Asahi", "abv": 5, "priceNumeric": 14, "availabilityStatus": "package_only" }
+      ],
+      "forbiddenNames": ["Punt Road Shiraz", "Gluten Free IPA"],
+      "observed": [
+        { "name": "Stone & Wood Pacific Ale", "brewery": "Stone & Wood", "abv": 4.4, "priceNumeric": 16.5, "availabilityStatus": "on_tap" },
+        { "name": "Mountain Culture Cult IPA", "brewery": "Mountain Culture", "abv": 6.2, "priceNumeric": 17.5, "availabilityStatus": "on_tap" },
+        { "name": "Guinness", "brewery": "Guinness", "abv": 4.2, "priceNumeric": 16, "availabilityStatus": "on_tap" },
+        { "name": "Asahi Super Dry", "brewery": "Asahi", "abv": 5, "priceNumeric": 14, "availabilityStatus": "package_only" }
+      ]
+    },
+    {
+      "id": "non-beer-rejection",
+      "venueName": "Rooftop Bar",
+      "expected": [
+        { "name": "Hahn SuperDry 3.5", "abv": 3.5, "priceNumeric": 14, "availabilityStatus": "on_tap" },
+        { "name": "Furphy Refreshing Ale", "abv": 4.4, "priceNumeric": 16, "availabilityStatus": "on_tap" },
+        { "name": "Guinness", "abv": 4.2, "priceNumeric": 18, "availabilityStatus": "on_tap" }
+      ],
+      "forbiddenNames": ["Poor Tom's Sydney Dry", "Archie Rose Signature Dry", "78 Degrees Whisky"],
+      "observed": [
+        { "name": "Hahn SuperDry 3.5", "abv": 3.5, "priceNumeric": 14, "availabilityStatus": "on_tap" },
+        { "name": "Furphy Refreshing Ale", "abv": 4.4, "priceNumeric": 16, "availabilityStatus": "on_tap" },
+        { "name": "Guinness", "abv": 4.2, "priceNumeric": 18, "availabilityStatus": "on_tap" }
+      ]
+    }
+  ]
+}

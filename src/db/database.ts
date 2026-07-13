@@ -8,7 +8,7 @@ import { env } from "../config/env.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 
-const CURRENT_DATABASE_SCHEMA_VERSION = 2;
+const CURRENT_DATABASE_SCHEMA_VERSION = 3;
 const MIGRATION_BACKUP_RETENTION = 3;
 
 function splitSchemaIndexes(schema: string): { baseSchema: string; indexSchema: string } {
@@ -68,6 +68,20 @@ const discountRedemptionColumns = [
 const pintPointDrinkRecordColumns = [
   { name: "points_awarded", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "idempotency_key", definition: "TEXT" },
+  { name: "status", definition: "TEXT NOT NULL DEFAULT 'active'" },
+  { name: "voided_at", definition: "TEXT" },
+  { name: "voided_by_user_id", definition: "TEXT" },
+  { name: "void_reason", definition: "TEXT" },
+] as const;
+
+const venueManagerAssignmentColumns = [
+  { name: "access_level", definition: "TEXT NOT NULL DEFAULT 'manager'" },
+] as const;
+
+const venueClaimRequestColumns = [
+  { name: "review_note", definition: "TEXT" },
+  { name: "reviewed_by", definition: "TEXT" },
+  { name: "reviewed_at", definition: "TEXT" },
 ] as const;
 
 const accountsColumns = [
@@ -248,6 +262,9 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_venue
       ON pint_point_drink_records (venue_id, recorded_at DESC);
 
+    CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_venue_status
+      ON pint_point_drink_records (venue_id, status, recorded_at DESC);
+
     CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_suburb
       ON pint_point_drink_records (suburb, recorded_at DESC);
 
@@ -366,6 +383,8 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
       ON venue_identity_aliases (canonical_venue_id, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_approved_by
       ON venue_manager_assignments (approved_by);
+    CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_access
+      ON venue_manager_assignments (venue_id, access_level, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_reviewed_by
       ON venue_pending_changes (reviewed_by);
     CREATE INDEX IF NOT EXISTS idx_venue_partner_outreach_updated_by
@@ -708,6 +727,8 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "auth_sessions", authSessionsColumns);
   ensureColumns(database, "discount_redemptions", discountRedemptionColumns);
   ensureColumns(database, "pint_point_drink_records", pintPointDrinkRecordColumns);
+  ensureColumns(database, "venue_manager_assignments", venueManagerAssignmentColumns);
+  ensureColumns(database, "venue_claim_requests", venueClaimRequestColumns);
   ensureColumns(database, "submissions", submissionColumns);
   ensureColumns(database, "submission_items", submissionItemColumns);
   ensureColumns(database, "feedback", feedbackColumns);

@@ -747,11 +747,16 @@ describe("viewer map UI wiring", () => {
     expect(html).not.toContain("debugToggle");
   });
 
-  it("keeps venue manager self-claiming hidden behind invite-only copy", () => {
-    expect(venuePortalHtml).toContain("Venue portal access is assigned by Pint Path admin");
-    expect(venuePortalHtml).not.toContain('id="claimForm"');
+  it("keeps venue claims behind manual admin approval", () => {
+    expect(venuePortalHtml).toContain("Request access to your venue");
+    expect(venuePortalHtml).toContain('id="venueClaimForm"');
+    expect(venuePortalHtml).toContain("Submitting this form never grants immediate dashboard access");
+    expect(venuePortalHtml).toContain("Log in to request access");
+    expect(venuePortalHtml).toContain("/api/business/venue-claim-requests");
+    expect(venuePortalHtml).toContain("pintPath.counterReceiptQueue.v1");
+    expect(venuePortalHtml).toContain("Rotating member codes are never stored");
+    expect(venuePortalHtml).toContain("This browser could not save the receipt");
     expect(venuePortalHtml).not.toContain("Create your Basic bar account");
-    expect(venuePortalHtml).not.toContain("Claim your bar");
     expect(venuePortalHtml).not.toContain('<select name="membershipTier">');
     expect(venuePortalHtml).not.toContain("near public transport");
     expect(venuePortalHtml).not.toContain('id="tierGuide"');
