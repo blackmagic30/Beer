@@ -66,6 +66,7 @@ import {
   venueManagerAssignmentSchema,
   venueManagerRevokeSchema,
   venueCounterStaffAssignmentSchema,
+  venueCounterStaffInvitationResponseSchema,
   venueOutreachSchema,
   venuePortalQuerySchema,
   venuePlaceSearchQuerySchema,
@@ -283,6 +284,17 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     } catch (error) {
       next(error);
     }
+  });
+
+  router.post("/account/counter-staff-invitations/:assignmentId/respond", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(
+      venueCounterStaffInvitationResponseSchema,
+      req.body,
+      "Invalid counter-staff invitation response",
+    );
+    const assignmentId = String(req.params.assignmentId ?? "");
+    res.json(success(businessService.respondToVenueCounterStaffInvitation(account, assignmentId, body)));
   });
 
   router.post("/account/age-confirm", writeLimiter, (req, res) => {

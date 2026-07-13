@@ -6499,14 +6499,14 @@ export class BusinessRepository {
     reviewedBy: string;
     reviewedAt: string;
   }): BarClaimRequest | null {
-    this.database
+    const result = this.database
       .prepare(
         `UPDATE venue_claim_requests
          SET status = ?, review_note = ?, reviewed_by = ?, reviewed_at = ?, updated_at = ?
          WHERE id = ? AND status = 'pending'`,
       )
       .run(input.status, input.reviewNote, input.reviewedBy, input.reviewedAt, input.reviewedAt, input.id);
-    return this.getBarClaimRequestById(input.id);
+    return result.changes === 1 ? this.getBarClaimRequestById(input.id) : null;
   }
 
   listBarClaimRequests(input: { userId?: string | undefined; status?: string | undefined; limit: number }): BarClaimRequest[] {
@@ -6540,8 +6540,9 @@ export class BusinessRepository {
     approvedBy: string;
     now: string;
   }): VenueManagerAssignment {
-    this.database
-      .prepare(
+    this.database.transaction(() => {
+      this.database
+        .prepare(
         `INSERT INTO venue_manager_assignments (
           id, user_id, venue_id, venue_name, suburb, access_level, status, approved_by, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
@@ -6552,17 +6553,75 @@ export class BusinessRepository {
           status = 'active',
           approved_by = excluded.approved_by,
           updated_at = excluded.updated_at`,
-      )
-      .run(input.id, input.userId, input.venueId, input.venueName, input.suburb, input.accessLevel ?? "manager", input.approvedBy, input.now, input.now);
+        )
+        .run(input.id, input.userId, input.venueId, input.venueName, input.suburb, input.accessLevel ?? "manager", input.approvedBy, input.now, input.now);
 
-    this.database
-      .prepare("UPDATE accounts SET role = 'venue_manager', updated_at = ? WHERE id = ? AND role = 'user'")
-      .run(input.now, input.userId);
+      this.database
+        .prepare("UPDATE accounts SET role = 'venue_manager', updated_at = ? WHERE id = ? AND role = 'user'")
+        .run(input.now, input.userId);
+    })();
 
     const row = this.database
       .prepare("SELECT * FROM venue_manager_assignments WHERE user_id = ? AND venue_id = ?")
       .get(input.userId, input.venueId) as VenueManagerAssignmentRow;
     return toVenueManagerAssignment(row);
+  }
+
+  inviteVenueCounterStaff(input: {
+    id: string;
+    userId: string;
+    venueId: string;
+    venueName: string;
+    suburb: string | null;
+    approvedBy: string;
+    now: string;
+  }): VenueManagerAssignment {
+    this.database
+      .prepare(
+        `INSERT INTO venue_manager_assignments (
+          id, user_id, venue_id, venue_name, suburb, access_level, status, approved_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'counter_staff', 'pending', ?, ?, ?)
+        ON CONFLICT(user_id, venue_id) DO UPDATE SET
+          venue_name = excluded.venue_name,
+          suburb = excluded.suburb,
+          access_level = 'counter_staff',
+          status = 'pending',
+          approved_by = excluded.approved_by,
+          updated_at = excluded.updated_at`,
+      )
+      .run(input.id, input.userId, input.venueId, input.venueName, input.suburb, input.approvedBy, input.now, input.now);
+    const row = this.database
+      .prepare("SELECT * FROM venue_manager_assignments WHERE user_id = ? AND venue_id = ?")
+      .get(input.userId, input.venueId) as VenueManagerAssignmentRow;
+    return toVenueManagerAssignment(row);
+  }
+
+  respondVenueCounterStaffInvitation(input: {
+    id: string;
+    userId: string;
+    decision: "accept" | "decline";
+    now: string;
+  }): VenueManagerAssignment | null {
+    return this.database.transaction(() => {
+      const status = input.decision === "accept" ? "active" : "revoked";
+      const result = this.database
+        .prepare(
+          `UPDATE venue_manager_assignments
+           SET status = ?, updated_at = ?
+           WHERE id = ? AND user_id = ? AND access_level = 'counter_staff' AND status = 'pending'`,
+        )
+        .run(status, input.now, input.id, input.userId);
+      if (result.changes !== 1) return null;
+      if (input.decision === "accept") {
+        this.database
+          .prepare("UPDATE accounts SET role = 'venue_manager', updated_at = ? WHERE id = ? AND role = 'user'")
+          .run(input.now, input.userId);
+      }
+      const row = this.database
+        .prepare("SELECT * FROM venue_manager_assignments WHERE id = ?")
+        .get(input.id) as VenueManagerAssignmentRow;
+      return toVenueManagerAssignment(row);
+    })();
   }
 
   revokeVenueManager(input: { userId: string; venueId: string; now: string }): VenueManagerAssignment | null {

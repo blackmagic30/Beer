@@ -120,6 +120,7 @@ import type {
   VenueManagerAssignmentInput,
   VenueManagerRevokeInput,
   VenueCounterStaffAssignmentInput,
+  VenueCounterStaffInvitationResponseInput,
   VenueOutreachInput,
   VenuePortalQuery,
   VenueRequestInput,
@@ -634,6 +635,16 @@ const FREE_PINT_REWARD_POINTS = 50;
 const FREE_PINT_REWARD_CODE_MINUTES = 10;
 const PINT_POINTS_DAILY_CAP = 8;
 const COUNTER_STAFF_VOID_WINDOW_MINUTES = 15;
+const PINT_POINT_CHECKOUT_AUTHORIZATION_MINUTES = 30;
+
+interface PintPointCheckoutClaims {
+  version: 1;
+  userId: string;
+  venueId: string;
+  authorizedByUserId: string;
+  transactionReference: string;
+  expiresAt: string;
+}
 
 function generateDiscountCode(): string {
   return Array.from({ length: 6 }, () =>
@@ -643,6 +654,16 @@ function generateDiscountCode(): string {
 
 function hashDiscountCode(code: string): string {
   return crypto.createHash("sha256").update(code.trim().toUpperCase()).digest("hex");
+}
+
+function normalizePintPointTransactionReference(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function signPintPointCheckoutClaims(secret: string, claims: PintPointCheckoutClaims): string {
+  const payload = Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
 }
 
 function createPosWebhookToken(secret: string, venueId: string, version: number): string {
@@ -4274,7 +4295,74 @@ export class BusinessService {
     };
   }
 
-  private resolvePintPointUser(input: { code?: string | undefined; accountId?: string | null | undefined; now: string }) {
+  private getPintPointCheckoutSigningSecret(): string {
+    const configuredSecret = this.config.SOURCE_EVIDENCE_SIGNING_SECRET;
+    if (!configuredSecret && this.config.NODE_ENV === "production") {
+      throw new AppError("Pint Points checkout authorization is not configured.", 503);
+    }
+    return crypto
+      .createHash("sha256")
+      .update(`pint-point-checkout:v1:${configuredSecret ?? this.config.PUBLIC_BASE_URL}`)
+      .digest("hex");
+  }
+
+  private createPintPointCheckoutToken(claims: PintPointCheckoutClaims): string {
+    return signPintPointCheckoutClaims(this.getPintPointCheckoutSigningSecret(), claims);
+  }
+
+  private verifyPintPointCheckoutToken(input: {
+    token: string;
+    venueId: string;
+    authorizedByUserId: string;
+    transactionReference: string;
+    now: string;
+  }): BusinessAccount {
+    const [payload, signature, extra] = input.token.split(".");
+    if (!payload || !signature || extra) {
+      throw new AppError("Member checkout authorization is invalid. Check the member code again.", 401);
+    }
+    const expectedSignature = crypto
+      .createHmac("sha256", this.getPintPointCheckoutSigningSecret())
+      .update(payload)
+      .digest("base64url");
+    if (!timingSafeStringEqual(expectedSignature, signature)) {
+      throw new AppError("Member checkout authorization is invalid. Check the member code again.", 401);
+    }
+
+    let claims: PintPointCheckoutClaims;
+    try {
+      claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as PintPointCheckoutClaims;
+    } catch {
+      throw new AppError("Member checkout authorization is invalid. Check the member code again.", 401);
+    }
+    if (
+      claims.version !== 1 ||
+      typeof claims.userId !== "string" ||
+      claims.venueId !== input.venueId ||
+      claims.authorizedByUserId !== input.authorizedByUserId ||
+      claims.transactionReference !== normalizePintPointTransactionReference(input.transactionReference) ||
+      !Number.isFinite(Date.parse(claims.expiresAt))
+    ) {
+      throw new AppError("Member checkout authorization does not match this purchase. Check the member code again.", 401);
+    }
+    if (Date.parse(claims.expiresAt) <= Date.parse(input.now)) {
+      throw new AppError("Member checkout authorization expired. Check the member code again.", 410);
+    }
+    const user = this.repository.getAccountById(claims.userId);
+    if (!user) {
+      throw new AppError("Pint Path account not found.", 404);
+    }
+    return user;
+  }
+
+  private resolvePintPointUser(input: {
+    code?: string | undefined;
+    checkoutToken?: string | undefined;
+    account: BusinessAccount;
+    venueId: string;
+    transactionReference: string;
+    now: string;
+  }) {
     if (input.code) {
       const pass = this.repository.getActiveDiscountPassByCodeHash({
         codeHash: hashDiscountCode(input.code),
@@ -4290,15 +4378,17 @@ export class BusinessService {
       return user;
     }
 
-    if (input.accountId) {
-      const user = this.repository.getAccountByPublicAccountId(input.accountId);
-      if (!user) {
-        throw new AppError("Pint Path account ID not found.", 404);
-      }
-      return user;
+    if (input.checkoutToken) {
+      return this.verifyPintPointCheckoutToken({
+        token: input.checkoutToken,
+        venueId: input.venueId,
+        authorizedByUserId: input.account.id,
+        transactionReference: input.transactionReference,
+        now: input.now,
+      });
     }
 
-    throw new AppError("Enter a Pint Path code or public account ID.", 400);
+    throw new AppError("Check the member code before recording this purchase.", 400);
   }
 
   previewPintPointMember(account: BusinessAccount, venueId: string, input: PintPointMemberPreviewInput) {
@@ -4327,11 +4417,22 @@ export class BusinessService {
       since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
     });
     const wallet = this.getPintPointWalletForAccount(user, now);
+    const authorizationExpiresAt = addMinutes(now, PINT_POINT_CHECKOUT_AUTHORIZATION_MINUTES);
+    const checkoutToken = this.createPintPointCheckoutToken({
+      version: 1,
+      userId: user.id,
+      venueId,
+      authorizedByUserId: account.id,
+      transactionReference: normalizePintPointTransactionReference(input.transactionReference),
+      expiresAt: authorizationExpiresAt,
+    });
 
     return {
       accountId: user.publicAccountId,
       eligible: true,
       expiresAt: pass.expiresAt,
+      checkoutToken,
+      authorizationExpiresAt,
       pointsToday,
       pointsRemainingToday: Math.max(0, PINT_POINTS_DAILY_CAP - pointsToday),
       wallet: {
@@ -4440,16 +4541,19 @@ export class BusinessService {
     const now = nowIso();
     const user = this.resolvePintPointUser({
       code: input.code,
-      accountId: input.accountId,
+      checkoutToken: input.checkoutToken,
+      account,
+      venueId,
+      transactionReference: input.transactionReference,
       now,
     });
 
-    if (user.status !== "active") {
+    if (!isFullAccess(user)) {
       throw new AppError("This Pint Path account cannot receive Pint Points right now.", 403);
     }
 
     const isAlcoholic = input.isAlcoholic ?? input.beverageCategory === "alcoholic";
-    const idempotencyKey = `manual:${input.transactionReference.trim().toLowerCase()}`;
+    const idempotencyKey = `manual:${normalizePintPointTransactionReference(input.transactionReference)}`;
     const existingRecord = this.repository.getPintPointDrinkRecordByIdempotencyKey({ venueId, idempotencyKey });
     if (existingRecord) {
       const itemMatches = (existingRecord.itemName ?? "") === (input.itemName ?? "");
@@ -4461,13 +4565,17 @@ export class BusinessService {
         throw new AppError("That receipt reference is already attached to a different purchase.", 409);
       }
       const wallet = this.getPintPointWalletForAccount(user, now);
+      const voided = existingRecord.status === "void";
       return {
         record: sanitizeVenuePintPointDrinkRecord(existingRecord),
         accountId: user.publicAccountId,
-        pointsEarned: existingRecord.pointsAwarded,
+        pointsEarned: voided ? 0 : existingRecord.pointsAwarded,
         wallet,
         idempotentReplay: true,
-        copy: "Already recorded. No duplicate Pint Points were added.",
+        voided,
+        copy: voided
+          ? "This receipt was recorded earlier and has since been voided. No Pint Points were added."
+          : "Already recorded. No duplicate Pint Points were added.",
         progressCopy: `You now have ${wallet.available} / ${FREE_PINT_REWARD_POINTS} Pint Points.`,
         rewardCopy: wallet.pointsUntilReward === 0
           ? "You have enough Pint Points for a Free Pint Reward."
@@ -4535,6 +4643,7 @@ export class BusinessService {
       pointsEarned,
       wallet,
       idempotentReplay: false,
+      voided: false,
       copy: pointsEarned > 0
         ? `Nice — you earned ${pointsEarned} Pint Point${pointsEarned === 1 ? "" : "s"}.`
         : "Recorded. Food and non-alcoholic drinks do not earn Pint Points.",
@@ -4846,6 +4955,16 @@ export class BusinessService {
     const recentDiscountRedemptions = this.repository.listDiscountRedemptionsForUser(account.id, 10);
     const rewardVouchers = this.repository.listAccountRewardVouchers(account.id, 10);
     const pintPointsWallet = this.getPintPointWalletForAccount(account, dashboardNow);
+    const counterStaffInvitations = this.repository
+      .listVenueManagerAssignments({ userId: account.id, activeOnly: false, limit: 100 })
+      .filter((assignment) => assignment.accessLevel === "counter_staff" && assignment.status === "pending")
+      .map((assignment) => ({
+        id: assignment.id,
+        venueId: assignment.venueId,
+        venueName: assignment.venueName,
+        suburb: assignment.suburb,
+        invitedAt: assignment.updatedAt,
+      }));
     const hasFullAccess = isFullAccess(account);
     const missionHistory = this.repository.listMissionProgressForUser(account.id, 12).map((progress) => {
       const mission = this.repository.getMissionById(progress.missionId);
@@ -4935,6 +5054,7 @@ export class BusinessService {
         copy: "Discount redemptions are logged only when you show your rotating code or QR at a venue.",
       },
       pintPoints: pintPointsWallet,
+      counterStaffInvitations,
       rewards: {
         status: rewardVouchers.length ? "active" : "leaderboard_monthly",
         eligiblePlaceholder: canAccessAgeGatedRewards({ account, latestAgeVerification }),
@@ -8538,8 +8658,8 @@ export class BusinessService {
       .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
       .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity));
     const staffAssignments = this.repository
-      .listVenueManagerAssignments({ venueId: selectedVenueId, activeOnly: true, limit: 100 })
-      .filter((item) => item.accessLevel === "counter_staff")
+      .listVenueManagerAssignments({ venueId: selectedVenueId, activeOnly: false, limit: 100 })
+      .filter((item) => item.accessLevel === "counter_staff" && ["active", "pending"].includes(item.status))
       .map((item) => {
         const staffAccount = this.repository.getAccountById(item.userId);
         return {
@@ -8547,6 +8667,7 @@ export class BusinessService {
           publicAccountId: staffAccount?.publicAccountId ?? null,
           displayName: staffAccount?.displayName ?? null,
           accessLevel: item.accessLevel,
+          status: item.status,
           createdAt: item.createdAt,
         };
       });
@@ -8687,30 +8808,21 @@ export class BusinessService {
       throw new AppError("Your manager assignment already includes counter access.", 409);
     }
     this.requireVerifiedBarAccount(staffAccount);
+    this.requireCounterStaffInvitationAvailable(staffAccount.id, venueId);
 
-    const existing = this.repository.getVenueManagerAssignment({
-      userId: staffAccount.id,
-      venueId,
-      activeOnly: true,
-    });
-    if (existing?.accessLevel === "manager") {
-      throw new AppError("That account is already a manager for this venue.", 409);
-    }
-
-    const assignment = this.repository.assignVenueManager({
+    const assignment = this.repository.inviteVenueCounterStaff({
       id: crypto.randomUUID(),
       userId: staffAccount.id,
       venueId,
       venueName: managerAssignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
       suburb: managerAssignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
-      accessLevel: "counter_staff",
       approvedBy: account.id,
       now: nowIso(),
     });
 
     this.auditSecurity({
       actor: account,
-      action: "venue_counter_staff_assigned",
+      action: "venue_counter_staff_invited",
       targetType: "venue_manager_assignment",
       targetId: assignment.id,
       metadata: {
@@ -8720,12 +8832,69 @@ export class BusinessService {
     });
 
     return {
+      message: "Counter-staff invitation sent. Access starts only after the account owner accepts it.",
       assignment: {
         ...assignment,
         userId: undefined,
         publicAccountId: staffAccount.publicAccountId,
         displayName: staffAccount.displayName,
       },
+    };
+  }
+
+  private requireCounterStaffInvitationAvailable(userId: string, venueId: string): void {
+    const existing = this.repository.getVenueManagerAssignment({
+      userId,
+      venueId,
+      activeOnly: false,
+    });
+    if (!existing || existing.status === "revoked") return;
+    if (existing.accessLevel === "manager") {
+      throw new AppError("That account is already a manager for this venue.", 409);
+    }
+    if (existing.status === "active") {
+      throw new AppError("That account already has counter access for this venue.", 409);
+    }
+    throw new AppError("That account already has a pending counter-staff invitation.", 409);
+  }
+
+  respondToVenueCounterStaffInvitation(
+    account: BusinessAccount,
+    assignmentId: string,
+    input: VenueCounterStaffInvitationResponseInput,
+  ) {
+    this.requireVerifiedBarAccount(account);
+    const assignment = this.repository.respondVenueCounterStaffInvitation({
+      id: assignmentId,
+      userId: account.id,
+      decision: input.decision,
+      now: nowIso(),
+    });
+    if (!assignment) {
+      throw new AppError("Pending counter-staff invitation not found.", 404);
+    }
+
+    this.auditSecurity({
+      actor: account,
+      action: input.decision === "accept" ? "venue_counter_staff_invitation_accepted" : "venue_counter_staff_invitation_declined",
+      targetType: "venue_manager_assignment",
+      targetId: assignment.id,
+      metadata: { venueId: assignment.venueId },
+    });
+
+    return {
+      assignment: {
+        id: assignment.id,
+        venueId: assignment.venueId,
+        venueName: assignment.venueName,
+        suburb: assignment.suburb,
+        accessLevel: assignment.accessLevel,
+        status: assignment.status,
+        updatedAt: assignment.updatedAt,
+      },
+      message: input.decision === "accept"
+        ? `Counter access is now active for ${assignment.venueName}.`
+        : `Invitation from ${assignment.venueName} declined.`,
     };
   }
 
@@ -8742,10 +8911,10 @@ export class BusinessService {
     const existing = this.repository.getVenueManagerAssignment({
       userId: staffAccount.id,
       venueId,
-      activeOnly: true,
+      activeOnly: false,
     });
-    if (!existing || existing.accessLevel !== "counter_staff") {
-      throw new AppError("Active counter-staff assignment not found.", 404);
+    if (!existing || existing.accessLevel !== "counter_staff" || !["active", "pending"].includes(existing.status)) {
+      throw new AppError("Counter-staff assignment or invitation not found.", 404);
     }
     const assignment = this.repository.revokeVenueManager({
       userId: staffAccount.id,
@@ -8877,6 +9046,16 @@ export class BusinessService {
 
     const reviewedAt = nowIso();
     const result = this.repository.runInTransaction(() => {
+      const reviewed = this.repository.reviewBarClaimRequest({
+        id: claim.id,
+        status: input.status,
+        reviewNote: input.reviewNote,
+        reviewedBy: admin.id,
+        reviewedAt,
+      });
+      if (!reviewed) {
+        throw new AppError("This venue claim was reviewed by another request. Refresh before trying again.", 409);
+      }
       const assignment = input.status === "approved" && claim.barId
         ? this.repository.assignVenueManager({
             id: crypto.randomUUID(),
@@ -8889,16 +9068,6 @@ export class BusinessService {
             now: reviewedAt,
           })
         : null;
-      const reviewed = this.repository.reviewBarClaimRequest({
-        id: claim.id,
-        status: input.status,
-        reviewNote: input.reviewNote,
-        reviewedBy: admin.id,
-        reviewedAt,
-      });
-      if (!reviewed) {
-        throw new AppError("Venue claim could not be reviewed.", 409);
-      }
       return { claim: reviewed, assignment };
     });
 
@@ -9329,19 +9498,33 @@ export class BusinessService {
       throw new AppError("User account not found.", 404);
     }
 
-    const assignment = this.repository.assignVenueManager({
-      id: crypto.randomUUID(),
-      userId: user.id,
-      venueId: input.venueId,
-      venueName: input.venueName,
-      suburb: input.suburb,
-      accessLevel: input.accessLevel ?? "manager",
-      approvedBy: admin.id,
-      now: nowIso(),
-    });
+    const accessLevel = input.accessLevel ?? "manager";
+    if (accessLevel === "counter_staff") {
+      this.requireCounterStaffInvitationAvailable(user.id, input.venueId);
+    }
+    const assignment = accessLevel === "counter_staff"
+      ? this.repository.inviteVenueCounterStaff({
+          id: crypto.randomUUID(),
+          userId: user.id,
+          venueId: input.venueId,
+          venueName: input.venueName,
+          suburb: input.suburb,
+          approvedBy: admin.id,
+          now: nowIso(),
+        })
+      : this.repository.assignVenueManager({
+          id: crypto.randomUUID(),
+          userId: user.id,
+          venueId: input.venueId,
+          venueName: input.venueName,
+          suburb: input.suburb,
+          accessLevel,
+          approvedBy: admin.id,
+          now: nowIso(),
+        });
     this.auditSecurity({
       actor: admin,
-      action: "admin_venue_manager_assignment",
+      action: accessLevel === "counter_staff" ? "admin_venue_counter_staff_invited" : "admin_venue_manager_assignment",
       targetType: "venue_manager_assignment",
       targetId: assignment.id,
       metadata: {
@@ -9365,7 +9548,12 @@ export class BusinessService {
       },
     });
 
-    return { assignment };
+    return {
+      assignment,
+      message: accessLevel === "counter_staff"
+        ? "Counter-staff invitation sent. Access starts after the account owner accepts it."
+        : "Venue manager assigned.",
+    };
   }
 
   revokeVenueManager(admin: BusinessAccount, input: VenueManagerRevokeInput) {

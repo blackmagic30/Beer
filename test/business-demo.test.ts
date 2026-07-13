@@ -15,7 +15,13 @@ import { initializeDatabaseSchema } from "../src/db/database.js";
 import { errorHandler } from "../src/middleware/error-handler.js";
 import { createAdminRouter } from "../src/modules/admin/admin.routes.js";
 import type { AdminService } from "../src/modules/admin/admin.service.js";
-import { authSignupSchema, barHappyHourSchema, createSubmissionSchema, normalizeHappyHourTime } from "../src/modules/business/business.schemas.js";
+import {
+  authSignupSchema,
+  barHappyHourSchema,
+  createSubmissionSchema,
+  normalizeHappyHourTime,
+  pintPointDrinkRecordSchema,
+} from "../src/modules/business/business.schemas.js";
 import { createBusinessRouter } from "../src/modules/business/business.routes.js";
 import { BusinessService, canAccessAgeGatedRewards, sanitizePostgrestIlikeTerm } from "../src/modules/business/business.service.js";
 
@@ -602,7 +608,15 @@ describe("Supabase account and verification foundation", () => {
     expect(drinkColumns).toEqual(expect.arrayContaining(["points_awarded", "idempotency_key"]));
     expect(redemptionIndexes).toContain("idx_discount_redemptions_idempotency");
     expect(drinkIndexes).toContain("idx_pint_point_drink_records_idempotency");
-    expect(database.pragma("user_version", { simple: true })).toBe(3);
+    expect(database.pragma("user_version", { simple: true })).toBe(4);
+    database.prepare(
+      `INSERT INTO pint_point_drink_records (
+        id, user_id, venue_id, venue_name, recorded_at, created_at
+      ) VALUES ('migration-record', 'legacy-user', 'legacy-venue', 'Legacy Venue', ?, ?)`,
+    ).run(NOW, NOW);
+    expect(() => database.prepare("UPDATE pint_point_drink_records SET status = 'broken' WHERE id = 'migration-record'").run()).toThrow(
+      "invalid pint point record status",
+    );
   });
 
   it("creates an app-facing profile row when an account is created", () => {
@@ -3393,6 +3407,7 @@ describe("business demo contribution model", () => {
     const memberPass = await service.getDiscountPass(user, memberSession);
     const memberPreview = service.previewPintPointMember(assignedManager, "pint-points-venue", {
       code: memberPass.code,
+      transactionReference: "receipt-points-1",
     });
     expect(memberPreview).toEqual(expect.objectContaining({
       accountId: user.publicAccountId,
@@ -3404,13 +3419,47 @@ describe("business demo contribution model", () => {
     expect(memberPreview).not.toHaveProperty("userId");
     expect(memberPreview).not.toHaveProperty("email");
     expect(memberPreview).not.toHaveProperty("displayName");
+    expect(memberPreview.checkoutToken).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect(pintPointDrinkRecordSchema.safeParse({
+      accountId: user.publicAccountId,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 1,
+      transactionReference: "receipt-public-id-bypass",
+    }).success).toBe(false);
+    expect(pintPointDrinkRecordSchema.safeParse({
+      code: memberPass.code,
+      checkoutToken: memberPreview.checkoutToken,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 1,
+      transactionReference: "receipt-ambiguous-auth",
+    }).success).toBe(false);
     expect(() => service.previewPintPointMember(unassignedManager, "pint-points-venue", {
       code: memberPass.code,
+      transactionReference: "receipt-points-blocked",
     })).toThrow("You can only access assigned venues.");
+    service.assignVenueManager(admin, {
+      userId: otherManager.id,
+      venueId: "pint-points-venue",
+      venueName: "Pint Points Venue",
+      suburb: "Fitzroy",
+    });
+    expect(() => service.recordPintPointDrink(repository.getAccountById(otherManager.id)!, "pint-points-venue", {
+      checkoutToken: memberPreview.checkoutToken,
+      code: undefined,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 2,
+      isAlcoholic: undefined,
+      transactionReference: "receipt-points-1",
+      notes: null,
+    })).toThrow("does not match this purchase");
+    service.revokeVenueManager(admin, { userId: otherManager.id, venueId: "pint-points-venue" });
 
     const firstDrink = service.recordPintPointDrink(assignedManager, "pint-points-venue", {
-      accountId: null,
-      code: memberPass.code,
+      checkoutToken: memberPreview.checkoutToken,
+      code: undefined,
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
@@ -3425,8 +3474,8 @@ describe("business demo contribution model", () => {
     expect(firstDrink.record).not.toHaveProperty("recordedByUserId");
 
     const firstDrinkRetry = service.recordPintPointDrink(assignedManager, "pint-points-venue", {
-      accountId: null,
-      code: memberPass.code,
+      checkoutToken: memberPreview.checkoutToken,
+      code: undefined,
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
@@ -3438,8 +3487,30 @@ describe("business demo contribution model", () => {
     expect(firstDrinkRetry.record.id).toBe(firstDrink.record.id);
     expect(firstDrinkRetry.wallet.available).toBe(2);
     expect(() => service.recordPintPointDrink(assignedManager, "pint-points-venue", {
-      accountId: null,
-      code: memberPass.code,
+      checkoutToken: memberPreview.checkoutToken,
+      code: undefined,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 2,
+      isAlcoholic: undefined,
+      transactionReference: "receipt-points-different",
+      notes: null,
+    })).toThrow("does not match this purchase");
+    vi.setSystemTime(new Date("2026-05-04T08:31:00.000Z"));
+    expect(() => service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+      checkoutToken: memberPreview.checkoutToken,
+      code: undefined,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 2,
+      isAlcoholic: undefined,
+      transactionReference: "receipt-points-1",
+      notes: null,
+    })).toThrow("authorization expired");
+    vi.setSystemTime(new Date(NOW));
+    expect(() => service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+      checkoutToken: memberPreview.checkoutToken,
+      code: undefined,
       itemName: "Different purchase",
       beverageCategory: "alcoholic",
       quantity: 1,
@@ -3449,8 +3520,8 @@ describe("business demo contribution model", () => {
     })).toThrow("already attached to a different purchase");
 
     const zeroPointDrink = service.recordPintPointDrink(assignedManager, "pint-points-venue", {
-      accountId: user.publicAccountId,
-      code: undefined,
+      checkoutToken: undefined,
+      code: memberPass.code,
       itemName: "Burger",
       beverageCategory: "food",
       quantity: 3,
@@ -3463,8 +3534,8 @@ describe("business demo contribution model", () => {
 
     for (const [index, quantity] of [4, 4].entries()) {
       service.recordPintPointDrink(assignedManager, "pint-points-venue", {
-        accountId: user.publicAccountId,
-        code: undefined,
+        checkoutToken: undefined,
+        code: memberPass.code,
         itemName: "Carlton Draught pint",
         beverageCategory: "alcoholic",
         quantity,
@@ -3617,15 +3688,25 @@ describe("business demo contribution model", () => {
     const staffAssignment = service.assignVenueCounterStaff(managerAccount, "counter-venue", {
       accountId: staff.publicAccountId,
     });
-    service.assignVenueCounterStaff(managerAccount, "counter-venue", {
+    const secondStaffAssignment = service.assignVenueCounterStaff(managerAccount, "counter-venue", {
       accountId: secondStaff.publicAccountId,
     });
     expect(staffAssignment.assignment).toEqual(expect.objectContaining({
       venueId: "counter-venue",
       accessLevel: "counter_staff",
       publicAccountId: staff.publicAccountId,
+      status: "pending",
     }));
     expect(staffAssignment.assignment.userId).toBeUndefined();
+    expect(service.getAccountDashboard(repository.getAccountById(staff.id)!).counterStaffInvitations).toContainEqual(
+      expect.objectContaining({ id: staffAssignment.assignment.id, venueId: "counter-venue" }),
+    );
+    service.respondToVenueCounterStaffInvitation(repository.getAccountById(staff.id)!, staffAssignment.assignment.id, {
+      decision: "accept",
+    });
+    service.respondToVenueCounterStaffInvitation(repository.getAccountById(secondStaff.id)!, secondStaffAssignment.assignment.id, {
+      decision: "accept",
+    });
 
     const staffAccount = repository.getAccountById(staff.id)!;
     const secondStaffAccount = repository.getAccountById(secondStaff.id)!;
@@ -3663,10 +3744,14 @@ describe("business demo contribution model", () => {
 
     const session = createSession(repository, member.id, "counter-member-session");
     const pass = await service.getDiscountPass(member, session);
-    expect(service.previewPintPointMember(staffAccount, "counter-venue", { code: pass.code }).eligible).toBe(true);
+    const firstPreview = service.previewPintPointMember(staffAccount, "counter-venue", {
+      code: pass.code,
+      transactionReference: "counter-receipt-1",
+    });
+    expect(firstPreview.eligible).toBe(true);
     const first = service.recordPintPointDrink(staffAccount, "counter-venue", {
       code: undefined,
-      accountId: member.publicAccountId,
+      checkoutToken: firstPreview.checkoutToken,
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
@@ -3691,13 +3776,27 @@ describe("business demo contribution model", () => {
     expect(service.voidPintPointDrink(staffAccount, "counter-venue", first.record.id, {
       reason: "Safe retry",
     }).idempotentReplay).toBe(true);
+    expect(service.recordPintPointDrink(staffAccount, "counter-venue", {
+      code: undefined,
+      checkoutToken: firstPreview.checkoutToken,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 2,
+      isAlcoholic: undefined,
+      transactionReference: "counter-receipt-1",
+      notes: null,
+    })).toEqual(expect.objectContaining({ idempotentReplay: true, voided: true, pointsEarned: 0 }));
     expect(repository.listPintPointDrinkRecordsForUser(member.id, 25)).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: first.record.id })]),
     );
 
+    const secondPreview = service.previewPintPointMember(staffAccount, "counter-venue", {
+      code: pass.code,
+      transactionReference: "counter-receipt-2",
+    });
     const second = service.recordPintPointDrink(staffAccount, "counter-venue", {
       code: undefined,
-      accountId: member.publicAccountId,
+      checkoutToken: secondPreview.checkoutToken,
       itemName: "Carlton Draught pint",
       beverageCategory: "alcoholic",
       quantity: 1,
@@ -5214,6 +5313,18 @@ describe("business demo contribution model", () => {
 
     expect(assignment.assignment.status).toBe("active");
     expect(managerAccount.role).toBe("venue_manager");
+    expect(() => service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "venue-1",
+      venueName: "Rooftop Bar",
+      suburb: "Melbourne",
+      accessLevel: "counter_staff",
+    })).toThrow("already a manager");
+    expect(repository.getVenueManagerAssignment({
+      userId: manager.id,
+      venueId: "venue-1",
+      activeOnly: false,
+    })).toEqual(expect.objectContaining({ accessLevel: "manager", status: "active" }));
     expect(service.searchAccountsForAdmin(admin, { q: "venue-manager", limit: 10 }).accounts).toEqual([
       expect.objectContaining({
         id: manager.id,

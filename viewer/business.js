@@ -333,7 +333,10 @@ async function apiFetch(path, options = {}) {
   const payload = await response.json().catch(() => null);
 
   if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.error?.message || payload?.error || `Request failed (${response.status})`);
+    const error = new Error(payload?.error?.message || payload?.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    error.retryable = response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500;
+    throw error;
   }
 
   const data = payload.data;

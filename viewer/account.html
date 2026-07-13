@@ -138,6 +138,17 @@
 
       <div id="dashboardStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
+      <section id="counterStaffInvitations" class="panel" aria-labelledby="counterStaffInvitationsTitle" hidden>
+        <div class="sectionHeader">
+          <div>
+            <div class="eyebrow">Venue access</div>
+            <h2 id="counterStaffInvitationsTitle">Counter-staff invitation</h2>
+            <p class="muted">Accept only if you recognise the venue. Counter access is limited to scanning member codes and correcting your own recent entries.</p>
+          </div>
+        </div>
+        <div id="counterStaffInvitationList" class="list"></div>
+      </section>
+
       <section id="accountSettingsHub" class="accountSectionStack settingsHub">
         <nav class="settingsNav" role="tablist" aria-label="Account settings sections">
           <button id="settingsStatsTab" class="settingsNavButton" type="button" role="tab" data-settings-target="stats" aria-controls="settingsStatsPanel" aria-selected="false">My stats</button>
@@ -2271,6 +2282,46 @@
       $("accountDashboard").classList.toggle("accountDashboard--rewardEligible", hasSpecialAccess || hasRewardReady);
     }
 
+    function renderCounterStaffInvitations(invitations) {
+      const section = $("counterStaffInvitations");
+      const list = $("counterStaffInvitationList");
+      const items = Array.isArray(invitations) ? invitations : [];
+      section.hidden = items.length === 0;
+      list.innerHTML = items.map((invitation) => `
+        <div class="listItem dataRow">
+          <div>
+            <strong>${escapeHtml(invitation.venueName || "Venue")}</strong>
+            <div class="muted">${escapeHtml(invitation.suburb || "Melbourne")} · invited ${MelbBeerBusiness.formatDate(invitation.invitedAt)}</div>
+          </div>
+          <div class="actionRow actionRow--compact">
+            <button class="button button--primary" type="button" data-counter-invite="${escapeHtml(invitation.id)}" data-decision="accept" aria-label="Accept counter access for ${escapeHtml(invitation.venueName || "venue")}">Accept</button>
+            <button class="button" type="button" data-counter-invite="${escapeHtml(invitation.id)}" data-decision="decline" aria-label="Decline counter access for ${escapeHtml(invitation.venueName || "venue")}">Decline</button>
+          </div>
+        </div>
+      `).join("");
+      list.querySelectorAll("[data-counter-invite]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const decision = button.dataset.decision;
+          try {
+            button.disabled = true;
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/account/counter-staff-invitations/${encodeURIComponent(button.dataset.counterInvite)}/respond`, {
+              method: "POST",
+              body: JSON.stringify({ decision }),
+            });
+            if (decision === "accept") {
+              window.location.assign(`/venue-portal.html?venueId=${encodeURIComponent(result.assignment.venueId)}`);
+              return;
+            }
+            MelbBeerBusiness.setStatus($("dashboardStatus"), result.message || "Invitation declined.");
+            await refreshAccount();
+          } catch (error) {
+            MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not update this invitation.", true);
+            button.disabled = false;
+          }
+        });
+      });
+    }
+
     function renderDashboard(result) {
       state.accountData = result;
       MelbBeerBusiness.setAccountContext(result.account);
@@ -2324,6 +2375,7 @@
       $("privacySettingsForm").emailUpdatesEnabled.checked = Boolean(privacySettings.emailUpdatesEnabled);
       MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings);
       renderRecentSubmissions(result.recentSubmissions || []);
+      renderCounterStaffInvitations(result.counterStaffInvitations || []);
       renderAccountStatsPanel(result);
       renderDisplayNameForm(account);
       renderBetaTestingPanel(result);

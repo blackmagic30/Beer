@@ -8,7 +8,7 @@ import { env } from "../config/env.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 
-const CURRENT_DATABASE_SCHEMA_VERSION = 3;
+const CURRENT_DATABASE_SCHEMA_VERSION = 4;
 const MIGRATION_BACKUP_RETENTION = 3;
 
 function splitSchemaIndexes(schema: string): { baseSchema: string; indexSchema: string } {
@@ -392,6 +392,97 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
   `);
 }
 
+function ensurePostMigrationIntegrity(database: BetterSqlite3.Database): void {
+  database.exec(`
+    UPDATE pint_point_drink_records
+    SET status = 'active'
+    WHERE status NOT IN ('active', 'void');
+    UPDATE pint_point_drink_records
+    SET voided_by_user_id = NULL
+    WHERE voided_by_user_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM accounts WHERE accounts.id = pint_point_drink_records.voided_by_user_id);
+
+    UPDATE venue_manager_assignments
+    SET access_level = 'manager'
+    WHERE access_level NOT IN ('manager', 'counter_staff');
+    UPDATE venue_manager_assignments
+    SET status = 'revoked'
+    WHERE status NOT IN ('active', 'pending', 'revoked');
+
+    UPDATE venue_claim_requests
+    SET status = 'pending'
+    WHERE status NOT IN ('pending', 'approved', 'rejected');
+    UPDATE venue_claim_requests
+    SET reviewed_by = NULL
+    WHERE reviewed_by IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM accounts WHERE accounts.id = venue_claim_requests.reviewed_by);
+
+    CREATE TRIGGER IF NOT EXISTS validate_pint_point_status_insert
+    BEFORE INSERT ON pint_point_drink_records
+    WHEN NEW.status NOT IN ('active', 'void')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid pint point record status');
+    END;
+    CREATE TRIGGER IF NOT EXISTS validate_pint_point_status_update
+    BEFORE UPDATE OF status ON pint_point_drink_records
+    WHEN NEW.status NOT IN ('active', 'void')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid pint point record status');
+    END;
+    CREATE TRIGGER IF NOT EXISTS validate_pint_point_voided_by_insert
+    BEFORE INSERT ON pint_point_drink_records
+    WHEN NEW.voided_by_user_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = NEW.voided_by_user_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid pint point voiding account');
+    END;
+    CREATE TRIGGER IF NOT EXISTS validate_pint_point_voided_by_update
+    BEFORE UPDATE OF voided_by_user_id ON pint_point_drink_records
+    WHEN NEW.voided_by_user_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = NEW.voided_by_user_id)
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid pint point voiding account');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS validate_venue_assignment_insert
+    BEFORE INSERT ON venue_manager_assignments
+    WHEN NEW.access_level NOT IN ('manager', 'counter_staff')
+      OR NEW.status NOT IN ('active', 'pending', 'revoked')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid venue assignment state');
+    END;
+    CREATE TRIGGER IF NOT EXISTS validate_venue_assignment_update
+    BEFORE UPDATE OF access_level, status ON venue_manager_assignments
+    WHEN NEW.access_level NOT IN ('manager', 'counter_staff')
+      OR NEW.status NOT IN ('active', 'pending', 'revoked')
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid venue assignment state');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS validate_venue_claim_insert
+    BEFORE INSERT ON venue_claim_requests
+    WHEN NEW.status NOT IN ('pending', 'approved', 'rejected')
+      OR (NEW.reviewed_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = NEW.reviewed_by))
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid venue claim review state');
+    END;
+    CREATE TRIGGER IF NOT EXISTS validate_venue_claim_update
+    BEFORE UPDATE OF status, reviewed_by ON venue_claim_requests
+    WHEN NEW.status NOT IN ('pending', 'approved', 'rejected')
+      OR (NEW.reviewed_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = NEW.reviewed_by))
+    BEGIN
+      SELECT RAISE(ABORT, 'invalid venue claim review state');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS clear_added_account_references_before_delete
+    BEFORE DELETE ON accounts
+    BEGIN
+      UPDATE pint_point_drink_records SET voided_by_user_id = NULL WHERE voided_by_user_id = OLD.id;
+      UPDATE venue_claim_requests SET reviewed_by = NULL WHERE reviewed_by = OLD.id;
+    END;
+  `);
+}
+
 function generatePublicAccountId(database: BetterSqlite3.Database): string {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     let randomPart = "";
@@ -741,6 +832,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
   redactCompletedAdminIngestionImages(database);
   ensureColumns(database, "venue_beers", venueBeersColumns);
+  ensurePostMigrationIntegrity(database);
   database.exec(indexSchema);
   syncStaticBeerCatalog(database);
   deletePendingNonBeerCatalogItems(database);

@@ -481,6 +481,9 @@ describe("account page shell", () => {
     expect(html).toContain("function requestedSettingsPanel");
     expect(html).toContain("showAccountSettingsPanel(requestedSettingsPanel())");
     expect(html).toContain("renderBetaTestingPanel(result)");
+    expect(html).toContain('id="counterStaffInvitations"');
+    expect(html).toContain("renderCounterStaffInvitations(result.counterStaffInvitations || [])");
+    expect(html).toContain("/counter-staff-invitations/");
     expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/beta/pub-golf/plan"');
     expect(html).not.toContain('id="privacyControlsSection"');
     expect(css).toContain(".settingsNavButton");
@@ -490,7 +493,8 @@ describe("account page shell", () => {
     expect(css).not.toContain(".premiumMemberHub");
     expect(css).toContain(".accountDashboard #accountSettingsHub");
     expect(css).toMatch(/\.accountDashboard \.accountDashboardIntro\s*\{[^}]*order:\s*1;/s);
-    expect(css).toMatch(/\.accountDashboard #accountSettingsHub\s*\{[^}]*order:\s*3;/s);
+    expect(css).toMatch(/\.accountDashboard #counterStaffInvitations\s*\{[^}]*order:\s*3;/s);
+    expect(css).toMatch(/\.accountDashboard #accountSettingsHub\s*\{[^}]*order:\s*4;/s);
     expect(css).not.toContain(".accountDashboard .accountHighlightsGrid");
     expect(css).not.toContain(".accountDashboard .accountPrimaryGrid");
   });

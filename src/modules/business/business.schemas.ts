@@ -807,6 +807,7 @@ export const pintPointMemberPreviewSchema = z.object({
   code: z.string().trim()
     .regex(/^[A-Za-z0-9]{6}$/, "Use the current 6-character Pint Path code.")
     .transform((value) => value.toUpperCase()),
+  transactionReference: z.string().trim().min(4).max(120),
 });
 
 export const pintPointDrinkRecordSchema = z.object({
@@ -814,15 +815,15 @@ export const pintPointDrinkRecordSchema = z.object({
     .regex(/^[A-Za-z0-9]{6}$/, "Use the current 6-character Pint Path code.")
     .transform((value) => value.toUpperCase())
     .optional(),
-  accountId: nullableTrimmedStringSchema.default(null),
+  checkoutToken: z.string().trim().min(32).max(2_048).optional(),
   itemName: nullableTrimmedStringSchema.default(null),
   beverageCategory: z.enum(["alcoholic", "non_alcoholic", "food"]).default("alcoholic"),
   quantity: z.coerce.number().int().min(1).max(4).default(1),
   isAlcoholic: z.boolean().optional(),
   transactionReference: z.string().trim().min(4).max(120),
   notes: nullableTrimmedStringSchema.default(null),
-}).refine((value) => Boolean(value.code || value.accountId), {
-  message: "Enter a Pint Path code or public account ID.",
+}).refine((value) => Boolean(value.code) !== Boolean(value.checkoutToken), {
+  message: "Use either the current member code or its checked checkout authorization, not both.",
   path: ["code"],
 });
 
@@ -832,6 +833,10 @@ export const pintPointDrinkVoidSchema = z.object({
 
 export const venueCounterStaffAssignmentSchema = z.object({
   accountId: z.string().trim().min(3).max(32).transform((value) => value.toUpperCase()),
+});
+
+export const venueCounterStaffInvitationResponseSchema = z.object({
+  decision: z.enum(["accept", "decline"]),
 });
 
 export const freePintRewardCodeSchema = z.object({
@@ -942,6 +947,7 @@ export type PintPointMemberPreviewInput = z.infer<typeof pintPointMemberPreviewS
 export type PintPointDrinkRecordInput = z.infer<typeof pintPointDrinkRecordSchema>;
 export type PintPointDrinkVoidInput = z.infer<typeof pintPointDrinkVoidSchema>;
 export type VenueCounterStaffAssignmentInput = z.infer<typeof venueCounterStaffAssignmentSchema>;
+export type VenueCounterStaffInvitationResponseInput = z.infer<typeof venueCounterStaffInvitationResponseSchema>;
 export type FreePintRewardCodeInput = z.infer<typeof freePintRewardCodeSchema>;
 export type FreePintRewardDecisionInput = z.infer<typeof freePintRewardDecisionSchema>;
 export type PosDiscountRedemptionInput = z.infer<typeof posDiscountRedemptionSchema>;

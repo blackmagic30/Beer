@@ -4056,7 +4056,9 @@
         selectedManagerVenueId = null;
         renderManagerUserResults();
         renderManagerVenueOptions();
-        MelbBeerBusiness.setStatus(statusEl, body.accessLevel === "counter_staff" ? "Counter-staff access assigned." : "Venue manager assigned.");
+        MelbBeerBusiness.setStatus(statusEl, body.accessLevel === "counter_staff"
+          ? "Counter-staff invitation sent. The account owner must accept it."
+          : "Venue manager assigned.");
         await loadAdmin();
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message, true);

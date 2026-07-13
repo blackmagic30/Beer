@@ -32,8 +32,19 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Release-readiness tests
+      - name: Automated release-readiness tests
         run: npm run test:e2e:pintpath
+
+      - name: Report external launch evidence status
+        run: npm run release:evidence | tee release-evidence-summary.json
+
+      - name: Upload launch evidence report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pintpath-launch-evidence
+          path: |
+            docs/release-evidence.json
+            release-evidence-summary.json
 
       - name: Secret scan
         run: npm run security:scan

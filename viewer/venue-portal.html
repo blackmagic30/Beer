@@ -174,7 +174,7 @@
                 <div>
                   <div class="eyebrow">Counter permissions</div>
                   <h2>Staff access</h2>
-                  <p class="muted">Counter staff can scan codes, record purchases, and reverse their own recent entries. They cannot see analytics, billing, POS credentials, or edit the venue.</p>
+                  <p class="muted">Invite a staff member by their public account ID. Access starts only after they accept from their own Pint Path account.</p>
                 </div>
                 <span class="pill">Venue scoped</span>
               </div>
@@ -182,7 +182,7 @@
                 <label class="field">Staff member public account ID
                   <input name="accountId" maxlength="32" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="PP-XXXXXXXX" required />
                 </label>
-                <button class="button button--primary" type="submit">Add counter staff</button>
+                <button class="button button--primary" type="submit">Invite counter staff</button>
               </form>
               <div id="counterStaffStatus" class="notice" role="status" hidden></div>
               <div id="counterStaffList" class="list" style="margin-top:16px;"></div>
@@ -691,11 +691,13 @@
     let premiumDashboardSection = "action_centre";
     let activeMemberPreviewCode = "";
     let activeMemberPreviewAccountId = "";
+    let activeMemberCheckoutToken = "";
+    let activeMemberPreviewReference = "";
     let pendingVoidRecordId = "";
     let memberQrStream = null;
     let memberQrTimer = null;
     const COUNTER_RECEIPT_QUEUE_KEY = "pintPath.counterReceiptQueue.v1";
-    const COUNTER_RECEIPT_QUEUE_TTL_MS = 24 * 60 * 60 * 1000;
+    const COUNTER_RECEIPT_QUEUE_TTL_MS = 30 * 60 * 1000;
     const COUNTER_RECEIPT_QUEUE_LIMIT = 20;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
@@ -1491,11 +1493,14 @@
         <div class="listItem dataRow">
           <div>
             <strong>${escapeHtml(assignment.displayName || assignment.publicAccountId || "Counter staff")}</strong>
-            <div class="muted">${escapeHtml(assignment.publicAccountId || "Public account ID unavailable")} · added ${MelbBeerBusiness.formatDate(assignment.createdAt)}</div>
+            <div class="muted">${escapeHtml(assignment.publicAccountId || "Public account ID unavailable")} · ${assignment.status === "pending" ? "invitation pending" : `active since ${MelbBeerBusiness.formatDate(assignment.createdAt)}`}</div>
           </div>
-          ${assignment.publicAccountId ? `<button class="button button--small button--danger" type="button" data-revoke-counter-staff="${escapeHtml(assignment.publicAccountId)}">Remove</button>` : ""}
+          <div class="actionRow actionRow--compact">
+            <span class="pill">${assignment.status === "pending" ? "Pending" : "Active"}</span>
+            ${assignment.publicAccountId ? `<button class="button button--small button--danger" type="button" data-revoke-counter-staff="${escapeHtml(assignment.publicAccountId)}">${assignment.status === "pending" ? "Withdraw" : "Remove"}</button>` : ""}
+          </div>
         </div>
-      `).join("") : '<div class="listItem muted">No counter-only staff accounts have been added for this venue.</div>';
+      `).join("") : '<div class="listItem muted">No active or pending counter-staff invitations for this venue.</div>';
       list.querySelectorAll("[data-revoke-counter-staff]").forEach((button) => {
         button.addEventListener("click", async () => {
           const venueId = selectedVenueId();
@@ -2239,7 +2244,7 @@
       const fallbackActions = [
         { label: "Open staff mode", tab: "redemption", copy: "Redeem Pint Path codes and record approved offers." },
         { label: "Monthly report", tab: "report", copy: "Check the venue-safe summary for this month." },
-        { label: "Invite staff", tab: "support", copy: "Give the team the right portal steps before the next shift." },
+        { label: "Invite staff", tab: "staff-access", copy: "Invite counter staff and review pending access before the next shift." },
         { label: "Check profile", tab: "profile", copy: "Confirm contact, suburb, website, and opening basics still look right." },
       ];
       const visibleActions = [...actions];
@@ -2482,15 +2487,6 @@
             : tier.canManageSpecials && !specials.length
               ? { label: "Add app special", tab: "specials", copy: "Pro venues can add reviewed Pint Path specials for extra conversion proof." }
               : { label: "Keep prices fresh", tab: "price-refresh", copy: "Confirm unchanged prices in one pass, or edit only the rows that changed." };
-      const mailSubject = encodeURIComponent(`Pint Path staff invite for ${profile.name || "my venue"}`);
-      const mailBody = encodeURIComponent([
-        `Venue: ${profile.name || ""}`,
-        `Area: ${profile.suburb || ""}`,
-        "",
-        "Please invite this staff member to manage discount redemptions:",
-        "Staff email:",
-      ].join("\n"));
-
       if (weeklyActionCard) {
         weeklyActionCard.innerHTML = `
           <div class="venueCardHeader">
@@ -2552,8 +2548,8 @@
             <span class="pill pill--success">Private</span>
           </div>
           <h2>Add trusted staff</h2>
-          <p class="muted">Send the staff email to Pint Path admin so the right people can refresh prices and redeem specials.</p>
-          <a class="button" href="mailto:admin@pintpath.au?subject=${mailSubject}&body=${mailBody}">Request staff invite</a>
+          <p class="muted">Invite a team member by their public account ID. They must accept before counter access starts.</p>
+          <button class="button" type="button" data-jump-tab="staff-access">Manage staff access</button>
         `;
       }
     }
@@ -2666,6 +2662,8 @@
     function resetMemberPreview(options = {}) {
       activeMemberPreviewCode = "";
       activeMemberPreviewAccountId = "";
+      activeMemberCheckoutToken = "";
+      activeMemberPreviewReference = "";
       const preview = document.getElementById("memberPreviewStatus");
       const fields = document.getElementById("memberPurchaseFields");
       if (preview) {
@@ -2728,14 +2726,14 @@
       }
     }
 
-    function queuePendingCounterReceipt(venueId, payload) {
+    function queuePendingCounterReceipt(venueId, accountId, payload) {
       const id = `${venueId}:${String(payload.transactionReference || "").toLowerCase()}`;
       const entries = readPendingCounterReceipts().filter((entry) => entry.id !== id);
       entries.push({
         id,
         venueId,
         venueName: currentPortal?.selectedVenue?.venueName || currentPortal?.profile?.name || venueId,
-        accountId: payload.accountId,
+        accountId,
         payload,
         createdAt: new Date().toISOString(),
         attempts: 0,
@@ -2759,6 +2757,12 @@
       renderPendingCounterReceipts();
     }
 
+    function isRetryableCounterReceiptError(error) {
+      if (error?.retryable === true) return true;
+      if (typeof error?.status === "number") return false;
+      return !navigator.onLine || error instanceof TypeError;
+    }
+
     async function retryPendingCounterReceipt(id) {
       const entry = readPendingCounterReceipts().find((item) => item.id === id);
       const status = document.getElementById("memberPurchaseStatus");
@@ -2775,8 +2779,13 @@
           ? "Receipt was already recorded. No duplicate points were added."
           : `Pending receipt recorded for ${result.accountId}.`);
       } catch (error) {
-        markPendingCounterReceiptError(id, error.message);
-        MelbBeerBusiness.setStatus(status, `${error.message || "Retry failed."} The receipt is still saved on this device.`, true);
+        if (isRetryableCounterReceiptError(error)) {
+          markPendingCounterReceiptError(id, error.message);
+          MelbBeerBusiness.setStatus(status, `${error.message || "Retry failed."} The receipt is still saved on this device.`, true);
+        } else {
+          removePendingCounterReceipt(id);
+          MelbBeerBusiness.setStatus(status, `${error.message || "Retry failed."} This receipt was removed from the retry queue because the server rejected it. Check the member code again.`, true);
+        }
       }
     }
 
@@ -2791,7 +2800,7 @@
           <div>
             <div class="eyebrow">Saved on this device</div>
             <h3>Pending receipts</h3>
-            <p class="muted">Retry with the same receipt reference when the connection returns. Rotating member codes are never stored.</p>
+            <p class="muted">Retry promptly with the same receipt reference when the connection returns. Rotating member codes are never stored; the signed checkout authorization expires after 30 minutes.</p>
           </div>
           <span class="pill">${formatCount(entries.length)} pending</span>
         </div>
@@ -2842,12 +2851,17 @@
       if (button instanceof HTMLButtonElement) button.disabled = true;
       MelbBeerBusiness.setStatus(status, "Checking member code...");
       try {
+        const referenceInput = field(form, "transactionReference");
+        const transactionReference = String(referenceInput?.value || "").trim() || generateCounterReference();
+        if (referenceInput) referenceInput.value = transactionReference;
         const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/member-preview`, {
           method: "POST",
-          body: JSON.stringify({ code }),
+          body: JSON.stringify({ code, transactionReference }),
         });
         activeMemberPreviewCode = code;
         activeMemberPreviewAccountId = String(result.accountId || "");
+        activeMemberCheckoutToken = String(result.checkoutToken || "");
+        activeMemberPreviewReference = transactionReference;
         renderMemberPreview(result);
         clearStatus(status);
         return result;
@@ -4086,6 +4100,9 @@
           if (memberCodeInput.value !== normalizedCode) memberCodeInput.value = normalizedCode;
           if (normalizedCode !== activeMemberPreviewCode) resetMemberPreview();
         });
+        field(memberPurchaseForm, "transactionReference").addEventListener("input", (event) => {
+          if (String(event.currentTarget.value || "").trim() !== activeMemberPreviewReference) resetMemberPreview();
+        });
         document.getElementById("checkMemberButton")?.addEventListener("click", () => {
           void checkMemberCode();
         });
@@ -4109,18 +4126,18 @@
           const transactionReference = String(referenceInput.value || "").trim() || generateCounterReference();
           referenceInput.value = transactionReference;
           const payload = {
-            accountId: activeMemberPreviewAccountId,
+            checkoutToken: activeMemberCheckoutToken,
             itemName: field(memberPurchaseForm, "itemName").value,
             beverageCategory: field(memberPurchaseForm, "beverageCategory").value,
             quantity: Number(field(memberPurchaseForm, "quantity").value || 1),
             transactionReference,
             notes: null,
           };
-          if (!payload.accountId) {
+          if (!payload.checkoutToken || transactionReference !== activeMemberPreviewReference) {
             MelbBeerBusiness.setStatus(memberPurchaseStatus, "Check the current member code before recording this purchase.", true);
             return;
           }
-          const queuedReceipt = queuePendingCounterReceipt(venueId, payload);
+          const queuedReceipt = queuePendingCounterReceipt(venueId, activeMemberPreviewAccountId, payload);
           const submitButton = document.getElementById("recordMemberPurchaseButton");
           if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
           MelbBeerBusiness.setStatus(memberPurchaseStatus, "Recording member purchase...");
@@ -4130,22 +4147,27 @@
               body: JSON.stringify(payload),
             });
             removePendingCounterReceipt(queuedReceipt.id);
-            const replayCopy = result.idempotentReplay ? " This receipt was already logged; no duplicate points were added." : "";
             memberPurchaseForm.reset();
             resetMemberPreview({ keepStatus: true });
             await loadPortal(venueId);
             MelbBeerBusiness.setStatus(
               memberPurchaseStatus,
-              `Purchase recorded for ${result.accountId}. ${formatCount(result.pointsEarned || 0)} Pint Point${Number(result.pointsEarned) === 1 ? "" : "s"} added.${replayCopy}`,
+              result.voided
+                ? `Receipt ${transactionReference} was already recorded and later voided. No Pint Points were added.`
+                : `Purchase recorded for ${result.accountId}. ${result.copy || `${formatCount(result.pointsEarned || 0)} Pint Points added.`}`,
             );
             memberCodeInput?.focus({ preventScroll: true });
           } catch (error) {
-            if (queuedReceipt.saved) markPendingCounterReceiptError(queuedReceipt.id, error.message);
+            const retryable = isRetryableCounterReceiptError(error);
+            if (queuedReceipt.saved && retryable) markPendingCounterReceiptError(queuedReceipt.id, error.message);
+            if (!retryable) removePendingCounterReceipt(queuedReceipt.id);
             MelbBeerBusiness.setStatus(
               memberPurchaseStatus,
-              queuedReceipt.saved
+              queuedReceipt.saved && retryable
                 ? `${error.message || "Could not record this member purchase."} The receipt is saved on this device for a safe retry.`
-                : `${error.message || "Could not record this member purchase."} This browser could not save the receipt. Keep reference ${transactionReference} and retry before serving another member.`,
+                : retryable
+                  ? `${error.message || "Could not record this member purchase."} This browser could not save the receipt. Keep reference ${transactionReference} and retry before serving another member.`
+                  : `${error.message || "Could not record this member purchase."} The server rejected this receipt, so it was not kept for automatic retry. Check the member code again.`,
               true,
             );
           } finally {
@@ -4197,13 +4219,13 @@
           try {
             if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
             const accountId = String(field(counterStaffForm, "accountId").value || "").trim().toUpperCase();
-            await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/counter-staff`, {
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(venueId)}/counter-staff`, {
               method: "POST",
               body: JSON.stringify({ accountId }),
             });
             counterStaffForm.reset();
             await loadPortal(venueId);
-            MelbBeerBusiness.setStatus(status, `Counter access added for ${accountId}.`);
+            MelbBeerBusiness.setStatus(status, result.message || `Invitation sent to ${accountId}.`);
           } catch (error) {
             MelbBeerBusiness.setStatus(status, error.message || "Could not add counter access.", true);
           } finally {
