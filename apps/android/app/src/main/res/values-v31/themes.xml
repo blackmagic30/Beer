@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.BeerMap" parent="Theme.BeerMap.Base">
+        <item name="android:windowSplashScreenBackground">@color/beermap_ink</item>
+    </style>
+</resources>
