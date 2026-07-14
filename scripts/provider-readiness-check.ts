@@ -301,12 +301,27 @@ const reportScheduleCheck: ProviderCheck = {
       ? "After a successful Resend dry run, set REPORT_DELIVERY_SCHEDULE_ENABLED=true."
       : null,
 };
-const resendApiKeyCheck: ProviderCheck = reportEmailMode === "resend" || reportScheduleEnabled
+const reportDeliveryRequested = reportEmailMode === "resend" || reportScheduleEnabled;
+const resendApiKeyCheck: ProviderCheck = reportDeliveryRequested
   ? checkRequired("RESEND_API_KEY", "Resend report-email API key", "Create a sending-only Resend API key and set RESEND_API_KEY.")
-  : { id: "RESEND_API_KEY", label: "Resend report-email API key", status: "pass", action: null };
-const reportEmailFromCheck: ProviderCheck = reportEmailMode === "resend" || reportScheduleEnabled
+  : hasValue("RESEND_API_KEY") || !isProduction()
+    ? { id: "RESEND_API_KEY", label: "Resend report-email API key", status: "pass", action: null }
+    : {
+      id: "RESEND_API_KEY",
+      label: "Resend report-email API key",
+      status: "warn",
+      action: "Create a sending-only Resend API key before enabling production report delivery.",
+    };
+const reportEmailFromCheck: ProviderCheck = reportDeliveryRequested
   ? checkRequired("REPORT_EMAIL_FROM", "Verified report sender address", "Set REPORT_EMAIL_FROM to an address on the verified Resend sending domain.")
-  : { id: "REPORT_EMAIL_FROM", label: "Verified report sender address", status: "pass", action: null };
+  : hasValue("REPORT_EMAIL_FROM") || !isProduction()
+    ? { id: "REPORT_EMAIL_FROM", label: "Verified report sender address", status: "pass", action: null }
+    : {
+      id: "REPORT_EMAIL_FROM",
+      label: "Verified report sender address",
+      status: "warn",
+      action: "Verify the Resend sending domain and set REPORT_EMAIL_FROM before enabling production report delivery.",
+    };
 
 const checks: ProviderCheck[] = [
   checkRequired("GOOGLE_MAPS_API_KEY", "Google Maps browser API key", "Create/restrict a browser key and set GOOGLE_MAPS_API_KEY."),

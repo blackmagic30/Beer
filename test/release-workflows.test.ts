@@ -18,7 +18,7 @@ function evidenceValidator(): string {
 }
 
 function productionSmoke(): string {
-  return fs.readFileSync(path.resolve(process.cwd(), "scripts/production-smoke-check.ts"), "utf8");
+  return fs.readFileSync(path.resolve(process.cwd(), "scripts/production-smoke-check.mjs"), "utf8");
 }
 
 function releaseDocument(name: string): string {
@@ -34,6 +34,7 @@ describe("release workflow contracts", () => {
     const source = workflow("pintpath-release-readiness.yml");
 
     expect(source).toContain("name: Pint Path Automated Readiness");
+    expect(source).toContain("fetch-depth: 0");
     expect(source).toContain("npm run test:e2e:pintpath");
     expect(source).toContain("npm run --silent release:evidence | tee release-evidence-summary.json");
     expect(source).toContain("npm run --silent release:evidence:strict | tee release-evidence-summary.json");
@@ -52,9 +53,13 @@ describe("release workflow contracts", () => {
 
     expect(source).toContain("workflow_dispatch:");
     expect(source).toContain("environment: production");
-    expect(source).toContain("PINTPATH_SMOKE_USER_TOKEN: ${{ secrets.PINTPATH_SMOKE_USER_TOKEN }}");
-    expect(source).toContain("PINTPATH_SMOKE_VENUE_TOKEN: ${{ secrets.PINTPATH_SMOKE_VENUE_TOKEN }}");
+    expect(source).toContain("fetch-depth: 0");
+    expect(source).toContain("PINTPATH_SMOKE_USER_EMAIL: ${{ secrets.PINTPATH_SMOKE_USER_EMAIL }}");
+    expect(source).toContain("PINTPATH_SMOKE_USER_PASSWORD: ${{ secrets.PINTPATH_SMOKE_USER_PASSWORD }}");
+    expect(source).toContain("PINTPATH_SMOKE_VENUE_EMAIL: ${{ secrets.PINTPATH_SMOKE_VENUE_EMAIL }}");
+    expect(source).toContain("PINTPATH_SMOKE_VENUE_PASSWORD: ${{ secrets.PINTPATH_SMOKE_VENUE_PASSWORD }}");
     expect(source).toContain("PINTPATH_SMOKE_ADMIN_TOKEN: ${{ secrets.PINTPATH_SMOKE_ADMIN_TOKEN }}");
+    expect(source).toContain('PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS: "true"');
     expect(source).toContain("npm run --silent smoke:production:auth");
     expect(source).toContain("npm run --silent readiness:launch");
     expect(source).toContain("npm run --silent release:evidence:strict");
@@ -70,8 +75,8 @@ describe("release workflow contracts", () => {
     expect(e2eStep).toContain("DATABASE_PATH: ./data/ci-production-release-gate.sqlite");
     expect(e2eStep).toContain("PINTPATH_TEST_DATABASE_PATH: ./data/ci-production-release-gate.sqlite");
     expect(e2eStep).not.toContain("SUPABASE_SERVICE_ROLE_KEY");
-    expect(e2eStep).not.toContain("PINTPATH_SMOKE_USER_TOKEN");
-    expect(e2eStep).not.toContain("PINTPATH_SMOKE_VENUE_TOKEN");
+    expect(e2eStep).not.toContain("PINTPATH_SMOKE_USER_PASSWORD");
+    expect(e2eStep).not.toContain("PINTPATH_SMOKE_VENUE_PASSWORD");
     expect(e2eStep).not.toContain("PINTPATH_SMOKE_ADMIN_TOKEN");
 
     const readinessStep = source.match(/- name: Enforce production provider readiness[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
@@ -80,15 +85,21 @@ describe("release workflow contracts", () => {
     expect(readinessStep).toContain("STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}");
 
     const authenticatedSmokeStep = source.match(/- name: Verify authenticated production roles[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
-    expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_USER_TOKEN: ${{ secrets.PINTPATH_SMOKE_USER_TOKEN }}");
-    expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_VENUE_TOKEN: ${{ secrets.PINTPATH_SMOKE_VENUE_TOKEN }}");
+    expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_USER_EMAIL: ${{ secrets.PINTPATH_SMOKE_USER_EMAIL }}");
+    expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_USER_PASSWORD: ${{ secrets.PINTPATH_SMOKE_USER_PASSWORD }}");
+    expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_VENUE_EMAIL: ${{ secrets.PINTPATH_SMOKE_VENUE_EMAIL }}");
+    expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_VENUE_PASSWORD: ${{ secrets.PINTPATH_SMOKE_VENUE_PASSWORD }}");
     expect(authenticatedSmokeStep).toContain("PINTPATH_SMOKE_ADMIN_TOKEN: ${{ secrets.PINTPATH_SMOKE_ADMIN_TOKEN }}");
+    expect(authenticatedSmokeStep).toContain("SUPABASE_URL: ${{ secrets.SUPABASE_URL }}");
+    expect(authenticatedSmokeStep).toContain("SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}");
+    expect(authenticatedSmokeStep).not.toContain("PINTPATH_SMOKE_ADMIN_PASSWORD");
+    expect(authenticatedSmokeStep).not.toContain("TOTP");
 
     const jobPrefix = source.slice(0, source.indexOf("    steps:"));
     expect(jobPrefix).not.toContain("SUPABASE_SERVICE_ROLE_KEY");
     expect(jobPrefix).not.toContain("STRIPE_SECRET_KEY");
-    expect(jobPrefix).not.toContain("PINTPATH_SMOKE_USER_TOKEN");
-    expect(jobPrefix).not.toContain("PINTPATH_SMOKE_VENUE_TOKEN");
+    expect(jobPrefix).not.toContain("PINTPATH_SMOKE_USER_PASSWORD");
+    expect(jobPrefix).not.toContain("PINTPATH_SMOKE_VENUE_PASSWORD");
     expect(jobPrefix).not.toContain("PINTPATH_SMOKE_ADMIN_TOKEN");
   });
 
@@ -104,8 +115,8 @@ describe("release workflow contracts", () => {
       .map(workflow)
       .join("\n");
     const expectedPins = new Map([
-      ["actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", 5],
-      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 3],
+      ["actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", 6],
+      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 4],
       ["actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a", 1],
       ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 2],
       ["android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699", 1],
@@ -123,7 +134,7 @@ describe("release workflow contracts", () => {
     const checkoutIndexes = lines
       .map((line, index) => line.includes("uses: actions/checkout@") ? index : -1)
       .filter((index) => index >= 0);
-    expect(checkoutIndexes).toHaveLength(5);
+    expect(checkoutIndexes).toHaveLength(6);
     for (const index of checkoutIndexes) {
       expect(lines.slice(index, index + 4).join("\n")).toContain("persist-credentials: false");
     }
@@ -154,13 +165,49 @@ describe("release workflow contracts", () => {
     }
   });
 
-  it("checks the production admin queue against its real paginated response contract", () => {
+  it("separates public availability from disposable user and venue authenticated monitoring", () => {
     const source = workflow("production-health.yml");
 
-    expect(source).toContain("/api/business/admin/queues?limit=1&offset=0");
-    expect(source).toContain("data?.wrongPriceReports");
-    expect(source).toContain("data?.pagination == null");
-    expect(source).not.toContain('check_data /api/business/admin/queues "$PINTPATH_SMOKE_ADMIN_TOKEN" queues');
+    expect(source).toContain("public-production-health:");
+    expect(source).toContain("authenticated-user-venue-health:");
+    expect(source).toContain("environment: production");
+    expect(source).toContain('cron: "*/15 * * * *"');
+    expect(source).toContain('cron: "7 * * * *"');
+    expect(source).toContain("Public production health is checked separately and this is not evidence of a public outage.");
+    expect(source).toContain("PINTPATH_SMOKE_USER_EMAIL: ${{ secrets.PINTPATH_SMOKE_USER_EMAIL }}");
+    expect(source).toContain("PINTPATH_SMOKE_USER_PASSWORD: ${{ secrets.PINTPATH_SMOKE_USER_PASSWORD }}");
+    expect(source).toContain("PINTPATH_SMOKE_VENUE_EMAIL: ${{ secrets.PINTPATH_SMOKE_VENUE_EMAIL }}");
+    expect(source).toContain("PINTPATH_SMOKE_VENUE_PASSWORD: ${{ secrets.PINTPATH_SMOKE_VENUE_PASSWORD }}");
+    expect(source).toContain("SUPABASE_URL: ${{ secrets.SUPABASE_URL }}");
+    expect(source).toContain("SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}");
+    expect(source).toContain("--auth-only --roles=user,venue");
+    expect(source).not.toContain("PINTPATH_SMOKE_ADMIN_TOKEN");
+    expect(source).not.toContain("PINTPATH_SMOKE_ADMIN_PASSWORD");
+    expect(source).not.toContain("TOTP");
+
+    const authenticatedJobPrefix = source.match(/authenticated-user-venue-health:[\s\S]*?steps:/)?.[0] || "";
+    expect(authenticatedJobPrefix).not.toContain("PINTPATH_SMOKE_USER_PASSWORD");
+    expect(authenticatedJobPrefix).not.toContain("PINTPATH_SMOKE_VENUE_PASSWORD");
+    expect(authenticatedJobPrefix).not.toContain("SUPABASE_URL: ${{ secrets.SUPABASE_URL }}");
+    expect(authenticatedJobPrefix).not.toContain("SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}");
+    const checkoutStep = source.match(/- name: Checkout[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
+    const setupNodeStep = source.match(/- name: Setup Node[\s\S]*?(?=\n\s{6}- name:)/)?.[0] || "";
+    expect(checkoutStep).not.toContain("PINTPATH_SMOKE_USER_PASSWORD");
+    expect(checkoutStep).not.toContain("PINTPATH_SMOKE_VENUE_PASSWORD");
+    expect(setupNodeStep).not.toContain("PINTPATH_SMOKE_USER_PASSWORD");
+    expect(setupNodeStep).not.toContain("PINTPATH_SMOKE_VENUE_PASSWORD");
+    expect(checkoutStep).not.toContain("SUPABASE_URL: ${{ secrets.SUPABASE_URL }}");
+    expect(checkoutStep).not.toContain("SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}");
+    expect(setupNodeStep).not.toContain("SUPABASE_URL: ${{ secrets.SUPABASE_URL }}");
+    expect(setupNodeStep).not.toContain("SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}");
+
+    const smoke = productionSmoke();
+    expect(smoke).toContain('path: "/api/business/admin/queues?limit=1&offset=0"');
+    expect(smoke).toContain("Array.isArray(data.wrongPriceReports)");
+    expect(smoke).toContain("/api/business/auth/supabase-session");
+    expect(smoke).toContain("/api/business/auth/logout");
+    expect(smoke).toContain("Public Supabase URL does not match protected SUPABASE_URL");
+    expect(smoke).toContain("Public Supabase key does not match protected SUPABASE_ANON_KEY");
   });
 
   it("documents the live POS reference, rotation, and discount-only contract", () => {

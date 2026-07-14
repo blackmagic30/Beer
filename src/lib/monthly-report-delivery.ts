@@ -557,7 +557,7 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
         const verified = verifiedManagers.get(normalizedEmail);
         if (verified) eligible.set(normalizedEmail, verified);
       }
-      if (eligible.size !== deliverySettings.recipients.length) {
+      if (!dryRun && eligible.size !== deliverySettings.recipients.length) {
         if (input.repository.setVenueReportDeliverySettings) {
           input.repository.setVenueReportDeliverySettings({
             venueId: report.barId,

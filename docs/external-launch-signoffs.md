@@ -12,6 +12,7 @@ Do not mark an item `pass` because its code exists or a local test passed. Mark 
   ```bash
   set -euo pipefail
   git fetch origin main
+  export RELEASE_ID="${PINTPATH_RELEASE_ID:?Set an immutable ID such as PP-LAUNCH-2026-001}"
   export RELEASE_SHA="$(git rev-parse origin/main)"
   export EVIDENCE_DIR="${PINTPATH_EVIDENCE_DIR:-$HOME/.pintpath/launch-evidence/$RELEASE_SHA}"
   umask 077
@@ -25,12 +26,27 @@ Do not mark an item `pass` because its code exists or a local test passed. Mark 
 - [ ] Confirm CI, automated readiness, and Native Apps are green for that commit.
 - [ ] Deploy that commit and confirm `/ready` reports the same SHA.
 - [ ] Create a private evidence register for the release. Do not commit tokens, customer identifiers, private menu files, POS secrets, signing keys, backup contents, or unredacted screenshots.
-- [ ] Give every evidence pack an immutable ID, such as `PP-LAUNCH-2026-001`, and record the candidate SHA, environment, date, executor, verifier, steps, results, defects, retests, and links to private artifacts.
+- [ ] Give the release an immutable ID such as `PP-LAUNCH-2026-001`. Before recording the first completed check, set `release.id` and the full 40-character `release.candidateSha` in `docs/release-evidence.json`. Never change them to rescue stale evidence. The validator requires that SHA to exist, remain an ancestor of `HEAD`, and have no later code changes; only `docs/release-evidence.json` may differ in the evidence-closeout commit.
+- [ ] For every gate, create a gate-specific private manifest under the release register. Record the release ID, gate ID, candidate SHA, production environment, date, executor, named verifier and role, every step/result, defects/retests, and private artifact links plus their hashes. The manifest is the durable proof; the public file stores only its opaque reference and SHA-256.
 - [ ] Use dedicated synthetic smoke accounts and redact transaction references before storing evidence.
 - [ ] Before sending any unpublished menu to OpenAI or collecting real-shift evidence, obtain written owner/legal approval for the data-processing purpose, venue/menu permission or lawful basis, privacy notice, retention, redaction, and participant handling. This is the preliminary part of `legal_billing`; keep that item pending until its final review is complete.
 - [ ] Keep each item `pending` if a required step is blocked. Use `fail` when a completed check fails. Do not use `not_applicable` for a required launch item.
 - [ ] Keep `set -euo pipefail` enabled for every operator-shell block below. The steps rely on immediate exit plus pipeline failure propagation so a later `jq`, hash, or SHA check cannot mask an earlier failure. Start a fresh initialized shell if those options are changed.
-- [ ] Use `npm run --silent` for machine-readable output and run `jq -e . <file>` after capture. Ordinary `npm run` adds banner text and does not produce a valid JSON artifact.
+- [ ] Use `npm run --silent` for machine-readable output and run `jq -e . <file>` after capture. Ordinary `npm run` adds banner text and does not produce a valid JSON artifact. Hash the final gate manifest only after it is immutable:
+
+  ```bash
+  export GATE_ID="production_public_smoke" # change for each gate
+  export GATE_RESULT="pass" # use fail when preserving a completed failed check
+  export GATE_MANIFEST="$EVIDENCE_DIR/$GATE_ID/manifest.json"
+  test -f "$GATE_MANIFEST"
+  jq -e --arg releaseId "$RELEASE_ID" --arg gateId "$GATE_ID" --arg sha "$RELEASE_SHA" --arg result "$GATE_RESULT" \
+    '.releaseId == $releaseId and .gateId == $gateId and .candidateSha == $sha
+      and .environment == "production" and .result == $result' "$GATE_MANIFEST"
+  export GATE_MANIFEST_SHA256="$(shasum -a 256 "$GATE_MANIFEST" | awk '{print $1}')"
+  test "${#GATE_MANIFEST_SHA256}" -eq 64
+  ```
+
+  A digest detects later artifact changes; it does not replace the independent verifier's responsibility to inspect the real proof.
 
 For a passed item, update only that matching object in `docs/release-evidence.json`:
 
@@ -38,15 +54,20 @@ For a passed item, update only that matching object in `docs/release-evidence.js
 {
   "id": "production_public_smoke",
   "label": "Production public health, readiness, API, and page smoke",
+  "owner": "Release engineer and operations owner",
+  "nextAction": "Enable and prove report email delivery and scheduling, then capture the complete public/provider, performance, load, security-header, and alert exercise against one frozen production SHA.",
   "required": true,
   "status": "pass",
-  "evidence": "PP-LAUNCH-2026-001",
+  "evidence": "PP-LAUNCH-2026-001/production_public_smoke",
+  "evidenceSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "verifiedAt": "2026-07-14T10:00:00.000Z",
   "verifiedBy": "Full name, release engineer"
 }
 ```
 
-Change only `status`, `evidence`, `verifiedAt`, and `verifiedBy`; preserve the existing ID, label, and `required: true` value.
+Change only `status`, `evidence`, `evidenceSha256`, `verifiedAt`, and `verifiedBy`; preserve the existing ID, label, owner, next action, and `required: true` value. `evidence` must be exactly `<release.id>/<gate id>`, the digest must be the lowercase SHA-256 of the final private gate manifest, and `verifiedBy` must contain `Full name, role`. A pending item must keep all four proof fields `null`; a completed failed check uses `status: "fail"` with the same durable proof fields.
+
+The stored `production_public_smoke` and `production_role_smoke` proofs expire after 24 hours because live providers and access can change without a code commit. Re-capture and independently verify both inside the final launch window. The informational validator reports expired proof or code/dirty-worktree drift as `evidenceCurrent: false`; the strict gate rejects it. Both modes reject future timestamps, proof collected before the frozen candidate commit, unknown/non-ancestor candidate SHAs, unexpected schema fields, and required `not_applicable` gates.
 
 After each update, run:
 
@@ -54,7 +75,7 @@ After each update, run:
 npm run release:evidence
 ```
 
-Keep the final evidence update as one documentation-only closeout commit where practical. If signed mobile builds were created from its parent candidate, prove that the closeout diff contains only release-evidence documentation and record both SHAs in the private register. The manual production gate must still run against the final deployed `main` SHA, and **Native Apps** must be manually dispatched for that final SHA because documentation-only pushes do not match its path filters.
+Keep the final evidence update as one closeout commit that changes only `docs/release-evidence.json`. If signed mobile builds were created from its parent candidate, record both SHAs in the private register. The manual production gate must still run against the final deployed `main` SHA, and **Native Apps** must be manually dispatched for that final SHA because documentation-only pushes do not match its path filters.
 
 ## Recommended order
 
@@ -84,12 +105,16 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
   test -d "$EVIDENCE_DIR"
   ```
 
-- [ ] From a clean shell with no smoke-role tokens set, run the public smoke:
+- [ ] From a clean shell with no smoke-role credentials or tokens set, run the public smoke:
 
   ```bash
   env -u PINTPATH_SMOKE_USER_TOKEN \
     -u PINTPATH_SMOKE_VENUE_TOKEN \
     -u PINTPATH_SMOKE_ADMIN_TOKEN \
+    -u PINTPATH_SMOKE_USER_EMAIL \
+    -u PINTPATH_SMOKE_USER_PASSWORD \
+    -u PINTPATH_SMOKE_VENUE_EMAIL \
+    -u PINTPATH_SMOKE_VENUE_PASSWORD \
     PINTPATH_SMOKE_BASE_URL=https://pintpath.au \
     PINTPATH_EXPECTED_COMMIT_SHA="$RELEASE_SHA" \
     npm run --silent smoke:production | tee "$EVIDENCE_DIR/production-public-smoke.json"
@@ -133,13 +158,14 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
 - [ ] Configure production [custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp), SPF/DKIM/DMARC, sender domain, bounce/delivery monitoring, and safe Auth email rate limits. Prove confirmation and password-reset delivery to non-team addresses; the default Supabase SMTP is not production evidence.
 - [ ] Test email/password signup, email confirmation, password reset, Google sign-in, and Apple sign-in through their normal production redirects. For every provider test success, cancellation, provider error, stale/replayed callback, and interrupted return.
 - [ ] Assign an owner and recurring six-month rotation date for the Apple OAuth secret as required by the current [Supabase Apple OAuth guidance](https://supabase.com/docs/guides/auth/social-login/auth-apple). Rotate once in staging and retest web, iOS, and Android sign-in before production rotation.
-- [ ] Obtain short-lived Supabase access tokens through normal login (the admin token must already be AAL2). Store each temporarily in a mode-`600` file under `$EVIDENCE_DIR`; never paste it into the checklist or shell history.
-- [ ] Exchange each Supabase token for a Pint Path app token without printing either token or placing it in a process argument. Repeat with `ROLE=user`, `venue`, and `admin`, changing the input filename each time:
+- [ ] Set the dedicated user and venue-manager credentials as protected `production` environment secrets for both hourly **Production Health** and **Pint Path Release Gate**. Use these exact names: `PINTPATH_SMOKE_USER_EMAIL`, `PINTPATH_SMOKE_USER_PASSWORD`, `PINTPATH_SMOKE_VENUE_EMAIL`, and `PINTPATH_SMOKE_VENUE_PASSWORD`. Keep the protected `SUPABASE_URL` and `SUPABASE_ANON_KEY` values in that environment too: the smoke script compares the live public auth config against those pins and sends no password on a mismatch. Do not configure user/venue bearer-token secrets; the workflow creates and revokes disposable sessions at runtime.
+- [ ] Obtain one short-lived Supabase admin access token through a normal password plus MFA ceremony and confirm its JWT is AAL2. Store it temporarily in a mode-`600` file at `$EVIDENCE_DIR/supabase-admin.token`; never paste it into the checklist or shell history. Do not store the admin password or TOTP seed in GitHub Actions.
+- [ ] Exchange the AAL2 Supabase admin token for a one-use Pint Path app token without printing either token or placing it in a process argument:
 
   ```bash
   (
     set -euo pipefail
-    ROLE=user
+    ROLE=admin
     TOKEN_FILE="$EVIDENCE_DIR/supabase-$ROLE.token"
     RESPONSE_FILE="$EVIDENCE_DIR/pintpath-$ROLE-exchange.json"
     APP_TOKEN_FILE="$EVIDENCE_DIR/pintpath-$ROLE.token"
@@ -160,12 +186,17 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
   )
   ```
 
-- [ ] Load the three app tokens only into the current protected shell:
+- [ ] Set `PINTPATH_SMOKE_ADMIN_TOKEN` as a `production` environment secret immediately before dispatching the manual gate. For an operator-run capture, load the one-use token and prompt for the lower-privilege credentials without writing them to shell history:
 
   ```bash
-  export PINTPATH_SMOKE_USER_TOKEN="$(<"$EVIDENCE_DIR/pintpath-user.token")"
-  export PINTPATH_SMOKE_VENUE_TOKEN="$(<"$EVIDENCE_DIR/pintpath-venue.token")"
   export PINTPATH_SMOKE_ADMIN_TOKEN="$(<"$EVIDENCE_DIR/pintpath-admin.token")"
+  export PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS=true
+  read -r -p 'Smoke user email: ' PINTPATH_SMOKE_USER_EMAIL
+  read -r -s -p 'Smoke user password: ' PINTPATH_SMOKE_USER_PASSWORD; echo
+  read -r -p 'Smoke venue email: ' PINTPATH_SMOKE_VENUE_EMAIL
+  read -r -s -p 'Smoke venue password: ' PINTPATH_SMOKE_VENUE_PASSWORD; echo
+  export PINTPATH_SMOKE_USER_EMAIL PINTPATH_SMOKE_USER_PASSWORD
+  export PINTPATH_SMOKE_VENUE_EMAIL PINTPATH_SMOKE_VENUE_PASSWORD
   ```
 
 - [ ] Run:
@@ -186,11 +217,13 @@ The OCR corpus, accessibility review, legal review, and store preparation can ru
 - [ ] Across two devices, prove password reset, current-device logout, logout-all, session listing/revocation, export, deletion request/status/cancel, and recent-auth requirements behave as documented. Export must include retained exact location fields but no raw evidence bytes/URLs, tokens, or passwords.
 - [ ] Require zero unexpected browser console errors or failed network requests in the completed role journeys.
 - [ ] Configure the Resend domain, sending-only key, sender, and monitored reply path. Use an active Pro venue, completed report month, enabled delivery, and current email-verified/age-confirmed manager. Require `deliveredCount=1`, zero rejected/uncertain/in-progress sends, a Resend delivered event, and no delivery to counter staff, revoked managers, or other venues. Confirm `job:monthly_report_delivery` succeeds.
-- [ ] Record each app token's `expiresAt`. Before the earliest expiry (admin sessions default to one day), a named operator must rotate both copies of all three tokens: the repository-level Actions secrets consumed by scheduled **Production Health**, and the GitHub `production` environment secrets consumed by **Pint Path Release Gate**. Dispatch Production Health, verify it passes, then revoke/delete the old tokens. Alert if the scheduled workflow fails or either secret store is within two hours of expiry.
-- [ ] Unset local token variables and securely delete temporary token files when the capture is complete unless an approved rotation process retains them:
+- [ ] Confirm the hourly authenticated job creates and revokes disposable user/venue sessions and that its JSON has both `*_session_cleanup` and `*_provider_session_cleanup` checks passing. Rotate the dedicated account passwords under the credential policy, not on the old bearer-token expiry schedule. Create a fresh MFA/AAL2 admin token for each manual gate; the gate sets `PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS=true` and must show `admin_queues_session_cleanup` passing.
+- [ ] Unset local credential/token variables and securely delete temporary token files when the capture is complete:
 
   ```bash
-  unset PINTPATH_SMOKE_USER_TOKEN PINTPATH_SMOKE_VENUE_TOKEN PINTPATH_SMOKE_ADMIN_TOKEN
+  unset PINTPATH_SMOKE_USER_EMAIL PINTPATH_SMOKE_USER_PASSWORD
+  unset PINTPATH_SMOKE_VENUE_EMAIL PINTPATH_SMOKE_VENUE_PASSWORD
+  unset PINTPATH_SMOKE_ADMIN_TOKEN PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS
   find "$EVIDENCE_DIR" -maxdepth 1 -type f \
     \( -name 'supabase-*.token' -o -name 'pintpath-*.token' \) -delete
   ```
@@ -475,7 +508,7 @@ This evidence item approves the Play internal-track candidate. It does **not** p
 
 ## Final closeout
 
-- [ ] Confirm all 12 objects in `docs/release-evidence.json` are `pass` with non-empty opaque evidence reference, ISO-8601 timestamp, and named verifier/role.
+- [ ] Confirm all 12 objects in `docs/release-evidence.json` are `pass`, bound to the one frozen release ID/candidate SHA, and contain the exact gate reference, private-manifest SHA-256, ISO-8601 timestamp, and named verifier/role. Confirm the public and role proofs are less than 24 hours old.
 - [ ] Run:
 
   ```bash

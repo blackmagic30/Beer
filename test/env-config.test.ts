@@ -80,6 +80,12 @@ describe("environment safety defaults", () => {
     await expect(loadEnv()).rejects.toThrow("RESEND_API_KEY is required");
   });
 
+  it("rejects the mock report transport in production", async () => {
+    stubProductionEnv({ REPORT_EMAIL_MODE: "mock" });
+
+    await expect(loadEnv()).rejects.toThrow("REPORT_EMAIL_MODE=mock is test-only");
+  });
+
   it("does not allow the automatic report schedule with a non-sending email mode", async () => {
     stubProductionEnv({
       REPORT_EMAIL_MODE: "disabled",

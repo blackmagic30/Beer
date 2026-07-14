@@ -396,7 +396,7 @@ These are not unresolved code defects. They are evidence gates that require auth
 13. Obtain legal/accounting owner approval for entity/contact details, privacy, Terms, alcohol/RSA language, billing, GST/invoices, refunds, renewals, and cancellation.
 14. Complete Apple signing, TestFlight, App Store privacy/screenshots, and device review.
 15. Complete Android signing, Play internal test, Data Safety, screenshots, and device review.
-16. Fill all 12 required entries in `docs/release-evidence.json`; the strict release gate must remain blocked until they contain evidence, verifier, and timestamp.
+16. Fill all 12 required entries in `docs/release-evidence.json`; the strict release gate must remain blocked until every gate is bound to the frozen candidate and contains the private-manifest reference and SHA-256, named verifier/role, and current timestamp.
 
 ## Release position
 

@@ -1,17 +1,154 @@
 {
-  "version": 1,
+  "version": 2,
+  "release": {
+    "id": null,
+    "candidateSha": null,
+    "environment": "production"
+  },
   "items": [
-    { "id": "production_public_smoke", "label": "Production public health, readiness, API, and page smoke", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "production_role_smoke", "label": "Production user, venue manager, and admin role smoke", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "ocr_labelled_corpus", "label": "Live OCR meets thresholds on owner-labelled menu images", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "venue_pilot_one", "label": "Venue pilot 1 completed across a real shift", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "venue_pilot_two", "label": "Venue pilot 2 completed across a real shift", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "venue_pilot_three", "label": "Venue pilot 3 completed across a real shift", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "pos_vendor_pilot", "label": "Chosen POS vendor adapter or manual fallback verified at a venue", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "backup_restore", "label": "Production backup restore rehearsal completed and dated", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "accessibility_devices", "label": "Keyboard, screen reader, iPhone Safari, and Android Chrome checks signed off", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "legal_billing", "label": "Privacy, terms, alcohol wording, refund, and cancellation review signed off", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "ios_release", "label": "iOS signing, privacy declarations, screenshots, and TestFlight build approved", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "android_release", "label": "Android signing, data safety, screenshots, and internal-test build approved", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null }
+    {
+      "id": "production_public_smoke",
+      "label": "Production public health, readiness, API, and page smoke",
+      "owner": "Release engineer and operations owner",
+      "nextAction": "Enable and prove report email delivery and scheduling, then capture the complete public/provider, performance, load, security-header, and alert exercise against one frozen production SHA.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "production_role_smoke",
+      "label": "Production user, venue manager, and admin role smoke",
+      "owner": "Release engineer, identity owner, and security verifier",
+      "nextAction": "Configure production SMTP, verify the enabled Google/Apple OAuth callbacks, create the five dedicated smoke accounts, capture disposable user/venue sessions and one fresh AAL2 admin token, then run strict automated and real-browser role journeys.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "ocr_labelled_corpus",
+      "label": "Live OCR meets thresholds on owner-labelled menu images",
+      "owner": "OCR/data QA lead and independent label reviewer",
+      "nextAction": "Obtain menu/data-processing permission, label at least 30 unseen distinct menus outside Git, and run the live-model benchmark without lowering thresholds.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "venue_pilot_one",
+      "label": "Venue pilot 1 completed across a real shift",
+      "owner": "Pilot lead and participating venue 1 owner",
+      "nextAction": "Recruit venue 1, verify its owner and staff roles, then complete a real-shift QR/code, offline retry, reversal, revocation, and reconciliation pilot.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "venue_pilot_two",
+      "label": "Venue pilot 2 completed across a real shift",
+      "owner": "Pilot lead and participating venue 2 owner",
+      "nextAction": "Recruit venue 2, verify its owner and staff roles, then independently repeat the complete real-shift pilot and reconciliation matrix.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "venue_pilot_three",
+      "label": "Venue pilot 3 completed across a real shift",
+      "owner": "Pilot lead and participating venue 3 owner",
+      "nextAction": "Recruit venue 3, verify its owner and staff roles, then independently repeat the complete real-shift pilot and reconciliation matrix.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "pos_vendor_pilot",
+      "label": "Chosen POS vendor adapter or manual fallback verified at a venue",
+      "owner": "Integration lead, venue owner, and vendor representative when applicable",
+      "nextAction": "Choose and record either one named POS adapter or the manual counter-entry launch mode, then prove retries, idempotency, rotation, role scope, and shift-close reconciliation at a venue.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "backup_restore",
+      "label": "Production backup restore rehearsal completed and dated",
+      "owner": "Operations/SRE lead, second operator, and incident owner",
+      "nextAction": "Run a fresh off-site backup from the production volume, restore it into isolated local and staging destinations, verify every checksum/privacy control, and record measured RPO/RTO plus two-person approval.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "accessibility_devices",
+      "label": "Keyboard, screen reader, iPhone Safari, and Android Chrome checks signed off",
+      "owner": "Accessibility QA lead and release owner",
+      "nextAction": "Complete the keyboard, 200% zoom, screen-reader, axe, physical iPhone Safari, and physical Android Chrome matrix for every required role and retest all serious defects.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "legal_billing",
+      "label": "Privacy, terms, alcohol wording, refund, and cancellation review signed off",
+      "owner": "Company owner, Australian legal/privacy reviewer, and finance owner",
+      "nextAction": "Finalize the legal entity and policies, obtain legal/privacy and finance approval, reconcile store declarations, and complete the controlled smallest-value live Stripe checkout, cancellation, and refund.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "ios_release",
+      "label": "iOS signing, privacy declarations, screenshots, and TestFlight build approved",
+      "owner": "Apple Account Holder, iOS release engineer, QA lead, and release owner",
+      "nextAction": "Provide Apple signing and App Store Connect access, finish metadata/privacy answers and screenshots, upload the signed candidate, and approve its TestFlight physical-device matrix.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    },
+    {
+      "id": "android_release",
+      "label": "Android signing, data safety, screenshots, and internal-test build approved",
+      "owner": "Play Console owner, Android release engineer, QA lead, and release owner",
+      "nextAction": "Provide Play Console and protected upload-key access, finish listing/Data Safety/screenshots, upload the signed AAB to the internal track, and approve the physical-device and pre-launch reports.",
+      "required": true,
+      "status": "pending",
+      "evidence": null,
+      "evidenceSha256": null,
+      "verifiedAt": null,
+      "verifiedBy": null
+    }
   ]
 }

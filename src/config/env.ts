@@ -187,6 +187,10 @@ if (
   throw new Error("DEMO_BILLING_MODE cannot be true in production unless ALLOW_DEMO_BILLING_IN_PRODUCTION=true.");
 }
 
+if (parsedEnv.data.NODE_ENV === "production" && parsedEnv.data.REPORT_EMAIL_MODE === "mock") {
+  throw new Error("REPORT_EMAIL_MODE=mock is test-only and cannot be used in production.");
+}
+
 if (parsedEnv.data.REPORT_EMAIL_MODE === "resend") {
   if (!parsedEnv.data.RESEND_API_KEY) {
     throw new Error("RESEND_API_KEY is required when REPORT_EMAIL_MODE=resend.");

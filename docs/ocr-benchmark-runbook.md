@@ -24,6 +24,6 @@ Run the real model:
 npm run ocr:benchmark:live -- --manifest /secure/path/labelled-corpus.json --write-results /secure/path/latest-results.json
 ```
 
-Record the command output in `docs/release-evidence.json`. Launch thresholds are 90% overall, 95% row recall, 98% row precision, 95% canonical names/prices/availability, and 100% rejection of explicitly labelled non-beer candidates.
+Store the labelled manifest, command output, model configuration, permission record, and independent review in the private `ocr_labelled_corpus` gate manifest described in `docs/external-launch-signoffs.md`. Put only that manifest's opaque gate reference and SHA-256 in `docs/release-evidence.json`. Launch thresholds are 90% overall, 95% row recall, 98% row precision, 95% canonical names/prices/availability, and 100% rejection of explicitly labelled non-beer candidates.
 
 Any failed case remains in admin review. Never lower thresholds to make a release pass; fix extraction or keep the affected layout manual-review only.

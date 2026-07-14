@@ -229,6 +229,36 @@ describe("monthly report delivery job", () => {
     expect(repository.states.size).toBe(0);
   });
 
+  it("does not scrub configured recipients during a dry run", async () => {
+    const repository = createRepository();
+    repository.getVenueReportDeliverySettings = vi.fn(() => ({
+      enabled: true,
+      recipients: ["owner@example.com", "former-manager@example.com"],
+      configured: true,
+    }));
+    repository.setVenueReportDeliverySettings = vi.fn();
+
+    const result = await runMonthlyReportDelivery({
+      generator: {
+        generateScheduledVenueMonthlyReports: () => ({
+          generatedCount: 1,
+          reports: [{ barId: "venue-1", month: "2026-06", data: { venue: { name: "Report Hotel" } } }],
+        }),
+      },
+      repository,
+      provider: null,
+      publicBaseUrl: "https://pintpath.au",
+      from: "Pint Path <reports@pintpath.au>",
+      timezone: "Australia/Melbourne",
+      month: "2026-06",
+      dryRun: true,
+    });
+
+    expect(result).toMatchObject({ dryRun: true, eligibleRecipientCount: 1, deliveredCount: 0 });
+    expect(repository.setVenueReportDeliverySettings).not.toHaveBeenCalled();
+    expect(repository.states.size).toBe(0);
+  });
+
   it("rejects invalid calendar months before generating a report", async () => {
     const repository = createRepository();
     const generator = { generateScheduledVenueMonthlyReports: vi.fn() };

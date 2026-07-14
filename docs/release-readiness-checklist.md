@@ -29,19 +29,32 @@ GitHub keeps these two signals deliberately separate:
 - **Pint Path Automated Readiness** runs on pushes and pull requests. It proves the build, local release suite, security scan, dependency audit, and reports external evidence without claiming that evidence is complete.
 - **Pint Path Release Gate** is a manual production-environment workflow. It runs strict authenticated production smoke checks and `release:evidence:strict`, so it cannot pass with skipped roles or incomplete sign-offs.
 
-The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Only the strict command is a launch gate.
+The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Its `incomplete` array names the accountable owner and exact next action for every open gate. Only the strict command is a launch gate.
+
+Release-evidence schema v2 binds every completed gate to one immutable production release ID and frozen 40-character candidate SHA and requires the SHA-256 of a gate-specific private manifest. The informational command reports stale live proof and code/worktree drift with `evidenceCurrent: false`; the strict gate refuses it. Future timestamps and structurally unsupported proof are invalid in both modes. This does not make human evidence automatic; it prevents a note, old timestamp, or unrelated commit from being mistaken for durable launch proof.
 
 Use the [external launch evidence checklist](external-launch-signoffs.md) for the ordered owner, command, pass/fail, stop-condition, and evidence checklist for all 12 required IDs.
 
-Configure fresh production-environment secrets before running the manual gate:
+Create a canonical, protected GitHub environment named `production`, then configure these environment secrets for both hourly user/venue monitoring and the manual gate:
 
 ```text
-PINTPATH_SMOKE_USER_TOKEN
-PINTPATH_SMOKE_VENUE_TOKEN
+PINTPATH_SMOKE_USER_EMAIL
+PINTPATH_SMOKE_USER_PASSWORD
+PINTPATH_SMOKE_VENUE_EMAIL
+PINTPATH_SMOKE_VENUE_PASSWORD
+```
+
+The scheduled workflow signs those dedicated verified accounts in through the public Supabase password flow, exchanges each provider session for a Pint Path session, checks the scoped endpoint, then revokes both the disposable Pint Path session and its current Supabase refresh session. Missing credentials are reported as a monitoring-configuration warning in a separate hourly job; they do not turn a passing public-health job into a false outage alert.
+
+The authenticated job also receives protected `SUPABASE_URL` and `SUPABASE_ANON_KEY` environment values. Before sending a password, it requires the live public config to match that pinned provider origin and browser-safe key; a mismatch fails closed without making a credential request.
+
+Immediately before manually dispatching **Pint Path Release Gate**, also set this `production` environment secret:
+
+```text
 PINTPATH_SMOKE_ADMIN_TOKEN
 ```
 
-These are short-lived Pint Path bearer sessions for dedicated smoke accounts. Never commit them or print them in evidence notes. The admin token must represent a currently MFA-verified admin session.
+The admin token must be a fresh Pint Path session created from a currently MFA-verified Supabase AAL2 admin session. Do not store an admin password or TOTP seed in Actions. The release gate revokes this one-use admin session after the check. Never commit credentials or print them in logs/evidence notes.
 
 ## Synthetic Data
 

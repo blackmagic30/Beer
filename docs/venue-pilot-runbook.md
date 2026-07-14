@@ -26,4 +26,4 @@ Stop the pilot if another venue is visible, a code is stored in the offline queu
 
 ## Evidence
 
-For each venue record date, venue, devices, staff roles, transaction references with customer identifiers redacted, pass/fail, defects, and owner sign-off. Update the matching `venue_pilot_*` item in `docs/release-evidence.json` only after all stop conditions pass.
+For each venue record date, venue, devices, staff roles, transaction references with customer identifiers redacted, pass/fail, defects, and owner sign-off in its private gate manifest. Update the matching `venue_pilot_*` item in `docs/release-evidence.json` only after all stop conditions pass, using the manifest's opaque gate reference and SHA-256 as described in `docs/external-launch-signoffs.md`.
