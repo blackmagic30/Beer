@@ -712,7 +712,7 @@ private func contributionTime(_ date: Date) -> String {
     return formatter.string(from: date)
 }
 
-private extension String {
+extension String {
     var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
     }

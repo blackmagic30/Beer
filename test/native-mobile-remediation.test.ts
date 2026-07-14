@@ -397,6 +397,8 @@ describe("native mobile remediation guardrails", () => {
     expect(iosAuth).toMatch(/CheckedContinuation<URL,\s*(?:any\s+)?Error>/);
     expect(iosSync).toContain("return try await send(");
     expect(iosAPI).not.toMatch(/pagination\?\.hasMore\s*\?\?\s*response\.\w+\.count\s*==\s*pageSize/);
+    expect(iosContribute).toMatch(/^extension String \{\s*var trimmed:/m);
+    expect(iosContribute).not.toMatch(/^(?:private|fileprivate) extension String \{\s*var trimmed:/m);
   });
 
   it("binds native provider login with PKCE instead of a caller-controlled OAuth state", () => {
