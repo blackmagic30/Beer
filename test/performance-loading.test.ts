@@ -33,7 +33,10 @@ describe("website performance loading", () => {
     expect(service).toContain("listPublicVenueDirectoryPage");
     expect(service).toContain('{ count: "exact" }');
     expect(service).toContain("request.range(remoteOffset, remoteOffset + remoteFetchLimit - 1)");
-    expect(service).toContain('request.not("id", "in"');
+    expect(service).toContain("if (allLocalVenues.length === 0)");
+    expect(service).toContain("const MAX_REMOTE_VENUE_SCAN_ROWS = 5000");
+    expect(service).toContain("request.range(scanOffset, scanOffset + scanLimit - 1)");
+    expect(service).not.toContain('request.not("id", "in"');
     expect(service).not.toContain("const prefixSize = normalizedOffset + normalizedLimit");
     expect(html).toContain('window.addEventListener("DOMContentLoaded", () => {');
   });

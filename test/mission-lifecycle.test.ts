@@ -43,7 +43,7 @@ afterEach(() => {
   }
 });
 
-function createHarness(): Harness {
+function createHarness(options: { nodeEnv?: "test" | "production" } = {}): Harness {
   const database = new BetterSqlite3(":memory:");
   initializeDatabaseSchema(database);
   databases.push(database);
@@ -71,7 +71,7 @@ function createHarness(): Harness {
     SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: 300,
     SOURCE_EVIDENCE_RETENTION_DAYS: 30,
     POS_WEBHOOK_SIGNING_SECRET: "mission-lifecycle-pos-secret-32-bytes",
-    NODE_ENV: "test",
+    NODE_ENV: options.nodeEnv ?? "test",
     STRIPE_SECRET_KEY: undefined,
     STRIPE_WEBHOOK_SECRET: undefined,
     STRIPE_PRICE_MONTHLY: undefined,
@@ -431,6 +431,71 @@ describe("autonomous mission lifecycle", () => {
     expect(repository.getMissionProgress({ missionId: mission.id, userId: contributor.id })?.status)
       .toBe("cancelled");
     expect(repository.getMissionById(mission.id)?.active).toBe(true);
+  });
+
+  it("does not regenerate auto missions for legacy demo venue candidates in production", () => {
+    const { database, repository, service } = createHarness({ nodeEnv: "production" });
+    repository.createMission({
+      id: "mission:inactive-real-venue",
+      venueId: "inactive-real-venue",
+      venueName: "Inactive Real Venue",
+      suburb: "Melbourne",
+      reason: "Legacy inactive mission",
+      priority: "normal",
+      points: 3,
+      multiplier: 1,
+      active: false,
+      lastVerifiedAt: null,
+      createdAt: START,
+      updatedAt: START,
+    });
+    repository.createMission({
+      id: "mission:rooftop-bar",
+      venueId: "demo:rooftop-bar",
+      venueName: "Rooftop Bar",
+      suburb: "Melbourne",
+      reason: "Legacy demo mission",
+      priority: "high",
+      points: 5,
+      multiplier: 1,
+      active: true,
+      lastVerifiedAt: null,
+      createdAt: START,
+      updatedAt: START,
+    });
+    repository.upsertVenueLocationCache({
+      venueId: "demo:rooftop-bar",
+      venueName: "Rooftop Bar",
+      suburb: "Melbourne",
+      latitude: -37.81,
+      longitude: 144.96,
+      now: START,
+    });
+    repository.upsertVenueLocationCache({
+      venueId: "official-rooftop-bar",
+      venueName: "Official Rooftop Bar",
+      suburb: "Melbourne",
+      latitude: -37.81,
+      longitude: 144.96,
+      now: START,
+    });
+
+    expect(repository.listMissionVenueCandidates(100).map((candidate) => candidate.venueId))
+      .not.toContain("inactive-real-venue");
+
+    const result = service.runMissionMaintenance({ forceRefresh: true });
+
+    expect(result.candidates).toBe(1);
+    expect(result.generated).toBe(1);
+    expect(repository.getMissionById("mission:rooftop-bar")).toEqual(expect.objectContaining({ active: false }));
+    expect(database.prepare(
+      "SELECT count(*) AS total FROM missions WHERE venue_id LIKE 'demo:%' AND active = 1",
+    ).get()).toEqual({ total: 0 });
+    expect(repository.getMissionById("auto:venue:official-rooftop-bar:coverage"))
+      .toEqual(expect.objectContaining({ venueId: "official-rooftop-bar", active: true }));
+    expect(database.prepare(
+      "SELECT count(*) AS total FROM missions WHERE id LIKE 'auto:%' AND venue_id = 'inactive-real-venue'",
+    ).get()).toEqual({ total: 0 });
   });
 
   it("refreshes needed auto missions, prunes unreferenced inactive rows, and retains completed history", () => {

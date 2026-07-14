@@ -2955,7 +2955,7 @@ describe("production hardening", () => {
     }));
   });
 
-  it("keeps text-keyed local venue IDs out of Supabase UUID filters", async () => {
+  it("reconciles text-keyed local venue IDs without sending them through Supabase filters", async () => {
     const { repository } = createRepository();
     const textVenueId = "pintpath-release:venue:044";
     const uuidVenueId = "00000000-0000-4000-8000-000000000044";
@@ -2982,30 +2982,25 @@ describe("production hardening", () => {
     upsertProfile(textVenueId, "Release Venue 044");
     upsertProfile(uuidVenueId, "UUID Venue 044");
 
-    const detailIn = vi.fn();
-    const detailBuilder = {
-      select: vi.fn(() => detailBuilder),
-      in: vi.fn((column: string, ids: string[]) => {
-        detailIn(column, ids);
-        return detailBuilder;
-      }),
-      limit: vi.fn(() => detailBuilder),
-      order: vi.fn(async () => ({ data: [], error: null })),
-    };
+    const remoteIn = vi.fn();
     const remoteNot = vi.fn();
     const remoteBuilder = {
       select: vi.fn(() => remoteBuilder),
+      in: vi.fn((column: string, ids: string[]) => {
+        remoteIn(column, ids);
+        return remoteBuilder;
+      }),
       not: vi.fn((column: string, operator: string, value: string) => {
         remoteNot(column, operator, value);
         return remoteBuilder;
       }),
       range: vi.fn(() => remoteBuilder),
       limit: vi.fn(() => remoteBuilder),
-      order: vi.fn(async () => ({ data: [], error: null, count: 0 })),
+      order: vi.fn((column: string) => column === "name"
+        ? remoteBuilder
+        : Promise.resolve({ data: [], error: null, count: 0 })),
     };
-    const from = vi.fn()
-      .mockReturnValueOnce(detailBuilder)
-      .mockReturnValueOnce(remoteBuilder);
+    const from = vi.fn(() => remoteBuilder);
     const service = createBusinessService(
       repository,
       {},
@@ -3019,10 +3014,8 @@ describe("production hardening", () => {
       textVenueId,
       uuidVenueId,
     ]));
-    expect(detailIn).toHaveBeenCalledWith("id", [uuidVenueId]);
-    expect(remoteNot).toHaveBeenCalledWith("id", "in", `("${uuidVenueId}")`);
-    expect(JSON.stringify(detailIn.mock.calls)).not.toContain(textVenueId);
-    expect(JSON.stringify(remoteNot.mock.calls)).not.toContain(textVenueId);
+    expect(remoteIn).not.toHaveBeenCalled();
+    expect(remoteNot).not.toHaveBeenCalled();
 
     const supabaseCallsBeforeLocalLookup = from.mock.calls.length;
     expect(await service.getPublicVenueById(textVenueId)).toEqual(expect.objectContaining({
@@ -3030,6 +3023,112 @@ describe("production hardening", () => {
       name: "Release Venue 044",
     }));
     expect(from).toHaveBeenCalledTimes(supabaseCallsBeforeLocalLookup);
+  });
+
+  it("deduplicates local and remote identities before applying page offsets", async () => {
+    const { repository } = createRepository();
+    const localVenueId = "demo:rooftop-bar";
+    repository.upsertBarProfile({
+      barId: localVenueId,
+      name: "Rooftop Bar",
+      address: null,
+      suburb: "Melbourne",
+      area: "Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      highlightedName: false,
+      premiumBadge: null,
+      promoted: false,
+      featuredSpecialEligible: false,
+      active: true,
+      now: NOW,
+    });
+    const remoteVenues = [
+      {
+        id: "9102aedc-de45-4784-a2ce-f89b7d194c01",
+        name: "Rooftop Bar",
+        address: null,
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3000",
+        latitude: -37.81,
+        longitude: 144.96,
+      },
+      {
+        id: "remote-unique",
+        name: "Unique Remote Venue",
+        address: "1 Remote St",
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3000",
+        latitude: -37.82,
+        longitude: 144.97,
+      },
+    ];
+    const builder = {
+      select: vi.fn(() => builder),
+      range: vi.fn(() => builder),
+      limit: vi.fn(() => builder),
+      order: vi.fn((column: string) => column === "name"
+        ? builder
+        : Promise.resolve({ data: remoteVenues, error: null, count: remoteVenues.length })),
+    };
+    const service = createBusinessService(
+      repository,
+      {},
+      undefined,
+      { from: vi.fn(() => builder) } as never,
+    );
+
+    const firstPage = await service.listVenuesPage(undefined, 1, 0);
+    const secondPage = await service.listVenuesPage(undefined, 1, 1);
+
+    expect(firstPage.venues.map((venue) => venue.id)).toEqual([localVenueId]);
+    expect(firstPage.pagination).toEqual({ total: 2, limit: 1, offset: 0, hasMore: true });
+    expect(secondPage.venues.map((venue) => venue.id)).toEqual(["remote-unique"]);
+    expect(secondPage.pagination).toEqual({ total: 2, limit: 1, offset: 1, hasMore: false });
+  });
+
+  it("deduplicates the complete local directory before applying page offsets", async () => {
+    const { repository } = createRepository();
+    const upsertProfile = (barId: string, name: string) => repository.upsertBarProfile({
+      barId,
+      name,
+      address: null,
+      suburb: "Melbourne",
+      area: "Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      highlightedName: false,
+      premiumBadge: null,
+      promoted: false,
+      featuredSpecialEligible: false,
+      active: true,
+      now: NOW,
+    });
+    const canonicalVenueId = "9102aedc-de45-4784-a2ce-f89b7d194c01";
+    upsertProfile(canonicalVenueId, "Rooftop Bar");
+    upsertProfile("demo:rooftop-bar", "Rooftop Bar");
+    upsertProfile("unique-local", "Unique Local Venue");
+    const service = createBusinessService(repository);
+
+    const firstPage = await service.listVenuesPage(undefined, 1, 0);
+    const secondPage = await service.listVenuesPage(undefined, 1, 1);
+
+    expect(firstPage.venues.map((venue) => venue.id)).toEqual([canonicalVenueId]);
+    expect(firstPage.pagination).toEqual({ total: 2, limit: 1, offset: 0, hasMore: true });
+    expect(secondPage.venues.map((venue) => venue.id)).toEqual(["unique-local"]);
+    expect(secondPage.pagination).toEqual({ total: 2, limit: 1, offset: 1, hasMore: false });
   });
 
   it("fetches only the requested bounded Supabase venue page at deep offsets", async () => {
@@ -3105,6 +3204,26 @@ describe("production hardening", () => {
         active: true,
         now: NOW,
       });
+    });
+    repository.upsertBarProfile({
+      barId: "demo:local-venue-001",
+      name: "Local Venue 001",
+      address: null,
+      suburb: "Melbourne",
+      area: "Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      highlightedName: false,
+      premiumBadge: null,
+      promoted: false,
+      featuredSpecialEligible: false,
+      active: true,
+      now: NOW,
     });
     const remoteVenues = [
       ...localVenueIds.map((id, index) => ({

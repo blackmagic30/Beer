@@ -6729,7 +6729,11 @@ export class BusinessRepository {
            UNION
            SELECT venue_id FROM venue_requests WHERE venue_id IS NOT NULL AND venue_id != ''
            UNION
-           SELECT venue_id FROM missions WHERE venue_id IS NOT NULL AND venue_id != '' AND id NOT LIKE 'auto:%'
+           SELECT venue_id FROM missions
+           WHERE venue_id IS NOT NULL
+             AND venue_id != ''
+             AND id NOT LIKE 'auto:%'
+             AND active = 1
          )
          SELECT
            ids.venue_id AS venue_id,
@@ -6738,7 +6742,7 @@ export class BusinessRepository {
              (SELECT venue_name FROM venue_location_cache location WHERE location.venue_id = ids.venue_id LIMIT 1),
              (SELECT venue_name FROM venue_price_records record WHERE record.venue_id = ids.venue_id ORDER BY record.last_verified_at DESC LIMIT 1),
              (SELECT venue_name FROM venue_requests request WHERE request.venue_id = ids.venue_id ORDER BY request.created_at DESC LIMIT 1),
-             (SELECT venue_name FROM missions mission WHERE mission.venue_id = ids.venue_id AND mission.id NOT LIKE 'auto:%' ORDER BY mission.updated_at DESC LIMIT 1),
+             (SELECT venue_name FROM missions mission WHERE mission.venue_id = ids.venue_id AND mission.id NOT LIKE 'auto:%' AND mission.active = 1 ORDER BY mission.updated_at DESC LIMIT 1),
              ids.venue_id
            ) AS venue_name,
            COALESCE(
@@ -6746,7 +6750,7 @@ export class BusinessRepository {
              (SELECT suburb FROM venue_location_cache location WHERE location.venue_id = ids.venue_id LIMIT 1),
              (SELECT suburb FROM venue_price_records record WHERE record.venue_id = ids.venue_id ORDER BY record.last_verified_at DESC LIMIT 1),
              (SELECT suburb FROM venue_requests request WHERE request.venue_id = ids.venue_id ORDER BY request.created_at DESC LIMIT 1),
-             (SELECT suburb FROM missions mission WHERE mission.venue_id = ids.venue_id AND mission.id NOT LIKE 'auto:%' ORDER BY mission.updated_at DESC LIMIT 1)
+             (SELECT suburb FROM missions mission WHERE mission.venue_id = ids.venue_id AND mission.id NOT LIKE 'auto:%' AND mission.active = 1 ORDER BY mission.updated_at DESC LIMIT 1)
            ) AS suburb,
            (SELECT max(last_verified_at) FROM venue_price_records record WHERE record.venue_id = ids.venue_id) AS latest_verified_at,
            (SELECT count(*) FROM venue_price_records record WHERE record.venue_id = ids.venue_id) AS record_count,

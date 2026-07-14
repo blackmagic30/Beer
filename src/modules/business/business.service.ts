@@ -258,7 +258,6 @@ const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 const COUNTER_STAFF_INVITATION_TTL_MINUTES = 72 * 60;
 const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
-const MAX_INLINE_POSTGREST_UUID_FILTERS = 100;
 const REMOTE_VENUE_SCAN_PAGE_SIZE = 1000;
 const MAX_REMOTE_VENUE_SCAN_ROWS = 5000;
 
@@ -8357,26 +8356,30 @@ export class BusinessService {
   }> {
     const normalizedLimit = Math.min(1000, Math.max(1, limit));
     const normalizedOffset = Math.max(0, offset);
+    const deduplicateLocalVenues = (venues: VenueRow[]) => this.mergeVenueRows(
+      venues.map((venue) => ({ ...venue, ...this.getPublicVenueTierMetadata(venue.id) })),
+      [],
+      venues.length,
+      false,
+    );
     if (!this.supabase) {
       const rawQuery = query?.trim();
       const labelStem = rawQuery?.split("·")[0] ?? "";
       const normalizedQuery = (labelStem.split(",")[0] ?? "").trim();
-      const directory = this.repository.listPublicVenueDirectoryPage({
+      const rawDirectory = this.repository.listPublicVenueDirectoryPage({
         query: normalizedQuery,
-        limit: normalizedLimit,
-        offset: normalizedOffset,
+        limit: -1,
+        offset: 0,
       });
-      const venues = directory.venues.map((venue) => ({
-        ...venue,
-        ...this.getPublicVenueTierMetadata(venue.id),
-      }));
+      const directory = deduplicateLocalVenues(rawDirectory.venues);
+      const venues = directory.slice(normalizedOffset, normalizedOffset + normalizedLimit);
       return {
         venues,
         pagination: {
-          total: directory.total,
+          total: directory.length,
           limit: normalizedLimit,
           offset: normalizedOffset,
-          hasMore: normalizedOffset + venues.length < directory.total,
+          hasMore: normalizedOffset + venues.length < directory.length,
         },
       };
     }
@@ -8384,26 +8387,23 @@ export class BusinessService {
     const normalizedSearch = query?.trim() ?? "";
     const labelStem = normalizedSearch.split("·")[0] ?? "";
     const localSearch = (labelStem.split(",")[0] ?? "").trim();
-    const localDirectory = this.repository.listPublicVenueDirectoryPage({
+    const rawLocalDirectory = this.repository.listPublicVenueDirectoryPage({
       query: localSearch,
       limit: -1,
       offset: 0,
     });
-    let localPage = localDirectory.venues
-      .slice(normalizedOffset, normalizedOffset + normalizedLimit)
-      .map((venue) => ({ ...venue, ...this.getPublicVenueTierMetadata(venue.id) }));
-    const allLocalVenues = this.repository.listPublicVenueDirectoryPage({
-      limit: -1,
-      offset: 0,
-    }).venues;
+    const localDirectory = deduplicateLocalVenues(rawLocalDirectory.venues);
+    let localPage = localDirectory.slice(normalizedOffset, normalizedOffset + normalizedLimit);
+    const allLocalVenues = localSearch
+      ? this.repository.listPublicVenueDirectoryPage({ limit: -1, offset: 0 }).venues
+      : rawLocalDirectory.venues;
     const allLocalVenueIds = allLocalVenues.map((venue) => venue.id);
-    const supabaseLocalVenueIds = allLocalVenueIds.filter(isPostgresUuid);
-    const remoteOffset = Math.max(0, normalizedOffset - localDirectory.total);
+    const remoteOffset = Math.max(0, normalizedOffset - localDirectory.length);
     const remoteSlots = Math.max(0, normalizedLimit - localPage.length);
     // Always fetch at least one row so the exact remote count remains available
     // while a page is still fully occupied by local-authoritative venues.
     const remoteFetchLimit = Math.max(1, remoteSlots);
-    const localPageSupabaseIds = localPage.map((venue) => venue.id).filter(isPostgresUuid);
+    const localPageVenueIds = localPage.map((venue) => venue.id);
     const hydrateLocalPage = (remoteDetailRows: VenueRow[]) => {
       if (localPage.length === 0 || remoteDetailRows.length === 0) {
         return;
@@ -8418,31 +8418,6 @@ export class BusinessService {
         false,
       );
     };
-    if (
-      localPageSupabaseIds.length > 0 &&
-      supabaseLocalVenueIds.length <= MAX_INLINE_POSTGREST_UUID_FILTERS
-    ) {
-      const localRemoteRows: VenueRow[] = [];
-      for (let index = 0; index < localPageSupabaseIds.length; index += MAX_INLINE_POSTGREST_UUID_FILTERS) {
-        const idBatch = localPageSupabaseIds.slice(index, index + MAX_INLINE_POSTGREST_UUID_FILTERS);
-        const localDetailRequest = this.supabase
-          .from("venues")
-          .select("id, name, address, suburb, state, postcode, latitude, longitude")
-          .in("id", idBatch)
-          .limit(idBatch.length);
-        const { data: localRemoteData, error: localRemoteError } = await localDetailRequest.order("name", { ascending: true });
-        if (localRemoteError) {
-          throw new ExternalServiceError("Failed to fetch venue details", {
-            message: localRemoteError.message,
-            details: localRemoteError.details,
-            hint: localRemoteError.hint,
-            code: localRemoteError.code,
-          });
-        }
-        localRemoteRows.push(...((localRemoteData ?? []) as VenueRow[]));
-      }
-      hydrateLocalPage(localRemoteRows);
-    }
     const safeQuery = normalizedSearch
       ? sanitizePostgrestIlikeTerm((labelStem.split(",")[0] ?? "").trim())
       : "";
@@ -8464,14 +8439,8 @@ export class BusinessService {
     };
     let remoteRows: VenueRow[];
     let estimatedRemoteTotal: number;
-    if (supabaseLocalVenueIds.length <= MAX_INLINE_POSTGREST_UUID_FILTERS) {
-      let request = createRemoteVenueRequest();
-      if (supabaseLocalVenueIds.length) {
-        const exclusion = supabaseLocalVenueIds
-          .map((id) => `"${id.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
-          .join(",");
-        request = request.not("id", "in", `(${exclusion})`);
-      }
+    if (allLocalVenues.length === 0) {
+      const request = createRemoteVenueRequest();
       const rangedRequest = typeof (request as { range?: unknown }).range === "function"
         ? request.range(remoteOffset, remoteOffset + remoteFetchLimit - 1)
         : request.limit(remoteFetchLimit);
@@ -8489,9 +8458,9 @@ export class BusinessService {
         ? count
         : remoteOffset + remoteRows.length + (remoteRows.length >= remoteFetchLimit ? 1 : 0);
     } else {
-      // A single not.in filter containing every local UUID can exceed proxy and
-      // PostgREST request-line limits. Scan a small, hard-bounded remote directory
-      // instead, then apply the same local-authoritative de-duplication in memory.
+      // Once a local directory exists, a remote row can represent the same venue
+      // under a different ID. Scan a small, hard-bounded remote directory so ID
+      // and identity de-duplication happen before offset pagination is applied.
       const remoteCandidates: VenueRow[] = [];
       let exactRawRemoteTotal: number | null = null;
       let completedRemoteScan = false;
@@ -8549,8 +8518,8 @@ export class BusinessService {
         );
       }
 
-      if (localPageSupabaseIds.length > 0) {
-        const localPageIdSet = new Set(localPageSupabaseIds);
+      if (localPageVenueIds.length > 0) {
+        const localPageIdSet = new Set(localPageVenueIds);
         hydrateLocalPage(remoteCandidates.filter((venue) => localPageIdSet.has(venue.id)));
       }
 
@@ -8581,7 +8550,7 @@ export class BusinessService {
       normalizedLimit,
       false,
     );
-    const estimatedTotal = localDirectory.total + estimatedRemoteTotal;
+    const estimatedTotal = localDirectory.length + estimatedRemoteTotal;
     const hasMore = normalizedOffset + page.length < estimatedTotal;
     return {
       venues: page,
@@ -9170,6 +9139,9 @@ export class BusinessService {
       return new Date(left).getTime() >= new Date(right).getTime() ? left : right;
     };
     for (const candidate of rawCandidates) {
+      if (this.config.NODE_ENV === "production" && candidate.venueId.trim().toLowerCase().startsWith("demo:")) {
+        continue;
+      }
       const venueId = this.repository.getCanonicalVenueId(candidate.venueId);
       const existing = candidateByVenue.get(venueId);
       if (!existing) {
