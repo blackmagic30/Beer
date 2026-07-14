@@ -258,13 +258,26 @@ if (parsedEnv.data.NODE_ENV === "production") {
     throw new Error("SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY are required in production for authentication and durable source-evidence storage.");
   }
 
-  if (!parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL || !parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY) {
-    throw new Error("OFFSITE_BACKUP_SUPABASE_URL and OFFSITE_BACKUP_SERVICE_ROLE_KEY are required in production.");
+  const missingOffsiteBackupVariables = [
+    ["OFFSITE_BACKUP_SUPABASE_URL", parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL],
+    ["OFFSITE_BACKUP_SERVICE_ROLE_KEY", parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY],
+  ]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+
+  if (missingOffsiteBackupVariables.length > 0) {
+    const variableLabel = missingOffsiteBackupVariables.length === 1 ? "variable" : "variables";
+    const referenceLabel = missingOffsiteBackupVariables.length === 1 ? "it" : "them";
+    throw new Error(
+      `Production startup blocked: missing required independent off-site backup environment ${variableLabel}: ${missingOffsiteBackupVariables.join(", ")}. ` +
+      `Configure ${referenceLabel} in the production service environment and redeploy. ` +
+      "OFFSITE_BACKUP_SUPABASE_URL must point to a different project/provider than SUPABASE_URL, and OFFSITE_BACKUP_SERVICE_ROLE_KEY must belong to that backup destination.",
+    );
   }
 
   if (
     new URL(parsedEnv.data.SUPABASE_URL).origin.toLowerCase() ===
-    new URL(parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL).origin.toLowerCase()
+    new URL(parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL!).origin.toLowerCase()
   ) {
     throw new Error("OFFSITE_BACKUP_SUPABASE_URL must identify an independent project/provider, not the production Supabase project.");
   }

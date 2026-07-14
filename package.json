@@ -12,6 +12,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "rm -rf dist && tsc --project tsconfig.json && mkdir -p dist/src/db && cp src/db/schema.sql dist/src/db/schema.sql",
     "start": "node dist/src/server.js",
+    "predeploy:production": "NODE_ENV=production node dist/src/config/env.js",
+    "deployment:guard:check": "node scripts/check-production-deploy-guard.mjs",
     "venues:import": "tsx scripts/import-melbourne-venues.ts",
     "venues:import:city": "tsx scripts/import-melbourne-venues.ts --city-backfill --city-only",
     "venues:import:inner-ring": "tsx scripts/import-melbourne-venues.ts --inner-ring-backfill --inner-ring-only",
@@ -45,7 +47,7 @@
     "test": "vitest run test",
     "security:scan": "node scripts/security-scan.mjs",
     "security:audit": "npm audit --audit-level=high",
-    "check": "npm run build && npm run test && npm run security:scan"
+    "check": "npm run build && npm run test && npm run security:scan && npm run deployment:guard:check"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.103.0",

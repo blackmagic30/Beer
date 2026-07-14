@@ -151,6 +151,61 @@ describe("environment safety defaults", () => {
     expect(env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION).toBe(false);
   });
 
+  it.each([
+    {
+      description: "both backup credentials are absent",
+      overrides: {
+        OFFSITE_BACKUP_SUPABASE_URL: "",
+        OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
+      },
+      expectedVariables: "OFFSITE_BACKUP_SUPABASE_URL, OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      expectedLabel: "variables",
+      expectedReference: "them",
+    },
+    {
+      description: "only the backup URL is absent",
+      overrides: { OFFSITE_BACKUP_SUPABASE_URL: "   " },
+      expectedVariables: "OFFSITE_BACKUP_SUPABASE_URL",
+      expectedLabel: "variable",
+      expectedReference: "it",
+    },
+    {
+      description: "only the backup service-role key is absent",
+      overrides: { OFFSITE_BACKUP_SERVICE_ROLE_KEY: "''" },
+      expectedVariables: "OFFSITE_BACKUP_SERVICE_ROLE_KEY",
+      expectedLabel: "variable",
+      expectedReference: "it",
+    },
+  ])("fails closed with an actionable, secret-safe diagnostic when $description", async ({
+    overrides,
+    expectedVariables,
+    expectedLabel,
+    expectedReference,
+  }) => {
+    stubProductionEnv(overrides);
+
+    const error = await loadEnv().catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain(
+      `missing required independent off-site backup environment ${expectedLabel}: ${expectedVariables}`,
+    );
+    expect(message).toContain(`Configure ${expectedReference} in the production service environment and redeploy.`);
+    expect(message).toContain("must point to a different project/provider than SUPABASE_URL");
+    expect(message).not.toContain(productionRequiredEnv.OFFSITE_BACKUP_SERVICE_ROLE_KEY);
+  });
+
+  it("rejects an off-site backup destination that resolves to the production Supabase origin", async () => {
+    stubProductionEnv({
+      OFFSITE_BACKUP_SUPABASE_URL: "HTTPS://PRODUCTION-PROJECT.SUPABASE.CO/backup/",
+    });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "OFFSITE_BACKUP_SUPABASE_URL must identify an independent project/provider",
+    );
+  });
+
   it("still blocks explicit production demo billing without the override", async () => {
     stubProductionEnv({ DEMO_BILLING_MODE: "true" });
 

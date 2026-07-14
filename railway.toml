@@ -3,6 +3,7 @@ builder = "RAILPACK"
 buildCommand = "npm run build"
 
 [deploy]
+preDeployCommand = ["npm run predeploy:production"]
 startCommand = "node dist/src/server.js"
 healthcheckPath = "/ready"
 healthcheckTimeout = 120

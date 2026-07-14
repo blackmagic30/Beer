@@ -105,6 +105,8 @@ Replace all placeholders with real environment-specific values. The source-evide
 
 Use a persistent Railway volume mounted at `/app/data`. Back it up before each schema-affecting deploy.
 
+`railway.toml` runs `npm run predeploy:production` after the image is built and before Railway starts a candidate deployment. The command imports the same compiled environment validator used by the server, so missing or invalid production configuration stops that candidate before application startup. This guard validates configuration and runtime invariants only; it does not prove provider connectivity. Keep `npm run readiness:launch` and the real-provider checks in the release gate for external verification.
+
 Generate `SOURCE_EVIDENCE_SIGNING_SECRET` locally and paste it into Railway as a private environment variable:
 
 ```bash
