@@ -78,7 +78,7 @@ struct ContributeView: View {
 
                 modePicker
 
-                if let acceptedMissionId {
+                if acceptedMissionId != nil {
                     StatusBanner(
                         message: "Mission reserved. The next update you send from this form will be linked for review.",
                         systemImage: "checkmark.seal.fill"

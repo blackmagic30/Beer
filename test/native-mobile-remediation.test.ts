@@ -384,12 +384,19 @@ describe("native mobile remediation guardrails", () => {
 
   it("keeps compiler-sensitive native concurrency and imports valid", () => {
     const iosContribute = read("apps/ios/BeerMap/Features/ContributeView.swift");
+    const iosSync = sourceSection(iosAPI, "func syncSupabase(", "func requestPasswordReset(");
     expect(androidAPI).toMatch(/^import java\.util\.Locale$/m);
     expect(androidAPI).toMatch(/^import kotlinx\.coroutines\.withContext$/m);
     expect(androidAPI).not.toContain("throw@withContext");
     expect(iosContribute).toMatch(
       /@MainActor\s+private final class OneTimeLocationProof:[^{\n]*@preconcurrency\s+CLLocationManagerDelegate/,
     );
+    expect(iosApp).toMatch(/private func withAuthenticatedSession<T:\s*Sendable>/);
+    expect(iosApp).toMatch(/private func withOptionalAuthenticatedSession<T:\s*Sendable>/);
+    expect(iosAuth).toMatch(/let callbackURL:\s*URL\s*=\s*try await withCheckedThrowingContinuation/);
+    expect(iosAuth).toMatch(/CheckedContinuation<URL,\s*(?:any\s+)?Error>/);
+    expect(iosSync).toContain("return try await send(");
+    expect(iosAPI).not.toMatch(/pagination\?\.hasMore\s*\?\?\s*response\.\w+\.count\s*==\s*pageSize/);
   });
 
   it("binds native provider login with PKCE instead of a caller-controlled OAuth state", () => {

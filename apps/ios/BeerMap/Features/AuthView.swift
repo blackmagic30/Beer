@@ -355,7 +355,7 @@ private final class NativeOAuthCoordinator: NSObject, ObservableObject, ASWebAut
             session = nil
         }
 
-        let callbackURL = try await withCheckedThrowingContinuation { continuation in
+        let callbackURL: URL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, any Error>) in
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "pintpath") { callbackURL, error in
                 if let error {
                     continuation.resume(throwing: error)

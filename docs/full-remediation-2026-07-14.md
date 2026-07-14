@@ -356,7 +356,7 @@ The final result came from several independent passes:
 296. Prevented account Security from starting a password-gated session inventory on render, made Refresh the explicit step-up action, and replaced raw hosted-auth session errors with provider-aware password/sign-in guidance.
 297. Moved the single current-device Log out control and signed-in identity summary outside individual settings panels so logout remains immediately reachable from Stats, Submissions, Saved, Preferences, Privacy, Support, Security, and Beta tools on desktop and phone.
 298. Re-swept public, authenticated, invalid-input, protected, evidence, local/remote venue, pagination-boundary, HTML, alias, and local-asset routes against a disposable database; every response matched its intended 2xx/3xx/4xx class and no unexpected 5xx remained.
-299. Closed the compiler gaps exposed by the authoritative native CI runner: the main-actor Core Location helper now uses a Swift 6-compatible pre-concurrency delegate conformance, Android imports `Locale`, invalid labelled Kotlin throws were removed, and static guardrails cover each boundary.
+299. Closed the compiler gaps exposed by the authoritative native CI runner: the main-actor Core Location helper uses a Swift 6-compatible pre-concurrency delegate conformance, authenticated operation results are Sendable, OAuth continuation types and Supabase returns are explicit, pagination fallback precedence is unambiguous, Android imports `Locale`, invalid labelled Kotlin throws were removed, and static guardrails cover each boundary.
 
 ## Final verification
 
@@ -374,7 +374,7 @@ The final result came from several independent passes:
 - Native static regression suite: **27/27 passed**
 - Swift parser: **passed**
 - iOS plist/privacy manifest lint: **passed**
-- Android Gradle build: **not runnable on this host because no Java runtime is installed; the GitHub Native Apps workflow is the authoritative debug/release Gradle gate**
+- Android Gradle build: **debug/release lint, tests, and assembly passed in GitHub Native Apps; it remains unavailable on this host because no Java runtime is installed**
 
 ## External evidence still required
 

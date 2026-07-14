@@ -151,7 +151,7 @@ struct BeerMapAPI {
     }
 
     func billingRecoveryPortal(accessToken: String, venueId: String?) async throws -> BillingRecoveryResult {
-        try await send(
+        return try await send(
             "/api/business/billing/recovery-portal",
             method: "POST",
             body: BillingRecoveryProviderRequest(accessToken: accessToken, venueId: venueId)
@@ -225,7 +225,7 @@ struct BeerMapAPI {
     ) async throws -> AuthResult {
         let hasCompleteConsent = ageConfirmed == true && termsAccepted == true && privacyAccepted == true
         let policyVersion = hasCompleteConsent ? (config.legalPolicyVersion ?? "2026-07-12") : nil
-        try await send(
+        return try await send(
             "/api/business/auth/supabase-session",
             method: "POST",
             body: SupabaseSessionRequest(
@@ -333,7 +333,7 @@ struct BeerMapAPI {
             )
             total = response.total ?? response.pagination?.total ?? total
             sessions.append(contentsOf: response.sessions.filter { seenIds.insert($0.id).inserted })
-            let hasMore = response.pagination?.hasMore ?? response.sessions.count == pageSize
+            let hasMore = response.pagination?.hasMore ?? (response.sessions.count == pageSize)
             guard hasMore else { break }
             guard !response.sessions.isEmpty else {
                 throw BeerMapAPIError.server("Session pagination stopped making progress. Refresh and try again.")
@@ -421,7 +421,7 @@ struct BeerMapAPI {
             if let normalizedQuery { items.append(URLQueryItem(name: "q", value: normalizedQuery)) }
             let response: VenueListResponse = try await get(path("/api/business/venues", queryItems: items))
             venues.append(contentsOf: response.venues.filter { seenIds.insert($0.id).inserted })
-            let hasMore = response.pagination?.hasMore ?? response.venues.count == pageSize
+            let hasMore = response.pagination?.hasMore ?? (response.venues.count == pageSize)
             guard hasMore else { break }
             guard !response.venues.isEmpty else {
                 throw BeerMapAPIError.server("Venue pagination stopped making progress. Refresh and try again.")
@@ -529,7 +529,7 @@ struct BeerMapAPI {
                 token: token
             )
             missions.append(contentsOf: response.missions.filter { seenIds.insert($0.id).inserted })
-            let hasMore = response.pagination?.hasMore ?? response.missions.count == pageSize
+            let hasMore = response.pagination?.hasMore ?? (response.missions.count == pageSize)
             guard hasMore else { break }
             guard !response.missions.isEmpty else {
                 throw BeerMapAPIError.server("Mission pagination stopped making progress. Refresh and try again.")

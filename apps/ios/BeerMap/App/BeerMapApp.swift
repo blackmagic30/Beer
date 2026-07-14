@@ -352,7 +352,7 @@ final class BeerMapAppModel: ObservableObject {
         do {
             _ = try await withAuthenticatedSession { token in
                 let reauthenticationToken = try self.currentReauthenticationToken()
-                try await self.api.logoutAll(
+                _ = try await self.api.logoutAll(
                     accessToken: reauthenticationToken,
                     token: token
                 )
@@ -1337,7 +1337,7 @@ final class BeerMapAppModel: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "au.pintpath.beermap.optionalAnalytics")
     }
 
-    private func withAuthenticatedSession<T>(
+    private func withAuthenticatedSession<T: Sendable>(
         _ operation: (String) async throws -> T
     ) async throws -> T {
         guard let currentToken = sessionToken else {
@@ -1354,7 +1354,7 @@ final class BeerMapAppModel: ObservableObject {
         }
     }
 
-    private func withOptionalAuthenticatedSession<T>(
+    private func withOptionalAuthenticatedSession<T: Sendable>(
         _ operation: (String?) async throws -> T
     ) async throws -> T {
         let currentToken = sessionToken
