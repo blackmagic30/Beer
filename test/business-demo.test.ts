@@ -3110,7 +3110,7 @@ describe("production hardening", () => {
       ...localVenueIds.map((id, index) => ({
         id,
         name: `Local Venue ${String(index).padStart(3, "0")}`,
-        address: null,
+        address: `${index} Hydrated St`,
         suburb: "Melbourne",
         state: "VIC",
         postcode: "3000",
@@ -3139,25 +3139,27 @@ describe("production hardening", () => {
       })),
     ];
     let requestedRange = { from: 0, to: 0 };
+    let remoteSearchActive = false;
     const remoteNot = vi.fn();
-    const detailIdBatches: string[][] = [];
-    const detailBuilder = {
-      select: vi.fn(() => detailBuilder),
-      in: vi.fn((_column: string, ids: string[]) => {
-        detailIdBatches.push(ids);
-        return detailBuilder;
-      }),
-      limit: vi.fn(() => detailBuilder),
-      order: vi.fn(async () => ({ data: [], error: null })),
-    };
+    const remoteIn = vi.fn();
     const remoteOrderColumns: string[] = [];
     const remoteBuilder = {
-      select: vi.fn(() => remoteBuilder),
+      select: vi.fn(() => {
+        remoteSearchActive = false;
+        return remoteBuilder;
+      }),
+      in: vi.fn((column: string, ids: string[]) => {
+        remoteIn(column, ids);
+        return remoteBuilder;
+      }),
       not: vi.fn((column: string, operator: string, value: string) => {
         remoteNot(column, operator, value);
         return remoteBuilder;
       }),
-      or: vi.fn(() => remoteBuilder),
+      or: vi.fn(() => {
+        remoteSearchActive = true;
+        return remoteBuilder;
+      }),
       range: vi.fn((from: number, to: number) => {
         requestedRange = { from, to };
         return remoteBuilder;
@@ -3165,22 +3167,22 @@ describe("production hardening", () => {
       limit: vi.fn(() => remoteBuilder),
       order: vi.fn((column: string) => {
         remoteOrderColumns.push(column);
+        const matchingRemoteVenues = remoteSearchActive
+          ? remoteVenues.filter((venue) => venue.name.includes("Local Venue 000"))
+          : remoteVenues;
         return column === "name"
           ? remoteBuilder
           : Promise.resolve({
-              data: remoteVenues.slice(
+              data: matchingRemoteVenues.slice(
                 requestedRange.from,
                 Math.min(requestedRange.to + 1, requestedRange.from + 200),
               ),
               error: null,
-              count: remoteVenues.length,
+              count: matchingRemoteVenues.length,
             });
       }),
     };
     const from = vi.fn(() => remoteBuilder);
-    Array.from({ length: Math.ceil(localVenueIds.length / 100) }).forEach(() => {
-      from.mockReturnValueOnce(detailBuilder);
-    });
     const service = createBusinessService(
       repository,
       {},
@@ -3191,10 +3193,11 @@ describe("production hardening", () => {
     const localPage = await service.listVenuesPage(undefined, localVenueIds.length, 0);
     const firstRemotePage = await service.listVenuesPage(undefined, 2, localVenueIds.length);
     const secondRemotePage = await service.listVenuesPage(undefined, 2, localVenueIds.length + 2);
+    const searchedPage = await service.listVenuesPage("Local Venue 000", 10, 0);
 
     expect(remoteNot).not.toHaveBeenCalled();
-    expect(detailIdBatches.map((ids) => ids.length)).toEqual([100, 100, 100, 100, 100, 100, 12]);
-    expect(detailIdBatches.flat()).toEqual(localVenueIds);
+    expect(remoteIn).not.toHaveBeenCalled();
+    expect(from).toHaveBeenCalledTimes(13);
     expect(remoteBuilder.range.mock.calls).toEqual([
       [0, 999],
       [200, 1199],
@@ -3208,9 +3211,24 @@ describe("production hardening", () => {
       [200, 1199],
       [400, 1399],
       [600, 1599],
+      [0, 999],
     ]);
-    expect(remoteOrderColumns).toEqual(Array.from({ length: 12 }, () => ["name", "id"]).flat());
+    expect(remoteOrderColumns).toEqual(Array.from({ length: 13 }, () => ["name", "id"]).flat());
     expect(localPage.venues.map((venue) => venue.id)).toEqual(localVenueIds);
+    expect(localPage.venues[0]).toEqual(expect.objectContaining({
+      address: "0 Hydrated St",
+      postcode: "3000",
+      latitude: -37.8,
+      longitude: 144.9,
+    }));
+    expect(searchedPage.venues).toEqual([
+      expect.objectContaining({
+        id: localVenueIds[0],
+        address: "0 Hydrated St",
+        postcode: "3000",
+      }),
+    ]);
+    expect(searchedPage.pagination).toEqual({ total: 1, limit: 10, offset: 0, hasMore: false });
     expect(localPage.pagination).toEqual({
       total: localVenueIds.length + 3,
       limit: localVenueIds.length,

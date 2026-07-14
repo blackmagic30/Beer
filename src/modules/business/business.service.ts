@@ -8404,7 +8404,24 @@ export class BusinessService {
     // while a page is still fully occupied by local-authoritative venues.
     const remoteFetchLimit = Math.max(1, remoteSlots);
     const localPageSupabaseIds = localPage.map((venue) => venue.id).filter(isPostgresUuid);
-    if (localPageSupabaseIds.length) {
+    const hydrateLocalPage = (remoteDetailRows: VenueRow[]) => {
+      if (localPage.length === 0 || remoteDetailRows.length === 0) {
+        return;
+      }
+      localPage = this.mergeVenueRows(
+        localPage,
+        remoteDetailRows.map((venue) => ({
+          ...venue,
+          ...this.getPublicVenueTierMetadata(venue.id),
+        })),
+        localPage.length,
+        false,
+      );
+    };
+    if (
+      localPageSupabaseIds.length > 0 &&
+      supabaseLocalVenueIds.length <= MAX_INLINE_POSTGREST_UUID_FILTERS
+    ) {
       const localRemoteRows: VenueRow[] = [];
       for (let index = 0; index < localPageSupabaseIds.length; index += MAX_INLINE_POSTGREST_UUID_FILTERS) {
         const idBatch = localPageSupabaseIds.slice(index, index + MAX_INLINE_POSTGREST_UUID_FILTERS);
@@ -8424,15 +8441,7 @@ export class BusinessService {
         }
         localRemoteRows.push(...((localRemoteData ?? []) as VenueRow[]));
       }
-      localPage = this.mergeVenueRows(
-        localPage,
-        localRemoteRows.map((venue) => ({
-          ...venue,
-          ...this.getPublicVenueTierMetadata(venue.id),
-        })),
-        localPage.length,
-        false,
-      );
+      hydrateLocalPage(localRemoteRows);
     }
     const safeQuery = normalizedSearch
       ? sanitizePostgrestIlikeTerm((labelStem.split(",")[0] ?? "").trim())
@@ -8538,6 +8547,11 @@ export class BusinessService {
           },
           503,
         );
+      }
+
+      if (localPageSupabaseIds.length > 0) {
+        const localPageIdSet = new Set(localPageSupabaseIds);
+        hydrateLocalPage(remoteCandidates.filter((venue) => localPageIdSet.has(venue.id)));
       }
 
       const seenVenueIds = new Set(allLocalVenueIds);
