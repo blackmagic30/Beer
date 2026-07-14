@@ -616,6 +616,13 @@ CREATE INDEX IF NOT EXISTS idx_mission_progress_user_status
 CREATE INDEX IF NOT EXISTS idx_mission_progress_submission
   ON mission_progress (submission_id);
 
+CREATE INDEX IF NOT EXISTS idx_mission_progress_acceptance_expiry
+  ON mission_progress (status, accepted_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_progress_open_reservation
+  ON mission_progress (mission_id)
+  WHERE status IN ('accepted', 'submitted');
+
 CREATE TABLE IF NOT EXISTS system_state (
   key TEXT PRIMARY KEY,
   value_json TEXT NOT NULL DEFAULT '{}',

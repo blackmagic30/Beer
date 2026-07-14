@@ -8,7 +8,7 @@ import { env } from "../config/env.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 
-const CURRENT_DATABASE_SCHEMA_VERSION = 4;
+const CURRENT_DATABASE_SCHEMA_VERSION = 5;
 const MIGRATION_BACKUP_RETENTION = 3;
 
 function splitSchemaIndexes(schema: string): { baseSchema: string; indexSchema: string } {
@@ -349,6 +349,13 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
       ON mission_progress (user_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_mission_progress_submission
       ON mission_progress (submission_id);
+
+    CREATE INDEX IF NOT EXISTS idx_mission_progress_acceptance_expiry
+      ON mission_progress (status, accepted_at);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_progress_open_reservation
+      ON mission_progress (mission_id)
+      WHERE status IN ('accepted', 'submitted');
     CREATE INDEX IF NOT EXISTS idx_submission_source_evidence_evidence
       ON submission_source_evidence (evidence_id);
     CREATE INDEX IF NOT EXISTS idx_verifications_upload
@@ -390,6 +397,33 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE INDEX IF NOT EXISTS idx_venue_partner_outreach_updated_by
       ON venue_partner_outreach (updated_by);
   `);
+}
+
+function normalizeMissionReservations(database: BetterSqlite3.Database): void {
+  const now = new Date().toISOString();
+  database
+    .prepare(
+      `WITH ranked_reservations AS (
+         SELECT
+           id,
+           row_number() OVER (
+             PARTITION BY mission_id
+             ORDER BY
+               CASE status WHEN 'submitted' THEN 0 ELSE 1 END,
+               CASE WHEN status = 'submitted' THEN julianday(submitted_at) END ASC,
+               CASE WHEN status = 'accepted' THEN julianday(accepted_at) END DESC,
+               id ASC
+           ) AS reservation_rank
+         FROM mission_progress
+         WHERE status IN ('accepted', 'submitted')
+       )
+       UPDATE mission_progress
+       SET status = 'cancelled', completed_at = NULL, updated_at = ?
+       WHERE id IN (
+         SELECT id FROM ranked_reservations WHERE reservation_rank > 1
+       )`,
+    )
+    .run(now);
 }
 
 function ensurePostMigrationIntegrity(database: BetterSqlite3.Database): void {
@@ -832,6 +866,7 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
   ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
   redactCompletedAdminIngestionImages(database);
   ensureColumns(database, "venue_beers", venueBeersColumns);
+  normalizeMissionReservations(database);
   ensurePostMigrationIntegrity(database);
   database.exec(indexSchema);
   syncStaticBeerCatalog(database);

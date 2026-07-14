@@ -236,6 +236,13 @@ export interface MissionProgress {
   updatedAt: string;
 }
 
+export class MissionReservationError extends Error {
+  constructor(message = "Accept this mission before submitting it.") {
+    super(message);
+    this.name = "MissionReservationError";
+  }
+}
+
 export interface MissionVenueCandidate {
   venueId: string;
   venueName: string;
@@ -3128,6 +3135,7 @@ export class BusinessRepository {
     id: string;
     clientSubmissionId: string | null;
     missionId?: string | null;
+    missionAcceptedAfter?: string | undefined;
     userId: string;
     venueId: string;
     venueName: string;
@@ -3164,6 +3172,28 @@ export class BusinessRepository {
     now: string;
   }): BusinessSubmission {
     const create = this.database.transaction(() => {
+      if (input.missionId) {
+        if (!input.missionAcceptedAfter) {
+          throw new MissionReservationError();
+        }
+        const reservation = this.database
+          .prepare(
+            `SELECT progress.id
+             FROM mission_progress progress
+             INNER JOIN missions mission ON mission.id = progress.mission_id
+             WHERE progress.mission_id = ?
+               AND progress.user_id = ?
+               AND progress.status = 'accepted'
+               AND mission.active = 1
+               AND julianday(progress.accepted_at) > julianday(?)
+             LIMIT 1`,
+          )
+          .get(input.missionId, input.userId, input.missionAcceptedAfter) as { id: string } | undefined;
+        if (!reservation) {
+          throw new MissionReservationError("This mission reservation expired or belongs to another contributor.");
+        }
+      }
+
       this.database
         .prepare(
           `INSERT INTO submissions (
@@ -3200,19 +3230,30 @@ export class BusinessRepository {
         );
 
       if (input.missionId) {
-        this.database
+        const progressUpdate = this.database
           .prepare(
-            `INSERT INTO mission_progress (
-              id, mission_id, user_id, submission_id, status, accepted_at, submitted_at, completed_at, updated_at
-            ) VALUES (?, ?, ?, ?, 'submitted', ?, ?, NULL, ?)
-            ON CONFLICT(mission_id, user_id) DO UPDATE SET
-              submission_id = excluded.submission_id,
-              status = 'submitted',
-              submitted_at = excluded.submitted_at,
-              completed_at = NULL,
-              updated_at = excluded.updated_at`,
+            `UPDATE mission_progress
+             SET submission_id = ?,
+                 status = 'submitted',
+                 submitted_at = ?,
+                 completed_at = NULL,
+                 updated_at = ?
+             WHERE mission_id = ?
+               AND user_id = ?
+               AND status = 'accepted'
+               AND julianday(accepted_at) > julianday(?)`,
           )
-          .run(crypto.randomUUID(), input.missionId, input.userId, input.id, input.now, input.now, input.now);
+          .run(
+            input.id,
+            input.now,
+            input.now,
+            input.missionId,
+            input.userId,
+            input.missionAcceptedAfter,
+          );
+        if (progressUpdate.changes !== 1) {
+          throw new MissionReservationError("This mission reservation is no longer available.");
+        }
       }
 
       const insertItem = this.database.prepare(
@@ -3252,7 +3293,7 @@ export class BusinessRepository {
       }
     });
 
-    create();
+    create.immediate();
     return this.getSubmissionById(input.id)!.submission;
   }
 
@@ -5011,13 +5052,16 @@ export class BusinessRepository {
 
       if (current.submission.missionId) {
         const missionStatus: MissionProgressStatus = input.status === "approved" ? "completed" : "needs_revision";
-        this.database
+        const missionProgressUpdate = this.database
           .prepare(
             `UPDATE mission_progress
              SET status = ?,
                  completed_at = CASE WHEN ? = 'completed' THEN ? ELSE NULL END,
                  updated_at = ?
-             WHERE mission_id = ? AND user_id = ?`,
+             WHERE mission_id = ?
+               AND user_id = ?
+               AND submission_id = ?
+               AND status = 'submitted'`,
           )
           .run(
             missionStatus,
@@ -5026,8 +5070,30 @@ export class BusinessRepository {
             input.now,
             current.submission.missionId,
             current.submission.userId,
+            input.submissionId,
           );
+        if (input.status === "approved" && missionProgressUpdate.changes !== 1) {
+          throw new MissionReservationError("This mission was already completed or reassigned.");
+        }
         if (input.status === "approved") {
+          this.database
+            .prepare(
+              `UPDATE mission_progress
+               SET status = 'cancelled', completed_at = NULL, updated_at = ?
+               WHERE mission_id = ?
+                 AND user_id != ?
+                 AND status IN ('accepted', 'submitted')`,
+            )
+            .run(input.now, current.submission.missionId, current.submission.userId);
+          this.database
+            .prepare(
+              `UPDATE submissions
+               SET mission_id = NULL, updated_at = ?
+               WHERE mission_id = ?
+                 AND user_id != ?
+                 AND status IN ('pending', 'needs_more_evidence')`,
+            )
+            .run(input.now, current.submission.missionId, current.submission.userId);
           this.database
             .prepare("UPDATE missions SET active = 0, updated_at = ? WHERE id = ?")
             .run(input.now, current.submission.missionId);
@@ -5059,7 +5125,7 @@ export class BusinessRepository {
       };
     });
 
-    return review();
+    return review.immediate();
   }
 
   private publishSubmissionPriceRecords(
@@ -5271,21 +5337,98 @@ export class BusinessRepository {
     return row ? toMission(row) : null;
   }
 
-  acceptMission(input: { missionId: string; userId: string; now: string }): MissionProgress {
-    this.database
+  acceptMission(input: {
+    missionId: string;
+    userId: string;
+    now: string;
+    acceptedAfter: string;
+  }): MissionProgress | null {
+    const accept = this.database.transaction(() => {
+      const activeMission = this.database
+        .prepare("SELECT 1 AS active FROM missions WHERE id = ? AND active = 1 LIMIT 1")
+        .get(input.missionId) as { active: number } | undefined;
+      if (!activeMission) return null;
+
+      this.database
+        .prepare(
+          `UPDATE mission_progress
+           SET status = 'cancelled', completed_at = NULL, updated_at = ?
+           WHERE mission_id = ?
+             AND status = 'accepted'
+             AND (
+               julianday(accepted_at) IS NULL
+               OR julianday(accepted_at) <= julianday(?)
+             )`,
+        )
+        .run(input.now, input.missionId, input.acceptedAfter);
+
+      const competingReservation = this.database
+        .prepare(
+          `SELECT 1 AS reserved
+           FROM mission_progress
+           WHERE mission_id = ?
+             AND user_id != ?
+             AND status IN ('accepted', 'submitted')
+           LIMIT 1`,
+        )
+        .get(input.missionId, input.userId) as { reserved: number } | undefined;
+      if (competingReservation) return null;
+
+      const existing = this.getMissionProgress({ missionId: input.missionId, userId: input.userId });
+      if (existing && ["accepted", "submitted", "completed"].includes(existing.status)) {
+        return existing;
+      }
+
+      this.database
+        .prepare(
+          `INSERT INTO mission_progress (
+            id, mission_id, user_id, submission_id, status, accepted_at, submitted_at, completed_at, updated_at
+          ) VALUES (?, ?, ?, NULL, 'accepted', ?, NULL, NULL, ?)
+          ON CONFLICT(mission_id, user_id) DO UPDATE SET
+            submission_id = NULL,
+            status = 'accepted',
+            accepted_at = excluded.accepted_at,
+            submitted_at = NULL,
+            completed_at = NULL,
+            updated_at = excluded.updated_at`,
+        )
+        .run(crypto.randomUUID(), input.missionId, input.userId, input.now, input.now);
+      return this.getMissionProgress({ missionId: input.missionId, userId: input.userId });
+    });
+
+    return accept.immediate();
+  }
+
+  expireAcceptedMissionProgress(input: { acceptedBefore: string; now: string }): number {
+    return this.database
       .prepare(
-        `INSERT INTO mission_progress (
-          id, mission_id, user_id, submission_id, status, accepted_at, submitted_at, completed_at, updated_at
-        ) VALUES (?, ?, ?, NULL, 'accepted', ?, NULL, NULL, ?)
-        ON CONFLICT(mission_id, user_id) DO UPDATE SET
-          status = CASE
-            WHEN mission_progress.status = 'completed' THEN mission_progress.status
-            ELSE 'accepted'
-          END,
-          updated_at = excluded.updated_at`,
+        `UPDATE mission_progress
+         SET status = 'cancelled', completed_at = NULL, updated_at = ?
+         WHERE status = 'accepted'
+           AND (
+             julianday(accepted_at) IS NULL
+             OR julianday(accepted_at) <= julianday(?)
+           )`,
       )
-      .run(crypto.randomUUID(), input.missionId, input.userId, input.now, input.now);
-    return this.getMissionProgress({ missionId: input.missionId, userId: input.userId })!;
+      .run(input.now, input.acceptedBefore).changes;
+  }
+
+  listUnavailableMissionIds(input: { userId?: string | undefined; acceptedAfter: string }): Set<string> {
+    const values: unknown[] = [input.acceptedAfter];
+    const otherUserClause = input.userId ? "AND user_id != ?" : "";
+    if (input.userId) values.push(input.userId);
+    const rows = this.database
+      .prepare(
+        `SELECT DISTINCT mission_id
+         FROM mission_progress
+         WHERE (
+           status = 'submitted'
+           OR (status = 'accepted' AND julianday(accepted_at) > julianday(?))
+         )
+         ${otherUserClause}`,
+      )
+      .all(...values) as Array<{ mission_id: string }>;
+    return new Set(rows.map((row) => row.mission_id));
   }
 
   getMissionProgress(input: { missionId: string; userId: string }): MissionProgress | null {
@@ -5493,7 +5636,17 @@ export class BusinessRepository {
   ): number {
     const replace = this.database.transaction((generatedMissions: typeof missions) => {
       this.database
-        .prepare("UPDATE missions SET active = 0, updated_at = ? WHERE id LIKE 'auto:%'")
+        .prepare(
+          `UPDATE missions
+           SET active = 0, updated_at = ?
+           WHERE id LIKE 'auto:%'
+             AND NOT EXISTS (
+               SELECT 1
+               FROM mission_progress progress
+               WHERE progress.mission_id = missions.id
+                 AND progress.status IN ('accepted', 'submitted')
+             )`,
+        )
         .run(now);
 
       const upsertMission = this.database.prepare(
@@ -5537,6 +5690,25 @@ export class BusinessRepository {
     });
 
     return replace(missions);
+  }
+
+  pruneInactiveAutoMissions(): number {
+    return this.database
+      .prepare(
+        `DELETE FROM missions
+         WHERE id LIKE 'auto:%'
+           AND active = 0
+           AND NOT EXISTS (
+             SELECT 1 FROM mission_progress progress WHERE progress.mission_id = missions.id
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM submissions submission WHERE submission.mission_id = missions.id
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM venue_requests request WHERE request.mission_id = missions.id
+           )`,
+      )
+      .run().changes;
   }
 
   listLatestPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {

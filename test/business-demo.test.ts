@@ -608,7 +608,7 @@ describe("Supabase account and verification foundation", () => {
     expect(drinkColumns).toEqual(expect.arrayContaining(["points_awarded", "idempotency_key"]));
     expect(redemptionIndexes).toContain("idx_discount_redemptions_idempotency");
     expect(drinkIndexes).toContain("idx_pint_point_drink_records_idempotency");
-    expect(database.pragma("user_version", { simple: true })).toBe(4);
+    expect(database.pragma("user_version", { simple: true })).toBe(5);
     database.prepare(
       `INSERT INTO pint_point_drink_records (
         id, user_id, venue_id, venue_name, recorded_at, created_at

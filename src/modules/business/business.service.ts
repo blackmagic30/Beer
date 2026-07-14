@@ -9,6 +9,7 @@ import { CONTRIBUTION_POINTS, PREMIUM_PRICING, SUBMISSION_LIMITS } from "../../c
 import type { Env } from "../../config/env.js";
 import {
   BusinessRepository,
+  MissionReservationError,
   type AgeVerification,
   type AccountPreferences,
   type BarPendingChange,
@@ -197,6 +198,7 @@ interface UserGoogleVenueLookup {
 const AUTO_MISSION_VENUE_LIMIT = 2_000;
 const AUTO_MISSION_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const AUTO_MISSION_REFRESH_STATE_KEY = "auto_missions_refresh";
+const MISSION_ACCEPTANCE_TTL_MS = 24 * 60 * 60 * 1000;
 const AUTO_MISSION_TARGET_BEERS = [
   SUPPORTED_BEERS.guinness,
   SUPPORTED_BEERS.carlton_draft,
@@ -205,6 +207,10 @@ const AUTO_MISSION_TARGET_BEERS = [
 const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
+
+function missionAcceptanceCutoff(now: string): string {
+  return new Date(new Date(now).getTime() - MISSION_ACCEPTANCE_TTL_MS).toISOString();
+}
 
 interface StripeEvent {
   id: string;
@@ -4903,7 +4909,7 @@ export class BusinessService {
       .filter((item) => item.itemType === "suburb")
       .map((item) => item.label);
     const suggestedSuburb = savedSuburbs[0] ?? preferences?.preferredSuburbs[0];
-    const suggestedMissions = this.listMissions({ suburb: suggestedSuburb, sort: "saved", limit: 6 });
+    const suggestedMissions = this.listMissions({ suburb: suggestedSuburb, sort: "saved", limit: 6 }, account);
     const latestAgeVerification = this.repository.getLatestAgeVerification(account.id);
     const submissions = this.repository.listSubmissions({ userId: account.id, limit: 100 });
     const recentSubmissions = submissions.slice(0, 12).map((submission) => {
@@ -5625,6 +5631,7 @@ export class BusinessService {
 
     const now = nowIso();
     if (input.missionId) {
+      this.runMissionMaintenance();
       const mission = this.repository.getMissionById(input.missionId);
       if (!mission || !mission.active) {
         throw new AppError("This mission is no longer active. Refresh Missions and choose a current task.", 409);
@@ -5635,6 +5642,9 @@ export class BusinessService {
       const progress = this.repository.getMissionProgress({ missionId: mission.id, userId: account.id });
       if (progress?.status === "completed") {
         throw new AppError("You have already completed this mission.", 409);
+      }
+      if (progress?.status !== "accepted") {
+        throw new AppError("Accept this mission before submitting it, or accept it again if your 24-hour reservation expired.", 409);
       }
     }
     const pendingVenue = this.normalizePendingVenue(input);
@@ -5708,41 +5718,50 @@ export class BusinessService {
           pendingCatalogCount,
         }
       : null;
-    const submission = this.repository.createSubmission({
-      id: crypto.randomUUID(),
-      clientSubmissionId: input.clientSubmissionId,
-      missionId: input.missionId,
-      userId: account.id,
-      venueId: input.venueId,
-      venueName: pendingVenue?.name ?? input.venueName,
-      suburb: pendingVenue?.suburb ?? input.suburb,
-      submissionType: input.submissionType,
-      observedAt: input.observedAt,
-      sourcePhotoUrl,
-      sourceEvidenceIds: sourcePhotoRefs
-        .map(getPrivateEvidenceId)
-        .filter((id): id is string => Boolean(id)),
-      ocrStatus: options.photoOcr?.status ?? "not_requested",
-      ocrSummary,
-      notes: input.notes,
-      now,
-      ...locationEligibility,
-      pendingVenue,
-      items: standardizedItems.map((item) => ({
+    let submission: BusinessSubmission;
+    try {
+      submission = this.repository.createSubmission({
         id: crypto.randomUUID(),
-        beerName: item.beerName,
-        normalizedBeerId: item.normalizedBeerId,
-        servingSize: item.servingSize,
-        price: item.price,
-        isHappyHourPrice: item.isHappyHourPrice,
-        happyHourDetails: item.happyHourDetails,
-        isOnTap: item.isOnTap,
-        confidence: item.confidence,
-        captureSource: item.captureSource,
-        sourceText: item.sourceText,
-        requiresCatalogApproval: item.requiresCatalogApproval,
-      })),
-    });
+        clientSubmissionId: input.clientSubmissionId,
+        missionId: input.missionId,
+        ...(input.missionId ? { missionAcceptedAfter: missionAcceptanceCutoff(now) } : {}),
+        userId: account.id,
+        venueId: input.venueId,
+        venueName: pendingVenue?.name ?? input.venueName,
+        suburb: pendingVenue?.suburb ?? input.suburb,
+        submissionType: input.submissionType,
+        observedAt: input.observedAt,
+        sourcePhotoUrl,
+        sourceEvidenceIds: sourcePhotoRefs
+          .map(getPrivateEvidenceId)
+          .filter((id): id is string => Boolean(id)),
+        ocrStatus: options.photoOcr?.status ?? "not_requested",
+        ocrSummary,
+        notes: input.notes,
+        now,
+        ...locationEligibility,
+        pendingVenue,
+        items: standardizedItems.map((item) => ({
+          id: crypto.randomUUID(),
+          beerName: item.beerName,
+          normalizedBeerId: item.normalizedBeerId,
+          servingSize: item.servingSize,
+          price: item.price,
+          isHappyHourPrice: item.isHappyHourPrice,
+          happyHourDetails: item.happyHourDetails,
+          isOnTap: item.isOnTap,
+          confidence: item.confidence,
+          captureSource: item.captureSource,
+          sourceText: item.sourceText,
+          requiresCatalogApproval: item.requiresCatalogApproval,
+        })),
+      });
+    } catch (error) {
+      if (error instanceof MissionReservationError) {
+        throw new AppError(error.message, 409);
+      }
+      throw error;
+    }
     const publishedVenueImmediately = this.shouldPublishSubmittedVenueImmediately(pendingVenue);
 
     if (publishedVenueImmediately) {
@@ -6733,20 +6752,28 @@ export class BusinessService {
       : 0;
     const reviewedAt = nowIso();
     const reviewConfidence = input.confidence ?? "admin_verified";
-    const result = this.repository.reviewSubmission({
-      submissionId,
-      reviewerId: admin.id,
-      status: input.status,
-      rejectionReason: input.rejectionReason,
-      fraudFlagged: input.fraudFlagged || input.status === "fraud_flagged",
-      pointsAwarded: input.status === "approved" ? points : 0,
-      confidence: reviewConfidence,
-      now: reviewedAt,
-      monthKey: monthKeyFromIso(submission.submission.observedAt),
-      premiumUntil: endOfMonthIso(reviewedAt),
-      contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
-      allowOwnReview,
-    });
+    let result: ReturnType<BusinessRepository["reviewSubmission"]>;
+    try {
+      result = this.repository.reviewSubmission({
+        submissionId,
+        reviewerId: admin.id,
+        status: input.status,
+        rejectionReason: input.rejectionReason,
+        fraudFlagged: input.fraudFlagged || input.status === "fraud_flagged",
+        pointsAwarded: input.status === "approved" ? points : 0,
+        confidence: reviewConfidence,
+        now: reviewedAt,
+        monthKey: monthKeyFromIso(submission.submission.observedAt),
+        premiumUntil: endOfMonthIso(reviewedAt),
+        contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
+        allowOwnReview,
+      });
+    } catch (error) {
+      if (error instanceof MissionReservationError) {
+        throw new AppError(error.message, 409);
+      }
+      throw error;
+    }
     this.auditSecurity({
       actor: admin,
       action: "admin_submission_review",
@@ -6793,6 +6820,18 @@ export class BusinessService {
           premiumUntil: result.account.premiumUntil,
         },
       });
+    }
+
+    if (input.status === "approved" && submission.submission.missionId) {
+      try {
+        this.runMissionMaintenance({ forceRefresh: true });
+      } catch (error) {
+        logger.error("Mission maintenance failed after an approved submission", {
+          submissionId,
+          missionId: submission.submission.missionId,
+          error: error instanceof Error ? redactSecrets(error.message) : "Unknown mission maintenance failure",
+        });
+      }
     }
 
     return {
@@ -7540,6 +7579,27 @@ export class BusinessService {
     };
   }
 
+  runMissionMaintenance(input: { forceRefresh?: boolean } = {}): {
+    expiredAcceptances: number;
+    candidates: number;
+    generated: number;
+    pruned: number;
+    refreshed: boolean;
+  } {
+    const now = nowIso();
+    const expiredAcceptances = this.repository.expireAcceptedMissionProgress({
+      acceptedBefore: missionAcceptanceCutoff(now),
+      now,
+    });
+    const refreshed = this.refreshAutoMissions(Boolean(input.forceRefresh));
+    const pruned = this.repository.pruneInactiveAutoMissions();
+    return {
+      expiredAcceptances,
+      ...refreshed,
+      pruned,
+    };
+  }
+
   async resolveMissionArea(query: string): Promise<{
     location: MissionAreaLookup | null;
     message: string;
@@ -7699,7 +7759,7 @@ export class BusinessService {
     sort?: string | undefined;
     limit: number;
   }, account: BusinessAccount | null = null): BusinessMission[] {
-    const refreshed = this.refreshAutoMissions();
+    const refreshed = this.runMissionMaintenance();
     if (refreshed.candidates === 0 && this.repository.countMissions() === 0) {
       this.seedDemoMissions();
     }
@@ -7718,8 +7778,13 @@ export class BusinessService {
         ? this.repository.listMissionProgressForUser(account.id).map((progress) => [progress.missionId, progress.status] as const)
         : [],
     );
+    const unavailableMissionIds = this.repository.listUnavailableMissionIds({
+      ...(account ? { userId: account.id } : {}),
+      acceptedAfter: missionAcceptanceCutoff(nowIso()),
+    });
     const missions = this.repository
       .listMissions({ activeOnly: true, suburb: query.suburb, limit: missionFetchLimit })
+      .filter((mission) => !unavailableMissionIds.has(mission.id))
       .map((mission) => ({
         ...mission,
         lastVerifiedAt: mission.id.startsWith("auto:")
@@ -7841,11 +7906,31 @@ export class BusinessService {
 
   acceptMission(account: BusinessAccount, missionId: string) {
     this.assertAccountCanSubmit(account);
+    this.runMissionMaintenance();
+    const acceptedAt = nowIso();
     const mission = this.repository.getMissionById(missionId);
     if (!mission || !mission.active) {
       throw new AppError("This mission is no longer active.", 404);
     }
-    const progress = this.repository.acceptMission({ missionId, userId: account.id, now: nowIso() });
+    const progress = this.repository.acceptMission({
+      missionId,
+      userId: account.id,
+      now: acceptedAt,
+      acceptedAfter: missionAcceptanceCutoff(acceptedAt),
+    });
+    if (!progress) {
+      const currentMission = this.repository.getMissionById(missionId);
+      if (!currentMission?.active) {
+        throw new AppError("This mission is no longer active.", 404);
+      }
+      throw new AppError(
+        "Another contributor is already working on this mission. It will reopen if they do not submit within 24 hours.",
+        409,
+      );
+    }
+    if (progress.status === "completed") {
+      throw new AppError("You have already completed this mission.", 409);
+    }
     const params = new URLSearchParams({
       missionId: mission.id,
       venueId: mission.venueId,

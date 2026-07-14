@@ -33,12 +33,13 @@ async function boot(): Promise<void> {
         meta: getDeployMeta(),
       }),
     );
-    const [{ createApp }, { env }, { logger }] = await Promise.all([
+    const [{ createApp, initializeAppServices }, { env }, { logger }] = await Promise.all([
       import("./app.js"),
       import("./config/env.js"),
       import("./lib/logger.js"),
     ]);
     const app = createApp();
+    await initializeAppServices();
     const useRailwayBinding = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined;
     const listenHost = useRailwayBinding ? "::" : env.HOST;
 

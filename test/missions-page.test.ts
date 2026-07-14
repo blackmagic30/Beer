@@ -33,6 +33,11 @@ describe("missions page", () => {
     expect(html).toContain("missionReason: String(mission.reason || \"Pint Path mission\")");
     expect(html).toContain("type: submissionTypeForMission(mission)");
     expect(html).toContain("Accept mission");
+    expect(html).toContain('const submissionPending = progress === "submitted"');
+    expect(html).toContain('const alreadyAccepted = progress === "accepted"');
+    expect(html).toContain('"/account.html?settings=submissions"');
+    expect(html).toContain("submissionPending || alreadyAccepted");
+    expect(html).toContain('progress === "needs_revision"');
     expect(html).toContain("Mission points change with data freshness");
     expect(html).toContain("const INITIAL_MISSION_COUNT = 5");
     expect(html).toContain("const MISSION_PAGE_SIZE = 5");

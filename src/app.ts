@@ -88,6 +88,14 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Evidence retention failed",
     });
   });
+  if (env.NODE_ENV !== "test") {
+    const { scheduleMissionMaintenance } = await import("./lib/mission-maintenance.js");
+    scheduleMissionMaintenance({
+      run: () => businessService.runMissionMaintenance(),
+      intervalMinutes: 30,
+      onStatus: (status) => recordOperationalState("mission_maintenance", { ...status }),
+    });
+  }
   if (env.NODE_ENV === "production" && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
     const { scheduleOffsiteBackups } = await import("./lib/offsite-backup.js");
     scheduleOffsiteBackups({
@@ -268,6 +276,10 @@ async function getLazyRouters(): Promise<LazyRouters> {
   }
 
   return lazyRoutersPromise;
+}
+
+export async function initializeAppServices(): Promise<void> {
+  await getLazyRouters();
 }
 
 function createLazyMount(selector: (routers: LazyRouters) => RequestHandler): RequestHandler {
