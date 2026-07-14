@@ -26,5 +26,7 @@ on conflict (id) do update set
   file_size_limit = excluded.file_size_limit,
   allowed_mime_types = excluded.allowed_mime_types;
 
-comment on table storage.objects is
-  'Storage objects are bucket-private. Pint Path source evidence is accessed only by server-side service role after application authorization.';
+-- `storage.objects` is owned by Supabase's managed Storage role, so application
+-- migrations must not COMMENT ON the table. The bucket row and absence of
+-- browser policies above are the enforceable configuration: only the server's
+-- service-role client can access Pint Path source evidence.

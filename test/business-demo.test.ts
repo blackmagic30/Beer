@@ -3079,6 +3079,222 @@ describe("production hardening", () => {
     expect(result.pagination).toEqual({ total: 50, limit: 5, offset: 20, hasMore: true });
   });
 
+  it("reconciles large local UUID directories without an oversized PostgREST exclusion filter", async () => {
+    const { repository } = createRepository();
+    const localVenueIds = Array.from({ length: 612 }, (_, index) =>
+      `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    );
+    localVenueIds.forEach((barId, index) => {
+      repository.upsertBarProfile({
+        barId,
+        name: `Local Venue ${String(index).padStart(3, "0")}`,
+        address: null,
+        suburb: "Melbourne",
+        area: "Melbourne",
+        phone: null,
+        website: null,
+        instagram: null,
+        description: null,
+        openingHours: {},
+        venueTags: [],
+        membershipTier: "basic",
+        highlightedName: false,
+        premiumBadge: null,
+        promoted: false,
+        featuredSpecialEligible: false,
+        active: true,
+        now: NOW,
+      });
+    });
+    const remoteVenues = [
+      ...localVenueIds.map((id, index) => ({
+        id,
+        name: `Local Venue ${String(index).padStart(3, "0")}`,
+        address: null,
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3000",
+        latitude: -37.8,
+        longitude: 144.9,
+      })),
+      {
+        id: "remote-shadow-local-identity",
+        name: "Local Venue 001",
+        address: null,
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3000",
+        latitude: -37.8,
+        longitude: 144.9,
+      },
+      ...["a", "b", "c"].map((suffix, index) => ({
+        id: `remote-${suffix}`,
+        name: `Remote Venue ${suffix.toUpperCase()}`,
+        address: `${index + 1} Remote St`,
+        suburb: "Melbourne",
+        state: "VIC",
+        postcode: "3000",
+        latitude: -37.8,
+        longitude: 144.9,
+      })),
+    ];
+    let requestedRange = { from: 0, to: 0 };
+    const remoteNot = vi.fn();
+    const detailIdBatches: string[][] = [];
+    const detailBuilder = {
+      select: vi.fn(() => detailBuilder),
+      in: vi.fn((_column: string, ids: string[]) => {
+        detailIdBatches.push(ids);
+        return detailBuilder;
+      }),
+      limit: vi.fn(() => detailBuilder),
+      order: vi.fn(async () => ({ data: [], error: null })),
+    };
+    const remoteOrderColumns: string[] = [];
+    const remoteBuilder = {
+      select: vi.fn(() => remoteBuilder),
+      not: vi.fn((column: string, operator: string, value: string) => {
+        remoteNot(column, operator, value);
+        return remoteBuilder;
+      }),
+      or: vi.fn(() => remoteBuilder),
+      range: vi.fn((from: number, to: number) => {
+        requestedRange = { from, to };
+        return remoteBuilder;
+      }),
+      limit: vi.fn(() => remoteBuilder),
+      order: vi.fn((column: string) => {
+        remoteOrderColumns.push(column);
+        return column === "name"
+          ? remoteBuilder
+          : Promise.resolve({
+              data: remoteVenues.slice(
+                requestedRange.from,
+                Math.min(requestedRange.to + 1, requestedRange.from + 200),
+              ),
+              error: null,
+              count: remoteVenues.length,
+            });
+      }),
+    };
+    const from = vi.fn(() => remoteBuilder);
+    Array.from({ length: Math.ceil(localVenueIds.length / 100) }).forEach(() => {
+      from.mockReturnValueOnce(detailBuilder);
+    });
+    const service = createBusinessService(
+      repository,
+      {},
+      undefined,
+      { from } as never,
+    );
+
+    const localPage = await service.listVenuesPage(undefined, localVenueIds.length, 0);
+    const firstRemotePage = await service.listVenuesPage(undefined, 2, localVenueIds.length);
+    const secondRemotePage = await service.listVenuesPage(undefined, 2, localVenueIds.length + 2);
+
+    expect(remoteNot).not.toHaveBeenCalled();
+    expect(detailIdBatches.map((ids) => ids.length)).toEqual([100, 100, 100, 100, 100, 100, 12]);
+    expect(detailIdBatches.flat()).toEqual(localVenueIds);
+    expect(remoteBuilder.range.mock.calls).toEqual([
+      [0, 999],
+      [200, 1199],
+      [400, 1399],
+      [600, 1599],
+      [0, 999],
+      [200, 1199],
+      [400, 1399],
+      [600, 1599],
+      [0, 999],
+      [200, 1199],
+      [400, 1399],
+      [600, 1599],
+    ]);
+    expect(remoteOrderColumns).toEqual(Array.from({ length: 12 }, () => ["name", "id"]).flat());
+    expect(localPage.venues.map((venue) => venue.id)).toEqual(localVenueIds);
+    expect(localPage.pagination).toEqual({
+      total: localVenueIds.length + 3,
+      limit: localVenueIds.length,
+      offset: 0,
+      hasMore: true,
+    });
+    expect(firstRemotePage.venues.map((venue) => venue.id)).toEqual(["remote-a", "remote-b"]);
+    expect(firstRemotePage.pagination).toEqual({
+      total: localVenueIds.length + 3,
+      limit: 2,
+      offset: localVenueIds.length,
+      hasMore: true,
+    });
+    expect(secondRemotePage.venues.map((venue) => venue.id)).toEqual(["remote-c"]);
+    expect(secondRemotePage.pagination).toEqual({
+      total: localVenueIds.length + 3,
+      limit: 2,
+      offset: localVenueIds.length + 2,
+      hasMore: false,
+    });
+  });
+
+  it("fails safely before a large-directory reconciliation can issue unbounded remote requests", async () => {
+    const { repository } = createRepository();
+    Array.from({ length: 101 }, (_, index) =>
+      `00000000-0000-4000-9000-${String(index).padStart(12, "0")}`,
+    ).forEach((barId, index) => {
+      repository.upsertBarProfile({
+        barId,
+        name: `Bounded Local Venue ${String(index).padStart(3, "0")}`,
+        address: null,
+        suburb: "Melbourne",
+        area: "Melbourne",
+        phone: null,
+        website: null,
+        instagram: null,
+        description: null,
+        openingHours: {},
+        venueTags: [],
+        membershipTier: "basic",
+        highlightedName: false,
+        premiumBadge: null,
+        promoted: false,
+        featuredSpecialEligible: false,
+        active: true,
+        now: NOW,
+      });
+    });
+    const builder = {
+      select: vi.fn(() => builder),
+      or: vi.fn(() => builder),
+      range: vi.fn(() => builder),
+      limit: vi.fn(() => builder),
+      order: vi.fn(async () => ({
+        data: [{
+          id: "remote-first",
+          name: "Remote First",
+          address: "1 Remote St",
+          suburb: "Melbourne",
+          state: "VIC",
+          postcode: "3000",
+          latitude: -37.8,
+          longitude: 144.9,
+        }],
+        error: null,
+        count: 5001,
+      })),
+    };
+    const from = vi.fn(() => builder);
+    const service = createBusinessService(
+      repository,
+      {},
+      undefined,
+      { from } as never,
+    );
+
+    await expect(service.listVenuesPage(undefined, 2, 101)).rejects.toMatchObject({
+      statusCode: 503,
+      details: expect.objectContaining({ code: "VENUE_DIRECTORY_SCAN_LIMIT" }),
+    });
+    expect(from).toHaveBeenCalledTimes(1);
+    expect(builder.range).toHaveBeenCalledTimes(1);
+  });
+
   it("deduplicates public price records that are also present in venue inventory", () => {
     const { database, repository } = createRepository();
     const service = createBusinessService(repository);

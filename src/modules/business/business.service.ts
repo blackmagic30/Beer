@@ -258,6 +258,9 @@ const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
 const COUNTER_STAFF_INVITATION_TTL_MINUTES = 72 * 60;
 const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
+const MAX_INLINE_POSTGREST_UUID_FILTERS = 100;
+const REMOTE_VENUE_SCAN_PAGE_SIZE = 1000;
+const MAX_REMOTE_VENUE_SCAN_ROWS = 5000;
 
 function missionAcceptanceCutoff(now: string): string {
   return new Date(new Date(now).getTime() - MISSION_ACCEPTANCE_TTL_MS).toISOString();
@@ -8389,10 +8392,11 @@ export class BusinessService {
     let localPage = localDirectory.venues
       .slice(normalizedOffset, normalizedOffset + normalizedLimit)
       .map((venue) => ({ ...venue, ...this.getPublicVenueTierMetadata(venue.id) }));
-    const allLocalVenueIds = this.repository.listPublicVenueDirectoryPage({
+    const allLocalVenues = this.repository.listPublicVenueDirectoryPage({
       limit: -1,
       offset: 0,
-    }).venues.map((venue) => venue.id);
+    }).venues;
+    const allLocalVenueIds = allLocalVenues.map((venue) => venue.id);
     const supabaseLocalVenueIds = allLocalVenueIds.filter(isPostgresUuid);
     const remoteOffset = Math.max(0, normalizedOffset - localDirectory.total);
     const remoteSlots = Math.max(0, normalizedLimit - localPage.length);
@@ -8401,23 +8405,28 @@ export class BusinessService {
     const remoteFetchLimit = Math.max(1, remoteSlots);
     const localPageSupabaseIds = localPage.map((venue) => venue.id).filter(isPostgresUuid);
     if (localPageSupabaseIds.length) {
-      const localDetailRequest = this.supabase
-        .from("venues")
-        .select("id, name, address, suburb, state, postcode, latitude, longitude")
-        .in("id", localPageSupabaseIds)
-        .limit(localPageSupabaseIds.length);
-      const { data: localRemoteData, error: localRemoteError } = await localDetailRequest.order("name", { ascending: true });
-      if (localRemoteError) {
-        throw new ExternalServiceError("Failed to fetch venue details", {
-          message: localRemoteError.message,
-          details: localRemoteError.details,
-          hint: localRemoteError.hint,
-          code: localRemoteError.code,
-        });
+      const localRemoteRows: VenueRow[] = [];
+      for (let index = 0; index < localPageSupabaseIds.length; index += MAX_INLINE_POSTGREST_UUID_FILTERS) {
+        const idBatch = localPageSupabaseIds.slice(index, index + MAX_INLINE_POSTGREST_UUID_FILTERS);
+        const localDetailRequest = this.supabase
+          .from("venues")
+          .select("id, name, address, suburb, state, postcode, latitude, longitude")
+          .in("id", idBatch)
+          .limit(idBatch.length);
+        const { data: localRemoteData, error: localRemoteError } = await localDetailRequest.order("name", { ascending: true });
+        if (localRemoteError) {
+          throw new ExternalServiceError("Failed to fetch venue details", {
+            message: localRemoteError.message,
+            details: localRemoteError.details,
+            hint: localRemoteError.hint,
+            code: localRemoteError.code,
+          });
+        }
+        localRemoteRows.push(...((localRemoteData ?? []) as VenueRow[]));
       }
       localPage = this.mergeVenueRows(
         localPage,
-        ((localRemoteData ?? []) as VenueRow[]).map((venue) => ({
+        localRemoteRows.map((venue) => ({
           ...venue,
           ...this.getPublicVenueTierMetadata(venue.id),
         })),
@@ -8425,44 +8434,139 @@ export class BusinessService {
         false,
       );
     }
-    let request = this.supabase
-      .from("venues")
-      .select("id, name, address, suburb, state, postcode, latitude, longitude", { count: "exact" });
-    if (supabaseLocalVenueIds.length) {
-      const exclusion = supabaseLocalVenueIds
-        .map((id) => `"${id.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
-        .join(",");
-      request = request.not("id", "in", `(${exclusion})`);
-    }
-    if (normalizedSearch) {
-      const searchQuery = (labelStem.split(",")[0] ?? "").trim();
-      const safeQuery = sanitizePostgrestIlikeTerm(searchQuery);
+    const safeQuery = normalizedSearch
+      ? sanitizePostgrestIlikeTerm((labelStem.split(",")[0] ?? "").trim())
+      : "";
+    const createRemoteVenueRequest = () => {
+      let request = this.supabase!
+        .from("venues")
+        .select("id, name, address, suburb, state, postcode, latitude, longitude", { count: "exact" });
       if (safeQuery) {
         request = request.or(`name.ilike.%${safeQuery}%,suburb.ilike.%${safeQuery}%,address.ilike.%${safeQuery}%`);
       }
+      return request;
+    };
+    const executeOrderedRemoteVenueRequest = async (request: ReturnType<typeof createRemoteVenueRequest>) => {
+      const nameOrderedRequest = request.order("name", { ascending: true });
+      const stableOrderedRequest = typeof (nameOrderedRequest as unknown as { order?: unknown }).order === "function"
+        ? nameOrderedRequest.order("id", { ascending: true })
+        : nameOrderedRequest;
+      return stableOrderedRequest;
+    };
+    let remoteRows: VenueRow[];
+    let estimatedRemoteTotal: number;
+    if (supabaseLocalVenueIds.length <= MAX_INLINE_POSTGREST_UUID_FILTERS) {
+      let request = createRemoteVenueRequest();
+      if (supabaseLocalVenueIds.length) {
+        const exclusion = supabaseLocalVenueIds
+          .map((id) => `"${id.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
+          .join(",");
+        request = request.not("id", "in", `(${exclusion})`);
+      }
+      const rangedRequest = typeof (request as { range?: unknown }).range === "function"
+        ? request.range(remoteOffset, remoteOffset + remoteFetchLimit - 1)
+        : request.limit(remoteFetchLimit);
+      const { data, error, count } = await executeOrderedRemoteVenueRequest(rangedRequest);
+      if (error) {
+        throw new ExternalServiceError("Failed to fetch venues", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+      }
+      remoteRows = ((data ?? []) as VenueRow[]).slice(0, remoteSlots);
+      estimatedRemoteTotal = typeof count === "number"
+        ? count
+        : remoteOffset + remoteRows.length + (remoteRows.length >= remoteFetchLimit ? 1 : 0);
+    } else {
+      // A single not.in filter containing every local UUID can exceed proxy and
+      // PostgREST request-line limits. Scan a small, hard-bounded remote directory
+      // instead, then apply the same local-authoritative de-duplication in memory.
+      const remoteCandidates: VenueRow[] = [];
+      let exactRawRemoteTotal: number | null = null;
+      let completedRemoteScan = false;
+      let scanOffset = 0;
+      while (scanOffset < MAX_REMOTE_VENUE_SCAN_ROWS) {
+        const scanLimit = Math.min(REMOTE_VENUE_SCAN_PAGE_SIZE, MAX_REMOTE_VENUE_SCAN_ROWS - scanOffset);
+        const request = createRemoteVenueRequest();
+        const supportsRange = typeof (request as { range?: unknown }).range === "function";
+        const rangedRequest = supportsRange
+          ? request.range(scanOffset, scanOffset + scanLimit - 1)
+          : request.limit(scanLimit);
+        const { data, error, count } = await executeOrderedRemoteVenueRequest(rangedRequest);
+        if (error) {
+          throw new ExternalServiceError("Failed to fetch venues", {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          });
+        }
+        const rows = (data ?? []) as VenueRow[];
+        if (typeof count === "number") {
+          exactRawRemoteTotal = count;
+          if (count > MAX_REMOTE_VENUE_SCAN_ROWS) {
+            throw new ExternalServiceError(
+              "Failed to fetch venues",
+              {
+                message: `Remote venue directory exceeds the safe reconciliation limit of ${MAX_REMOTE_VENUE_SCAN_ROWS} rows.`,
+                code: "VENUE_DIRECTORY_SCAN_LIMIT",
+              },
+              503,
+            );
+          }
+        }
+        remoteCandidates.push(...rows);
+        completedRemoteScan = exactRawRemoteTotal !== null
+          ? scanOffset + rows.length >= exactRawRemoteTotal
+          : rows.length < scanLimit;
+        if (completedRemoteScan) {
+          break;
+        }
+        if (!supportsRange || rows.length === 0) {
+          break;
+        }
+        scanOffset += rows.length;
+      }
+      if (!completedRemoteScan) {
+        throw new ExternalServiceError(
+          "Failed to fetch venues",
+          {
+            message: `Remote venue reconciliation did not complete within ${MAX_REMOTE_VENUE_SCAN_ROWS} rows.`,
+            code: "VENUE_DIRECTORY_SCAN_LIMIT",
+          },
+          503,
+        );
+      }
+
+      const seenVenueIds = new Set(allLocalVenueIds);
+      const seenVenueIdentities = new Set(
+        allLocalVenues
+          .map((venue) => venueIdentityKey(venue))
+          .filter((identity): identity is string => identity !== null),
+      );
+      const uniqueRemoteRows: VenueRow[] = [];
+      for (const venue of remoteCandidates) {
+        const identity = venueIdentityKey(venue);
+        if (seenVenueIds.has(venue.id) || (identity !== null && seenVenueIdentities.has(identity))) {
+          continue;
+        }
+        seenVenueIds.add(venue.id);
+        if (identity !== null) {
+          seenVenueIdentities.add(identity);
+        }
+        uniqueRemoteRows.push(venue);
+      }
+      remoteRows = uniqueRemoteRows.slice(remoteOffset, remoteOffset + remoteSlots);
+      estimatedRemoteTotal = uniqueRemoteRows.length;
     }
-    const rangedRequest = typeof (request as { range?: unknown }).range === "function"
-      ? request.range(remoteOffset, remoteOffset + remoteFetchLimit - 1)
-      : request.limit(remoteFetchLimit);
-    const { data, error, count } = await rangedRequest.order("name", { ascending: true });
-    if (error) {
-      throw new ExternalServiceError("Failed to fetch venues", {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-      });
-    }
-    const remoteRows = ((data ?? []) as VenueRow[]).slice(0, remoteSlots);
     const page = this.mergeVenueRows(
       localPage,
       remoteRows.map((venue) => ({ ...venue, ...this.getPublicVenueTierMetadata(venue.id) })),
       normalizedLimit,
       false,
     );
-    const estimatedRemoteTotal = typeof count === "number"
-      ? count
-      : remoteOffset + remoteRows.length + (remoteRows.length >= remoteFetchLimit ? 1 : 0);
     const estimatedTotal = localDirectory.total + estimatedRemoteTotal;
     const hasMore = normalizedOffset + page.length < estimatedTotal;
     return {
