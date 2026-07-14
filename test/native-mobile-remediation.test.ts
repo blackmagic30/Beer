@@ -474,6 +474,17 @@ describe("native mobile remediation guardrails", () => {
     expect(androidReadme).toContain("unsigned build artifact and must never be submitted to Play");
   });
 
+  it("keeps Android compilation free of resolved deprecation and nullability warnings", () => {
+    const androidApp = read(
+      "apps/android/app/src/main/java/au/pintpath/beermap/ui/features/BeerMapApp.kt",
+    );
+    expect(androidApp).toContain("import androidx.compose.material3.HorizontalDivider");
+    expect(androidApp).not.toContain("import androidx.compose.material3.Divider");
+    expect(androidApp).not.toMatch(/\bDivider\(/);
+    expect(androidModels).toContain('else -> value?.toString() ?: "-"');
+    expect(androidModels).not.toContain("else -> value.toString()");
+  });
+
   it("matches current account, deletion, invitation, and privacy response envelopes", () => {
     for (const client of [iosAPI, androidAPI]) {
       expect(client).toContain("/api/business/account/privacy-settings");

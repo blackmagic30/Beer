@@ -653,7 +653,7 @@ private fun JSONObject.plannerValue(key: String): String {
             if (double % 1.0 == 0.0) double.toInt().toString() else "%.1f".format(double)
         }
         is Boolean -> if (value) "Yes" else "No"
-        else -> value.toString()
+        else -> value?.toString() ?: "-"
     }
 }
 

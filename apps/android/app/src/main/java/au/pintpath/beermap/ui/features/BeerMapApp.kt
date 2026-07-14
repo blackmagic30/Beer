@@ -59,8 +59,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -1163,7 +1163,7 @@ private fun VenueDetailCard(state: BeerMapState, scope: CoroutineScope, venue: V
                         }
                     }
                 }
-                Divider()
+                HorizontalDivider()
             }
         }
         SecondaryAction("Refresh prices", icon = Icons.Filled.Refresh) {
@@ -1688,7 +1688,7 @@ private fun MissionsCard(
                         }
                     }
                 }
-                Divider()
+                HorizontalDivider()
             }
         }
     }
@@ -1880,7 +1880,7 @@ private fun CounterStaffInvitationsCard(
                     modifier = Modifier.weight(1f)
                 ) { Text("Decline") }
             }
-            Divider()
+            HorizontalDivider()
         }
     }
 }
@@ -1968,7 +1968,7 @@ private fun AccountSessionsCard(state: BeerMapState, scope: CoroutineScope) {
                         }
                     }
                 }
-                Divider()
+                HorizontalDivider()
             }
         }
         if (state.accountSessionsLoaded) {
@@ -2641,10 +2641,10 @@ private fun BeerEditor(state: BeerMapState, scope: CoroutineScope, beers: List<B
                     }
                     Text(it.price?.let { value -> "$" + "%.2f".format(value) } ?: "", fontWeight = FontWeight.Bold)
                 }
-                Divider()
+                HorizontalDivider()
             }
         }
-        Divider()
+        HorizontalDivider()
         FormField("Beer name", Icons.Filled.LocalBar, beerName, { beerName = it })
         FormField("Brewery", Icons.Filled.Business, brewery, { brewery = it })
         FormField("Style", Icons.Filled.Tag, style, { style = it })
@@ -2692,7 +2692,7 @@ private fun HappyHourEditor(state: BeerMapState, scope: CoroutineScope, happyHou
                 FeatureCard(it.title, "${it.daysOfWeek.joinToString(", ")} - ${it.startTime}-${it.endTime}", Icons.Filled.Timer, Leaf)
             }
         }
-        Divider()
+        HorizontalDivider()
         FormField("Title", Icons.Filled.Timer, title, { title = it })
         FormField("Description", Icons.Filled.Settings, description, { description = it }, minLines = 3, singleLine = false)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2732,7 +2732,7 @@ private fun SpecialEditor(state: BeerMapState, scope: CoroutineScope, specials: 
             }
         }
         if (canManage) {
-            Divider()
+            HorizontalDivider()
             FormField("Special title", Icons.Filled.Tag, title, { title = it })
             FormField("Description", Icons.Filled.Settings, description, { description = it }, minLines = 3, singleLine = false)
             FormField("Discount copy", Icons.Filled.Tag, discount, { discount = it })
