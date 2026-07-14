@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -59,7 +61,7 @@ android {
                 val configuredStorePath = releaseSigningEnvironment.getValue(
                     "PINT_PATH_ANDROID_KEYSTORE_PATH",
                 )!!
-                val unresolvedStoreFile = java.io.File(configuredStorePath)
+                val unresolvedStoreFile = File(configuredStorePath)
                 if (!unresolvedStoreFile.isAbsolute) {
                     throw GradleException(
                         "PINT_PATH_ANDROID_KEYSTORE_PATH must be an absolute path.",

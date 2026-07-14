@@ -444,7 +444,9 @@ describe("native mobile remediation guardrails", () => {
     expect(androidBuild).toContain("gradle.taskGraph.whenReady");
     expect(androidBuild).toContain('it.name == "bundleRelease"');
     expect(androidBuild).toContain("if (releaseBundleRequested && !releaseSigningConfigured)");
-    expect(androidBuild).toContain("java.io.File(configuredStorePath)");
+    expect(androidBuild).toContain("import java.io.File");
+    expect(androidBuild).toContain("File(configuredStorePath)");
+    expect(androidBuild).not.toContain("java.io.File(configuredStorePath)");
     expect(androidBuild).toContain("if (!unresolvedStoreFile.isAbsolute)");
     expect(androidBuild.indexOf("if (!unresolvedStoreFile.isAbsolute)")).toBeLessThan(
       androidBuild.indexOf("unresolvedStoreFile.canonicalFile"),
