@@ -3882,7 +3882,6 @@
     const GOOGLE_MAPS_DEMO_MAP_ID = "DEMO_MAP_ID";
     const EFFECTIVE_GOOGLE_MAPS_MAP_ID =
       (IS_LOCAL_VIEWER_ORIGIN && (params.get("googleMapsMapId") || params.get("mapId"))) ||
-      GOOGLE_MAPS_MAP_ID ||
       GOOGLE_MAPS_DEMO_MAP_ID;
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers)
       ? viewerConfig.trackedBeers

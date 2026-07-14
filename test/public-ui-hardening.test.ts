@@ -15,6 +15,8 @@ describe("public UI hardening", () => {
     expect(html).toContain('(IS_LOCAL_VIEWER_ORIGIN && (params.get("googleMapsMapId") || params.get("mapId")))');
     expect(html).toContain('(IS_LOCAL_VIEWER_ORIGIN && (params.get("googleMapsKey") || window.localStorage.getItem("googleMapsKey")))');
     expect(html).toContain('mapId: EFFECTIVE_GOOGLE_MAPS_MAP_ID');
+    expect(html).toContain('GOOGLE_MAPS_DEMO_MAP_ID;');
+    expect(html).not.toContain('GOOGLE_MAPS_MAP_ID ||\n      GOOGLE_MAPS_DEMO_MAP_ID');
     expect(html).toContain('if (IS_LOCAL_VIEWER_ORIGIN && params.get("googleMapsKey"))');
     expect(html).toContain('if (response.isAuthenticated) {\n          await window.MelbBeerBusiness.apiFetch("/api/business/account");');
     expect(html).toContain('window.MelbBeerBusiness.setAccountContext(null);\n        console.warn("Could not load business access state"');

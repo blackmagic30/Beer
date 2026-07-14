@@ -83,7 +83,7 @@
         <a class="button" href="/submit.html">Venue not listed? Request it first</a>
       </form>
       <div class="actionRow" style="margin-top:16px;">
-        <a id="venuePortalLoginLink" class="button" href="/account.html">Go to account</a>
+        <a id="venuePortalLoginLink" class="button" href="/venue-login.html">Log in as a venue</a>
         <a class="button" href="/">Back to map</a>
       </div>
       <div id="claimRequests" class="list is-hidden" style="margin-top:16px;"></div>
@@ -1483,7 +1483,7 @@
         const claimForm = document.getElementById("venueClaimForm");
         if (claimForm instanceof HTMLFormElement) claimForm.hidden = false;
         const loginLink = document.getElementById("venuePortalLoginLink");
-        if (loginLink) loginLink.textContent = "Go to account";
+        if (loginLink) loginLink.textContent = "Log in as a venue";
         MelbBeerBusiness.setStatus(
           claimStatus,
           data.message || "Request access to a known Pint Path venue.",
@@ -4937,7 +4937,7 @@
           const returnPath = `${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`;
           const loginLink = document.getElementById("venuePortalLoginLink");
           if (loginLink) {
-            loginLink.href = `/account.html?next=${encodeURIComponent(returnPath)}`;
+            loginLink.href = `/venue-login.html?next=${encodeURIComponent(returnPath)}`;
             loginLink.textContent = "Log in to request access";
           }
           if (venueClaimForm instanceof HTMLFormElement) venueClaimForm.hidden = true;

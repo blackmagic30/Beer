@@ -6824,7 +6824,8 @@ body.discountPassModalOpen {
 }
 
 .authActions {
-  display: block;
+  display: grid;
+  gap: 12px;
 }
 
 .authActions .button {
@@ -8556,6 +8557,10 @@ body.discountPassModalOpen {
 
 .feedbackPromise {
   align-content: start;
+}
+
+.feedbackPage #feedbackSupportInfo + .feedbackPromise {
+  margin-bottom: clamp(24px, 3vw, 40px);
 }
 
 .feedbackGrid {

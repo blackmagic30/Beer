@@ -481,6 +481,7 @@ describe("account page shell", () => {
     expect(feedback).toContain("feedbackGrid.prepend(feedbackForm)");
     expect(feedback).toContain("feedbackGrid.after(supportInfo)");
     expect(feedback).toContain("supportInfo.after(feedbackPromise)");
+    expect(businessCss()).toContain(".feedbackPage #feedbackSupportInfo + .feedbackPromise");
     expect(css).toContain("margin-top: clamp(14px, 2.2vw, 24px);");
     expect(script).toContain('{ key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: "Contact us" }');
     expect(script).not.toContain('href="/account.html#feedbackForm"');
@@ -821,6 +822,20 @@ describe("account page shell", () => {
     expect(script).toContain('/api/business/auth/password-reset-complete');
     expect(script).toContain('signOut({ scope: "global" })');
     expect(script).not.toContain("await syncSupabaseSession().catch(() => null);");
+  });
+
+  it("keeps recovery notices out of view until there is a result and provides a dedicated venue login", () => {
+    const reset = resetPasswordHtml();
+    const resend = resendConfirmationHtml();
+    const venueLogin = fs.readFileSync(path.resolve(process.cwd(), "viewer/venue-login.html"), "utf8");
+
+    expect(reset).toContain('id="resetStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden');
+    expect(resend).toContain('id="resendStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden');
+    expect(venueLogin).toContain("Log in to your venue");
+    expect(venueLogin).toContain('id="venueLoginForm"');
+    expect(venueLogin).toContain("MelbBeerBusiness.signInWithEmail");
+    expect(venueLogin).toContain('MelbBeerBusiness.apiFetch("/api/business/auth/login"');
+    expect(venueLogin).toContain('requested.startsWith("/venue-portal.html")');
   });
 
   it("keeps the primary nav consistent and gives privileged accounts dashboard/admin links", () => {
