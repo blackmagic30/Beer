@@ -1,138 +1,41 @@
-# BeerMap Mobile Release Notes Draft
+# Pint Path Mobile Release Notes Draft
 
-Date: 2026-06-30
-App name: `BeerMap`
-iOS bundle ID placeholder: `au.pintpath.beermap`
-Android package placeholder: `au.pintpath.beermap`
+Version: `1.0.0`
+iOS build: `2`
+Android version code: `2`
 
-## 1. Short App Description
+## Store short description
 
-BeerMap helps Melbourne beer fans find venue prices, happy hours, and bar updates, with native tools for contributors and assigned bar owners.
+Find Melbourne beer prices and happy hours, contribute verified updates, and manage assigned venues with Pint Path.
 
-## 2. Long App Description
+## What is included
 
-BeerMap brings the existing Pint Path/BeerMap experience to iPhone and Android.
+- Search venues and inspect server-gated price information.
+- Save venues and report prices or venue details that need review.
+- Submit beer prices, selected source photos, and happy-hour updates, with optional one-time location proof.
+- Reserve and release local data missions.
+- Manage privacy choices, active sessions, account export, deletion requests, rewards, and staff invitations.
+- For assigned venue teams: update profile, beer/stock, happy hours and eligible specials; use counter tools, analytics/planner insights, and monthly report exports.
+- Sign in with email/password or configured Google/Apple providers using secure PKCE authentication.
 
-Find Melbourne venues, search by venue or suburb, reveal server-gated beer price rows, and save venues to your account. Signed-in contributors can send reviewed beer-price updates, report venue data that looks wrong, request missing venues or beers, and browse missions that need fresh information.
+## Platform notes
 
-Assigned bar owners can manage their venue dashboard from the app, including public profile/contact details, beer stock, happy hours, and eligible specials/deals. Venue access, exact-price access, review queues, account controls, and privacy settings all use the existing BeerMap/Pint Path backend.
+iPhone includes an in-app MapKit venue map. Android opens venue coordinates in the user's map app, with a browser fallback. Venue-claim evidence and admin moderation open the secure Pint Path web workflow.
 
-BeerMap is intended for adults 18+. Prices, stock, and specials can change, and venues remain responsible for responsible service of alcohol obligations.
+## Safety and privacy
 
-## 3. iOS Release Notes
+Pint Path is for adults 18+. Prices, stock, and offers can change, and venues remain responsible for RSA obligations. Optional analytics are off unless enabled. Photos and location proof are submitted only after the user chooses them.
 
-Initial native iPhone release for BeerMap.
+## Not included in 1.0
 
-- Search Melbourne venues and view server-gated price rows.
-- Sign in or create a BeerMap account with the existing backend.
-- Save venues and manage privacy settings.
-- Submit reviewed beer-price updates.
-- Report wrong price or venue details.
-- Request missing venues or beers.
-- Browse venue data missions.
-- Manage assigned bar profiles, stock, happy hours, and eligible specials.
-- Send support feedback from Settings.
+Direct camera capture, multi-image/PDF submissions, offline upload queues, general native checkout/plan changes, and native admin moderation are not part of this release. Billing-only recovery for a suspended paid account is included and does not restore app access.
 
-Known limitations for this release:
+## Release-owner fields
 
-- Native Google/Apple OAuth is not wired yet.
-- Native photo evidence upload is not wired yet.
-- Native upload-location proof is not wired yet.
-- Billing, rewards, POS, and report export flows are not included in this version.
-
-## 4. Android Release Notes
-
-Initial native Android release for BeerMap.
-
-- Search Melbourne venues and reveal server-gated price data.
-- Sign in or create a BeerMap account with the existing backend.
-- Save venues and manage account privacy controls.
-- Submit beer-price updates for review.
-- Report wrong venue or price data.
-- Request missing venues or beers.
-- Browse data missions.
-- Use the assigned bar dashboard for profile, beer stock, happy hours, and eligible specials.
-- Send support feedback from Settings.
-
-Known limitations for this release:
-
-- Native Google/Apple OAuth is not wired yet.
-- Native photo evidence upload is not wired yet.
-- Native upload-location proof is not wired yet.
-- Billing, rewards, POS, and report export flows are not included in this version.
-
-## 5. Keyword / Metadata Ideas
-
-Use only keywords allowed by each store and backed by the app experience.
-
-Potential keywords:
-
-- BeerMap
-- Pint Path
-- Melbourne beer
-- happy hour
-- beer prices
-- bar finder
-- venue specials
-- craft beer
-- pub guide
-- bar owner tools
-- beer map
-- Melbourne bars
-
-Metadata positioning ideas:
-
-- Melbourne beer prices and happy hours.
-- Find bars faster with venue updates.
-- Contributor-reviewed beer price updates.
-- Bar owner profile, stock, happy-hour, and specials tools.
-- Server-gated exact-price access through the existing Pint Path backend.
-
-Avoid:
-
-- Claims about live availability unless verified by backend freshness.
-- Claims about discounts/rewards/POS if those flows are not enabled in the native app.
-- Health, safety, or legal claims beyond the existing responsible-use framing.
-- Claims that source photos or location proof work natively until those flows are implemented and tested.
-
-## 6. Support URL Placeholder
-
-Placeholder:
-
-```text
-https://pintpath.au/support
-```
-
-Before submission:
-
-- Replace with the real support URL.
-- Confirm the page handles privacy, billing, abuse, moderation, venue account, and deletion-review support.
-- Confirm the URL is reachable without login.
-
-## 7. Marketing URL Placeholder
-
-Placeholder:
-
-```text
-https://pintpath.au
-```
-
-Before submission:
-
-- Confirm the marketing URL reflects the app name, BeerMap/Pint Path relationship, 18+ framing, and current feature set.
-- Do not add store metadata claims that are missing from the site or app.
-
-## 8. Privacy Policy URL Placeholder
-
-Placeholder:
-
-```text
-https://pintpath.au/privacy.html
-```
-
-Before submission:
-
-- Confirm the privacy URL is final and reachable.
-- Confirm it covers email/password accounts, optional display names, session tokens, anonymous session IDs, venue searches, price reveals, saved venues, submissions, reports, requests, support feedback, optional analytics, privacy settings, and venue-manager edits.
-- Confirm it explains account deletion review and any retention limits accurately.
-- Confirm it does not claim native photo/location evidence collection unless those native flows are implemented before release.
+- App Store promotional text: `[approve before submission]`
+- Play release title: `Pint Path 1.0`
+- Support URL: `[confirm production URL]`
+- Marketing URL: `[confirm production URL]`
+- Privacy URL: `[confirm production URL]`
+- TestFlight/Play testing notes and reviewer credentials: `[add securely in store consoles]`
+- Final device/OS QA evidence: `[link]`

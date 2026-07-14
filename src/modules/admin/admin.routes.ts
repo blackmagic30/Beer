@@ -78,13 +78,18 @@ function parseIngestionStatus(value: unknown): AdminIngestionStatus | undefined 
   }
 }
 
-function parseBoundedInteger(value: unknown, fallback: number, max: number): number {
+function parseBoundedInteger(value: unknown, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
   if (typeof value !== "string") {
     return fallback;
   }
 
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed)) {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return fallback;
+  }
+
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed)) {
     return fallback;
   }
 
@@ -105,6 +110,11 @@ function stringParam(value: unknown): string {
 
 export function createAdminRouter(adminService: AdminService, businessService: BusinessService): Router {
   const router = Router();
+
+  router.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    next();
+  });
 
   router.use((req, _res, next) => {
     try {
@@ -140,10 +150,24 @@ export function createAdminRouter(adminService: AdminService, businessService: B
     try {
       const status = parseIngestionStatus(req.query.status);
       const limit = parseBoundedInteger(req.query.limit, 50, 100);
-      const offset = parseBoundedInteger(req.query.offset, 0, 10_000);
+      const offset = parseBoundedInteger(req.query.offset, 0);
       const items = adminService.listQueuedIngestions(status, limit, offset);
       const total = adminService.countQueuedIngestions(status);
-      res.json(success({ items, total, limit, offset }));
+      const imageRetention = adminService.getQueuedIngestionImageRetentionStatus();
+      res.json(success({ items, total, limit, offset, imageRetention }));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/ingestions/:id/evidence", (req, res, next) => {
+    try {
+      const evidence = adminService.getQueuedIngestionEvidence(stringParam(req.params.id));
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Content-Type", evidence.mimeType);
+      res.setHeader("Content-Length", String(evidence.bytes.length));
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(evidence.bytes);
     } catch (error) {
       next(error);
     }

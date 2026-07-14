@@ -153,6 +153,12 @@
         $("feedbackBackLink").textContent = "Back to dashboard";
         $("feedbackStatus").textContent = "Venue support messages are saved into the Pint Path admin support inbox.";
         $("feedbackForm").elements.namedItem("feedbackType").value = "venue_partner_interest";
+      } else {
+        const requestedType = params.get("type");
+        const typeSelect = $("feedbackForm").elements.namedItem("feedbackType");
+        if (requestedType && Array.from(typeSelect.options).some((option) => option.value === requestedType)) {
+          typeSelect.value = requestedType;
+        }
       }
 
       $("feedbackForm").addEventListener("submit", async (event) => {
@@ -177,7 +183,13 @@
             }),
           });
           $("feedbackForm").reset();
-          MelbBeerBusiness.setStatus($("feedbackStatus"), result.message || (isVenueSupport ? "Venue support request saved. Thank you." : "Message saved for review. Thank you."));
+          const reference = result.feedback?.id || null;
+          MelbBeerBusiness.setStatus(
+            $("feedbackStatus"),
+            reference
+              ? `${result.message || "Message saved for review."} Reference: ${reference}. Keep this reference for follow-up.`
+              : result.message || (isVenueSupport ? "Venue support request saved. Thank you." : "Message saved for review. Thank you."),
+          );
           if (isVenueSupport) {
             $("feedbackForm").elements.namedItem("feedbackType").value = "venue_partner_interest";
           }

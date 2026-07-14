@@ -11,6 +11,8 @@ export const CONTRIBUTION_POINTS = {
   staleUpdate: 1,
   newVenue: 5,
   locationRadiusMeters: 200,
+  maxLocationAccuracyMeters: 100,
+  locationMaxAgeHours: 12,
   veryFreshHours: 24,
   weekOldDays: 7,
 } as const;
@@ -23,6 +25,4 @@ export const SUBMISSION_LIMITS = {
 export const RESPONSIBLE_ALCOHOL_COPY = {
   footer:
     "Pint Path is for adults 18+ in Victoria. Prices can change, availability is not guaranteed, and venues may refuse service under RSA obligations. Drink responsibly.",
-  rewardsDisabled:
-    "Partner venue credit is planned for a future release and is not live in this demo.",
 } as const;

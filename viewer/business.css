@@ -3192,6 +3192,213 @@ button.adminFocusRail__item:focus-visible {
   }
 }
 
+/* Venue and admin workflow hardening: compact, task-first role surfaces. */
+.venuePortalHasUnsavedChanges .venuePortalHero__meta::after {
+  content: " · Unsaved changes";
+  color: var(--warning, #fbbf24);
+}
+
+.adminPanelErrors ul {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+
+.adminPanelErrors pre,
+#securityAuditList pre {
+  max-width: min(100%, 680px);
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  background: rgba(7, 10, 18, 0.7);
+}
+
+@media (max-width: 760px) {
+  .venuePortalHero--operational {
+    min-height: 0;
+    margin: 6px 0 8px;
+    padding: 10px 12px;
+  }
+
+  .venuePortalHero--operational .eyebrow {
+    display: none;
+  }
+
+  .venuePortalHero--operational h1 {
+    font-size: 1.25rem;
+  }
+
+  .venuePortalHero__meta {
+    font-size: 0.72rem;
+  }
+
+  .dashboardSidebar #selectedVenueSummary,
+  .dashboardSidebar .tabNav {
+    display: none;
+  }
+
+  .dashboardSidebar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: end;
+    padding: 10px;
+  }
+
+  .dashboardSidebar .venueLogoutButton {
+    grid-column: 1 / -1;
+    min-height: 44px;
+    padding: 10px;
+  }
+
+  .dashboardSetupProgress,
+  .venueDailyActions {
+    padding: 14px;
+  }
+
+  .venueDailyActions__grid {
+    gap: 8px;
+  }
+
+  .venueDailyAction {
+    min-height: 64px;
+    padding: 10px;
+  }
+
+  #adminSecurityAuditHeading,
+  #adminAccountContainmentHeading,
+  #adminMissionLifecycleHeading,
+  #adminReportOpsHeading {
+    font-size: 1.3rem;
+  }
+}
+
+/* Shared public/account remediation components. */
+.legalFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 28px;
+  padding: 18px 0 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+  color: var(--muted, #a8b2c5);
+  font-size: 0.86rem;
+}
+
+.legalFooter nav,
+.pricingAudienceSwitch,
+.legalAcceptanceGate__actions,
+.submitRecoveryBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.legalFooter nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 4px;
+  color: inherit;
+  text-underline-offset: 3px;
+}
+
+.oauthConsent {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+}
+
+.oauthConsent legend {
+  padding: 0 6px;
+  font-weight: 700;
+}
+
+.legalAcceptanceGate {
+  display: grid;
+  gap: 16px;
+  border-color: rgba(245, 197, 66, 0.55);
+}
+
+.legalAcceptanceGate[hidden] {
+  display: none;
+}
+
+.pricingAudienceSwitch {
+  margin-top: 18px;
+}
+
+.pricingAudienceSwitch [aria-selected="true"] {
+  border-color: #f5c542;
+  color: #f5c542;
+}
+
+.submitRecoveryBar {
+  justify-content: space-between;
+  padding: 14px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.58);
+}
+
+.submitRecoveryBar > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: min(100%, 260px);
+}
+
+.accountDeletionStatusHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.accountDeletionStatusHeader h3,
+.accountDeletionStatusHeader p {
+  margin: 0;
+}
+
+.accountSessions {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.accountSessionItem,
+.accountDeletionRequestItem {
+  align-items: center;
+}
+
+@media (max-width: 760px) {
+  .submitRecoveryBar,
+  .legalFooter {
+    align-items: stretch;
+  }
+
+  .submitRecoveryBar .actionRow,
+  .pricingAudienceSwitch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+
+  .accountDeletionStatusHeader,
+  .accountSessionItem,
+  .accountDeletionRequestItem {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 /* Operational polish: compact actions, flatter hierarchy, and consistent phone targets. */
 *,
 *::before,
@@ -3294,12 +3501,37 @@ button.adminFocusRail__item:focus-visible {
   min-width: min(100%, 420px);
 }
 
-.adminSubmissionEvidencePreview__document iframe {
-  width: 100%;
-  min-height: 420px;
+.adminSubmissionEvidencePreview__pdfTile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 120px;
   border: 1px solid var(--border-medium);
   border-radius: 6px;
-  background: #fff;
+  background: rgba(15, 23, 42, 0.58);
+  padding: 16px;
+}
+
+.adminSubmissionEvidencePreview__pdfTile > div {
+  display: grid;
+  gap: 5px;
+}
+
+.adminSubmissionEvidencePreview__pdfTile span {
+  color: var(--text-muted);
+}
+
+.adminSubmissionEvidencePreview__pdfIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 58px;
+  min-height: 58px;
+  border: 1px solid rgba(245, 197, 66, 0.34);
+  border-radius: 12px;
+  background: rgba(245, 197, 66, 0.1);
+  color: var(--gold) !important;
+  font-weight: 950;
 }
 
 @media (max-width: 760px) {
@@ -3338,9 +3570,6 @@ button.adminFocusRail__item:focus-visible {
     min-height: 44px;
   }
 
-  .adminSubmissionEvidencePreview__document iframe {
-    min-height: 320px;
-  }
 }
 
 .adminCrmCard,
@@ -6047,7 +6276,7 @@ button.adminFocusRail__item:focus-visible {
 
 .accountSpecialIdentityGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.38fr) minmax(280px, 0.72fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: clamp(14px, 1.8vw, 20px);
   align-items: stretch;
   min-width: 0;
@@ -6075,11 +6304,16 @@ button.adminFocusRail__item:focus-visible {
   order: 1;
 }
 
+.accountDashboard .accountIdentityBar {
+  order: 1;
+}
+
 .accountDashboard #dashboardStatus {
   order: 2;
 }
 
-.accountDashboard #counterStaffInvitations {
+.accountDashboard #counterStaffInvitations,
+.accountDashboard #counterStaffAccess {
   order: 3;
 }
 
@@ -6206,6 +6440,22 @@ button.adminFocusRail__item:focus-visible {
     radial-gradient(circle at 18% 0%, rgba(139, 92, 246, 0.18), transparent 42%),
     radial-gradient(circle at 90% 8%, rgba(245, 197, 66, 0.08), transparent 38%),
     rgba(18, 26, 44, 0.78);
+}
+
+.accountIdentityBar {
+  grid-template-columns: minmax(170px, 0.72fr) minmax(0, 1.5fr) auto;
+  align-items: center;
+  padding: 14px 16px;
+}
+
+.accountIdentityBar__details {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.accountIdentityBar > .button {
+  min-width: 92px;
 }
 
 .accountIdentityCard--compact strong {
@@ -6580,6 +6830,50 @@ body.discountPassModalOpen {
 .authActions .button {
   min-width: 0;
   width: 100%;
+}
+
+.billingRecoveryPanel {
+  display: grid;
+  gap: 12px;
+  border-color: rgba(245, 197, 66, 0.34);
+  background: rgba(245, 197, 66, 0.08);
+}
+
+.billingRecoveryPanel[hidden] {
+  display: none;
+}
+
+.billingRecoveryPanel > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.billingRecoveryPanel strong {
+  color: #fef3c7;
+}
+
+.billingRecoveryPanel span {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.reauthPasswordDialog {
+  width: min(92vw, 460px);
+  max-width: 460px;
+  border: 1px solid rgba(34, 211, 238, 0.26);
+  background: #0b1220;
+  color: var(--text-primary);
+  padding: 20px;
+}
+
+.reauthPasswordDialog::backdrop {
+  background: rgba(2, 6, 23, 0.82);
+  backdrop-filter: blur(5px);
+}
+
+.reauthPasswordDialog h2,
+.reauthPasswordDialog p {
+  margin: 4px 0 0;
 }
 
 .authUtilityGrid {
@@ -7956,7 +8250,7 @@ body.discountPassModalOpen {
   box-shadow: var(--shadow-premium);
 }
 
-.rewardVoucherCard span {
+.rewardVoucherCard .rewardVoucherAmount {
   color: var(--gold);
   font-family: var(--display-font);
   font-size: clamp(1.7rem, 5vw, 2.5rem);
@@ -7973,6 +8267,104 @@ body.discountPassModalOpen {
   color: var(--text-muted);
   font-style: normal;
   font-weight: 850;
+}
+
+.rewardVoucherReference {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+  border: 1px solid rgba(245, 197, 66, 0.2);
+  border-radius: 14px;
+  background: rgba(3, 7, 18, 0.38);
+  padding: 10px;
+}
+
+.rewardVoucherReference small {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-weight: 850;
+}
+
+.rewardVoucherReference code,
+.rewardVoucherAdminCard code {
+  color: #fef3c7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.rewardVoucherFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rewardVoucherFooter small {
+  color: var(--text-muted);
+  font-weight: 800;
+}
+
+.rewardVoucherAdminList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+}
+
+.rewardVoucherAdminCard {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(245, 197, 66, 0.22);
+  border-radius: 18px;
+  background: rgba(3, 7, 18, 0.34);
+  padding: 14px;
+}
+
+.rewardVoucherAdminCard__header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.rewardVoucherAdminCard__header h3,
+.rewardVoucherAdminCard__header p {
+  margin: 3px 0 0;
+}
+
+.rewardVoucherAdminCard__details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rewardVoucherAdminCard__details > div {
+  display: grid;
+  gap: 5px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.52);
+  padding: 10px;
+}
+
+.rewardVoucherAdminCard__details small {
+  color: var(--text-muted);
+  font-weight: 800;
+}
+
+@media (max-width: 520px) {
+  .rewardVoucherReference,
+  .rewardVoucherAdminCard__details {
+    grid-template-columns: 1fr;
+  }
+
+  .rewardVoucherReference .button {
+    width: 100%;
+  }
 }
 
 .pubGolfDrinkGrid {
@@ -8535,6 +8927,40 @@ body.discountPassModalOpen {
   font-size: 12px;
   font-weight: 850;
   text-transform: uppercase;
+}
+
+.verificationCandidateCard {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.verificationCandidateItems {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.verificationCandidateItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  align-items: baseline;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.45);
+  padding: 10px 12px;
+}
+
+.verificationCandidateItem small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.verificationCandidateActions {
+  align-items: stretch;
+}
+
+.verificationCandidateActions .button {
+  min-height: 44px;
 }
 
 .statusBadge {
@@ -9339,6 +9765,21 @@ body.discountPassModalOpen {
     gap: 8px;
   }
 
+  .accountIdentityBar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 12px 14px;
+  }
+
+  .accountIdentityBar .accountAccessBadgeRow {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .accountIdentityBar > .button {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
   .accountIdentityCard--compact strong {
     font-size: 0.95rem;
   }
@@ -10107,6 +10548,10 @@ body.discountPassModalOpen {
     font-size: 0.82rem;
   }
 
+  .accountIdentityBar > .button {
+    min-height: 42px;
+  }
+
   .accountAccessBadgeRow {
     gap: 5px;
     flex-wrap: nowrap;
@@ -10310,7 +10755,7 @@ body.discountPassModalOpen {
   }
 
   .accountSpecialIdentityGrid {
-    grid-template-columns: minmax(0, 1fr) minmax(240px, 0.48fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .dashboardSetupChecklist,
@@ -10357,6 +10802,14 @@ body.discountPassModalOpen {
   .adminIngestionPager .muted {
     order: -1;
     flex-basis: 100%;
+  }
+
+  .verificationCandidateItem {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .verificationCandidateActions .button {
+    width: 100%;
   }
 }
 
@@ -10422,5 +10875,41 @@ body.discountPassModalOpen {
   body .venueDetailOverlay__close,
   body .venueRail__sortChip {
     min-height: 44px;
+  }
+
+  /* Keep venue operations above decorative chrome on small screens. */
+  .venuePortalHero--operational {
+    min-height: 0;
+    margin: 6px 0 8px;
+    padding: 10px 12px;
+  }
+
+  .venuePortalHero--operational .eyebrow {
+    display: none;
+  }
+
+  .venuePortalHero--operational h1 {
+    font-size: 1.25rem;
+  }
+
+  .venuePortalHero__meta {
+    font-size: 0.72rem;
+  }
+
+  .dashboardSidebar #selectedVenueSummary,
+  .dashboardSidebar .tabNav {
+    display: none;
+  }
+
+  .dashboardSidebar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: end;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .dashboardSidebar .venueLogoutButton {
+    grid-column: 1 / -1;
   }
 }

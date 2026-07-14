@@ -66,7 +66,7 @@ The raw HTML grew by about 2.2 KB because of the lazy loader, startup coordinati
 - Move the large inline landing/map script into a versioned external file so it can be cached independently from HTML.
 - Consider a small route-level loader for venue portal/account/submit pages so each page loads only the helpers it needs.
 - Add a compressed, production-ready social preview image instead of relying on the current large logo asset for previews.
-- Add HTTP compression and CDN cache validation checks to deployment QA if the host does not already enforce them.
+- HTTP compression is now enabled for large public pages and covered by an automated regression test; production CDN cache validation remains a deployment QA check.
 - Consider a backend read endpoint that returns map venue rows and approved price records together. That could reduce client requests, but it would change API shape and was intentionally left for a separate backend-safe pass.
 
 ## Risky Optimizations Intentionally Avoided

@@ -7,6 +7,7 @@ struct VenuePortalView: View {
 
     enum PortalSection: String, CaseIterable, Identifiable {
         case dashboard = "Dashboard"
+        case counter = "Counter"
         case profile = "Profile"
         case beers = "Beers"
         case happyHours = "Happy hours"
@@ -18,6 +19,7 @@ struct VenuePortalView: View {
         var systemImage: String {
             switch self {
             case .dashboard: return "chart.bar.fill"
+            case .counter: return "barcode.viewfinder"
             case .profile: return "building.2.fill"
             case .beers: return "mug.fill"
             case .happyHours: return "clock.badge.checkmark.fill"
@@ -37,7 +39,11 @@ struct VenuePortalView: View {
                         systemImage: "building.2.crop.circle"
                     )
                 } else if let portal = model.venuePortal {
-                    portalView(portal)
+                    if portal.accessState == "claim_required" {
+                        claimAccessView(portal)
+                    } else {
+                        portalView(portal)
+                    }
                 } else {
                     EmptyStateView(
                         title: "No venue dashboard yet",
@@ -56,6 +62,28 @@ struct VenuePortalView: View {
         .task {
             await model.refreshVenuePortal()
         }
+    }
+
+    private func claimAccessView(_ portal: VenuePortalData) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(
+                eyebrow: "Verified access",
+                title: "Connect your venue",
+                subtitle: portal.message ?? "Venue access is manually verified before management tools are enabled.",
+                systemImage: "person.2.badge.key.fill"
+            )
+            Link(destination: AppConfig.apiBaseURL.appending(path: "venue-portal.html")) {
+                Label("Request or review venue access", systemImage: "safari.fill")
+                    .font(.headline.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 50)
+            }
+            .buttonStyle(.borderedProminent)
+            StatusBanner(
+                message: "The secure web claim form is used because it includes the business-verification evidence and admin review trail.",
+                systemImage: "checkmark.shield.fill"
+            )
+        }
+        .beerMapCard()
     }
 
     private func portalView(_ portal: VenuePortalData) -> some View {
@@ -83,7 +111,9 @@ struct VenuePortalView: View {
                         selectedVenueId = portal.selectedVenue?.venueId ?? assignments.first?.venueId ?? ""
                     }
                     .onChange(of: selectedVenueId) { _, newValue in
-                        Task { await model.refreshVenuePortal(venueId: newValue) }
+                        if newValue != portal.selectedVenue?.venueId {
+                            Task { await model.refreshVenuePortal(venueId: newValue) }
+                        }
                     }
                 }
             }
@@ -91,7 +121,7 @@ struct VenuePortalView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(PortalSection.allCases) { section in
+                    ForEach(portal.accessLevel == "counter_staff" ? [.counter] : PortalSection.allCases) { section in
                         Button {
                             selectedSection = section
                         } label: {
@@ -118,23 +148,183 @@ struct VenuePortalView: View {
             }
             .accessibilityElement(children: .contain)
 
-            switch selectedSection {
+            switch portal.accessLevel == "counter_staff" ? .counter : selectedSection {
             case .dashboard:
                 PortalDashboard(portal: portal)
+            case .counter:
+                CounterToolsView(portal: portal)
+                    .id("counter-\(portal.selectedVenue?.venueId ?? "none")")
             case .profile:
                 if let profile = portal.profile {
                     ProfileEditor(profile: profile)
+                        .id("profile-\(portal.selectedVenue?.venueId ?? "none")")
                 }
             case .beers:
                 BeerInventoryView(beers: portal.inventory?.beers ?? [])
+                    .id("beers-\(portal.selectedVenue?.venueId ?? "none")")
             case .happyHours:
                 HappyHourInventoryView(happyHours: portal.inventory?.happyHours ?? [])
+                    .id("happy-\(portal.selectedVenue?.venueId ?? "none")")
             case .specials:
                 SpecialInventoryView(specials: portal.inventory?.specials ?? [], canManage: portal.tier?.canManageSpecials == true)
+                    .id("specials-\(portal.selectedVenue?.venueId ?? "none")")
             case .reports:
                 PortalReportsView(portal: portal)
+                    .id("reports-\(portal.selectedVenue?.venueId ?? "none")")
             }
         }
+        .onChange(of: portal.selectedVenue?.venueId, initial: true) { _, venueId in
+            selectedVenueId = venueId ?? ""
+        }
+    }
+}
+
+struct CounterToolsView: View {
+    @EnvironmentObject private var model: BeerMapAppModel
+    let portal: VenuePortalData
+
+    @State private var memberCode = ""
+    @State private var transactionReference = ""
+    @State private var checkedReference: String?
+    @State private var itemName = ""
+    @State private var category = "alcoholic"
+    @State private var quantity = 1
+    @State private var notes = ""
+    @State private var voidReason = ""
+    @State private var rewardCode = ""
+    @State private var rewardReason = ""
+
+    var body: some View {
+        VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionHeader(
+                    eyebrow: "Counter",
+                    title: portal.selectedVenue?.venueName ?? "Member checkout",
+                    subtitle: "Check a short-lived member code before recording the exact paid item.",
+                    systemImage: "barcode.viewfinder"
+                )
+                TextField("6-character member code", text: Binding(
+                    get: { memberCode },
+                    set: { memberCode = String($0.uppercased().prefix(6)); checkedReference = nil }
+                ))
+                    .textFieldStyle(.roundedBorder)
+                    .keyboardType(.asciiCapable)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                TextField("Receipt or order reference", text: Binding(
+                    get: { transactionReference },
+                    set: { transactionReference = $0; checkedReference = nil }
+                ))
+                    .textFieldStyle(.roundedBorder)
+                    .keyboardType(.asciiCapable)
+                    .autocorrectionDisabled()
+                PrimaryButton(title: "Check member", systemImage: "checkmark.shield.fill", isLoading: model.isLoading) {
+                    Task {
+                        if await model.previewCounterMember(code: memberCode, transactionReference: transactionReference.trimmed) {
+                            checkedReference = transactionReference.trimmed
+                        }
+                    }
+                }
+                .disabled(!validCode(memberCode) || transactionReference.trimmed.count < 4)
+
+                if let preview = model.counterMemberPreview {
+                    StatusBanner(
+                        message: "Eligible member \(preview.accountId). \(preview.pointsRemainingToday ?? 0) Pint Points remain in today's cap.",
+                        systemImage: "checkmark.seal.fill"
+                    )
+                    if let privacyCopy = preview.privacyCopy {
+                        Text(privacyCopy)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    TextField("Purchased item", text: $itemName)
+                        .textFieldStyle(.roundedBorder)
+                    Picker("Category", selection: $category) {
+                        Text("Alcoholic").tag("alcoholic")
+                        Text("Non-alcoholic").tag("non_alcoholic")
+                        Text("Food").tag("food")
+                    }
+                    .pickerStyle(.segmented)
+                    Stepper("Quantity: \(quantity)", value: $quantity, in: 1...4)
+                    TextField("Notes, optional", text: $notes)
+                        .textFieldStyle(.roundedBorder)
+                    PrimaryButton(title: "Record purchase", systemImage: "plus.circle.fill", isLoading: model.isLoading) {
+                        Task {
+                            if await model.recordCounterPurchase(
+                                itemName: itemName,
+                                category: category,
+                                quantity: quantity,
+                                transactionReference: transactionReference.trimmed,
+                                notes: notes
+                            ) {
+                                memberCode = ""
+                                checkedReference = nil
+                                itemName = ""
+                                notes = ""
+                                quantity = 1
+                            }
+                        }
+                    }
+                    .disabled(itemName.trimmed.isEmpty || checkedReference != transactionReference.trimmed)
+                }
+            }
+            .beerMapCard()
+
+            if let result = model.counterPurchaseResult {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionHeader(eyebrow: "Correction", title: "Most recent purchase", subtitle: result.copy, systemImage: "arrow.uturn.backward.circle.fill")
+                    if let progress = result.progressCopy { Text(progress) }
+                    if let reward = result.rewardCopy { Text(reward) }
+                    TextField("Reason for reversal", text: $voidReason)
+                        .textFieldStyle(.roundedBorder)
+                    SecondaryButton(title: "Reverse this purchase", systemImage: "arrow.uturn.backward", isDestructive: true) {
+                        Task {
+                            if await model.voidCounterPurchase(reason: voidReason.trimmed) { voidReason = "" }
+                        }
+                    }
+                    .disabled(voidReason.trimmed.count < 4)
+                }
+                .beerMapCard()
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(
+                    eyebrow: "Reward",
+                    title: "Free Pint Reward",
+                    subtitle: "Confirm only after age, ID, and responsible-service checks.",
+                    systemImage: "gift.fill"
+                )
+                TextField("6-character reward code", text: Binding(
+                    get: { rewardCode },
+                    set: { rewardCode = String($0.uppercased().prefix(6)) }
+                ))
+                    .textFieldStyle(.roundedBorder)
+                    .keyboardType(.asciiCapable)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                PrimaryButton(title: "Confirm reward", systemImage: "checkmark.seal.fill", isLoading: model.isLoading) {
+                    Task { await model.decideFreePintReward(code: rewardCode, action: "confirm", reason: nil) }
+                }
+                .disabled(!validCode(rewardCode))
+                TextField("Rejection reason", text: $rewardReason)
+                    .textFieldStyle(.roundedBorder)
+                SecondaryButton(title: "Reject reward", systemImage: "xmark.seal.fill", isDestructive: true) {
+                    Task { await model.decideFreePintReward(code: rewardCode, action: "reject", reason: rewardReason.trimmed) }
+                }
+                .disabled(!validCode(rewardCode) || rewardReason.trimmed.count < 4)
+                if let result = model.counterRewardResult {
+                    StatusBanner(message: result.copy ?? "Reward \(result.status ?? "updated").", systemImage: "checkmark.shield.fill")
+                    if let instruction = result.instruction {
+                        Text(instruction).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .beerMapCard()
+        }
+    }
+
+    private func validCode(_ value: String) -> Bool {
+        value.range(of: #"^[A-Z0-9]{6}$"#, options: .regularExpression) != nil
     }
 }
 
@@ -264,8 +454,13 @@ struct ProfileEditor: View {
             TextField("Website", text: binding("website"))
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
             TextField("Instagram URL", text: binding("instagram"))
                 .textFieldStyle(.roundedBorder)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
             TextField("Description", text: binding("description"), axis: .vertical)
                 .lineLimit(3...6)
                 .textFieldStyle(.roundedBorder)
@@ -550,6 +745,8 @@ struct SpecialInventoryView: View {
 }
 
 struct PortalReportsView: View {
+    @EnvironmentObject private var model: BeerMapAppModel
+    @State private var month = previousCompletedMonth()
     let portal: VenuePortalData
 
     var body: some View {
@@ -562,8 +759,17 @@ struct PortalReportsView: View {
             )
             if portal.tier?.monthlyReports == true {
                 MetricPill(title: "Privacy floor", value: portal.analytics?.privacyFloorMet == true ? "Met" : "Building", systemImage: "lock.shield.fill", tint: BeerMapTheme.leaf)
-                Text("CSV and JSON export use the existing backend route and can be added to this screen once final store download handling is configured.")
-                    .font(.subheadline)
+                TextField("Completed month (YYYY-MM)", text: $month)
+                    .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                HStack {
+                    reportAction(format: "csv", label: "CSV")
+                    reportAction(format: "json", label: "JSON")
+                }
+                Text("Exports use privacy-safe aggregate data and are available only for completed months.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 EmptyStateView(title: "Upgrade to Pro", message: portal.tier?.upgradeCopy ?? "Pro unlocks analytics and monthly reports.", systemImage: "chart.bar.doc.horizontal")
@@ -571,6 +777,42 @@ struct PortalReportsView: View {
         }
         .beerMapCard()
     }
+
+    @ViewBuilder
+    private func reportAction(format: String, label: String) -> some View {
+        if let url = model.venueReportExportURLs[format] {
+            ShareLink(item: url) {
+                Label("Share \(label)", systemImage: "square.and.arrow.up")
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+        } else {
+            Button {
+                Task { await model.prepareVenueReportExport(month: month, format: format) }
+            } label: {
+                Label("Prepare \(label)", systemImage: "arrow.down.doc")
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!validReportMonth(month) || model.isLoading)
+        }
+    }
+}
+
+private func previousCompletedMonth() -> String {
+    let calendar = Calendar(identifier: .gregorian)
+    let previous = calendar.date(byAdding: .month, value: -1, to: Date()) ?? Date()
+    let formatter = DateFormatter()
+    formatter.calendar = calendar
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM"
+    return formatter.string(from: previous)
+}
+
+private func validReportMonth(_ value: String) -> Bool {
+    value.range(of: #"^\d{4}-(0[1-9]|1[0-2])$"#, options: .regularExpression) != nil
 }
 
 private func formatTime(_ date: Date) -> String {

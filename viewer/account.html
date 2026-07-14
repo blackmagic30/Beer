@@ -16,7 +16,7 @@
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js" integrity="sha384-PsnFqJ58vyp7buRfuvdS2SrjRdUYinBv6lWwJXx3xQ17hWefo/UkwXowVBT53ubG" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -25,9 +25,9 @@
 
     <section id="loggedOutView" class="authShell" hidden>
       <div class="authIntro panel">
-        <div class="eyebrow">Contributor account</div>
-        <h1>Pint Path Contributor Account</h1>
-        <p class="lead">Upload beer prices, menu photos, and tap-list evidence to help verify Melbourne beer pricing.</p>
+        <div class="eyebrow">Pint Path account</div>
+        <h1>Sign in to Pint Path</h1>
+        <p class="lead">Save venues and night plans, manage premium access, or contribute current Melbourne beer data.</p>
         <div class="authTrustGrid">
           <div>
             <strong>Private evidence</strong>
@@ -45,7 +45,7 @@
       </div>
 
       <section class="authCard panel" aria-label="Account access">
-        <div class="authTabs" role="tablist" aria-label="Choose sign in or create account">
+        <div id="authTabs" class="authTabs" role="tablist" aria-label="Choose sign in or create account">
           <button id="showLoginButton" class="authTab is-active" type="button" role="tab" aria-selected="true" aria-controls="loginForm">Sign in</button>
           <button id="showSignupButton" class="authTab" type="button" role="tab" aria-selected="false" aria-controls="signupForm">Create account</button>
         </div>
@@ -58,15 +58,29 @@
               <label class="field">Email
                 <input name="email" type="email" autocomplete="email" required />
               </label>
-              <label class="field passwordField">Password
+              <div class="field passwordField"><label for="loginPassword">Password</label>
                 <span class="passwordInputWrap">
-                  <input name="password" type="password" autocomplete="current-password" required />
+                  <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
                   <button class="passwordToggle" type="button" data-password-toggle>Show</button>
                 </span>
-              </label>
+              </div>
             </div>
             <div class="actionRow authActions">
               <button class="button button--primary" type="submit">Sign in</button>
+            </div>
+            <div id="billingRecoveryPanel" class="notice billingRecoveryPanel" role="status" aria-live="polite" hidden>
+              <div>
+                <strong>Billing-only access is available</strong>
+                <span>Your Pint Path access remains suspended, but you can securely manage or cancel an existing subscription without entering the app.</span>
+              </div>
+              <label id="billingRecoveryTargetField" class="field" hidden>Billing profile
+                <select id="billingRecoveryTargetSelect" aria-describedby="billingRecoveryTargetHint"></select>
+                <span id="billingRecoveryTargetHint" class="fieldHint">Choose the personal or managed-venue subscription you need to manage.</span>
+              </label>
+              <div class="actionRow actionRow--compact">
+                <button id="openBillingRecoveryButton" class="button button--primary" type="button">Manage billing only</button>
+                <a class="button" href="/feedback.html?type=billing_support">Contact billing support</a>
+              </div>
             </div>
             <div class="authUtilityGrid" aria-label="Account recovery links">
               <a id="passwordResetLink" class="authUtilityCard" href="/reset-password.html">
@@ -82,7 +96,7 @@
               <button class="button oauthButton" data-provider="google" type="button">Continue with Google</button>
               <button class="button oauthButton" data-provider="apple" type="button">Continue with Apple</button>
             </div>
-            <p id="oauthHelper" class="helperCopy">Google and Apple sign-in appears when Supabase OAuth providers are configured.</p>
+            <p id="oauthHelper" class="helperCopy">Google and Apple first verify your identity. New accounts, or accounts with updated policies, are asked for 18+ and current Terms/Privacy acceptance only after that verification.</p>
           </div>
         </form>
 
@@ -98,27 +112,46 @@
                 <input name="displayName" maxlength="28" autocomplete="nickname" placeholder="Shown on leaderboards" />
                 <span class="nameRuleHint"><span class="nameRuleIcon" aria-hidden="true">!</span> Unique public name. No disrespectful, racist, hateful, rude, URL, or impersonation names.</span>
               </label>
-              <label class="field passwordField">Password
+              <div class="field passwordField"><label for="signupPassword">Password</label>
                 <span class="passwordInputWrap">
-                  <input name="password" type="password" autocomplete="new-password" minlength="8" required />
+                  <input id="signupPassword" name="password" type="password" autocomplete="new-password" minlength="8" required />
                   <button class="passwordToggle" type="button" data-password-toggle>Show</button>
                 </span>
                 <span class="fieldHint">Use at least 8 characters.</span>
-              </label>
-              <label class="field passwordField">Confirm password
+              </div>
+              <div class="field passwordField"><label for="signupConfirmPassword">Confirm password</label>
                 <span class="passwordInputWrap">
-                  <input name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+                  <input id="signupConfirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
                   <button class="passwordToggle" type="button" data-password-toggle>Show</button>
                 </span>
-              </label>
+              </div>
               <div class="field consentField" role="group" aria-label="Account consent">
                 <label class="consentLine"><input name="ageConfirmed" type="checkbox" required /> <span>I confirm I am 18 years or older.</span></label>
-                <label class="consentLine"><input name="termsAccepted" type="checkbox" required /> <span>I agree to the <a href="/terms.html" target="_blank" rel="noopener">Terms and Conditions</a>.</span></label>
-                <label class="consentLine"><input name="privacyAccepted" type="checkbox" required /> <span>I agree to the <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
+                <label class="consentLine"><input name="termsAccepted" type="checkbox" required /> <span>I agree to the Terms and Conditions.</span></label>
+                <label class="consentLine"><input name="privacyAccepted" type="checkbox" required /> <span>I agree to the Privacy Policy.</span></label>
+                <p class="fieldHint"><a href="/terms.html" target="_blank" rel="noopener">Read Terms and Conditions</a> · <a href="/privacy.html" target="_blank" rel="noopener">Read Privacy Policy</a></p>
                 <span class="fieldHint">Pint Path does not store ID documents. Accounts that exploit, scrape, spam, fake submissions, or bypass access controls may be restricted or banned.</span>
               </div>
             </div>
             <button class="button button--primary" type="submit">Create account</button>
+          </div>
+        </form>
+
+        <form id="returningLegalAcceptanceForm" class="form authForm" aria-labelledby="returningLegalAcceptanceTitle" aria-describedby="returningLegalAcceptanceHelp" hidden>
+          <div class="authPanelStack">
+            <h2 id="returningLegalAcceptanceTitle">Review updated account terms</h2>
+            <p class="muted">Your password was accepted, but Pint Path needs your explicit acceptance of the current policies before creating an app session.</p>
+            <fieldset class="field consentField" aria-describedby="returningLegalAcceptanceHelp">
+              <legend>Current account acceptance</legend>
+              <label class="consentLine"><input name="ageConfirmed" type="checkbox" required /> <span>I confirm I am 18 years or older.</span></label>
+              <label class="consentLine"><input name="termsAccepted" type="checkbox" required /> <span>I accept the current <a href="/terms.html" target="_blank" rel="noopener">Terms and Conditions</a>.</span></label>
+              <label class="consentLine"><input name="privacyAccepted" type="checkbox" required /> <span>I accept the current <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
+            </fieldset>
+            <p id="returningLegalAcceptanceHelp" class="fieldHint">Nothing is accepted automatically. These choices are sent only after Supabase confirms your signed-in identity.</p>
+            <div class="actionRow authActions">
+              <button id="returningLegalAcceptanceButton" class="button button--primary" type="submit">Accept and continue</button>
+              <button id="cancelReturningLegalAcceptanceButton" class="button" type="button">Cancel and sign out</button>
+            </div>
           </div>
         </form>
 
@@ -136,7 +169,31 @@
         <a class="button" href="/feedback.html">Contact us</a>
       </section>
 
+      <section class="panel accountIdentityCard accountIdentityCard--compact accountIdentityBar" aria-label="Current signed-in account">
+        <div class="accountIdentityBar__details">
+          <span class="muted">Signed in as</span>
+          <strong id="accountEmail">Not signed in</strong>
+          <span id="accountEmailHelper" class="accountEmailHelper" hidden></span>
+        </div>
+        <div id="accessBadgeRow" class="miniStatRow accountAccessBadgeRow"></div>
+        <button id="logoutButton" class="button button--danger" type="button" aria-label="Log out this device">Log out</button>
+      </section>
+
       <div id="dashboardStatus" class="notice" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+      <section id="legalAcceptanceGate" class="panel legalAcceptanceGate" aria-labelledby="legalAcceptanceGateTitle" hidden>
+        <div>
+          <div class="eyebrow">Action required</div>
+          <h2 id="legalAcceptanceGateTitle">Review the current Terms and Privacy Policy</h2>
+          <p class="muted">Pint Path updated these policies on 12 July 2026. Accept the current versions before using account-only features.</p>
+        </div>
+        <div class="legalAcceptanceGate__actions">
+          <a class="button" href="/terms.html" target="_blank" rel="noopener">Read Terms</a>
+          <a class="button" href="/privacy.html" target="_blank" rel="noopener">Read Privacy Policy</a>
+          <button id="acceptCurrentLegalButton" class="button button--primary" type="button">Accept current policies</button>
+          <button id="legalGateLogoutButton" class="button" type="button">Log out</button>
+        </div>
+      </section>
 
       <section id="counterStaffInvitations" class="panel" aria-labelledby="counterStaffInvitationsTitle" hidden>
         <div class="sectionHeader">
@@ -149,14 +206,27 @@
         <div id="counterStaffInvitationList" class="list"></div>
       </section>
 
+      <section id="counterStaffAccess" class="panel" aria-labelledby="counterStaffAccessTitle" hidden>
+        <div class="sectionHeader">
+          <div>
+            <div class="eyebrow">Active venue access</div>
+            <h2 id="counterStaffAccessTitle">Counter dashboards</h2>
+            <p class="muted">Open the counter tools for a venue that has assigned you. This access does not include venue settings or analytics.</p>
+          </div>
+        </div>
+        <div id="counterStaffAccessList" class="list"></div>
+      </section>
+
       <section id="accountSettingsHub" class="accountSectionStack settingsHub">
         <nav class="settingsNav" role="tablist" aria-label="Account settings sections">
           <button id="settingsStatsTab" class="settingsNavButton" type="button" role="tab" data-settings-target="stats" aria-controls="settingsStatsPanel" aria-selected="false">My stats</button>
           <button id="settingsSubmissionsTab" class="settingsNavButton" type="button" role="tab" data-settings-target="submissions" aria-controls="settingsSubmissionsPanel" aria-selected="false">View submissions</button>
+          <button id="settingsSavedTab" class="settingsNavButton" type="button" role="tab" data-settings-target="saved" aria-controls="settingsSavedPanel" aria-selected="false">Saved</button>
+          <button id="settingsPreferencesTab" class="settingsNavButton" type="button" role="tab" data-settings-target="preferences" aria-controls="settingsPreferencesPanel" aria-selected="false">Preferences</button>
           <button id="settingsPrivacyTab" class="settingsNavButton" type="button" role="tab" data-settings-target="privacy" aria-controls="settingsPrivacyPanel" aria-selected="false">Privacy</button>
           <button id="settingsSupportTab" class="settingsNavButton" type="button" role="tab" data-settings-target="support" aria-controls="settingsSupportPanel" aria-selected="false">Support</button>
           <button id="settingsSecurityTab" class="settingsNavButton" type="button" role="tab" data-settings-target="security" aria-controls="settingsSecurityPanel" aria-selected="false">Security</button>
-          <button id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta" type="button" role="tab" data-settings-target="beta-testing" aria-controls="settingsBetaTestingPanel" aria-selected="false" hidden>BetaTesting</button>
+          <button id="betaTestingNavButton" class="settingsNavButton settingsNavButton--beta" type="button" role="tab" data-settings-target="beta-testing" aria-controls="settingsBetaTestingPanel" aria-selected="false" hidden>Beta tools</button>
         </nav>
 
         <article id="settingsEmptyPanel" class="panel settingsEmptyPanel">
@@ -168,11 +238,35 @@
           <section id="recentSubmissionsSection" class="panel">
             <div class="sectionHeader">
               <div>
-                <h2>Recent submissions</h2>
+                <h2>Submission history</h2>
                 <p class="muted">Your private submission history. Public map data only updates after verification.</p>
               </div>
             </div>
             <div id="recentSubmissionsList" class="submissionList"></div>
+            <div id="submissionHistoryPager" class="adminIngestionPager" aria-live="polite" hidden>
+              <button id="submissionHistoryPrev" class="button button--small" type="button">Previous</button>
+              <span id="submissionHistoryPageStatus" class="helperCopy" aria-live="polite"></span>
+              <button id="submissionHistoryNext" class="button button--small" type="button">Next</button>
+            </div>
+          </section>
+
+          <section id="communityVerificationSection" class="panel" aria-labelledby="communityVerificationTitle">
+            <div class="sectionHeader">
+              <div>
+                <div class="eyebrow">Community checks</div>
+                <h2 id="communityVerificationTitle">Help verify venue data</h2>
+                <p class="muted">Compare recent venue details with what you personally saw. You will never be shown the contributor's identity, notes, upload location, or private evidence.</p>
+              </div>
+              <button id="refreshVerificationCandidatesButton" class="button button--small" type="button">Refresh checks</button>
+            </div>
+            <p id="communityVerificationPrivacy" class="helperCopy">Only privacy-safe venue, timing, price, and item details are shown here.</p>
+            <p id="communityVerificationStatus" class="helperCopy" role="status" aria-live="polite">Open this section to load checks.</p>
+            <div id="communityVerificationList" class="submissionList" aria-busy="false"></div>
+            <div id="communityVerificationPager" class="adminIngestionPager" aria-live="polite" hidden>
+              <button id="communityVerificationPrev" class="button button--small" type="button">Previous</button>
+              <span id="communityVerificationPageStatus" class="helperCopy"></span>
+              <button id="communityVerificationNext" class="button button--small" type="button">Next</button>
+            </div>
           </section>
         </div>
 
@@ -209,13 +303,6 @@
                   <p class="helperCopy">Only show this at a venue when redeeming a Pint Path special.</p>
                 </article>
 
-                <article class="panel accountIdentityCard accountIdentityCard--compact">
-                  <span class="muted">Signed in as</span>
-                  <strong id="accountEmail">Not signed in</strong>
-                  <span id="accountEmailHelper" class="accountEmailHelper" hidden></span>
-                  <div id="accessBadgeRow" class="miniStatRow accountAccessBadgeRow"></div>
-                  <button id="logoutButton" class="button button--danger" type="button">Log out</button>
-                </article>
               </div>
             </section>
             <div id="accountStatsGrid" class="statsGrid accountStatsGrid"></div>
@@ -231,19 +318,58 @@
           </section>
         </div>
 
+        <div id="settingsSavedPanel" class="settingsPanel" data-settings-panel="saved" role="tabpanel" aria-labelledby="settingsSavedTab" hidden>
+          <section class="panel">
+            <div class="sectionHeader">
+              <div>
+                <h2>Saved venues, areas, beers, and night plans</h2>
+                <p class="muted">These shortcuts belong to this account and stay isolated when another person signs in on the same device.</p>
+              </div>
+              <a class="button" href="/">Open map</a>
+            </div>
+            <div id="savedItemsList" class="list"></div>
+          </section>
+        </div>
+
+        <div id="settingsPreferencesPanel" class="settingsPanel" data-settings-panel="preferences" role="tabpanel" aria-labelledby="settingsPreferencesTab" hidden>
+          <form id="accountPreferencesForm" class="panel form">
+            <div class="sectionHeader">
+              <div>
+                <h2>Discovery preferences</h2>
+                <p class="muted">Use comma-separated names. These preferences help Pint Path suggest relevant areas, beers, and missions.</p>
+              </div>
+            </div>
+            <label class="field">Preferred suburbs
+              <input name="preferredSuburbs" maxlength="500" placeholder="Fitzroy, Richmond, Brunswick" />
+            </label>
+            <label class="field">Preferred beers
+              <input name="preferredBeers" maxlength="500" placeholder="Guinness, Carlton Draught" />
+            </label>
+            <fieldset class="field consentField">
+              <legend>What do you use Pint Path for?</legend>
+              <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="cheapest_beer" /> <span>Finding best-value beer</span></label>
+              <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="happy_hours" /> <span>Finding happy hours</span></label>
+              <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="specific_beers" /> <span>Finding specific beers</span></label>
+              <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="recently_verified" /> <span>Using recently verified data</span></label>
+              <label class="consentLine"><input name="preferredUseCases" type="checkbox" value="contributing_data" /> <span>Contributing venue data</span></label>
+            </fieldset>
+            <button class="button button--primary" type="submit">Save preferences</button>
+          </form>
+        </div>
+
         <div id="settingsBetaTestingPanel" class="settingsPanel" data-settings-panel="beta-testing" role="tabpanel" aria-labelledby="betaTestingNavButton" hidden>
           <section class="panel betaTestingPanel betaTestingShell">
             <div class="betaTestingHeader">
               <div>
                 <div class="eyebrow">Premium beta</div>
-                <h2 id="betaFeatureTitle">BetaTesting</h2>
-                <p class="muted">Choose one beta field at a time so the tools stay clean on phones.</p>
+                <h2 id="betaFeatureTitle">Beta tools</h2>
+                <p class="muted">Choose one beta tool at a time so the page stays clean on phones.</p>
               </div>
               <div class="betaFeaturePicker">
-                <span class="betaFeatureHint">Click here to show other beta testing features.</span>
+                <span class="betaFeatureHint">Choose another beta tool.</span>
                 <div class="betaFeatureMenu">
                   <button id="betaFeatureMenuButton" class="button button--premium" type="button" aria-haspopup="true" aria-expanded="false">Pub Golf</button>
-                  <div class="betaFeatureDropdown" role="menu" aria-label="BetaTesting fields">
+                  <div class="betaFeatureDropdown" role="menu" aria-label="Beta tools menu">
                     <button type="button" role="menuitem" data-beta-feature-target="pub-golf">Pub Golf</button>
                     <button type="button" role="menuitem" data-beta-feature-target="leaderboard">Leaderboard</button>
                     <button type="button" role="menuitem" data-beta-feature-target="pint-points">Pint Point Wallet</button>
@@ -258,9 +384,13 @@
                 <div>
                   <div class="eyebrow">Beta route planner</div>
                   <h3>Pub Golf</h3>
-                  <p class="muted">Pick nine drinks and Pint Path will build a walking/public-transport route from verified venue data.</p>
+                  <p class="muted">Choose route preferences and Pint Path will build a walking/public-transport plan from verified venue data.</p>
                 </div>
                 <button id="randomizePubGolfButton" class="button" type="button">Randomise drinks</button>
+              </div>
+              <div class="notice notice--warning pubGolfSafetyNotice" role="note">
+                <strong>This is a route planner, not a drinking challenge.</strong>
+                <span>You never need to buy or finish alcohol. Skip rounds, choose water or food, follow every venue's RSA decisions, and never drive after drinking.</span>
               </div>
               <form id="pubGolfForm" class="form">
                 <div class="grid grid--two">
@@ -291,7 +421,7 @@
                 <div>
                   <div class="eyebrow">Monthly race</div>
                   <h3>Leaderboard</h3>
-                  <p class="muted">Top contributors earn account vouchers after the monthly leaderboard closes and admin confirms winners.</p>
+                  <p class="muted">Top contributors earn 90-day account vouchers after the monthly leaderboard closes. Pint Path support verifies and fulfils each winning claim.</p>
                 </div>
                 <span id="betaCampaignBadge" class="pill pill--premium">Monthly</span>
               </div>
@@ -385,17 +515,10 @@
               <span><strong>Allow optional product analytics</strong><em>Helps improve search, map filters, and app reliability.</em></span>
             </label>
             <label class="toggleLine">
-              <input name="venueReportInclusionEnabled" type="checkbox" />
-              <span><strong>Include my aggregate activity in venue insights</strong><em>Only privacy-safe area/venue buckets above thresholds are used.</em></span>
+              <input name="venueReportInclusionEnabled" type="checkbox" aria-describedby="venueReportInclusionHint" />
+              <span><strong>Include my aggregate activity in venue insights</strong><em id="venueReportInclusionHint">Requires optional analytics. Only privacy-safe area/venue buckets above thresholds are used.</em></span>
             </label>
-            <label class="toggleLine">
-              <input name="productResearchEnabled" type="checkbox" />
-              <span><strong>Use my feedback for product research</strong><em>Helps prioritize coverage, missions, and mobile improvements.</em></span>
-            </label>
-            <label class="toggleLine">
-              <input name="emailUpdatesEnabled" type="checkbox" />
-              <span><strong>Email me product updates</strong><em>Off by default. Transactional account emails may still be sent.</em></span>
-            </label>
+            <p class="helperCopy">Pint Path does not currently use account feedback for a separate research programme or send marketing/product-update email. If either programme starts, it will require a new, explicit opt-in here. Transactional security, billing, and account emails are separate.</p>
             <button class="button button--primary" type="submit">Save privacy settings</button>
           </form>
         </div>
@@ -430,10 +553,20 @@
                 <label class="field">Details
                   <textarea name="message" required maxlength="1200" placeholder="Tell us what you need. Do not include passwords, card numbers, ID documents, or private keys."></textarea>
                 </label>
-                <p class="helperCopy">The JSON export includes exact stored upload coordinates and short-lived links to your private evidence. Passwords and session tokens are never exported.</p>
+                <p class="helperCopy">The JSON export excludes passwords, full session tokens, and private evidence file bytes. It includes exact upload coordinates while they remain inside the review and appeal retention window so you can inspect sensitive data still held about you.</p>
                 <button class="button button--primary" type="submit">Send request</button>
               </div>
             </form>
+            <section class="panel accountSupportPanel" aria-labelledby="supportReceiptsTitle">
+              <h2 id="supportReceiptsTitle">Request receipts</h2>
+              <p class="muted">Receipts created on this device are shown only for the signed-in account.</p>
+              <div id="supportReceiptList" class="list"></div>
+              <div class="accountDeletionStatusHeader">
+                <h3>Deletion request status</h3>
+                <button id="refreshDeletionStatusButton" class="button button--small" type="button">Refresh</button>
+              </div>
+              <div id="accountDeletionStatus" class="list" aria-live="polite"></div>
+            </section>
           </div>
         </div>
 
@@ -448,6 +581,21 @@
               <a class="button" href="/community.html">Community rules</a>
               <button id="logoutAllButton" class="button button--danger securityLogoutAll" type="button">Log out all sessions</button>
             </div>
+            <section class="accountSessions" aria-labelledby="accountSessionsTitle">
+              <div class="accountDeletionStatusHeader">
+                <div>
+                  <h3 id="accountSessionsTitle">Signed-in sessions</h3>
+                  <p class="muted">Review active sessions and revoke any device you do not recognise.</p>
+                </div>
+                <button id="refreshAccountSessionsButton" class="button button--small" type="button">Refresh</button>
+              </div>
+              <div id="accountSessionList" class="list" aria-live="polite"><div class="emptyState"><span>Choose Refresh to confirm your identity and review signed-in sessions.</span></div></div>
+              <div id="accountSessionPager" class="adminIngestionPager" aria-live="polite" hidden>
+                <button id="accountSessionPrev" class="button button--small" type="button">Previous 25</button>
+                <span id="accountSessionPageStatus" class="muted">Showing 0 of 0</span>
+                <button id="accountSessionNext" class="button button--small" type="button">Next 25</button>
+              </div>
+            </section>
             <section id="mfaSetup" class="mfaSetup" aria-labelledby="mfaSetupTitle">
               <div class="mfaSetupHeader">
                 <div>
@@ -474,7 +622,11 @@
                   </div>
                 </div>
               </div>
-              <button id="startMfaButton" class="button" type="button" hidden>Set up authenticator</button>
+              <div class="actionRow">
+                <button id="startMfaButton" class="button" type="button" hidden>Set up authenticator</button>
+                <button id="replaceMfaButton" class="button" type="button" hidden>Replace authenticator</button>
+                <button id="removeMfaButton" class="button button--danger" type="button" hidden>Remove authenticator</button>
+              </div>
             </section>
           </article>
         </div>
@@ -513,7 +665,10 @@
       checkoutResumeStarted: false,
       checkoutReconcileStarted: false,
       mfaFactorId: null,
+      mfaVerifiedFactorId: null,
       mfaEnrollmentFactorId: null,
+      mfaReplacementOldFactorId: null,
+      mfaVerifiedAt: 0,
       mfaVerificationMode: null,
       mfaPendingRequest: false,
       activeBetaFeature: "pub-golf",
@@ -521,9 +676,26 @@
       pubGolfAutocompleteReady: false,
       pubGolfMap: null,
       pubGolfDirectionsRenderer: null,
+      pubGolfRenderEpoch: 0,
+      discountPassReturnFocus: null,
+      submissionHistoryOffset: 0,
+      submissionHistoryTotal: 0,
+      verificationCandidateOffset: 0,
+      verificationCandidateTotal: 0,
+      verificationCandidatesLoaded: false,
+      accountSessionOffset: 0,
+      accountSessionTotal: 0,
+      accountUiEpoch: 0,
+      authFlowEpoch: 0,
     };
 
+    const SUBMISSION_HISTORY_PAGE_SIZE = 25;
+    const VERIFICATION_CANDIDATE_PAGE_SIZE = 20;
+    const ACCOUNT_SESSION_PAGE_SIZE = 25;
+    const pubGolfLocationRequestIds = new WeakMap();
+
     const CAN_I_DRIVE_PROFILE_KEY = "pintPathCanIDriveProfile";
+    const SUPPORT_RECEIPTS_KEY = "pintPathSupportReceipts";
     const AU_STANDARD_DRINK_GRAMS = 10;
     const CAN_I_DRIVE_MAX_RECENT_DRINKS = 25;
 
@@ -627,7 +799,7 @@
 
     function loadCanIDriveProfile() {
       try {
-        const parsed = JSON.parse(window.localStorage.getItem(CAN_I_DRIVE_PROFILE_KEY) || "{}");
+        const parsed = JSON.parse(MelbBeerBusiness.getAccountScopedStorage(CAN_I_DRIVE_PROFILE_KEY) || "{}");
         return parsed && typeof parsed === "object" ? parsed : {};
       } catch {
         return {};
@@ -639,7 +811,7 @@
         windowHours: parseFiniteNumber(form.windowHours.value, 4),
       };
       try {
-        window.localStorage.setItem(CAN_I_DRIVE_PROFILE_KEY, JSON.stringify(profile));
+        MelbBeerBusiness.setAccountScopedStorage(CAN_I_DRIVE_PROFILE_KEY, JSON.stringify(profile));
       } catch {
         // Local-only profile storage is optional.
       }
@@ -913,9 +1085,19 @@
 
     function requestedSettingsPanel() {
       const panel = new URLSearchParams(window.location.search).get("settings") || window.location.hash.replace("#", "");
-      return ["stats", "submissions", "privacy", "support", "security", "beta-testing"].includes(panel)
+      return ["stats", "submissions", "saved", "preferences", "privacy", "support", "security", "beta-testing"].includes(panel)
         ? panel
         : "stats";
+    }
+
+    function authUtilityLink(pathname, emailOverride = null) {
+      const email = emailOverride || $("loginForm").email.value || $("signupForm").email.value;
+      if (!email) {
+        return pathname;
+      }
+      const url = new URL(pathname, window.location.origin);
+      url.searchParams.set("email", email);
+      return `${url.pathname}${url.search}`;
     }
 
     function localDatetimeIso(date = new Date()) {
@@ -954,6 +1136,7 @@
         return;
       }
 
+      MelbBeerBusiness.clearPendingLegalAcceptance();
       setOauthButtonsLoading(false);
       setAccountStatus($("authStatus"), message);
     }
@@ -979,9 +1162,104 @@
       MelbBeerBusiness.setStatus(element, message, isError);
     }
 
-    function showLoggedOut(message = "Enter your details to continue.", isError = false) {
-      MelbBeerBusiness.setAccountContext(null);
+    function captureAccountUiContext() {
+      return {
+        epoch: state.accountUiEpoch,
+        accountId: state.accountData?.account?.id || null,
+      };
+    }
+
+    function isAccountUiContextCurrent(context) {
+      return context?.epoch === state.accountUiEpoch
+        && context?.accountId === (state.accountData?.account?.id || null);
+    }
+
+    function invalidateAccountBoundUi() {
+      state.accountUiEpoch += 1;
+      refreshAccountRequestId += 1;
+      mfaStateRequestId += 1;
+      accountSessionsRequestId += 1;
+      submissionHistoryRequestId += 1;
+      deletionStatusRequestId += 1;
+      communityVerificationRequestId += 1;
+      state.pubGolfRenderEpoch += 1;
+      state.checkoutResumeStarted = false;
+      state.checkoutReconcileStarted = false;
+      state.mfaPendingRequest = false;
+      state.mfaFactorId = null;
+      state.mfaVerifiedFactorId = null;
+      state.mfaEnrollmentFactorId = null;
+      state.mfaReplacementOldFactorId = null;
+      state.mfaVerifiedAt = 0;
+      hideMfaVerification();
+      hideMfaManagementActions();
+      $("mfaSetup").hidden = true;
       closeDiscountPassModal({ quiet: true });
+      $("discountPassCode").textContent = "------";
+      $("discountPassQr").removeAttribute("src");
+      $("discountPassExpires").textContent = "";
+      $("freePintRewardCode").textContent = "------";
+      $("freePintRewardQr").removeAttribute("src");
+      $("freePintRewardExpires").textContent = "";
+      $("freePintRewardResult").hidden = true;
+      $("freePintRewardResult").classList.add("is-hidden");
+      $("accountSessionList").replaceChildren();
+      $("accountSessionPager").hidden = true;
+      $("accountSessionPageStatus").textContent = "";
+      $("accountDeletionStatus").replaceChildren();
+      $("recentSubmissionsList").replaceChildren();
+      $("communityVerificationList").replaceChildren();
+      $("communityVerificationPager").hidden = true;
+      const pubGolfForm = $("pubGolfForm");
+      pubGolfForm.reset();
+      pubGolfForm.querySelectorAll("[data-pub-golf-location]").forEach((input) => {
+        pubGolfLocationRequestIds.set(input, (pubGolfLocationRequestIds.get(input) || 0) + 1);
+        delete input.dataset.latitude;
+        delete input.dataset.longitude;
+        delete input.dataset.placeLabel;
+        setPubGolfLocationStatus(input, "Use a real address, venue, station, or area.");
+      });
+      $("pubGolfResult").replaceChildren();
+      try {
+        state.pubGolfDirectionsRenderer?.setMap(null);
+      } catch {
+        // The previous map may already have been detached.
+      }
+      state.pubGolfDirectionsRenderer = null;
+      state.pubGolfMap = null;
+      const canIDriveForm = $("canIDriveForm");
+      canIDriveForm.reset();
+      delete canIDriveForm.dataset.profileLoaded;
+      $("canIDriveResult").innerHTML = '<div class="emptyState"><strong>No drink summary yet.</strong><span>Choose a time window to review recent logged drinks.</span></div>';
+      $("canIDriveDrinkList").replaceChildren();
+      $("dataRequestForm").reset();
+      $("accountPreferencesForm").reset();
+      $("displayNameForm").reset();
+      [
+        $("pubGolfForm").querySelector('button[type="submit"]'),
+        $("displayNameForm").querySelector('button[type="submit"]'),
+        $("accountPreferencesForm").querySelector('button[type="submit"]'),
+        $("acceptCurrentLegalButton"),
+        $("refreshDiscountPassButton"),
+        $("freePintRewardButton"),
+        $("startMfaButton"),
+        $("removeMfaButton"),
+        $("verifyMfaButton"),
+      ].forEach((button) => setLoading(button, false));
+    }
+
+    function showLoggedOut(message = "Enter your details to continue.", isError = false) {
+      state.authFlowEpoch += 1;
+      invalidateAccountBoundUi();
+      MelbBeerBusiness.setAccountContext(null);
+      state.accountData = null;
+      state.submissionHistoryOffset = 0;
+      state.submissionHistoryTotal = 0;
+      state.verificationCandidateOffset = 0;
+      state.verificationCandidateTotal = 0;
+      state.verificationCandidatesLoaded = false;
+      state.accountSessionOffset = 0;
+      state.accountSessionTotal = 0;
       $("loggedOutView").hidden = false;
       $("accountDashboard").hidden = true;
       $("accountDashboard").classList.add("is-hidden");
@@ -989,10 +1267,99 @@
       $("accountEmail").removeAttribute("title");
       $("accountEmailHelper").hidden = true;
       $("accountEmailHelper").textContent = "";
+      setLoading($("loginForm").querySelector('button[type="submit"]'), false);
+      setLoading($("signupForm").querySelector('button[type="submit"]'), false);
+      setLoading($("returningLegalAcceptanceButton"), false);
+      setLoading($("cancelReturningLegalAcceptanceButton"), false);
+      setLoading($("openBillingRecoveryButton"), false);
+      setOauthButtonsLoading(false);
       hideAccountStatus($("dashboardStatus"));
       $("logoutButton").disabled = true;
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
       setAccountStatus($("authStatus"), message, isError);
+    }
+
+    function hideBillingRecovery() {
+      $("billingRecoveryPanel").hidden = true;
+      $("billingRecoveryPanel").removeAttribute("data-provider-mode");
+    }
+
+    function setBillingRecoveryTargets(recovery = null) {
+      const select = $("billingRecoveryTargetSelect");
+      const field = $("billingRecoveryTargetField");
+      select.replaceChildren();
+      if (recovery?.consumer) {
+        select.appendChild(new Option("Personal Pint Path subscription", ""));
+      }
+      (Array.isArray(recovery?.venues) ? recovery.venues : []).forEach((venue) => {
+        if (!venue?.venueId || !venue?.venueName) return;
+        select.appendChild(new Option(`Venue: ${venue.venueName}`, venue.venueId));
+      });
+      field.hidden = select.options.length <= 1;
+      if (select.options.length === 1) select.selectedIndex = 0;
+    }
+
+    function showBillingRecovery({ providerMode = false, recovery = null } = {}) {
+      const panel = $("billingRecoveryPanel");
+      panel.dataset.providerMode = providerMode ? "true" : "false";
+      if (recovery) setBillingRecoveryTargets(recovery);
+      panel.hidden = false;
+      $("openBillingRecoveryButton").textContent = "Manage billing only";
+      window.requestAnimationFrame(() => {
+        const target = $("billingRecoveryTargetField").hidden
+          ? $("openBillingRecoveryButton")
+          : $("billingRecoveryTargetSelect");
+        target.focus();
+      });
+    }
+
+    async function openBillingRecoveryPortal() {
+      const button = $("openBillingRecoveryButton");
+      const providerMode = $("billingRecoveryPanel").dataset.providerMode === "true";
+      const requestedContext = captureAccountUiContext();
+      const authFlowId = ++state.authFlowEpoch;
+      const requestedEmail = $("loginForm").email.value.trim();
+      const requestedPassword = $("loginForm").password.value;
+      const requestedVenueId = $("billingRecoveryTargetSelect").value;
+      const requestIsCurrent = () => authFlowId === state.authFlowEpoch
+        && isAccountUiContextCurrent(requestedContext);
+      try {
+        setLoading(button, true, "Opening secure billing...");
+        let body;
+        if (providerMode) {
+          const client = MelbBeerBusiness.getSupabaseClient();
+          const { data, error } = client ? await client.auth.getSession() : { data: null, error: null };
+          if (!requestIsCurrent()) return;
+          if (error || !data?.session?.access_token) {
+            throw new Error("Your provider session is no longer available. Sign in again, then choose Manage billing only.");
+          }
+          body = { accessToken: data.session.access_token };
+        } else {
+          if (!requestedEmail || !requestedPassword) {
+            throw new Error("Enter the suspended account email and password, then choose Manage billing only.");
+          }
+          body = { email: requestedEmail, password: requestedPassword };
+        }
+        if (requestedVenueId) body.venueId = requestedVenueId;
+        const result = await MelbBeerBusiness.apiFetch("/api/business/billing/recovery-portal", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        if (!requestIsCurrent()) return;
+        $("loginForm").password.value = "";
+        if (!result?.portalUrl) throw new Error("Stripe did not return a billing portal link.");
+        window.location.assign(result.portalUrl);
+      } catch (error) {
+        if (!requestIsCurrent()) return;
+        if (error?.code === "BILLING_RECOVERY_VENUE_SELECTION_REQUIRED" && error?.recovery?.eligible) {
+          setBillingRecoveryTargets(error.recovery);
+          MelbBeerBusiness.setStatus($("authStatus"), "Choose which managed venue subscription to open, then continue.", true);
+          return;
+        }
+        MelbBeerBusiness.setStatus($("authStatus"), error.message || "Could not open billing recovery.", true);
+      } finally {
+        if (requestIsCurrent()) setLoading(button, false);
+      }
     }
 
     function showDashboard() {
@@ -1003,7 +1370,9 @@
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
     }
 
-    function showAuthTab(tab) {
+    function showAuthTab(tab, options = {}) {
+      $("returningLegalAcceptanceForm").hidden = true;
+      $("authTabs").hidden = false;
       const showLogin = tab === "login";
       $("loginForm").hidden = !showLogin;
       $("signupForm").hidden = showLogin;
@@ -1013,7 +1382,32 @@
       $("showSignupButton").classList.toggle("is-active", !showLogin);
       $("showLoginButton").setAttribute("aria-selected", showLogin ? "true" : "false");
       $("showSignupButton").setAttribute("aria-selected", showLogin ? "false" : "true");
+      $("showLoginButton").setAttribute("tabindex", showLogin ? "0" : "-1");
+      $("showSignupButton").setAttribute("tabindex", showLogin ? "-1" : "0");
+      if (options.focus) {
+        (showLogin ? $("showLoginButton") : $("showSignupButton")).focus();
+      }
       setAccountStatus($("authStatus"), showLogin ? "Sign in with email and password." : "Create an account to start contributing.");
+    }
+
+    function showReturningLegalAcceptance() {
+      $("authTabs").hidden = true;
+      $("loginForm").hidden = true;
+      $("signupForm").hidden = true;
+      $("loginForm").classList.add("is-hidden");
+      $("signupForm").classList.add("is-hidden");
+      $("returningLegalAcceptanceForm").hidden = false;
+      $("returningLegalAcceptanceForm").ageConfirmed.focus();
+    }
+
+    function authenticatedReturnDestination(account) {
+      const regularReturnPath = MelbBeerBusiness.getAuthReturnPathFromLocation();
+      const sensitiveReturnPath = MelbBeerBusiness.consumeSensitiveAuthReturnPath();
+      if (account?.role === "venue_manager") {
+        const venueReturnPath = sensitiveReturnPath || regularReturnPath;
+        return venueReturnPath?.startsWith("/venue-portal.html") ? venueReturnPath : "/venue-portal.html";
+      }
+      return regularReturnPath;
     }
 
     function showAccountSettingsPanel(target = "stats") {
@@ -1032,9 +1426,18 @@
         const active = button.dataset.settingsTarget === activeTarget;
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
+        button.setAttribute("tabindex", active ? "0" : "-1");
       });
+      const url = new URL(window.location.href);
+      url.searchParams.set("settings", activeTarget);
+      url.hash = "";
+      window.history.replaceState({}, "", `${url.pathname}${url.search}`);
       if (activeTarget === "security" && state.accountData) {
         void loadMfaState();
+        showAccountSessionRefreshPrompt();
+      }
+      if (activeTarget === "submissions" && state.accountData && !state.verificationCandidatesLoaded) {
+        void loadCommunityVerificationCandidates();
       }
     }
 
@@ -1043,7 +1446,7 @@
       const badge = $("mfaStatusBadge");
       status.textContent = message;
       status.classList.toggle("noticeText--error", tone === "error");
-      badge.textContent = tone === "secure" ? "Protected" : tone === "action" ? "Action needed" : tone === "error" ? "Unavailable" : "Not set up";
+      badge.textContent = tone === "secure" ? "Protected" : tone === "password" ? "Password checks" : tone === "action" ? "Action needed" : tone === "error" ? "Unavailable" : "Not set up";
       badge.dataset.tone = tone;
     }
 
@@ -1057,13 +1460,23 @@
       state.mfaVerificationMode = null;
     }
 
+    function hideMfaManagementActions() {
+      $("startMfaButton").hidden = true;
+      $("replaceMfaButton").hidden = true;
+      $("removeMfaButton").hidden = true;
+    }
+
     function showMfaCodeEntry({ mode, factorId, qrCode = null, secret = null }) {
       state.mfaFactorId = factorId;
       state.mfaVerificationMode = mode;
       $("mfaVerification").hidden = false;
-      $("mfaVerificationInstructions").textContent = mode === "enroll"
-        ? "Scan the QR code with your authenticator app, then enter the six-digit code it creates."
-        : "Enter the current six-digit code from your authenticator app to unlock sensitive actions.";
+      const instructions = {
+        enroll: "Scan the QR code with your authenticator app, then enter the six-digit code it creates.",
+        challenge: "Enter the current six-digit code from your authenticator app to unlock sensitive actions. If you lost the authenticator, contact support for identity-checked recovery.",
+        remove: "Enter a current six-digit code to confirm removal. You can set up a new authenticator afterwards.",
+        "replace-authorize": "Enter a current six-digit code before creating the replacement. Your existing authenticator stays active until the new one is verified.",
+      };
+      $("mfaVerificationInstructions").textContent = instructions[mode] || instructions.challenge;
       const qrImage = $("mfaQrImage");
       if (mode === "enroll" && typeof qrCode === "string" && qrCode.startsWith("data:image/")) {
         qrImage.src = qrCode;
@@ -1079,6 +1492,8 @@
       $("mfaCode").focus();
     }
 
+    let mfaStateRequestId = 0;
+
     async function loadMfaState(force = false) {
       if (state.mfaPendingRequest && !force) return;
       const client = MelbBeerBusiness.getSupabaseClient();
@@ -1086,29 +1501,41 @@
         $("mfaSetup").hidden = true;
         return;
       }
+      const requestId = ++mfaStateRequestId;
+      const requestedContext = captureAccountUiContext();
 
       $("mfaSetup").hidden = false;
+      hideMfaManagementActions();
+      const authProvider = String(state.accountData?.account?.authProvider || "").toLowerCase();
+      if (!["supabase", "google", "apple"].includes(authProvider)) {
+        hideMfaVerification();
+        setMfaStatus("This password-based account confirms the current password before sensitive actions. Authenticator setup is available for hosted sign-in accounts.", "password");
+        return;
+      }
       setMfaStatus("Checking your authenticator status...");
       try {
-        const [{ data: sessionData, error: sessionError }, { data: factorData, error: factorError }, { data: assuranceData, error: assuranceError }] = await Promise.all([
-          client.auth.getSession(),
+        const { data: sessionData, error: sessionError } = await client.auth.getSession();
+        if (requestId !== mfaStateRequestId || !isAccountUiContextCurrent(requestedContext)) return;
+        if (sessionError) throw sessionError;
+        if (!sessionData.session) {
+          hideMfaVerification();
+          hideMfaManagementActions();
+          setMfaStatus("Your hosted sign-in session is no longer available. Sign out and sign back in before changing authenticator settings.", "error");
+          return;
+        }
+        const [{ data: factorData, error: factorError }, { data: assuranceData, error: assuranceError }] = await Promise.all([
           client.auth.mfa.listFactors(),
           client.auth.mfa.getAuthenticatorAssuranceLevel(),
         ]);
-        if (sessionError || factorError || assuranceError) {
-          throw sessionError || factorError || assuranceError;
-        }
-        if (!sessionData.session) {
-          hideMfaVerification();
-          $("startMfaButton").hidden = true;
-          setMfaStatus("Sign in again before changing authenticator settings.", "error");
-          return;
-        }
+        if (requestId !== mfaStateRequestId || !isAccountUiContextCurrent(requestedContext)) return;
+        if (factorError || assuranceError) throw factorError || assuranceError;
 
         const factors = Array.isArray(factorData?.all) ? factorData.all : [];
         const verifiedFactor = factors.find((factor) => factor.factor_type === "totp" && factor.status === "verified");
         state.mfaFactorId = verifiedFactor?.id || null;
+        state.mfaVerifiedFactorId = verifiedFactor?.id || null;
         state.mfaEnrollmentFactorId = null;
+        state.mfaReplacementOldFactorId = null;
         hideMfaVerification();
         if (!verifiedFactor) {
           $("startMfaButton").hidden = false;
@@ -1118,6 +1545,8 @@
 
         $("startMfaButton").hidden = true;
         if (assuranceData?.currentLevel === "aal2") {
+          $("replaceMfaButton").hidden = false;
+          $("removeMfaButton").hidden = false;
           setMfaStatus("Authenticator verified for this session.", "secure");
           return;
         }
@@ -1125,23 +1554,36 @@
         setMfaStatus("Authenticator is enrolled. Verify a code for sensitive actions.", "action");
         showMfaCodeEntry({ mode: "challenge", factorId: verifiedFactor.id });
       } catch (error) {
+        if (requestId !== mfaStateRequestId || !isAccountUiContextCurrent(requestedContext)) return;
         hideMfaVerification();
-        $("startMfaButton").hidden = true;
-        setMfaStatus(error.message || "Could not read authenticator status.", "error");
+        hideMfaManagementActions();
+        const message = String(error?.message || "");
+        setMfaStatus(
+          /auth session missing|session not found|not authenticated/i.test(message)
+            ? "Your hosted sign-in session is no longer available. Sign out and sign back in before changing authenticator settings."
+            : message || "Could not read authenticator status.",
+          "error",
+        );
       }
     }
 
-    async function beginMfaEnrollment() {
+    async function beginMfaEnrollment(options = {}) {
       const client = MelbBeerBusiness.getSupabaseClient();
       if (!client || state.mfaPendingRequest) return;
+      const requestedContext = captureAccountUiContext();
+      const replaceFactorId = String(options.replaceFactorId || "").trim() || null;
       state.mfaPendingRequest = true;
+      hideMfaManagementActions();
       setLoading($("startMfaButton"), true, "Starting...");
       try {
         const { data: existingData, error: listError } = await client.auth.mfa.listFactors();
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         if (listError) throw listError;
         const staleFactors = (existingData?.all || []).filter((factor) => factor.factor_type === "totp" && factor.status !== "verified");
         for (const factor of staleFactors) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           const { error: removeError } = await client.auth.mfa.unenroll({ factorId: factor.id });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           if (removeError) throw removeError;
         }
 
@@ -1149,8 +1591,10 @@
           factorType: "totp",
           friendlyName: "Pint Path authenticator",
         });
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         if (error || !data?.id || !data?.totp) throw error || new Error("Authenticator setup did not return a factor.");
         state.mfaEnrollmentFactorId = data.id;
+        state.mfaReplacementOldFactorId = replaceFactorId;
         setMfaStatus("Finish setup by verifying the first code.", "action");
         showMfaCodeEntry({
           mode: "enroll",
@@ -1159,16 +1603,63 @@
           secret: data.totp.secret,
         });
       } catch (error) {
+        if (!isAccountUiContextCurrent(requestedContext)) return;
+        state.mfaReplacementOldFactorId = null;
+        if (replaceFactorId) {
+          $("replaceMfaButton").hidden = false;
+          $("removeMfaButton").hidden = false;
+        } else {
+          $("startMfaButton").hidden = false;
+        }
         setMfaStatus(error.message || "Could not start authenticator setup.", "error");
       } finally {
-        state.mfaPendingRequest = false;
-        setLoading($("startMfaButton"), false);
+        if (isAccountUiContextCurrent(requestedContext)) {
+          state.mfaPendingRequest = false;
+          setLoading($("startMfaButton"), false);
+        }
+      }
+    }
+
+    function hasRecentMfaVerification() {
+      return Number.isFinite(state.mfaVerifiedAt) && Date.now() - state.mfaVerifiedAt < 5 * 60 * 1000;
+    }
+
+    async function removeVerifiedMfaFactor() {
+      const client = MelbBeerBusiness.getSupabaseClient();
+      const factorId = state.mfaVerifiedFactorId;
+      if (!client || !factorId || state.mfaPendingRequest) return;
+      const requestedContext = captureAccountUiContext();
+      state.mfaPendingRequest = true;
+      hideMfaManagementActions();
+      setLoading($("removeMfaButton"), true, "Removing...");
+      try {
+        const { error } = await client.auth.mfa.unenroll({ factorId });
+        if (!isAccountUiContextCurrent(requestedContext)) return;
+        if (error) throw error;
+        state.mfaVerifiedFactorId = null;
+        state.mfaVerifiedAt = 0;
+        await MelbBeerBusiness.syncSupabaseSession();
+        if (!isAccountUiContextCurrent(requestedContext)) return;
+        await loadMfaState(true);
+      } catch (error) {
+        if (!isAccountUiContextCurrent(requestedContext)) return;
+        setMfaStatus(error.message || "Could not remove the authenticator.", "error");
+        $("removeMfaButton").hidden = false;
+        $("replaceMfaButton").hidden = false;
+      } finally {
+        if (isAccountUiContextCurrent(requestedContext)) {
+          state.mfaPendingRequest = false;
+          setLoading($("removeMfaButton"), false);
+        }
       }
     }
 
     async function verifyMfaCode() {
       const client = MelbBeerBusiness.getSupabaseClient();
       if (!client || !state.mfaFactorId || state.mfaPendingRequest) return;
+      const requestedContext = captureAccountUiContext();
+      const requestedFactorId = state.mfaFactorId;
+      const requestedMode = state.mfaVerificationMode;
       const code = $("mfaCode").value.replace(/\D/g, "");
       if (!/^\d{6}$/.test(code)) {
         setMfaStatus("Enter the six-digit code from your authenticator app.", "error");
@@ -1179,36 +1670,72 @@
       state.mfaPendingRequest = true;
       setLoading($("verifyMfaButton"), true, "Verifying...");
       try {
-        const { error } = await client.auth.mfa.challengeAndVerify({ factorId: state.mfaFactorId, code });
+        const { error } = await client.auth.mfa.challengeAndVerify({ factorId: requestedFactorId, code });
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         if (error) throw error;
+        state.mfaVerifiedAt = Date.now();
+        if (requestedMode === "remove") {
+          const factorId = state.mfaVerifiedFactorId || requestedFactorId;
+          const { error: removeError } = await client.auth.mfa.unenroll({ factorId });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          if (removeError) throw removeError;
+          state.mfaVerifiedFactorId = null;
+          await MelbBeerBusiness.syncSupabaseSession();
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          await loadMfaState(true);
+          return;
+        }
+        if (requestedMode === "replace-authorize") {
+          const replaceFactorId = state.mfaVerifiedFactorId || requestedFactorId;
+          state.mfaPendingRequest = false;
+          await beginMfaEnrollment({ replaceFactorId });
+          return;
+        }
+        if (requestedMode === "enroll" && state.mfaReplacementOldFactorId) {
+          const oldFactorId = state.mfaReplacementOldFactorId;
+          const { error: removeError } = await client.auth.mfa.unenroll({ factorId: oldFactorId });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          if (removeError) throw removeError;
+          state.mfaReplacementOldFactorId = null;
+        }
         state.mfaEnrollmentFactorId = null;
         await MelbBeerBusiness.syncSupabaseSession();
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         await loadMfaState(true);
       } catch (error) {
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         setMfaStatus(error.message || "That code could not be verified.", "error");
         $("mfaCode").select();
       } finally {
-        state.mfaPendingRequest = false;
-        setLoading($("verifyMfaButton"), false);
+        if (isAccountUiContextCurrent(requestedContext)) {
+          state.mfaPendingRequest = false;
+          setLoading($("verifyMfaButton"), false);
+        }
       }
     }
 
     async function cancelMfaVerification() {
       const client = MelbBeerBusiness.getSupabaseClient();
       if (!client || state.mfaPendingRequest) return;
+      const requestedContext = captureAccountUiContext();
+      const requestedMode = state.mfaVerificationMode;
+      const requestedEnrollmentFactorId = state.mfaEnrollmentFactorId;
       state.mfaPendingRequest = true;
       try {
-        if (state.mfaVerificationMode === "enroll" && state.mfaEnrollmentFactorId) {
-          const { error } = await client.auth.mfa.unenroll({ factorId: state.mfaEnrollmentFactorId });
+        if (requestedMode === "enroll" && requestedEnrollmentFactorId) {
+          const { error } = await client.auth.mfa.unenroll({ factorId: requestedEnrollmentFactorId });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           if (error) throw error;
         }
         state.mfaEnrollmentFactorId = null;
+        state.mfaReplacementOldFactorId = null;
         hideMfaVerification();
         await loadMfaState(true);
       } catch (error) {
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         setMfaStatus(error.message || "Could not cancel authenticator setup.", "error");
       } finally {
-        state.mfaPendingRequest = false;
+        if (isAccountUiContextCurrent(requestedContext)) state.mfaPendingRequest = false;
       }
     }
 
@@ -1306,6 +1833,7 @@
       }
       inputs.forEach((input) => {
         input.addEventListener("input", () => {
+          pubGolfLocationRequestIds.set(input, (pubGolfLocationRequestIds.get(input) || 0) + 1);
           delete input.dataset.latitude;
           delete input.dataset.longitude;
           delete input.dataset.placeLabel;
@@ -1331,6 +1859,8 @@
 
     async function resolvePubGolfLocationInput(input, options = {}) {
       const query = String(input?.value || "").trim();
+      const requestId = (pubGolfLocationRequestIds.get(input) || 0) + 1;
+      pubGolfLocationRequestIds.set(input, requestId);
       if (!query) {
         setPubGolfLocationStatus(input, "Add a start or finish location.", true);
         return null;
@@ -1353,6 +1883,9 @@
       setPubGolfLocationStatus(input, "Checking location...");
       const params = new URLSearchParams({ q: query });
       const result = await MelbBeerBusiness.apiFetch(`/api/business/geocode?${params.toString()}`);
+      if (pubGolfLocationRequestIds.get(input) !== requestId || String(input.value || "").trim() !== query) {
+        return null;
+      }
       const location = result.location;
       if (!location?.latitude || !location?.longitude) {
         setPubGolfLocationStatus(input, result.message || "Could not match that location yet.", true);
@@ -1375,8 +1908,17 @@
       return `<span class="statusBadge statusBadge--${escapeHtml(status)}">${escapeHtml(label)}</span>`;
     }
 
-    function renderRecentSubmissions(submissions) {
+    function renderRecentSubmissions(submissions, pagination = {}) {
       const list = $("recentSubmissionsList");
+      state.submissionHistoryTotal = Number(pagination.total ?? state.submissionHistoryTotal ?? submissions.length);
+      const pageStart = submissions.length ? state.submissionHistoryOffset + 1 : 0;
+      const pageEnd = state.submissionHistoryOffset + submissions.length;
+      $("submissionHistoryPager").hidden = state.submissionHistoryTotal <= SUBMISSION_HISTORY_PAGE_SIZE
+        && state.submissionHistoryOffset === 0;
+      $("submissionHistoryPageStatus").textContent = `Showing ${pageStart}-${pageEnd} of ${state.submissionHistoryTotal}`;
+      $("submissionHistoryPrev").disabled = state.submissionHistoryOffset === 0;
+      $("submissionHistoryNext").disabled = pagination.hasMore === false
+        || pageEnd >= state.submissionHistoryTotal;
       if (!submissions.length) {
         list.innerHTML = `
           <div class="emptyState accountEmptyState">
@@ -1394,8 +1936,10 @@
         const itemCopy = firstItem
           ? `${escapeHtml(firstItem.beerName)} · ${escapeHtml(firstItem.servingSize)}${extraCount ? ` · +${extraCount} more` : ""}`
           : "Menu/photo evidence for reviewer queue";
-        const evidenceCopy = submission.hasEvidence ? "Private evidence attached" : "No photo evidence";
-        const newVenueCopy = submission.isNewVenue && submission.status === "pending"
+        const hasEvidence = submission.hasEvidence ?? Boolean(submission.sourcePhotoUrl);
+        const isNewVenue = submission.isNewVenue ?? Boolean(submission.pendingVenue);
+        const evidenceCopy = hasEvidence ? "Private evidence attached" : "No photo evidence";
+        const newVenueCopy = isNewVenue && submission.status === "pending"
           ? '<div class="notice submissionPendingNotice">Venue added to the public map. Beer data is pending review before prices appear publicly.</div>'
           : "";
         return `
@@ -1419,31 +1963,217 @@
       }).join("");
     }
 
+    let submissionHistoryRequestId = 0;
+
+    async function loadSubmissionHistory(options = {}) {
+      if (options.resetPage) state.submissionHistoryOffset = 0;
+      const requestId = ++submissionHistoryRequestId;
+      const requestedOffset = state.submissionHistoryOffset;
+      const requestedContext = captureAccountUiContext();
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/submissions?mine=true&includeReviewData=true&limit=${SUBMISSION_HISTORY_PAGE_SIZE}&offset=${requestedOffset}`);
+        if (requestId !== submissionHistoryRequestId
+          || requestedOffset !== state.submissionHistoryOffset
+          || !isAccountUiContextCurrent(requestedContext)) return;
+        const submissions = Array.isArray(result.submissions) ? result.submissions : [];
+        const total = Number(result.pagination?.total || 0);
+        if (!submissions.length && state.submissionHistoryOffset > 0 && total > 0) {
+          state.submissionHistoryOffset = Math.max(0, state.submissionHistoryOffset - SUBMISSION_HISTORY_PAGE_SIZE);
+          return loadSubmissionHistory();
+        }
+        renderRecentSubmissions(submissions, result.pagination || { total });
+      } catch (error) {
+        if (requestId !== submissionHistoryRequestId || !isAccountUiContextCurrent(requestedContext)) return;
+        $("submissionHistoryPageStatus").textContent = error.message || "Could not load submission history.";
+      }
+    }
+
+    function setCommunityVerificationStatus(message, isError = false) {
+      const status = $("communityVerificationStatus");
+      status.textContent = message;
+      status.classList.toggle("noticeText--error", isError);
+    }
+
+    function renderCommunityVerificationCandidates(candidates, pagination = {}, privacyCopy = "") {
+      const list = $("communityVerificationList");
+      state.verificationCandidateTotal = Number(pagination.total ?? candidates.length);
+      const pageStart = candidates.length ? state.verificationCandidateOffset + 1 : 0;
+      const pageEnd = state.verificationCandidateOffset + candidates.length;
+      $("communityVerificationPager").hidden = state.verificationCandidateTotal <= VERIFICATION_CANDIDATE_PAGE_SIZE
+        && state.verificationCandidateOffset === 0;
+      $("communityVerificationPageStatus").textContent = `Showing ${pageStart}-${pageEnd} of ${state.verificationCandidateTotal}`;
+      $("communityVerificationPrev").disabled = state.verificationCandidateOffset === 0;
+      $("communityVerificationNext").disabled = pagination.hasMore === false
+        || pageEnd >= state.verificationCandidateTotal;
+      if (privacyCopy) $("communityVerificationPrivacy").textContent = privacyCopy;
+
+      if (!candidates.length) {
+        list.innerHTML = `
+          <div class="emptyState accountEmptyState">
+            <strong>No community checks waiting.</strong>
+            <span>You are caught up. Refresh later when more privacy-safe venue data is ready.</span>
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = candidates.map((candidate) => {
+        const candidateId = String(candidate.id || "");
+        const items = Array.isArray(candidate.items) ? candidate.items : [];
+        const itemMarkup = items.map((item) => {
+          const priceDetails = [
+            formatPrice(item.price),
+            item.isOnTap === true ? "On tap" : item.isOnTap === false ? "Packaged" : "",
+            item.isHappyHourPrice ? "Special price" : "",
+          ].filter(Boolean).join(" · ");
+          return `
+            <div class="verificationCandidateItem" role="listitem">
+              <span><strong>${escapeHtml(item.beerName || "Beer")}</strong> · ${escapeHtml(item.servingSize || "serving")}</span>
+              <span>${escapeHtml(priceDetails)}</span>
+              ${item.happyHourDetails ? `<small>${escapeHtml(item.happyHourDetails)}</small>` : ""}
+            </div>
+          `;
+        }).join("");
+        const observedAt = candidate.observedAt || candidate.createdAt;
+        const confirmationCount = Math.max(0, Number(candidate.confirmationCount || 0));
+        const noteId = `verification-note-${candidateId.replace(/[^a-z0-9_-]/gi, "-")}`;
+        return `
+          <article class="submissionCard verificationCandidateCard" data-verification-candidate="${escapeHtml(candidateId)}">
+            <div class="submissionCard__top">
+              <strong>${escapeHtml(candidate.venueName || "Venue")}</strong>
+              ${statusBadge(candidate.status || "pending")}
+            </div>
+            <div class="muted">${escapeHtml(candidate.suburb || "Melbourne")} · observed ${MelbBeerBusiness.formatDate(observedAt)} · ${confirmationCount} community confirmation${confirmationCount === 1 ? "" : "s"}</div>
+            <div class="verificationCandidateItems" role="list" aria-label="Venue details to check">
+              ${itemMarkup || '<span class="muted">No item rows were supplied.</span>'}
+            </div>
+            <p class="helperCopy">${candidate.hasSourceEvidence ? "Source evidence is attached for authorised reviewers; it is not exposed here." : "No private source evidence is attached."}</p>
+            <label class="field" for="${escapeHtml(noteId)}">Verification note <span class="muted">(required when disputing or asking for more evidence)</span>
+              <textarea id="${escapeHtml(noteId)}" data-verification-note maxlength="500" rows="2" placeholder="Describe only what you personally observed. Do not include names or other personal information."></textarea>
+            </label>
+            <div class="actionRow verificationCandidateActions">
+              <button class="button button--primary" type="button" data-verification-result="confirmed">Matches what I saw</button>
+              <button class="button" type="button" data-verification-result="disputed">Dispute details</button>
+              <button class="button" type="button" data-verification-result="needs_more_evidence">Needs more evidence</button>
+            </div>
+            <p class="helperCopy" data-verification-card-status role="status" aria-live="polite"></p>
+          </article>
+        `;
+      }).join("");
+    }
+
+    let communityVerificationRequestId = 0;
+
+    async function loadCommunityVerificationCandidates(options = {}) {
+      if (!state.accountData?.account?.id) return;
+      if (options.resetPage) state.verificationCandidateOffset = 0;
+      const requestId = ++communityVerificationRequestId;
+      const requestedOffset = state.verificationCandidateOffset;
+      const requestedAccountId = state.accountData.account.id;
+      const requestedContext = captureAccountUiContext();
+      const list = $("communityVerificationList");
+      list.setAttribute("aria-busy", "true");
+      setCommunityVerificationStatus("Loading privacy-safe community checks...");
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/verification-candidates?limit=${VERIFICATION_CANDIDATE_PAGE_SIZE}&offset=${requestedOffset}`);
+        if (requestId !== communityVerificationRequestId
+          || requestedOffset !== state.verificationCandidateOffset
+          || requestedAccountId !== state.accountData?.account?.id
+          || !isAccountUiContextCurrent(requestedContext)) return;
+        const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+        const total = Number(result.pagination?.total || 0);
+        if (!candidates.length && state.verificationCandidateOffset > 0 && total > 0) {
+          state.verificationCandidateOffset = Math.max(0, state.verificationCandidateOffset - VERIFICATION_CANDIDATE_PAGE_SIZE);
+          return loadCommunityVerificationCandidates(options);
+        }
+        renderCommunityVerificationCandidates(candidates, result.pagination || { total }, result.privacyCopy || "");
+        state.verificationCandidatesLoaded = true;
+        setCommunityVerificationStatus(options.announcement
+          || (candidates.length ? "Choose the result that matches what you personally observed." : "You are caught up for now."));
+      } catch (error) {
+        if (requestId !== communityVerificationRequestId
+          || requestedAccountId !== state.accountData?.account?.id
+          || !isAccountUiContextCurrent(requestedContext)) return;
+        state.verificationCandidatesLoaded = false;
+        $("communityVerificationPager").hidden = true;
+        list.innerHTML = `
+          <div class="emptyState accountEmptyState">
+            <strong>Community checks are unavailable.</strong>
+            <span>Verify your email, confirm you are 18+, and accept the current Terms and Privacy Policy before checking venue data.</span>
+          </div>
+        `;
+        setCommunityVerificationStatus(error.message || "Could not load community checks.", true);
+      } finally {
+        if (requestId === communityVerificationRequestId && isAccountUiContextCurrent(requestedContext)) {
+          list.setAttribute("aria-busy", "false");
+        }
+      }
+    }
+
+    async function submitCommunityVerification(button) {
+      const card = button.closest("[data-verification-candidate]");
+      if (!card) return;
+      const requestedContext = captureAccountUiContext();
+      const result = button.dataset.verificationResult;
+      const notesField = card.querySelector("[data-verification-note]");
+      const notes = String(notesField?.value || "").trim();
+      const cardStatus = card.querySelector("[data-verification-card-status]");
+      if (result !== "confirmed" && notes.length < 3) {
+        cardStatus.textContent = "Add a short note explaining what differs or what evidence is missing.";
+        cardStatus.classList.add("noticeText--error");
+        notesField?.focus();
+        return;
+      }
+
+      const controls = Array.from(card.querySelectorAll("button, textarea"));
+      controls.forEach((control) => { control.disabled = true; });
+      card.setAttribute("aria-busy", "true");
+      cardStatus.classList.remove("noticeText--error");
+      cardStatus.textContent = "Saving your independent check...";
+      try {
+        const candidateId = String(card.dataset.verificationCandidate || "");
+        await MelbBeerBusiness.apiFetch(`/api/business/submissions/${encodeURIComponent(candidateId)}/verifications`, {
+          method: "POST",
+          body: JSON.stringify({ result, notes: notes || null }),
+        });
+        if (!isAccountUiContextCurrent(requestedContext)) return;
+        state.verificationCandidatesLoaded = false;
+        await loadCommunityVerificationCandidates({ announcement: "Thanks. Your check was recorded once and removed from this queue." });
+      } catch (error) {
+        if (!isAccountUiContextCurrent(requestedContext)) return;
+        if (!card.isConnected) return;
+        controls.forEach((control) => { control.disabled = false; });
+        card.removeAttribute("aria-busy");
+        cardStatus.textContent = error.message || "Could not save this check.";
+        cardStatus.classList.add("noticeText--error");
+      }
+    }
+
     function renderAccountStatsPanel(result) {
       const grid = $("accountStatsGrid");
       if (!grid) {
         return;
       }
 
-      const submissions = Array.isArray(result.recentSubmissions) ? result.recentSubmissions : [];
+      const submissions = Array.isArray(result.submissions) ? result.submissions : (Array.isArray(result.recentSubmissions) ? result.recentSubmissions : []);
       const countStatus = (statuses) => submissions.filter((submission) =>
         statuses.includes(String(submission.status || "").toLowerCase()),
       ).length;
-      const stats = result.stats || {};
+      const stats = result.dashboardStats || {};
       const progress = result.contributorProgress || {};
       const account = result.account || {};
       const points = Number(progress.pointsThisMonth || 0);
       const threshold = Math.max(1, Number(progress.unlockThreshold || 15));
       const pointsNeeded = Number(progress.pointsNeeded ?? Math.max(0, threshold - points));
       const totalUploads = Number(stats.totalUploads ?? stats.total_uploads ?? result.totalUploads ?? submissions.length ?? 0);
-      const pendingCount = Number(stats.pendingCount ?? stats.pending ?? countStatus(["pending", "needs_more_info"]));
+      const pendingCount = Number(stats.pendingVerificationCount ?? stats.pendingCount ?? stats.pending ?? countStatus(["pending", "needs_more_evidence"]));
       const verifiedCount = Number(stats.verifiedCount ?? stats.verified ?? countStatus(["verified", "approved"]));
-      const rejectedCount = Number(stats.rejectedCount ?? stats.rejected ?? countStatus(["rejected"]));
+      const rejectedCount = Number(stats.rejectedCount ?? stats.rejected ?? countStatus(["rejected", "disputed", "fraud_flagged"]));
       const trustScore = Number(stats.trustScore ?? account.trustScore ?? 0);
       const savings = formatMoney((result.discounts?.estimatedSavingsCents || 0) / 100);
       const pintPoints = result.pintPoints || {};
       const accountId = result.leaderboard?.accountId || account.publicAccountId || "—";
-      const ageCopy = result.ageVerification?.copy || "18+ confirmation unlocks future venue-special and reward features.";
+      const ageCopy = result.ageVerification?.copy || "18+ confirmation is required for protected contribution and reward features.";
       const progressPercent = Math.min(100, Math.round((points / threshold) * 100));
       const unlockReached = pointsNeeded <= 0;
       const isPaidMember = ["premium_monthly", "premium_yearly"].includes(String(account.subscriptionStatus || ""));
@@ -1506,12 +2236,15 @@
 
       grid.querySelector("[data-manage-billing]")?.addEventListener("click", async (event) => {
         const button = event.currentTarget;
+        const requestedContext = captureAccountUiContext();
         button.disabled = true;
         button.textContent = "Opening Stripe...";
         try {
           const result = await MelbBeerBusiness.apiFetch("/api/business/billing/portal", { method: "POST", body: "{}" });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           window.location.assign(result.portalUrl);
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           button.disabled = false;
           button.textContent = "Manage billing or cancel";
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Billing management could not be opened.", true);
@@ -1677,17 +2410,34 @@
         ? `
           <div class="betaLeaderboardMeta">
             <strong>Your reward vouchers</strong>
-            <span>Use these when a partnered venue confirms a Pint Path special redemption.</span>
+            <span>Contact Pint Path support with the claim reference below. Support will verify the reward and confirm fulfilment.</span>
           </div>
           ${vouchers.map((voucher) => `
-            <div class="rewardVoucherCard">
-              <span>${escapeHtml(voucher.amountLabel || formatMoney((voucher.amountCents || 0) / 100))}</span>
+            <article class="rewardVoucherCard">
+              <span class="rewardVoucherAmount">${escapeHtml(voucher.amountLabel || formatMoney((voucher.amountCents || 0) / 100))}</span>
               <strong>${escapeHtml(voucher.title || "Pint Path voucher")}</strong>
-              <em>${escapeHtml(voucher.venueScope || "Partner venue")} · ${escapeHtml(voucher.status || "active")}</em>
-            </div>
+              <em>${escapeHtml(voucher.venueScope || "Manual Pint Path fulfilment")} · ${escapeHtml(voucher.statusLabel || voucher.status || "Ready to claim")}</em>
+              ${voucher.claimReference ? `
+                <div class="rewardVoucherReference">
+                  <small>Claim reference</small>
+                  <code>${escapeHtml(voucher.claimReference)}</code>
+                  <button class="button button--small" type="button" data-copy-voucher-reference="${escapeHtml(voucher.claimReference)}" aria-label="Copy claim reference ${escapeHtml(voucher.claimReference)}">Copy reference</button>
+                </div>
+              ` : '<p class="helperCopy">A claim reference has not been issued. Contact support so the reward can be checked.</p>'}
+              <p class="helperCopy">${escapeHtml(voucher.instructions || "Contact Pint Path support with the voucher reference so the reward can be verified and fulfilled.")}</p>
+              <div class="rewardVoucherFooter">
+                <small>${voucher.expiresAt ? `Expires ${escapeHtml(MelbBeerBusiness.formatDate(voucher.expiresAt))}` : "No expiry supplied"}</small>
+                <a class="button button--small" href="/feedback.html?type=billing_support">Contact support</a>
+              </div>
+            </article>
           `).join("")}
         `
         : "";
+    }
+
+    function isPubGolfRenderCurrent(context) {
+      return context?.renderEpoch === state.pubGolfRenderEpoch
+        && isAccountUiContextCurrent(context?.accountUiContext);
     }
 
     function renderPubGolfResult(result) {
@@ -1695,6 +2445,10 @@
       if (!target) {
         return;
       }
+      const renderContext = {
+        renderEpoch: ++state.pubGolfRenderEpoch,
+        accountUiContext: captureAccountUiContext(),
+      };
       const warnings = (result.warnings || []).map((warning) => `<li>${escapeHtml(warning)}</li>`).join("");
       target.innerHTML = `
         <div class="pubGolfSummary">
@@ -1740,7 +2494,8 @@
         ${warnings ? `<ul class="pubGolfWarnings">${warnings}</ul>` : ""}
         <p class="helperCopy">${escapeHtml(result.safetyCopy || "")}</p>
       `;
-      renderPubGolfRouteMap(result).catch((error) => {
+      renderPubGolfRouteMap(result, renderContext).catch((error) => {
+        if (!isPubGolfRenderCurrent(renderContext)) return;
         const status = $("pubGolfMapStatus");
         if (status) {
           status.textContent = error.message || "Route map unavailable. Use each stop's Maps link and avoid driving.";
@@ -1913,7 +2668,7 @@
       return transit.totalSeconds < walking.totalSeconds ? transit : walking;
     }
 
-    async function planPubGolfLiveLeg(maps, service, from, to, departureTime, requestedMode) {
+    async function planPubGolfLiveLeg(maps, service, from, to, departureTime, requestedMode, renderContext) {
       const origin = { lat: from.lat, lng: from.lng };
       const destination = { lat: to.lat, lng: to.lng };
       const walkingResponse = await requestDirections(maps, service, {
@@ -1921,6 +2676,7 @@
         destination,
         travelMode: maps.TravelMode.WALKING,
       });
+      if (!isPubGolfRenderCurrent(renderContext)) return null;
       const walking = routePlanFromResponse(walkingResponse, "walking", departureTime);
       const distance = straightLineMeters(from, to);
       const shouldTryTransit = requestedMode === "transit" ||
@@ -1943,6 +2699,7 @@
             },
           })
         : null;
+      if (!isPubGolfRenderCurrent(renderContext)) return null;
       const transit = routePlanFromResponse(transitResponse, "transit", departureTime);
       return choosePubGolfTravelLeg(walking, transit, requestedMode);
     }
@@ -2006,9 +2763,9 @@
       `;
     }
 
-    async function renderPubGolfLiveItinerary(maps, service, points, requestedMode) {
+    async function renderPubGolfLiveItinerary(maps, service, points, requestedMode, renderContext) {
       const target = $("pubGolfLiveItinerary");
-      if (!target) {
+      if (!target || !isPubGolfRenderCurrent(renderContext)) {
         return;
       }
       const stops = itineraryPoints(points);
@@ -2021,14 +2778,17 @@
       for (let index = 0; index < stops.length - 1; index += 1) {
         const from = stops[index];
         const to = stops[index + 1];
-        const selected = await planPubGolfLiveLeg(maps, service, from, to, legStartTime, requestedMode || "auto");
+        const selected = await planPubGolfLiveLeg(maps, service, from, to, legStartTime, requestedMode || "auto", renderContext);
+        if (!isPubGolfRenderCurrent(renderContext)) return;
         if (!selected) {
           continue;
         }
         legs.push({ ...selected, from, to });
         legStartTime = new Date(selected.arrivalTime.getTime() + (index < stops.length - 2 ? PUB_GOLF_STOP_MINUTES * 60 * 1000 : 0));
       }
-      renderPubGolfItineraryPlan(legs, itineraryStartTime, legStartTime);
+      if (isPubGolfRenderCurrent(renderContext)) {
+        renderPubGolfItineraryPlan(legs, itineraryStartTime, legStartTime);
+      }
     }
 
     function createPubGolfMarker(maps, map, point, index) {
@@ -2063,11 +2823,11 @@
       });
     }
 
-    async function renderPubGolfRouteMap(result) {
+    async function renderPubGolfRouteMap(result, renderContext) {
       const mapElement = $("pubGolfRouteMap");
       const status = $("pubGolfMapStatus");
       const directionsLink = $("pubGolfDirectionsLink");
-      if (!mapElement || !status) {
+      if (!mapElement || !status || !isPubGolfRenderCurrent(renderContext)) {
         return;
       }
       const points = pubGolfRoutePoints(result);
@@ -2081,6 +2841,7 @@
       }
 
       const maps = await loadAccountGoogleMaps();
+      if (!isPubGolfRenderCurrent(renderContext)) return;
       const { mapId } = googleMapsConfig();
       const bounds = new maps.LatLngBounds();
       points.forEach((point) => bounds.extend({ lat: point.lat, lng: point.lng }));
@@ -2116,7 +2877,8 @@
       });
       state.pubGolfDirectionsRenderer = renderer;
       const service = new maps.DirectionsService();
-      renderPubGolfLiveItinerary(maps, service, points, result.summary?.travelMode || "auto").catch((error) => {
+      renderPubGolfLiveItinerary(maps, service, points, result.summary?.travelMode || "auto", renderContext).catch((error) => {
+        if (!isPubGolfRenderCurrent(renderContext)) return;
         const target = $("pubGolfLiveItinerary");
         if (target) {
           target.innerHTML = `
@@ -2142,6 +2904,7 @@
         optimizeWaypoints: false,
         travelMode: maps.TravelMode.WALKING,
       }, (response, routeStatus) => {
+        if (!isPubGolfRenderCurrent(renderContext)) return;
         if (routeStatus === "OK" && response) {
           renderer.setDirections(response);
           status.textContent = result.summary?.travelMode === "transit"
@@ -2219,9 +2982,13 @@
       }
       modal.hidden = true;
       document.body.classList.remove("discountPassModalOpen");
+      Array.from(modal.parentElement.children).forEach((sibling) => {
+        if (sibling !== modal) sibling.inert = false;
+      });
       if (!options.quiet) {
-        $("refreshDiscountPassButton")?.focus();
+        (state.discountPassReturnFocus || $("refreshDiscountPassButton"))?.focus();
       }
+      state.discountPassReturnFocus = null;
     }
 
     function openDiscountPassModal() {
@@ -2229,9 +2996,194 @@
       if (!modal) {
         return;
       }
+      state.discountPassReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       modal.hidden = false;
       document.body.classList.add("discountPassModalOpen");
+      Array.from(modal.parentElement.children).forEach((sibling) => {
+        if (sibling !== modal) sibling.inert = true;
+      });
       $("discountPassModalClose")?.focus();
+    }
+
+    function renderSavedItems(items) {
+      const list = $("savedItemsList");
+      const savedItems = Array.isArray(items) ? items : [];
+      if (!savedItems.length) {
+        list.innerHTML = '<div class="emptyState"><strong>Nothing saved yet.</strong><span>Save a venue, area, beer, or night plan from the map.</span></div>';
+        return;
+      }
+      list.innerHTML = savedItems.map((item) => `
+        <article class="listItem">
+          <div>
+            <strong>${escapeHtml(item.label || item.itemId || "Saved item")}</strong>
+            <div class="muted">${escapeHtml(String(item.itemType || "item").replaceAll("_", " "))}${item.suburb ? ` · ${escapeHtml(item.suburb)}` : ""} · saved ${escapeHtml(MelbBeerBusiness.formatDate(item.createdAt))}</div>
+          </div>
+          <button class="button button--small button--danger" type="button" data-remove-saved-item="${escapeHtml(item.itemId)}" data-saved-item-type="${escapeHtml(item.itemType)}">Remove</button>
+        </article>
+      `).join("");
+    }
+
+    function renderAccountPreferences(preferences = {}) {
+      const form = $("accountPreferencesForm");
+      form.preferredSuburbs.value = (preferences.preferredSuburbs || []).join(", ");
+      form.preferredBeers.value = (preferences.preferredBeers || []).join(", ");
+      const selected = new Set(preferences.preferredUseCases || []);
+      form.querySelectorAll('input[name="preferredUseCases"]').forEach((input) => {
+        input.checked = selected.has(input.value);
+      });
+    }
+
+    function syncVenueReportConsentDependency() {
+      const form = $("privacySettingsForm");
+      const optionalAnalyticsEnabled = form.optionalAnalyticsEnabled.checked;
+      if (!optionalAnalyticsEnabled) {
+        form.venueReportInclusionEnabled.checked = false;
+      }
+      form.venueReportInclusionEnabled.disabled = !optionalAnalyticsEnabled;
+      form.venueReportInclusionEnabled.setAttribute("aria-disabled", optionalAnalyticsEnabled ? "false" : "true");
+    }
+
+    function splitPreferenceList(value) {
+      return [...new Set(String(value || "").split(",").map((item) => item.trim()).filter(Boolean))].slice(0, 20);
+    }
+
+    function readSupportReceipts() {
+      try {
+        const receipts = JSON.parse(MelbBeerBusiness.getAccountScopedStorage(SUPPORT_RECEIPTS_KEY) || "[]");
+        return Array.isArray(receipts) ? receipts.slice(0, 12) : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function renderSupportReceipts() {
+      const list = $("supportReceiptList");
+      const receipts = readSupportReceipts();
+      list.innerHTML = receipts.length ? receipts.map((receipt) => `
+        <article class="listItem">
+          <div><strong>Request ${escapeHtml(receipt.id || "received")}</strong><div class="muted">${escapeHtml(String(receipt.type || "support").replaceAll("_", " "))} · ${escapeHtml(MelbBeerBusiness.formatDate(receipt.createdAt))}</div></div>
+          <span class="statusBadge statusBadge--pending">Received</span>
+        </article>
+      `).join("") : '<div class="emptyState"><strong>No receipts on this device.</strong><span>New support requests will show a reference here.</span></div>';
+    }
+
+    function saveSupportReceipt(receipt) {
+      const receipts = [receipt, ...readSupportReceipts().filter((item) => item.id !== receipt.id)].slice(0, 12);
+      MelbBeerBusiness.setAccountScopedStorage(SUPPORT_RECEIPTS_KEY, JSON.stringify(receipts));
+      renderSupportReceipts();
+    }
+
+    function renderDeletionStatus(request) {
+      const host = $("accountDeletionStatus");
+      if (!request) {
+        host.innerHTML = '<div class="emptyState"><strong>No deletion request.</strong><span>You can create a seven-day review request from the privacy actions.</span></div>';
+        return;
+      }
+      const status = String(request.status || "pending_review");
+      const canCancel = ["pending_review", "approved", "failed"].includes(status);
+      const executeAfter = request.execute_after || request.executeAfter;
+      host.innerHTML = `
+        <article class="listItem accountDeletionRequestItem">
+          <div>
+            <strong>${escapeHtml(status.replaceAll("_", " "))}</strong>
+            <div class="muted">Requested ${escapeHtml(MelbBeerBusiness.formatDate(request.requested_at || request.requestedAt))}${executeAfter ? ` · earliest processing ${escapeHtml(MelbBeerBusiness.formatDate(executeAfter))}` : ""}</div>
+          </div>
+          ${canCancel ? `<button class="button button--small" type="button" data-cancel-deletion-request="${escapeHtml(request.id)}">Cancel request</button>` : ""}
+        </article>
+      `;
+    }
+
+    let deletionStatusRequestId = 0;
+
+    async function loadDeletionStatus() {
+      const requestId = ++deletionStatusRequestId;
+      const requestedAccountId = state.accountData?.account?.id || null;
+      const requestedContext = captureAccountUiContext();
+      const host = $("accountDeletionStatus");
+      const refreshButton = $("refreshDeletionStatusButton");
+      if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = true;
+      host.innerHTML = '<div class="emptyState"><span>Checking deletion request status...</span></div>';
+      try {
+        const result = await MelbBeerBusiness.apiFetch("/api/business/account/delete-request");
+        if (requestId !== deletionStatusRequestId
+          || requestedAccountId !== (state.accountData?.account?.id || null)
+          || !isAccountUiContextCurrent(requestedContext)) return;
+        renderDeletionStatus(result.request || null);
+      } catch (error) {
+        if (requestId !== deletionStatusRequestId
+          || requestedAccountId !== (state.accountData?.account?.id || null)
+          || !isAccountUiContextCurrent(requestedContext)) return;
+        host.innerHTML = `<div class="notice notice--warning">${escapeHtml(error.message || "Could not load deletion status.")}</div>`;
+      } finally {
+        if (requestId === deletionStatusRequestId
+          && requestedAccountId === (state.accountData?.account?.id || null)
+          && isAccountUiContextCurrent(requestedContext)) {
+          if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = false;
+        }
+      }
+    }
+
+    function renderAccountSessions(result) {
+      const host = $("accountSessionList");
+      const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+      if (!sessions.length) {
+        host.innerHTML = '<div class="emptyState"><strong>No sessions found on this page.</strong><span>Refresh after signing in again.</span></div>';
+      } else {
+        host.innerHTML = sessions.map((session) => `
+          <article class="listItem accountSessionItem">
+            <div>
+              <strong>${session.current ? "Current session" : session.active ? "Signed-in device" : "Inactive session"}</strong>
+              <div class="muted">Last used ${escapeHtml(MelbBeerBusiness.formatDate(session.lastUsedAt || session.createdAt))} · expires ${escapeHtml(MelbBeerBusiness.formatDate(session.expiresAt))}${session.deviceFingerprint ? ` · device ${escapeHtml(session.deviceFingerprint)}` : ""}</div>
+            </div>
+            ${session.current ? '<span class="statusBadge statusBadge--approved">This device</span>' : session.active ? `<button class="button button--small button--danger" type="button" data-revoke-account-session="${escapeHtml(session.id)}">Revoke</button>` : '<span class="statusBadge">Expired or revoked</span>'}
+          </article>
+        `).join("");
+      }
+      state.accountSessionTotal = Number(result?.total || sessions.length);
+      const start = sessions.length ? state.accountSessionOffset + 1 : 0;
+      const end = state.accountSessionOffset + sessions.length;
+      $("accountSessionPager").hidden = state.accountSessionTotal <= ACCOUNT_SESSION_PAGE_SIZE && state.accountSessionOffset === 0;
+      $("accountSessionPageStatus").textContent = `${start}-${end} of ${state.accountSessionTotal}`;
+      $("accountSessionPrev").disabled = state.accountSessionOffset === 0;
+      $("accountSessionNext").disabled = !result?.pagination?.hasMore;
+    }
+
+    let accountSessionsRequestId = 0;
+
+    function showAccountSessionRefreshPrompt() {
+      const host = $("accountSessionList");
+      if (host.childElementCount > 0) return;
+      host.innerHTML = '<div class="emptyState"><span>Choose Refresh to confirm your identity and review signed-in sessions.</span></div>';
+    }
+
+    async function loadAccountSessions() {
+      const requestId = ++accountSessionsRequestId;
+      const requestedOffset = state.accountSessionOffset;
+      const requestedContext = captureAccountUiContext();
+      const host = $("accountSessionList");
+      host.innerHTML = '<div class="emptyState"><span>Checking account sessions...</span></div>';
+      try {
+        const result = await MelbBeerBusiness.sensitiveApiFetch(`/api/business/account/sessions?limit=${ACCOUNT_SESSION_PAGE_SIZE}&offset=${requestedOffset}`);
+        if (requestId !== accountSessionsRequestId
+          || requestedOffset !== state.accountSessionOffset
+          || !isAccountUiContextCurrent(requestedContext)) return;
+        if (!(result.sessions || []).length && state.accountSessionOffset > 0 && Number(result.total || 0) > 0) {
+          state.accountSessionOffset = Math.max(0, state.accountSessionOffset - ACCOUNT_SESSION_PAGE_SIZE);
+          await loadAccountSessions();
+          return;
+        }
+        renderAccountSessions(result);
+      } catch (error) {
+        if (requestId !== accountSessionsRequestId || !isAccountUiContextCurrent(requestedContext)) return;
+        host.innerHTML = `<div class="notice notice--warning">${escapeHtml(error.message || "Could not load account sessions.")}</div>`;
+      }
+    }
+
+    function syncLegalAcceptanceGate(account) {
+      const current = MelbBeerBusiness.hasCurrentLegalAcceptance(account);
+      $("legalAcceptanceGate").hidden = current;
+      $("accountSettingsHub").hidden = !current;
+      return current;
     }
 
     function renderAccountEmail(account) {
@@ -2302,12 +3254,14 @@
       list.querySelectorAll("[data-counter-invite]").forEach((button) => {
         button.addEventListener("click", async () => {
           const decision = button.dataset.decision;
+          const requestedContext = captureAccountUiContext();
           try {
             button.disabled = true;
             const result = await MelbBeerBusiness.apiFetch(`/api/business/account/counter-staff-invitations/${encodeURIComponent(button.dataset.counterInvite)}/respond`, {
               method: "POST",
               body: JSON.stringify({ decision }),
             });
+            if (!isAccountUiContextCurrent(requestedContext)) return;
             if (decision === "accept") {
               window.location.assign(`/venue-portal.html?venueId=${encodeURIComponent(result.assignment.venueId)}`);
               return;
@@ -2315,6 +3269,7 @@
             MelbBeerBusiness.setStatus($("dashboardStatus"), result.message || "Invitation declined.");
             await refreshAccount();
           } catch (error) {
+            if (!isAccountUiContextCurrent(requestedContext)) return;
             MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not update this invitation.", true);
             button.disabled = false;
           }
@@ -2322,11 +3277,47 @@
       });
     }
 
+    function renderCounterStaffAssignments(assignments) {
+      const section = $("counterStaffAccess");
+      const list = $("counterStaffAccessList");
+      const items = Array.isArray(assignments)
+        ? assignments.filter((assignment) => assignment?.capabilities?.openCounter === true)
+        : [];
+      section.hidden = items.length === 0;
+      list.innerHTML = items.map((assignment) => {
+        const portalPath = String(assignment.portalPath || "");
+        if (!portalPath.startsWith("/venue-portal.html")) return "";
+        return `
+          <div class="listItem dataRow">
+            <div>
+              <strong>${escapeHtml(assignment.venueName || "Venue")}</strong>
+              <div class="muted">${escapeHtml(assignment.suburb || "Melbourne")} · counter-only access</div>
+            </div>
+            <a class="button button--primary" href="${escapeHtml(portalPath)}">Open counter</a>
+          </div>
+        `;
+      }).join("");
+    }
+
     function renderDashboard(result) {
+      const previousAccountId = state.accountData?.account?.id || null;
+      const nextAccountId = result.account?.id || null;
+      if (previousAccountId !== nextAccountId) {
+        invalidateAccountBoundUi();
+        state.submissionHistoryOffset = 0;
+        state.verificationCandidateOffset = 0;
+        state.verificationCandidateTotal = 0;
+        state.verificationCandidatesLoaded = false;
+        state.accountSessionOffset = 0;
+      }
       state.accountData = result;
-      MelbBeerBusiness.setAccountContext(result.account);
+      MelbBeerBusiness.setAccountContext(result.account, {
+        ...result.access,
+        counterStaffAssignments: result.counterStaffAssignments || [],
+      });
       showDashboard();
       const account = result.account;
+      syncLegalAcceptanceGate(account);
       renderAccountEmail(account);
       syncAccountDashboardVisualState(result);
       const planBadge = subscriptionBadge(account);
@@ -2371,15 +3362,38 @@
       const privacySettings = result.privacySettings || {};
       $("privacySettingsForm").optionalAnalyticsEnabled.checked = Boolean(privacySettings.optionalAnalyticsEnabled);
       $("privacySettingsForm").venueReportInclusionEnabled.checked = Boolean(privacySettings.venueReportInclusionEnabled);
-      $("privacySettingsForm").productResearchEnabled.checked = Boolean(privacySettings.productResearchEnabled);
-      $("privacySettingsForm").emailUpdatesEnabled.checked = Boolean(privacySettings.emailUpdatesEnabled);
+      syncVenueReportConsentDependency();
       MelbBeerBusiness.setPrivacyPreferenceCache(privacySettings);
-      renderRecentSubmissions(result.recentSubmissions || []);
+      const detailedSubmissionHistory = Array.isArray(result.submissionHistory)
+        ? result.submissionHistory
+        : Array.isArray(result.submissions) && result.submissions.every((submission) => Array.isArray(submission.items) && "hasEvidence" in submission)
+          ? result.submissions
+          : result.recentSubmissions || [];
+      state.submissionHistoryTotal = Number(result.dashboardStats?.totalUploads || detailedSubmissionHistory.length);
+      if (state.submissionHistoryOffset === 0) {
+        renderRecentSubmissions(detailedSubmissionHistory.slice(0, SUBMISSION_HISTORY_PAGE_SIZE), {
+          total: state.submissionHistoryTotal,
+          hasMore: detailedSubmissionHistory.length > SUBMISSION_HISTORY_PAGE_SIZE
+            || state.submissionHistoryTotal > SUBMISSION_HISTORY_PAGE_SIZE,
+        });
+      }
+      void loadSubmissionHistory();
+      if (!$("settingsSubmissionsPanel").hidden) {
+        void loadCommunityVerificationCandidates();
+      }
+      renderSavedItems(result.savedItems || []);
+      renderAccountPreferences(result.preferences || {});
+      renderSupportReceipts();
+      void loadDeletionStatus();
       renderCounterStaffInvitations(result.counterStaffInvitations || []);
+      renderCounterStaffAssignments(result.counterStaffAssignments || []);
       renderAccountStatsPanel(result);
       renderDisplayNameForm(account);
       renderBetaTestingPanel(result);
       void loadMfaState();
+      if (!$("settingsSecurityPanel").hidden) {
+        showAccountSessionRefreshPrompt();
+      }
     }
 
     async function resumeCheckoutIfRequested(result) {
@@ -2387,6 +3401,7 @@
       if (!plan || state.checkoutResumeStarted) {
         return;
       }
+      const requestedContext = captureAccountUiContext();
 
       if (!result?.account?.ageConfirmedAt) {
         MelbBeerBusiness.setStatus(
@@ -2405,11 +3420,13 @@
           method: "POST",
           body: JSON.stringify({ plan }),
         });
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         if (checkout.mode === "demo") {
           await MelbBeerBusiness.apiFetch("/api/business/billing/demo-subscribe", {
             method: "POST",
             body: JSON.stringify({ plan }),
           });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Demo subscription activated. Your account now has premium access.");
           return;
         }
@@ -2418,6 +3435,7 @@
         }
         window.location.assign(checkout.checkoutUrl);
       } catch (error) {
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         state.checkoutResumeStarted = false;
         MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not start checkout from your account.", true);
       }
@@ -2428,6 +3446,7 @@
       if (!sessionId || state.checkoutReconcileStarted) {
         return false;
       }
+      const requestedContext = captureAccountUiContext();
 
       state.checkoutReconcileStarted = true;
       try {
@@ -2436,7 +3455,9 @@
           method: "POST",
           body: JSON.stringify({ sessionId }),
         });
+        if (!isAccountUiContextCurrent(requestedContext)) return false;
         const accountResult = await MelbBeerBusiness.apiFetch("/api/business/account");
+        if (!isAccountUiContextCurrent(requestedContext)) return false;
         renderDashboard(accountResult);
         MelbBeerBusiness.setStatus(
           $("dashboardStatus"),
@@ -2447,6 +3468,7 @@
         window.history.replaceState({}, "", cleanedUrl.toString());
         return true;
       } catch (error) {
+        if (!isAccountUiContextCurrent(requestedContext)) return false;
         state.checkoutReconcileStarted = false;
         MelbBeerBusiness.setStatus(
           $("dashboardStatus"),
@@ -2457,9 +3479,14 @@
       }
     }
 
+    let refreshAccountRequestId = 0;
+
     async function refreshAccount() {
+      const requestId = ++refreshAccountRequestId;
+      const requestedContext = captureAccountUiContext();
       try {
         const result = await MelbBeerBusiness.apiFetch("/api/business/account");
+        if (requestId !== refreshAccountRequestId || !isAccountUiContextCurrent(requestedContext)) return null;
         renderDashboard(result);
         const reconciled = await reconcileCheckoutReturnIfNeeded();
         if (!reconciled) {
@@ -2467,14 +3494,20 @@
         }
         return result;
       } catch (error) {
+        if (requestId !== refreshAccountRequestId || !isAccountUiContextCurrent(requestedContext)) return null;
         MelbBeerBusiness.setAuthToken(null);
-        showLoggedOut(error.message || "Please sign in again.", true);
+        const expectedSignedOut = Number(error.status) === 401 || /login required|unauthorized/i.test(error.message || "");
+        showLoggedOut(
+          expectedSignedOut ? "Enter your details to continue." : (error.message || "Please sign in again."),
+          !expectedSignedOut,
+        );
         return null;
       }
     }
 
     async function handleAuth(event, path) {
       event.preventDefault();
+      const authFlowId = ++state.authFlowEpoch;
       const form = event.currentTarget;
       const submitButton = form.querySelector('button[type="submit"]');
       const body = Object.fromEntries(new FormData(form).entries());
@@ -2482,8 +3515,10 @@
       body.termsAccepted = body.termsAccepted === "on";
       body.privacyAccepted = body.privacyAccepted === "on";
       const isSignup = path.includes("signup");
+      let supabaseConfigured = false;
 
       try {
+        hideBillingRecovery();
         clearAuthFieldErrors(form);
         if (isSignup && body.password !== body.confirmPassword) {
           markAuthFields(form, ["password", "confirmPassword"]);
@@ -2508,11 +3543,9 @@
 
         setLoading(submitButton, true, isSignup ? "Creating..." : "Signing in...");
         const authParams = new URLSearchParams(window.location.search);
-        const useLocalEmailAuth =
-          ((window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") &&
-            authParams.get("supabaseAuth") !== "1") ||
-          authParams.get("localAuth") === "1";
-        const supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient()) && !useLocalEmailAuth;
+        const isLocalHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+        const useLocalEmailAuth = isLocalHost && authParams.get("supabaseAuth") !== "1";
+        supabaseConfigured = Boolean(MelbBeerBusiness.getSupabaseClient()) && !useLocalEmailAuth;
         if (isSignup) {
           MelbBeerBusiness.trackEvent("signup_started", { source: "account_page" }).catch(() => null);
         }
@@ -2527,6 +3560,7 @@
               body.privacyAccepted,
               body.displayName || null,
             );
+            if (authFlowId !== state.authFlowEpoch) return;
             if (result.needsEmailConfirmation) {
               form.reset();
               $("resendConfirmationLink").href = authUtilityLink("/resend-confirmation.html", body.email);
@@ -2535,18 +3569,21 @@
             }
           } else {
             await MelbBeerBusiness.signInWithEmail(body.email, body.password);
+            if (authFlowId !== state.authFlowEpoch) return;
           }
         } else {
           const result = await MelbBeerBusiness.apiFetch(path, {
             method: "POST",
             body: JSON.stringify(body),
           });
+          if (authFlowId !== state.authFlowEpoch) return;
           MelbBeerBusiness.setAuthToken(result.token);
-          MelbBeerBusiness.setAccountContext(result.account);
+          MelbBeerBusiness.setAccountContext(result.account, result.access);
         }
 
         form.reset();
         const dashboard = await refreshAccount();
+        if (authFlowId !== state.authFlowEpoch) return;
         if (isSignup && useLocalEmailAuth) {
           MelbBeerBusiness.setStatus(
             $("dashboardStatus"),
@@ -2556,22 +3593,100 @@
         if (pendingCheckoutPlan()) {
           return;
         }
-        if (dashboard?.account?.role === "venue_manager") {
-          window.location.assign("/venue-portal.html");
-          return;
-        }
-        const nextPath = MelbBeerBusiness.getAuthReturnPathFromLocation();
+        const nextPath = authenticatedReturnDestination(dashboard?.account);
         if (nextPath && nextPath !== "/account.html" && !nextPath.startsWith("/account.html")) {
           window.location.assign(nextPath);
+          return;
         }
       } catch (error) {
+        if (authFlowId !== state.authFlowEpoch) return;
+        if (!isSignup && (
+          (error?.code === "ACCOUNT_SUSPENDED_BILLING_RECOVERY" && error?.recovery?.eligible === true)
+          || error?.details?.billingRecoveryEligible
+        )) {
+          showLoggedOut(error.message || "Account access is suspended. Billing-only recovery remains available.", true);
+          showBillingRecovery({ providerMode: supabaseConfigured, recovery: error.recovery || null });
+          return;
+        }
+        if (!isSignup && supabaseConfigured && [403, 409].includes(Number(error?.status))
+          && /accept the current terms and privacy policy/i.test(String(error?.message || ""))) {
+          showReturningLegalAcceptance();
+          MelbBeerBusiness.setStatus(
+            $("authStatus"),
+            "Your identity is confirmed. Review and accept the current policies below to finish signing in.",
+            true,
+          );
+          return;
+        }
         const message = error.message || "Account request failed.";
         const friendlyMessage = isSignup && /load failed|failed to fetch|network/i.test(message)
           ? "We could not finish account creation. If a confirmation email arrives, use it and then sign in. Otherwise, please try again."
           : message;
         MelbBeerBusiness.setStatus($("authStatus"), friendlyMessage, true);
       } finally {
-        setLoading(submitButton, false);
+        if (authFlowId === state.authFlowEpoch) setLoading(submitButton, false);
+      }
+    }
+
+    async function acceptReturningLoginPolicies(event) {
+      event.preventDefault();
+      const authFlowId = ++state.authFlowEpoch;
+      const form = event.currentTarget;
+      const button = $("returningLegalAcceptanceButton");
+      try {
+        setLoading(button, true, "Accepting...");
+        const binding = await MelbBeerBusiness.setPendingLegalAcceptanceForCurrentSession({
+          ageConfirmed: form.ageConfirmed.checked,
+          termsAccepted: form.termsAccepted.checked,
+          privacyAccepted: form.privacyAccepted.checked,
+          termsVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION,
+          privacyVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION,
+        });
+        if (authFlowId !== state.authFlowEpoch) return;
+        await MelbBeerBusiness.syncSupabaseSession({
+          applyPendingLegalAcceptance: true,
+          authFlowNonce: binding.authFlowNonce,
+        });
+        if (authFlowId !== state.authFlowEpoch) return;
+        form.reset();
+        form.hidden = true;
+        const dashboard = await refreshAccount();
+        if (authFlowId !== state.authFlowEpoch) return;
+        if (!dashboard || pendingCheckoutPlan()) return;
+        const nextPath = authenticatedReturnDestination(dashboard.account);
+        if (nextPath && nextPath !== "/account.html" && !nextPath.startsWith("/account.html")) {
+          window.location.assign(nextPath);
+          return;
+        }
+      } catch (error) {
+        if (authFlowId !== state.authFlowEpoch) return;
+        MelbBeerBusiness.setStatus(
+          $("authStatus"),
+          error.message || "Could not save the current policy acceptance. Your choices remain available to retry.",
+          true,
+        );
+      } finally {
+        if (authFlowId === state.authFlowEpoch) setLoading(button, false);
+      }
+    }
+
+    async function cancelReturningLoginPolicies() {
+      const authFlowId = ++state.authFlowEpoch;
+      const button = $("cancelReturningLegalAcceptanceButton");
+      try {
+        setLoading(button, true, "Signing out...");
+        MelbBeerBusiness.clearPendingLegalAcceptance();
+        MelbBeerBusiness.clearSensitiveAuthReturnState();
+        await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" }).catch(() => null);
+        if (authFlowId !== state.authFlowEpoch) return;
+        await MelbBeerBusiness.getSupabaseClient()?.auth.signOut({ scope: "local" }).catch(() => null);
+        if (authFlowId !== state.authFlowEpoch) return;
+        MelbBeerBusiness.setAuthToken(null);
+        $("returningLegalAcceptanceForm").reset();
+        showAuthTab("login");
+        setAccountStatus($("authStatus"), "Sign-in cancelled. No policy choices were saved.");
+      } finally {
+        if (authFlowId === state.authFlowEpoch) setLoading(button, false);
       }
     }
 
@@ -2644,23 +3759,36 @@
       });
       $("showLoginButton").addEventListener("click", () => showAuthTab("login"));
       $("showSignupButton").addEventListener("click", () => showAuthTab("signup"));
-      function authUtilityLink(pathname, emailOverride = null) {
-        const email = emailOverride || $("loginForm").email.value || $("signupForm").email.value;
-        if (!email) {
-          return pathname;
-        }
-        const url = new URL(pathname, window.location.origin);
-        url.searchParams.set("email", email);
-        return `${url.pathname}${url.search}`;
-      }
+      $("showLoginButton").setAttribute("tabindex", "0");
+      $("showSignupButton").setAttribute("tabindex", "-1");
+      $("showLoginButton").parentElement.addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const login = event.key === "ArrowLeft" || event.key === "Home";
+        showAuthTab(login ? "login" : "signup", { focus: true });
+      });
       $("passwordResetLink").addEventListener("click", (event) => {
         event.currentTarget.href = authUtilityLink("/reset-password.html");
       });
       $("resendConfirmationLink").addEventListener("click", (event) => {
         event.currentTarget.href = authUtilityLink("/resend-confirmation.html");
       });
+      $("openBillingRecoveryButton").addEventListener("click", () => void openBillingRecoveryPortal());
       document.querySelectorAll("[data-settings-target]").forEach((button) => {
         button.addEventListener("click", () => showAccountSettingsPanel(button.dataset.settingsTarget));
+      });
+      $("accountSettingsHub").querySelector(".settingsNav").addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+        const buttons = Array.from(document.querySelectorAll('[data-settings-target]:not([hidden])'));
+        const index = buttons.indexOf(document.activeElement);
+        if (index < 0) return;
+        event.preventDefault();
+        const nextIndex = event.key === "Home" ? 0
+          : event.key === "End" ? buttons.length - 1
+            : (index + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1) + buttons.length) % buttons.length;
+        const next = buttons[nextIndex];
+        showAccountSettingsPanel(next.dataset.settingsTarget);
+        next.focus();
       });
       document.querySelectorAll("[data-close-discount-pass-modal]").forEach((button) => {
         button.addEventListener("click", () => closeDiscountPassModal());
@@ -2668,43 +3796,70 @@
       document.addEventListener("keydown", (event) => {
         if (event.key === "Escape" && !$("discountPassModal").hidden) {
           closeDiscountPassModal();
+          return;
+        }
+        if (event.key === "Tab" && !$("discountPassModal").hidden) {
+          const focusable = Array.from($("discountPassModal").querySelectorAll('button:not([disabled]), a[href], input:not([disabled])'));
+          if (!focusable.length) return;
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
         }
       });
       showAccountSettingsPanel(requestedSettingsPanel());
       $("signupForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/signup"));
       $("loginForm").addEventListener("submit", (event) => handleAuth(event, "/api/business/auth/login"));
+      $("returningLegalAcceptanceForm").addEventListener("submit", acceptReturningLoginPolicies);
+      $("cancelReturningLegalAcceptanceButton").addEventListener("click", cancelReturningLoginPolicies);
       $("logoutButton").addEventListener("click", async () => {
         const hadApiSession = MelbBeerBusiness.hasAuthenticatedSessionHint();
+        const supabaseClient = MelbBeerBusiness.getSupabaseClient();
+        MelbBeerBusiness.setAuthToken(null);
+        showLoggedOut("Logging out securely...");
+        const requestedContext = captureAccountUiContext();
         let hadSupabaseSession = false;
         try {
-          const session = await MelbBeerBusiness.getSupabaseClient()?.auth.getSession();
+          const session = await supabaseClient?.auth.getSession();
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           hadSupabaseSession = Boolean(session?.data?.session?.access_token);
         } catch {
           hadSupabaseSession = false;
         }
         try {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           await MelbBeerBusiness.apiFetch("/api/business/auth/logout", { method: "POST", body: "{}" });
         } catch {
           // Clear local session even if the server session already expired.
         }
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         try {
           if (hadSupabaseSession) {
-            await MelbBeerBusiness.getSupabaseClient()?.auth.signOut();
+            await supabaseClient?.auth.signOut({ scope: "local" });
           }
         } catch {
           // Supabase is optional in local demo mode.
         }
+        if (!isAccountUiContextCurrent(requestedContext)) return;
         MelbBeerBusiness.setAuthToken(null);
         showLoggedOut(hadApiSession || hadSupabaseSession ? "You have been logged out." : "Enter your details to continue.");
       });
       $("confirmAgeButton").addEventListener("click", async () => {
+        const requestedContext = captureAccountUiContext();
         try {
           await MelbBeerBusiness.apiFetch("/api/business/account/age-confirm", {
             method: "POST",
             body: JSON.stringify({ ageConfirmed: true }),
           });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           await refreshAccount();
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
@@ -2712,6 +3867,7 @@
         event.preventDefault();
         const form = $("displayNameForm");
         const button = form.querySelector('button[type="submit"]');
+        const requestedContext = captureAccountUiContext();
         try {
           const displayName = validateDisplayNameClient(form.displayName.value);
           setLoading(button, true, "Saving...");
@@ -2719,35 +3875,42 @@
             method: "POST",
             body: JSON.stringify({ displayName }),
           });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           const result = await refreshAccount();
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), result?.account?.displayName ? "Display name saved for the leaderboard." : "Display name cleared.");
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not save display name.", true);
         } finally {
-          setLoading(button, false);
+          if (isAccountUiContextCurrent(requestedContext)) setLoading(button, false);
         }
       });
       $("refreshDiscountPassButton").addEventListener("click", async () => {
         const button = $("refreshDiscountPassButton");
+        const requestedContext = captureAccountUiContext();
         try {
           setLoading(button, true, "Generating...");
           const pass = await MelbBeerBusiness.apiFetch("/api/business/account/discount-pass", {
             method: "POST",
             body: "{}",
           });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           $("discountPassCode").textContent = pass.code;
           $("discountPassQr").src = pass.qrDataUrl;
           $("discountPassExpires").textContent = `Expires ${MelbBeerBusiness.formatDate(pass.expiresAt)}. Refresh the page or sign in again for a new session code.`;
           openDiscountPassModal();
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Pint Path special code generated. Only show it to venue staff when redeeming a special.");
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not generate a Pint Path special code.", true);
         } finally {
-          setLoading(button, false);
+          if (isAccountUiContextCurrent(requestedContext)) setLoading(button, false);
         }
       });
       $("freePintRewardButton").addEventListener("click", async () => {
         const button = $("freePintRewardButton");
+        const requestedContext = captureAccountUiContext();
         let createdRewardCode = false;
         try {
           setLoading(button, true, "Creating...");
@@ -2755,6 +3918,7 @@
             method: "POST",
             body: "{}",
           });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           $("freePintRewardCode").textContent = reward.code;
           $("freePintRewardQr").src = reward.qrDataUrl;
           $("freePintRewardResult").hidden = false;
@@ -2763,12 +3927,15 @@
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Free Pint Reward code created. Venue staff still need to complete age, ID, and responsible service checks.");
           createdRewardCode = true;
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not create a Free Pint Reward code.", true);
         } finally {
-          setLoading(button, false);
-          if (createdRewardCode) {
-            button.disabled = true;
-            button.textContent = "Reward code active";
+          if (isAccountUiContextCurrent(requestedContext)) {
+            setLoading(button, false);
+            if (createdRewardCode) {
+              button.disabled = true;
+              button.textContent = "Reward code active";
+            }
           }
         }
       });
@@ -2777,10 +3944,13 @@
         event.preventDefault();
         const form = $("pubGolfForm");
         const button = form.querySelector('button[type="submit"]');
+        const requestedContext = captureAccountUiContext();
         try {
           setLoading(button, true, "Planning...");
           const start = await resolvePubGolfLocationInput(form.startLocation);
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           const finish = await resolvePubGolfLocationInput(form.finishLocation);
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           if (!start || !finish) {
             throw new Error("Choose real start and finish locations before building the route.");
           }
@@ -2794,12 +3964,14 @@
             method: "POST",
             body: JSON.stringify(body),
           });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           renderPubGolfResult(result);
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Pub Golf route built from verified venue drink data.");
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not build Pub Golf route.", true);
         } finally {
-          setLoading(button, false);
+          if (isAccountUiContextCurrent(requestedContext)) setLoading(button, false);
         }
       });
       $("canIDriveForm").addEventListener("submit", (event) => {
@@ -2816,30 +3988,138 @@
       });
       $("privacySettingsForm").addEventListener("submit", async (event) => {
         event.preventDefault();
+        const optionalAnalyticsEnabled = $("privacySettingsForm").optionalAnalyticsEnabled.checked;
         const settings = {
-          optionalAnalyticsEnabled: $("privacySettingsForm").optionalAnalyticsEnabled.checked,
-          venueReportInclusionEnabled: $("privacySettingsForm").venueReportInclusionEnabled.checked,
-          productResearchEnabled: $("privacySettingsForm").productResearchEnabled.checked,
-          emailUpdatesEnabled: $("privacySettingsForm").emailUpdatesEnabled.checked,
-          consentVersion: "2026-07-11",
+          optionalAnalyticsEnabled,
+          venueReportInclusionEnabled: optionalAnalyticsEnabled && $("privacySettingsForm").venueReportInclusionEnabled.checked,
+          productResearchEnabled: false,
+          emailUpdatesEnabled: false,
+          consentVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION,
         };
+        const requestedContext = captureAccountUiContext();
         try {
           const result = await MelbBeerBusiness.apiFetch("/api/business/account/privacy-settings", {
             method: "POST",
             body: JSON.stringify(settings),
           });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setPrivacyPreferenceCache(result.privacySettings || settings);
           MelbBeerBusiness.setStatus($("dashboardStatus"), "Privacy settings saved.");
           await refreshAccount();
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
+        }
+      });
+      $("privacySettingsForm").optionalAnalyticsEnabled.addEventListener("change", syncVenueReportConsentDependency);
+      $("acceptCurrentLegalButton").addEventListener("click", async () => {
+        const button = $("acceptCurrentLegalButton");
+        const requestedContext = captureAccountUiContext();
+        try {
+          setLoading(button, true, "Saving acceptance...");
+          await MelbBeerBusiness.apiFetch("/api/business/account/legal-acceptance", {
+            method: "POST",
+            body: JSON.stringify({
+              termsAccepted: true,
+              privacyAccepted: true,
+              termsVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION,
+              privacyVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION,
+            }),
+          });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          await refreshAccount();
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Current Terms and Privacy Policy accepted.");
+        } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not save policy acceptance.", true);
+        } finally {
+          if (isAccountUiContextCurrent(requestedContext)) setLoading(button, false);
+        }
+      });
+      $("legalGateLogoutButton").addEventListener("click", () => $("logoutButton").click());
+      $("accountPreferencesForm").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const button = form.querySelector('button[type="submit"]');
+        const requestedContext = captureAccountUiContext();
+        try {
+          setLoading(button, true, "Saving...");
+          const result = await MelbBeerBusiness.apiFetch("/api/business/account/preferences", {
+            method: "POST",
+            body: JSON.stringify({
+              preferredSuburbs: splitPreferenceList(form.preferredSuburbs.value),
+              preferredBeers: splitPreferenceList(form.preferredBeers.value),
+              preferredUseCases: Array.from(form.querySelectorAll('input[name="preferredUseCases"]:checked')).map((input) => input.value),
+              onboardingCompleted: true,
+            }),
+          });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          renderAccountPreferences(result.preferences || {});
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Discovery preferences saved.");
+        } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not save preferences.", true);
+        } finally {
+          if (isAccountUiContextCurrent(requestedContext)) setLoading(button, false);
+        }
+      });
+      $("savedItemsList").addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-remove-saved-item]");
+        if (!button) return;
+        const requestedContext = captureAccountUiContext();
+        try {
+          button.disabled = true;
+          await MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
+            method: "DELETE",
+            body: JSON.stringify({ itemType: button.dataset.savedItemType, itemId: button.dataset.removeSavedItem }),
+          });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          await refreshAccount();
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          showAccountSettingsPanel("saved");
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Saved item removed.");
+        } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          button.disabled = false;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not remove the saved item.", true);
+        }
+      });
+      $("rewardVoucherList").addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-copy-voucher-reference]");
+        if (!button) return;
+        const reference = button.dataset.copyVoucherReference || "";
+        const requestedContext = captureAccountUiContext();
+        try {
+          if (!reference) throw new Error("No claim reference is available.");
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(reference);
+          } else {
+            const textArea = document.createElement("textarea");
+            textArea.value = reference;
+            textArea.setAttribute("readonly", "");
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.select();
+            const copied = typeof document.execCommand === "function" && document.execCommand("copy");
+            document.body.removeChild(textArea);
+            if (!copied) throw new Error("Clipboard copy failed.");
+          }
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          button.textContent = "Copied";
+          MelbBeerBusiness.setStatus($("dashboardStatus"), `Claim reference ${reference} copied.`);
+        } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not copy the claim reference.", true);
         }
       });
       $("dataRequestForm").addEventListener("submit", async (event) => {
         event.preventDefault();
         const body = Object.fromEntries(new FormData($("dataRequestForm")).entries());
+        const requestedContext = captureAccountUiContext();
         try {
-          await MelbBeerBusiness.apiFetch("/api/business/feedback", {
+          const result = await MelbBeerBusiness.apiFetch("/api/business/feedback", {
             method: "POST",
             body: JSON.stringify({
               anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
@@ -2849,47 +4129,179 @@
               venueId: null,
             }),
           });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          const reference = result.feedback?.id || `local-${Date.now()}`;
+          saveSupportReceipt({ id: reference, type: body.feedbackType, createdAt: result.feedback?.createdAt || new Date().toISOString() });
           $("dataRequestForm").reset();
-          MelbBeerBusiness.setStatus($("dashboardStatus"), "Request saved. We’ll review it through the support queue.");
+          MelbBeerBusiness.setStatus($("dashboardStatus"), `Request saved. Reference: ${reference}.`);
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
       $("downloadAccountDataButton").addEventListener("click", async () => {
+        const requestedContext = captureAccountUiContext();
         try {
-          const result = await MelbBeerBusiness.apiFetch("/api/business/account/export");
+          const result = await MelbBeerBusiness.sensitiveApiFetch("/api/business/account/export");
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           downloadJson(`pint-path-account-export-${new Date().toISOString().slice(0, 10)}.json`, result);
-          MelbBeerBusiness.setStatus($("dashboardStatus"), "Account export downloaded with stored coordinates and short-lived private-evidence links.");
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Account export downloaded. It includes retained account data, including exact upload coordinates while they remain inside the review and appeal retention window; private evidence files are listed but not embedded.");
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
       $("requestAccountDeletionButton").addEventListener("click", async () => {
-        const confirmed = window.confirm("Request an admin review to delete your Pint Path account? This does not instantly delete moderation, billing, security, or legal records.");
+        const confirmed = window.confirm("Request an admin review to delete your Pint Path account? This clears private submission drafts, exact location proof, and queued evidence from this device now, even if you later cancel the request. It does not instantly delete moderation, billing, security, or legal records.");
         if (!confirmed) {
           return;
         }
+        const requestedContext = captureAccountUiContext();
         try {
-          await MelbBeerBusiness.apiFetch("/api/business/account/delete-request", {
+          const deletionAccountId = MelbBeerBusiness.getAccountScopeId();
+          await MelbBeerBusiness.sensitiveApiFetch("/api/business/account/delete-request", {
             method: "POST",
             body: JSON.stringify({ message: "Self-service deletion review requested from account dashboard." }),
           });
-          MelbBeerBusiness.setStatus($("dashboardStatus"), "Deletion review request saved. Admin will verify retention requirements before actioning it.");
+          let localCleanupComplete = true;
+          try {
+            await MelbBeerBusiness.clearLocalSubmissionDeviceData(deletionAccountId);
+          } catch {
+            localCleanupComplete = false;
+          }
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          MelbBeerBusiness.setStatus(
+            $("dashboardStatus"),
+            localCleanupComplete
+              ? "Deletion review request saved. Private drafts, location proof, and queued evidence for this account were cleared from this device. Admin will verify server retention requirements before actioning it."
+              : "Deletion review request saved, but this browser could not clear all private offline submission data. Open Submit and use Clear queue, then clear the draft and location proof. Admin will still verify server retention requirements.",
+            !localCleanupComplete,
+          );
+          await loadDeletionStatus();
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
-      $("logoutAllButton").addEventListener("click", async () => {
+      $("refreshDeletionStatusButton").addEventListener("click", () => void loadDeletionStatus());
+      $("accountDeletionStatus").addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-cancel-deletion-request]");
+        if (!button || !window.confirm("Cancel this account deletion request?")) return;
+        const requestedContext = captureAccountUiContext();
+        button.disabled = true;
         try {
-          await MelbBeerBusiness.apiFetch("/api/business/auth/logout-all", { method: "POST", body: "{}" });
-          await MelbBeerBusiness.getSupabaseClient()?.auth.signOut().catch(() => null);
+          await MelbBeerBusiness.sensitiveApiFetch(`/api/business/account/delete-request/${encodeURIComponent(button.dataset.cancelDeletionRequest)}`, {
+            method: "DELETE",
+          });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Account deletion request cancelled.");
+          await loadDeletionStatus();
+        } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          button.disabled = false;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not cancel the deletion request.", true);
+        }
+      });
+      $("refreshAccountSessionsButton").addEventListener("click", () => void loadAccountSessions());
+      $("accountSessionPrev").addEventListener("click", () => {
+        state.accountSessionOffset = Math.max(0, state.accountSessionOffset - ACCOUNT_SESSION_PAGE_SIZE);
+        void loadAccountSessions();
+      });
+      $("accountSessionNext").addEventListener("click", () => {
+        if (state.accountSessionOffset + ACCOUNT_SESSION_PAGE_SIZE >= state.accountSessionTotal) return;
+        state.accountSessionOffset += ACCOUNT_SESSION_PAGE_SIZE;
+        void loadAccountSessions();
+      });
+      $("submissionHistoryPrev").addEventListener("click", () => {
+        state.submissionHistoryOffset = Math.max(0, state.submissionHistoryOffset - SUBMISSION_HISTORY_PAGE_SIZE);
+        void loadSubmissionHistory();
+      });
+      $("submissionHistoryNext").addEventListener("click", () => {
+        if (state.submissionHistoryOffset + SUBMISSION_HISTORY_PAGE_SIZE >= state.submissionHistoryTotal) return;
+        state.submissionHistoryOffset += SUBMISSION_HISTORY_PAGE_SIZE;
+        void loadSubmissionHistory();
+      });
+      $("refreshVerificationCandidatesButton").addEventListener("click", () => {
+        state.verificationCandidatesLoaded = false;
+        void loadCommunityVerificationCandidates({ resetPage: true });
+      });
+      $("communityVerificationPrev").addEventListener("click", () => {
+        state.verificationCandidateOffset = Math.max(0, state.verificationCandidateOffset - VERIFICATION_CANDIDATE_PAGE_SIZE);
+        void loadCommunityVerificationCandidates();
+      });
+      $("communityVerificationNext").addEventListener("click", () => {
+        if (state.verificationCandidateOffset + VERIFICATION_CANDIDATE_PAGE_SIZE >= state.verificationCandidateTotal) return;
+        state.verificationCandidateOffset += VERIFICATION_CANDIDATE_PAGE_SIZE;
+        void loadCommunityVerificationCandidates();
+      });
+      $("communityVerificationList").addEventListener("click", (event) => {
+        const button = event.target.closest("[data-verification-result]");
+        if (button) void submitCommunityVerification(button);
+      });
+      $("accountSessionList").addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-revoke-account-session]");
+        if (!button || !window.confirm("Revoke this signed-in session?")) return;
+        const requestedContext = captureAccountUiContext();
+        button.disabled = true;
+        try {
+          await MelbBeerBusiness.sensitiveApiFetch(`/api/business/account/sessions/${encodeURIComponent(button.dataset.revokeAccountSession)}`, {
+            method: "DELETE",
+          });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          button.disabled = true;
+          button.textContent = "Revoked";
+          MelbBeerBusiness.setStatus($("dashboardStatus"), "Session revoked. Choose Refresh to reload the full session list.");
+        } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          button.disabled = false;
+          MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Could not revoke the session.", true);
+        }
+      });
+      $("logoutAllButton").addEventListener("click", async () => {
+        const requestedContext = captureAccountUiContext();
+        try {
+          const supabaseClient = MelbBeerBusiness.getSupabaseClient();
+          const providerSession = supabaseClient
+            ? await supabaseClient.auth.getSession()
+            : { data: { session: null }, error: null };
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          if (providerSession.error) throw new Error(providerSession.error.message);
+          const accessToken = providerSession.data.session?.access_token || null;
+          await MelbBeerBusiness.sensitiveApiFetch("/api/business/auth/logout-all", {
+            method: "POST",
+            body: JSON.stringify(accessToken ? { accessToken } : {}),
+          });
+          if (!isAccountUiContextCurrent(requestedContext)) return;
+          await supabaseClient?.auth.signOut({ scope: "local" }).catch(() => null);
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setAuthToken(null);
           showLoggedOut("All Pint Path sessions have been logged out.");
         } catch (error) {
+          if (!isAccountUiContextCurrent(requestedContext)) return;
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message, true);
         }
       });
       $("startMfaButton").addEventListener("click", () => void beginMfaEnrollment());
+      $("replaceMfaButton").addEventListener("click", () => {
+        if (!state.mfaVerifiedFactorId) return;
+        if (hasRecentMfaVerification()) {
+          void beginMfaEnrollment({ replaceFactorId: state.mfaVerifiedFactorId });
+          return;
+        }
+        hideMfaManagementActions();
+        setMfaStatus("Confirm your current authenticator before replacing it.", "action");
+        showMfaCodeEntry({ mode: "replace-authorize", factorId: state.mfaVerifiedFactorId });
+      });
+      $("removeMfaButton").addEventListener("click", () => {
+        if (!state.mfaVerifiedFactorId || !window.confirm("Remove authenticator protection from this account? A current code is required.")) return;
+        if (hasRecentMfaVerification()) {
+          void removeVerifiedMfaFactor();
+          return;
+        }
+        hideMfaManagementActions();
+        setMfaStatus("Confirm removal with your current authenticator.", "action");
+        showMfaCodeEntry({ mode: "remove", factorId: state.mfaVerifiedFactorId });
+      });
       $("verifyMfaButton").addEventListener("click", () => void verifyMfaCode());
       $("cancelMfaButton").addEventListener("click", () => void cancelMfaVerification());
       $("mfaCode").addEventListener("input", (event) => {
@@ -2901,12 +4313,33 @@
           void verifyMfaCode();
         }
       });
+      let initialSessionError = null;
       await MelbBeerBusiness.syncSupabaseSession()
-        .catch((error) => MelbBeerBusiness.setStatus($("authStatus"), error.message, true));
+        .catch((error) => {
+          initialSessionError = error;
+          MelbBeerBusiness.setStatus($("authStatus"), error.message, true);
+        });
       await refreshAccount();
-      const authError = new URLSearchParams(window.location.search).get("authError");
+      const accountParams = new URLSearchParams(window.location.search);
+      const authError = accountParams.get("authError");
       if (authError) {
         MelbBeerBusiness.setStatus($("authStatus"), authError, true);
+      }
+      if (
+        (initialSessionError?.code === "ACCOUNT_SUSPENDED_BILLING_RECOVERY" && initialSessionError?.recovery?.eligible === true)
+        || initialSessionError?.details?.billingRecoveryEligible
+        || accountParams.get("billingRecovery") === "1"
+      ) {
+        let recovery = initialSessionError?.recovery || null;
+        if (!recovery) {
+          try {
+            recovery = JSON.parse(window.sessionStorage.getItem("pintPathBillingRecoveryOptions") || "null");
+          } catch {
+            recovery = null;
+          }
+        }
+        window.sessionStorage.removeItem("pintPathBillingRecoveryOptions");
+        showBillingRecovery({ providerMode: true, recovery });
       }
     });
   </script>

@@ -1,47 +1,51 @@
-# BeerMap iOS
+# Pint Path iOS
 
-Native SwiftUI iPhone app for the existing BeerMap/Pint Path backend. Continue this app in place; do not create a duplicate iOS project.
+Native SwiftUI app for Pint Path. The existing Xcode target and source module retain the internal `BeerMap` name; the installed app is displayed as **Pint Path**. Continue this project in place.
 
-## Open And Run
+## Run
 
-1. Open `apps/ios/BeerMap.xcodeproj` in Xcode.
-2. Select the `BeerMap` scheme.
-3. Pick an iPhone simulator.
-4. Press Run.
+1. Install full Xcode.
+2. Open `apps/ios/BeerMap.xcodeproj`.
+3. Select the `BeerMap` scheme and an iPhone simulator.
+4. Run.
 
-The app defaults to `https://pintpath.au`. To point at a local backend, copy `Config.example.xcconfig` to `Config.xcconfig`, set `PINT_PATH_API_BASE_URL`, and attach the xcconfig to the BeerMap target build settings in Xcode.
-
-Useful values:
+The hosted API defaults to `https://pintpath.au`. For local development, copy `Config.example.xcconfig` to the ignored `Config.xcconfig`, set `PINT_PATH_API_BASE_URL`, and attach it to the target if required.
 
 ```xcconfig
-PINT_PATH_API_BASE_URL = https:/$()/pintpath.au
 PINT_PATH_API_BASE_URL = http:/$()/127.0.0.1:3000
 ```
 
-## Backend Contract
+## Current integration
 
-- Public config: `GET /api/business/config`
-- Public venues: `GET /api/business/venues`
-- Price records: `GET /api/business/price-records`
-- Auth: `POST /api/business/auth/signup`, `POST /api/business/auth/login`, `POST /api/business/auth/logout`
-- Account dashboard: `GET /api/business/account`
-- Venue manager dashboard: `GET /api/business/venue-portal`
-- Venue CRUD: `/api/business/venue-portal/:venueId/profile`, `/beers`, `/happy-hours`, `/specials`
-- Contributor updates: `POST /api/business/submissions`, `/wrong-price-reports`, `/requests`
-- Analytics: `POST /api/business/events`
+- Email/password signup, login, refresh, password recovery, and logout use Supabase Auth REST endpoints.
+- Google and Apple provider login use an ephemeral authorization code protected by PKCE, then exchange it for Supabase tokens.
+- Supabase access tokens are exchanged at `POST /api/business/auth/supabase-session` for the scoped Pint Path app session.
+- Sensitive session/export/deletion actions require a fresh provider sign-in token; a rejected action is never reported as complete.
+- A suspended paid account receives billing-only recovery without an app session, including personal-versus-managed-venue selection when needed.
+- App, Supabase refresh, and Supabase access tokens are stored in Keychain as `WhenUnlockedThisDeviceOnly`; a non-Keychain installation marker clears surviving Keychain sessions after reinstall.
+- No service-role key is bundled, and the app never reads private Supabase tables directly.
 
-The native app stores only the Pint Path bearer session token in Keychain. It does not connect directly to private Supabase tables and it never includes service-role keys.
+Provider login also requires `pintpath://auth-callback` in the Supabase redirect allow list and correctly configured Google/Apple provider consoles.
 
-## Native Screens
+## Native coverage
 
-- Discover
-- Account
-- Add
-- Bars
-- Settings
+- Venue search, MapKit pins, fixed free price preview or entitled full prices, wrong-price reporting, venue saving, and external directions.
+- Reviewed price, photo, and happy-hour submissions with optional one-time location proof.
+- Missing venue/beer requests and mission reserve/release.
+- Account dashboard, privacy controls, sessions, JSON export, deletion request/status/cancel, rewards, and counter-staff invitations.
+- Venue profile, beer/stock, happy hours, eligible specials, counter/POS tools, analytics, planner, and monthly report export for assigned roles.
+- Claim-required accounts are handed to the secure web claim workflow because business evidence and admin review remain web-managed.
 
-The Add tab covers reviewed beer-price submissions, wrong-price reports, missing venue/beer requests, and mission browsing. Photo evidence, one-time location proof, native OAuth, billing, venue claims, and reward/POS flows remain web-only. Native CI builds an unsigned simulator app; signing, privacy declarations, screenshots, TestFlight, and a real-device pass remain release-owner steps.
+## Deliberate remaining boundaries
 
-## Release Notes
+The photo library supports one image per native submission. Direct camera capture, multiple images, PDF evidence, offline upload queues, general plan/checkout changes, and admin moderation remain outside this native release. The narrow suspended-account billing-recovery portal is implemented. Signing, real-device/provider testing, screenshots, reviewer accounts, and App Store metadata/disclosures require release-owner credentials.
 
-Before App Store submission, replace placeholder signing, review the bundle ID, add final screenshots, confirm OAuth/deep-link settings if native Google/Apple login is enabled, and verify privacy disclosures against the production data flows.
+## Validation
+
+```bash
+swiftc -parse $(rg --files apps/ios/BeerMap -g '*.swift')
+plutil -lint apps/ios/BeerMap/Info.plist apps/ios/BeerMap/PrivacyInfo.xcprivacy
+xcodebuild -project apps/ios/BeerMap.xcodeproj -scheme BeerMap -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+```
+
+The final command requires full Xcode. CI also performs unsigned simulator and Release archive builds.

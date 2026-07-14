@@ -5,15 +5,28 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>BeerMap</string>
+	<string>Pint Path</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>au.pintpath.beermap.auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>pintpath</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleName</key>
-	<string>BeerMap</string>
+	<string>Pint Path</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
@@ -22,12 +35,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.food-and-drink</string>
-	<key>NSCameraUsageDescription</key>
-	<string>BeerMap can use the camera to attach venue menus, taps, receipts, or other intentional source evidence to a submission.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>BeerMap can use one-time location access to sort nearby venues and help confirm intentional venue submissions.</string>
+	<string>Pint Path can attach a one-time location fix when you choose location proof for a venue submission. It never requests background location.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>BeerMap can use selected photos as private source evidence for venue updates.</string>
+	<string>Pint Path can use selected photos as private source evidence for venue updates.</string>
 	<key>PINT_PATH_API_BASE_URL</key>
 	<string>$(PINT_PATH_API_BASE_URL)</string>
 	<key>SUPABASE_ANON_KEY</key>
@@ -47,7 +58,8 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 </dict>
 </plist>
-

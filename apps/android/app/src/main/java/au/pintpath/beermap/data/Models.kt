@@ -8,6 +8,29 @@ data class AuthResult(
     val account: Account
 )
 
+data class NativeAuthOutcome(
+    val authResult: AuthResult?,
+    val refreshToken: String?,
+    val accessToken: String?,
+    val confirmationRequired: Boolean
+)
+
+data class SupabaseAuthTokens(
+    val accessToken: String?,
+    val refreshToken: String?
+)
+
+data class BillingRecoveryResult(
+    val portalUrl: String,
+    val accountId: String?,
+    val message: String?
+)
+
+data class BillingRecoveryVenue(
+    val venueId: String,
+    val venueName: String
+)
+
 data class Account(
     val id: String,
     val email: String,
@@ -24,12 +47,29 @@ data class Account(
 
 data class AccountDashboard(
     val account: Account,
+    val access: AccountAccess?,
     val stats: AccountStats?,
     val savedCount: Int,
     val submissionCount: Int,
     val privacySettings: PrivacySettings?,
     val discounts: DiscountSummary?,
-    val pintPoints: PintPoints?
+    val pintPoints: PintPoints?,
+    val counterStaffInvitations: List<CounterStaffInvitation>
+)
+
+data class AccountAccess(
+    val accountRole: String?,
+    val isAdmin: Boolean,
+    val hasFullAccess: Boolean
+)
+
+data class CounterStaffInvitation(
+    val id: String,
+    val venueId: String,
+    val venueName: String,
+    val suburb: String?,
+    val invitedAt: String?,
+    val expiresAt: String?
 )
 
 data class AccountStats(
@@ -38,6 +78,15 @@ data class AccountStats(
     val pendingSubmissions: Int?,
     val totalSavingsCents: Int?,
     val trustScore: Double?
+)
+
+data class AccountSession(
+    val id: String,
+    val createdAt: String?,
+    val expiresAt: String?,
+    val lastUsedAt: String?,
+    val active: Boolean,
+    val current: Boolean
 )
 
 data class PrivacySettings(
@@ -76,7 +125,9 @@ data class Venue(
     val address: String?,
     val suburb: String?,
     val state: String?,
-    val membershipTier: String?
+    val membershipTier: String?,
+    val latitude: Double?,
+    val longitude: Double?
 ) {
     val location: String
         get() = listOfNotNull(suburb, state).joinToString(", ")
@@ -87,9 +138,12 @@ data class PriceRecord(
     val venueId: String?,
     val venueName: String?,
     val beerName: String?,
+    val normalizedBeerId: String?,
     val servingSize: String?,
     val price: Double?,
     val priceRedacted: Boolean,
+    val freePreviewIncluded: Boolean,
+    val isHappyHourPrice: Boolean,
     val happyHour: String?
 ) {
     val formattedPrice: String
@@ -100,16 +154,70 @@ data class PriceRecord(
         }
 }
 
+data class PriceRecordsResult(
+    val records: List<PriceRecord>,
+    val access: PriceAccessState?,
+    val preview: PricePreview?,
+    val nextCursor: String?
+)
+
+data class PricePreview(
+    val model: String,
+    val includedCount: Int,
+    val lockedCount: Int
+)
+
+data class PriceAccessState(
+    val status: String?,
+    val isAuthenticated: Boolean,
+    val accountRole: String?,
+    val isAdmin: Boolean,
+    val hasFullAccess: Boolean,
+    val ageConfirmed: Boolean,
+    val priceAccessModel: String?,
+    val canViewAllPrices: Boolean,
+    val freePreviewScope: String?
+)
+
 data class Mission(
     val id: String,
     val venueId: String?,
     val venueName: String,
     val suburb: String?,
     val reason: String?,
-    val points: Double?
+    val points: Double?,
+    val userProgress: String?,
+    val reservationAcceptedAt: String?,
+    val reservationExpiresAt: String?
+)
+
+data class UploadLocation(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Double?,
+    val capturedAt: String
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("latitude", latitude)
+        .put("longitude", longitude)
+        .putNullable("accuracyMeters", accuracyMeters)
+        .put("capturedAt", capturedAt)
+}
+
+data class AccountDeletionStatus(
+    val id: String,
+    val status: String,
+    val userMessage: String?,
+    val requestedAt: String?,
+    val executeAfter: String?,
+    val reviewedAt: String?,
+    val completedAt: String?,
+    val lastError: String?
 )
 
 data class PortalData(
+    val isAdmin: Boolean,
+    val accessLevel: String?,
     val accessState: String?,
     val assignments: List<VenueAssignment>,
     val selectedVenue: SelectedVenue?,
@@ -130,7 +238,8 @@ data class PortalData(
 data class VenueAssignment(
     val venueId: String,
     val venueName: String,
-    val suburb: String?
+    val suburb: String?,
+    val accessLevel: String?
 )
 
 data class SelectedVenue(
@@ -148,8 +257,11 @@ data class BarProfile(
     val website: String?,
     val instagram: String?,
     val description: String?,
+    val openingHours: JSONObject,
+    val venueTags: List<String>,
     val membershipTier: String?,
-    val active: Boolean
+    val active: Boolean,
+    val updatedAt: String?
 )
 
 data class TierCapabilities(
@@ -166,11 +278,15 @@ data class BarBeer(
     val beerName: String,
     val brewery: String?,
     val style: String?,
+    val abv: Double?,
     val serveSize: String?,
     val price: Double?,
     val onTap: Boolean,
     val inStock: Boolean,
-    val notes: String?
+    val notes: String?,
+    val updatedAt: String? = null,
+    val priceConfirmed: Boolean = false,
+    val stockConfirmed: Boolean = false
 )
 
 data class BarHappyHour(
@@ -200,7 +316,7 @@ data class VenueAnalytics(
     val profileViews: Int,
     val beerListViews: Int,
     val specialsViews: Int,
-    val priceReveals: Int,
+    val pricePreviewViews: Int,
     val privacyFloorMet: Boolean,
     val privacyThreshold: Int
 )
@@ -243,6 +359,31 @@ data class VenuePintPointSummary(
     val copy: String?
 )
 
+data class CounterMemberPreview(
+    val accountId: String,
+    val checkoutToken: String,
+    val authorizationExpiresAt: String?,
+    val pointsRemainingToday: Int,
+    val privacyCopy: String?
+)
+
+data class CounterPurchaseResult(
+    val recordId: String?,
+    val accountId: String?,
+    val pointsEarned: Int,
+    val idempotentReplay: Boolean,
+    val copy: String?,
+    val progressCopy: String?,
+    val rewardCopy: String?
+)
+
+data class CounterRewardResult(
+    val status: String,
+    val accountId: String?,
+    val copy: String?,
+    val instruction: String?
+)
+
 fun JSONObject.stringOrNull(key: String): String? =
     if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null
 
@@ -275,7 +416,9 @@ fun JSONObject.toVenue(): Venue = Venue(
     address = stringOrNull("address"),
     suburb = stringOrNull("suburb"),
     state = stringOrNull("state"),
-    membershipTier = stringOrNull("membershipTier")
+    membershipTier = stringOrNull("membershipTier"),
+    latitude = doubleOrNull("latitude"),
+    longitude = doubleOrNull("longitude")
 )
 
 fun JSONObject.toPriceRecord(): PriceRecord = PriceRecord(
@@ -283,9 +426,12 @@ fun JSONObject.toPriceRecord(): PriceRecord = PriceRecord(
     venueId = stringOrNull("venueId"),
     venueName = stringOrNull("venueName"),
     beerName = stringOrNull("beerName"),
+    normalizedBeerId = stringOrNull("normalizedBeerId"),
     servingSize = stringOrNull("servingSize"),
     price = doubleOrNull("price"),
     priceRedacted = optBoolean("priceRedacted", false),
+    freePreviewIncluded = optBoolean("freePreviewIncluded", false),
+    isHappyHourPrice = optBoolean("isHappyHourPrice", false),
     happyHour = stringOrNull("happyHour")
 )
 
@@ -295,16 +441,35 @@ fun JSONObject.toMission(): Mission = Mission(
     venueName = optString("venueName", "Venue mission"),
     suburb = stringOrNull("suburb"),
     reason = stringOrNull("reason"),
-    points = doubleOrNull("points")
+    points = doubleOrNull("points"),
+    userProgress = stringOrNull("userProgress"),
+    reservationAcceptedAt = stringOrNull("reservationAcceptedAt"),
+    reservationExpiresAt = stringOrNull("reservationExpiresAt")
+)
+
+fun JSONObject.toAccountSession(): AccountSession = AccountSession(
+    id = optString("id"),
+    createdAt = stringOrNull("createdAt"),
+    expiresAt = stringOrNull("expiresAt"),
+    lastUsedAt = stringOrNull("lastUsedAt"),
+    active = optBoolean("active", false),
+    current = optBoolean("current", false)
 )
 
 fun JSONObject.toAccountDashboard(): AccountDashboard = AccountDashboard(
     account = getJSONObject("account").toAccount(),
-    stats = optJSONObject("stats")?.let {
+    access = optJSONObject("access")?.let {
+        AccountAccess(
+            accountRole = it.stringOrNull("accountRole"),
+            isAdmin = it.optBoolean("isAdmin", false),
+            hasFullAccess = it.optBoolean("hasFullAccess", false)
+        )
+    },
+    stats = (optJSONObject("dashboardStats") ?: optJSONObject("stats"))?.let {
         AccountStats(
-            totalSubmissions = it.intOrNull("totalSubmissions"),
-            approvedSubmissions = it.intOrNull("approvedSubmissions"),
-            pendingSubmissions = it.intOrNull("pendingSubmissions"),
+            totalSubmissions = it.intOrNull("totalUploads") ?: it.intOrNull("totalSubmissions"),
+            approvedSubmissions = it.intOrNull("verifiedCount") ?: it.intOrNull("approvedSubmissions"),
+            pendingSubmissions = it.intOrNull("pendingVerificationCount") ?: it.intOrNull("pendingSubmissions"),
             totalSavingsCents = it.intOrNull("totalSavingsCents"),
             trustScore = it.doubleOrNull("trustScore")
         )
@@ -313,9 +478,9 @@ fun JSONObject.toAccountDashboard(): AccountDashboard = AccountDashboard(
     submissionCount = optJSONArray("submissions")?.length() ?: 0,
     privacySettings = optJSONObject("privacySettings")?.let {
         PrivacySettings(
-            optionalAnalyticsEnabled = it.optBoolean("optionalAnalyticsEnabled", true),
-            venueReportInclusionEnabled = it.optBoolean("venueReportInclusionEnabled", true),
-            productResearchEnabled = it.optBoolean("productResearchEnabled", true),
+            optionalAnalyticsEnabled = it.optBoolean("optionalAnalyticsEnabled", false),
+            venueReportInclusionEnabled = it.optBoolean("venueReportInclusionEnabled", false),
+            productResearchEnabled = it.optBoolean("productResearchEnabled", false),
             emailUpdatesEnabled = it.optBoolean("emailUpdatesEnabled", false)
         )
     },
@@ -332,12 +497,35 @@ fun JSONObject.toAccountDashboard(): AccountDashboard = AccountDashboard(
             pointsUntilReward = it.optInt("pointsUntilReward", 50),
             rewardAvailable = it.optBoolean("rewardAvailable", false)
         )
-    }
+    },
+    counterStaffInvitations = optJSONArray("counterStaffInvitations")?.objects()?.map {
+        CounterStaffInvitation(
+            id = it.optString("id"),
+            venueId = it.optString("venueId"),
+            venueName = it.optString("venueName", "Venue"),
+            suburb = it.stringOrNull("suburb"),
+            invitedAt = it.stringOrNull("invitedAt"),
+            expiresAt = it.stringOrNull("expiresAt")
+        )
+    }.orEmpty()
+)
+
+fun JSONObject.toAccountDeletionStatus(): AccountDeletionStatus = AccountDeletionStatus(
+    id = optString("id"),
+    status = optString("status"),
+    userMessage = stringOrNull("user_message"),
+    requestedAt = stringOrNull("requested_at"),
+    executeAfter = stringOrNull("execute_after"),
+    reviewedAt = stringOrNull("reviewed_at"),
+    completedAt = stringOrNull("completed_at"),
+    lastError = stringOrNull("last_error")
 )
 
 fun JSONObject.toPortalData(): PortalData {
     val inventory = optJSONObject("inventory") ?: JSONObject()
     return PortalData(
+        isAdmin = optBoolean("isAdmin", false),
+        accessLevel = stringOrNull("accessLevel"),
         accessState = stringOrNull("accessState"),
         assignments = optJSONArray("assignments")?.objects()?.map { it.toVenueAssignment() }.orEmpty(),
         selectedVenue = optJSONObject("selectedVenue")?.let {
@@ -368,7 +556,7 @@ fun JSONObject.toPortalData(): PortalData {
                 profileViews = it.optInt("profileViews", 0),
                 beerListViews = it.optInt("beerListViews", 0),
                 specialsViews = it.optInt("specialsViews", 0),
-                priceReveals = it.optInt("priceReveals", 0),
+                pricePreviewViews = it.optInt("pricePreviewViews", 0),
                 privacyFloorMet = it.optBoolean("privacyFloorMet", false),
                 privacyThreshold = it.optInt("privacyThreshold", 10)
             )
@@ -403,6 +591,31 @@ fun JSONObject.toRotatingCodeResult(): RotatingCodeResult = RotatingCodeResult(
     validMinutes = intOrNull("validMinutes"),
     pointsReserved = intOrNull("pointsReserved"),
     copy = stringOrNull("copy")
+)
+
+fun JSONObject.toCounterMemberPreview(): CounterMemberPreview = CounterMemberPreview(
+    accountId = optString("accountId"),
+    checkoutToken = optString("checkoutToken"),
+    authorizationExpiresAt = stringOrNull("authorizationExpiresAt"),
+    pointsRemainingToday = optInt("pointsRemainingToday", 0),
+    privacyCopy = stringOrNull("privacyCopy")
+)
+
+fun JSONObject.toCounterPurchaseResult(): CounterPurchaseResult = CounterPurchaseResult(
+    recordId = optJSONObject("record")?.stringOrNull("id"),
+    accountId = stringOrNull("accountId"),
+    pointsEarned = optInt("pointsEarned", 0),
+    idempotentReplay = optBoolean("idempotentReplay", false),
+    copy = stringOrNull("copy"),
+    progressCopy = stringOrNull("progressCopy"),
+    rewardCopy = stringOrNull("rewardCopy")
+)
+
+fun JSONObject.toCounterRewardResult(): CounterRewardResult = CounterRewardResult(
+    status = optString("status"),
+    accountId = stringOrNull("accountId"),
+    copy = stringOrNull("copy"),
+    instruction = stringOrNull("instruction")
 )
 
 fun JSONObject.toDailySpecialsPlanner(): DailySpecialsPlanner = DailySpecialsPlanner(
@@ -447,7 +660,8 @@ private fun JSONObject.plannerValue(key: String): String {
 fun JSONObject.toVenueAssignment(): VenueAssignment = VenueAssignment(
     venueId = optString("venueId"),
     venueName = optString("venueName", "Assigned venue"),
-    suburb = stringOrNull("suburb")
+    suburb = stringOrNull("suburb"),
+    accessLevel = stringOrNull("accessLevel")
 )
 
 fun JSONObject.toBarProfile(): BarProfile = BarProfile(
@@ -459,8 +673,13 @@ fun JSONObject.toBarProfile(): BarProfile = BarProfile(
     website = stringOrNull("website"),
     instagram = stringOrNull("instagram"),
     description = stringOrNull("description"),
+    openingHours = optJSONObject("openingHours") ?: JSONObject(),
+    venueTags = optJSONArray("venueTags")?.let { tags ->
+        (0 until tags.length()).mapNotNull { index -> tags.optString(index).takeIf(String::isNotBlank) }
+    }.orEmpty(),
     membershipTier = stringOrNull("membershipTier"),
-    active = optBoolean("active", true)
+    active = optBoolean("active", true),
+    updatedAt = stringOrNull("updatedAt")
 )
 
 fun JSONObject.toBarBeer(): BarBeer = BarBeer(
@@ -468,11 +687,13 @@ fun JSONObject.toBarBeer(): BarBeer = BarBeer(
     beerName = optString("beerName", "Beer"),
     brewery = stringOrNull("brewery"),
     style = stringOrNull("style"),
+    abv = doubleOrNull("abv"),
     serveSize = stringOrNull("serveSize"),
     price = doubleOrNull("price"),
     onTap = optBoolean("onTap", false),
     inStock = optBoolean("inStock", true),
-    notes = stringOrNull("notes")
+    notes = stringOrNull("notes"),
+    updatedAt = stringOrNull("updatedAt")
 )
 
 fun JSONObject.toHappyHour(): BarHappyHour = BarHappyHour(
@@ -508,8 +729,10 @@ fun BarProfile.toJson(): JSONObject = JSONObject()
     .putNullable("website", website)
     .putNullable("instagram", instagram)
     .putNullable("description", description)
-    .put("openingHours", JSONObject())
-    .put("venueTags", JSONArray())
+    .put("openingHours", openingHours)
+    .put("venueTags", JSONArray(venueTags))
+    .put("replaceVenueTags", false)
+    .putNullable("expectedUpdatedAt", updatedAt)
     .putNullable("membershipTier", membershipTier)
     .put("active", active)
 
@@ -518,12 +741,15 @@ fun BarBeer.toJson(): JSONObject = JSONObject()
     .put("beerName", beerName)
     .putNullable("brewery", brewery)
     .putNullable("style", style)
-    .putNullable("abv", null)
+    .putNullable("abv", abv)
     .putNullable("serveSize", serveSize)
     .putNullable("price", price)
     .put("onTap", onTap)
     .put("inStock", inStock)
     .putNullable("notes", notes)
+    .put("priceConfirmed", priceConfirmed)
+    .put("stockConfirmed", stockConfirmed)
+    .putNullable("expectedUpdatedAt", updatedAt)
 
 fun BarHappyHour.toJson(): JSONObject = JSONObject()
     .putNullable("id", id)

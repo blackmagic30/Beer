@@ -1,13 +1,18 @@
 # Security Backlog
 
-These items are intentionally deferred because they are larger than the current P0/P1 beta hardening pass or need infrastructure decisions.
+The open items below require external provider work, infrastructure decisions, or a later specialist assessment. Capabilities completed in-repo are recorded separately so they are not mistaken for missing work.
+
+## Recently Completed In-Repo
+
+- Device/session management: Account and Admin can inspect paginated active/inactive sessions, see last-used/device fingerprints, revoke individual sessions, and use logout-all behind recent-authentication checks.
+- Security reporting: `/security.html`, `/feedback.html?type=security_report`, `/.well-known/security.txt`, and `/security.txt` provide responsible-disclosure guidance and a private support submission path. A formal paid bug-bounty programme is not claimed.
 
 ## Full Admin MFA / TOTP
 
 - Priority: P0/P1
 - Risk: A compromised admin session or password can approve submissions, assign venue managers, and access sensitive review queues.
 - Current status: Repo-side production admin checks require verified email and fresh Supabase AAL2/MFA claims when `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
-- Remaining implementation: Configure Supabase MFA factors, prove admin AAL2 in staging, and add a richer recovery/session-management UX later.
+- Remaining implementation: Configure Supabase MFA factors, prove admin AAL2 in staging, and document the human recovery process. Session inspection/revocation UI is already implemented.
 - Why still tracked: Provider MFA setup and human recovery process cannot be completed from local code alone.
 
 ## Private Object Storage With Signed URLs
@@ -33,20 +38,6 @@ These items are intentionally deferred because they are larger than the current 
 - Current status: Migration contract tests enforce the intended local policy shape, and public exact-price reads remain server-gated through Express APIs.
 - Remaining implementation: Apply migrations to the live project, run Supabase Advisor/RLS Tester, confirm table grants/Data API exposure, and test anonymous/user/admin access with real staging accounts.
 - Why still tracked: Live provider state can drift from migration files and must be verified in Supabase itself.
-
-## Device And Session Management UI
-
-- Priority: P1
-- Risk: Users cannot yet inspect or revoke individual sessions from a UI.
-- Proposed implementation: Account page session list with last-used time and revoke controls, using the existing hashed session metadata.
-- Why deferred: Logout-all API exists; UI can follow after beta.
-
-## Security Contact / Bug Bounty Page
-
-- Priority: P2
-- Risk: Testers may report issues through public channels with sensitive details.
-- Proposed implementation: Add a private security contact page and disclosure guidance.
-- Why deferred: `SECURITY.md` covers repository guidance for now.
 
 ## Annual Penetration Test
 

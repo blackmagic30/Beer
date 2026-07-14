@@ -1,7 +1,7 @@
 # Pint Path Production Readiness Report
 
 Date: 2026-05-25
-Latest update: 2026-07-01
+Latest update: 2026-07-14
 
 ## Executive Summary
 
@@ -51,7 +51,7 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 - Runtime: Node.js 22+ with TypeScript and Express.
 - Frontend: static HTML/CSS/JS in `viewer/`.
 - Database: SQLite via `better-sqlite3`, initialized additively from `src/db/schema.sql`.
-- Auth: local Pint Path bearer sessions plus optional Supabase OAuth session exchange; production admin actions require verified email and AAL2 step-up claims.
+- Auth: Supabase email/password and Google/Apple provider identities are exchanged for scoped Pint Path app sessions. The browser app session uses an HttpOnly cookie; direct Pint Path password signup/login is development/localhost-only. Production admin actions require verified email and, during normal operation, AAL2 step-up claims.
 - Payments: Stripe Checkout/webhooks plus demo billing mode guarded by env.
 - External services: Supabase, Google Maps, OpenAI, Stripe. Historical phone-call automation code has been removed from the repository and is not built, mounted, or configured.
 - Hosting assumptions: Railway, with build `npm run build`, start `node dist/src/server.js`.
@@ -92,8 +92,8 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
   - `PUBLIC_BASE_URL` must be HTTPS in production.
   - `ADMIN_EMAILS` can be blank while the official owner/admin email is pending; admin routes fail closed until it is configured.
   - `GOOGLE_MAPS_API_KEY` is required in production.
-  - `REQUIRE_ADMIN_MFA_IN_PRODUCTION` must remain enabled in production.
-  - `SOURCE_EVIDENCE_SIGNING_SECRET` can be pending at boot; source-evidence links fail closed until configured.
+  - `REQUIRE_ADMIN_MFA_IN_PRODUCTION` defaults to enabled. A temporary owner-led field-test exception may set it false only while the admin allowlist and verified email remain enforced.
+  - `SOURCE_EVIDENCE_SIGNING_SECRET` must be a unique high-entropy secret of at least 32 bytes; production boot fails without it.
   - `REDIS_URL` can be pending at boot; rate-limited write/auth/payment routes fail closed in production unless the explicit in-memory override is set.
 - Added `/ready` readiness route that initializes lazy routers/database-backed services.
 - Added `Cache-Control: no-store` to `/config.js`.
@@ -105,9 +105,9 @@ The codebase is mostly ready for a controlled beta behind careful operations, bu
 ## Existing Critical Controls Verified In The Branch
 
 - Public exact-price records are server-gated and redacted by default.
-- Anonymous/free reveal limits are enforced server-side.
+- Anonymous and free accounts receive only the fixed server-owned preview; non-preview exact prices require premium, contributor, or admin access.
 - Admin APIs return unauthorized/forbidden to unauthenticated/non-admin callers.
-- Legacy call/result APIs remain admin-only.
+- Legacy call/result APIs are removed from the active router and return not found; they are not an admin API surface.
 - Venue managers are scoped to assigned venues only.
 - Venue-manager submitted changes are saved as pending review and do not publish until admin approval.
 - Pending venue-manager changes are visible only to the owning manager and admins.
@@ -184,7 +184,7 @@ P1 blockers before broad paid/public rollout:
 - Live Stripe Checkout/webhook flow needs provider-backed test verification.
 - Supabase RLS migration/policies need to be applied and audited before any direct browser writes. The migration has been expanded but not applied to a real project here.
 - Redis-backed rate limiting must be provisioned and smoke-tested with `REDIS_URL`; the repo now fails closed by default in production if Redis is missing. Do not use the in-memory production override for full-scale launch.
-- Supabase Confirm Email/custom SMTP must be configured for verified-account onboarding. Local email/password self-serve remains blocked for production until verification is implemented.
+- Supabase Confirm Email/custom SMTP, provider callback URLs, and verified-email timestamps must be configured and exercised in staging; production onboarding is provider-first and local password signup/login remains intentionally localhost/development-only.
 - Production observability is currently mostly logs/checklists rather than alerting/tracing/SLOs.
 - Legal/privacy review of Terms, Privacy, cookie/analytics consent, account export/deletion wording, and alcohol/responsible-service wording remains a human/provider task before broad public scale.
 

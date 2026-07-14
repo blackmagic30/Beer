@@ -15,8 +15,10 @@ function required(name: string): string {
 const result = await runOffsiteBackup({
   databasePath: path.resolve(required("DATABASE_PATH")),
   evidencePath: path.resolve(process.env.SOURCE_EVIDENCE_STORAGE_DIR || "./data/source-evidence"),
-  supabaseUrl: required("SUPABASE_URL"),
-  serviceRoleKey: required("SUPABASE_SERVICE_ROLE_KEY"),
+  sourceSupabaseUrl: required("SUPABASE_URL"),
+  sourceServiceRoleKey: required("SUPABASE_SERVICE_ROLE_KEY"),
+  destinationSupabaseUrl: required("OFFSITE_BACKUP_SUPABASE_URL"),
+  destinationServiceRoleKey: required("OFFSITE_BACKUP_SERVICE_ROLE_KEY"),
   bucketName: process.env.OFFSITE_BACKUP_BUCKET?.trim() || "pintpath-backups",
   retentionDays: Number(process.env.OFFSITE_BACKUP_RETENTION_DAYS || 30),
 });

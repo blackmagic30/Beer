@@ -5,11 +5,24 @@ export function success<T>(data: T) {
   };
 }
 
-export function failure(message: string, details?: unknown) {
+export function failure(
+  message: string,
+  details?: unknown,
+  publicMetadata?: {
+    code: string;
+    recovery?: {
+      eligible: boolean;
+      endpoint: string;
+      consumer: boolean;
+      venues: Array<{ venueId: string; venueName: string }>;
+    };
+  } | undefined,
+) {
   return {
     ok: false,
     error: {
       message,
+      ...(publicMetadata ?? {}),
       ...(details === undefined ? {} : { details }),
     },
   };

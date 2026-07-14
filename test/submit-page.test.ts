@@ -109,6 +109,8 @@ describe("submit page auth gate", () => {
     expect(html).toContain("/api/business/venue-places/search");
     expect(html).toContain("/api/business/venue-places/");
     expect(html).toContain("googlePlaceId: selectedNewVenueGooglePlace?.googlePlaceId || null");
+    expect(html).toContain("googlePlaceId: newVenue.googlePlaceId");
+    expect(html).toContain("result.duplicate");
     expect(html).toContain("Choose the new venue from Google Maps before submitting");
     expect(html).toContain("newVenue,");
     expect(html).not.toContain("Review/edit selected details");
@@ -123,20 +125,24 @@ describe("submit page auth gate", () => {
     expect(html).toContain("Add beer, cider, or happy-hour data below and use Submit for review to link drinks to this venue.");
   });
 
-  it("keeps submit-time, notes, and evidence fields constrained by submission type", () => {
+  it("keeps submit-time and notes constrained while allowing optional evidence in every data-entry mode", () => {
     const html = submitHtml();
 
     expect(html).not.toContain("Observed date/time");
     expect(html).not.toContain('name="observedAt"');
     expect(html).not.toContain('name="notes" placeholder="Optional notes, conditions, or source details"');
-    expect(html).toContain('id="sourcePhotoField" class="field is-hidden"');
-    expect(html).toContain('id="sourcePhoto" type="file" accept="image/*,application/pdf" multiple disabled');
+    expect(html).toContain('id="sourcePhotoField" class="field"');
+    expect(html).toContain('id="sourcePhoto" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,application/pdf,.pdf" multiple');
     expect(html).toContain('id="sourcePhotoList" class="sourcePhotoList" aria-live="polite" hidden');
     expect(html).toContain("let selectedSourcePhotoFiles = [];");
-    expect(html).toContain("sourcePhotoField.classList.toggle(\"is-hidden\", !isPhotoOnly)");
-    expect(html).toContain("sourcePhoto.disabled = !isPhotoOnly");
+    expect(html).toContain('sourcePhotoField.classList.remove("is-hidden")');
+    expect(html).toContain("sourcePhoto.disabled = false");
     expect(html).toContain("sourcePhoto.required = isPhotoOnly && selectedSourcePhotoFiles.length === 0");
-    expect(html).toContain("Upload up to 6 clear images, or one flat PDF menu.");
+    expect(html).toContain("Evidence is optional for data-entry modes and required for Photo/upload source.");
+    expect(html).toContain("Upload up to 6 JPEG, PNG, or WebP images (25MB maximum each), or one flat PDF menu (8MB maximum).");
+    expect(html).toContain("assertPreparedEvidenceFits(sourcePhotoDataUrls, sourceDocumentDataUrl)");
+    expect(html).toContain("SOURCE_IMAGE_COMBINED_MAX_BYTES = 8 * 1024 * 1024");
+    expect(html).toContain("SOURCE_EVIDENCE_COMBINED_MAX_BYTES = 11 * 1024 * 1024");
     expect(html).toContain("sourceDocumentDataUrl");
     expect(html).toContain("const observedAt = new Date().toISOString();");
     expect(html).toContain('submissionTypeSelect.value === "photo_upload"');
@@ -176,29 +182,30 @@ describe("submit page auth gate", () => {
     const html = submitHtml();
 
     expect(html).not.toContain("Points need location proof");
-    expect(html).not.toContain("Use my location for points");
-    expect(html).not.toContain('id="captureLocationButton"');
+    expect(html).toContain("Use my location for points");
+    expect(html).toContain('id="captureLocationButton"');
+    expect(html).toContain('id="clearLocationButton"');
     expect(html).toContain("function captureUploadLocation()");
     expect(html).toContain("async function ensureUploadLocationForSubmit()");
     expect(html).toContain("await ensureUploadLocationForSubmit()");
-    expect(html).toContain("Location proof is optional for now");
-    expect(html).toContain("Submitting without location proof is allowed for field testing");
+    expect(html).toContain("Location proof is optional.");
+    expect(html).toContain("Location permission was denied or unavailable.");
     expect(html).toContain("uploadLocation,");
     expect(html).toContain("getCurrentPosition");
     expect(html).toContain("UPLOAD_LOCATION_STORAGE_KEY");
     expect(html).toContain("restoreUploadLocation()");
-    expect(html).toContain("localStorage.setItem");
-    expect(html).toContain("localStorage.removeItem");
+    expect(html).toContain("writeAccountScopedValue(UPLOAD_LOCATION_STORAGE_KEY");
+    expect(html).toContain("removeAccountScopedValue(UPLOAD_LOCATION_STORAGE_KEY)");
     expect(html).not.toContain("window.addEventListener(\"DOMContentLoaded\", captureUploadLocation");
   });
 
-  it("keeps silent draft autosave and offline queued submissions without visible field-test status", () => {
+  it("makes account-scoped draft, location, and offline queue recovery explicit", () => {
     const html = submitHtml();
     const css = businessCss();
 
     expect(html).not.toContain('class="fieldTestConsole"');
     expect(html).not.toContain('id="networkStatusPill"');
-    expect(html).not.toContain('id="locationStatusPill"');
+    expect(html).toContain('id="locationStatusPill"');
     expect(html).toContain('const networkStatusPill = document.getElementById("networkStatusPill")');
     expect(html).toContain('const locationStatusPill = document.getElementById("locationStatusPill")');
     expect(html).toContain("if (!element) {");
@@ -206,25 +213,40 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="submissionQueueList"');
     expect(html).toContain('id="retryQueuedSubmissionsButton"');
     expect(html).toContain('id="clearQueuedSubmissionsButton"');
-    expect(html).not.toContain('id="draftStatusPill"');
+    expect(html).toContain('id="draftStatusPill"');
     expect(html).not.toContain('id="saveDraftButton"');
-    expect(html).not.toContain('id="restoreDraftButton"');
-    expect(html).not.toContain('id="clearDraftButton"');
+    expect(html).toContain('id="restoreDraftButton"');
+    expect(html).toContain('id="clearDraftButton"');
     expect(html).toContain("FIELD_DRAFT_STORAGE_KEY");
     expect(html).toContain("function collectFieldDraft()");
-    expect(html).toContain("localStorage.setItem(FIELD_DRAFT_STORAGE_KEY");
+    expect(html).toContain("writeAccountScopedValue(FIELD_DRAFT_STORAGE_KEY");
+    expect(html).toContain("ownerAccountId: requireActiveSubmissionAccountId()");
+    expect(html).toContain('id="legacyQueueWarning"');
+    expect(html).toContain("will never upload automatically");
+    expect(html).toContain("async function discardOwnerlessLegacyQueue");
     expect(html).toContain('submissionForm.addEventListener("input", scheduleDraftAutosave)');
     expect(html).toContain('window.addEventListener("online", () => {');
     expect(html).toContain('window.addEventListener("offline", updateNetworkStatus)');
     expect(html).toContain("SUBMISSION_QUEUE_STORAGE_KEY");
     expect(html).toContain("SUBMISSION_QUEUE_DB_NAME");
     expect(html).toContain("SUBMISSION_QUEUE_STORE_NAME");
+    expect(html).toContain("const SUBMISSION_QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000");
+    expect(html).toContain("function isRetainedQueuedSubmission");
+    expect(html).toContain("async function purgeExpiredSubmissionQueueInDb");
+    expect(html).toContain("function purgeExpiredLegacySubmissionQueuesForAllOwners");
+    expect(html).toContain("async function purgeExpiredSubmissionDataBeforeAuth");
+    expect(html).toContain("await purgeExpiredSubmissionDataBeforeAuth()");
+    expect(html).toContain("writeAccountScopedValue(SUBMISSION_QUEUE_STORAGE_KEY, JSON.stringify(cleanQueue))");
+    expect(html).toContain("expire after 24 hours");
     expect(html).toContain("indexedDB.open(SUBMISSION_QUEUE_DB_NAME");
     expect(html).toContain("async function migrateLegacySubmissionQueueToDb");
     expect(html).toContain("async function queueSubmissionPayload");
     expect(html).toContain("payload.clientSubmissionId = clientSubmissionId");
     expect(html).toContain("await queueSubmissionPayload(submissionPayload)");
     expect(html).toContain("function renderSubmissionQueue");
+    expect(html).toContain("Array.isArray(payload.sourcePhotoDataUrls)");
+    expect(html).toContain('payload.sourceDocumentDataUrl ? "PDF" : ""');
+    expect(html).toContain('`${evidenceTypes.join(" + ")} ready`');
     expect(html).toContain("async function removeQueuedSubmission");
     expect(html).toContain("async function clearSubmissionQueue");
     expect(html).toContain("async function requestPersistentSubmissionStorage");
@@ -261,6 +283,8 @@ describe("submit page auth gate", () => {
 
     expect(html).toContain("SOURCE_PHOTO_MAX_EDGE");
     expect(html).toContain("SOURCE_PHOTO_MAX_FILES");
+    expect(html).toContain("const SOURCE_PHOTO_MAX_RAW_BYTES = 25 * 1024 * 1024");
+    expect(html).toContain("function isSupportedSourceImage");
     expect(html).toContain("SOURCE_PHOTO_OUTPUT_TYPE");
     expect(html).toContain("SOURCE_PHOTO_OUTPUT_QUALITY");
     expect(html).toContain("function loadImageFromFile");
@@ -275,7 +299,9 @@ describe("submit page auth gate", () => {
     expect(html).toContain("await readSourcePhotoSelectionDataUrls(selectedSourcePhotoFiles)");
     expect(html).toContain("sourcePhotoDataUrls,");
     expect(html).not.toContain("combinePhotoDataUrls");
-    expect(html).toContain("Attach a real photo or screenshot image");
+    expect(html).toContain("Attach a JPEG, PNG, or WebP photo or screenshot. Convert HEIC/HEIF photos to JPEG first.");
+    expect(html).toContain("Each source image must be 25MB or smaller before it is prepared for upload.");
+    expect(html).toContain("GIF, SVG, AVIF, and other file types are not supported.");
     expect(html).toContain("clientSubmissionId: createQueuedSubmissionId()");
   });
 

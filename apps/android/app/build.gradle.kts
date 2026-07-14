@@ -15,8 +15,8 @@ android {
         applicationId = "au.pintpath.beermap"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "1.0.0"
 
         val apiBaseUrl = (project.findProperty("PINT_PATH_API_BASE_URL") as String?) ?: "https://pintpath.au"
         val supabaseUrl = (project.findProperty("SUPABASE_URL") as String?) ?: ""
@@ -50,8 +50,10 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.exifinterface:exifinterface:1.4.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

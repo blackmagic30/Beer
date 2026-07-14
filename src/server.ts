@@ -3,6 +3,8 @@ import type { Server } from "node:http";
 import { redactSecrets } from "./lib/redact.js";
 
 let server: Server | undefined;
+let shutdownServices: () => Promise<void> = async () => {};
+let shuttingDown = false;
 
 function getDeployMeta(): Record<string, string> {
   return {
@@ -33,13 +35,14 @@ async function boot(): Promise<void> {
         meta: getDeployMeta(),
       }),
     );
-    const [{ createApp, initializeAppServices }, { env }, { logger }] = await Promise.all([
+    const [{ createApp, initializeAppServices, shutdownAppServices }, { env }, { logger }] = await Promise.all([
       import("./app.js"),
       import("./config/env.js"),
       import("./lib/logger.js"),
     ]);
     const app = createApp();
     await initializeAppServices();
+    shutdownServices = shutdownAppServices;
     const useRailwayBinding = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined;
     const listenHost = useRailwayBinding ? "::" : env.HOST;
 
@@ -96,15 +99,26 @@ async function boot(): Promise<void> {
 
 void boot();
 
-function shutdown(signal: string): void {
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.info("Shutting down server", { signal });
 
   if (!server) {
+    await shutdownServices().catch(() => undefined);
     process.exit(0);
   }
 
-  server.close(() => {
-    process.exit(0);
+  server.close(async () => {
+    try {
+      await shutdownServices();
+      process.exit(0);
+    } catch (error) {
+      console.error("Application service shutdown failed", {
+        error: error instanceof Error ? redactSecrets(error.message) : redactSecrets(String(error)),
+      });
+      process.exit(1);
+    }
   });
 
   setTimeout(() => {
@@ -112,8 +126,8 @@ function shutdown(signal: string): void {
   }, 10_000).unref();
 }
 
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("uncaughtException", (error) => {
   console.error("Uncaught exception", redactSecrets({
     error: error instanceof Error ? error.message : String(error),

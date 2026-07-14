@@ -9,7 +9,13 @@ export type BeerUnavailableReason =
   | "unknown"
   | null;
 
-export type AdminIngestionStatus = "pending_review" | "published" | "rejected" | "failed";
+export type AdminIngestionStatus =
+  | "pending_review"
+  | "publishing"
+  | "rejecting"
+  | "published"
+  | "rejected"
+  | "failed";
 
 export type AdminIngestionSourceType = "menu_photo_upload" | "source_image_url" | "source_reference";
 
@@ -47,6 +53,10 @@ export interface AdminIngestionQueueRecord {
   sourceType: AdminIngestionSourceType;
   sourceUrl: string | null;
   imageDataUrl: string | null;
+  hasImageData: boolean;
+  imageRetentionExpiresAt: string | null;
+  imageRedactedAt: string | null;
+  imageRedactionReason: string | null;
   note: string | null;
   status: AdminIngestionStatus;
   venueNameGuess: string | null;

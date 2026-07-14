@@ -6,11 +6,15 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import * as QRCode from "qrcode";
 
 import { CONTRIBUTION_POINTS, PREMIUM_PRICING, SUBMISSION_LIMITS } from "../../config/business-rules.js";
+import { CURRENT_LEGAL_POLICY_VERSION } from "../../config/legal.js";
 import type { Env } from "../../config/env.js";
 import {
   BusinessRepository,
+  ACCOUNT_DATA_RETENTION_POLICY,
   MissionReservationError,
+  OptimisticConcurrencyError,
   type AgeVerification,
+  type AccountRewardVoucher,
   type AccountPreferences,
   type BarPendingChange,
   type BarPendingChangeAction,
@@ -18,6 +22,7 @@ import {
   type BusinessAccount,
   type BarMembershipTier,
   type BarProfile,
+  type BarSpecial,
   type MonthlyBarReport,
   type BusinessMission,
   type MissionVenueCandidate,
@@ -41,6 +46,7 @@ import {
   type SubscriptionStatus,
 } from "../../db/business.repository.js";
 import { BeerCatalogRepository, type BeerCatalogAdminItem, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
+import { purgeExpiredMigrationBackups } from "../../db/database.js";
 import {
   SUPPORTED_BEERS,
   VIEWER_TRACKED_BEERS,
@@ -51,6 +57,11 @@ import {
 } from "../../constants/beers.js";
 import { AppError, ExternalServiceError } from "../../lib/errors.js";
 import { logger } from "../../lib/logger.js";
+import {
+  createMockReportEmailProvider,
+  createResendReportEmailProvider,
+  runMonthlyReportDelivery,
+} from "../../lib/monthly-report-delivery.js";
 import type { MenuPhotoOcrBeer, MenuPhotoOcrProcessor, MenuPhotoOcrResult } from "../../lib/menu-photo-ocr.js";
 import { redactSecrets } from "../../lib/redact.js";
 import {
@@ -77,10 +88,13 @@ import type {
   AccountPreferencesInput,
   AccountPrivacySettingsInput,
   AdminDashboardQuery,
+  AdminPaginationInput,
   AuthLoginInput,
+  BillingRecoveryPortalInput,
   AuthSignupInput,
   AuthSupabaseSessionInput,
   BarBeerInput,
+  BarBeerBulkInput,
   BarClaimRequestInput,
   VenueClaimReviewInput,
   BarHappyHourInput,
@@ -88,6 +102,7 @@ import type {
   BarProfileInput,
   BarSpecialInput,
   BarTierCheckoutInput,
+  BeerCatalogAdminQuery,
   CheckoutInput,
   CheckoutSessionInput,
   CreateSubmissionInput,
@@ -100,12 +115,15 @@ import type {
   LeaderboardPrizeCampaignInput,
   LeaderboardPrizeFinalizeInput,
   LeaderboardQuery,
+  RewardVoucherTransitionInput,
   FreePintRewardCodeInput,
   FreePintRewardDecisionInput,
   MonthlyReportDeliveryInput,
   MonthlyReportExportQuery,
   MonthlyReportGenerateInput,
   PintPointMemberPreviewInput,
+  LogoutAllInput,
+  PasswordResetCompleteInput,
   PintPointDrinkRecordInput,
   PintPointDrinkVoidInput,
   PosDiscountRedemptionInput,
@@ -125,6 +143,8 @@ import type {
   VenueOutreachInput,
   VenuePortalQuery,
   VenueRequestInput,
+  VenueReportDeliverySettingsInput,
+  VenueReconciliationQuery,
   VerificationInput,
   WrongPriceReportInput,
 } from "./business.schemas.js";
@@ -138,6 +158,11 @@ interface VenueRow {
   postcode: string | null;
   latitude: number | null;
   longitude: number | null;
+  phone?: string | null;
+  website?: string | null;
+  instagram?: string | null;
+  description?: string | null;
+  openingHours?: Record<string, unknown>;
   membershipTier?: BarMembershipTier;
   highlightedName?: boolean;
   premiumBadge?: string | null;
@@ -154,6 +179,17 @@ interface MissionAreaLookup {
   label: string;
   source: "google_geocode" | "local_cache";
   confidence: "exact" | "approximate";
+}
+
+interface MissionListQuery {
+  suburb?: string | undefined;
+  q?: string | undefined;
+  latitude?: number | undefined;
+  longitude?: number | undefined;
+  radiusKm?: number | undefined;
+  sort?: "points" | "saved" | "stale" | "no_data" | "missing_happy_hour" | "most_requested" | "high_demand" | "nearby" | undefined;
+  limit: number;
+  offset?: number | undefined;
 }
 
 interface GoogleGeocodeResponse {
@@ -195,7 +231,21 @@ interface UserGoogleVenueLookup {
   existingVenue: Pick<VenueRow, "id" | "name" | "address" | "suburb"> | null;
 }
 
-const AUTO_MISSION_VENUE_LIMIT = 2_000;
+type RemoteReadinessDependency = {
+  status: "ok" | "failed" | "configured" | "required_unconfigured" | "optional_unconfigured" | "field_test_unconfigured";
+  required: boolean;
+  liveProbe: boolean;
+  error?: string;
+};
+
+type SupabaseReadinessDependencies = {
+  ready: boolean;
+  supabaseAuth: RemoteReadinessDependency;
+  supabaseDatabase: RemoteReadinessDependency;
+  supabaseEvidenceStorage: RemoteReadinessDependency;
+};
+
+const AUTO_MISSION_VENUE_PAGE_SIZE = 500;
 const AUTO_MISSION_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
 const AUTO_MISSION_REFRESH_STATE_KEY = "auto_missions_refresh";
 const MISSION_ACCEPTANCE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -227,7 +277,7 @@ interface StripeCheckoutSession {
   status?: string | null;
   payment_status?: string | null;
   customer?: string | { id?: string | null } | null;
-  subscription?: string | { id?: string | null; current_period_end?: number | null } | null;
+  subscription?: string | { id?: string | null; status?: string | null; current_period_end?: number | null } | null;
   metadata?: Record<string, string> | null;
   error?: {
     message?: string;
@@ -263,15 +313,6 @@ function addMinutes(baseIso: string, minutes: number): string {
   const date = new Date(baseIso);
   date.setUTCMinutes(date.getUTCMinutes() + minutes);
   return date.toISOString();
-}
-
-function endOfMonthIso(baseIso: string): string {
-  const date = new Date(baseIso);
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 23, 59, 59, 999)).toISOString();
-}
-
-function monthKeyFromIso(value: string): string {
-  return value.slice(0, 7);
 }
 
 function getGoogleVenueAddressComponent(
@@ -439,6 +480,10 @@ export function sanitizePostgrestIlikeTerm(value: string | null | undefined): st
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 80);
+}
+
+function isPostgresUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
 function safeProviderDisplayName(value: string | null): string | null {
@@ -771,6 +816,11 @@ function sanitizeAccount(account: BusinessAccount) {
     privacyAcceptedAt: account.privacyAcceptedAt,
     termsVersion: account.termsVersion,
     privacyVersion: account.privacyVersion,
+    legalAcceptanceCurrent:
+      account.termsVersion === CURRENT_LEGAL_POLICY_VERSION &&
+      account.privacyVersion === CURRENT_LEGAL_POLICY_VERSION &&
+      Boolean(account.termsAcceptedAt) &&
+      Boolean(account.privacyAcceptedAt),
     subscriptionStatus: account.subscriptionStatus,
     premiumUntil: account.premiumUntil,
     trustScore: account.trustScore,
@@ -835,6 +885,15 @@ const PRIVATE_EVIDENCE_PREFIX = "private:evidence:";
 const FILESYSTEM_EVIDENCE_PROVIDER = "filesystem_private";
 const SUPABASE_EVIDENCE_PROVIDER = "supabase_private";
 const SUPABASE_EVIDENCE_BUCKET = "beermap-source-evidence";
+const SUPABASE_EVIDENCE_BUCKET_MIN_BYTES = 8 * 1024 * 1024;
+const SUPABASE_EVIDENCE_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "application/pdf",
+] as const;
 
 function getBearerToken(header: string | undefined): string | null {
   if (!header) {
@@ -930,6 +989,33 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
+function getSupabaseSessionIdHash(accessToken: string): string | null {
+  const payload = decodeJwtPayload(accessToken);
+  const sessionId = payload?.session_id;
+  if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 256) {
+    return null;
+  }
+  return hashToken(`supabase-session:${sessionId}`);
+}
+
+function getSupabaseTokenIssuedAt(accessToken: string): string | null {
+  const issuedAt = decodeJwtPayload(accessToken)?.iat;
+  return typeof issuedAt === "number" && Number.isSafeInteger(issuedAt) && issuedAt > 0
+    ? new Date(issuedAt * 1000).toISOString()
+    : null;
+}
+
+function getSupabaseAuthenticationMethods(accessToken: string): string[] {
+  const amr = decodeJwtPayload(accessToken)?.amr;
+  if (!Array.isArray(amr)) return [];
+  return amr.flatMap((entry) => {
+    if (typeof entry === "string") return [entry.toLowerCase()];
+    if (!entry || typeof entry !== "object") return [];
+    const method = (entry as Record<string, unknown>).method;
+    return typeof method === "string" ? [method.toLowerCase()] : [];
+  });
+}
+
 function getSupabaseEmailVerifiedAt(user: unknown): string | null {
   const record = user as Record<string, unknown>;
   const value = record.email_confirmed_at ?? record.confirmed_at;
@@ -958,13 +1044,17 @@ function getSupabaseMfaClaims(accessToken: string): { mfaLevel: string; mfaVerif
   };
 }
 
-function isFullAccess(account: BusinessAccount | null): boolean {
+function isFullAccess(account: BusinessAccount | null, currentAdmin = false): boolean {
   if (!account) {
     return false;
   }
 
+  if (account.status !== "active") {
+    return false;
+  }
+
   if (account.role === "admin" || account.subscriptionStatus === "admin") {
-    return true;
+    return currentAdmin;
   }
 
   if (!account.ageConfirmedAt) {
@@ -984,11 +1074,12 @@ function isFullAccess(account: BusinessAccount | null): boolean {
 
 function buildConsumerPremiumToolkit(input: {
   account: BusinessAccount | null;
+  currentAdmin?: boolean;
   savedItems?: SavedItem[];
   preferences?: AccountPreferences | null;
   discountStats?: { totalRedemptions: number; estimatedSavingsCents: number; uniqueVenues: number } | null;
 }) {
-  const hasFullAccess = isFullAccess(input.account);
+  const hasFullAccess = isFullAccess(input.account, input.currentAdmin);
   const savedItems = input.savedItems ?? [];
   const savedCounts = savedItems.reduce(
     (counts, item) => {
@@ -1051,7 +1142,7 @@ function buildConsumerPremiumToolkit(input: {
         title: "Cheapest-night filters",
         unlocked: hasFullAccess,
         badge: hasFullAccess ? "Active" : "Paid",
-        copy: "Use beer search, cheapest sort, verified-only, under-A$10, nearby, and saved-area filters without daily reveal limits.",
+        copy: "Use beer search, cheapest sort, verified-only, under-A$10, nearby, and saved-area filters across the full verified-price catalogue.",
         href: "/index.html",
         ctaLabel: "Find value",
       },
@@ -1147,6 +1238,38 @@ function isSpecialRecord(record: PublicVenuePriceRecord): boolean {
 
 function shouldExposePriceRecord(record: PublicVenuePriceRecord): boolean {
   return isHappyHourRecord(record) || isSpecialRecord(record) || isLikelyBeerName(record.beerName);
+}
+
+const ESSENTIAL_EVENT_TYPES = new Set<EventTrackInput["eventType"]>([
+  "age_confirmed",
+  "age_verification_started",
+  "age_verification_status_updated",
+  "checkout_started",
+  "subscription_created",
+  "subscription_cancelled",
+  "submission_completed",
+  "data_upload_created",
+  "data_verified",
+  "data_edit_submitted",
+  "submission_approved",
+  "submission_rejected",
+  "contributor_access_unlocked",
+  "wrong_price_reported",
+  "venue_requested",
+  "beer_requested",
+  "mission_created_from_request",
+  "feedback_submitted",
+  "venue_interest_submitted",
+  "venue_claim_requested",
+  "venue_update_submitted",
+  "venue_manager_assigned",
+  "venue_manager_revoked",
+  "outreach_status_updated",
+]);
+
+function serverEventPrivacyScope(input: EventTrackInput): "optional_analytics" | "venue_insight" | null {
+  if (ESSENTIAL_EVENT_TYPES.has(input.eventType)) return null;
+  return input.venueId ? "venue_insight" : "optional_analytics";
 }
 
 function priceRecordIdentityKey(record: PublicVenuePriceRecord): string {
@@ -1271,6 +1394,51 @@ function cleanStringList(values: string[]): string[] {
   ).slice(0, 20);
 }
 
+function normalizeVenueTags(existing: string[], incoming: string[], replace: boolean): string[] {
+  const values = replace ? incoming : [...existing, ...incoming];
+  const byKey = new Map<string, string>();
+  for (const value of cleanStringList(values)) {
+    const key = value.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    if (key && !byKey.has(key)) byKey.set(key, key);
+  }
+  return Array.from(byKey.values()).slice(0, 20);
+}
+
+function normalizeVenueOpeningHours(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalizeDay = (value: unknown): unknown => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const day = value as Record<string, unknown>;
+    const legacyOpenTime = typeof day.open === "string" ? day.open : null;
+    const legacyCloseTime = typeof day.close === "string" ? day.close : null;
+    const openTime = typeof day.openTime === "string"
+      ? day.openTime
+      : typeof day.opens === "string"
+        ? day.opens
+        : typeof day.startTime === "string"
+          ? day.startTime
+          : legacyOpenTime;
+    const closeTime = typeof day.closeTime === "string"
+      ? day.closeTime
+      : typeof day.closes === "string"
+        ? day.closes
+        : typeof day.endTime === "string"
+          ? day.endTime
+          : legacyCloseTime;
+    return {
+      open: typeof day.open === "boolean" ? day.open : Boolean(openTime && closeTime),
+      openTime: openTime ?? null,
+      closeTime: closeTime ?? null,
+    };
+  };
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(existing)) result[key] = normalizeDay(value);
+  for (const [key, value] of Object.entries(incoming)) result[key] = normalizeDay(value);
+  return result;
+}
+
 function stringArrayFromUnknown(value: unknown): string[] {
   return Array.isArray(value)
     ? cleanStringList(value.filter((item): item is string => typeof item === "string"))
@@ -1294,6 +1462,38 @@ function stripePeriodEndIso(value: unknown): string | null {
   const timestamp = direct ?? itemPeriodEnd;
   if (timestamp == null || !Number.isSafeInteger(timestamp) || timestamp <= 0) return null;
   return new Date(timestamp * 1000).toISOString();
+}
+
+function stripePriceIds(value: unknown): Set<string> {
+  const object = objectFromUnknown(value);
+  const ids = new Set<string>();
+  const addPrice = (price: unknown) => {
+    const id = stripeObjectId(price);
+    if (id) ids.add(id);
+  };
+  addPrice(object.price);
+  addPrice(object.plan);
+  for (const container of [objectFromUnknown(object.items), objectFromUnknown(object.lines)]) {
+    const rows = Array.isArray(container.data) ? container.data : [];
+    for (const row of rows) {
+      const item = objectFromUnknown(row);
+      addPrice(item.price);
+      addPrice(item.plan);
+    }
+  }
+  return ids;
+}
+
+function isStripeGrantEligibleStatus(status: unknown): status is "active" | "trialing" {
+  return status === "active" || status === "trialing";
+}
+
+function isStripeCheckoutSettled(object: Record<string, unknown>): boolean {
+  const subscription = objectFromUnknown(object.subscription);
+  if (typeof subscription.status === "string") {
+    return isStripeGrantEligibleStatus(subscription.status);
+  }
+  return object.payment_status === "paid";
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -1419,7 +1619,7 @@ function buildVenueDemandSnapshot(input: {
     opportunityScore,
     funnel: [
       { label: "Discovery interest", value: analytics.barLookups, helper: "Map pins, venue cards and explicit venue lookups." },
-      { label: "Beer-price intent", value: analytics.beerListViews + analytics.priceReveals, helper: "Beer-list views and price reveals." },
+      { label: "Beer-price intent", value: analytics.beerListViews + analytics.pricePreviewViews, helper: "Beer-list views and free-preview views." },
       { label: "Specials intent", value: analytics.specialsViews, helper: "Pint Path special and happy-hour interest." },
       { label: "Action intent", value: actionIntent, helper: "Directions, saves, night-plan adds and shares." },
     ],
@@ -1597,7 +1797,7 @@ function buildVenueDemandPeriod(input: {
 }) {
   const { analytics } = input;
   const actionIntent = getTotalVenueActionIntent(analytics);
-  const beerIntent = analytics.beerListViews + analytics.priceReveals;
+  const beerIntent = analytics.beerListViews + analytics.pricePreviewViews;
   const topBeer = analytics.privacyFloorMet ? analytics.areaBeerSearches[0] ?? null : null;
   const topStyle = analytics.privacyFloorMet ? analytics.areaStyleSearches[0] ?? null : null;
   const recommendedAction = topBeer
@@ -2154,14 +2354,14 @@ function getMonthlyReportFilename(input: { venueId: string; month: string; forma
 export class BusinessService {
   private readonly supabase?: SupabaseClient;
   private readonly useSupabaseEvidenceStorage: boolean;
-  private publicVenueCache: { rows: VenueRow[]; fetchedAt: number; fetchLimit: number } | null = null;
+  private supabaseReadinessCache: { expiresAt: number; value: SupabaseReadinessDependencies } | null = null;
+  private supabaseReadinessInFlight: Promise<SupabaseReadinessDependencies> | null = null;
 
   constructor(
     private readonly repository: BusinessRepository,
     private readonly config: Pick<
       Env,
       | "PUBLIC_BASE_URL"
-      | "FREE_PRICE_REVEALS_PER_DAY"
       | "CONTRIBUTOR_UNLOCK_POINTS"
       | "CONTRIBUTOR_UNLOCK_DAYS"
       | "DEMO_BILLING_MODE"
@@ -2186,7 +2386,6 @@ export class BusinessService {
       | "STRIPE_PRICE_MONTHLY"
       | "STRIPE_PRICE_YEARLY"
       | "STRIPE_PRO_PRICE_ID"
-      | "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"
       | "SUPABASE_URL"
       | "SUPABASE_ANON_KEY"
       | "SUPABASE_SERVICE_ROLE_KEY"
@@ -2194,10 +2393,24 @@ export class BusinessService {
       | "ADMIN_EMAILS"
       | "GOOGLE_MAPS_API_KEY"
       | "GOOGLE_PLACES_API_KEY"
-    >,
+    > & Partial<Pick<Env,
+      | "DATABASE_PATH"
+      | "REPORT_DELIVERY_SCHEDULE_ENABLED"
+      | "REPORT_DELIVERY_DAY"
+      | "REPORT_DELIVERY_HOUR"
+      | "RESEND_API_KEY"
+      | "REPORT_EMAIL_FROM"
+      | "REPORT_EMAIL_REPLY_TO"
+      | "OPENAI_API_KEY"
+    >>,
     private readonly beerCatalogRepository?: BeerCatalogRepository,
     private readonly menuPhotoOcr?: MenuPhotoOcrProcessor,
     supabaseClientOverride?: SupabaseClient,
+    private readonly accountDeletionTombstoneWriter?: (tombstone: {
+      requestId: string;
+      userId: string;
+      completedAt: string;
+    }) => Promise<void>,
   ) {
     const supabaseServerKey = config.SUPABASE_SERVICE_ROLE_KEY ?? config.SUPABASE_ANON_KEY;
     if (supabaseClientOverride) {
@@ -2426,26 +2639,25 @@ export class BusinessService {
   getPublicConfig() {
     return {
       pricing: PREMIUM_PRICING,
-      freePriceRevealsPerDay: this.config.FREE_PRICE_REVEALS_PER_DAY,
+      priceAccessModel: "fixed_preview" as const,
+      freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
       contributorUnlockDays: this.config.CONTRIBUTOR_UNLOCK_DAYS,
-      stripePublishableKey: this.config.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? null,
       supabaseUrl: this.config.SUPABASE_URL ?? null,
       supabaseAnonKey: this.config.SUPABASE_ANON_KEY ?? null,
       supabaseOauthProviders: this.config.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
       demoBillingMode: this.config.DEMO_BILLING_MODE,
       fieldTestMode: this.config.FIELD_TEST_MODE,
-      rewards: {
-        partnerVenueCredit: "disabled",
-        copy: "Partner venue credit is coming soon and is not active in this demo.",
-      },
+      legalPolicyVersion: CURRENT_LEGAL_POLICY_VERSION,
       trackedBeers: this.getTrackedBeerCatalogForViewer(),
     };
   }
 
-  getAdminBeerCatalog(account: BusinessAccount): {
+  getAdminBeerCatalog(account: BusinessAccount, query: BeerCatalogAdminQuery = { pendingLimit: 100, pendingOffset: 0, activeLimit: 100, activeOffset: 0, activeQ: "" }): {
     pending: BeerCatalogAdminItem[];
     active: BeerCatalogAdminItem[];
+    totals: { pending: number; active: number };
+    pagination: Record<string, unknown>;
   } {
     if (!this.isAdmin(account)) {
       throw new AppError("Admin access required.", 403);
@@ -2454,9 +2666,20 @@ export class BusinessService {
       throw new AppError("Beer catalogue review is not configured.", 503);
     }
 
+    const pending = this.beerCatalogRepository.listForAdmin("pending_review", query.pendingLimit, query.pendingOffset);
+    const active = this.beerCatalogRepository.listForAdmin("active", query.activeLimit, query.activeOffset, query.activeQ);
+    const totals = {
+      pending: this.beerCatalogRepository.countForAdmin("pending_review"),
+      active: this.beerCatalogRepository.countForAdmin("active", query.activeQ),
+    };
     return {
-      pending: this.beerCatalogRepository.listForAdmin("pending_review", 100),
-      active: this.beerCatalogRepository.listForAdmin("active", 500),
+      pending,
+      active,
+      totals,
+      pagination: {
+        pending: { limit: query.pendingLimit, offset: query.pendingOffset, hasMore: query.pendingOffset + pending.length < totals.pending },
+        active: { limit: query.activeLimit, offset: query.activeOffset, q: query.activeQ, hasMore: query.activeOffset + active.length < totals.active },
+      },
     };
   }
 
@@ -2480,6 +2703,14 @@ export class BusinessService {
     if (!beer) {
       throw new AppError("Pending beer was not found.", 404);
     }
+
+    this.auditSecurity({
+      actor: account,
+      action: "beer_catalog_item_approved",
+      targetType: "beer_catalog_item",
+      targetId: key,
+      metadata: { reviewNote: input.reviewNote ?? null },
+    });
 
     return { beer };
   }
@@ -2506,6 +2737,14 @@ export class BusinessService {
       throw new AppError("Pending beer could not be merged into that catalogue item.", 404);
     }
 
+    this.auditSecurity({
+      actor: account,
+      action: "beer_catalog_item_merged",
+      targetType: "beer_catalog_item",
+      targetId: key,
+      metadata: { targetKey: input.targetKey, reviewNote: input.reviewNote ?? null },
+    });
+
     return result;
   }
 
@@ -2529,6 +2768,14 @@ export class BusinessService {
     if (!beer) {
       throw new AppError("Pending beer was not found.", 404);
     }
+
+    this.auditSecurity({
+      actor: account,
+      action: "beer_catalog_item_rejected",
+      targetType: "beer_catalog_item",
+      targetId: key,
+      metadata: { reviewNote: input.reviewNote ?? null },
+    });
 
     return { beer };
   }
@@ -2554,6 +2801,14 @@ export class BusinessService {
         throw new AppError("Pending beer was not found.", 404);
       }
       return beer;
+    });
+
+    this.auditSecurity({
+      actor: account,
+      action: "beer_catalog_items_bulk_rejected",
+      targetType: "beer_catalog_item",
+      targetId: null,
+      metadata: { keys: input.keys, rejectedCount: beers.length, reviewNote: input.reviewNote ?? null },
     });
 
     return {
@@ -2604,6 +2859,78 @@ export class BusinessService {
     return account;
   }
 
+  async requireRecentAuthentication(
+    account: BusinessAccount,
+    authorizationHeader: string | undefined,
+    proof?: { accessToken: string | undefined; password: string | undefined },
+    maxAgeMinutes = 15,
+  ): Promise<void> {
+    const token = getBearerToken(authorizationHeader);
+    if (!token) throw new AppError("Recent sign-in required for this sensitive action.", 401);
+    const createdAt = this.repository.getActiveSessionCreatedAt({
+      tokenHash: hashToken(token),
+      userId: account.id,
+      now: nowIso(),
+    });
+    const ageMs = createdAt ? Date.now() - new Date(createdAt).getTime() : Number.POSITIVE_INFINITY;
+    if (!createdAt || !Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMinutes * 60_000) {
+      throw new AppError("Recent sign-in required for this sensitive action.", 403, {
+        reauthenticationRequired: true,
+        maxAgeMinutes,
+      });
+    }
+
+    // Tests use short-lived, isolated app sessions. Real deployments require
+    // proof of the underlying credential ceremony as well; minting a new app
+    // cookie from a refreshed/stolen provider session is not a reauthentication.
+    if (this.config.NODE_ENV === "test") return;
+
+    if (account.supabaseUserId) {
+      const accessToken = proof?.accessToken?.trim();
+      if (!accessToken || !this.supabase) {
+        throw new AppError("Provider reauthentication required for this sensitive action.", 403, {
+          reauthenticationRequired: true,
+          provider: account.authProvider,
+        });
+      }
+      const payload = decodeJwtPayload(accessToken);
+      const authTime = typeof payload?.auth_time === "number" ? payload.auth_time : null;
+      const amrTimes = Array.isArray(payload?.amr)
+        ? payload.amr.flatMap((entry) => {
+            if (!entry || typeof entry !== "object") return [];
+            const record = entry as Record<string, unknown>;
+            const method = typeof record.method === "string" ? record.method.toLowerCase() : "";
+            return method && !method.includes("refresh") && typeof record.timestamp === "number"
+              ? [record.timestamp]
+              : [];
+          })
+        : [];
+      const credentialTimeSeconds = Math.max(authTime ?? 0, ...amrTimes, 0);
+      const credentialAgeMs = Date.now() - credentialTimeSeconds * 1000;
+      if (
+        credentialTimeSeconds <= 0 ||
+        credentialAgeMs < 0 ||
+        credentialAgeMs > maxAgeMinutes * 60_000
+      ) {
+        throw new AppError("A fresh provider sign-in or MFA step-up is required.", 403, {
+          reauthenticationRequired: true,
+          maxAgeMinutes,
+        });
+      }
+      const { data, error } = await this.supabase.auth.getUser(accessToken);
+      if (error || data.user?.id !== account.supabaseUserId) {
+        throw new AppError("Provider reauthentication proof is invalid.", 403);
+      }
+      return;
+    }
+
+    if (!proof?.password || !await verifyPassword(proof.password, account.passwordHash)) {
+      throw new AppError("Current password required for this sensitive action.", 403, {
+        reauthenticationRequired: true,
+      });
+    }
+  }
+
   requireAdmin(
     authorizationHeader: string | undefined,
     context?: SessionRequestContext | undefined,
@@ -2616,6 +2943,7 @@ export class BusinessService {
     }
 
     if (this.config.NODE_ENV === "production") {
+      this.requireCurrentLegalAcceptance(account);
       if (adminEmails.size === 0 || !adminEmails.has(normalizeEmail(account.email))) {
         this.auditSecurity({
           actor: account,
@@ -2665,6 +2993,19 @@ export class BusinessService {
     }
   }
 
+  private requireCurrentLegalAcceptance(account: BusinessAccount): void {
+    if (
+      !account.termsAcceptedAt ||
+      !account.privacyAcceptedAt ||
+      account.termsVersion !== CURRENT_LEGAL_POLICY_VERSION ||
+      account.privacyVersion !== CURRENT_LEGAL_POLICY_VERSION
+    ) {
+      throw new AppError("Accept the current Terms and Privacy Policy before continuing.", 403, {
+        currentVersion: CURRENT_LEGAL_POLICY_VERSION,
+      });
+    }
+  }
+
   private hasFreshAdminMfa(account: BusinessAccount): boolean {
     if (account.mfaLevel !== "aal2" || !account.mfaVerifiedAt) {
       return false;
@@ -2684,10 +3025,41 @@ export class BusinessService {
     if (!account.ageConfirmedAt) {
       throw new AppError("Verify your account before managing a venue. Confirm 18+ from your account page first.", 403);
     }
+    this.requireCurrentLegalAcceptance(account);
   }
 
   private isAdmin(account: BusinessAccount): boolean {
-    return account.role === "admin" || account.subscriptionStatus === "admin";
+    if (account.role !== "admin" && account.subscriptionStatus !== "admin") {
+      return false;
+    }
+    if (this.config.NODE_ENV !== "production") {
+      return true;
+    }
+    const adminEmails = this.getAdminEmailAllowlist();
+    if (
+      !account.termsAcceptedAt ||
+      !account.privacyAcceptedAt ||
+      account.termsVersion !== CURRENT_LEGAL_POLICY_VERSION ||
+      account.privacyVersion !== CURRENT_LEGAL_POLICY_VERSION ||
+      adminEmails.size === 0 ||
+      !adminEmails.has(normalizeEmail(account.email)) ||
+      !account.emailVerifiedAt
+    ) {
+      return false;
+    }
+    return !this.config.REQUIRE_ADMIN_MFA_IN_PRODUCTION || this.hasFreshAdminMfa(account);
+  }
+
+  private assertAdminControlPreserved(actor: BusinessAccount, target: BusinessAccount): void {
+    const targetHasAdminAuthority = target.role === "admin" || target.subscriptionStatus === "admin";
+    if (!targetHasAdminAuthority) return;
+    if (actor.id === target.id) {
+      throw new AppError("Administrators cannot approve their own deletion or suspension.", 409);
+    }
+    const remaining = this.repository.listActiveAdminAccounts(target.id).filter((candidate) => this.isAdmin(candidate));
+    if (remaining.length === 0) {
+      throw new AppError("This action would remove the last active, authorised administrator.", 409);
+    }
   }
 
   private requireAssignedVenue(
@@ -2700,10 +3072,6 @@ export class BusinessService {
     }
 
     this.requireVerifiedBarAccount(account);
-
-    if (account.role !== "venue_manager") {
-      throw new AppError("Venue manager access required.", 403);
-    }
 
     const assignment = this.repository.getVenueManagerAssignment({
       userId: account.id,
@@ -2719,7 +3087,7 @@ export class BusinessService {
         targetId: venueId,
         metadata: { accountRole: account.role },
       });
-      throw new AppError("You can only access assigned venues.", 403);
+      throw new AppError("Venue manager access required. You can only access assigned venues.", 403);
     }
 
     if (requiredAccess === "manager" && assignment.accessLevel !== "manager") {
@@ -2809,6 +3177,7 @@ export class BusinessService {
       openingHours: {},
       venueTags: [],
       membershipTier: "basic",
+      stripePaidMembershipTier: null,
       highlightedName: false,
       premiumBadge: null,
       promoted: false,
@@ -2820,6 +3189,10 @@ export class BusinessService {
       acceptsPintPathCodes: false,
       stripeEventCreatedAt: null,
       posWebhookTokenVersion: 1,
+      posPreviousTokenVersion: null,
+      posPreviousTokenValidUntil: null,
+      posLastSuccessAt: null,
+      posLastTerminalId: null,
       active: true,
       createdAt: now,
       updatedAt: now,
@@ -2985,13 +3358,12 @@ export class BusinessService {
       return null;
     }
 
-    const existingPendingDelete = this.repository
-      .listBarPendingChanges({ barId: input.venueId, status: "pending", limit: 100 })
-      .find((change) =>
-        change.action === "delete" &&
-        change.changeType === input.changeType &&
-        change.targetId === input.targetId
-      );
+    const existingPendingDelete = this.repository.getPendingBarChangeForTarget({
+      barId: input.venueId,
+      changeType: input.changeType,
+      action: "delete",
+      targetId: input.targetId,
+    });
     if (existingPendingDelete) {
       return {
         pendingChange: existingPendingDelete,
@@ -3020,18 +3392,30 @@ export class BusinessService {
   }
 
   private applyApprovedBarChange(change: BarPendingChange, admin: BusinessAccount, now: string): void {
+    const expectedUpdatedAt = stringOrNull(change.payload.expectedUpdatedAt);
+    const requireBaseVersion = (currentUpdatedAt: string | null | undefined) => {
+      if (currentUpdatedAt && !expectedUpdatedAt) {
+        throw new AppError("This pending change predates edit protection. Ask the venue manager to submit it again.", 409);
+      }
+    };
     if (change.action === "delete") {
       if (!change.targetId) {
         throw new AppError("Pending delete change is missing a target.", 409);
       }
 
       if (change.changeType === "beer") {
-        this.repository.deleteBarBeer({ id: change.targetId, barId: change.barId });
+        requireBaseVersion(this.repository.getBarBeerById(change.targetId)?.updatedAt);
+        if (!this.repository.deleteBarBeer({ id: change.targetId, barId: change.barId, expectedUpdatedAt })) {
+          throw new AppError("The beer row changed or was removed after this review item was submitted.", 409);
+        }
         return;
       }
 
       if (change.changeType === "happy_hour") {
-        this.repository.deleteBarHappyHour({ id: change.targetId, barId: change.barId });
+        requireBaseVersion(this.repository.getBarHappyHourById(change.targetId)?.updatedAt);
+        if (!this.repository.deleteBarHappyHour({ id: change.targetId, barId: change.barId, expectedUpdatedAt })) {
+          throw new AppError("The happy hour changed or was removed after this review item was submitted.", 409);
+        }
         return;
       }
 
@@ -3040,7 +3424,10 @@ export class BusinessService {
         if (!getBarTierCapabilities(membershipTier).canManageSpecials) {
           throw new AppError("Pro venue tier required to publish Pint Path specials.", 403);
         }
-        this.repository.deleteBarSpecial({ id: change.targetId, barId: change.barId });
+        requireBaseVersion(this.repository.getBarSpecialById(change.targetId)?.updatedAt);
+        if (!this.repository.deleteBarSpecial({ id: change.targetId, barId: change.barId, expectedUpdatedAt })) {
+          throw new AppError("The special changed or was removed after this review item was submitted.", 409);
+        }
         return;
       }
 
@@ -3049,6 +3436,7 @@ export class BusinessService {
 
     if (change.changeType === "profile") {
       const existing = this.repository.getBarProfile(change.barId);
+      requireBaseVersion(existing?.updatedAt);
       const payload = change.payload;
       const membershipTier = existing?.membershipTier ?? "basic";
       const flags = tierFlags(membershipTier);
@@ -3068,6 +3456,7 @@ export class BusinessService {
         tierManualOverride: existing?.tierManualOverride ?? false,
         acceptsPintPathCodes: existing?.acceptsPintPathCodes ?? false,
         active: booleanFromUnknown(payload.active, existing?.active ?? true),
+        expectedUpdatedAt,
         now,
         ...flags,
       });
@@ -3077,6 +3466,7 @@ export class BusinessService {
     if (change.changeType === "beer") {
       const payload = change.payload;
       const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
+      requireBaseVersion(this.repository.getBarBeerById(targetId)?.updatedAt);
       const beerInput = this.standardizeBarBeerInput({
         id: targetId,
         beerName: stringOrNull(payload.beerName) ?? "Unnamed beer",
@@ -3088,6 +3478,9 @@ export class BusinessService {
         onTap: booleanFromUnknown(payload.onTap, false),
         inStock: booleanFromUnknown(payload.inStock, true),
         notes: stringOrNull(payload.notes),
+        priceConfirmed: booleanFromUnknown(payload.priceConfirmed, false),
+        stockConfirmed: booleanFromUnknown(payload.stockConfirmed, false),
+        expectedUpdatedAt: null,
       }, "approved_venue_inventory_change", now);
       this.ensureBarProfile({
         barId: change.barId,
@@ -3108,6 +3501,7 @@ export class BusinessService {
         onTap: beerInput.onTap,
         inStock: beerInput.inStock,
         notes: beerInput.notes,
+        expectedUpdatedAt,
         now,
       });
       return;
@@ -3116,6 +3510,7 @@ export class BusinessService {
     if (change.changeType === "happy_hour") {
       const payload = change.payload;
       const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
+      requireBaseVersion(this.repository.getBarHappyHourById(targetId)?.updatedAt);
       this.ensureBarProfile({
         barId: change.barId,
         name: this.repository.getBarProfile(change.barId)?.name ?? change.barId,
@@ -3131,6 +3526,7 @@ export class BusinessService {
         description: stringOrNull(payload.description) ?? "Details pending.",
         happyHourBeers: happyHourBeersFromUnknown(payload.happyHourBeers),
         active: booleanFromUnknown(payload.active, true),
+        expectedUpdatedAt,
         now,
       });
       return;
@@ -3139,6 +3535,7 @@ export class BusinessService {
     if (change.changeType === "special") {
       const payload = change.payload;
       const targetId = change.targetId ?? stringOrNull(payload.id) ?? crypto.randomUUID();
+      requireBaseVersion(this.repository.getBarSpecialById(targetId)?.updatedAt);
       const membershipTier = this.repository.getBarProfile(change.barId)?.membershipTier ?? "basic";
       const capabilities = getBarTierCapabilities(membershipTier);
       if (!capabilities.canManageSpecials) {
@@ -3163,6 +3560,7 @@ export class BusinessService {
         scheduleNote: stringOrNull(payload.scheduleNote),
         exclusive: capabilities.featuredSpecials && booleanFromUnknown(payload.exclusive, false),
         active: booleanFromUnknown(payload.active, true),
+        expectedUpdatedAt,
         now,
       });
       return;
@@ -3179,6 +3577,9 @@ export class BusinessService {
   }
 
   async signup(input: AuthSignupInput, context?: SessionRequestContext | undefined) {
+    if (this.config.NODE_ENV === "production") {
+      throw new AppError("Password signup is disabled. Continue with the configured secure sign-in provider.", 410);
+    }
     const email = normalizeEmail(input.email);
 
     if (this.repository.getAccountByEmail(email)) {
@@ -3186,7 +3587,6 @@ export class BusinessService {
     }
 
     const now = nowIso();
-    const adminEmails = this.getAdminEmailAllowlist();
     const displayName = validatePublicDisplayName(input.displayName);
     const displayNameKey = this.assertDisplayNameAvailable(displayName);
     const account = this.repository.createAccount({
@@ -3195,12 +3595,14 @@ export class BusinessService {
       passwordHash: await hashPassword(input.password),
       displayName,
       displayNameKey,
-      role: adminEmails.has(email) ? "admin" : "user",
-      subscriptionStatus: adminEmails.has(email) ? "admin" : "free",
+      // Local development accounts must never gain admin authority merely by
+      // presenting an allowlisted but unverified email address.
+      role: "user",
+      subscriptionStatus: "free",
       termsAcceptedAt: now,
       privacyAcceptedAt: now,
-      termsVersion: "2026-05-24",
-      privacyVersion: "2026-05-24",
+      termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+      privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
       now,
     });
     const confirmed = input.ageConfirmed ? this.repository.updateAgeConfirmed(account.id, now) : account;
@@ -3240,6 +3642,9 @@ export class BusinessService {
   }
 
   async login(input: AuthLoginInput, context?: SessionRequestContext | undefined) {
+    if (this.config.NODE_ENV === "production") {
+      throw new AppError("Password login is disabled. Continue with the configured secure sign-in provider.", 410);
+    }
     const account = this.repository.getAccountByEmail(normalizeEmail(input.email));
 
     if (!account || !await verifyPassword(input.password, account.passwordHash)) {
@@ -3247,7 +3652,15 @@ export class BusinessService {
     }
 
     if (account.status === "suspended") {
-      throw new AppError("Account access is suspended.", 403);
+      const recovery = this.getSuspendedBillingRecoveryOptions(account);
+      const recoveryEligible = recovery.consumer || recovery.venues.length > 0;
+      throw new AppError("Account access is suspended. Billing management remains available through secure billing recovery.", 403, {
+        publicCode: recoveryEligible ? "ACCOUNT_SUSPENDED_BILLING_RECOVERY" : "ACCOUNT_SUSPENDED",
+        billingRecoveryEligible: recoveryEligible,
+        billingRecoveryConsumer: recovery.consumer,
+        billingRecoveryVenues: recovery.venues,
+        billingRecoveryEndpoint: "/api/business/billing/recovery-portal",
+      });
     }
 
     const session = this.createSessionResponse(account, context);
@@ -3269,7 +3682,11 @@ export class BusinessService {
     return session;
   }
 
-  async loginWithSupabaseAccessToken(input: AuthSupabaseSessionInput, context?: SessionRequestContext | undefined) {
+  async loginWithSupabaseAccessToken(
+    input: AuthSupabaseSessionInput,
+    context?: SessionRequestContext | undefined,
+    existingAuthorization?: string | undefined,
+  ) {
     if (!this.supabase) {
       throw new AppError("Supabase authentication is not configured.", 503);
     }
@@ -3298,10 +3715,64 @@ export class BusinessService {
     const displayName = safeProviderDisplayName(providerDisplayName);
     const avatarUrl = typeof metadata.avatar_url === "string" ? metadata.avatar_url : null;
 
-    let account = this.repository.getAccountBySupabaseUserId(supabaseUser.id) ?? this.repository.getAccountByEmail(email);
+    const accountBySupabaseId = this.repository.getAccountBySupabaseUserId(supabaseUser.id);
+    const accountByEmail = this.repository.getAccountByEmail(email);
+    if (accountBySupabaseId && accountByEmail && accountBySupabaseId.id !== accountByEmail.id) {
+      throw new AppError("This provider identity conflicts with another Pint Path account. Contact support before continuing.", 409);
+    }
+    if (accountByEmail?.supabaseUserId && accountByEmail.supabaseUserId !== supabaseUser.id) {
+      throw new AppError("This email is already linked to a different sign-in identity. Contact support before relinking it.", 409);
+    }
+    let account = accountBySupabaseId ?? accountByEmail;
     const now = nowIso();
+    if (account?.providerTokensValidAfter) {
+      const issuedAt = getSupabaseTokenIssuedAt(input.accessToken);
+      if (!issuedAt || Date.parse(issuedAt) <= Date.parse(account.providerTokensValidAfter)) {
+        throw new AppError("This sign-in token predates a security reset. Sign in again to continue.", 401);
+      }
+    }
     const emailVerifiedAt = getSupabaseEmailVerifiedAt(supabaseUser);
     const mfaClaims = getSupabaseMfaClaims(input.accessToken);
+    const providerSessionIdHash = getSupabaseSessionIdHash(input.accessToken);
+    if (!providerSessionIdHash) {
+      throw new AppError("The sign-in provider session is missing its session identifier. Sign in again before continuing.", 401);
+    }
+    if (this.repository.isProviderSessionRevoked({
+      userId: account?.id ?? supabaseUser.id,
+      providerSessionIdHash,
+    })) {
+      throw new AppError("This sign-in provider session was revoked. Sign in again to start a new session.", 401);
+    }
+    const legalAcceptance = input.legalAcceptance ?? (
+      input.ageConfirmed === true &&
+      input.termsAccepted === true &&
+      input.privacyAccepted === true &&
+      input.termsVersion === CURRENT_LEGAL_POLICY_VERSION &&
+      input.privacyVersion === CURRENT_LEGAL_POLICY_VERSION
+        ? {
+            ageConfirmed: true as const,
+            termsAccepted: true as const,
+            privacyAccepted: true as const,
+            termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+            privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+            source: input.consentSource ?? "web" as const,
+          }
+        : undefined
+    );
+
+    if (
+      this.config.NODE_ENV === "production" &&
+      this.config.REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION &&
+      !emailVerifiedAt
+    ) {
+      throw new AppError("Verify your email with the sign-in provider before continuing.", 403);
+    }
+
+    if (!account && !legalAcceptance) {
+      throw new AppError("Accept the current Terms and Privacy Policy before creating your Pint Path account.", 403, {
+        currentVersion: CURRENT_LEGAL_POLICY_VERSION,
+      });
+    }
 
     if (!account) {
       const adminEmails = this.getAdminEmailAllowlist();
@@ -3318,14 +3789,17 @@ export class BusinessService {
         emailVerifiedAt,
         mfaLevel: mfaClaims.mfaLevel,
         mfaVerifiedAt: mfaClaims.mfaVerifiedAt,
-        termsAcceptedAt: null,
-        privacyAcceptedAt: null,
-        termsVersion: null,
-        privacyVersion: null,
-        role: adminEmails.has(email) ? "admin" : "user",
-        subscriptionStatus: adminEmails.has(email) ? "admin" : "free",
+        termsAcceptedAt: legalAcceptance ? now : null,
+        privacyAcceptedAt: legalAcceptance ? now : null,
+        termsVersion: legalAcceptance ? CURRENT_LEGAL_POLICY_VERSION : null,
+        privacyVersion: legalAcceptance ? CURRENT_LEGAL_POLICY_VERSION : null,
+        role: adminEmails.has(email) && Boolean(emailVerifiedAt) ? "admin" : "user",
+        subscriptionStatus: adminEmails.has(email) && Boolean(emailVerifiedAt) ? "admin" : "free",
         now,
       });
+      if (legalAcceptance?.ageConfirmed) {
+        account = this.repository.updateAgeConfirmed(account.id, now);
+      }
       this.recordUserActivity({
         account,
         eventType: "user_signup",
@@ -3333,12 +3807,19 @@ export class BusinessService {
         relatedEntityId: account.id,
         metadata: { authProvider: "supabase" },
       });
-    } else if (!account.supabaseUserId || account.authProvider !== "supabase" || (!account.displayName && displayName) || account.avatarUrl !== avatarUrl) {
+    } else {
+      if (!accountBySupabaseId && accountByEmail && !emailVerifiedAt) {
+        throw new AppError("Verify this email with the sign-in provider before linking it to an existing Pint Path account.", 403);
+      }
+      if (accountBySupabaseId && normalizeEmail(accountBySupabaseId.email) !== email && !emailVerifiedAt) {
+        throw new AppError("Verify the changed provider email before updating your Pint Path account.", 403);
+      }
       const nextDisplayName = account.displayName ?? displayName;
       const providerIdentity = this.providerDisplayNameIfAvailable(nextDisplayName, account.id);
       account = this.repository.linkSupabaseAccount({
         userId: account.id,
         supabaseUserId: supabaseUser.id,
+        email,
         authProvider: "supabase",
         displayName: providerIdentity.displayName,
         displayNameKey: providerIdentity.displayNameKey,
@@ -3348,18 +3829,51 @@ export class BusinessService {
         mfaVerifiedAt: mfaClaims.mfaVerifiedAt,
         now,
       });
-    } else {
-      account = this.repository.updateAccountSecurityClaims({
+    }
+
+    if (legalAcceptance) {
+      account = this.repository.updateLegalAcceptance({
         userId: account.id,
-        emailVerifiedAt,
-        mfaLevel: mfaClaims.mfaLevel,
-        mfaVerifiedAt: mfaClaims.mfaVerifiedAt,
-        now,
+        acceptedAt: now,
+        termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+        privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
+      });
+      if (!account.ageConfirmedAt && legalAcceptance.ageConfirmed) {
+        account = this.repository.updateAgeConfirmed(account.id, now);
+      }
+    }
+
+    this.requireCurrentLegalAcceptance(account);
+
+    if (account.status === "suspended") {
+      const recovery = this.getSuspendedBillingRecoveryOptions(account);
+      const recoveryEligible = recovery.consumer || recovery.venues.length > 0;
+      throw new AppError("Account access is suspended. Billing management remains available through secure billing recovery.", 403, {
+        publicCode: recoveryEligible ? "ACCOUNT_SUSPENDED_BILLING_RECOVERY" : "ACCOUNT_SUSPENDED",
+        billingRecoveryEligible: recoveryEligible,
+        billingRecoveryConsumer: recovery.consumer,
+        billingRecoveryVenues: recovery.venues,
+        billingRecoveryEndpoint: "/api/business/billing/recovery-portal",
       });
     }
 
-    if (account.status === "suspended") {
-      throw new AppError("Account access is suspended.", 403);
+    const existingToken = getBearerToken(existingAuthorization);
+    const existingExpiresAt = existingToken
+      ? this.repository.getActiveProviderSessionExpiresAt({
+          tokenHash: hashToken(existingToken),
+          userId: account.id,
+          providerSessionIdHash,
+          now,
+        })
+      : null;
+    if (existingToken && existingExpiresAt) {
+      return {
+        token: existingToken,
+        expiresAt: existingExpiresAt,
+        account: sanitizeAccount(account),
+        access: this.getAccessState(account, null),
+        reused: true,
+      };
     }
 
     this.recordUserActivity({
@@ -3378,7 +3892,112 @@ export class BusinessService {
       context,
     });
 
-    return this.createSessionResponse(account, context);
+    return this.createSessionResponse(account, context, providerSessionIdHash);
+  }
+
+  async completePasswordReset(input: PasswordResetCompleteInput, context?: SessionRequestContext | undefined) {
+    if (!this.supabase) {
+      throw new AppError("Supabase authentication is not configured.", 503);
+    }
+    const payload = decodeJwtPayload(input.accessToken);
+    const providerSessionIdHash = getSupabaseSessionIdHash(input.accessToken);
+    const issuedAt = getSupabaseTokenIssuedAt(input.accessToken);
+    const authenticationMethods = getSupabaseAuthenticationMethods(input.accessToken);
+    if (
+      !providerSessionIdHash ||
+      !issuedAt ||
+      !authenticationMethods.some((method) => method === "otp" || method === "recovery")
+    ) {
+      throw new AppError("Invalid password recovery session. Request a new password reset link.", 401);
+    }
+
+    const { data, error } = await this.supabase.auth.getUser(input.accessToken);
+    if (error || !data.user?.id || !data.user.email || payload?.sub !== data.user.id) {
+      throw new AppError("Invalid password recovery session. Request a new password reset link.", 401);
+    }
+    const account = this.repository.getAccountBySupabaseUserId(data.user.id);
+    if (!account || normalizeEmail(account.email) !== normalizeEmail(data.user.email)) {
+      throw new AppError("Invalid password recovery session. Request a new password reset link.", 401);
+    }
+
+    await this.revokeProviderSessionsGlobally(account, input.accessToken, "password_reset", context, data.user.id);
+
+    const completedAt = nowIso();
+    const containment = this.repository.completePasswordResetContainment({
+      userId: account.id,
+      providerSessionIdHash,
+      providerTokensValidAfter: completedAt,
+      revokedAt: completedAt,
+    });
+    this.recordUserActivity({
+      account,
+      eventType: "password_reset_completed",
+      relatedEntityType: "account",
+      relatedEntityId: account.id,
+      metadata: { reauthenticationRequired: true },
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "password_reset_completed",
+      targetType: "account",
+      targetId: account.id,
+      metadata: {
+        revokedSessions: containment.revokedSessions,
+        revokedDiscountPasses: containment.revokedDiscountPasses,
+        cancelledRewardCodes: containment.cancelledRewardCodes,
+        providerTokenEpochAdvanced: true,
+      },
+      context,
+    });
+    return {
+      completed: true,
+      reauthenticationRequired: true,
+      ...containment,
+    };
+  }
+
+  private async revokeProviderSessionsGlobally(
+    account: BusinessAccount,
+    accessToken: string,
+    operation: "password_reset" | "logout_all",
+    context?: SessionRequestContext | undefined,
+    verifiedProviderUserId?: string,
+  ): Promise<void> {
+    if (!this.supabase || !this.config.SUPABASE_SERVICE_ROLE_KEY) {
+      throw new AppError("Provider-wide session revocation is not configured. Try again shortly.", 503);
+    }
+
+    let providerUserId = verifiedProviderUserId;
+    if (!providerUserId) {
+      const { data, error } = await this.supabase.auth.getUser(accessToken);
+      if (error || !data.user?.id || !data.user.email) {
+        throw new AppError("A current sign-in provider session is required to log out every device.", 401);
+      }
+      providerUserId = data.user.id;
+      if (
+        providerUserId !== account.supabaseUserId ||
+        normalizeEmail(data.user.email) !== normalizeEmail(account.email)
+      ) {
+        throw new AppError("The sign-in provider session does not belong to this account.", 403);
+      }
+    }
+
+    if (providerUserId !== account.supabaseUserId) {
+      throw new AppError("The sign-in provider session does not belong to this account.", 403);
+    }
+
+    const { error } = await this.supabase.auth.admin.signOut(accessToken, "global");
+    if (error) {
+      this.auditSecurity({
+        actor: account,
+        action: "provider_global_signout_failed",
+        targetType: "account",
+        targetId: account.id,
+        metadata: { operation, errorCode: typeof error.code === "string" ? error.code : null },
+        context,
+      });
+      throw new AppError("The sign-in provider could not revoke every session. Nothing was reported as complete; try again.", 503);
+    }
   }
 
   confirmAge(account: BusinessAccount) {
@@ -3405,6 +4024,14 @@ export class BusinessService {
   }
 
   acceptLegal(account: BusinessAccount, input: LegalAcceptanceInput) {
+    if (
+      input.termsVersion !== CURRENT_LEGAL_POLICY_VERSION ||
+      input.privacyVersion !== CURRENT_LEGAL_POLICY_VERSION
+    ) {
+      throw new AppError("Accept the current Terms and Privacy Policy before continuing.", 409, {
+        currentVersion: CURRENT_LEGAL_POLICY_VERSION,
+      });
+    }
     const acceptedAt = nowIso();
     const updated = this.repository.updateLegalAcceptance({
       userId: account.id,
@@ -3452,10 +4079,14 @@ export class BusinessService {
     };
   }
 
-  private createSessionResponse(account: BusinessAccount, context?: SessionRequestContext | undefined) {
+  private createSessionResponse(
+    account: BusinessAccount,
+    context?: SessionRequestContext | undefined,
+    providerSessionIdHash?: string | null,
+  ) {
     const now = nowIso();
     const token = crypto.randomBytes(32).toString("base64url");
-    const ttlDays = account.role === "admin" || account.subscriptionStatus === "admin"
+    const ttlDays = this.isAdmin(account)
       ? this.config.ADMIN_SESSION_TTL_DAYS
       : this.config.SESSION_TTL_DAYS;
     const requestHashes = this.getRequestHashes(context);
@@ -3469,6 +4100,7 @@ export class BusinessService {
       lastUsedAt: now,
       lastIpHash: requestHashes.ipHash,
       userAgentHash: requestHashes.userAgentHash,
+      providerSessionIdHash: providerSessionIdHash ?? null,
     });
 
     return {
@@ -3476,12 +4108,46 @@ export class BusinessService {
       expiresAt,
       account: sanitizeAccount(account),
       access: this.getAccessState(account, null),
+      counterStaffAssignments: this.getCounterStaffAssignmentsForAccount(account.id),
     };
   }
 
   getSessionExpiresAt(authorizationHeader: string | undefined): string | null {
     const token = getBearerToken(authorizationHeader);
     return token ? this.repository.getSessionExpiresAt(hashToken(token), nowIso()) : null;
+  }
+
+  getAuthSession(account: BusinessAccount | null) {
+    return {
+      authenticated: Boolean(account),
+      account: account ? sanitizeAccount(account) : null,
+      access: this.getAccessState(account, null),
+      counterStaffAssignments: account ? this.getCounterStaffAssignmentsForAccount(account.id) : [],
+    };
+  }
+
+  private getCounterStaffAssignmentsForAccount(accountId: string) {
+    this.repository.expireVenueCounterStaffInvitations(nowIso());
+    return this.repository
+      .listVenueManagerAssignments({ userId: accountId, activeOnly: true, limit: -1 })
+      .filter((assignment) => assignment.accessLevel === "counter_staff")
+      .map((assignment) => ({
+        id: assignment.id,
+        venueId: assignment.venueId,
+        venueName: assignment.venueName,
+        suburb: assignment.suburb,
+        accessLevel: "counter_staff" as const,
+        status: "active" as const,
+        portalPath: `/venue-portal.html?venueId=${encodeURIComponent(assignment.venueId)}&tab=redemption`,
+        capabilities: {
+          openCounter: true,
+          recordPintPointPurchases: true,
+          redeemFreePintRewards: true,
+          voidOwnRecentPurchases: true,
+          manageVenue: false,
+          viewVenueAnalytics: false,
+        },
+      }));
   }
 
   logout(authorizationHeader: string | undefined, context?: SessionRequestContext | undefined) {
@@ -3512,7 +4178,18 @@ export class BusinessService {
     return { revoked, revokedDiscountPasses };
   }
 
-  logoutAll(account: BusinessAccount, context?: SessionRequestContext | undefined) {
+  async logoutAll(
+    account: BusinessAccount,
+    input: LogoutAllInput = {},
+    context?: SessionRequestContext | undefined,
+  ) {
+    const providerLinked = account.authProvider === "supabase" || Boolean(account.supabaseUserId);
+    if (providerLinked) {
+      if (!input.accessToken) {
+        throw new AppError("A current sign-in provider session is required to log out every device.", 400);
+      }
+      await this.revokeProviderSessionsGlobally(account, input.accessToken, "logout_all", context);
+    }
     const now = nowIso();
     const revokedCount = this.repository.revokeUserSessions({
       userId: account.id,
@@ -3527,27 +4204,121 @@ export class BusinessService {
       action: "logout_all",
       targetType: "account",
       targetId: account.id,
-      metadata: { revokedCount, revokedDiscountPasses },
+      metadata: { revokedCount, revokedDiscountPasses, providerSessionsRevoked: providerLinked },
       context,
     });
-    return { revokedCount, revokedDiscountPasses };
+    return { revokedCount, revokedDiscountPasses, providerSessionsRevoked: providerLinked };
+  }
+
+  listAccountSessions(account: BusinessAccount, authorizationHeader?: string, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
+    const currentTokenHash = getBearerToken(authorizationHeader)
+      ? hashToken(getBearerToken(authorizationHeader)!)
+      : null;
+    const timestamp = nowIso();
+    const now = new Date(timestamp).getTime();
+    const present = (session: ReturnType<BusinessRepository["listUserSessions"]>[number]) => ({
+      id: session.id,
+      createdAt: session.createdAt,
+      expiresAt: session.expiresAt,
+      lastUsedAt: session.lastUsedAt,
+      active: !session.revokedAt && new Date(session.expiresAt).getTime() > now,
+      revokedAt: session.revokedAt,
+      current: currentTokenHash?.startsWith(session.id) ?? false,
+      deviceFingerprint: session.userAgentHash?.slice(0, 12) ?? null,
+      networkFingerprint: session.lastIpHash?.slice(0, 12) ?? null,
+      providerBacked: session.providerBacked,
+    });
+    const sessions = this.repository.listUserSessions({ userId: account.id, now: timestamp, ...query }).map(present);
+    const total = this.repository.countUserSessions(account.id, timestamp);
+    const historyLimit = Math.min(20, query.limit);
+    const history = this.repository.listUserSessionHistory({
+      userId: account.id,
+      now: timestamp,
+      limit: historyLimit,
+      offset: 0,
+    }).map(present);
+    const historyTotal = this.repository.countUserSessionHistory(account.id, timestamp);
+    return {
+      sessions,
+      total,
+      history,
+      historyTotal,
+      pagination: { ...query, hasMore: query.offset + sessions.length < total },
+      historyPagination: { limit: historyLimit, offset: 0, hasMore: history.length < historyTotal },
+    };
+  }
+
+  revokeAccountSession(
+    actor: BusinessAccount,
+    targetUserId: string,
+    sessionId: string,
+    context?: SessionRequestContext,
+    reason?: string,
+  ) {
+    if (!/^[a-f0-9]{24}$/.test(sessionId)) {
+      throw new AppError("Session not found.", 404);
+    }
+    if (actor.id !== targetUserId && !this.isAdmin(actor)) {
+      throw new AppError("You cannot revoke another account's sessions.", 403);
+    }
+    if (actor.id !== targetUserId && (!reason || reason.trim().length < 4)) {
+      throw new AppError("A reason is required to revoke another account's session.", 400);
+    }
+    const result = this.repository.revokeUserSessionById({
+      userId: targetUserId,
+      sessionId,
+      revokedAt: nowIso(),
+    });
+    if (!result.revoked) {
+      throw new AppError("Session not found or already revoked.", 404);
+    }
+    this.auditSecurity({
+      actor,
+      action: actor.id === targetUserId ? "session_revoked" : "admin_session_revoked",
+      targetType: "account",
+      targetId: targetUserId,
+      metadata: { sessionId, revokedDiscountPasses: result.revokedDiscountPasses, reason: reason ?? null },
+      context,
+    });
+    return result;
+  }
+
+  listAdminAccountSessions(admin: BusinessAccount, userId: string, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    const account = this.repository.getAccountById(userId);
+    if (!account) throw new AppError("Account not found.", 404);
+    return this.listAccountSessions(account, undefined, query);
+  }
+
+  getAdminSecurityAuditLogs(
+    admin: BusinessAccount,
+    query: { limit?: number; offset?: number; action?: string | null; actorUserId?: string | null },
+  ) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    const limit = Math.min(500, Math.max(1, query.limit ?? 100));
+    const offset = Math.max(0, query.offset ?? 0);
+    const filters = { action: query.action ?? null, actorUserId: query.actorUserId ?? null };
+    const logs = this.repository.listSecurityAuditLogs({ ...filters, limit, offset });
+    const total = this.repository.countSecurityAuditLogs(filters);
+    return {
+      logs,
+      pagination: { total, limit, offset, hasMore: offset + logs.length < total },
+    };
   }
 
   getAccessState(account: BusinessAccount | null, anonymousSessionId: string | null) {
-    const hasFullAccess = isFullAccess(account);
+    const currentAdmin = account ? this.isAdmin(account) : false;
+    const hasFullAccess = isFullAccess(account, currentAdmin);
 
     return {
       status: account?.subscriptionStatus ?? "free",
       isAuthenticated: Boolean(account),
       accountRole: account?.role ?? null,
       hasFullAccess,
-      isAdmin: account?.role === "admin" || account?.subscriptionStatus === "admin",
+      isAdmin: currentAdmin,
       ageConfirmed: Boolean(account?.ageConfirmedAt),
       priceAccessModel: hasFullAccess ? "full" : "fixed_preview",
-      freePriceRevealsPerDay: 0,
-      freePriceRevealsUsedToday: 0,
-      freePriceRevealsRemainingToday: 0,
-      canRevealPrice: hasFullAccess,
+      canViewAllPrices: hasFullAccess,
       canUseCheapestSort: hasFullAccess,
       canUseBeerSearch: hasFullAccess,
       canUseHappyHourActiveNow: true,
@@ -3556,7 +4327,7 @@ export class BusinessService {
       canUseDiscountPass: hasFullAccess,
       freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
       premiumScope: "Every verified beer price, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.",
-      premiumToolkit: buildConsumerPremiumToolkit({ account }),
+      premiumToolkit: buildConsumerPremiumToolkit({ account, currentAdmin }),
       premiumUntil: account?.premiumUntil ?? null,
     };
   }
@@ -3635,17 +4406,74 @@ export class BusinessService {
     };
   }
 
+  private sanitizeRewardVoucher(voucher: AccountRewardVoucher, includeAdminMetadata = false) {
+    const effectiveStatus = voucher.status === "active"
+      && voucher.expiresAt
+      && Date.parse(voucher.expiresAt) <= Date.now()
+      ? "expired"
+      : voucher.status;
+    const claimReference = typeof voucher.metadata.claimReference === "string"
+      ? voucher.metadata.claimReference
+      : null;
+    const instructions = typeof voucher.metadata.fulfillmentInstructions === "string"
+      ? voucher.metadata.fulfillmentInstructions
+      : "Contact Pint Path support with the voucher reference so the reward can be verified and fulfilled.";
+    return {
+      id: voucher.id,
+      publicAccountId: voucher.publicAccountId,
+      sourceType: voucher.sourceType,
+      sourceId: voucher.sourceId,
+      title: voucher.title,
+      amountCents: voucher.amountCents,
+      amountDollars: Number((voucher.amountCents / 100).toFixed(2)),
+      amountLabel: formatAudCents(voucher.amountCents),
+      currency: voucher.currency,
+      venueScope: voucher.venueScope,
+      status: effectiveStatus,
+      statusLabel: effectiveStatus === "active"
+        ? "Ready to claim"
+        : effectiveStatus === "redeemed"
+          ? "Fulfilled"
+          : effectiveStatus === "expired"
+            ? "Expired"
+            : "Void",
+      issuedAt: voucher.issuedAt,
+      expiresAt: voucher.expiresAt,
+      fulfilledAt: voucher.redeemedAt,
+      fulfillmentMethod: "manual_support",
+      claimReference,
+      instructions,
+      ...(includeAdminMetadata ? {
+        userId: voucher.userId,
+        fulfillmentReason: typeof voucher.metadata.fulfillmentReason === "string"
+          ? voucher.metadata.fulfillmentReason
+          : null,
+        fulfilledBy: typeof voucher.metadata.fulfilledBy === "string"
+          ? voucher.metadata.fulfilledBy
+          : null,
+      } : {}),
+    };
+  }
+
   getLeaderboardPrizeAdmin(_admin: BusinessAccount) {
     const now = nowIso();
     const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const monthKey = getZonedMonthKey(new Date(now), timezone);
     const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, now);
     const leaderboard = this.getLeaderboard(_admin, { period: "month", limit: 25 });
+    const awards = this.repository.listLeaderboardPrizeAwards(campaign.monthKey);
     return {
       campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
-      awards: this.repository.listLeaderboardPrizeAwards(campaign.monthKey),
+      awards,
+      vouchers: awards.flatMap((award) => {
+        if (!award.voucherId) {
+          return [];
+        }
+        const voucher = this.repository.getAccountRewardVoucherById(award.voucherId);
+        return voucher ? [this.sanitizeRewardVoucher(voucher, true)] : [];
+      }),
       leaderboard,
-      copy: "Edit the monthly prize amounts before finalizing. Finalization snapshots the top three and creates account vouchers once per month.",
+      copy: "Edit prize amounts before finalizing. Winners receive a 90-day manual-fulfillment claim reference; admins must verify support claims and mark each reward fulfilled or void.",
     };
   }
 
@@ -3698,7 +4526,7 @@ export class BusinessService {
     }
     const entries = this.repository.listLeaderboard({
       period: "month",
-      limit: 3,
+      limit: 100,
       now,
       monthKey: campaign.monthKey,
     });
@@ -3718,13 +4546,54 @@ export class BusinessService {
     return {
       campaign: this.sanitizeLeaderboardPrizeCampaign(result.campaign),
       awards: result.awards,
-      vouchers: result.vouchers,
+      vouchers: result.vouchers.map((voucher) => this.sanitizeRewardVoucher(voucher, true)),
       message: `Finalized ${campaign.monthKey}. ${result.vouchers.length} voucher${result.vouchers.length === 1 ? "" : "s"} created.`,
     };
   }
 
+  transitionRewardVoucher(admin: BusinessAccount, voucherId: string, input: RewardVoucherTransitionInput) {
+    const now = nowIso();
+    const result = this.repository.transitionAccountRewardVoucher({
+      id: voucherId,
+      action: input.action,
+      actorUserId: admin.id,
+      reason: input.reason,
+      now,
+    });
+    if (!result) {
+      throw new AppError("Reward voucher not found.", 404);
+    }
+    if (result.conflict) {
+      throw new AppError(
+        result.voucher.status === "expired"
+          ? "This reward voucher has expired and cannot be fulfilled."
+          : `This reward voucher is already ${result.voucher.status}.`,
+        409,
+      );
+    }
+    this.auditSecurity({
+      actor: admin,
+      action: input.action === "fulfill" ? "reward_voucher_fulfilled" : "reward_voucher_voided",
+      targetType: "account_reward_voucher",
+      targetId: result.voucher.id,
+      metadata: {
+        userId: result.voucher.userId,
+        amountCents: result.voucher.amountCents,
+        reason: input.reason,
+        idempotent: result.idempotent,
+      },
+    });
+    return {
+      voucher: this.sanitizeRewardVoucher(result.voucher),
+      idempotent: result.idempotent,
+      message: input.action === "fulfill"
+        ? "Voucher marked fulfilled."
+        : "Voucher voided.",
+    };
+  }
+
   async planPubGolf(account: BusinessAccount, input: PubGolfPlanInput) {
-    if (!isFullAccess(account)) {
+    if (!isFullAccess(account, this.isAdmin(account))) {
       throw new AppError("Pub Golf beta planning is for premium or contributor accounts.", 403);
     }
 
@@ -3950,7 +4819,8 @@ export class BusinessService {
   }
 
   async getDiscountPass(account: BusinessAccount, authorizationHeader: string | undefined) {
-    if (!isFullAccess(account)) {
+    this.requireCurrentLegalAcceptance(account);
+    if (!isFullAccess(account, this.isAdmin(account))) {
       throw new AppError("Discount passes are for premium or contributor accounts.", 403);
     }
 
@@ -4043,6 +4913,40 @@ export class BusinessService {
     };
   }
 
+  private isBarSpecialActiveNow(special: BarSpecial, now: Date): boolean {
+    if (!special.active) return false;
+    const time = now.getTime();
+    if (special.startsAt && Date.parse(special.startsAt) > time) return false;
+    if (special.endsAt && Date.parse(special.endsAt) <= time) return false;
+    if (!special.startTime || !special.endTime) return true;
+
+    const timezone = special.recurrence.timezone || this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
+    if (special.recurrence.frequency === "weekly") {
+      const weekday = new Intl.DateTimeFormat("en-AU", { timeZone: timezone, weekday: "short" })
+        .format(now)
+        .slice(0, 3)
+        .toLowerCase();
+      if (!special.recurrence.daysOfWeek.includes(weekday)) return false;
+    }
+    const parts = new Intl.DateTimeFormat("en-AU", {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(now);
+    const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+    const current = hour * 60 + minute;
+    const toMinutes = (value: string) => {
+      const [hours = "0", minutes = "0"] = value.split(":");
+      return Number(hours) * 60 + Number(minutes);
+    };
+    const start = toMinutes(special.startTime);
+    const end = toMinutes(special.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return false;
+    return start < end ? current >= start && current < end : current >= start || current < end;
+  }
+
   private redeemDiscountPassForVenue(input: {
     actor: BusinessAccount | null;
     venueId: string;
@@ -4067,14 +4971,32 @@ export class BusinessService {
     if (!profile?.acceptsPintPathCodes) {
       throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
     }
+    const normalizedTerminalId = String(input.terminalId ?? "default")
+      .trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 80) || "default";
+    const posReference = String(input.posReference ?? "").trim();
     const idempotencyKey = input.source === "pos_webhook"
-      ? `pos:${String(input.posReference ?? "").trim()}`
+      ? `pos:v2:${crypto.createHash("sha256").update(`${normalizedTerminalId}\0${posReference}`).digest("hex").slice(0, 40)}`
       : `pass:${hashDiscountCode(input.code)}`;
-    const existingRedemption = this.repository.getDiscountRedemptionByIdempotencyKey({
+    const codeHash = hashDiscountCode(input.code);
+    const anyPass = this.repository.getDiscountPassByCodeHash(codeHash);
+    let existingRedemption = this.repository.getDiscountRedemptionByIdempotencyKey({
       venueId: input.venueId,
       idempotencyKey,
     });
+    if (!existingRedemption && input.source === "pos_webhook") {
+      const legacy = this.repository.getDiscountRedemptionByIdempotencyKey({
+        venueId: input.venueId,
+        idempotencyKey: `pos:${posReference}`,
+      });
+      const legacyTerminal = typeof legacy?.metadata.terminalId === "string"
+        ? legacy.metadata.terminalId.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 80) || "default"
+        : "default";
+      if (legacy && legacyTerminal === normalizedTerminalId) existingRedemption = legacy;
+    }
     if (existingRedemption) {
+      if (!anyPass || existingRedemption.discountPassId !== anyPass.id) {
+        throw new AppError("That transaction reference is already attached to a different discount pass.", 409);
+      }
       return {
         redemption: existingRedemption,
         accountId: existingRedemption.publicAccountId,
@@ -4087,8 +5009,25 @@ export class BusinessService {
         copy: "This transaction was already recorded. No duplicate Pint Points were added.",
       };
     }
+    const priorPassRedemption = anyPass ? this.repository.getDiscountRedemptionByPassId(anyPass.id) : null;
+    if (priorPassRedemption) {
+      if (priorPassRedemption.venueId !== input.venueId) {
+        throw new AppError("This one-time discount code was already used at another venue.", 409);
+      }
+      return {
+        redemption: priorPassRedemption,
+        accountId: priorPassRedemption.publicAccountId,
+        venueId: priorPassRedemption.venueId,
+        venueName: priorPassRedemption.venueName,
+        suburb: priorPassRedemption.suburb,
+        estimatedSavingsDollars: Number((priorPassRedemption.estimatedSavingsCents / 100).toFixed(2)),
+        pointsEarned: 0,
+        idempotentReplay: true,
+        copy: "This one-time discount was already recorded. No duplicate saving or Pint Points were added.",
+      };
+    }
     const pass = this.repository.getActiveDiscountPassByCodeHash({
-      codeHash: hashDiscountCode(input.code),
+      codeHash,
       now,
     });
 
@@ -4097,16 +5036,29 @@ export class BusinessService {
     }
 
     const user = this.repository.getAccountById(pass.userId);
-    if (!user || !isFullAccess(user)) {
+    if (!user || !isFullAccess(user, this.isAdmin(user))) {
       throw new AppError("This account does not currently have discount access.", 403);
     }
 
-    const dailyPoints = this.repository.countPintPointsAwardedSince({
-      userId: user.id,
-      since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    });
-    const pointsEarned = Math.min(input.quantity, Math.max(0, PINT_POINTS_DAILY_CAP - dailyPoints));
-    const { redemption, pintPointRecord } = this.repository.runInTransaction(() => {
+    let specialId: string | null = null;
+    let itemName = input.itemName;
+    let estimatedSavingsCents = 0;
+    if (input.specialId) {
+      const special = this.repository.getBarSpecialById(input.specialId);
+      if (!special || special.barId !== input.venueId) {
+        throw new AppError("Choose an active Pint Path special from this venue.", 400);
+      }
+      if (!this.isBarSpecialActiveNow(special, new Date(now))) {
+        throw new AppError("That Pint Path special is not active right now.", 409);
+      }
+      specialId = special.id;
+      itemName = special.title;
+      estimatedSavingsCents = Math.max(0, special.savingsAmountCents ?? 0) * input.quantity;
+    }
+    const redemption = this.repository.runInTransaction(() => {
+      if (!this.repository.markDiscountPassUsed({ id: pass.id, lastUsedAt: now })) {
+        throw new AppError("This one-time discount code was already used or expired.", 409);
+      }
       const redemption = this.repository.createDiscountRedemption({
         id: crypto.randomUUID(),
         userId: user.id,
@@ -4114,10 +5066,10 @@ export class BusinessService {
         venueId: input.venueId,
         venueName: input.venueName,
         suburb: input.suburb,
-        specialId: input.specialId,
-        itemName: input.itemName,
+        specialId,
+        itemName,
         quantity: input.quantity,
-        estimatedSavingsCents: input.estimatedSavingsCents,
+        estimatedSavingsCents,
         discountPassId: pass.id,
         redeemedByUserId: input.actor?.id ?? null,
         idempotencyKey,
@@ -4130,37 +5082,11 @@ export class BusinessService {
           posReference: input.posReference,
           terminalId: input.terminalId,
           posRedeemedAt: input.posRedeemedAt,
-          pointsEarned,
+          clientEstimatedSavingsCents: input.estimatedSavingsCents,
+          pointsEarned: 0,
         })),
       });
-      const pintPointRecord = this.repository.createPintPointDrinkRecord({
-        id: crypto.randomUUID(),
-        userId: user.id,
-        venueId: input.venueId,
-        venueName: input.venueName,
-        suburb: input.suburb,
-        itemName: input.itemName,
-        beverageCategory: "alcoholic",
-        quantity: input.quantity,
-        isAlcoholic: true,
-        pointsAwarded: pointsEarned,
-        source: input.source,
-        recordedByUserId: input.actor?.id ?? null,
-        idempotencyKey,
-        recordedAt: now,
-        metadata: sanitizeEventMetadata(redactSecrets({
-          discountRedemptionId: redemption.id,
-          discountPassId: pass.id,
-          specialId: input.specialId,
-          source: input.source,
-          redeemedByRole: input.redeemedByRole,
-          posReference: input.posReference,
-          terminalId: input.terminalId,
-          dailyCap: PINT_POINTS_DAILY_CAP,
-        })),
-      });
-      this.repository.markDiscountPassUsed({ id: pass.id, lastUsedAt: now });
-      return { redemption, pintPointRecord };
+      return redemption;
     });
     this.recordUserActivity({
       account: user,
@@ -4170,25 +5096,10 @@ export class BusinessService {
       metadata: {
         venueName: input.venueName,
         suburb: input.suburb,
-        itemName: input.itemName,
+        itemName,
         quantity: input.quantity,
-        estimatedSavingsCents: input.estimatedSavingsCents,
+        estimatedSavingsCents,
         source: input.source,
-      },
-    });
-    this.recordUserActivity({
-      account: user,
-      eventType: "pint_point_drink_recorded",
-      relatedEntityType: "venue",
-      relatedEntityId: input.venueId,
-      metadata: {
-        venueName: input.venueName,
-        suburb: input.suburb,
-        itemName: input.itemName,
-        quantity: input.quantity,
-        pointsEarned,
-        source: input.source,
-        discountRedemptionId: redemption.id,
       },
     });
     this.auditSecurity({
@@ -4198,11 +5109,10 @@ export class BusinessService {
       targetId: input.venueId,
       metadata: {
         publicAccountId: user.publicAccountId,
-        itemName: input.itemName,
+        itemName,
         quantity: input.quantity,
-        estimatedSavingsCents: input.estimatedSavingsCents,
-        pointsEarned,
-        pintPointDrinkRecordId: pintPointRecord.id,
+        estimatedSavingsCents,
+        pointsEarned: 0,
         source: input.source,
         posReference: input.posReference,
       },
@@ -4216,8 +5126,8 @@ export class BusinessService {
       venueName: input.venueName,
       suburb: input.suburb,
       estimatedSavingsDollars: Number((redemption.estimatedSavingsCents / 100).toFixed(2)),
-      pointsEarned,
-      copy: "Redemption logged and Pint Points added automatically.",
+      pointsEarned: 0,
+      copy: "Discount redemption logged. Record the verified alcoholic purchase separately to award Pint Points.",
     };
   }
 
@@ -4251,6 +5161,15 @@ export class BusinessService {
     const token = this.config.POS_WEBHOOK_SIGNING_SECRET && tierCapabilities.posWebhookIntegration
       ? createPosWebhookToken(this.config.POS_WEBHOOK_SIGNING_SECRET, venueId, tokenVersion)
       : null;
+    const lastSuccessAt = profile?.posLastSuccessAt ?? null;
+    const lastSuccessAgeMs = lastSuccessAt ? Date.now() - Date.parse(lastSuccessAt) : Number.POSITIVE_INFINITY;
+    const health = !token
+      ? "disabled"
+      : !lastSuccessAt
+        ? "not_tested"
+        : lastSuccessAgeMs <= 30 * 24 * 60 * 60 * 1000
+          ? "healthy"
+          : "stale";
 
     return {
       enabled: Boolean(token),
@@ -4262,9 +5181,13 @@ export class BusinessService {
       endpoint,
       method: "POST",
       authHeader: "X-Pint-Path-POS-Token",
-      token,
       tokenPreview: token ? `${token.slice(0, 8)}...${token.slice(-8)}` : null,
       tokenVersion,
+      tokenAvailableOnlyOnRotation: true,
+      previousTokenValidUntil: profile?.posPreviousTokenValidUntil ?? null,
+      lastSuccessfulWebhookAt: lastSuccessAt,
+      lastTerminalId: profile?.posLastTerminalId ?? null,
+      health,
       payloadExample: {
         venueId,
         code: "ABC123",
@@ -4277,7 +5200,7 @@ export class BusinessService {
       },
       copy: tierCapabilities.posWebhookIntegration
         ? token
-          ? "Give this endpoint and token only to the venue POS integration. It can redeem one user code at this venue and records item, quantity, savings and server time."
+          ? "POS webhook is configured. Rotate the token to reveal a new secret once; existing secrets are never returned by normal portal reads."
           : "POS webhooks are disabled until POS_WEBHOOK_SIGNING_SECRET is configured on the server. Manual staff redemption still works."
         : "POS webhook automation is a Pro venue feature. Staff can still redeem codes manually from the portal.",
     };
@@ -4289,7 +5212,12 @@ export class BusinessService {
     if (!profile) {
       throw new AppError("Venue profile not found.", 404);
     }
-    this.repository.rotateBarPosWebhookToken({ barId: venueId, now: nowIso() });
+    const now = nowIso();
+    const updated = this.repository.rotateBarPosWebhookToken({
+      barId: venueId,
+      now,
+      previousValidUntil: addMinutes(now, 10),
+    });
     this.auditSecurity({
       actor: account,
       action: "venue_pos_token_rotated",
@@ -4297,7 +5225,16 @@ export class BusinessService {
       targetId: venueId,
       metadata: { previousVersion: profile.posWebhookTokenVersion },
     });
-    return this.getVenuePosIntegration(account, venueId);
+    const status = this.getVenuePosIntegration(account, venueId);
+    const token = this.config.POS_WEBHOOK_SIGNING_SECRET
+      ? createPosWebhookToken(this.config.POS_WEBHOOK_SIGNING_SECRET, venueId, updated.posWebhookTokenVersion)
+      : null;
+    return {
+      ...status,
+      token,
+      revealedOnce: Boolean(token),
+      previousTokenValidUntil: updated.posPreviousTokenValidUntil,
+    };
   }
 
   redeemDiscountPassFromPos(
@@ -4313,7 +5250,14 @@ export class BusinessService {
     const suppliedToken = token?.trim() ?? "";
     const profile = this.repository.getBarProfile(input.venueId);
     const expectedToken = createPosWebhookToken(secret, input.venueId, profile?.posWebhookTokenVersion ?? 1);
-    if (!suppliedToken || !timingSafeStringEqual(expectedToken, suppliedToken)) {
+    const previousToken = profile?.posPreviousTokenVersion && profile.posPreviousTokenValidUntil && Date.parse(profile.posPreviousTokenValidUntil) > Date.now()
+      ? createPosWebhookToken(secret, input.venueId, profile.posPreviousTokenVersion)
+      : null;
+    const tokenValid = Boolean(suppliedToken) && (
+      timingSafeStringEqual(expectedToken, suppliedToken) ||
+      Boolean(previousToken && timingSafeStringEqual(previousToken, suppliedToken))
+    );
+    if (!tokenValid) {
       this.auditSecurity({
         actor: null,
         action: "pos_discount_redeem_blocked",
@@ -4332,7 +5276,7 @@ export class BusinessService {
       throw new AppError("Pro venue tier required for POS webhook redemptions.", 403);
     }
 
-    return this.redeemDiscountPassForVenue({
+    const result = this.redeemDiscountPassForVenue({
       actor: null,
       venueId: input.venueId,
       venueName: venue.venueName,
@@ -4350,6 +5294,12 @@ export class BusinessService {
       metadata: input.metadata,
       context,
     });
+    this.repository.recordBarPosWebhookSuccess({
+      barId: input.venueId,
+      terminalId: input.terminalId ?? null,
+      now: nowIso(),
+    });
+    return result;
   }
 
   private expirePintPointRewardCodesForAccount(accountId: string, now = nowIso()) {
@@ -4512,14 +5462,12 @@ export class BusinessService {
       throw new AppError("Pint Path code expired or not found. Ask the user to refresh their code.", 404);
     }
     const user = this.repository.getAccountById(pass.userId);
-    if (!user || !isFullAccess(user)) {
+    if (!user || !isFullAccess(user, this.isAdmin(user))) {
       throw new AppError("This Pint Path account cannot receive Pint Points right now.", 403);
     }
 
-    const pointsToday = this.repository.countPintPointsAwardedSince({
-      userId: user.id,
-      since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    });
+    const dayRange = getZonedDayRangeIso(new Date(now), this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
+    const pointsToday = this.repository.countPintPointsAwardedSince({ userId: user.id, since: dayRange.startIso });
     const wallet = this.getPintPointWalletForAccount(user, now);
     const authorizationExpiresAt = addMinutes(now, PINT_POINT_CHECKOUT_AUTHORIZATION_MINUTES);
     const checkoutToken = this.createPintPointCheckoutToken({
@@ -4555,6 +5503,7 @@ export class BusinessService {
   }
 
   async createFreePintRewardCode(account: BusinessAccount, input: FreePintRewardCodeInput) {
+    this.requireCurrentLegalAcceptance(account);
     if (account.status !== "active") {
       throw new AppError("Suspended accounts cannot create Free Pint Reward codes.", 403);
     }
@@ -4587,6 +5536,9 @@ export class BusinessService {
         lastError = null;
         break;
       } catch (error) {
+        if (error instanceof Error && error.message === "INSUFFICIENT_PINT_POINTS") {
+          throw new AppError(`${FREE_PINT_REWARD_POINTS} available Pint Points are required for a Free Pint Reward.`, 409);
+        }
         lastError = error;
       }
     }
@@ -4655,7 +5607,7 @@ export class BusinessService {
       allowExpiredCheckoutToken: Boolean(existingRecord && input.checkoutToken),
     });
 
-    if (!isFullAccess(user)) {
+    if (!isFullAccess(user, this.isAdmin(user))) {
       throw new AppError("This Pint Path account cannot receive Pint Points right now.", 403);
     }
 
@@ -4687,13 +5639,7 @@ export class BusinessService {
           : `${wallet.pointsUntilReward} Pint Point${wallet.pointsUntilReward === 1 ? "" : "s"} until your Free Pint Reward.`,
       };
     }
-    const dailyPoints = this.repository.countPintPointsAwardedSince({
-      userId: user.id,
-      since: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    });
-    const pointsEarned = isAlcoholic
-      ? Math.min(input.quantity, Math.max(0, PINT_POINTS_DAILY_CAP - dailyPoints))
-      : 0;
+    const today = getZonedDayRangeIso(new Date(now), this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE);
     const record = this.repository.createPintPointDrinkRecord({
       id: crypto.randomUUID(),
       userId: user.id,
@@ -4704,7 +5650,9 @@ export class BusinessService {
       beverageCategory: input.beverageCategory,
       quantity: input.quantity,
       isAlcoholic,
-      pointsAwarded: pointsEarned,
+      pointsAwarded: isAlcoholic ? input.quantity : 0,
+      dailyCap: PINT_POINTS_DAILY_CAP,
+      dailySince: today.startIso,
       source: "venue_portal",
       recordedByUserId: account.id,
       idempotencyKey,
@@ -4714,6 +5662,7 @@ export class BusinessService {
         enteredByRole: account.role,
       },
     });
+    const pointsEarned = record.pointsAwarded;
 
     const wallet = this.getPintPointWalletForAccount(user, now);
     this.recordUserActivity({
@@ -5012,8 +5961,13 @@ export class BusinessService {
     const suggestedSuburb = savedSuburbs[0] ?? preferences?.preferredSuburbs[0];
     const suggestedMissions = this.listMissions({ suburb: suggestedSuburb, sort: "saved", limit: 6 }, account);
     const latestAgeVerification = this.repository.getLatestAgeVerification(account.id);
-    const submissions = this.repository.listSubmissions({ userId: account.id, limit: 100 });
-    const recentSubmissions = submissions.slice(0, 12).map((submission) => {
+    const submissionHistoryLimit = 12;
+    const rawSubmissions = this.repository.listSubmissions({
+      userId: account.id,
+      limit: submissionHistoryLimit,
+      offset: 0,
+    });
+    const submissionHistory = rawSubmissions.map((submission) => {
       const detail = this.repository.getSubmissionById(submission.id);
       return {
         id: submission.id,
@@ -5046,14 +6000,21 @@ export class BusinessService {
         })),
       };
     });
-    const pendingCount = submissions.filter((submission) => submission.status === "pending").length;
-    const needsMoreInfoCount = submissions.filter((submission) => submission.status === "needs_more_evidence").length;
-    const verifiedCount = submissions.filter((submission) => submission.status === "approved").length;
-    const rejectedCount = submissions.filter((submission) =>
-      ["rejected", "disputed", "fraud_flagged"].includes(submission.status),
-    ).length;
+    const recentSubmissions = submissionHistory;
+    const totalSubmissionCount = this.repository.countSubmissions({ userId: account.id });
+    const pendingCount = this.repository.countSubmissions({ userId: account.id, status: "pending" });
+    const needsMoreInfoCount = this.repository.countSubmissions({ userId: account.id, status: "needs_more_evidence" });
+    const verifiedCount = this.repository.countSubmissions({ userId: account.id, status: "approved" });
+    const rejectedCount = ["rejected", "disputed", "fraud_flagged"].reduce(
+      (total, status) => total + this.repository.countSubmissions({ userId: account.id, status: status as never }),
+      0,
+    );
     const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const monthKey = getZonedMonthKey(new Date(dashboardNow), timezone);
+    const currentMonthPoints = this.repository.getContributionPointsForMonth(account.id, monthKey);
+    const dashboardAccount = currentMonthPoints === account.contributionPointsCurrentMonth
+      ? account
+      : { ...account, contributionPointsCurrentMonth: currentMonthPoints };
     const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, dashboardNow);
     const leaderboardRank = this.repository.getLeaderboardRank({ userId: account.id, period: "month", now: dashboardNow, monthKey });
     const leaderboardEntries = this.repository.listLeaderboard({ period: "month", limit: 50, now: dashboardNow, monthKey });
@@ -5061,8 +6022,10 @@ export class BusinessService {
     const recentDiscountRedemptions = this.repository.listDiscountRedemptionsForUser(account.id, 10);
     const rewardVouchers = this.repository.listAccountRewardVouchers(account.id, 10);
     const pintPointsWallet = this.getPintPointWalletForAccount(account, dashboardNow);
-    const counterStaffInvitations = this.repository
-      .listVenueManagerAssignments({ userId: account.id, activeOnly: false, limit: 100 })
+    const counterStaffAssignmentRows = this.repository
+      .listVenueManagerAssignments({ userId: account.id, activeOnly: false, limit: -1 })
+      .filter((assignment) => assignment.accessLevel === "counter_staff");
+    const counterStaffInvitations = counterStaffAssignmentRows
       .filter((assignment) => assignment.accessLevel === "counter_staff" && assignment.status === "pending")
       .map((assignment) => ({
         id: assignment.id,
@@ -5072,7 +6035,9 @@ export class BusinessService {
         invitedAt: assignment.updatedAt,
         expiresAt: assignment.expiresAt,
       }));
-    const hasFullAccess = isFullAccess(account);
+    const counterStaffAssignments = this.getCounterStaffAssignmentsForAccount(account.id);
+    const currentAdmin = this.isAdmin(dashboardAccount);
+    const hasFullAccess = isFullAccess(dashboardAccount, currentAdmin);
     const missionHistory = this.repository.listMissionProgressForUser(account.id, 12).map((progress) => {
       const mission = this.repository.getMissionById(progress.missionId);
       return {
@@ -5094,20 +6059,27 @@ export class BusinessService {
     });
 
     return {
-      account: sanitizeAccount(account),
+      account: sanitizeAccount(dashboardAccount),
       profile: this.repository.getProfileById(account.id),
       access: this.getAccessState(account, null),
-      submissions,
+      submissions: submissionHistory,
+      submissionHistory,
       recentSubmissions,
+      submissionPagination: {
+        total: totalSubmissionCount,
+        limit: submissionHistoryLimit,
+        offset: 0,
+        hasMore: submissionHistory.length < totalSubmissionCount,
+      },
       dashboardStats: {
-        totalUploads: submissions.length,
+        totalUploads: totalSubmissionCount,
         pendingCount,
         pendingVerificationCount: pendingCount + needsMoreInfoCount,
         needsMoreInfoCount,
         verifiedCount,
         rejectedCount,
         fraudStrikes: account.fraudStrikeCount,
-        pointsThisMonth: account.contributionPointsCurrentMonth,
+        pointsThisMonth: currentMonthPoints,
         trustScore: account.trustScore,
       },
       verifications: this.repository.listVerificationsForUser(account.id, 100),
@@ -5127,15 +6099,16 @@ export class BusinessService {
       suggestedMissions,
       missionHistory,
       premiumMemberToolkit: buildConsumerPremiumToolkit({
-        account,
+        account: dashboardAccount,
+        currentAdmin,
         savedItems,
         preferences,
         discountStats,
       }),
       contributorProgress: {
-        pointsThisMonth: roundPoints(account.contributionPointsCurrentMonth),
+        pointsThisMonth: roundPoints(currentMonthPoints),
         unlockThreshold: this.config.CONTRIBUTOR_UNLOCK_POINTS,
-        pointsNeeded: roundPoints(Math.max(0, this.config.CONTRIBUTOR_UNLOCK_POINTS - account.contributionPointsCurrentMonth)),
+        pointsNeeded: roundPoints(Math.max(0, this.config.CONTRIBUTOR_UNLOCK_POINTS - currentMonthPoints)),
         unlockCopy: "Earn 15 approved points in a month to unlock premium until the end of that month.",
       },
       leaderboard: {
@@ -5152,7 +6125,7 @@ export class BusinessService {
         copy: "Leaderboard counts approved contribution points only.",
       },
       discounts: {
-        eligible: isFullAccess(account),
+        eligible: hasFullAccess,
         totalRedemptions: discountStats.totalRedemptions,
         estimatedSavingsCents: discountStats.estimatedSavingsCents,
         estimatedSavingsDollars: Number((discountStats.estimatedSavingsCents / 100).toFixed(2)),
@@ -5162,20 +6135,18 @@ export class BusinessService {
       },
       pintPoints: pintPointsWallet,
       counterStaffInvitations,
+      counterStaffAssignments,
       rewards: {
         status: rewardVouchers.length ? "active" : "leaderboard_monthly",
         eligiblePlaceholder: canAccessAgeGatedRewards({ account, latestAgeVerification }),
         ageGatedEligible: canAccessAgeGatedRewards({ account, latestAgeVerification }),
         ageThreshold: 18,
-        vouchers: rewardVouchers.map((voucher) => ({
-          ...voucher,
-          amountDollars: Number((voucher.amountCents / 100).toFixed(2)),
-          amountLabel: formatAudCents(voucher.amountCents),
-        })),
+        fulfillmentCopy: "Rewards are fulfilled manually. Contact Pint Path support with the claim reference before the expiry date; your status updates after an admin verifies fulfillment.",
+        vouchers: rewardVouchers.map((voucher) => this.sanitizeRewardVoucher(voucher)),
       },
       betaTesting: {
         enabled: hasFullAccess,
-        label: hasFullAccess ? "BetaTesting unlocked" : "Premium feature",
+        label: hasFullAccess ? "Beta tools unlocked" : "Premium feature",
         leaderboard: {
           monthKey,
           campaign: this.sanitizeLeaderboardPrizeCampaign(campaign),
@@ -5202,7 +6173,7 @@ export class BusinessService {
         latest: latestAgeVerification,
         status: account.ageVerificationStatus,
         isOver18Verified: account.isOver18Verified,
-        copy: "18+ verification will be required for some future rewards. Pint Path does not store raw ID documents.",
+        copy: "18+ confirmation is required for protected contribution and reward features. Pint Path does not store raw ID documents.",
       },
     };
   }
@@ -5212,16 +6183,8 @@ export class BusinessService {
     const privacySettings =
       this.repository.getAccountPrivacySettings(account.id) ??
       this.repository.getDefaultAccountPrivacySettings(account.id);
-    const submissions = this.repository.listSubmissions({ userId: account.id, limit: 1000 }).map((submission) => {
+    const submissions = this.repository.listSubmissions({ userId: account.id, limit: -1 }).map((submission) => {
       const detail = this.repository.getSubmissionById(submission.id);
-      let sourceEvidence: ReturnType<BusinessService["getSubmissionSourceEvidenceUrl"]> | null = null;
-      if (submission.sourcePhotoUrl) {
-        try {
-          sourceEvidence = this.getSubmissionSourceEvidenceUrl(account, submission.id);
-        } catch (error) {
-          if (!(error instanceof AppError) || error.statusCode !== 404) throw error;
-        }
-      }
       return {
         id: submission.id,
         venueId: submission.venueId,
@@ -5235,12 +6198,11 @@ export class BusinessService {
         pointsEligibleByLocation: submission.pointsEligibleByLocation,
         pointsEligibilityReason: submission.pointsEligibilityReason,
         distanceToVenueMeters: submission.distanceToVenueMeters,
-        uploadLocationCapturedAt: submission.uploadLocationCapturedAt,
-        uploadAccuracyMeters: submission.uploadAccuracyMeters,
         uploadLatitude: submission.uploadLatitude,
         uploadLongitude: submission.uploadLongitude,
+        uploadLocationCapturedAt: submission.uploadLocationCapturedAt,
+        uploadAccuracyMeters: submission.uploadAccuracyMeters,
         hasPrivateEvidence: Boolean(submission.sourcePhotoUrl),
-        sourceEvidence,
         reviewedAt: submission.reviewedAt,
         rejectionReason: submission.rejectionReason,
         fraudFlagged: submission.fraudFlagged,
@@ -5278,21 +6240,27 @@ export class BusinessService {
     return {
       exportedAt: nowIso(),
       exportFormat: "pint_path_account_export_v1",
-      note: "Private evidence files, raw photo data, raw tokens, passwords, and exact stored upload coordinates are not included in this quick self-service export.",
+      note: "Private evidence file bytes, raw photo data, raw tokens, and passwords are excluded. Exact stored upload coordinates and capture times are included until their post-review retention period ends.",
       account: sanitizeAccount(account),
       profile: this.repository.getProfileById(account.id),
       privacySettings,
       preferences: preferences ?? null,
       savedItems: this.repository.listSavedItems(account.id),
-      recentSearches: this.repository.listRecentSearches(account.id, 100),
+      recentSearches: this.repository.listRecentSearches(account.id, -1),
       submissions,
-      verifications: this.repository.listVerificationsForUser(account.id, 1000),
-      activity: this.repository.listUserActivityEvents(account.id, 1000),
+      verifications: this.repository.listVerificationsForUser(account.id, -1),
+      activity: this.repository.listUserActivityEvents(account.id, -1),
       ageVerification: {
         latest: this.repository.getLatestAgeVerification(account.id),
         status: account.ageVerificationStatus,
         isOver18Verified: account.isOver18Verified,
       },
+      relatedData: this.repository.exportAccountRelatedData({
+        userId: account.id,
+        email: account.email,
+        stripeCustomerId: account.stripeCustomerId,
+      }),
+      retentionPolicy: ACCOUNT_DATA_RETENTION_POLICY,
     };
   }
 
@@ -5326,6 +6294,49 @@ export class BusinessService {
       : this.repository.getVenueLocationCache(input.venueId);
     const uploadLatitude = input.uploadLocation.latitude;
     const uploadLongitude = input.uploadLocation.longitude;
+    const uploadAccuracyMeters = input.uploadLocation.accuracyMeters;
+    const capturedAtMs = Date.parse(input.uploadLocation.capturedAt);
+    const captureAgeMs = Date.now() - capturedAtMs;
+
+    // Client geolocation is retained as anti-abuse/reviewer evidence. It is not
+    // cryptographic proof and never bypasses admin review.
+    if (!Number.isFinite(uploadAccuracyMeters)) {
+      return {
+        uploadLatitude,
+        uploadLongitude,
+        uploadAccuracyMeters: null,
+        uploadLocationCapturedAt: input.uploadLocation.capturedAt,
+        distanceToVenueMeters: null,
+        pointsEligibleByLocation: false,
+        pointsEligibilityReason: "location_accuracy_missing",
+      };
+    }
+    if (uploadAccuracyMeters > CONTRIBUTION_POINTS.maxLocationAccuracyMeters) {
+      return {
+        uploadLatitude,
+        uploadLongitude,
+        uploadAccuracyMeters,
+        uploadLocationCapturedAt: input.uploadLocation.capturedAt,
+        distanceToVenueMeters: null,
+        pointsEligibleByLocation: false,
+        pointsEligibilityReason: "location_accuracy_over_100m",
+      };
+    }
+    if (
+      !Number.isFinite(capturedAtMs) ||
+      captureAgeMs < -(15 * 60_000) ||
+      captureAgeMs > CONTRIBUTION_POINTS.locationMaxAgeHours * 60 * 60_000
+    ) {
+      return {
+        uploadLatitude,
+        uploadLongitude,
+        uploadAccuracyMeters,
+        uploadLocationCapturedAt: input.uploadLocation.capturedAt,
+        distanceToVenueMeters: null,
+        pointsEligibleByLocation: false,
+        pointsEligibilityReason: captureAgeMs < 0 ? "location_capture_in_future" : "location_capture_stale",
+      };
+    }
 
     if (
       !venueLocation ||
@@ -5335,7 +6346,7 @@ export class BusinessService {
       return {
         uploadLatitude,
         uploadLongitude,
-        uploadAccuracyMeters: input.uploadLocation.accuracyMeters,
+        uploadAccuracyMeters,
         uploadLocationCapturedAt: input.uploadLocation.capturedAt,
         distanceToVenueMeters: null,
         pointsEligibleByLocation: false,
@@ -5352,7 +6363,7 @@ export class BusinessService {
     return {
       uploadLatitude,
       uploadLongitude,
-      uploadAccuracyMeters: input.uploadLocation.accuracyMeters,
+      uploadAccuracyMeters,
       uploadLocationCapturedAt: input.uploadLocation.capturedAt,
       distanceToVenueMeters,
       pointsEligibleByLocation,
@@ -5408,10 +6419,9 @@ export class BusinessService {
     const venuesByCanonicalId = new Map<string, VenueRow>();
     const canonicalIdByVenueId = new Map<string, string>();
     const canonicalIdByIdentity = new Map<string, string>();
-    const now = nowIso();
 
     for (const [index, venue] of [...primary, ...secondary].entries()) {
-      const enriched = { ...venue, ...this.getPublicVenueTierMetadata(venue.id) };
+      const enriched = venue;
       const identity = venueIdentityKey(enriched) ?? `id:${enriched.id}`;
       const canonicalId =
         canonicalIdByVenueId.get(enriched.id) ??
@@ -5420,12 +6430,6 @@ export class BusinessService {
         venuesByCanonicalId.set(enriched.id, enriched);
         canonicalIdByVenueId.set(enriched.id, enriched.id);
         canonicalIdByIdentity.set(identity, enriched.id);
-        this.repository.upsertVenueIdentityAlias({
-          aliasVenueId: enriched.id,
-          canonicalVenueId: enriched.id,
-          identityKey: identity,
-          now,
-        });
         continue;
       }
 
@@ -5458,12 +6462,6 @@ export class BusinessService {
       venuesByCanonicalId.set(canonicalId, canonical);
       canonicalIdByVenueId.set(enriched.id, canonicalId);
       canonicalIdByIdentity.set(identity, canonicalId);
-      this.repository.upsertVenueIdentityAlias({
-        aliasVenueId: enriched.id,
-        canonicalVenueId: canonicalId,
-        identityKey: identity,
-        now,
-      });
     }
 
     return Array.from(venuesByCanonicalId.values()).slice(0, limit);
@@ -5479,6 +6477,7 @@ export class BusinessService {
     }
 
     this.requireVerifiedEmail(account, "Verify your email before uploading venue data.");
+    this.requireCurrentLegalAcceptance(account);
 
     if (!account.ageConfirmedAt) {
       throw new AppError("Please confirm you are 18+ before submitting venue data.", 403);
@@ -5564,7 +6563,7 @@ export class BusinessService {
       return `data:${mimeType};base64,${bytes.toString("base64")}`;
     });
 
-    // Base64 adds roughly one third to the request size; stay below Express' 12MB body limit.
+    // Base64 adds roughly one third to the request size; stay below Express' 16MB body limit.
     if (totalBytes > 8 * 1024 * 1024) {
       throw new AppError("Source images must be 8MB or smaller in total after compression.", 400);
     }
@@ -5701,8 +6700,22 @@ export class BusinessService {
     };
     const verifiedInput = await this.withVerifiedPendingGoogleVenue(account, normalizedInput);
     const photoOcr = await this.preparePhotoOcr(verifiedInput);
-    const sourcePhotoRefs = await this.resolveSubmissionSourcePhotos(account, verifiedInput);
-    return this.createSubmission(account, verifiedInput, { photoOcr, sourcePhotoRefs });
+    const createdEvidenceRefs: string[] = [];
+    try {
+      const sourcePhotoRefs = await this.resolveSubmissionSourcePhotos(
+        account,
+        verifiedInput,
+        (ref) => createdEvidenceRefs.push(ref),
+      );
+      const result = this.createSubmission(account, verifiedInput, { photoOcr, sourcePhotoRefs });
+      if (result.idempotentReplay) {
+        await this.compensateUnlinkedSourceEvidence(createdEvidenceRefs);
+      }
+      return result;
+    } catch (error) {
+      await this.compensateUnlinkedSourceEvidence(createdEvidenceRefs);
+      throw error;
+    }
   }
 
   createSubmission(
@@ -5731,6 +6744,23 @@ export class BusinessService {
     }
 
     const now = nowIso();
+    const observedAtMs = Date.parse(input.observedAt);
+    const nowMs = Date.parse(now);
+    if (observedAtMs > nowMs + (15 * 60_000)) {
+      throw new AppError("Observation time cannot be more than 15 minutes in the future.", 400);
+    }
+    if (observedAtMs < nowMs - (31 * 24 * 60 * 60_000)) {
+      throw new AppError("Observation time must be within the last 31 days so published prices remain current.", 400);
+    }
+    if (input.uploadLocation) {
+      const capturedAtMs = Date.parse(input.uploadLocation.capturedAt);
+      if (
+        capturedAtMs > nowMs + (15 * 60_000) ||
+        capturedAtMs < nowMs - (CONTRIBUTION_POINTS.locationMaxAgeHours * 60 * 60_000)
+      ) {
+        throw new AppError("Upload location must have been captured within the last 12 hours and not in the future.", 400);
+      }
+    }
     if (input.missionId) {
       this.runMissionMaintenance();
       const mission = this.repository.getMissionById(input.missionId);
@@ -5865,13 +6895,24 @@ export class BusinessService {
     }
     const publishedVenueImmediately = this.shouldPublishSubmittedVenueImmediately(pendingVenue);
 
+    let linkedVenueRequestCount = 0;
     if (publishedVenueImmediately) {
-      this.repository.publishPendingVenue({
-        venueId: submission.venueId,
-        venueName: submission.venueName,
-        suburb: submission.suburb,
-        pendingVenue,
-        now,
+      this.repository.runInTransaction(() => {
+        this.repository.publishPendingVenue({
+          venueId: submission.venueId,
+          venueName: submission.venueName,
+          suburb: submission.suburb,
+          pendingVenue,
+          now,
+        });
+        if (pendingVenue?.googlePlaceId) {
+          linkedVenueRequestCount = this.repository.resolveGoogleVenueRequestsForSubmission({
+            googlePlaceId: pendingVenue.googlePlaceId,
+            venueId: submission.venueId,
+            submissionId: submission.id,
+            now,
+          }).length;
+        }
       });
     }
 
@@ -5893,6 +6934,7 @@ export class BusinessService {
         rewardEligible,
         newVenue: Boolean(pendingVenue),
         venuePublishedImmediately: publishedVenueImmediately,
+        linkedVenueRequestCount,
       },
     });
     this.recordUserActivity({
@@ -5910,6 +6952,7 @@ export class BusinessService {
         rewardEligible,
         newVenue: Boolean(pendingVenue),
         venuePublishedImmediately: publishedVenueImmediately,
+        linkedVenueRequestCount,
       },
     });
 
@@ -5929,12 +6972,14 @@ export class BusinessService {
         ? "Submitted for review. If approved, this can earn points toward this month's contributor unlock."
         : "Submitted for review. Points need a saved upload location within 200m of the venue.",
       ocrStatus: submission.ocrStatus,
+      linkedVenueRequestCount,
     };
   }
 
   private async resolveSubmissionSourcePhotos(
     account: Pick<BusinessAccount, "id">,
     input: CreateSubmissionInput,
+    onCreated?: (ref: string) => void,
   ): Promise<string[]> {
     const refs: string[] = [];
     const dataUrls = Array.from(new Set([
@@ -5948,7 +6993,10 @@ export class BusinessService {
         sourceDocumentDataUrl: sourcePhotoDataUrl.startsWith("data:application/pdf") ? sourcePhotoDataUrl : null,
         sourcePhotoUrl: null,
       });
-      if (ref) refs.push(ref);
+      if (ref) {
+        refs.push(ref);
+        onCreated?.(ref);
+      }
     }
 
     if (input.sourcePhotoUrl) {
@@ -5957,10 +7005,36 @@ export class BusinessService {
         sourceDocumentDataUrl: null,
         sourcePhotoUrl: input.sourcePhotoUrl,
       });
-      if (ref) refs.push(ref);
+      if (ref) {
+        refs.push(ref);
+        onCreated?.(ref);
+      }
     }
 
     return refs;
+  }
+
+  private async compensateUnlinkedSourceEvidence(refs: string[]): Promise<void> {
+    for (const ref of [...refs].reverse()) {
+      const evidenceId = getPrivateEvidenceId(ref);
+      if (!evidenceId || this.repository.isSourceEvidenceLinked(evidenceId)) continue;
+      const evidence = this.repository.getSourceEvidenceObject(evidenceId);
+      if (!evidence) continue;
+      try {
+        if (evidence.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
+          await fs.promises.rm(this.getSourceEvidenceFilePath(evidence.objectPath), { force: true });
+        } else if (evidence.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
+          await this.removeSupabaseSourceEvidence(evidence.objectPath);
+        }
+        this.repository.deleteUnlinkedSourceEvidenceObject(evidenceId);
+      } catch (error) {
+        logger.error("Failed to compensate unlinked source evidence", {
+          evidenceId,
+          storageProvider: evidence.storageProvider,
+          error: error instanceof Error ? redactSecrets(error.message) : "unknown",
+        });
+      }
+    }
   }
 
   private resolveInlineSubmissionSourcePhotos(
@@ -6084,18 +7158,31 @@ export class BusinessService {
     }
 
     const createdAt = nowIso();
-    return this.repository.createSourceEvidenceObject({
-      id,
-      ownerUserId: account?.id ?? null,
-      storageProvider: FILESYSTEM_EVIDENCE_PROVIDER,
-      objectPath,
-      mimeType,
-      byteSize: bytes.length,
-      dataBase64: null,
-      externalUrl: null,
-      retentionExpiresAt: addDays(createdAt, this.config.SOURCE_EVIDENCE_RETENTION_DAYS ?? 90),
-      createdAt,
-    });
+    try {
+      return this.repository.createSourceEvidenceObject({
+        id,
+        ownerUserId: account?.id ?? null,
+        storageProvider: FILESYSTEM_EVIDENCE_PROVIDER,
+        objectPath,
+        mimeType,
+        byteSize: bytes.length,
+        dataBase64: null,
+        externalUrl: null,
+        retentionExpiresAt: addDays(createdAt, this.config.SOURCE_EVIDENCE_RETENTION_DAYS ?? 90),
+        createdAt,
+      });
+    } catch (error) {
+      try {
+        await fs.promises.rm(filePath, { force: true });
+      } catch (cleanupError) {
+        logger.error("Failed to compensate orphaned private source evidence file", {
+          provider: FILESYSTEM_EVIDENCE_PROVIDER,
+          objectPath,
+          error: cleanupError,
+        });
+      }
+      throw error;
+    }
   }
 
   private async createSupabaseSourceEvidence(
@@ -6326,13 +7413,16 @@ export class BusinessService {
 
   savePrivacySettings(account: BusinessAccount, input: AccountPrivacySettingsInput) {
     const now = nowIso();
+    const optionalAnalyticsEnabled = input.optionalAnalyticsEnabled;
     const privacySettings = this.repository.upsertAccountPrivacySettings({
       userId: account.id,
-      optionalAnalyticsEnabled: input.optionalAnalyticsEnabled,
-      venueReportInclusionEnabled: input.venueReportInclusionEnabled,
-      productResearchEnabled: input.productResearchEnabled,
-      emailUpdatesEnabled: input.emailUpdatesEnabled,
-      consentVersion: input.consentVersion ?? "2026-07-11",
+      optionalAnalyticsEnabled,
+      venueReportInclusionEnabled: optionalAnalyticsEnabled && input.venueReportInclusionEnabled,
+      // These preferences have no active consent-bound consumer yet. Store a
+      // safe disabled state until the corresponding workflows exist.
+      productResearchEnabled: false,
+      emailUpdatesEnabled: false,
+      consentVersion: CURRENT_LEGAL_POLICY_VERSION,
       now,
     });
     if (!privacySettings.optionalAnalyticsEnabled) {
@@ -6536,41 +7626,128 @@ export class BusinessService {
     };
   }
 
-  async purgeExpiredSourceEvidence(limit = 100): Promise<{ purged: number; failed: number }> {
-    const expired = this.repository.listExpiredSourceEvidence({ now: nowIso(), limit });
+  getAccountDeletionStatus(account: BusinessAccount) {
+    return { request: this.repository.getAccountDeletionRequestForUser(account.id) };
+  }
+
+  cancelAccountDeletion(account: BusinessAccount, requestId: string) {
+    const request = this.repository.getAccountDeletionRequestById(requestId);
+    if (!request || String(request.user_id) !== account.id) {
+      throw new AppError("Deletion request not found.", 404);
+    }
+    if (!this.repository.cancelAccountDeletion({ requestId, userId: account.id, now: nowIso() })) {
+      throw new AppError("This deletion request can no longer be cancelled.", 409);
+    }
+    this.auditSecurity({
+      actor: account,
+      action: "account_deletion_cancelled",
+      targetType: "account_deletion_request",
+      targetId: requestId,
+    });
+    return { requestId, status: "cancelled", cancelled: true };
+  }
+
+  async purgeExpiredSourceEvidence(pageSize = 100): Promise<{
+    purged: number;
+    failed: number;
+    remaining: number;
+    backlogBefore: number;
+    passes: number;
+    stalled: boolean;
+    heldForOpenReview: number;
+    pastHardCap: number;
+    heldForOpenReviewBefore: number;
+  }> {
+    const purgeNow = nowIso();
+    const hardCutoff = daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.pendingEvidenceHardCap.daysAfterCreation);
+    const limit = Math.max(1, Math.min(500, Math.floor(pageSize)));
+    const backlogBefore = this.repository.countExpiredSourceEvidence(purgeNow, hardCutoff);
+    const heldBefore = this.repository.countOverdueHeldSourceEvidence(purgeNow, hardCutoff);
     let purged = 0;
-    let failed = 0;
-    for (const evidence of expired) {
-      try {
-        if (evidence.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
-          await fs.promises.rm(this.getSourceEvidenceFilePath(evidence.objectPath), { force: true });
-        } else if (evidence.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
-          await this.removeSupabaseSourceEvidence(evidence.objectPath);
+    let passes = 0;
+    let stalled = false;
+    const failedEvidenceIds = new Set<string>();
+    while (true) {
+      const expired = this.repository.listExpiredSourceEvidence({ now: purgeNow, hardCutoff, limit });
+      if (!expired.length) break;
+      passes += 1;
+      let passPurged = 0;
+      for (const evidence of expired) {
+        try {
+          if (evidence.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
+            await fs.promises.rm(this.getSourceEvidenceFilePath(evidence.objectPath), { force: true });
+          } else if (evidence.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
+            await this.removeSupabaseSourceEvidence(evidence.objectPath);
+          }
+          this.repository.markSourceEvidenceDeleted({ id: evidence.id, deletedAt: nowIso() });
+          purged += 1;
+          passPurged += 1;
+          failedEvidenceIds.delete(evidence.id);
+        } catch (error) {
+          failedEvidenceIds.add(evidence.id);
+          logger.warn("Source evidence retention purge failed", {
+            evidenceId: evidence.id,
+            error: error instanceof Error ? redactSecrets(error.message) : "unknown",
+          });
         }
-        this.repository.markSourceEvidenceDeleted({ id: evidence.id, deletedAt: nowIso() });
-        purged += 1;
-      } catch (error) {
-        failed += 1;
-        logger.warn("Source evidence retention purge failed", {
-          evidenceId: evidence.id,
-          error: error instanceof Error ? redactSecrets(error.message) : "unknown",
-        });
+      }
+      if (passPurged === 0) {
+        stalled = true;
+        break;
       }
     }
-    return { purged, failed };
+    const remaining = this.repository.countExpiredSourceEvidence(purgeNow, hardCutoff);
+    const heldAfter = this.repository.countOverdueHeldSourceEvidence(purgeNow, hardCutoff);
+    return {
+      purged,
+      failed: failedEvidenceIds.size,
+      remaining,
+      backlogBefore,
+      passes,
+      stalled,
+      heldForOpenReview: heldAfter.heldForOpenReview,
+      pastHardCap: heldAfter.pastHardCap,
+      heldForOpenReviewBefore: heldBefore.heldForOpenReview,
+    };
   }
 
-  listAccountDeletionRequests(admin: BusinessAccount) {
-    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
-    return { requests: this.repository.listAccountDeletionRequests({ limit: 100 }) };
+  runPrivacyRetention() {
+    return {
+      policyVersion: ACCOUNT_DATA_RETENTION_POLICY.version,
+      ...this.repository.prunePrivacyRetention({
+        authSessionCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.authSessions.daysAfterExpiryOrRevocation),
+        providerRevocationCutoff: daysAgoIso(
+          ACCOUNT_DATA_RETENTION_POLICY.revokedProviderSessions.globallyRevokedRowsDaysAfterRevocation,
+        ),
+        stripePayloadCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.stripeWebhookPayloads.daysAfterReceipt),
+        stripeEnvelopeCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.stripeWebhookEventEnvelope.daysAfterReceipt),
+        securityFingerprintCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.securityRequestFingerprints.daysAfterCreation),
+        securityEnvelopeCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.securityAuditEnvelope.daysAfterCreation),
+        reviewedLocationCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.reviewedSubmissionExactLocation.daysAfterReview),
+        migrationQuarantineCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.migrationQuarantinePayload.daysAfterQuarantine),
+      }),
+      migrationBackupsDeleted: this.config.DATABASE_PATH
+        ? purgeExpiredMigrationBackups(this.config.DATABASE_PATH)
+        : 0,
+    };
   }
 
-  async executeAccountDeletion(admin: BusinessAccount, requestId: string) {
+  listAccountDeletionRequests(admin: BusinessAccount, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
     if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
-    const requests = this.repository.listAccountDeletionRequests({ limit: 500 });
-    const request = requests.find((item) => item.id === requestId);
+    const requests = this.repository.listAccountDeletionRequests(query);
+    const total = this.repository.countAccountDeletionRequests();
+    return {
+      requests,
+      total,
+      pagination: { ...query, hasMore: query.offset + requests.length < total },
+    };
+  }
+
+  async executeAccountDeletion(admin: BusinessAccount, requestId: string, reason: string) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    const request = this.repository.getAccountDeletionRequestById(requestId);
     if (!request) throw new AppError("Deletion request not found.", 404);
-    if (!['pending_review', 'approved'].includes(String(request.status))) {
+    if (!['pending_review', 'approved', 'failed', 'processing'].includes(String(request.status))) {
       throw new AppError("This account deletion request has already been processed.", 409);
     }
     if (new Date(String(request.execute_after)).getTime() > Date.now()) {
@@ -6578,53 +7755,152 @@ export class BusinessService {
     }
     const account = this.repository.getAccountById(String(request.user_id));
     if (!account) throw new AppError("Account not found.", 404);
-
-    if (account.supabaseUserId && this.supabase) {
-      const { error } = await this.supabase.auth.admin.deleteUser(account.supabaseUserId);
-      if (error) {
-        throw new ExternalServiceError("Supabase account deletion failed; local data was left unchanged.", {
-          message: redactSecrets(error.message),
-        });
-      }
-    }
-
-    const evidence = this.repository.listSourceEvidenceForOwner(account.id);
-    for (const item of evidence) {
-      if (item.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
-        await fs.promises.rm(this.getSourceEvidenceFilePath(item.objectPath), { force: true });
-      } else if (item.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
-        await this.removeSupabaseSourceEvidence(item.objectPath);
-      }
-    }
-    const summary = this.repository.executeAccountAnonymisation({
+    this.assertAdminControlPreserved(admin, account);
+    const startedAt = nowIso();
+    const processing = this.repository.beginAccountDeletion({
       requestId,
       reviewedBy: admin.id,
-      now: nowIso(),
+      now: startedAt,
+      staleBefore: new Date(Date.now() - 10 * 60_000).toISOString(),
     });
-    for (const evidenceId of (summary.evidenceIds as string[] | undefined) ?? []) {
-      this.repository.markSourceEvidenceDeleted({ id: evidenceId, deletedAt: nowIso() });
+    if (!processing) throw new AppError("This deletion request is already being processed.", 409);
+    this.repository.revokeUserSessions({ userId: account.id, revokedAt: startedAt });
+    this.repository.revokeDiscountPassesForUser({ userId: account.id, revokedAt: startedAt });
+
+    try {
+      const deletedStripeCustomerSnapshot = typeof processing.stripe_customer_id_snapshot === "string"
+        ? processing.stripe_customer_id_snapshot
+        : null;
+      const stripeCustomerNeedsDeletion = Boolean(
+        account.stripeCustomerId && (
+          !processing.stripe_customer_deleted_at || account.stripeCustomerId !== deletedStripeCustomerSnapshot
+        ),
+      );
+      if (account.stripeCustomerId && stripeCustomerNeedsDeletion && !this.config.DEMO_BILLING_MODE) {
+        if (!this.config.STRIPE_SECRET_KEY) {
+          throw new ExternalServiceError("Stripe customer deletion is not configured; the request is saved for retry.");
+        }
+        const response = await fetchWithTimeout(
+          `https://api.stripe.com/v1/customers/${encodeURIComponent(account.stripeCustomerId)}`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}` },
+          },
+        );
+        if (!response.ok && response.status !== 404) {
+          const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+          throw new ExternalServiceError("Stripe customer deletion failed; the request is saved for retry.", {
+            status: response.status,
+            message: redactSecrets(payload?.error?.message ?? "unknown"),
+          });
+        }
+        this.repository.markAccountDeletionStripeCustomerDeleted({
+          requestId,
+          userId: account.id,
+          stripeCustomerId: account.stripeCustomerId,
+          now: nowIso(),
+        });
+      }
+
+      if (account.supabaseUserId && !processing.identity_deleted_at && !this.supabase) {
+        throw new ExternalServiceError("Supabase identity deletion is not configured; the request is saved for retry.");
+      }
+      if (account.supabaseUserId && this.supabase && !processing.identity_deleted_at) {
+        const { error } = await this.supabase.auth.admin.deleteUser(account.supabaseUserId);
+        const alreadyDeleted = Boolean(error && /not[ -]?found|does not exist/i.test(error.message));
+        if (error && !alreadyDeleted) {
+          throw new ExternalServiceError("Supabase account deletion failed; the request is saved for retry.", {
+            message: redactSecrets(error.message),
+          });
+        }
+        this.repository.markAccountDeletionIdentityDeleted({ requestId, now: nowIso() });
+      }
+
+      const evidence = this.repository.listSourceEvidenceForOwner(account.id);
+      for (const item of evidence) {
+        if (item.storageProvider === FILESYSTEM_EVIDENCE_PROVIDER) {
+          await fs.promises.rm(this.getSourceEvidenceFilePath(item.objectPath), { force: true });
+        } else if (item.storageProvider === SUPABASE_EVIDENCE_PROVIDER) {
+          await this.removeSupabaseSourceEvidence(item.objectPath);
+        }
+      }
+      if (!processing.deletion_tombstone_recorded_at) {
+        if (!this.accountDeletionTombstoneWriter && this.config.NODE_ENV === "production") {
+          throw new ExternalServiceError(
+            "Independent account-deletion ledger is not configured; the request is saved for retry.",
+          );
+        }
+        if (this.accountDeletionTombstoneWriter) {
+          const tombstoneRecordedAt = nowIso();
+          await this.accountDeletionTombstoneWriter({
+            requestId,
+            userId: account.id,
+            completedAt: tombstoneRecordedAt,
+          });
+          this.repository.markAccountDeletionTombstoneRecorded({
+            requestId,
+            recordedAt: tombstoneRecordedAt,
+            now: nowIso(),
+          });
+        }
+      }
+      const completedAt = nowIso();
+      const summary = this.repository.executeAccountAnonymisation({ requestId, reviewedBy: admin.id, now: completedAt });
+      for (const evidenceId of (summary.evidenceIds as string[] | undefined) ?? []) {
+        this.repository.markSourceEvidenceDeleted({ id: evidenceId, deletedAt: completedAt });
+      }
+      this.auditSecurity({
+        actor: admin,
+        action: "account_deletion_executed",
+        targetType: "account_deletion_request",
+        targetId: requestId,
+        metadata: {
+          anonymisedAccount: typeof summary.surrogatePublicId === "string" ? summary.surrogatePublicId : "deleted-account",
+          reason,
+        },
+      });
+      return { requestId, status: "completed", summary };
+    } catch (error) {
+      const message = error instanceof Error ? redactSecrets(error.message) : "Account deletion failed";
+      this.repository.failAccountDeletion({ requestId, error: message, now: nowIso() });
+      this.auditSecurity({
+        actor: admin,
+        action: "account_deletion_failed",
+        targetType: "account_deletion_request",
+        targetId: requestId,
+        metadata: { reason, error: message },
+      });
+      throw error;
     }
-    this.auditSecurity({
-      actor: admin,
-      action: "account_deletion_executed",
-      targetType: "account_deletion_request",
-      targetId: requestId,
-      metadata: { anonymisedUserId: account.id },
-    });
-    return { requestId, status: "completed", summary };
   }
 
   async reportWrongPrice(account: BusinessAccount | null, input: WrongPriceReportInput) {
     const now = nowIso();
+    if (!account && !input.anonymousSessionId) {
+      throw new AppError("A privacy-safe session identifier is required for anonymous reports.", 400);
+    }
+    let venueName = input.venueName;
+    let beerName = input.beerName;
+    if (input.priceRecordId) {
+      const record = this.repository.getPriceRecordById(input.priceRecordId);
+      if (!record) {
+        throw new AppError("That price record no longer exists. Refresh the venue before reporting it.", 404);
+      }
+      if (record.venueId !== input.venueId) {
+        throw new AppError("That price record does not belong to this venue.", 400);
+      }
+      venueName = record.venueName;
+      beerName = record.beerName;
+    }
     const sourcePhotoUrl = await this.resolveSourcePhoto(account, input);
     const result = this.repository.createWrongPriceReport({
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
       anonymousSessionId: input.anonymousSessionId,
       venueId: input.venueId,
-      venueName: input.venueName,
+      venueName,
       priceRecordId: input.priceRecordId,
-      beerName: input.beerName,
+      beerName,
       reason: input.reason,
       notes: input.notes,
       sourcePhotoUrl,
@@ -6635,7 +7911,7 @@ export class BusinessService {
       anonymousSessionId: input.anonymousSessionId,
       eventType: "wrong_price_reported",
       venueId: input.venueId,
-      beerId: input.beerName ? normalizeTrackedBeerId(input.beerName) : null,
+      beerId: beerName ? normalizeTrackedBeerId(beerName) : null,
       suburb: null,
       metadata: {
         reportId: result.report.id,
@@ -6647,7 +7923,9 @@ export class BusinessService {
 
     return {
       ...result,
-      message: result.markedDisputed
+      message: result.duplicate
+        ? "You already have an open report for this price. The original report remains in review."
+        : result.markedDisputed
         ? "Report saved. This price is now marked for review."
         : "Report saved for review. One report will not remove high-confidence data by itself.",
     };
@@ -6655,39 +7933,50 @@ export class BusinessService {
 
   createVenueRequest(account: BusinessAccount | null, input: VenueRequestInput) {
     const now = nowIso();
-    const request = this.repository.createVenueRequest({
+    const googlePlaceId = input.googlePlaceId ?? input.notes
+      ?.match(/^Google Place ID:\s*([^\r\n]{1,255})$/im)?.[1]
+      ?.trim() ?? null;
+    const result = this.repository.createOrGetVenueRequest({
       id: crypto.randomUUID(),
       userId: account?.id ?? null,
       anonymousSessionId: input.anonymousSessionId,
       requestType: input.requestType,
       venueId: input.venueId,
       venueName: input.venueName,
+      googlePlaceId,
       beerName: input.beerName,
       suburb: input.suburb,
       notes: input.notes,
       now,
     });
+    const { request } = result;
     const isBeerRequest = input.requestType === "missing_beer" || input.requestType === "verify_beer_at_venue";
 
-    this.trackEvent(account, {
-      anonymousSessionId: input.anonymousSessionId,
-      eventType: isBeerRequest ? "beer_requested" : "venue_requested",
-      venueId: input.venueId,
-      beerId: input.beerName ? normalizeTrackedBeerId(input.beerName) : null,
-      suburb: input.suburb,
-      metadata: {
-        requestId: request.id,
-        requestType: input.requestType,
-        venueName: input.venueName,
-      },
-    });
+    if (!result.duplicate) {
+      this.trackEvent(account, {
+        anonymousSessionId: input.anonymousSessionId,
+        eventType: isBeerRequest ? "beer_requested" : "venue_requested",
+        venueId: input.venueId,
+        beerId: input.beerName ? normalizeTrackedBeerId(input.beerName) : null,
+        suburb: input.suburb,
+        metadata: {
+          requestId: request.id,
+          requestType: input.requestType,
+          venueName: input.venueName,
+          hasGooglePlaceId: Boolean(googlePlaceId),
+        },
+      });
+    }
 
     const message = input.requestType === "missing_venue"
-      ? `${input.venueName || "This venue"} has been added to the admin review queue.`
+      ? result.duplicate
+        ? `${input.venueName || "This venue"} is already in the admin review queue.`
+        : `${input.venueName || "This venue"} has been added to the admin review queue.`
       : "Request saved. Admin can turn high-demand requests into missions.";
 
     return {
       request,
+      duplicate: result.duplicate,
       message,
     };
   }
@@ -6727,13 +8016,13 @@ export class BusinessService {
     };
   }
 
-  listSubmissions(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number; includeReviewData?: boolean | undefined }) {
+  listSubmissions(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number; offset?: number; includeReviewData?: boolean | undefined }) {
     if (!account) {
       throw new AppError("Login required.", 401);
     }
 
-    const isAdmin = account.role === "admin" || account.subscriptionStatus === "admin";
-    const listMethod = input.includeReviewData && isAdmin
+    const isAdmin = this.isAdmin(account);
+    const listMethod = input.includeReviewData && (isAdmin || input.mine)
       ? this.repository.listSubmissionsWithItems.bind(this.repository)
       : this.repository.listSubmissions.bind(this.repository);
     if (input.mine || !isAdmin) {
@@ -6741,13 +8030,84 @@ export class BusinessService {
         userId: account.id,
         status: input.status as never,
         limit: input.limit,
+        offset: input.offset ?? 0,
       });
     }
 
     return listMethod({
       status: input.status as never,
       limit: input.limit,
+      offset: input.offset ?? 0,
     });
+  }
+
+  getSubmissionsPage(account: BusinessAccount | null, input: { status?: string | undefined; mine: boolean; limit: number; offset: number; includeReviewData?: boolean | undefined }) {
+    const submissions = this.listSubmissions(account, input);
+    if (!account) throw new AppError("Login required.", 401);
+    const isAdmin = this.isAdmin(account);
+    const filters = {
+      ...(input.mine || !isAdmin ? { userId: account.id } : {}),
+      ...(input.status ? { status: input.status as never } : {}),
+    };
+    const total = this.repository.countSubmissions(filters);
+    return {
+      submissions,
+      pagination: { total, limit: input.limit, offset: input.offset, hasMore: input.offset + submissions.length < total },
+    };
+  }
+
+  getCommunityVerificationCandidates(
+    account: BusinessAccount,
+    input: { limit: number; offset: number },
+  ) {
+    this.assertCanCommunityVerify(account);
+    const candidates = this.repository.listCommunityVerificationCandidates({
+      verifierUserId: account.id,
+      limit: input.limit,
+      offset: input.offset,
+    }).map((submission) => ({
+      id: submission.id,
+      venueId: submission.venueId,
+      venueName: submission.venueName,
+      suburb: submission.suburb,
+      submissionType: submission.submissionType,
+      status: submission.status,
+      observedAt: submission.observedAt,
+      createdAt: submission.createdAt,
+      hasSourceEvidence: Boolean(submission.sourcePhotoUrl),
+      confirmationCount: this.repository.countConfirmedVerificationsForSubmission(submission.id),
+      items: submission.items.map((item) => ({
+        beerName: item.beerName,
+        servingSize: item.servingSize,
+        price: item.price,
+        isHappyHourPrice: item.isHappyHourPrice,
+        happyHourDetails: redactUserVisibleFreeText(item.happyHourDetails),
+        isOnTap: item.isOnTap,
+      })),
+      verificationPath: `/api/business/submissions/${encodeURIComponent(submission.id)}/verifications`,
+    }));
+    const total = this.repository.countCommunityVerificationCandidates(account.id);
+    return {
+      candidates,
+      pagination: {
+        total,
+        limit: input.limit,
+        offset: input.offset,
+        hasMore: input.offset + candidates.length < total,
+      },
+      privacyCopy: "Candidate rows exclude submitter identity, private evidence, upload location, notes, and reviewer-only fields.",
+    };
+  }
+
+  private assertCanCommunityVerify(account: BusinessAccount): void {
+    if (account.status === "suspended") {
+      throw new AppError("Suspended accounts cannot verify venue data.", 403);
+    }
+    this.requireVerifiedEmail(account, "Verify your email before verifying venue data.");
+    this.requireCurrentLegalAcceptance(account);
+    if (!account.ageConfirmedAt) {
+      throw new AppError("Confirm you are 18+ before verifying venue data.", 403);
+    }
   }
 
   private hasUnapprovedCatalogItems(items: BusinessSubmissionItem[]): boolean {
@@ -6757,11 +8117,7 @@ export class BusinessService {
   }
 
   verifySubmission(account: BusinessAccount, submissionId: string, input: VerificationInput) {
-    if (account.status === "suspended") {
-      throw new AppError("Suspended accounts cannot verify venue data.", 403);
-    }
-
-    this.requireVerifiedEmail(account, "Verify your email before verifying venue data.");
+    this.assertCanCommunityVerify(account);
 
     const submission = this.repository.getSubmissionById(submissionId);
     if (!submission) {
@@ -6861,6 +8217,8 @@ export class BusinessService {
       ? roundPoints(Math.min(requestedPoints, suggestedPoints))
       : 0;
     const reviewedAt = nowIso();
+    const reportTimezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
+    const reviewedMonthKey = getZonedMonthKey(new Date(reviewedAt), reportTimezone);
     const reviewConfidence = input.confidence ?? "admin_verified";
     let result: ReturnType<BusinessRepository["reviewSubmission"]>;
     try {
@@ -6873,8 +8231,8 @@ export class BusinessService {
         pointsAwarded: input.status === "approved" ? points : 0,
         confidence: reviewConfidence,
         now: reviewedAt,
-        monthKey: monthKeyFromIso(submission.submission.observedAt),
-        premiumUntil: endOfMonthIso(reviewedAt),
+        monthKey: reviewedMonthKey,
+        premiumUntil: getZonedMonthRangeIso(reviewedMonthKey, reportTimezone).endIso,
         contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
         allowOwnReview,
       });
@@ -6891,7 +8249,7 @@ export class BusinessService {
       targetId: submissionId,
       metadata: {
         status: input.status,
-        fraudFlagged: input.fraudFlagged,
+        fraudFlagged: input.status === "fraud_flagged" || input.fraudFlagged,
         pointsAwarded: input.status === "approved" ? result.pointsAwarded : 0,
         suggestedPoints,
         selfReview: submission.submission.userId === admin.id,
@@ -6899,24 +8257,26 @@ export class BusinessService {
         venueId: result.submission.venueId,
       },
     });
-    const eventType: EventTrackInput["eventType"] =
-      input.status === "approved" ? "submission_approved" : "submission_rejected";
-
-    this.trackEvent(result.account, {
-      anonymousSessionId: null,
-      eventType,
-      venueId: result.submission.venueId,
-      beerId: null,
-      suburb: result.submission.suburb,
-      metadata: {
-        submissionId,
-        reviewedByAdmin: true,
-        pointsAwarded: result.pointsAwarded,
-        suggestedPoints,
-        pointsEligibilityReason: result.submission.pointsEligibilityReason,
-        status: input.status,
-      },
-    });
+    if (input.status !== "needs_more_evidence") {
+      const eventType: EventTrackInput["eventType"] =
+        input.status === "approved" ? "submission_approved" : "submission_rejected";
+      this.trackEvent(result.account, {
+        anonymousSessionId: null,
+        eventType,
+        venueId: result.submission.venueId,
+        beerId: null,
+        suburb: result.submission.suburb,
+        metadata: {
+          submissionId,
+          reviewedByAdmin: true,
+          pointsAwarded: result.pointsAwarded,
+          suggestedPoints,
+          pointsEligibilityReason: result.submission.pointsEligibilityReason,
+          status: input.status,
+          reviewOutcome: input.status === "disputed" ? "disputed" : input.status,
+        },
+      });
+    }
 
     if (result.account.subscriptionStatus === "contributor_unlocked" && result.pointsAwarded > 0) {
       this.trackEvent(result.account, {
@@ -6951,16 +8311,7 @@ export class BusinessService {
   }
 
   private canAdminReviewOwnSubmission(admin: BusinessAccount): boolean {
-    if (!this.isAdmin(admin)) {
-      return false;
-    }
-
-    if (this.config.NODE_ENV !== "production") {
-      return true;
-    }
-
-    const adminEmails = this.getAdminEmailAllowlist();
-    return adminEmails.size > 0 && adminEmails.has(normalizeEmail(admin.email));
+    return this.isAdmin(admin);
   }
 
   calculatePoints(submission: BusinessSubmission, items: BusinessSubmissionItem[]): number {
@@ -6994,68 +8345,106 @@ export class BusinessService {
   }
 
   async listVenues(query: string | undefined, limit: number): Promise<VenueRow[]> {
-    const localVenues = this.repository.listLocalVenues({ query, limit }).map((venue) => ({
-      ...venue,
-      ...this.getPublicVenueTierMetadata(venue.id),
-    }));
+    return (await this.listVenuesPage(query, limit, 0)).venues;
+  }
 
+  async listVenuesPage(query: string | undefined, limit: number, offset = 0): Promise<{
+    venues: VenueRow[];
+    pagination: { total: number; limit: number; offset: number; hasMore: boolean };
+  }> {
+    const normalizedLimit = Math.min(1000, Math.max(1, limit));
+    const normalizedOffset = Math.max(0, offset);
     if (!this.supabase) {
       const rawQuery = query?.trim();
       const labelStem = rawQuery?.split("·")[0] ?? "";
-      const normalizedQuery = (labelStem.split(",")[0] ?? "").trim().toLowerCase();
-      const missionVenues = this.repository
-        .listMissions({ activeOnly: true, limit, suburb: undefined })
-        .filter((mission) => {
-          if (!normalizedQuery) {
-            return true;
-          }
-
-          return [mission.venueName, mission.suburb, mission.reason]
-            .filter(Boolean)
-            .join(" ")
-            .toLowerCase()
-            .includes(normalizedQuery);
-        })
-        .map((mission) => ({
-          id: mission.venueId,
-          name: mission.venueName,
-          address: null,
-          suburb: mission.suburb,
-          state: "VIC",
-          postcode: null,
-          latitude: null,
-          longitude: null,
-          ...this.getPublicVenueTierMetadata(mission.venueId),
-        }));
-      return this.mergeVenueRows(localVenues, missionVenues, limit);
+      const normalizedQuery = (labelStem.split(",")[0] ?? "").trim();
+      const directory = this.repository.listPublicVenueDirectoryPage({
+        query: normalizedQuery,
+        limit: normalizedLimit,
+        offset: normalizedOffset,
+      });
+      const venues = directory.venues.map((venue) => ({
+        ...venue,
+        ...this.getPublicVenueTierMetadata(venue.id),
+      }));
+      return {
+        venues,
+        pagination: {
+          total: directory.total,
+          limit: normalizedLimit,
+          offset: normalizedOffset,
+          hasMore: normalizedOffset + venues.length < directory.total,
+        },
+      };
     }
 
     const normalizedSearch = query?.trim() ?? "";
-    const cachedRows = !normalizedSearch
-      && this.publicVenueCache
-      && Date.now() - this.publicVenueCache.fetchedAt < 60_000
-      && this.publicVenueCache.fetchLimit >= limit
-        ? this.publicVenueCache.rows.slice(0, limit)
-        : null;
-
+    const labelStem = normalizedSearch.split("·")[0] ?? "";
+    const localSearch = (labelStem.split(",")[0] ?? "").trim();
+    const localDirectory = this.repository.listPublicVenueDirectoryPage({
+      query: localSearch,
+      limit: -1,
+      offset: 0,
+    });
+    let localPage = localDirectory.venues
+      .slice(normalizedOffset, normalizedOffset + normalizedLimit)
+      .map((venue) => ({ ...venue, ...this.getPublicVenueTierMetadata(venue.id) }));
+    const allLocalVenueIds = this.repository.listPublicVenueDirectoryPage({
+      limit: -1,
+      offset: 0,
+    }).venues.map((venue) => venue.id);
+    const supabaseLocalVenueIds = allLocalVenueIds.filter(isPostgresUuid);
+    const remoteOffset = Math.max(0, normalizedOffset - localDirectory.total);
+    const remoteSlots = Math.max(0, normalizedLimit - localPage.length);
+    // Always fetch at least one row so the exact remote count remains available
+    // while a page is still fully occupied by local-authoritative venues.
+    const remoteFetchLimit = Math.max(1, remoteSlots);
+    const localPageSupabaseIds = localPage.map((venue) => venue.id).filter(isPostgresUuid);
+    if (localPageSupabaseIds.length) {
+      const localDetailRequest = this.supabase
+        .from("venues")
+        .select("id, name, address, suburb, state, postcode, latitude, longitude")
+        .in("id", localPageSupabaseIds)
+        .limit(localPageSupabaseIds.length);
+      const { data: localRemoteData, error: localRemoteError } = await localDetailRequest.order("name", { ascending: true });
+      if (localRemoteError) {
+        throw new ExternalServiceError("Failed to fetch venue details", {
+          message: localRemoteError.message,
+          details: localRemoteError.details,
+          hint: localRemoteError.hint,
+          code: localRemoteError.code,
+        });
+      }
+      localPage = this.mergeVenueRows(
+        localPage,
+        ((localRemoteData ?? []) as VenueRow[]).map((venue) => ({
+          ...venue,
+          ...this.getPublicVenueTierMetadata(venue.id),
+        })),
+        localPage.length,
+        false,
+      );
+    }
     let request = this.supabase
       .from("venues")
-      .select("id, name, address, suburb, state, postcode, latitude, longitude")
-      .limit(limit);
-
-    if (query && query.trim().length > 0) {
-      const labelStem = query.trim().split("·")[0] ?? "";
+      .select("id, name, address, suburb, state, postcode, latitude, longitude", { count: "exact" });
+    if (supabaseLocalVenueIds.length) {
+      const exclusion = supabaseLocalVenueIds
+        .map((id) => `"${id.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
+        .join(",");
+      request = request.not("id", "in", `(${exclusion})`);
+    }
+    if (normalizedSearch) {
       const searchQuery = (labelStem.split(",")[0] ?? "").trim();
       const safeQuery = sanitizePostgrestIlikeTerm(searchQuery);
       if (safeQuery) {
         request = request.or(`name.ilike.%${safeQuery}%,suburb.ilike.%${safeQuery}%,address.ilike.%${safeQuery}%`);
       }
     }
-
-    const { data, error } = cachedRows
-      ? { data: cachedRows, error: null }
-      : await request.order("name", { ascending: true });
-
+    const rangedRequest = typeof (request as { range?: unknown }).range === "function"
+      ? request.range(remoteOffset, remoteOffset + remoteFetchLimit - 1)
+      : request.limit(remoteFetchLimit);
+    const { data, error, count } = await rangedRequest.order("name", { ascending: true });
     if (error) {
       throw new ExternalServiceError("Failed to fetch venues", {
         message: error.message,
@@ -7064,27 +8453,27 @@ export class BusinessService {
         code: error.code,
       });
     }
-
-    const venues = (data ?? []) as VenueRow[];
-    if (!normalizedSearch && !cachedRows) {
-      this.publicVenueCache = { rows: venues, fetchedAt: Date.now(), fetchLimit: limit };
-    }
-    const now = nowIso();
-    venues.forEach((venue) => {
-      this.repository.upsertVenueLocationCache({
-        venueId: venue.id,
-        venueName: venue.name,
-        suburb: venue.suburb,
-        latitude: venue.latitude,
-        longitude: venue.longitude,
-        now,
-      });
-    });
-
-    return this.mergeVenueRows(localVenues, venues.map((venue) => ({
-      ...venue,
-      ...this.getPublicVenueTierMetadata(venue.id),
-    })), limit, true);
+    const remoteRows = ((data ?? []) as VenueRow[]).slice(0, remoteSlots);
+    const page = this.mergeVenueRows(
+      localPage,
+      remoteRows.map((venue) => ({ ...venue, ...this.getPublicVenueTierMetadata(venue.id) })),
+      normalizedLimit,
+      false,
+    );
+    const estimatedRemoteTotal = typeof count === "number"
+      ? count
+      : remoteOffset + remoteRows.length + (remoteRows.length >= remoteFetchLimit ? 1 : 0);
+    const estimatedTotal = localDirectory.total + estimatedRemoteTotal;
+    const hasMore = normalizedOffset + page.length < estimatedTotal;
+    return {
+      venues: page,
+      pagination: {
+        total: estimatedTotal,
+        limit: normalizedLimit,
+        offset: normalizedOffset,
+        hasMore,
+      },
+    };
   }
 
   async getPublicVenueById(venueId: string): Promise<VenueRow | null> {
@@ -7093,25 +8482,9 @@ export class BusinessService {
       return null;
     }
 
-    if (!this.supabase) {
-      const profile = this.repository.getBarProfile(normalizedVenueId);
-      const location = this.repository.getVenueLocationCache(normalizedVenueId);
-      if (!profile && !location) {
-        return null;
-      }
-
-      return {
-        id: normalizedVenueId,
-        name: profile?.name || location?.venueName || normalizedVenueId,
-        address: profile?.address || null,
-        suburb: profile?.suburb || location?.suburb || null,
-        state: "VIC",
-        postcode: null,
-        latitude: location?.latitude || null,
-        longitude: location?.longitude || null,
-        ...this.getPublicVenueTierMetadata(normalizedVenueId),
-      };
-    }
+    const localVenue = this.getLocalPublicVenueById(normalizedVenueId);
+    if (!this.supabase) return localVenue;
+    if (!isPostgresUuid(normalizedVenueId)) return localVenue;
 
     const { data, error } = await this.supabase
       .from("venues")
@@ -7129,23 +8502,7 @@ export class BusinessService {
     }
 
     if (!data) {
-      const profile = this.repository.getBarProfile(normalizedVenueId);
-      const location = this.repository.getVenueLocationCache(normalizedVenueId);
-      if (!profile && !location) {
-        return null;
-      }
-
-      return {
-        id: normalizedVenueId,
-        name: profile?.name || location?.venueName || normalizedVenueId,
-        address: profile?.address || null,
-        suburb: profile?.suburb || location?.suburb || null,
-        state: "VIC",
-        postcode: null,
-        latitude: location?.latitude || null,
-        longitude: location?.longitude || null,
-        ...this.getPublicVenueTierMetadata(normalizedVenueId),
-      };
+      return localVenue;
     }
 
     const venue = data as VenueRow;
@@ -7159,9 +8516,33 @@ export class BusinessService {
       now,
     });
 
+    const remoteVenue = { ...venue, ...this.getPublicVenueTierMetadata(venue.id) };
+    return localVenue
+      ? this.mergeVenueRows([localVenue], [remoteVenue], 1, false)[0] ?? localVenue
+      : remoteVenue;
+  }
+
+  private getLocalPublicVenueById(venueId: string): VenueRow | null {
+    const profile = this.repository.getBarProfile(venueId);
+    const location = this.repository.getVenueLocationCache(venueId);
+    if (!profile && !location) return null;
     return {
-      ...venue,
-      ...this.getPublicVenueTierMetadata(venue.id),
+      id: venueId,
+      name: profile?.name || location?.venueName || venueId,
+      address: profile?.address ?? null,
+      suburb: profile?.suburb || location?.suburb || null,
+      state: "VIC",
+      postcode: null,
+      latitude: location?.latitude ?? null,
+      longitude: location?.longitude ?? null,
+      phone: profile?.phone ?? null,
+      website: profile?.website ?? null,
+      instagram: profile?.instagram ?? null,
+      description: profile?.description ?? null,
+      openingHours: profile?.openingHours ?? {},
+      venueTags: profile?.venueTags ?? [],
+      isUserSubmittedVenue: profile?.venueTags.includes("user submitted") ?? false,
+      ...this.getPublicVenueTierMetadata(venueId),
     };
   }
 
@@ -7464,6 +8845,9 @@ export class BusinessService {
   }
 
   seedDemoMissions() {
+    if (this.config.NODE_ENV === "production") {
+      throw new AppError("Demo missions are disabled in production.", 403);
+    }
     if (this.repository.countMissions() > 0) {
       return { created: 0 };
     }
@@ -7644,7 +9028,23 @@ export class BusinessService {
     if (!force && Number.isFinite(lastRefreshMs) && Date.now() - lastRefreshMs < AUTO_MISSION_REFRESH_INTERVAL_MS) {
       return { candidates: this.repository.countMissions(), generated: 0, refreshed: false };
     }
-    const rawCandidates = this.repository.listMissionVenueCandidates(AUTO_MISSION_VENUE_LIMIT);
+    const rawCandidates: MissionVenueCandidate[] = [];
+    let candidateOffset = 0;
+    let priorPageSignature: string | null = null;
+    while (true) {
+      const page = this.repository.listMissionVenueCandidates(AUTO_MISSION_VENUE_PAGE_SIZE, candidateOffset);
+      if (!page.length) break;
+      const pageSignature = `${page[0]?.venueId ?? ""}:${page.at(-1)?.venueId ?? ""}:${page.length}`;
+      if (pageSignature === priorPageSignature) {
+        logger.error("Auto-mission candidate pagination stopped making progress", { candidateOffset });
+        break;
+      }
+      rawCandidates.push(...page);
+      priorPageSignature = pageSignature;
+      const nextOffset = candidateOffset + page.length;
+      if (nextOffset <= candidateOffset || page.length < AUTO_MISSION_VENUE_PAGE_SIZE) break;
+      candidateOffset = nextOffset;
+    }
     const candidateByVenue = new Map<string, MissionVenueCandidate>();
     const newestIso = (left: string | null, right: string | null) => {
       if (!left) return right;
@@ -7697,6 +9097,9 @@ export class BusinessService {
     refreshed: boolean;
   } {
     const now = nowIso();
+    if (this.config.NODE_ENV === "production") {
+      this.repository.deactivateDemoMissions(now);
+    }
     const expiredAcceptances = this.repository.expireAcceptedMissionProgress({
       acceptedBefore: missionAcceptanceCutoff(now),
       now,
@@ -7814,7 +9217,7 @@ export class BusinessService {
     }
 
     const matches = this.repository
-      .listMissions({ activeOnly: true, suburb: undefined, limit: 500 })
+      .listMissions({ activeOnly: true, suburb: undefined, limit: -1 })
       .map((mission) => {
         const profile = this.repository.getBarProfile(mission.venueId);
         const location = this.repository.getVenueLocationCache(mission.venueId);
@@ -7860,131 +9263,75 @@ export class BusinessService {
     };
   }
 
-  listMissions(query: {
-    suburb?: string | undefined;
-    q?: string | undefined;
-    latitude?: number | undefined;
-    longitude?: number | undefined;
-    radiusKm?: number | undefined;
-    sort?: string | undefined;
-    limit: number;
-  }, account: BusinessAccount | null = null): BusinessMission[] {
-    const refreshed = this.runMissionMaintenance();
-    if (refreshed.candidates === 0 && this.repository.countMissions() === 0) {
-      this.seedDemoMissions();
-    }
-
-    const hasLocation = typeof query.latitude === "number" && typeof query.longitude === "number";
+  private buildMissionResults(query: MissionListQuery, account: BusinessAccount | null): {
+    missions: BusinessMission[];
+    total: number;
+  } {
     const radiusMeters = Math.max(100, Math.min(50_000, Number(query.radiusKm || 5) * 1000));
-    const resultLimit = Math.max(1, query.limit);
-    const missionFetchLimit = Math.max(resultLimit * 8, 100);
     const searchTerms = String(query.q || "")
       .toLowerCase()
       .split(/\s+/)
       .map((term) => term.trim())
       .filter(Boolean);
-    const progressByMission = new Map(
-      account
-        ? this.repository.listMissionProgressForUser(account.id).map((progress) => [progress.missionId, progress.status] as const)
-        : [],
-    );
-    const unavailableMissionIds = this.repository.listUnavailableMissionIds({
-      ...(account ? { userId: account.id } : {}),
-      acceptedAfter: missionAcceptanceCutoff(nowIso()),
+    const savedSuburbs = query.sort === "saved" && account
+      ? [
+          ...this.repository.listSavedItems(account.id)
+            .filter((item) => item.itemType === "suburb")
+            .map((item) => item.label.trim().toLowerCase()),
+          ...(this.repository.getAccountPreferences(account.id)?.preferredSuburbs ?? [])
+            .map((suburb) => suburb.trim().toLowerCase()),
+        ].filter(Boolean)
+      : [];
+    const now = new Date();
+    const page = this.repository.listMissionFeedPage({
+      userId: account?.id ?? null,
+      suburb: query.suburb,
+      searchTerms,
+      savedSuburbs: Array.from(new Set(savedSuburbs)),
+      savedOnly: query.sort === "saved",
+      latitude: query.latitude,
+      longitude: query.longitude,
+      radiusMeters,
+      sort: query.sort ?? "points",
+      limit: Math.max(1, query.limit),
+      offset: Math.max(0, query.offset ?? 0),
+      acceptedAfter: missionAcceptanceCutoff(now.toISOString()),
+      veryFreshCutoff: new Date(now.getTime() - CONTRIBUTION_POINTS.veryFreshHours * 60 * 60 * 1000).toISOString(),
+      weekOldCutoff: new Date(now.getTime() - CONTRIBUTION_POINTS.weekOldDays * 24 * 60 * 60 * 1000).toISOString(),
+      veryFreshPoints: CONTRIBUTION_POINTS.veryFreshUpdate,
+      weekOldPoints: CONTRIBUTION_POINTS.weekOldUpdate,
+      stalePoints: CONTRIBUTION_POINTS.staleUpdate,
+      newVenuePoints: CONTRIBUTION_POINTS.newVenue,
     });
-    const missions = this.repository
-      .listMissions({ activeOnly: true, suburb: query.suburb, limit: missionFetchLimit })
-      .filter((mission) => !unavailableMissionIds.has(mission.id))
-      .map((mission) => ({
+    return {
+      total: page.total,
+      missions: page.missions.map((mission) => ({
         ...mission,
-        lastVerifiedAt: mission.id.startsWith("auto:")
-          ? mission.lastVerifiedAt
-          : this.repository.getLatestVenueDataTimestamp(mission.venueId) ?? mission.lastVerifiedAt,
-        venueAddress: this.repository.getBarProfile(mission.venueId)?.address ?? null,
-      }))
-      .map((mission) => {
-        const venueLocation = this.repository.getVenueLocationCache(mission.venueId);
-        const canMeasureDistance = hasLocation
-          && typeof venueLocation?.latitude === "number"
-          && typeof venueLocation?.longitude === "number";
-        const distanceMeters = canMeasureDistance
-          ? Math.round(distanceMetersBetween(
-            { latitude: query.latitude!, longitude: query.longitude! },
-            { latitude: venueLocation!.latitude!, longitude: venueLocation!.longitude! },
-          ))
-          : null;
+        freshnessLabel: this.missionFreshnessLabel(mission.lastVerifiedAt),
+        reservationExpiresAt: mission.userProgress === "accepted" && mission.reservationAcceptedAt
+          ? new Date(new Date(mission.reservationAcceptedAt).getTime() + MISSION_ACCEPTANCE_TTL_MS).toISOString()
+          : null,
+      })),
+    };
+  }
 
-        return {
-          ...mission,
-          points: this.missionDynamicPoints(mission),
-          distanceMeters,
-          distanceKm: distanceMeters == null ? null : Math.round((distanceMeters / 1000) * 10) / 10,
-          freshnessLabel: this.missionFreshnessLabel(mission.lastVerifiedAt),
-          userProgress: progressByMission.get(mission.id) ?? null,
-        };
-      })
-      .filter((mission) => {
-        if (hasLocation && (mission.distanceMeters == null || mission.distanceMeters > radiusMeters)) {
-          return false;
-        }
+  listMissions(query: MissionListQuery, account: BusinessAccount | null = null): BusinessMission[] {
+    return this.buildMissionResults(query, account).missions;
+  }
 
-        if (!searchTerms.length) {
-          return true;
-        }
-
-        const searchable = [mission.venueName, mission.suburb, mission.venueAddress, mission.reason]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        return searchTerms.every((term) => searchable.includes(term));
-      });
-
-    switch (query.sort) {
-      case "nearby":
-        return missions
-          .slice()
-          .sort((left, right) => {
-            if (left.distanceMeters == null && right.distanceMeters == null) {
-              return (Number(right.points) * Number(right.multiplier || 1)) -
-                (Number(left.points) * Number(left.multiplier || 1));
-            }
-            if (left.distanceMeters == null) {
-              return 1;
-            }
-            if (right.distanceMeters == null) {
-              return -1;
-            }
-            return left.distanceMeters - right.distanceMeters;
-          })
-          .slice(0, resultLimit);
-      case "stale":
-        return missions
-          .slice()
-          .sort((left, right) => String(left.lastVerifiedAt ?? "").localeCompare(String(right.lastVerifiedAt ?? "")))
-          .slice(0, resultLimit);
-      case "no_data":
-        return missions
-          .slice()
-          .sort((left, right) => Number(Boolean(left.lastVerifiedAt)) - Number(Boolean(right.lastVerifiedAt)))
-          .slice(0, resultLimit);
-      case "missing_happy_hour":
-        return missions
-          .slice()
-          .sort((left, right) => Number(/happy/i.test(right.reason)) - Number(/happy/i.test(left.reason)))
-          .slice(0, resultLimit);
-      case "most_requested":
-      case "high_demand":
-      case "saved":
-      case "points":
-      default:
-        return missions
-          .slice()
-          .sort((left, right) =>
-            (Number(right.points) * Number(right.multiplier || 1)) -
-            (Number(left.points) * Number(left.multiplier || 1)),
-          )
-          .slice(0, resultLimit);
-    }
+  getMissionsPage(query: MissionListQuery, account: BusinessAccount | null = null) {
+    const result = this.buildMissionResults(query, account);
+    const offset = Math.max(0, query.offset ?? 0);
+    const limit = Math.max(1, query.limit);
+    return {
+      missions: result.missions,
+      pagination: {
+        total: result.total,
+        limit,
+        offset,
+        hasMore: offset + result.missions.length < result.total,
+      },
+    };
   }
 
   createMission(input: {
@@ -8053,10 +9400,64 @@ export class BusinessService {
           : "single_beer_price",
     });
     return {
-      mission: { ...mission, userProgress: progress.status },
+      mission: {
+        ...mission,
+        userProgress: progress.status,
+        reservationAcceptedAt: progress.acceptedAt,
+        reservationExpiresAt: new Date(new Date(progress.acceptedAt).getTime() + MISSION_ACCEPTANCE_TTL_MS).toISOString(),
+      },
       progress,
+      reservationAcceptedAt: progress.acceptedAt,
+      reservationExpiresAt: new Date(new Date(progress.acceptedAt).getTime() + MISSION_ACCEPTANCE_TTL_MS).toISOString(),
       submitUrl: `/submit.html?${params.toString()}`,
     };
+  }
+
+  releaseMission(account: BusinessAccount, missionId: string) {
+    this.assertAccountCanSubmit(account);
+    const progress = this.repository.getMissionProgress({ missionId, userId: account.id });
+    if (!progress) throw new AppError("Mission reservation not found.", 404);
+    if (progress.status !== "accepted") {
+      throw new AppError("Only an accepted mission can be released before submission.", 409);
+    }
+    const released = this.repository.releaseAcceptedMission({ missionId, userId: account.id, now: nowIso() });
+    if (!released) throw new AppError("Mission reservation was already released.", 409);
+    return { missionId, progress: released, released: true };
+  }
+
+  listAdminMissions(admin: BusinessAccount, input: number | AdminPaginationInput = 500) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    const query = typeof input === "number"
+      ? { limit: Math.min(1000, Math.max(1, input)), offset: 0 }
+      : input;
+    const missions = this.repository.listMissions({ activeOnly: false, limit: query.limit, offset: query.offset });
+    const total = this.repository.countMissions();
+    return {
+      missions,
+      total,
+      pagination: { ...query, hasMore: query.offset + missions.length < total },
+    };
+  }
+
+  updateAdminMission(admin: BusinessAccount, missionId: string, input: { active: boolean; reason: string }) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    if (!this.repository.setMissionActive({ missionId, active: input.active, now: nowIso() })) {
+      throw new AppError("Mission not found.", 404);
+    }
+    const mission = this.repository.getMissionById(missionId)!;
+    this.auditSecurity({ actor: admin, action: "admin_mission_lifecycle_updated", targetType: "mission", targetId: missionId, metadata: input });
+    return { mission };
+  }
+
+  deleteAdminMission(admin: BusinessAccount, missionId: string, reason: string) {
+    if (!this.isAdmin(admin)) throw new AppError("Admin access required.", 403);
+    const mission = this.repository.getMissionById(missionId);
+    if (!mission) throw new AppError("Mission not found.", 404);
+    if (!this.repository.deleteMissionIfUnused(missionId)) {
+      throw new AppError("Mission has progress, submissions, or request history and can only be deactivated.", 409);
+    }
+    this.auditSecurity({ actor: admin, action: "admin_mission_deleted", targetType: "mission", targetId: missionId, metadata: { venueId: mission.venueId, reason } });
+    return { missionId, deleted: true };
   }
 
   listPriceRecords(
@@ -8071,20 +9472,60 @@ export class BusinessService {
       const canonicalVenueId = this.repository.getCanonicalVenueId(record.venueId);
       return canonicalVenueId === record.venueId ? record : { ...record, venueId: canonicalVenueId };
     };
-    const venueManagerRecords = this.repository
-      .listVenueManagerPriceRecords(5_000, null)
-      .filter((record) => !requestedVenueId || this.repository.getCanonicalVenueId(record.venueId) === requestedVenueId);
-    const records = [
-      ...this.repository.listCurrentPriceRecords(identityVenueIds),
-      ...venueManagerRecords,
-    ]
-      .map(canonicalizeRecord)
-      .filter(shouldExposePriceRecord)
-      .filter((record) =>
-        !record.sourceType.startsWith("venue_manager_portal") ||
-        record.displayKind !== "beer" ||
-        record.price != null,
-      );
+    const cursor = decodePriceCursor(input.cursor);
+    const batchSize = Math.min(500, Math.max(50, input.limit * 2));
+    const maxBatches = 10;
+    const managerVenueIds: Array<string | null> = requestedVenueId
+      ? (identityVenueIds.length ? identityVenueIds : [requestedVenueId])
+      : [null];
+    let scanCursor = cursor;
+    let scanHasMore = false;
+    let records: PublicVenuePriceRecord[] = [];
+    for (let batch = 0; batch < maxBatches; batch += 1) {
+      const currentBatch = this.repository.listCurrentPriceRecordPage({
+        venueIds: identityVenueIds,
+        limit: batchSize,
+        before: scanCursor,
+      });
+      const managerBatches = managerVenueIds.map((venueId) =>
+        this.repository.listVenueManagerPriceRecords(batchSize, venueId, scanCursor));
+      const candidates = [...currentBatch, ...managerBatches.flat()]
+        .sort((left, right) => {
+          const timestampDifference = Date.parse(right.lastVerifiedAt) - Date.parse(left.lastVerifiedAt);
+          return timestampDifference || right.id.localeCompare(left.id);
+        });
+      const globalBatch = candidates.slice(0, batchSize);
+      if (!globalBatch.length) {
+        scanHasMore = false;
+        break;
+      }
+      const lastScanned = globalBatch[globalBatch.length - 1]!;
+      scanCursor = { id: lastScanned.id, verifiedAt: lastScanned.lastVerifiedAt };
+      scanHasMore = candidates.length > batchSize || currentBatch.length === batchSize ||
+        managerBatches.some((managerBatch) => managerBatch.length === batchSize);
+
+      const visibleBatch = globalBatch
+        .map(canonicalizeRecord)
+        .filter((record) => {
+          if (record.displayKind !== "special" || !record.id.startsWith("venue_special:")) return true;
+          const special = this.repository.getBarSpecialById(record.id.slice("venue_special:".length));
+          return special ? this.isBarSpecialActiveNow(special, new Date()) : false;
+        })
+        .filter(shouldExposePriceRecord)
+        .filter((record) =>
+          !record.sourceType.startsWith("venue_manager_portal") ||
+          record.displayKind !== "beer" ||
+          record.price != null,
+        );
+      records = dedupePublicPriceRecords([...records, ...visibleBatch])
+        .sort((left, right) => {
+          const timestampDifference = Date.parse(right.lastVerifiedAt) - Date.parse(left.lastVerifiedAt);
+          return timestampDifference || right.id.localeCompare(left.id);
+        });
+      if (records.length > input.limit || !scanHasMore) {
+        break;
+      }
+    }
     const publicVenueMetadata = new Map<string, Pick<
       VenueRow,
       "membershipTier" | "highlightedName" | "premiumBadge" | "promoted" | "featuredSpecialEligible" | "acceptsPintPathCodes"
@@ -8107,70 +9548,40 @@ export class BusinessService {
         const timestampDifference = new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime();
         return timestampDifference || right.id.localeCompare(left.id);
       });
-    const cursor = decodePriceCursor(input.cursor);
-    const cursorIndex = cursor
-      ? allCurrentRecords.findIndex((record) => record.id === cursor.id && record.lastVerifiedAt === cursor.verifiedAt)
-      : -1;
-    if (cursor && cursorIndex < 0) {
-      throw new AppError("Price cursor is no longer current. Refresh the map to continue.", 409);
-    }
-    const recordsAfterCursor = cursorIndex >= 0 ? allCurrentRecords.slice(cursorIndex + 1) : allCurrentRecords;
-    const dedupedRecords = recordsAfterCursor.slice(0, input.limit);
-    const nextCursor = recordsAfterCursor.length > input.limit && dedupedRecords.length
+    const dedupedRecords = allCurrentRecords.slice(0, input.limit);
+    const nextCursor = allCurrentRecords.length > input.limit && dedupedRecords.length
       ? encodePriceCursor(dedupedRecords[dedupedRecords.length - 1]!)
-      : null;
-    const hasFullAccess = isFullAccess(account);
+      : scanHasMore && scanCursor
+        ? encodePriceCursor({ id: scanCursor.id, lastVerifiedAt: scanCursor.verifiedAt })
+        : null;
+    const hasFullAccess = isFullAccess(account, account ? this.isAdmin(account) : false);
 
     if (hasFullAccess) {
       return {
         records: dedupedRecords,
         access: this.getAccessState(account, anonymousSessionId),
-        revealed: true,
-        blocked: false,
         nextCursor,
       };
     }
 
     const freePreviewRecords = dedupedRecords.map(freePreviewPriceRecord);
-    if (!input.reveal || !input.venueId || dedupedRecords.length === 0) {
-      return {
-        records: freePreviewRecords,
-        access: this.getAccessState(account, anonymousSessionId),
-        revealed: false,
-        blocked: false,
-        nextCursor,
-      };
-    }
-
     const visibleCount = freePreviewRecords.filter((record) => "freePreviewIncluded" in record).length;
     const lockedCount = freePreviewRecords.filter((record) => "priceRedacted" in record).length;
-    if (lockedCount > 0) {
-      this.trackEvent(account, {
-        anonymousSessionId,
-        eventType: "price_view_blocked_free_limit",
-        venueId: input.venueId,
-        beerId: null,
-        suburb: records[0]?.suburb ?? null,
-        metadata: {
-          source: "server_free_preview_scope",
-          recordCount: records.length,
-          visibleFreePreviewCount: visibleCount,
-          lockedPremiumCount: lockedCount,
-        },
-      });
-    }
     return {
       records: freePreviewRecords,
       access: this.getAccessState(account, anonymousSessionId),
-      revealed: visibleCount > 0,
-      blocked: lockedCount > 0,
+      preview: {
+        model: "fixed_preview" as const,
+        includedCount: visibleCount,
+        lockedCount,
+      },
       nextCursor,
     };
   }
 
   trackEvent(account: BusinessAccount | null, input: EventTrackInput): void {
     try {
-      const privacyScope = typeof input.metadata.privacyScope === "string" ? input.metadata.privacyScope : null;
+      const privacyScope = serverEventPrivacyScope(input);
       if (account && privacyScope === "optional_analytics") {
         const settings = this.repository.getAccountPrivacySettings(account.id) ??
           this.repository.getDefaultAccountPrivacySettings(account.id);
@@ -8185,6 +9596,8 @@ export class BusinessService {
           return;
         }
       }
+      const metadata = { ...input.metadata };
+      delete metadata.privacyScope;
       this.repository.recordEvent({
         id: crypto.randomUUID(),
         userId: account?.id ?? null,
@@ -8193,7 +9606,10 @@ export class BusinessService {
         venueId: input.venueId,
         beerId: input.beerId ? normalizeTrackedBeerId(input.beerId) : null,
         suburb: input.suburb,
-        metadata: sanitizeEventMetadata(input.metadata),
+        metadata: sanitizeEventMetadata({
+          ...metadata,
+          ...(privacyScope ? { privacyScope } : {}),
+        }),
         createdAt: nowIso(),
       });
     } catch (error) {
@@ -8204,8 +9620,24 @@ export class BusinessService {
     }
   }
 
+  trackClientEvent(
+    account: BusinessAccount | null,
+    input: EventTrackInput,
+    context?: SessionRequestContext | undefined,
+  ): void {
+    // trackEvent always classifies privacy from server-parsed fields and event
+    // semantics. Keeping a separate client entry point makes that trust
+    // boundary explicit at the route.
+    this.trackEvent(account, {
+      ...input,
+      anonymousSessionId: account
+        ? null
+        : hashAnonymousFallback(context?.ip || "unknown-client"),
+    });
+  }
+
   getAnalyticsPreview(admin: BusinessAccount) {
-    if (admin.role !== "admin" && admin.subscriptionStatus !== "admin") {
+    if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
@@ -8298,7 +9730,7 @@ export class BusinessService {
         uniqueSpecialsDealsViews: analytics.specialsViews,
         mapMarkerClicks: analytics.markerClicks,
         directionsClicks: analytics.directionsClicks,
-        priceReveals: analytics.priceReveals,
+        pricePreviewViews: analytics.pricePreviewViews,
         savesAndNightPlanAdds: analytics.saves,
         shares: analytics.shares,
         areaSearches: analytics.areaSearches,
@@ -8424,9 +9856,116 @@ export class BusinessService {
     return result;
   }
 
-  private getVenueReportRecipients(venueId: string) {
+  getVenueReportDeliverySettings(account: BusinessAccount, venueId: string) {
+    this.requireVerifiedBarAccount(account);
+    this.requireAssignedVenue(account, venueId);
+    const settings = this.repository.getVenueReportDeliverySettings(venueId);
+    const effectiveRecipients = this.getVenueReportRecipients(venueId).map((recipient) => recipient.email);
+    const deliveryJob = this.repository.getSystemState<Record<string, unknown>>("job:monthly_report_delivery");
+    return {
+      ...settings,
+      effectiveRecipients,
+      recipientMode: settings.recipients.length > 0 ? "custom" : "verified_managers",
+      schedule: {
+        enabled: this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false,
+        dayOfMonth: this.config.REPORT_DELIVERY_DAY ?? 2,
+        hour: this.config.REPORT_DELIVERY_HOUR ?? 9,
+        timezone: this.getReportTimezone(),
+        providerConfigured: this.config.REPORT_EMAIL_MODE !== "disabled",
+      },
+      lastDeliveryJob: deliveryJob?.value ?? null,
+      lastDeliveryJobUpdatedAt: deliveryJob?.updatedAt ?? null,
+    };
+  }
+
+  getVenueReconciliation(
+    account: BusinessAccount,
+    venueId: string,
+    query: VenueReconciliationQuery,
+  ) {
+    this.requireVerifiedBarAccount(account);
+    const assignment = this.requireAssignedVenue(account, venueId);
+    const discountTotal = this.repository.countDiscountRedemptionsForVenue(venueId);
+    const pintPointTotal = this.repository.countPintPointDrinkRecordsForVenue(venueId);
+    const discountRedemptions = this.repository
+      .listDiscountRedemptionsForVenue(venueId, query.limit, query.offset)
+      .map((redemption) => ({
+        id: redemption.id,
+        publicAccountId: redemption.publicAccountId,
+        itemName: redemption.itemName,
+        quantity: redemption.quantity,
+        estimatedSavingsCents: redemption.estimatedSavingsCents,
+        source: typeof redemption.metadata.source === "string" ? redemption.metadata.source : "venue_portal",
+        posReference: typeof redemption.metadata.posReference === "string" ? redemption.metadata.posReference : null,
+        terminalId: typeof redemption.metadata.terminalId === "string" ? redemption.metadata.terminalId : null,
+        redeemedAt: redemption.redeemedAt,
+      }));
+    const pintPointActivity = this.repository
+      .listPintPointDrinkRecordsForVenue(venueId, query.limit, query.offset)
+      .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity));
+
+    return {
+      venueId,
+      pagination: {
+        limit: query.limit,
+        offset: query.offset,
+      },
+      discountRedemptions: {
+        items: discountRedemptions,
+        total: discountTotal,
+        hasMore: query.offset + discountRedemptions.length < discountTotal,
+      },
+      pintPointActivity: {
+        items: pintPointActivity,
+        total: pintPointTotal,
+        hasMore: query.offset + pintPointActivity.length < pintPointTotal,
+      },
+      privacyCopy: "Only public member identifiers and transaction reconciliation fields are returned; private account details are excluded.",
+    };
+  }
+
+  updateVenueReportDeliverySettings(
+    account: BusinessAccount,
+    venueId: string,
+    input: VenueReportDeliverySettingsInput,
+  ) {
+    this.requireVerifiedBarAccount(account);
+    this.requireAssignedVenue(account, venueId);
+    const allowedRecipients = new Set(this.getVerifiedVenueReportManagerEmails(venueId));
+    const invalidRecipientCount = input.recipients.filter(
+      (email) => !allowedRecipients.has(email.trim().toLowerCase()),
+    ).length;
+    if (invalidRecipientCount > 0) {
+      throw new AppError(
+        "Report recipients must be current, verified manager accounts assigned to this venue.",
+        400,
+      );
+    }
+    const now = nowIso();
+    this.repository.setVenueReportDeliverySettings({
+      venueId,
+      enabled: input.enabled,
+      recipients: input.recipients,
+      updatedBy: account.id,
+      now,
+    });
+    this.auditSecurity({
+      actor: account,
+      action: "venue_report_delivery_settings_updated",
+      targetType: "venue",
+      targetId: venueId,
+      metadata: {
+        enabled: input.enabled,
+        recipientCount: input.recipients.length,
+        recipientDomains: [...new Set(input.recipients.map((email) => email.split("@")[1] ?? "unknown"))],
+      },
+    });
+    return this.getVenueReportDeliverySettings(account, venueId);
+  }
+
+  private getVerifiedVenueReportManagerEmails(venueId: string): string[] {
     return this.repository
-      .listVenueManagerAssignments({ venueId, activeOnly: true, limit: 50 })
+      .listVenueManagerAssignments({ venueId, activeOnly: true, limit: -1 })
       .filter((assignment) => assignment.accessLevel === "manager")
       .map((assignment) => this.repository.getAccountById(assignment.userId))
       .filter((account): account is BusinessAccount => Boolean(
@@ -8436,74 +9975,83 @@ export class BusinessService {
         account.email &&
         account.emailVerifiedAt &&
         account.ageConfirmedAt,
-      ));
+      ))
+      .map((recipient) => recipient.email.trim().toLowerCase());
   }
 
-  deliverVenueMonthlyReports(admin: BusinessAccount, input: MonthlyReportDeliveryInput) {
+  private getVenueReportRecipients(venueId: string): Array<{ email: string }> {
+    const settings = this.repository.getVenueReportDeliverySettings(venueId);
+    if (!settings.enabled) return [];
+    const verified = new Set(this.getVerifiedVenueReportManagerEmails(venueId));
+    if (settings.recipients.length > 0) {
+      const valid = settings.recipients.filter((email) => verified.has(email.trim().toLowerCase()));
+      if (valid.length !== settings.recipients.length) {
+        this.repository.setVenueReportDeliverySettings({
+          venueId,
+          enabled: valid.length > 0,
+          recipients: valid,
+          updatedBy: "system:recipient-validation",
+          now: nowIso(),
+        });
+      }
+      return valid.map((email) => ({ email }));
+    }
+    return [...verified].map((email) => ({ email }));
+  }
+
+  async deliverVenueMonthlyReports(admin: BusinessAccount, input: MonthlyReportDeliveryInput) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
-
-    const generated = this.generateVenueMonthlyReports(admin, input);
-    const deliveries = generated.reports.flatMap((report) => {
-      const monthlyReport = report as MonthlyBarReport;
-      const recipients = this.getVenueReportRecipients(monthlyReport.barId);
-      if (recipients.length === 0) {
-        return [{
-          venueId: monthlyReport.barId,
-          month: monthlyReport.month,
-          status: "skipped_no_recipients",
-          recipients: [],
-          subject: `Pint Path monthly venue report - ${monthlyReport.month}`,
-          attachmentName: getMonthlyReportFilename({
-            venueId: monthlyReport.barId,
-            month: monthlyReport.month,
-            format: "json",
-          }),
-        }];
-      }
-
-      return recipients.map((recipient) => {
-        const status = input.dryRun || !input.deliver
-          ? "dry_run"
-          : this.config.REPORT_EMAIL_MODE === "mock"
-            ? "mocked"
-            : "skipped_email_disabled";
-        const delivery = {
-          venueId: monthlyReport.barId,
-          month: monthlyReport.month,
-          status,
-          recipients: [recipient.email],
-          subject: `Pint Path monthly venue report - ${monthlyReport.month}`,
-          attachmentName: getMonthlyReportFilename({
-            venueId: monthlyReport.barId,
-            month: monthlyReport.month,
-            format: "json",
-          }),
-        };
-
-        if (status === "mocked") {
-          this.auditSecurity({
-            actor: admin,
-            action: "venue_monthly_report_delivery_mocked",
-            targetType: "venue",
-            targetId: monthlyReport.barId,
-            metadata: {
-              month: monthlyReport.month,
-              recipientCount: 1,
-              recipientDomain: recipient.email.split("@")[1] ?? "unknown",
-            },
-          });
-        }
-
-        return delivery;
-      });
+    const dryRun = input.dryRun || !input.deliver;
+    const provider = dryRun
+      ? null
+      : this.config.REPORT_EMAIL_MODE === "mock"
+        ? createMockReportEmailProvider()
+        : this.config.REPORT_EMAIL_MODE === "resend" && this.config.RESEND_API_KEY
+          ? createResendReportEmailProvider({ apiKey: this.config.RESEND_API_KEY })
+          : null;
+    if (!dryRun && !provider) {
+      throw new AppError("Report email delivery is disabled. Configure Resend or run a dry-run preview.", 503);
+    }
+    if (!dryRun && this.config.REPORT_EMAIL_MODE === "resend" && !this.config.REPORT_EMAIL_FROM) {
+      throw new AppError("Report sender address is not configured.", 503);
+    }
+    const result = await runMonthlyReportDelivery({
+      generator: this,
+      repository: this.repository,
+      provider,
+      publicBaseUrl: this.config.PUBLIC_BASE_URL,
+      from: this.config.REPORT_EMAIL_FROM ?? "reports@mock.pintpath.local",
+      ...(this.config.REPORT_EMAIL_REPLY_TO ? { replyTo: this.config.REPORT_EMAIL_REPLY_TO } : {}),
+      timezone: this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE,
+      ...(input.month ? { month: input.month } : {}),
+      venueId: input.venueId,
+      dryRun,
     });
-
+    this.auditSecurity({
+      actor: admin,
+      action: dryRun ? "venue_monthly_report_delivery_previewed" : "venue_monthly_report_delivery_run",
+      targetType: input.venueId ? "venue" : "venue_monthly_reports",
+      targetId: input.venueId ?? result.month,
+      metadata: {
+        month: result.month,
+        deliveredCount: result.deliveredCount,
+        mockedCount: result.mockedCount,
+        rejectedCount: result.rejectedCount,
+        uncertainCount: result.uncertainCount,
+        skippedNoEligibleRecipientCount: result.skippedNoEligibleRecipientCount,
+      },
+    });
     return {
-      ...generated,
+      ...result,
       emailMode: this.config.REPORT_EMAIL_MODE,
-      deliveries,
+      processedCount: result.deliveredCount + result.mockedCount + result.rejectedCount + result.uncertainCount,
+      message: dryRun
+        ? `Previewed ${result.generatedCount} report${result.generatedCount === 1 ? "" : "s"}.`
+        : result.rejectedCount || result.uncertainCount
+          ? `Delivery completed with ${result.rejectedCount} rejected and ${result.uncertainCount} uncertain send${result.rejectedCount + result.uncertainCount === 1 ? "" : "s"}.`
+          : `Delivered ${result.deliveredCount} report email${result.deliveredCount === 1 ? "" : "s"}${result.mockedCount ? ` (${result.mockedCount} mocked)` : ""}.`,
     };
   }
 
@@ -8655,8 +10203,8 @@ export class BusinessService {
     this.repository.expireVenueCounterStaffInvitations(nowIso());
     const isAdmin = this.isAdmin(account);
     const assignments = isAdmin
-      ? this.repository.listVenueManagerAssignments({ activeOnly: true, limit: 100 })
-      : this.repository.listVenueManagerAssignments({ userId: account.id, activeOnly: true, limit: 100 });
+      ? this.repository.listVenueManagerAssignments({ activeOnly: true, limit: -1 })
+      : this.repository.listVenueManagerAssignments({ userId: account.id, activeOnly: true, limit: -1 });
 
     if (!isAdmin && assignments.length === 0) {
       const claimRequests = this.repository
@@ -8673,6 +10221,7 @@ export class BusinessService {
           reviewedAt: claim.reviewedAt,
         }));
       return {
+        account: sanitizeAccount(account),
         accessState: "claim_required",
         isAdmin,
         assignments: [],
@@ -8699,6 +10248,7 @@ export class BusinessService {
     const selectedVenueId = query.venueId ?? assignments[0]?.venueId;
     if (!selectedVenueId) {
       return {
+        account: sanitizeAccount(account),
         isAdmin,
         assignments,
         selectedVenue: null,
@@ -8754,6 +10304,7 @@ export class BusinessService {
       });
 
       return {
+        account: sanitizeAccount(account),
         accessState: "counter_staff",
         accessLevel,
         isAdmin: false,
@@ -8937,7 +10488,7 @@ export class BusinessService {
       .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
       .map((activity) => this.sanitizeVenuePintPointActivity(account, assignment, activity));
     const staffAssignments = this.repository
-      .listVenueManagerAssignments({ venueId: selectedVenueId, activeOnly: false, limit: 100 })
+      .listVenueManagerAssignments({ venueId: selectedVenueId, activeOnly: false, limit: -1 })
       .filter((item) => item.accessLevel === "counter_staff" && ["active", "pending"].includes(item.status))
       .map((item) => {
         const staffAccount = this.repository.getAccountById(item.userId);
@@ -8985,6 +10536,7 @@ export class BusinessService {
     });
 
     return {
+      account: sanitizeAccount(account),
       isAdmin,
       accessLevel,
       assignments,
@@ -9003,7 +10555,7 @@ export class BusinessService {
         happyHours: inventoryHappyHours,
         specials: inventorySpecials,
       },
-      pendingChanges: this.repository.listBarPendingChanges({ barId: selectedVenueId, status: "pending", limit: 100 }),
+      pendingChanges: this.repository.listBarPendingChanges({ barId: selectedVenueId, status: "pending", limit: -1 }),
       insights,
       analytics,
       demandDashboard,
@@ -9019,6 +10571,12 @@ export class BusinessService {
       },
       posIntegration,
       staffAssignments,
+      staffPagination: {
+        total: staffAssignments.length,
+        limit: staffAssignments.length,
+        offset: 0,
+        hasMore: false,
+      },
       monthlyReport,
       businessToolkit: {
         demandSnapshot,
@@ -9129,6 +10687,7 @@ export class BusinessService {
     });
 
     return {
+      account: sanitizeAccount(this.repository.getAccountById(account.id) ?? account),
       assignment: {
         id: assignment.id,
         venueId: assignment.venueId,
@@ -9374,6 +10933,16 @@ export class BusinessService {
   upsertBarProfile(account: BusinessAccount, venueId: string, input: BarProfileInput) {
     const assignment = this.requireAssignedVenue(account, venueId);
     const existing = this.repository.getBarProfile(venueId);
+    if (existing && !input.expectedUpdatedAt) {
+      throw new AppError("Refresh this venue profile before saving so a teammate's edits are not overwritten.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
+    }
+    if (existing && existing.updatedAt !== input.expectedUpdatedAt) {
+      throw new AppError("This venue profile changed in another session. Refresh before saving your edits.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
+    }
     const existingTier = existing?.membershipTier ?? "basic";
     const membershipTier = this.isAdmin(account) ? input.membershipTier ?? existingTier : existingTier;
     const acceptsPintPathCodes = this.isAdmin(account)
@@ -9381,7 +10950,9 @@ export class BusinessService {
       : existing?.acceptsPintPathCodes ?? false;
     const flags = tierFlags(membershipTier);
     const now = nowIso();
-    const profile = this.repository.upsertBarProfile({
+    let profile;
+    try {
+      profile = this.repository.upsertBarProfile({
       barId: venueId,
       name: input.name,
       address: input.address,
@@ -9391,15 +10962,22 @@ export class BusinessService {
       website: input.website,
       instagram: input.instagram,
       description: input.description,
-      openingHours: input.openingHours,
-      venueTags: cleanStringList(input.venueTags),
+      openingHours: normalizeVenueOpeningHours(existing?.openingHours ?? {}, input.openingHours),
+      venueTags: normalizeVenueTags(existing?.venueTags ?? [], input.venueTags, input.replaceVenueTags),
       membershipTier,
       acceptsPintPathCodes,
       active: this.isAdmin(account) ? input.active : existing?.active ?? true,
+      expectedUpdatedAt: input.expectedUpdatedAt,
       tierManualOverride: this.isAdmin(account) && input.membershipTier !== undefined ? true : existing?.tierManualOverride ?? false,
       now,
       ...flags,
-    });
+      });
+    } catch (error) {
+      if (error instanceof OptimisticConcurrencyError) {
+        throw new AppError("This venue profile changed in another session. Refresh before saving your edits.", 409);
+      }
+      throw error;
+    }
 
     this.trackEvent(account, {
       anonymousSessionId: null,
@@ -9423,6 +11001,16 @@ export class BusinessService {
     if (existing && existing.barId !== venueId) {
       throw new AppError("Beer row belongs to another venue.", 403);
     }
+    if (existing && !input.expectedUpdatedAt) {
+      throw new AppError("Refresh this beer row before saving so a teammate's edits are not overwritten.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
+    }
+    if (existing && existing.updatedAt !== input.expectedUpdatedAt) {
+      throw new AppError("This beer row changed in another session. Refresh before saving your edits.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
+    }
 
     const now = nowIso();
     const beerInput = this.standardizeBarBeerInput(
@@ -9436,7 +11024,13 @@ export class BusinessService {
       name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
       suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
     });
-    const beer = this.repository.upsertBarBeer({
+    const priceChanged = Boolean(existing) && existing?.price !== beerInput.price;
+    const stockChanged = Boolean(existing) && (
+      existing?.inStock !== beerInput.inStock || existing?.onTap !== beerInput.onTap
+    );
+    let beer;
+    try {
+      beer = this.repository.upsertBarBeer({
       id: beerInput.id ?? crypto.randomUUID(),
       barId: venueId,
       beerName: beerInput.beerName,
@@ -9450,8 +11044,25 @@ export class BusinessService {
       onTap: beerInput.onTap,
       inStock: beerInput.inStock,
       notes: beerInput.notes,
+      priceVerifiedAt: beerInput.priceConfirmed
+        ? now
+        : priceChanged
+          ? null
+          : existing?.priceVerifiedAt ?? null,
+      stockVerifiedAt: beerInput.stockConfirmed
+        ? now
+        : stockChanged
+          ? null
+          : existing?.stockVerifiedAt ?? null,
+      expectedUpdatedAt: input.expectedUpdatedAt,
       now,
-    });
+      });
+    } catch (error) {
+      if (error instanceof OptimisticConcurrencyError) {
+        throw new AppError("This beer row changed in another session. Refresh before saving your edits.", 409);
+      }
+      throw error;
+    }
 
     this.trackEvent(account, {
       anonymousSessionId: null,
@@ -9465,11 +11076,34 @@ export class BusinessService {
     return { beer, message: "Beer row saved." };
   }
 
-  deleteBarBeer(account: BusinessAccount, venueId: string, beerId: string) {
+  bulkUpsertBarBeers(account: BusinessAccount, venueId: string, input: BarBeerBulkInput) {
+    this.requireAssignedVenue(account, venueId);
+    const ids = input.items.map((item) => item.id).filter((id): id is string => Boolean(id));
+    if (new Set(ids).size !== ids.length) {
+      throw new AppError("Each beer row can appear only once in a bulk update.", 400);
+    }
+    const results = this.repository.runInTransaction(() =>
+      input.items.map((item) => this.upsertBarBeer(account, venueId, item).beer),
+    );
+    return {
+      beers: results,
+      total: results.length,
+      priceVerifiedCount: results.filter((beer) => Boolean(beer.priceVerifiedAt)).length,
+      stockVerifiedCount: results.filter((beer) => Boolean(beer.stockVerifiedAt)).length,
+      message: `${results.length} beer row${results.length === 1 ? "" : "s"} saved atomically.`,
+    };
+  }
+
+  deleteBarBeer(account: BusinessAccount, venueId: string, beerId: string, expectedUpdatedAt: string) {
     const assignment = this.requireAssignedVenue(account, venueId);
     const existing = this.repository.getBarBeerById(beerId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Beer row not found for this venue.", 404);
+    }
+    if (existing.updatedAt !== expectedUpdatedAt) {
+      throw new AppError("This beer row changed in another session. Refresh before deleting it.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
     }
 
     const queuedDelete = this.maybeQueueVenueDeleteForReview({
@@ -9482,6 +11116,7 @@ export class BusinessService {
         beerName: existing.beerName,
         serveSize: existing.serveSize,
         price: existing.price,
+        expectedUpdatedAt: existing.updatedAt,
       },
       suburb: assignment?.suburb ?? null,
     });
@@ -9489,7 +11124,15 @@ export class BusinessService {
       return queuedDelete;
     }
 
-    const deleted = this.repository.deleteBarBeer({ id: beerId, barId: venueId });
+    let deleted: boolean;
+    try {
+      deleted = this.repository.deleteBarBeer({ id: beerId, barId: venueId, expectedUpdatedAt });
+    } catch (error) {
+      if (error instanceof OptimisticConcurrencyError) {
+        throw new AppError("This beer row changed in another session. Refresh before deleting it.", 409);
+      }
+      throw error;
+    }
     if (!deleted) {
       throw new AppError("Beer row not found for this venue.", 404);
     }
@@ -9522,13 +11165,25 @@ export class BusinessService {
     if (existing && existing.barId !== venueId) {
       throw new AppError("Happy-hour row belongs to another venue.", 403);
     }
+    if (existing && !input.expectedUpdatedAt) {
+      throw new AppError("Refresh this happy hour before saving so a teammate's edits are not overwritten.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
+    }
+    if (existing && existing.updatedAt !== input.expectedUpdatedAt) {
+      throw new AppError("This happy hour changed in another session. Refresh before saving your edits.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
+    }
 
     const profile = this.ensureBarProfile({
       barId: venueId,
       name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
       suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
     });
-    const happyHour = this.repository.upsertBarHappyHour({
+    let happyHour;
+    try {
+      happyHour = this.repository.upsertBarHappyHour({
       id: input.id ?? crypto.randomUUID(),
       barId: venueId,
       title: input.title,
@@ -9538,8 +11193,15 @@ export class BusinessService {
       description: input.description,
       happyHourBeers: input.happyHourBeers,
       active: input.active,
+      expectedUpdatedAt: input.expectedUpdatedAt,
       now: nowIso(),
-    });
+      });
+    } catch (error) {
+      if (error instanceof OptimisticConcurrencyError) {
+        throw new AppError("This happy hour changed in another session. Refresh before saving your edits.", 409);
+      }
+      throw error;
+    }
 
     this.trackEvent(account, {
       anonymousSessionId: null,
@@ -9553,11 +11215,16 @@ export class BusinessService {
     return { happyHour, message: "Happy hour saved." };
   }
 
-  deleteBarHappyHour(account: BusinessAccount, venueId: string, happyHourId: string) {
+  deleteBarHappyHour(account: BusinessAccount, venueId: string, happyHourId: string, expectedUpdatedAt: string) {
     const assignment = this.requireAssignedVenue(account, venueId);
     const existing = this.repository.getBarHappyHourById(happyHourId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Happy hour not found for this venue.", 404);
+    }
+    if (existing.updatedAt !== expectedUpdatedAt) {
+      throw new AppError("This happy hour changed in another session. Refresh before deleting it.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
     }
 
     const queuedDelete = this.maybeQueueVenueDeleteForReview({
@@ -9579,7 +11246,15 @@ export class BusinessService {
       return queuedDelete;
     }
 
-    const deleted = this.repository.deleteBarHappyHour({ id: happyHourId, barId: venueId });
+    let deleted: boolean;
+    try {
+      deleted = this.repository.deleteBarHappyHour({ id: happyHourId, barId: venueId, expectedUpdatedAt });
+    } catch (error) {
+      if (error instanceof OptimisticConcurrencyError) {
+        throw new AppError("This happy hour changed in another session. Refresh before deleting it.", 409);
+      }
+      throw error;
+    }
     if (!deleted) {
       throw new AppError("Happy hour not found for this venue.", 404);
     }
@@ -9606,13 +11281,30 @@ export class BusinessService {
     if (existing && existing.barId !== venueId) {
       throw new AppError("Special belongs to another venue.", 403);
     }
+    if (existing && !input.expectedUpdatedAt) {
+      throw new AppError("Refresh this special before saving so a teammate's edits are not overwritten.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
+    }
+    if (existing && existing.updatedAt !== input.expectedUpdatedAt) {
+      throw new AppError("This special changed in another session. Refresh before saving your edits.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
+    }
 
     const profile = this.ensureBarProfile({
       barId: venueId,
       name: assignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
       suburb: assignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
     });
-    const special = this.repository.upsertBarSpecial({
+    const recurrence = input.recurrence ?? {
+      frequency: "none" as const,
+      daysOfWeek: [],
+      timezone: this.getReportTimezone(),
+    };
+    let special;
+    try {
+      special = this.repository.upsertBarSpecial({
       id: input.id ?? crypto.randomUUID(),
       barId: venueId,
       title: input.title,
@@ -9624,11 +11316,21 @@ export class BusinessService {
       endsAt: input.endsAt,
       startTime: input.startTime,
       endTime: input.endTime,
+      recurrenceFrequency: recurrence.frequency,
+      daysOfWeek: recurrence.daysOfWeek,
+      timezone: recurrence.timezone,
       scheduleNote: input.scheduleNote,
       exclusive: input.exclusive,
       active: input.active,
+      expectedUpdatedAt: input.expectedUpdatedAt,
       now: nowIso(),
-    });
+      });
+    } catch (error) {
+      if (error instanceof OptimisticConcurrencyError) {
+        throw new AppError("This special changed in another session. Refresh before saving your edits.", 409);
+      }
+      throw error;
+    }
 
     this.trackEvent(account, {
       anonymousSessionId: null,
@@ -9642,12 +11344,17 @@ export class BusinessService {
     return { special, message: "Pint Path special saved." };
   }
 
-  deleteBarSpecial(account: BusinessAccount, venueId: string, specialId: string) {
+  deleteBarSpecial(account: BusinessAccount, venueId: string, specialId: string, expectedUpdatedAt: string) {
     const assignment = this.requireAssignedVenue(account, venueId);
     this.requireBarSpecialsTier(account, venueId);
     const existing = this.repository.getBarSpecialById(specialId);
     if (!existing || existing.barId !== venueId) {
       throw new AppError("Special not found for this venue.", 404);
+    }
+    if (existing.updatedAt !== expectedUpdatedAt) {
+      throw new AppError("This special changed in another session. Refresh before deleting it.", 409, {
+        currentUpdatedAt: existing.updatedAt,
+      });
     }
 
     const queuedDelete = this.maybeQueueVenueDeleteForReview({
@@ -9667,7 +11374,15 @@ export class BusinessService {
       return queuedDelete;
     }
 
-    const deleted = this.repository.deleteBarSpecial({ id: specialId, barId: venueId });
+    let deleted: boolean;
+    try {
+      deleted = this.repository.deleteBarSpecial({ id: specialId, barId: venueId, expectedUpdatedAt });
+    } catch (error) {
+      if (error instanceof OptimisticConcurrencyError) {
+        throw new AppError("This special changed in another session. Refresh before deleting it.", 409);
+      }
+      throw error;
+    }
     if (!deleted) {
       throw new AppError("Special not found for this venue.", 404);
     }
@@ -9689,43 +11404,58 @@ export class BusinessService {
       throw new AppError("Admin access required.", 403);
     }
 
-    const change = this.repository.getBarPendingChangeById(changeId);
-    if (!change) {
-      throw new AppError("Pending venue change not found.", 404);
-    }
-
-    if (change.status !== "pending") {
-      throw new AppError("Pending venue change has already been reviewed.", 409);
-    }
-
     const now = nowIso();
-    if (input.status === "approved") {
-      this.applyApprovedBarChange(change, admin, now);
-    }
+    const result = this.repository.runInTransaction(() => {
+      const change = this.repository.getBarPendingChangeById(changeId);
+      if (!change) {
+        throw new AppError("Pending venue change not found.", 404);
+      }
+      if (change.status !== "pending") {
+        throw new AppError("Pending venue change has already been reviewed.", 409);
+      }
 
-    const reviewed = this.repository.reviewBarPendingChange({
-      id: change.id,
-      status: input.status,
-      reviewedBy: admin.id,
-      reviewedAt: now,
-      rejectionReason: input.status === "rejected" ? input.rejectionReason ?? "Rejected by admin review." : input.rejectionReason,
+      // Own the pending row before publishing. If publishing fails, the
+      // surrounding transaction rolls this state change back with it.
+      const reviewed = this.repository.reviewBarPendingChange({
+        id: change.id,
+        status: input.status,
+        reviewedBy: admin.id,
+        reviewedAt: now,
+        rejectionReason: input.status === "rejected" ? input.rejectionReason ?? "Rejected by admin review." : input.rejectionReason,
+      });
+      if (!reviewed) {
+        throw new AppError("Pending venue change has already been reviewed.", 409);
+      }
+
+      if (input.status === "approved") {
+        try {
+          this.applyApprovedBarChange(change, admin, now);
+        } catch (error) {
+          if (error instanceof OptimisticConcurrencyError) {
+            throw new AppError("The venue data changed after this review item was submitted. Refresh and ask the manager to resubmit it.", 409);
+          }
+          throw error;
+        }
+      }
+
+      return { change, reviewed };
     });
 
     this.auditSecurity({
       actor: admin,
       action: "admin_venue_pending_change_review",
       targetType: "venue_pending_change",
-      targetId: change.id,
+      targetId: result.change.id,
       metadata: {
-        venueId: change.barId,
-        changeType: change.changeType,
-        action: change.action,
+        venueId: result.change.barId,
+        changeType: result.change.changeType,
+        action: result.change.action,
         status: input.status,
       },
     });
 
     return {
-      pendingChange: reviewed,
+      pendingChange: result.reviewed,
       message: input.status === "approved" ? "Venue change approved and published." : "Venue change rejected. Public data was not changed.",
     };
   }
@@ -9818,6 +11548,9 @@ export class BusinessService {
     if (!assignment) {
       throw new AppError("Venue manager assignment not found.", 404);
     }
+    // Re-evaluate and persist delivery recipients immediately so a revoked
+    // manager cannot remain in a custom scheduled-report recipient list.
+    this.getVenueReportRecipients(assignment.venueId);
     this.auditSecurity({
       actor: admin,
       action: "admin_venue_manager_revoke",
@@ -9842,12 +11575,12 @@ export class BusinessService {
     return { assignment };
   }
 
-  getVenuePartnerAdmin(admin: BusinessAccount) {
+  getVenuePartnerAdmin(admin: BusinessAccount, query: AdminPaginationInput = { limit: 100, offset: 0 }) {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const assignments = this.repository.listVenueManagerAssignments({ limit: 100 }).map((assignment) => {
+    const assignments = this.repository.listVenueManagerAssignments(query).map((assignment) => {
       const manager = this.repository.getAccountById(assignment.userId);
       return {
         ...assignment,
@@ -9857,16 +11590,37 @@ export class BusinessService {
       };
     });
 
+    const interests = this.repository.listVenueInterestRequests(query.limit, query.offset);
+    const claimRequests = this.repository.listBarClaimRequests(query);
+    const pendingChanges = this.repository.listBarPendingChanges({ status: "pending", ...query });
+    const outreach = this.repository.listVenuePartnerOutreach(query.limit, query.offset);
+    const totals = this.repository.getVenuePartnerAdminCounts();
+    const leads = this.repository.getPotentialPartnerLeads({
+      staleBefore: daysAgoIso(90),
+      limit: 25,
+    });
+    const leadRelationshipContext = this.repository.getVenuePartnerLeadContext(
+      leads.map((lead) => lead.venueId),
+    );
     return {
-      interests: this.repository.listVenueInterestRequests(100),
-      claimRequests: this.repository.listBarClaimRequests({ limit: 100 }),
+      interests,
+      claimRequests,
       assignments,
-      pendingChanges: this.repository.listBarPendingChanges({ status: "pending", limit: 100 }),
-      outreach: this.repository.listVenuePartnerOutreach(100),
-      leads: this.repository.getPotentialPartnerLeads({
-        staleBefore: daysAgoIso(90),
-        limit: 25,
-      }),
+      pendingChanges,
+      outreach,
+      totals,
+      pagination: {
+        ...query,
+        hasMore: {
+          interests: query.offset + interests.length < totals.interests,
+          claimRequests: query.offset + claimRequests.length < totals.claimRequests,
+          assignments: query.offset + assignments.length < totals.assignments,
+          pendingChanges: query.offset + pendingChanges.length < totals.pendingChanges,
+          outreach: query.offset + outreach.length < totals.outreach,
+        },
+      },
+      leads,
+      leadRelationshipContext,
     };
   }
 
@@ -9957,7 +11711,7 @@ export class BusinessService {
   }
 
   getAdminKpis(admin: BusinessAccount, query: AdminDashboardQuery) {
-    if (admin.role !== "admin" && admin.subscriptionStatus !== "admin") {
+    if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
@@ -9982,7 +11736,7 @@ export class BusinessService {
   }
 
   getRetentionCohorts(admin: BusinessAccount, query: RetentionQuery) {
-    if (admin.role !== "admin" && admin.subscriptionStatus !== "admin") {
+    if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
@@ -9993,7 +11747,7 @@ export class BusinessService {
   }
 
   getCoverageDashboard(admin: BusinessAccount) {
-    if (admin.role !== "admin" && admin.subscriptionStatus !== "admin") {
+    if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
@@ -10005,7 +11759,7 @@ export class BusinessService {
   }
 
   getPotentialPartnerLeads(admin: BusinessAccount) {
-    if (admin.role !== "admin" && admin.subscriptionStatus !== "admin") {
+    if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
@@ -10017,15 +11771,33 @@ export class BusinessService {
     };
   }
 
-  getAdminQueues(admin: BusinessAccount) {
-    if (admin.role !== "admin" && admin.subscriptionStatus !== "admin") {
+  getAdminQueues(admin: BusinessAccount, query: AdminPaginationInput = { limit: 50, offset: 0 }) {
+    if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
+    const feedback = this.repository.listFeedback(query.limit, query.offset);
+    const wrongPriceReports = this.repository.listWrongPriceReports(query.limit, query.offset);
+    const venueRequests = this.repository.listVenueRequests(query.limit, query.offset);
+    const totals = {
+      feedback: this.repository.countFeedback(),
+      wrongPriceReports: this.repository.countWrongPriceReports(),
+      venueRequests: this.repository.countVenueRequests(),
+    };
     return {
-      feedback: this.repository.listFeedback(50),
-      wrongPriceReports: this.repository.listWrongPriceReports(50),
-      venueRequests: this.repository.listVenueRequests(50),
+      feedback,
+      wrongPriceReports,
+      venueRequests,
+      totals,
+      pagination: {
+        limit: query.limit,
+        offset: query.offset,
+        hasMore: {
+          feedback: query.offset + feedback.length < totals.feedback,
+          wrongPriceReports: query.offset + wrongPriceReports.length < totals.wrongPriceReports,
+          venueRequests: query.offset + venueRequests.length < totals.venueRequests,
+        },
+      },
     };
   }
 
@@ -10063,15 +11835,38 @@ export class BusinessService {
     if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
-    const item = this.repository.updateTrustWorkflow({
+    let assignedTo: string | null = null;
+    if (input.assignedTo) {
+      const assignee = input.assignedTo === "self"
+        ? admin
+        : this.repository.getAccountById(input.assignedTo)
+          ?? this.repository.getAccountByPublicAccountId(input.assignedTo);
+      if (!assignee || assignee.status !== "active" || !this.isAdmin(assignee)) {
+        throw new AppError("Trust queue assignee must be an active, authorised administrator.", 400);
+      }
+      assignedTo = assignee.id;
+    }
+    const trustUpdatedAt = new Date(Math.max(
+      Date.now(),
+      new Date(input.expectedUpdatedAt).getTime() + 1,
+    )).toISOString();
+    const result = this.repository.updateTrustWorkflow({
       kind,
       id,
       status: input.status,
-      assignedTo: input.assignedTo === "self" ? admin.id : input.assignedTo,
+      assignedTo,
       resolutionNote: input.resolutionNote,
       resolvedBy: admin.id,
-      now: nowIso(),
+      expectedUpdatedAt: input.expectedUpdatedAt,
+      now: trustUpdatedAt,
     });
+    if (result.state === "not_found") {
+      throw new AppError("Trust queue item not found.", 404);
+    }
+    if (result.state === "conflict") {
+      throw new AppError("This trust queue item changed. Refresh it before saving.", 409);
+    }
+    const item = result.item;
     this.auditSecurity({
       actor: admin,
       action: "admin_trust_queue_update",
@@ -10087,30 +11882,22 @@ export class BusinessService {
   }
 
   createMissionFromRequest(admin: BusinessAccount, requestId: string) {
-    if (admin.role !== "admin" && admin.subscriptionStatus !== "admin") {
+    if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
-    const request = this.repository.getVenueRequestById(requestId);
-    if (!request) {
-      throw new AppError("Request not found.", 404);
-    }
-
-    const mission = this.createMission({
-      venueId: request.venueId ?? `request:${request.id}`,
-      venueName: request.venueName ?? request.beerName ?? "Requested venue",
-      suburb: request.suburb,
-      reason: request.requestType.replaceAll("_", " "),
-      priority: "normal",
-      points: request.requestType === "verify_beer_at_venue" ? 2 : 4,
-      multiplier: 1,
-      active: true,
-    });
-    const updatedRequest = this.repository.markVenueRequestMission({
-      requestId: request.id,
-      missionId: mission.id,
+    const result = this.repository.createMissionFromVenueRequest({
+      requestId,
+      missionId: crypto.randomUUID(),
       now: nowIso(),
     });
+    if (result.state === "not_found") {
+      throw new AppError("Request not found.", 404);
+    }
+    if (result.state === "conflict") {
+      throw new AppError("This request already has a mission or is no longer pending.", 409);
+    }
+    const { mission, request } = result;
 
     this.trackEvent(admin, {
       anonymousSessionId: null,
@@ -10121,10 +11908,14 @@ export class BusinessService {
       metadata: { requestId: request.id, missionId: mission.id },
     });
 
-    return { mission, request: updatedRequest };
+    return { mission, request };
   }
 
   async createCheckout(account: BusinessAccount, input: CheckoutInput) {
+    this.requireCurrentLegalAcceptance(account);
+    if (this.repository.hasDeletionLock(account.id)) {
+      throw new AppError("Billing changes are unavailable while account deletion is being processed.", 409);
+    }
     if (!account.ageConfirmedAt) {
       throw new AppError("Please confirm you are 18+ before starting checkout.", 403);
     }
@@ -10152,6 +11943,18 @@ export class BusinessService {
     if (!this.config.STRIPE_SECRET_KEY || !priceId) {
       throw new AppError("Stripe checkout is not configured for this plan.", 503);
     }
+    if (account.stripeCustomerId) {
+      const portal = await this.createStripeBillingPortalSession(
+        account.stripeCustomerId,
+        "/account.html?billing=returned",
+      );
+      return {
+        ...portal,
+        mode: "portal",
+        checkoutUrl: portal.portalUrl,
+        message: "Your Stripe billing profile already exists. Manage, recover, or change it in the billing portal.",
+      };
+    }
 
     const successUrl = new URL("/account.html?checkout=success", this.config.PUBLIC_BASE_URL);
     successUrl.searchParams.set("session_id", "{CHECKOUT_SESSION_ID}");
@@ -10162,6 +11965,9 @@ export class BusinessService {
       headers: {
         Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
         "Content-Type": "application/x-www-form-urlencoded",
+        "Idempotency-Key": crypto.createHash("sha256")
+          .update(`consumer-checkout:${account.id}:${input.plan}:${Math.floor(Date.now() / (30 * 60_000))}`)
+          .digest("hex"),
       },
       body: formEncode({
         mode: "subscription",
@@ -10171,6 +11977,9 @@ export class BusinessService {
         "line_items[0][quantity]": "1",
         "metadata[user_id]": account.id,
         "metadata[subscription_status]": subscriptionStatus,
+        "subscription_data[metadata][billing_context]": "consumer",
+        "subscription_data[metadata][user_id]": account.id,
+        "subscription_data[metadata][subscription_status]": subscriptionStatus,
         customer_email: account.email,
       }),
     });
@@ -10227,9 +12036,6 @@ export class BusinessService {
   }
 
   async createBillingPortal(account: BusinessAccount) {
-    if (!["premium_monthly", "premium_yearly"].includes(account.subscriptionStatus)) {
-      throw new AppError("A paid Pint Path subscription is required to manage billing.", 409);
-    }
     const result = await this.createStripeBillingPortalSession(account.stripeCustomerId ?? "", "/account.html?billing=returned");
     this.auditSecurity({
       actor: account,
@@ -10241,12 +12047,109 @@ export class BusinessService {
     return result;
   }
 
+  private getSuspendedBillingRecoveryOptions(account: BusinessAccount) {
+    const venues = this.repository
+      .listVenueManagerAssignments({ userId: account.id, activeOnly: true, limit: -1 })
+      .filter((assignment) => assignment.accessLevel === "manager")
+      .flatMap((assignment) => {
+        const profile = this.repository.getBarProfile(assignment.venueId);
+        return profile?.stripeCustomerId
+          ? [{ venueId: assignment.venueId, venueName: assignment.venueName }]
+          : [];
+      });
+    return { consumer: Boolean(account.stripeCustomerId), venues };
+  }
+
+  async createSuspendedAccountBillingPortal(input: BillingRecoveryPortalInput, context?: SessionRequestContext | undefined) {
+    let account: BusinessAccount | null = null;
+    if (input.accessToken) {
+      if (!this.supabase) {
+        throw new AppError("Supabase authentication is not configured.", 503);
+      }
+      const { data, error } = await this.supabase.auth.getUser(input.accessToken);
+      if (error || !data.user?.id || !data.user.email) {
+        throw new AppError("Invalid billing recovery credentials.", 401);
+      }
+      const byProviderId = this.repository.getAccountBySupabaseUserId(data.user.id);
+      const byEmail = this.repository.getAccountByEmail(normalizeEmail(data.user.email));
+      if (byProviderId && byEmail && byProviderId.id !== byEmail.id) {
+        throw new AppError("This provider identity conflicts with another Pint Path account. Contact support.", 409);
+      }
+      account = byProviderId ?? byEmail;
+      if (!account || account.authProvider !== "supabase" || account.supabaseUserId !== data.user.id) {
+        throw new AppError("Invalid billing recovery credentials.", 401);
+      }
+      if (account.providerTokensValidAfter) {
+        const issuedAt = getSupabaseTokenIssuedAt(input.accessToken);
+        if (!issuedAt || Date.parse(issuedAt) <= Date.parse(account.providerTokensValidAfter)) {
+          throw new AppError("This sign-in token predates a security reset. Sign in again to manage billing.", 401);
+        }
+      }
+    } else if (input.email && input.password) {
+      const candidate = this.repository.getAccountByEmail(normalizeEmail(input.email));
+      if (!candidate || candidate.authProvider !== "local" || !await verifyPassword(input.password, candidate.passwordHash)) {
+        throw new AppError("Invalid billing recovery credentials.", 401);
+      }
+      account = candidate;
+    }
+
+    if (!account || account.status !== "suspended") {
+      throw new AppError("Billing recovery is only available for suspended accounts. Sign in normally to manage billing.", 403);
+    }
+    if (account.authProvider === "deleted" || this.repository.hasDeletionLock(account.id)) {
+      throw new AppError("Deleted accounts cannot open billing recovery.", 410);
+    }
+    const recoveryOptions = this.getSuspendedBillingRecoveryOptions(account);
+    let billingContext: "consumer" | "venue" = "consumer";
+    let venueId: string | null = null;
+    let customerId = account.stripeCustomerId;
+    if (input.venueId) {
+      const requestedVenue = recoveryOptions.venues.find((venue) => venue.venueId === input.venueId);
+      if (!requestedVenue) {
+        throw new AppError("Only an assigned venue manager can recover that venue's billing. Counter access is not sufficient.", 403);
+      }
+      billingContext = "venue";
+      venueId = requestedVenue.venueId;
+      customerId = this.repository.getBarProfile(requestedVenue.venueId)?.stripeCustomerId ?? null;
+    } else if (!customerId && recoveryOptions.venues.length === 1) {
+      billingContext = "venue";
+      venueId = recoveryOptions.venues[0]!.venueId;
+      customerId = this.repository.getBarProfile(venueId)?.stripeCustomerId ?? null;
+    } else if (!customerId && recoveryOptions.venues.length > 1) {
+      throw new AppError("Choose which managed venue billing profile to recover.", 409, {
+        publicCode: "BILLING_RECOVERY_VENUE_SELECTION_REQUIRED",
+        billingRecoveryEligible: true,
+        billingRecoveryConsumer: false,
+        billingRecoveryVenues: recoveryOptions.venues,
+      });
+    }
+    const result = await this.createStripeBillingPortalSession(
+      customerId ?? "",
+      "/pricing.html?billing=recovery-returned",
+    );
+    this.auditSecurity({
+      actor: account,
+      action: "suspended_account_billing_portal_opened",
+      targetType: billingContext === "venue" ? "venue" : "account",
+      targetId: venueId ?? account.id,
+      metadata: { billingContext, authProvider: account.authProvider, accountId: account.id },
+      context,
+    });
+    return {
+      ...result,
+      accountId: account.publicAccountId,
+      billingContext,
+      venueId,
+      message: "Billing portal opened without restoring application access.",
+    };
+  }
+
   async createBarBillingPortal(account: BusinessAccount, venueId: string) {
     this.requireVerifiedBarAccount(account);
     this.requireAssignedVenue(account, venueId);
     const profile = this.repository.getBarProfile(venueId);
-    if (!profile || profile.membershipTier !== "pro") {
-      throw new AppError("This venue does not have an active Pro billing profile.", 409);
+    if (!profile) {
+      throw new AppError("This venue does not have a billing profile.", 409);
     }
     const result = await this.createStripeBillingPortalSession(
       profile.stripeCustomerId ?? "",
@@ -10263,6 +12166,9 @@ export class BusinessService {
   }
 
   async reconcileCheckoutSession(account: BusinessAccount, input: CheckoutSessionInput) {
+    if (account.authProvider === "deleted" || this.repository.hasDeletionLock(account.id)) {
+      throw new AppError("Deleted accounts cannot restore billing access.", 410);
+    }
     if (this.config.DEMO_BILLING_MODE) {
       return {
         account: sanitizeAccount(account),
@@ -10310,18 +12216,48 @@ export class BusinessService {
       throw new AppError("Stripe checkout session is missing Pint Path subscription metadata.", 400);
     }
 
-    const sessionComplete = payload.status === "complete" || payload.payment_status === "paid";
-    if (!sessionComplete) {
-      throw new AppError("Stripe checkout has not completed yet. Please wait a few seconds and refresh Account.", 409);
+    const checkoutObject = payload as unknown as Record<string, unknown>;
+    if (!isStripeCheckoutSettled(checkoutObject)) {
+      throw new AppError("Stripe checkout payment is not settled yet. Please wait a few seconds and refresh Account.", 409);
     }
 
+    const subscriptionId = stripeObjectId(payload.subscription);
+    if (!subscriptionId) {
+      throw new AppError("Stripe checkout is not linked to a subscription.", 409);
+    }
+    // Stripe event.created is second-granularity. Store a cursor one full second
+    // before the authority read starts so a cancellation racing the GET always
+    // remains eligible to apply instead of being suppressed by local wall time.
+    const authoritySnapshotCursor = new Date((Math.floor(Date.now() / 1_000) - 1) * 1_000).toISOString();
+    const subscriptionResponse = await fetchWithTimeout(
+      `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      { headers: { Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}` } },
+    );
+    const authoritativeSubscription = await subscriptionResponse.json().catch(() => null) as Record<string, unknown> | null;
+    if (
+      !subscriptionResponse.ok ||
+      !authoritativeSubscription ||
+      !isStripeGrantEligibleStatus(authoritativeSubscription.status)
+    ) {
+      throw new AppError(
+        "This checkout no longer has an active or trialing Stripe subscription. Open billing to recover or choose a plan.",
+        409,
+      );
+    }
+
+    const reconciledAt = nowIso();
     const updated = this.repository.updateSubscription({
       userId: account.id,
       subscriptionStatus,
-      stripeCustomerId: stripeObjectId(payload.customer),
-      premiumUntil: stripePeriodEndIso(payload.subscription),
-      now: nowIso(),
+      stripePaidSubscriptionStatus: subscriptionStatus,
+      stripeCustomerId: stripeObjectId(authoritativeSubscription.customer) ?? stripeObjectId(payload.customer),
+      premiumUntil: stripePeriodEndIso(authoritativeSubscription),
+      now: reconciledAt,
+      stripeEventCreatedAt: authoritySnapshotCursor,
     });
+    if (updated.subscriptionStatus !== subscriptionStatus) {
+      throw new AppError("Billing changed while checkout was being confirmed. Refresh Account to see the current Stripe status.", 409);
+    }
     this.trackEvent(updated, {
       anonymousSessionId: null,
       eventType: "subscription_created",
@@ -10396,6 +12332,18 @@ export class BusinessService {
     if (!this.config.STRIPE_SECRET_KEY || !priceId) {
       throw new AppError("Stripe checkout is not configured for this venue tier.", 503);
     }
+    if (profile.stripeCustomerId) {
+      const portal = await this.createStripeBillingPortalSession(
+        profile.stripeCustomerId,
+        `/venue-portal.html?venueId=${encodeURIComponent(venueId)}&billing=returned`,
+      );
+      return {
+        ...portal,
+        mode: "portal",
+        checkoutUrl: portal.portalUrl,
+        message: "This venue already has a Stripe billing profile. Manage or recover it in the billing portal.",
+      };
+    }
 
     const successUrl = new URL(`/venue-portal?checkout=success&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
     const cancelUrl = new URL(`/venue-portal?checkout=cancelled&venueId=${encodeURIComponent(venueId)}`, this.config.PUBLIC_BASE_URL).toString();
@@ -10404,6 +12352,9 @@ export class BusinessService {
       headers: {
         Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}`,
         "Content-Type": "application/x-www-form-urlencoded",
+        "Idempotency-Key": crypto.createHash("sha256")
+          .update(`venue-checkout:${venueId}:${input.tier}:${Math.floor(Date.now() / (30 * 60_000))}`)
+          .digest("hex"),
       },
       body: formEncode({
         mode: "subscription",
@@ -10415,6 +12366,10 @@ export class BusinessService {
         "metadata[user_id]": account.id,
         "metadata[venue_id]": venueId,
         "metadata[venue_membership_tier]": input.tier,
+        "subscription_data[metadata][billing_context]": "venue",
+        "subscription_data[metadata][user_id]": account.id,
+        "subscription_data[metadata][venue_id]": venueId,
+        "subscription_data[metadata][venue_membership_tier]": input.tier,
         customer_email: account.email,
       }),
     });
@@ -10445,6 +12400,7 @@ export class BusinessService {
     const updated = this.repository.updateSubscription({
       userId: account.id,
       subscriptionStatus: status,
+      stripePaidSubscriptionStatus: status,
       premiumUntil: null,
       now,
     });
@@ -10466,7 +12422,7 @@ export class BusinessService {
     return { account: sanitizeAccount(updated), access: this.getAccessState(updated, null) };
   }
 
-  handleStripeWebhook(rawBody: Buffer | undefined, signature: string | undefined): { received: true } {
+  async handleStripeWebhook(rawBody: Buffer | undefined, signature: string | undefined): Promise<{ received: true }> {
     if (!this.config.STRIPE_WEBHOOK_SECRET) {
       throw new AppError("Stripe webhook secret is not configured.", 503);
     }
@@ -10498,7 +12454,7 @@ export class BusinessService {
     const eventCreatedAt = Number.isSafeInteger(event.created)
       ? new Date(Number(event.created) * 1000).toISOString()
       : null;
-    const shouldProcess = this.repository.beginStripeEvent({
+    const processingClaim = this.repository.beginStripeEvent({
       id: event.id,
       eventType: event.type,
       eventCreatedAt,
@@ -10506,7 +12462,7 @@ export class BusinessService {
       receivedAt,
     });
 
-    if (!shouldProcess) {
+    if (processingClaim.state === "applied") {
       this.repository.setSystemState("job:stripe_webhook", {
         state: "succeeded",
         completedAt: receivedAt,
@@ -10515,15 +12471,23 @@ export class BusinessService {
       }, receivedAt);
       return { received: true };
     }
+    if (processingClaim.state === "in_progress") {
+      throw new AppError("This Stripe event is already being processed. Retry shortly.", 409);
+    }
+    const processingToken = processingClaim.processingToken;
 
     try {
+      event = await this.resolveAuthoritativeStripeEvent(event, eventCreatedAt);
       this.repository.runInTransaction(() => {
         this.applyStripeEvent(event, eventCreatedAt);
-        this.repository.markStripeEventApplied({ id: event.id, appliedAt: nowIso() });
+        if (!this.repository.markStripeEventApplied({ id: event.id, processingToken, appliedAt: nowIso() })) {
+          throw new AppError("Stripe event processing ownership was lost; retrying safely.", 409);
+        }
       });
     } catch (error) {
       this.repository.markStripeEventFailed({
         id: event.id,
+        processingToken,
         failedAt: nowIso(),
         error: error instanceof Error ? redactSecrets(error.message) : "Stripe event application failed",
       });
@@ -10546,17 +12510,97 @@ export class BusinessService {
     return { received: true };
   }
 
-  private verifyStripeWebhook(rawBody: Buffer, signature: string): StripeEvent {
-    const entries = Object.fromEntries(
-      signature.split(",").map((part) => {
-        const [key, value] = part.split("=");
-        return [key, value];
-      }),
-    );
-    const timestamp = entries.t;
-    const signed = entries.v1;
+  private async resolveAuthoritativeStripeEvent(event: StripeEvent, eventCreatedAt: string | null): Promise<StripeEvent> {
+    const object = event.data?.object;
+    if (!object || !eventCreatedAt) return event;
+    if (![
+      "customer.subscription.updated",
+      "customer.subscription.deleted",
+      "invoice.payment_failed",
+      "checkout.session.completed",
+      "checkout.session.async_payment_succeeded",
+    ].includes(event.type)) return event;
 
-    if (!timestamp || !signed) {
+    const subscriptionId = event.type.startsWith("customer.subscription.")
+      ? stripeObjectId(object.id)
+      : stripeObjectId(object.subscription);
+    if (!subscriptionId) return event;
+    const customer = stripeObjectId(object.customer);
+    const profile = this.repository.getBarProfileByStripeSubscriptionId(subscriptionId);
+    const account = customer ? this.repository.getAccountByStripeCustomerId(customer) : null;
+    if (
+      (profile?.stripeEventCreatedAt && profile.stripeEventCreatedAt > eventCreatedAt) ||
+      (account?.stripeEventCreatedAt && account.stripeEventCreatedAt > eventCreatedAt)
+    ) {
+      return event;
+    }
+    const isAmbiguousSameSecond =
+      profile?.stripeEventCreatedAt === eventCreatedAt || account?.stripeEventCreatedAt === eventCreatedAt;
+    const isCheckoutGrantEvent = event.type === "checkout.session.completed" ||
+      event.type === "checkout.session.async_payment_succeeded";
+    if (!isAmbiguousSameSecond && event.type !== "invoice.payment_failed" && !isCheckoutGrantEvent) return event;
+    if (!this.config.STRIPE_SECRET_KEY) {
+      if (isCheckoutGrantEvent && this.config.NODE_ENV !== "production" && !isAmbiguousSameSecond) {
+        return event;
+      }
+      throw new AppError("Stripe subscription authority is unavailable for an ambiguous billing event.", 503);
+    }
+
+    const response = await fetchWithTimeout(
+      `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
+      { headers: { Authorization: `Bearer ${this.config.STRIPE_SECRET_KEY}` } },
+    );
+    if (response.status === 404) {
+      const missingSubscription = { id: subscriptionId, status: "canceled" };
+      return {
+        ...event,
+        data: {
+          object: event.type.startsWith("checkout.session.")
+            ? { ...object, subscription: missingSubscription }
+            : { ...object, ...missingSubscription },
+        },
+      };
+    }
+    const authoritative = await response.json().catch(() => null) as Record<string, unknown> | null;
+    if (!response.ok || !authoritative) {
+      throw new ExternalServiceError("Stripe subscription authority could not be confirmed; the event is queued for retry.", {
+        status: response.status,
+      });
+    }
+    const resolvedObject = event.type.startsWith("checkout.session.")
+      ? {
+          ...object,
+          subscription: {
+            ...authoritative,
+            id: stripeObjectId(authoritative.id) ?? subscriptionId,
+          },
+          customer: authoritative.customer ?? object.customer,
+        }
+      : {
+          ...object,
+          ...authoritative,
+          id: stripeObjectId(authoritative.id) ?? subscriptionId,
+          customer: authoritative.customer ?? object.customer,
+        };
+    return {
+      ...event,
+      data: {
+        object: resolvedObject,
+      },
+    };
+  }
+
+  private verifyStripeWebhook(rawBody: Buffer, signature: string): StripeEvent {
+    const entries = signature.split(",").map((part) => {
+      const separator = part.indexOf("=");
+      return separator < 0
+        ? { key: part.trim(), value: "" }
+        : { key: part.slice(0, separator).trim(), value: part.slice(separator + 1).trim() };
+    });
+    const timestamp = entries.find((entry) => entry.key === "t")?.value;
+    const signatures = entries.filter((entry) => entry.key === "v1").map((entry) => entry.value);
+
+    if (!timestamp || signatures.length === 0) {
       throw new AppError("Invalid Stripe webhook signature.", 400);
     }
 
@@ -10573,7 +12617,8 @@ export class BusinessService {
       throw new AppError("Invalid Stripe webhook signature.", 401);
     }
 
-    if (!/^[a-f0-9]{64}$/i.test(signed)) {
+    const validSignatures = signatures.filter((candidate) => /^[a-f0-9]{64}$/i.test(candidate));
+    if (validSignatures.length === 0) {
       throw new AppError("Invalid Stripe webhook signature.", 401);
     }
 
@@ -10582,10 +12627,9 @@ export class BusinessService {
       .update(`${timestamp}.${rawBody.toString("utf8")}`)
       .digest("hex");
 
-    if (
-      expected.length !== signed.length ||
-      !crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signed, "hex"))
-    ) {
+    if (!validSignatures.some((candidate) =>
+      expected.length === candidate.length &&
+      crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(candidate, "hex")))) {
       throw new AppError("Invalid Stripe webhook signature.", 401);
     }
 
@@ -10598,7 +12642,36 @@ export class BusinessService {
       return;
     }
 
-    if (event.type === "checkout.session.completed") {
+    if (["checkout.session.completed", "checkout.session.async_payment_succeeded"].includes(event.type)) {
+      const authoritativeStatus = objectFromUnknown(object.subscription).status;
+      if (
+        (this.config.STRIPE_SECRET_KEY && !isStripeGrantEligibleStatus(authoritativeStatus)) ||
+        (typeof authoritativeStatus === "string" && !isStripeGrantEligibleStatus(authoritativeStatus))
+      ) {
+        this.auditSecurity({
+          action: "stripe_checkout_authority_rejected",
+          targetType: "stripe_checkout",
+          targetId: stripeObjectId(object.id),
+          metadata: {
+            eventType: event.type,
+            subscriptionStatus: typeof authoritativeStatus === "string" ? authoritativeStatus : "missing",
+          },
+        });
+        return;
+      }
+      if (!isStripeCheckoutSettled(object)) {
+        this.auditSecurity({
+          action: "stripe_checkout_unsettled",
+          targetType: "stripe_checkout",
+          targetId: stripeObjectId(object.id),
+          metadata: {
+            eventType: event.type,
+            paymentStatus: object.payment_status ?? null,
+            subscriptionStatus: typeof authoritativeStatus === "string" ? authoritativeStatus : null,
+          },
+        });
+        return;
+      }
       const metadata = object.metadata as Record<string, string> | undefined;
       const billingContext = metadata?.billing_context;
       const barId = metadata?.venue_id;
@@ -10606,7 +12679,7 @@ export class BusinessService {
       const barMembershipTier: BarMembershipTier | null = rawBarMembershipTier === "pro" || rawBarMembershipTier === "plus"
         ? "pro"
         : null;
-      const subscriptionId = typeof object.subscription === "string" ? object.subscription : null;
+      const subscriptionId = stripeObjectId(object.subscription);
       const userId = metadata?.user_id;
       const subscriptionStatus = metadata?.subscription_status as SubscriptionStatus | undefined;
       const customer = typeof object.customer === "string" ? object.customer : null;
@@ -10620,6 +12693,7 @@ export class BusinessService {
         this.repository.updateBarSubscription({
           barId,
           membershipTier: barMembershipTier,
+          stripePaidMembershipTier: barMembershipTier,
           stripeCustomerId: customer,
           stripeSubscriptionId: subscriptionId,
           subscriptionStatus: "active",
@@ -10646,12 +12720,27 @@ export class BusinessService {
 
       if (userId && subscriptionStatus) {
         const currentAccount = this.repository.getAccountById(userId);
+        if (!currentAccount) {
+          throw new AppError("Stripe checkout referenced an unknown account.", 409);
+        }
+        if (currentAccount.authProvider === "deleted" || this.repository.hasDeletionLock(userId)) {
+          this.auditSecurity({
+            action: "stripe_event_ignored_deleted_account",
+            targetType: "account_tombstone",
+            targetId: userId,
+            metadata: { eventType: event.type },
+          });
+          return;
+        }
         if (eventCreatedAt && currentAccount?.stripeEventCreatedAt && currentAccount.stripeEventCreatedAt > eventCreatedAt) {
           return;
         }
         const updated = this.repository.updateSubscription({
           userId,
           subscriptionStatus,
+          stripePaidSubscriptionStatus: subscriptionStatus === "premium_monthly" || subscriptionStatus === "premium_yearly"
+            ? subscriptionStatus
+            : null,
           stripeCustomerId: customer,
           premiumUntil: null,
           now: nowIso(),
@@ -10675,6 +12764,15 @@ export class BusinessService {
       }
     }
 
+    if (event.type === "checkout.session.async_payment_failed") {
+      this.auditSecurity({
+        action: "stripe_checkout_async_payment_failed",
+        targetType: "stripe_checkout",
+        targetId: stripeObjectId(object.id),
+      });
+      return;
+    }
+
     if (
       event.type === "customer.subscription.deleted" ||
       event.type === "customer.subscription.updated" ||
@@ -10687,23 +12785,32 @@ export class BusinessService {
           ? object.id
           : null;
       const stripeStatus = typeof object.status === "string" ? object.status : null;
-      const shouldDowngrade =
-        event.type === "customer.subscription.deleted" ||
-        ["canceled", "cancelled", "past_due", "unpaid", "incomplete_expired"].includes(stripeStatus ?? "");
+      const grantEligible = event.type === "customer.subscription.updated" && isStripeGrantEligibleStatus(stripeStatus);
+      const shouldDowngrade = !grantEligible;
       const premiumUntil = stripePeriodEndIso(object);
+      const subscriptionMetadata = objectFromUnknown(object.metadata);
+      const subscriptionPriceIds = stripePriceIds(object);
       const barProfile = subscriptionId ? this.repository.getBarProfileByStripeSubscriptionId(subscriptionId) : null;
       if (barProfile) {
         if (eventCreatedAt && barProfile.stripeEventCreatedAt && barProfile.stripeEventCreatedAt > eventCreatedAt) {
           return;
         }
-        const nextTier = shouldDowngrade ? "basic" : barProfile.membershipTier;
+        const metadataTier = subscriptionMetadata.venue_membership_tier;
+        const intendedTier: BarMembershipTier | null =
+          metadataTier === "pro" || metadataTier === "plus"
+            ? "pro"
+            : this.config.STRIPE_PRO_PRICE_ID && subscriptionPriceIds.has(this.config.STRIPE_PRO_PRICE_ID)
+              ? "pro"
+              : barProfile.stripePaidMembershipTier ?? (barProfile.membershipTier === "pro" ? "pro" : null);
+        const nextTier = shouldDowngrade ? "basic" : intendedTier ?? barProfile.membershipTier;
         const flags = tierFlags(nextTier);
         this.repository.updateBarSubscription({
           barId: barProfile.barId,
           membershipTier: nextTier,
+          stripePaidMembershipTier: intendedTier,
           stripeCustomerId: customer,
           stripeSubscriptionId: subscriptionId,
-          subscriptionStatus: shouldDowngrade ? "cancelled_or_past_due" : stripeStatus ?? "active",
+          subscriptionStatus: shouldDowngrade ? stripeStatus ?? "inactive_or_unknown" : stripeStatus,
           now: nowIso(),
           stripeEventCreatedAt: eventCreatedAt,
           ...flags,
@@ -10722,7 +12829,7 @@ export class BusinessService {
           action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
           targetType: "venue",
           targetId: barProfile.barId,
-          metadata: { eventType: event.type, stripeStatus, shouldDowngrade },
+          metadata: { eventType: event.type, stripeStatus, shouldDowngrade, intendedTier },
         });
         return;
       }
@@ -10733,9 +12840,22 @@ export class BusinessService {
         if (eventCreatedAt && account.stripeEventCreatedAt && account.stripeEventCreatedAt > eventCreatedAt) {
           return;
         }
+        const metadataStatus = subscriptionMetadata.subscription_status;
+        const intendedStatus =
+          metadataStatus === "premium_monthly" || metadataStatus === "premium_yearly"
+            ? metadataStatus
+            : this.config.STRIPE_PRICE_MONTHLY && subscriptionPriceIds.has(this.config.STRIPE_PRICE_MONTHLY)
+              ? "premium_monthly"
+              : this.config.STRIPE_PRICE_YEARLY && subscriptionPriceIds.has(this.config.STRIPE_PRICE_YEARLY)
+                ? "premium_yearly"
+                : account.stripePaidSubscriptionStatus ??
+                  (account.subscriptionStatus === "premium_monthly" || account.subscriptionStatus === "premium_yearly"
+                    ? account.subscriptionStatus
+                    : null);
         const updated = this.repository.updateSubscription({
           userId: account.id,
-          subscriptionStatus: shouldDowngrade ? "free" : account.subscriptionStatus,
+          subscriptionStatus: shouldDowngrade ? "free" : intendedStatus ?? account.subscriptionStatus,
+          stripePaidSubscriptionStatus: intendedStatus,
           premiumUntil,
           now: nowIso(),
           stripeEventCreatedAt: eventCreatedAt,
@@ -10755,17 +12875,22 @@ export class BusinessService {
           action: shouldDowngrade ? "stripe_subscription_downgrade" : "stripe_subscription_update",
           targetType: "account",
           targetId: updated.id,
-          metadata: { eventType: event.type, stripeStatus, shouldDowngrade },
+          metadata: { eventType: event.type, stripeStatus, shouldDowngrade, intendedStatus },
         });
       }
     }
   }
 
-  adminOverrideUser(admin: BusinessAccount, userId: string, input: { status: "active" | "warned" | "suspended"; trustScore?: number | undefined; fraudStrikeCount?: number | undefined }) {
-    if (admin.role !== "admin" && admin.subscriptionStatus !== "admin") {
+  adminOverrideUser(admin: BusinessAccount, userId: string, input: { status: "active" | "warned" | "suspended"; trustScore?: number | undefined; fraudStrikeCount?: number | undefined; reason: string }) {
+    if (!this.isAdmin(admin)) {
       throw new AppError("Admin access required.", 403);
     }
 
+    const target = this.repository.getAccountById(userId);
+    if (!target) throw new AppError("Account not found.", 404);
+    if (target.role === "admin" || target.subscriptionStatus === "admin") {
+      this.assertAdminControlPreserved(admin, target);
+    }
     const account = this.repository.overrideUserStatus({
       userId,
       status: input.status,
@@ -10773,21 +12898,222 @@ export class BusinessService {
       fraudStrikeCount: input.fraudStrikeCount,
       now: nowIso(),
     });
+    const revokedSessions = input.status === "suspended"
+      ? this.repository.revokeUserSessions({ userId, revokedAt: nowIso() })
+      : 0;
+    const revokedDiscountPasses = input.status === "suspended"
+      ? this.repository.revokeDiscountPassesForUser({ userId, revokedAt: nowIso() })
+      : 0;
     this.auditSecurity({
       actor: admin,
       action: "admin_user_status_override",
       targetType: "account",
       targetId: userId,
-      metadata: { status: input.status, fraudStrikeCount: input.fraudStrikeCount },
+      metadata: { status: input.status, fraudStrikeCount: input.fraudStrikeCount, reason: input.reason, revokedSessions, revokedDiscountPasses },
     });
     return {
       account: sanitizeAccount(account),
     };
   }
 
+  private async getSupabaseOperationalReadiness(): Promise<SupabaseReadinessDependencies> {
+    const required = this.config.NODE_ENV === "production" && !this.config.FIELD_TEST_MODE;
+    const configured = Boolean(
+      this.config.SUPABASE_URL &&
+      this.config.SUPABASE_ANON_KEY &&
+      this.config.SUPABASE_SERVICE_ROLE_KEY,
+    );
+    const commonStatus = (): RemoteReadinessDependency => ({
+      status: configured
+        ? "configured"
+        : required
+          ? "required_unconfigured"
+          : this.config.FIELD_TEST_MODE
+            ? "field_test_unconfigured"
+            : "optional_unconfigured",
+      required,
+      liveProbe: false,
+    });
+
+    if (!required || !configured) {
+      return {
+        ready: !required || configured,
+        supabaseAuth: commonStatus(),
+        supabaseDatabase: commonStatus(),
+        supabaseEvidenceStorage: commonStatus(),
+      };
+    }
+
+    const now = Date.now();
+    if (this.supabaseReadinessCache && this.supabaseReadinessCache.expiresAt > now) {
+      return this.supabaseReadinessCache.value;
+    }
+    if (this.supabaseReadinessInFlight) {
+      return this.supabaseReadinessInFlight;
+    }
+
+    const url = this.config.SUPABASE_URL!;
+    const anonKey = this.config.SUPABASE_ANON_KEY!;
+    const serviceRoleKey = this.config.SUPABASE_SERVICE_ROLE_KEY!;
+    const probe = async (
+      endpoint: string,
+      key: string,
+      validate?: (response: Response) => Promise<string | null>,
+    ): Promise<RemoteReadinessDependency> => {
+      try {
+        const response = await fetchWithTimeout(new URL(endpoint, `${url.replace(/\/$/, "")}/`), {
+          headers: {
+            Accept: "application/json",
+            apikey: key,
+            Authorization: `Bearer ${key}`,
+          },
+        }, 2_500);
+        if (!response.ok) {
+          return { status: "failed", required: true, liveProbe: true, error: `http_${response.status}` };
+        }
+        const validationError = validate ? await validate(response) : null;
+        return validationError
+          ? { status: "failed", required: true, liveProbe: true, error: validationError }
+          : { status: "ok", required: true, liveProbe: true };
+      } catch (error) {
+        return {
+          status: "failed",
+          required: true,
+          liveProbe: true,
+          error: error instanceof Error && error.name === "AbortError" ? "timeout" : "request_failed",
+        };
+      }
+    };
+
+    this.supabaseReadinessInFlight = (async () => {
+      const [supabaseAuth, supabaseDatabase, supabaseEvidenceStorage] = await Promise.all([
+        probe("auth/v1/health", anonKey),
+        probe("rest/v1/venues?select=id&limit=1", serviceRoleKey),
+        probe(`storage/v1/bucket/${encodeURIComponent(SUPABASE_EVIDENCE_BUCKET)}`, serviceRoleKey, async (response) => {
+          try {
+            const bucket = await response.json() as {
+              public?: unknown;
+              file_size_limit?: unknown;
+              allowed_mime_types?: unknown;
+            };
+            if (bucket.public !== false) return "bucket_not_private";
+            const sizeLimit = Number(bucket.file_size_limit);
+            if (!Number.isFinite(sizeLimit) || sizeLimit < SUPABASE_EVIDENCE_BUCKET_MIN_BYTES) {
+              return "bucket_size_limit_too_small";
+            }
+            const mimeTypes = Array.isArray(bucket.allowed_mime_types)
+              ? new Set(bucket.allowed_mime_types.filter((value): value is string => typeof value === "string"))
+              : new Set<string>();
+            return SUPABASE_EVIDENCE_MIME_TYPES.every((mimeType) => mimeTypes.has(mimeType))
+              ? null
+              : "bucket_mime_types_incomplete";
+          } catch {
+            return "invalid_bucket_response";
+          }
+        }),
+      ]);
+      return {
+        ready: [supabaseAuth, supabaseDatabase, supabaseEvidenceStorage]
+          .every((dependency) => dependency.status === "ok"),
+        supabaseAuth,
+        supabaseDatabase,
+        supabaseEvidenceStorage,
+      };
+    })();
+
+    try {
+      const value = await this.supabaseReadinessInFlight;
+      this.supabaseReadinessCache = { value, expiresAt: Date.now() + 15_000 };
+      return value;
+    } finally {
+      this.supabaseReadinessInFlight = null;
+    }
+  }
+
+  async getOperationalReadiness() {
+    let database: { status: "ok" | "failed"; foreignKeyViolations: number; error?: string };
+    try {
+      const health = this.repository.checkDatabaseHealth();
+      database = {
+        status: health.ok ? "ok" : "failed",
+        foreignKeyViolations: health.foreignKeyViolations,
+      };
+    } catch (error) {
+      database = {
+        status: "failed",
+        foreignKeyViolations: 0,
+        error: error instanceof Error ? String(redactSecrets(error.message)).slice(0, 200) : "Database probe failed",
+      };
+    }
+
+    let evidenceStorage: { status: "ok" | "failed"; error?: string };
+    try {
+      fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
+      fs.accessSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, fs.constants.R_OK | fs.constants.W_OK);
+      evidenceStorage = { status: "ok" };
+    } catch (error) {
+      evidenceStorage = {
+        status: "failed",
+        error: error instanceof Error ? String(redactSecrets(error.message)).slice(0, 200) : "Evidence storage probe failed",
+      };
+    }
+
+    const supabase = await this.getSupabaseOperationalReadiness();
+    const billingConfigured = this.config.DEMO_BILLING_MODE || Boolean(
+      this.config.STRIPE_SECRET_KEY &&
+      this.config.STRIPE_WEBHOOK_SECRET &&
+      this.config.STRIPE_PRICE_MONTHLY &&
+      this.config.STRIPE_PRICE_YEARLY &&
+      this.config.STRIPE_PRO_PRICE_ID,
+    );
+    const venueLookupConfigured = Boolean(this.config.GOOGLE_PLACES_API_KEY);
+    const menuExtractionConfigured = Boolean(this.config.OPENAI_API_KEY);
+    const reportDeliveryConfigured = this.config.REPORT_EMAIL_MODE === "mock" || Boolean(
+      this.config.REPORT_EMAIL_MODE === "resend" && this.config.RESEND_API_KEY && this.config.REPORT_EMAIL_FROM,
+    );
+    const providerReady = this.config.NODE_ENV !== "production" || (
+      billingConfigured &&
+      venueLookupConfigured &&
+      menuExtractionConfigured &&
+      (!(this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false) || reportDeliveryConfigured)
+    );
+
+    return {
+      ready: database.status === "ok" && evidenceStorage.status === "ok" && supabase.ready && providerReady,
+      dependencies: {
+        database,
+        evidenceStorage,
+        supabaseAuth: supabase.supabaseAuth,
+        supabaseDatabase: supabase.supabaseDatabase,
+        supabaseEvidenceStorage: supabase.supabaseEvidenceStorage,
+        billingProvider: {
+          status: this.config.DEMO_BILLING_MODE ? "demo" : billingConfigured ? "configured" : "missing",
+          required: this.config.NODE_ENV === "production" && !this.config.DEMO_BILLING_MODE,
+        },
+        venueLookupProvider: {
+          status: venueLookupConfigured ? "configured" : "missing",
+          required: this.config.NODE_ENV === "production",
+        },
+        menuExtractionProvider: {
+          status: menuExtractionConfigured ? "configured" : "missing",
+          required: this.config.NODE_ENV === "production",
+        },
+        reportDelivery: {
+          status: this.config.REPORT_EMAIL_MODE === "disabled"
+            ? "disabled"
+            : reportDeliveryConfigured
+              ? "configured"
+              : "missing",
+          scheduled: this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false,
+          required: this.config.NODE_ENV === "production" && (this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false),
+        },
+      },
+    };
+  }
+
   logStartupSummary() {
     logger.info("Business demo service ready", {
-      freePriceRevealsPerDay: this.config.FREE_PRICE_REVEALS_PER_DAY,
+      priceAccessModel: "fixed_preview",
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
       demoBillingMode: this.config.DEMO_BILLING_MODE,
       fieldTestMode: this.config.FIELD_TEST_MODE,

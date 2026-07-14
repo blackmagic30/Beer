@@ -8,8 +8,13 @@ CREATE TABLE IF NOT EXISTS admin_ingestion_queue (
   source_type TEXT NOT NULL,
   source_url TEXT,
   image_data_url TEXT,
+  image_retention_expires_at TEXT,
+  image_redacted_at TEXT,
+  image_redaction_reason TEXT,
   note TEXT,
   status TEXT NOT NULL DEFAULT 'pending_review',
+  review_claim_token TEXT,
+  review_claimed_at TEXT,
   venue_name_guess TEXT,
   captured_notes TEXT,
   overall_confidence REAL,
@@ -28,6 +33,10 @@ CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_status_created
 
 CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_venue_status
   ON admin_ingestion_queue (venue_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_admin_ingestion_queue_image_retention
+  ON admin_ingestion_queue (status, image_retention_expires_at, created_at)
+  WHERE image_data_url IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS beer_catalog_items (
   key TEXT PRIMARY KEY,
@@ -73,6 +82,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   email_verified_at TEXT,
   mfa_level TEXT NOT NULL DEFAULT 'aal1',
   mfa_verified_at TEXT,
+  provider_tokens_valid_after TEXT,
   role TEXT NOT NULL DEFAULT 'user',
   age_confirmed_at TEXT,
   terms_accepted_at TEXT,
@@ -83,6 +93,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   is_over_18_verified INTEGER NOT NULL DEFAULT 0,
   subscription_status TEXT NOT NULL DEFAULT 'free',
   stripe_customer_id TEXT,
+  stripe_paid_subscription_status TEXT,
   stripe_event_created_at TEXT,
   premium_until TEXT,
   trust_score INTEGER NOT NULL DEFAULT 50,
@@ -124,6 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_profiles_status
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
+  provider_session_id_hash TEXT,
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   revoked_at TEXT,
@@ -135,6 +147,33 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
   ON auth_sessions (user_id, expires_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_provider_session
+  ON auth_sessions (user_id, provider_session_id_hash);
+
+CREATE TABLE IF NOT EXISTS revoked_provider_sessions (
+  user_id TEXT NOT NULL,
+  provider_session_id_hash TEXT NOT NULL,
+  revoked_at TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  PRIMARY KEY (user_id, provider_session_id_hash),
+  FOREIGN KEY (user_id) REFERENCES accounts(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_provider_sessions_user
+  ON revoked_provider_sessions (user_id, revoked_at DESC);
+
+CREATE TABLE IF NOT EXISTS migration_quarantined_records (
+  id TEXT PRIMARY KEY,
+  entity_type TEXT NOT NULL,
+  original_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  quarantined_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_migration_quarantine_entity
+  ON migration_quarantined_records (entity_type, original_id, quarantined_at DESC);
 
 CREATE TABLE IF NOT EXISTS account_discount_passes (
   id TEXT PRIMARY KEY,
@@ -191,6 +230,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_discount_redemptions_idempotency
   ON discount_redemptions (venue_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_discount_redemptions_pass_once
+  ON discount_redemptions (discount_pass_id)
+  WHERE discount_pass_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS pint_point_drink_records (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -231,6 +274,10 @@ CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_suburb
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pint_point_drink_records_idempotency
   ON pint_point_drink_records (venue_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pint_point_drink_records_member_pass_once
+  ON pint_point_drink_records (idempotency_key)
+  WHERE idempotency_key LIKE 'member-pass:%';
 
 CREATE TABLE IF NOT EXISTS free_pint_reward_codes (
   id TEXT PRIMARY KEY,
@@ -572,6 +619,9 @@ CREATE TABLE IF NOT EXISTS venue_price_records (
 CREATE INDEX IF NOT EXISTS idx_venue_price_records_venue
   ON venue_price_records (venue_id, last_verified_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_venue_price_records_feed
+  ON venue_price_records (last_verified_at DESC, id DESC);
+
 CREATE INDEX IF NOT EXISTS idx_venue_price_records_beer
   ON venue_price_records (normalized_beer_id, last_verified_at DESC);
 
@@ -713,7 +763,7 @@ CREATE TABLE IF NOT EXISTS account_privacy_settings (
   venue_report_inclusion_enabled INTEGER NOT NULL DEFAULT 0,
   product_research_enabled INTEGER NOT NULL DEFAULT 0,
   email_updates_enabled INTEGER NOT NULL DEFAULT 0,
-  consent_version TEXT NOT NULL DEFAULT '2026-07-11',
+  consent_version TEXT NOT NULL DEFAULT '2026-07-12',
   consented_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -732,6 +782,13 @@ CREATE TABLE IF NOT EXISTS account_deletion_requests (
   reviewed_by TEXT REFERENCES accounts(id) ON DELETE SET NULL,
   reviewed_at TEXT,
   completed_at TEXT,
+  processing_started_at TEXT,
+  identity_deleted_at TEXT,
+  stripe_customer_deleted_at TEXT,
+  stripe_customer_id_snapshot TEXT,
+  deletion_tombstone_recorded_at TEXT,
+  last_error TEXT,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
   result_summary_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -743,6 +800,10 @@ CREATE INDEX IF NOT EXISTS idx_account_deletion_requests_status
 CREATE UNIQUE INDEX IF NOT EXISTS idx_account_deletion_requests_open_user
   ON account_deletion_requests (user_id)
   WHERE status IN ('pending_review', 'approved');
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_account_deletion_requests_unfinished_user
+  ON account_deletion_requests (user_id)
+  WHERE status IN ('pending_review', 'approved', 'processing', 'failed');
 
 CREATE TABLE IF NOT EXISTS feedback (
   id TEXT PRIMARY KEY,
@@ -801,11 +862,13 @@ CREATE TABLE IF NOT EXISTS venue_requests (
   request_type TEXT NOT NULL,
   venue_id TEXT,
   venue_name TEXT,
+  google_place_id TEXT,
   beer_name TEXT,
   suburb TEXT,
   notes TEXT,
   status TEXT NOT NULL DEFAULT 'open',
   mission_id TEXT REFERENCES missions(id) ON DELETE SET NULL,
+  source_submission_id TEXT REFERENCES submissions(id) ON DELETE SET NULL,
   assigned_to TEXT,
   resolution_note TEXT,
   resolved_at TEXT,
@@ -821,6 +884,24 @@ CREATE INDEX IF NOT EXISTS idx_venue_requests_type_status
 
 CREATE INDEX IF NOT EXISTS idx_venue_requests_venue
   ON venue_requests (venue_id, venue_name, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_requests_google_place
+  ON venue_requests (google_place_id, request_type, status, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_venue_requests_user_google_open
+  ON venue_requests (user_id, google_place_id)
+  WHERE user_id IS NOT NULL
+    AND google_place_id IS NOT NULL
+    AND request_type = 'missing_venue'
+    AND status IN ('open', 'in_progress', 'mission_created');
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_venue_requests_anon_google_open
+  ON venue_requests (anonymous_session_id, google_place_id)
+  WHERE user_id IS NULL
+    AND anonymous_session_id IS NOT NULL
+    AND google_place_id IS NOT NULL
+    AND request_type = 'missing_venue'
+    AND status IN ('open', 'in_progress', 'mission_created');
 
 CREATE TABLE IF NOT EXISTS venue_interest_requests (
   id TEXT PRIMARY KEY,
@@ -897,10 +978,15 @@ CREATE TABLE IF NOT EXISTS venue_profiles (
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
   subscription_status TEXT,
+  stripe_paid_membership_tier TEXT,
   tier_manual_override INTEGER NOT NULL DEFAULT 0,
   accepts_pint_path_codes INTEGER NOT NULL DEFAULT 0,
   stripe_event_created_at TEXT,
   pos_webhook_token_version INTEGER NOT NULL DEFAULT 1,
+  pos_previous_token_version INTEGER,
+  pos_previous_token_valid_until TEXT,
+  pos_last_success_at TEXT,
+  pos_last_terminal_id TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -926,6 +1012,9 @@ CREATE TABLE IF NOT EXISTS venue_beers (
   on_tap INTEGER NOT NULL DEFAULT 0,
   in_stock INTEGER NOT NULL DEFAULT 1,
   notes TEXT,
+  price_verified_at TEXT,
+  stock_verified_at TEXT,
+  source_ingestion_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -935,6 +1024,10 @@ CREATE INDEX IF NOT EXISTS idx_venue_beers_venue
 
 CREATE INDEX IF NOT EXISTS idx_venue_beers_name
   ON venue_beers (beer_name, style);
+
+CREATE INDEX IF NOT EXISTS idx_venue_beers_source_ingestion
+  ON venue_beers (source_ingestion_id)
+  WHERE source_ingestion_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS venue_happy_hours (
   id TEXT PRIMARY KEY,
@@ -965,6 +1058,9 @@ CREATE TABLE IF NOT EXISTS venue_specials (
   ends_at TEXT,
   start_time TEXT,
   end_time TEXT,
+  recurrence_frequency TEXT NOT NULL DEFAULT 'none',
+  days_of_week_json TEXT NOT NULL DEFAULT '[]',
+  timezone TEXT NOT NULL DEFAULT 'Australia/Melbourne',
   schedule_note TEXT,
   exclusive INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1,
@@ -1109,7 +1205,8 @@ CREATE TABLE IF NOT EXISTS stripe_webhook_events (
   last_error TEXT,
   received_at TEXT NOT NULL,
   applied_at TEXT,
-  processed_at TEXT NOT NULL
+  processed_at TEXT NOT NULL,
+  processing_token TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_status
@@ -1123,6 +1220,8 @@ CREATE INDEX IF NOT EXISTS idx_discount_redemptions_pass
   ON discount_redemptions (discount_pass_id);
 CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_recorded_by
   ON pint_point_drink_records (recorded_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_voided_by
+  ON pint_point_drink_records (voided_by_user_id);
 CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_reward
   ON pint_point_drink_records (reward_code_id);
 CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_redeemed_by
@@ -1153,14 +1252,32 @@ CREATE INDEX IF NOT EXISTS idx_account_deletion_requests_reviewed_by
   ON account_deletion_requests (reviewed_by);
 CREATE INDEX IF NOT EXISTS idx_feedback_user
   ON feedback (user_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_assigned_to
+  ON feedback (assigned_to);
+CREATE INDEX IF NOT EXISTS idx_feedback_resolved_by
+  ON feedback (resolved_by);
 CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_user
   ON wrong_price_reports (user_id);
+CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_assigned_to
+  ON wrong_price_reports (assigned_to);
+CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_resolved_by
+  ON wrong_price_reports (resolved_by);
 CREATE INDEX IF NOT EXISTS idx_venue_requests_mission
   ON venue_requests (mission_id);
 CREATE INDEX IF NOT EXISTS idx_venue_requests_user
   ON venue_requests (user_id);
+CREATE INDEX IF NOT EXISTS idx_venue_requests_assigned_to
+  ON venue_requests (assigned_to);
+CREATE INDEX IF NOT EXISTS idx_venue_requests_resolved_by
+  ON venue_requests (resolved_by);
 CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_user
   ON venue_interest_requests (user_id);
+CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_assigned_to
+  ON venue_interest_requests (assigned_to);
+CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_resolved_by
+  ON venue_interest_requests (resolved_by);
+CREATE INDEX IF NOT EXISTS idx_venue_claim_requests_reviewed_by
+  ON venue_claim_requests (reviewed_by);
 CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_approved_by
   ON venue_manager_assignments (approved_by);
 CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_reviewed_by

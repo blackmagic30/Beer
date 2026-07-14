@@ -20,11 +20,13 @@ struct RootView: View {
                     Label("Add", systemImage: "plus.circle.fill")
                 }
 
-                NavigationStack {
-                    VenuePortalView()
-                }
-                .tabItem {
-                    Label("Bars", systemImage: "building.2.fill")
+                if model.hasVenueAccess {
+                    NavigationStack {
+                        VenuePortalView()
+                    }
+                    .tabItem {
+                        Label("Bars", systemImage: "building.2.fill")
+                    }
                 }
 
                 NavigationStack {
@@ -48,13 +50,13 @@ struct RootView: View {
             if model.isLoading {
                 VStack {
                     Spacer()
-                    LoadingOverlay(message: "Updating BeerMap")
+                    LoadingOverlay(message: "Updating Pint Path")
                         .padding(.bottom, 28)
                 }
                 .transition(.opacity)
             }
         }
-        .alert("BeerMap", isPresented: Binding(
+        .alert("Pint Path", isPresented: Binding(
             get: { model.errorMessage != nil || model.notice != nil },
             set: { if !$0 { model.dismissMessages() } }
         )) {

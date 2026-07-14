@@ -1,0 +1,19 @@
+{
+  "dashboardStats": {
+    "totalUploads": 37
+  },
+  "submissions": [
+    { "id": "recent-01" },
+    { "id": "recent-02" },
+    { "id": "recent-03" },
+    { "id": "recent-04" },
+    { "id": "recent-05" },
+    { "id": "recent-06" },
+    { "id": "recent-07" },
+    { "id": "recent-08" },
+    { "id": "recent-09" },
+    { "id": "recent-10" },
+    { "id": "recent-11" },
+    { "id": "recent-12" }
+  ]
+}

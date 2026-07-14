@@ -9,6 +9,44 @@ function safeRequestPath(req: Request): string {
   return req.path || req.originalUrl?.split("?")[0] || "";
 }
 
+function safePublicErrorMetadata(details: unknown): {
+  code: string;
+  recovery?: {
+    eligible: boolean;
+    endpoint: string;
+    consumer: boolean;
+    venues: Array<{ venueId: string; venueName: string }>;
+  };
+} | undefined {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return undefined;
+  const value = details as Record<string, unknown>;
+  if (
+    value.publicCode !== "ACCOUNT_SUSPENDED_BILLING_RECOVERY" &&
+    value.publicCode !== "BILLING_RECOVERY_VENUE_SELECTION_REQUIRED" &&
+    value.publicCode !== "ACCOUNT_SUSPENDED"
+  ) return undefined;
+  const venues = Array.isArray(value.billingRecoveryVenues)
+    ? value.billingRecoveryVenues.flatMap((venue) => {
+        if (!venue || typeof venue !== "object" || Array.isArray(venue)) return [];
+        const candidate = venue as Record<string, unknown>;
+        return typeof candidate.venueId === "string" && typeof candidate.venueName === "string"
+          ? [{ venueId: candidate.venueId.slice(0, 200), venueName: candidate.venueName.slice(0, 200) }]
+          : [];
+      }).slice(0, 20)
+    : [];
+  return {
+    code: value.publicCode,
+    ...(value.publicCode === "ACCOUNT_SUSPENDED" ? {} : {
+      recovery: {
+        eligible: value.billingRecoveryEligible === true,
+        endpoint: "/api/business/billing/recovery-portal",
+        consumer: value.billingRecoveryConsumer === true,
+        venues,
+      },
+    }),
+  };
+}
+
 export function errorHandler(error: unknown, req: Request, res: Response, _next: NextFunction): void {
   const fallbackError = new AppError("Internal server error", 500, undefined, false);
   const appError = isAppError(error) ? error : fallbackError;
@@ -34,6 +72,7 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
     failure(
       appError.expose ? appError.message : "Internal server error",
       isProduction ? undefined : redactSecrets(appError.details),
+      safePublicErrorMetadata(appError.details),
     ),
   );
 }

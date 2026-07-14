@@ -29,12 +29,12 @@
     <div id="adminContent" hidden>
       <div class="adminWorkbench">
       <nav class="adminJumpNav" role="tablist" aria-label="Admin workflow sections">
-        <button class="adminTabButton" type="button" data-admin-tab-target="dashboard" aria-controls="adminDashboard" aria-selected="false">Dashboard</button>
-        <button class="adminTabButton" type="button" data-admin-tab-target="review" aria-controls="adminReview" aria-selected="false">Review</button>
-        <button class="adminTabButton" type="button" data-admin-tab-target="capture" aria-controls="adminCapture" aria-selected="false">Data capture</button>
-        <button class="adminTabButton" type="button" data-admin-tab-target="partners" aria-controls="adminPartners" aria-selected="false">Partners</button>
-        <button class="adminTabButton" type="button" data-admin-tab-target="leaderboard" aria-controls="adminLeaderboard" aria-selected="false">Prizes</button>
-        <button class="adminTabButton" type="button" data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false">Analytics</button>
+        <button id="adminTab-dashboard" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="dashboard" aria-controls="adminDashboard" aria-selected="false">Dashboard</button>
+        <button id="adminTab-review" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="review" aria-controls="adminReview" aria-selected="false">Review</button>
+        <button id="adminTab-capture" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="capture" aria-controls="adminCapture" aria-selected="false">Data capture</button>
+        <button id="adminTab-partners" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="partners" aria-controls="adminPartners" aria-selected="false">Partners</button>
+        <button id="adminTab-leaderboard" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="leaderboard" aria-controls="adminLeaderboard" aria-selected="false">Prizes</button>
+        <button id="adminTab-analytics" class="adminTabButton" role="tab" tabindex="-1" type="button" data-admin-tab-target="analytics" aria-controls="adminAnalytics" aria-selected="false">Analytics</button>
       </nav>
       <label class="mobileSectionPicker" for="adminMobileTabSelect">Admin section
         <select id="adminMobileTabSelect">
@@ -58,6 +58,7 @@
           <button id="refreshAdminPageButton" class="button button--small button--primary" type="button">Refresh</button>
         </div>
       </div>
+      <div id="adminPanelErrors" class="notice adminPanelErrors" role="alert" aria-live="polite" hidden></div>
 
       <div id="adminFocusRail" class="adminFocusRail" aria-label="Admin snapshot">
         <div class="adminFocusRail__item">
@@ -66,7 +67,7 @@
         </div>
       </div>
 
-      <section id="adminDashboard" class="adminSection adminSection--priority adminDashboard" data-admin-tab-panel="dashboard" role="tabpanel" hidden>
+      <section id="adminDashboard" class="adminSection adminSection--priority adminDashboard" data-admin-tab-panel="dashboard" role="tabpanel" hidden aria-labelledby="adminTab-dashboard" tabindex="0">
         <div class="panel adminDashboardHero adminPanelSpan">
           <div>
             <div class="eyebrow">Admin command centre</div>
@@ -129,7 +130,7 @@
         </div>
       </section>
 
-      <section id="adminReview" class="adminSection adminSection--priority" data-admin-tab-panel="review" role="tabpanel" hidden>
+      <section id="adminReview" class="adminSection adminSection--priority" data-admin-tab-panel="review" role="tabpanel" hidden aria-labelledby="adminTab-review" tabindex="0">
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Start here</div>
@@ -141,7 +142,7 @@
         <section id="fieldTestPanel" class="panel adminPanelSpan" hidden>
           <div class="eyebrow">Field-test today</div>
           <h2>Tomorrow-ready signal check</h2>
-          <p class="muted">A quick daily view for private tests: usage, blocked reveals, submissions, reports, contact messages, and demand signals.</p>
+          <p class="muted">A quick daily view for private tests: fixed-preview usage, submissions, reports, contact messages, and demand signals.</p>
           <div id="fieldTestMetrics" class="metricGrid adminMetricBlock"></div>
           <div id="fieldTestSignals" class="list adminListBlock"></div>
         </section>
@@ -169,8 +170,124 @@
             </div>
             <button id="refreshAccountDeletionsButton" class="button button--small" type="button">Refresh</button>
           </div>
+          <label class="field">Deletion execution audit reason
+            <input id="accountDeletionAuditReason" minlength="4" maxlength="500" placeholder="Required before permanently deleting an account" />
+          </label>
           <div id="accountDeletionRequests" class="list"></div>
+          <div id="accountDeletionPager" class="adminIngestionPager" aria-live="polite" hidden>
+            <button id="accountDeletionPrev" class="button button--small" type="button">Previous 25</button>
+            <span id="accountDeletionPageStatus" class="muted">Showing 0 of 0</span>
+            <button id="accountDeletionNext" class="button button--small button--primary" type="button">Next 25</button>
+          </div>
         </div>
+
+        <div class="adminGrid adminGrid--two adminPanelSpan">
+          <section class="panel" aria-labelledby="adminSecurityAuditHeading">
+            <div class="sectionHeader">
+              <div>
+                <div class="eyebrow">Security operations</div>
+                <h2 id="adminSecurityAuditHeading">Security audit log</h2>
+              </div>
+              <button id="refreshSecurityAuditButton" class="button button--small" type="button">Refresh</button>
+            </div>
+            <form id="securityAuditFilterForm" class="form">
+              <div class="grid grid--two">
+                <label class="field">Action
+                  <input name="action" maxlength="120" placeholder="e.g. admin_session_revoked" />
+                </label>
+                <label class="field">Actor user ID
+                  <input name="actorUserId" maxlength="180" placeholder="Optional exact user ID" />
+                </label>
+              </div>
+              <button class="button button--small button--primary" type="submit">Apply filters</button>
+            </form>
+            <div id="securityAuditStatus" class="notice" role="status">Load the latest audited security actions.</div>
+            <div id="securityAuditList" class="list"></div>
+            <div class="adminIngestionPager">
+              <button id="securityAuditPrev" class="button button--small" type="button">Previous</button>
+              <span id="securityAuditPage" class="muted">0 of 0</span>
+              <button id="securityAuditNext" class="button button--small" type="button">Next</button>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="adminAccountContainmentHeading">
+            <div class="eyebrow">Incident containment</div>
+            <h2 id="adminAccountContainmentHeading">Account sessions and status</h2>
+            <form id="adminAccountContainmentForm" class="form">
+              <label class="field">Account ID
+                <input name="userId" maxlength="180" required placeholder="Paste the exact account ID" />
+              </label>
+              <div class="grid grid--two">
+                <label class="field">Status
+                  <select name="status"><option value="active">Active</option><option value="warned">Warned</option><option value="suspended">Suspended</option></select>
+                </label>
+                <label class="field">Trust score
+                  <input name="trustScore" type="number" min="0" max="100" placeholder="Leave unchanged" />
+                </label>
+              </div>
+              <label class="field">Audit reason
+                <textarea name="reason" minlength="4" maxlength="500" required placeholder="Why is this account status or session being changed?"></textarea>
+              </label>
+              <div class="actionRow actionRow--compact">
+                <button id="loadAdminAccountSessions" class="button" type="button">Load sessions</button>
+                <button class="button button--danger" type="submit">Apply account status</button>
+              </div>
+            </form>
+            <div id="adminAccountContainmentStatus" class="notice" role="status">No account selected.</div>
+            <div id="adminAccountSessions" class="list"></div>
+            <div id="adminAccountSessionPager" class="adminIngestionPager" aria-live="polite" hidden>
+              <button id="adminAccountSessionPrev" class="button button--small" type="button">Previous 25</button>
+              <span id="adminAccountSessionPageStatus" class="muted">Showing 0 of 0</span>
+              <button id="adminAccountSessionNext" class="button button--small" type="button">Next 25</button>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel adminPanelSpan" aria-labelledby="adminMissionLifecycleHeading">
+          <div class="sectionHeader">
+            <div>
+              <div class="eyebrow">Mission integrity</div>
+              <h2 id="adminMissionLifecycleHeading">Mission inventory and lifecycle</h2>
+              <p class="muted">Review provenance, deactivate stale missions, and delete only unused rows. Demo missions are called out explicitly.</p>
+            </div>
+            <button id="refreshAdminMissionsButton" class="button button--small" type="button">Refresh missions</button>
+          </div>
+          <label class="field compactField">Filter missions
+            <input id="adminMissionFilter" type="search" placeholder="Venue, reason, ID, or demo" autocomplete="off" />
+          </label>
+          <label class="field">Lifecycle audit reason
+            <input id="adminMissionLifecycleReason" minlength="4" maxlength="500" placeholder="Required before deactivating, reactivating, or deleting a mission" />
+          </label>
+          <div id="adminMissionStatus" class="notice" role="status">Mission inventory has not loaded yet.</div>
+          <div id="adminMissionList" class="list"></div>
+          <div id="adminMissionPager" class="adminIngestionPager" aria-live="polite" hidden>
+            <button id="adminMissionPrev" class="button button--small" type="button">Previous 100</button>
+            <span id="adminMissionPageStatus" class="muted">Showing 0 of 0</span>
+            <button id="adminMissionNext" class="button button--small button--primary" type="button">Next 100</button>
+          </div>
+        </section>
+
+        <section class="panel adminPanelSpan" aria-labelledby="adminReportOpsHeading">
+          <div class="eyebrow">Report operations</div>
+          <h2 id="adminReportOpsHeading">Generate and deliver monthly reports</h2>
+          <p class="muted">Run a dry preview first. Delivery uses each venue's configured report recipients and the production delivery provider.</p>
+          <form id="adminReportOpsForm" class="form">
+            <div class="grid grid--two">
+              <label class="field">Month
+                <input name="month" type="month" required />
+              </label>
+              <label class="field">Venue ID (optional)
+                <input name="venueId" maxlength="200" placeholder="Blank runs all eligible venues" />
+              </label>
+            </div>
+            <div class="actionRow actionRow--compact">
+              <button class="button" type="submit" data-report-operation="dry-run">Preview generation</button>
+              <button class="button button--primary" type="submit" data-report-operation="generate">Generate</button>
+              <button class="button button--danger" type="submit" data-report-operation="deliver">Deliver generated reports</button>
+            </div>
+          </form>
+          <div id="adminReportOpsStatus" class="notice" role="status">No report operation started.</div>
+        </section>
 
         <div class="panel adminPanelSpan adminSourceReviewPanel">
           <div class="sectionHeader">
@@ -203,7 +320,7 @@
           <div class="sectionHeader">
             <div>
               <h2>Pending beer catalogue</h2>
-              <p class="muted">Approve real new beers, or merge spelling mistakes into the canonical catalogue before they spread.</p>
+              <p class="muted">Approve real new beers, or merge spelling mistakes into the canonical catalogue before they spread. Start typing a canonical beer name to search the full active catalogue.</p>
             </div>
             <div class="actionRow">
               <button id="rejectPendingBeerCatalogButton" class="button button--small button--danger" type="button" disabled>Reject pending junk</button>
@@ -213,27 +330,48 @@
           <div id="adminBeerCatalogStatus" class="notice">Loading pending beer names...</div>
           <datalist id="adminBeerCatalogMergeTargets"></datalist>
           <div id="pendingBeerCatalog" class="list"></div>
+          <div id="pendingBeerCatalogPager" class="adminIngestionPager" aria-live="polite" hidden>
+            <button id="pendingBeerCatalogPrev" class="button button--small" type="button">Previous 50</button>
+            <span id="pendingBeerCatalogPageStatus" class="muted">Showing 0 of 0</span>
+            <button id="pendingBeerCatalogNext" class="button button--small button--primary" type="button">Next 50</button>
+          </div>
         </div>
 
         <div class="adminGrid adminGrid--two">
           <div class="panel">
             <h2>Pending submissions</h2>
+            <p id="pendingSubmissionsPageStatus" class="muted">Loading pending submissions...</p>
             <div id="pendingSubmissions" class="list"></div>
+            <div id="pendingSubmissionsPager" class="adminIngestionPager" aria-live="polite" hidden>
+              <button id="pendingSubmissionsPrev" class="button button--small" type="button">Previous 50</button>
+              <span id="pendingSubmissionsPagerStatus" class="muted">Showing 0 of 0</span>
+              <button id="pendingSubmissionsNext" class="button button--small button--primary" type="button">Next 50</button>
+            </div>
           </div>
           <div class="panel">
             <h2>Pending venue changes</h2>
             <p class="muted">Only safeguarded actions such as the fourth deletion within an hour appear here. Normal assigned-venue edits save directly.</p>
             <div id="pendingBarChanges" class="list"></div>
+            <div id="venuePartnerReviewPager" class="adminIngestionPager" aria-live="polite" hidden>
+              <button id="venuePartnerReviewPrev" class="button button--small" type="button">Previous 50</button>
+              <span id="venuePartnerReviewPageStatus" class="muted">Showing 0 of 0</span>
+              <button id="venuePartnerReviewNext" class="button button--small button--primary" type="button">Next 50</button>
+            </div>
           </div>
         </div>
 
         <div class="panel adminPanelSpan">
           <h2>Review queues</h2>
           <div id="reviewQueues" class="list"></div>
+          <div id="adminReviewQueuePager" class="adminIngestionPager" aria-live="polite" hidden>
+            <button id="adminReviewQueuePrev" class="button button--small" type="button">Previous 25</button>
+            <span id="adminReviewQueuePageStatus" class="muted">Showing 0 of 0</span>
+            <button id="adminReviewQueueNext" class="button button--small button--primary" type="button">Next 25</button>
+          </div>
         </div>
       </section>
 
-      <section id="adminCapture" class="adminSection" data-admin-tab-panel="capture" role="tabpanel" hidden>
+      <section id="adminCapture" class="adminSection" data-admin-tab-panel="capture" role="tabpanel" hidden aria-labelledby="adminTab-capture" tabindex="0">
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Data capture</div>
@@ -257,13 +395,14 @@
             <div id="adminSelectedVenue" class="notice">No venue selected yet.</div>
 
             <label class="field">Menu photo OCR
-              <input id="adminMenuPhoto" type="file" accept="image/*" capture="environment" />
+              <input id="adminMenuPhoto" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" capture="environment" />
+              <span class="fieldHint">JPEG, PNG, or WebP; 25MB maximum. Convert HEIC/HEIF photos to JPEG first.</span>
             </label>
             <div class="actionRow">
               <button id="adminOcrButton" class="button" type="button">Read menu photo</button>
               <button id="adminAddBeerRow" class="button" type="button">Add beer row</button>
             </div>
-            <div id="adminOcrResult" class="fieldHint"></div>
+            <div id="adminOcrResult" class="fieldHint" role="status" aria-live="polite"></div>
 
             <div id="adminBeerRows" class="adminBeerRows"></div>
             <label class="field">Notes
@@ -339,18 +478,19 @@
               <input name="sourceUrl" type="url" placeholder="https://..." />
             </label>
             <label class="field">Upload image
-              <input id="adminSourceImage" type="file" accept="image/*" capture="environment" />
+              <input id="adminSourceImage" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" capture="environment" />
+              <span class="fieldHint">JPEG, PNG, or WebP; 25MB maximum. Convert HEIC/HEIF photos to JPEG first.</span>
             </label>
             <label class="field">Notes
               <textarea name="note" rows="3" placeholder="Where this source came from"></textarea>
             </label>
             <button class="button button--primary" type="submit">Queue source</button>
-            <div id="adminSourceQueueStatus" class="notice">Select a venue above, then add a source URL or image.</div>
+            <div id="adminSourceQueueStatus" class="notice" role="status" aria-live="polite">Select a venue above, then add a source URL or image.</div>
           </form>
         </div>
       </section>
 
-      <section id="adminPartners" class="adminSection" data-admin-tab-panel="partners" role="tabpanel" hidden>
+      <section id="adminPartners" class="adminSection" data-admin-tab-panel="partners" role="tabpanel" hidden aria-labelledby="adminTab-partners" tabindex="0">
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Venue partners</div>
@@ -383,6 +523,11 @@
             <div id="venueManagerAssignments" class="list"></div>
           </div>
         </div>
+        <div id="venuePartnerPager" class="adminIngestionPager" aria-live="polite" hidden>
+          <button id="venuePartnerPrev" class="button button--small" type="button">Previous 50</button>
+          <span id="venuePartnerPageStatus" class="muted">Showing 0 of 0</span>
+          <button id="venuePartnerNext" class="button button--small button--primary" type="button">Next 50</button>
+        </div>
 
         <div class="adminGrid adminGrid--two">
           <form id="managerAssignForm" class="panel form">
@@ -394,10 +539,12 @@
             <div id="managerUserResults" class="list compactList">
               <div class="listItem muted">Search for the staff member's Pint Path account.</div>
             </div>
-            <label class="field">Venue
+            <label class="field">Search venue
               <input id="managerVenueSearch" type="search" placeholder="Search venue name or area" autocomplete="off" />
             </label>
-            <select id="managerVenueSelect"></select>
+            <label class="field">Selected venue
+              <select id="managerVenueSelect" aria-describedby="managerAssignPreview"></select>
+            </label>
             <input id="managerVenueId" name="venueId" type="hidden" />
             <input id="managerVenueName" name="venueName" type="hidden" />
             <input id="managerVenueSuburb" name="suburb" type="hidden" />
@@ -470,7 +617,7 @@
         </div>
       </section>
 
-      <section id="adminLeaderboard" class="adminSection" data-admin-tab-panel="leaderboard" role="tabpanel" hidden>
+      <section id="adminLeaderboard" class="adminSection" data-admin-tab-panel="leaderboard" role="tabpanel" hidden aria-labelledby="adminTab-leaderboard" tabindex="0">
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Contributor prizes</div>
@@ -538,9 +685,19 @@
             <div id="adminLeaderboardAwards" class="list"></div>
           </div>
         </div>
+
+        <div class="panel adminPanelSpan">
+          <div class="sectionHeader">
+            <div>
+              <h2>Voucher fulfilment</h2>
+              <p class="muted">Verify the support claim reference, then mark the voucher fulfilled or void with an audited reason.</p>
+            </div>
+          </div>
+          <div id="adminLeaderboardVouchers" class="rewardVoucherAdminList"></div>
+        </div>
       </section>
 
-      <section id="adminAnalytics" class="adminSection" data-admin-tab-panel="analytics" role="tabpanel" hidden>
+      <section id="adminAnalytics" class="adminSection" data-admin-tab-panel="analytics" role="tabpanel" hidden aria-labelledby="adminTab-analytics" tabindex="0">
         <div class="adminSectionHeader">
           <div>
             <div class="eyebrow">Growth signals</div>
@@ -627,6 +784,10 @@
       return `${Math.round(Number(value || 0) * 100)}%`;
     }
 
+    function formatCount(value) {
+      return new Intl.NumberFormat("en-AU").format(Number(value || 0));
+    }
+
     function formatAudCents(value) {
       return new Intl.NumberFormat("en-AU", {
         style: "currency",
@@ -696,7 +857,10 @@
     let selectedAdminVenueId = null;
     let adminCaptureSource = "manual_entry";
     let adminGoogleVenueSearchTimer = null;
+    let adminGoogleVenueSearchRequestId = 0;
+    let adminGoogleVenueDetailsRequestId = 0;
     let managerUserSearchTimer = null;
+    let managerUserSearchRequestId = 0;
     let managerAccountCandidates = [];
     let selectedManagerAccount = null;
     let selectedManagerVenueId = null;
@@ -704,11 +868,56 @@
     let latestAdminTodayPayload = null;
     let latestAdminDashboardPayload = null;
     let reviewDecisionState = null;
+    let leaderboardPrizesRequestId = 0;
     const ADMIN_INGESTION_PAGE_SIZE = 12;
     const ADMIN_FAST_REJECT_SOURCE_NOTE = "Fast rejected during admin source cleanup.";
     const ADMIN_FAST_REJECT_BEER_NOTE = "Fast rejected as beer catalogue cleanup noise.";
     let adminIngestionOffset = 0;
     let adminIngestionTotal = 0;
+    const SECURITY_AUDIT_PAGE_SIZE = 25;
+    let securityAuditOffset = 0;
+    let securityAuditTotal = 0;
+    let securityAuditRequestId = 0;
+    const ACCOUNT_DELETION_PAGE_SIZE = 25;
+    let accountDeletionOffset = 0;
+    let accountDeletionTotal = 0;
+    let accountDeletionRequestId = 0;
+    const ADMIN_MISSION_PAGE_SIZE = 100;
+    let adminMissionOffset = 0;
+    let adminMissionTotal = 0;
+    let adminMissionRequestId = 0;
+    const ADMIN_ACCOUNT_SESSION_PAGE_SIZE = 25;
+    let adminAccountSessionOffset = 0;
+    let adminAccountSessionTotal = 0;
+    let adminAccountSessionUserId = null;
+    let adminAccountSessionRequestId = 0;
+    const ADMIN_REVIEW_QUEUE_PAGE_SIZE = 25;
+    let adminReviewQueueOffset = 0;
+    const ADMIN_SUBMISSION_PAGE_SIZE = 50;
+    let adminSubmissionOffset = 0;
+    let adminSubmissionTotal = 0;
+    const ADMIN_BEER_CATALOG_PAGE_SIZE = 50;
+    let adminBeerCatalogOffset = 0;
+    let adminBeerCatalogTotal = 0;
+    let adminActiveBeerCatalog = [];
+    let adminBeerCatalogSearchTimer = null;
+    let adminBeerCatalogSearchRequestId = 0;
+    let adminBeerCatalogReviewRequestId = 0;
+    let adminBeerCatalogRefreshRequestId = 0;
+    const VENUE_PARTNER_PAGE_SIZE = 50;
+    let venuePartnerOffset = 0;
+    let venuePartnerMaxTotal = 0;
+    let venuePartnerHasMore = false;
+    let venuePartnerRequestId = 0;
+    const ADMIN_IMAGE_MAX_RAW_BYTES = 25 * 1024 * 1024;
+    const ADMIN_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+    const ADMIN_IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i;
+    let adminMissions = [];
+    let adminLoadRequestId = 0;
+    let adminRefreshRequestId = 0;
+    let adminStatusRequestId = 0;
+    let adminVenuesRequestId = 0;
+    let adminDataToolsRequestId = 0;
     const ADMIN_TAB_KEYS = ["dashboard", "review", "capture", "partners", "leaderboard", "analytics"];
     const ADMIN_TAB_LABELS = {
       dashboard: "Dashboard",
@@ -839,7 +1048,15 @@
       return ADMIN_TAB_KEYS.includes(target) ? target : "dashboard";
     }
 
-    function showAdminTab(target = "dashboard") {
+    function updateAdminTabUrl(target, { replace = false } = {}) {
+      const url = new URL(window.location.href);
+      if (target === "dashboard") url.searchParams.delete("adminTab");
+      else url.searchParams.set("adminTab", target);
+      url.hash = "";
+      window.history[replace ? "replaceState" : "pushState"]({ ...(window.history.state || {}), adminTab: target }, "", url);
+    }
+
+    function showAdminTab(target = "dashboard", options = {}) {
       const panels = Array.from(document.querySelectorAll("[data-admin-tab-panel]"));
       const buttons = Array.from(document.querySelectorAll("[data-admin-tab-target]"));
       const activeTarget = ADMIN_TAB_KEYS.includes(target) ? target : "dashboard";
@@ -853,6 +1070,7 @@
         const active = button.dataset.adminTabTarget === activeTarget;
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-selected", active ? "true" : "false");
+        button.tabIndex = active ? 0 : -1;
       });
       const mobileSelect = document.getElementById("adminMobileTabSelect");
       if (mobileSelect) mobileSelect.value = activeTarget;
@@ -861,10 +1079,28 @@
       if (activeLabel) {
         activeLabel.textContent = ADMIN_TAB_LABELS[activeTarget] || "Dashboard";
       }
+      if (options.updateHistory === true) updateAdminTabUrl(activeTarget);
+      return activeTarget;
+    }
+
+    function handleAdminTabKeydown(event) {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      const tabs = Array.from(document.querySelectorAll("[data-admin-tab-target]:not([hidden]):not([disabled])"));
+      const currentIndex = tabs.indexOf(event.currentTarget);
+      if (currentIndex < 0 || !tabs.length) return;
+      event.preventDefault();
+      const nextIndex = event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      const next = tabs[nextIndex];
+      showAdminTab(next.dataset.adminTabTarget, { updateHistory: true });
+      next.focus();
     }
 
     function adminJumpTo(target, selector) {
-      showAdminTab(target);
+      showAdminTab(target, { updateHistory: true });
       window.requestAnimationFrame(() => {
         const element = selector ? document.querySelector(selector) : document.querySelector(`[data-admin-tab-panel="${target}"]`);
         element?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1106,8 +1342,9 @@
       return stageDefaultNextAction(nextStatus, item);
     }
 
-    function buildOutreachPipelineItems(outreach = [], leads = []) {
-      const outreachByVenue = new Map(outreach.map((item) => [item.venueId, item]));
+    function buildOutreachPipelineItems(outreach = [], leads = [], knownOutreachByVenueId = {}) {
+      const outreachByVenue = new Map(Object.entries(knownOutreachByVenueId || {}));
+      outreach.forEach((item) => outreachByVenue.set(item.venueId, item));
       const leadByVenue = new Map(leads.map((lead) => [lead.venueId, lead]));
       const savedItems = outreach.map((item) => {
         const lead = leadByVenue.get(item.venueId);
@@ -1196,18 +1433,23 @@
     function renderOutreachPipeline(data) {
       const outreach = Array.isArray(data.outreach) ? data.outreach : [];
       const leads = Array.isArray(data.leads) ? data.leads : [];
-      const items = buildOutreachPipelineItems(outreach, leads);
+      const items = buildOutreachPipelineItems(
+        outreach,
+        leads,
+        data.leadRelationshipContext?.outreachByVenueId || {},
+      );
       const savedItems = items.filter((item) => !item.isLeadSignal);
       const openItems = savedItems.filter((item) => !["closed", "not_interested"].includes(outreachStageForStatus(item.status).id));
       const dueFollowUps = savedItems.filter((item) => outreachFollowUpState(item).due).length;
       const hotSignals = items.filter((item) => Number(item.leadScore || 0) >= 72 && outreachStageForStatus(item.status).id !== "closed").length;
       const partners = savedItems.filter((item) => outreachStageForStatus(item.status).id === "partner").length;
+      const globalOpenItems = Number(data.totals?.openOutreach ?? openItems.length);
 
       outreachPipelineSummary.innerHTML = [
-        { label: "Open", value: openItems.length },
-        { label: "Hot signals", value: hotSignals },
-        { label: "Due", value: dueFollowUps },
-        { label: "Partners", value: partners },
+        { label: "Open overall", value: globalOpenItems },
+        { label: "Hot on page", value: hotSignals },
+        { label: "Due on page", value: dueFollowUps },
+        { label: "Partners on page", value: partners },
       ].map((item) => `
         <div class="outreachPipelineSummary__item">
           <span>${escapeHtml(item.label)}</span>
@@ -1308,7 +1550,7 @@
         renderMetric("Beer searches", metrics.totalBeerSearches),
         renderMetric("Near-me uses", metrics.totalNearMeUses || 0),
         renderMetric("Happy-hour near me", metrics.totalHappyHourNearMeUses || 0),
-        renderMetric("Exact price reveals", metrics.totalExactPriceReveals),
+        renderMetric("Free preview views", metrics.totalFreePreviewViews || 0),
         renderMetric("Submission completions", metrics.totalSubmissionCompletions),
         renderMetric("Approval rate", formatPercent(metrics.submissionApprovalRate)),
         renderMetric("Verified venues", metrics.venuesWithVerifiedData),
@@ -1339,8 +1581,7 @@
         renderMetric("Searches today", metrics.totalVenueSearches + metrics.totalBeerSearches, { target: "analytics", selector: "#demandSignals", title: "Open search demand signals" }),
         renderMetric("Near-me uses", metrics.totalNearMeUses || 0, { target: "analytics", selector: "#demandSignals", title: "Open nearby demand signals" }),
         renderMetric("HH near me", metrics.totalHappyHourNearMeUses || 0, { target: "analytics", selector: "#demandSignals", title: "Open happy-hour demand signals" }),
-        renderMetric("Price reveals", metrics.totalExactPriceReveals, { target: "analytics", selector: "#demandSignals", title: "Open price reveal analytics" }),
-        renderMetric("Blocked reveals", metrics.totalBlockedPriceReveals || 0, { target: "analytics", selector: "#demandSignals", title: "Open blocked reveal analytics" }),
+        renderMetric("Free preview views", metrics.totalFreePreviewViews || 0, { target: "analytics", selector: "#demandSignals", title: "Open fixed-preview analytics" }),
         renderMetric("Submissions", metrics.totalSubmissionCompletions, { target: "review", selector: "#pendingSubmissions", title: "Open pending submissions" }),
         renderMetric("Pending approvals", metrics.totalPendingSubmissions, { target: "review", selector: "#pendingSubmissions", title: "Open pending approvals" }),
         renderMetric("Wrong-price reports", activeRows(queues.wrongPriceReports).length, { target: "review", selector: "#reviewQueues", title: "Open wrong-price reports" }),
@@ -1358,8 +1599,8 @@
       retentionCohorts.innerHTML = data.cohorts.length
         ? data.cohorts.map((cohort) => `
           <div class="listItem">
-            <strong>${cohort.cohort}</strong>
-            <div class="muted">${cohort.users} users · 7-day ${formatPercent(cohort.retention7)} (${cohort.returned7}) · 30-day ${formatPercent(cohort.retention30)} (${cohort.returned30})</div>
+            <strong>${escapeHtml(cohort.cohort)}</strong>
+            <div class="muted">${formatCount(cohort.users)} users · 7-day ${formatPercent(cohort.retention7)} (${formatCount(cohort.returned7)}) · 30-day ${formatPercent(cohort.retention30)} (${formatCount(cohort.returned30)})</div>
           </div>
         `).join("")
         : '<div class="listItem muted">No cohorts yet.</div>';
@@ -1369,7 +1610,7 @@
       coverageDashboard.innerHTML = [
         `<div class="listItem"><strong>Venue coverage</strong><div class="muted">${data.venuesWithAtLeastOneVerifiedPrice} verified · ${data.venuesWithThreePlusVerifiedPrices} with 3+ prices · ${data.venuesWithNoData} with no data</div></div>`,
         `<div class="listItem"><strong>Freshness</strong><div class="muted">${data.venuesWithStaleData} stale venues · average price age ${data.averagePriceRecordAgeDays} days · ${data.disputedRecords} disputed records</div></div>`,
-        `<div class="listItem"><strong>Coverage by area</strong><div class="muted">${data.coverageBySuburb.length ? data.coverageBySuburb.map((row) => `${row.suburb}: ${row.venuesWithPrices}`).join(" · ") : "No price coverage yet"}</div></div>`,
+        `<div class="listItem"><strong>Coverage by area</strong><div class="muted">${data.coverageBySuburb.length ? data.coverageBySuburb.map((row) => `${escapeHtml(row.suburb)}: ${formatCount(row.venuesWithPrices)}`).join(" · ") : "No price coverage yet"}</div></div>`,
       ].join("");
     }
 
@@ -1406,10 +1647,11 @@
                   <textarea data-trust-note maxlength="2000" placeholder="What was checked, changed, or sent to the requester">${escapeHtml(row.resolutionNote || "")}</textarea>
                 </label>
                 <div class="actionRow actionRow--compact">
-                  <button class="button button--small" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-status="in_progress">Assign to me</button>
-                  <button class="button button--small button--primary" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-status="resolved">Resolve</button>
-                  <button class="button button--small button--danger" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-status="rejected">Reject</button>
-                  ${["resolved", "rejected"].includes(row.status) ? `<button class="button button--small" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-status="open">Reopen</button>` : ""}
+                  <button class="button button--small" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-updated-at="${escapeHtml(row.updatedAt)}" data-trust-status="in_progress">Assign to me</button>
+                  <button class="button button--small button--primary" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-updated-at="${escapeHtml(row.updatedAt)}" data-trust-status="resolved">Resolve</button>
+                  <button class="button button--small button--danger" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-updated-at="${escapeHtml(row.updatedAt)}" data-trust-status="rejected">Reject</button>
+                  ${group.kind === "venue_request" && ["open", "in_progress"].includes(row.status) ? `<button class="button button--small" type="button" data-request-to-mission="${escapeHtml(row.id)}">Create mission</button>` : ""}
+                  ${["resolved", "rejected"].includes(row.status) ? `<button class="button button--small" type="button" data-trust-kind="${escapeHtml(group.kind)}" data-trust-id="${escapeHtml(row.id)}" data-trust-updated-at="${escapeHtml(row.updatedAt)}" data-trust-status="open">Reopen</button>` : ""}
                 </div>
               </article>
             `).join("") : '<div class="listItem muted">Nothing in this queue.</div>'}
@@ -1434,6 +1676,7 @@
                 status: button.dataset.trustStatus,
                 assignedTo: button.dataset.trustStatus === "in_progress" ? "self" : null,
                 resolutionNote: note,
+                expectedUpdatedAt: button.dataset.trustUpdatedAt,
               }),
             });
             MelbBeerBusiness.setStatus(statusEl, "Trust queue item updated.");
@@ -1444,6 +1687,41 @@
           }
         });
       });
+      reviewQueues.querySelectorAll("[data-request-to-mission]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          if (!window.confirm("Create an active public mission from this request? Review the venue details first.")) return;
+          button.disabled = true;
+          try {
+            await MelbBeerBusiness.apiFetch(`/api/business/admin/requests/${encodeURIComponent(button.dataset.requestToMission)}/mission`, { method: "POST", body: "{}" });
+            MelbBeerBusiness.setStatus(statusEl, "Mission created from the venue request.");
+            await Promise.allSettled([loadAdminMissions(), loadAdmin()]);
+          } catch (error) {
+            button.disabled = false;
+            MelbBeerBusiness.setStatus(statusEl, error.message || "Could not create mission from request.", true);
+          }
+        });
+      });
+
+      const pager = document.getElementById("adminReviewQueuePager");
+      const pageStatus = document.getElementById("adminReviewQueuePageStatus");
+      const previousButton = document.getElementById("adminReviewQueuePrev");
+      const nextButton = document.getElementById("adminReviewQueueNext");
+      const totals = data.totals || {};
+      const pagination = data.pagination || {};
+      const pageOffset = Number.isFinite(Number(pagination.offset)) ? Number(pagination.offset) : adminReviewQueueOffset;
+      const pageLimit = Number.isFinite(Number(pagination.limit)) ? Number(pagination.limit) : ADMIN_REVIEW_QUEUE_PAGE_SIZE;
+      const totalCounts = [totals.feedback, totals.wrongPriceReports, totals.venueRequests]
+        .map((value) => Number(value || 0));
+      const maxTotal = Math.max(0, ...totalCounts);
+      const hasMore = pagination.hasMore || {};
+      const canLoadNext = Boolean(hasMore.feedback || hasMore.wrongPriceReports || hasMore.venueRequests);
+      const hasPaging = pageOffset > 0 || canLoadNext;
+      if (pager) pager.hidden = !hasPaging;
+      if (pageStatus) {
+        pageStatus.textContent = `Page ${Math.floor(pageOffset / pageLimit) + 1} · feedback ${totalCounts[0]} · wrong prices ${totalCounts[1]} · requests ${totalCounts[2]}`;
+      }
+      if (previousButton) previousButton.disabled = pageOffset <= 0;
+      if (nextButton) nextButton.disabled = !canLoadNext || pageOffset + pageLimit >= maxTotal;
     }
 
     function topPitchLeads(leadsData) {
@@ -1461,10 +1739,10 @@
       const activeCount = (rows) => (Array.isArray(rows) ? rows : [])
         .filter((row) => ["open", "in_progress"].includes(row.status)).length;
       return {
-        submissions: submissions.length,
+        submissions: Number(payload.submissionTotal ?? submissions.length),
         newVenues: submissions.filter((submission) => submission.pendingVenue).length,
         sourcePending: sourceItems.filter((item) => item.status === "pending_review").length,
-        pendingChanges: pendingChanges.length,
+        pendingChanges: Number(payload.venuePartners?.totals?.pendingChanges ?? pendingChanges.length),
         wrongPriceReports: activeCount(queues.wrongPriceReports),
         contactMessages: activeCount(queues.feedback),
         venueRequests: activeCount(queues.venueRequests),
@@ -1501,9 +1779,10 @@
 
       const counts = queueCountsFromPayload(data);
       const leadCount = Array.isArray(data.leads?.leads) ? data.leads.leads.length : 0;
-      const openOutreach = Array.isArray(data.venuePartners?.outreach)
+      const pageOpenOutreach = Array.isArray(data.venuePartners?.outreach)
         ? data.venuePartners.outreach.filter((item) => !["closed", "not_interested"].includes(String(item.status || "lead"))).length
         : 0;
+      const openOutreach = Number(data.venuePartners?.totals?.openOutreach ?? pageOpenOutreach);
       const campaign = data.leaderboardPrizes?.campaign || data.leaderboardPrizes?.leaderboard?.campaign || {};
       const totalTrust = counts.wrongPriceReports + counts.contactMessages + counts.venueRequests;
       const items = [
@@ -1563,10 +1842,24 @@
       `;
     }
 
+    function partnerLeadRelationshipMaps(partnerData = {}) {
+      const context = partnerData.leadRelationshipContext || {};
+      const hasOutreachContext = context.outreachByVenueId && typeof context.outreachByVenueId === "object";
+      const hasAssignmentContext = Array.isArray(context.assignedVenueIds);
+      const outreachByVenue = hasOutreachContext
+        ? new Map(Object.entries(context.outreachByVenueId))
+        : new Map((partnerData.outreach || []).map((item) => [item.venueId, item]));
+      const assignedVenueIds = hasAssignmentContext
+        ? new Set(context.assignedVenueIds)
+        : new Set((partnerData.assignments || [])
+          .filter((item) => !item.status || item.status === "active")
+          .map((item) => item.venueId));
+      return { outreachByVenue, assignedVenueIds };
+    }
+
     function renderDashboardPitchList(leadsData, partnerData = {}) {
       const topLeads = topPitchLeads(leadsData);
-      const outreachByVenue = new Map((partnerData.outreach || []).map((item) => [item.venueId, item]));
-      const assignedVenueIds = new Set((partnerData.assignments || []).map((item) => item.venueId));
+      const { outreachByVenue, assignedVenueIds } = partnerLeadRelationshipMaps(partnerData);
 
       adminDashboardPitchList.innerHTML = topLeads.length
         ? topLeads.map((lead, index) => {
@@ -1679,7 +1972,7 @@
       adminDashboardPulse.innerHTML = [
         renderMetric("Searches today", totalSearchesToday, { target: "analytics", selector: "#demandSignals", title: "Open search demand signals" }),
         renderMetric("Submissions", metrics.totalSubmissionCompletions || 0, { target: "review", selector: "#pendingSubmissions", title: "Open pending submissions" }),
-        renderMetric("Price reveals", metrics.totalExactPriceReveals || 0, { target: "analytics", selector: "#demandSignals", title: "Open price reveal analytics" }),
+        renderMetric("Free preview views", metrics.totalFreePreviewViews || 0, { target: "analytics", selector: "#demandSignals", title: "Open fixed-preview analytics" }),
         renderMetric("Pending approvals", metrics.totalPendingSubmissions || counts.submissions, { target: "review", selector: "#pendingSubmissions", title: "Open pending approvals" }),
       ].join("");
       wireAdminJumpActions(adminDashboardPulse);
@@ -1763,8 +2056,7 @@
 
     function renderPitchReadiness(leadsData, partnerData = {}) {
       const leads = Array.isArray(leadsData?.leads) ? leadsData.leads : [];
-      const outreachByVenue = new Map((partnerData.outreach || []).map((item) => [item.venueId, item]));
-      const assignedVenueIds = new Set((partnerData.assignments || []).map((item) => item.venueId));
+      const { outreachByVenue, assignedVenueIds } = partnerLeadRelationshipMaps(partnerData);
       const topLeads = [...leads]
         .sort((a, b) => getLeadScore(b) - getLeadScore(a))
         .slice(0, 3);
@@ -1832,6 +2124,7 @@
       const entries = leaderboard.entries || [];
       const podium = leaderboard.podium || entries.slice(0, 3);
       const awards = data.awards || [];
+      const vouchers = data.vouchers || [];
 
       fillLeaderboardPrizeForm(campaign);
       adminLeaderboardPodium.innerHTML = podium.length
@@ -1864,12 +2157,55 @@
         `).join("")
         : '<div class="listItem muted">No awards finalized yet.</div>';
 
+      adminLeaderboardVouchers.innerHTML = vouchers.length
+        ? vouchers.map((voucher) => {
+          const active = voucher.status === "active";
+          const accountLabel = voucher.publicAccountId || voucher.userId || "Unknown account";
+          return `
+            <article class="rewardVoucherAdminCard">
+              <div class="rewardVoucherAdminCard__header">
+                <div>
+                  <span class="eyebrow">${escapeHtml(voucher.amountLabel || formatAudCents(voucher.amountCents || 0))}</span>
+                  <h3>${escapeHtml(voucher.title || "Pint Path voucher")}</h3>
+                  <p class="muted">Account ${escapeHtml(accountLabel)} · ${escapeHtml(voucher.statusLabel || voucher.status || "Unknown")}</p>
+                </div>
+                <span class="pill${active ? " pill--warning" : voucher.status === "redeemed" ? " pill--success" : ""}">${escapeHtml(voucher.statusLabel || voucher.status || "Unknown")}</span>
+              </div>
+              <div class="rewardVoucherAdminCard__details">
+                <div>
+                  <small>Claim reference</small>
+                  <code>${escapeHtml(voucher.claimReference || "Not issued")}</code>
+                  ${voucher.claimReference ? `<button class="button button--small" type="button" data-copy-voucher-reference="${escapeHtml(voucher.claimReference)}">Copy reference</button>` : ""}
+                </div>
+                <div><small>Expires</small><strong>${voucher.expiresAt ? escapeHtml(MelbBeerBusiness.formatDate(voucher.expiresAt)) : "Not supplied"}</strong></div>
+              </div>
+              <p class="muted">${escapeHtml(voucher.instructions || "Verify the support request and claim reference before fulfilment.")}</p>
+              ${voucher.fulfillmentReason ? `<p class="muted"><strong>Decision:</strong> ${escapeHtml(voucher.fulfillmentReason)}</p>` : ""}
+              ${active ? `
+                <div class="actionRow actionRow--compact">
+                  <button class="button button--small button--primary" type="button" data-transition-reward-voucher="fulfill" data-voucher-id="${escapeHtml(voucher.id)}" data-voucher-reference="${escapeHtml(voucher.claimReference || voucher.id)}">Mark fulfilled</button>
+                  <button class="button button--small button--danger" type="button" data-transition-reward-voucher="void" data-voucher-id="${escapeHtml(voucher.id)}" data-voucher-reference="${escapeHtml(voucher.claimReference || voucher.id)}">Void voucher</button>
+                </div>
+              ` : ""}
+            </article>
+          `;
+        }).join("")
+        : '<div class="emptyState"><strong>No vouchers to fulfil.</strong><span>Finalized leaderboard prizes and their claim references will appear here.</span></div>';
+
       const copy = data.copy || data.message || "Edit prizes before finalizing the monthly top three.";
       setLocalNotice(leaderboardPrizeStatus, copy, campaign.status === "finalized");
     }
 
     async function loadLeaderboardPrizes() {
-      const result = await MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes");
+      const requestId = ++leaderboardPrizesRequestId;
+      let result;
+      try {
+        result = await MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes");
+      } catch (error) {
+        if (requestId !== leaderboardPrizesRequestId) return null;
+        throw error;
+      }
+      if (requestId !== leaderboardPrizesRequestId) return null;
       renderAdminLeaderboardPrizes(result);
       if (latestAdminDashboardPayload) {
         latestAdminDashboardPayload = { ...latestAdminDashboardPayload, leaderboardPrizes: result };
@@ -1894,15 +2230,11 @@
       try {
         button.disabled = true;
         setLocalNotice(leaderboardPrizeStatus, "Saving prize settings...");
-        const result = await MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes", {
+        await MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes", {
           method: "POST",
           body: JSON.stringify(body),
         });
-        renderAdminLeaderboardPrizes(result);
-        if (latestAdminDashboardPayload) {
-          latestAdminDashboardPayload = { ...latestAdminDashboardPayload, leaderboardPrizes: result };
-          renderAdminDashboard();
-        }
+        await loadLeaderboardPrizes();
         MelbBeerBusiness.setStatus(statusEl, "Leaderboard prize settings saved.");
       } catch (error) {
         setLocalNotice(leaderboardPrizeStatus, error.message || "Could not save prize settings.", true);
@@ -1934,6 +2266,41 @@
       } finally {
         finalizeLeaderboardPrizeButton.disabled = false;
       }
+    }
+
+    function handleRewardVoucherTransitionRequest(button) {
+      const action = button.dataset.transitionRewardVoucher;
+      const voucherId = button.dataset.voucherId;
+      const reference = button.dataset.voucherReference || voucherId;
+      if (!voucherId || !["fulfill", "void"].includes(action)) return;
+      const fulfilling = action === "fulfill";
+      openReviewDecision({
+        eyebrow: "Voucher fulfilment",
+        title: fulfilling ? `Fulfil ${reference}` : `Void ${reference}`,
+        copy: fulfilling
+          ? "Confirm that support verified the account and claim reference before recording fulfilment."
+          : "Void only when the claim is invalid, duplicated, cancelled, or cannot be fulfilled. This is audited.",
+        reasons: fulfilling
+          ? ["Support verified claim and fulfilment", "Winner identity and reference verified", "Reward delivered after manual review"]
+          : ["Invalid or unverifiable claim", "Duplicate voucher or award", "Reward cancelled after support review", "Administrative correction"],
+        notePlaceholder: "Required context is recorded with the selected reason",
+        confirmLabel: fulfilling ? "Confirm fulfilment" : "Confirm void",
+        tone: fulfilling ? "primary" : "danger",
+        onConfirm: async ({ combinedNote }) => {
+          button.disabled = true;
+          try {
+            const result = await MelbBeerBusiness.apiFetch(`/api/business/admin/reward-vouchers/${encodeURIComponent(voucherId)}/transition`, {
+              method: "POST",
+              body: JSON.stringify({ action, reason: combinedNote || (fulfilling ? "Support verified claim and fulfilment" : "Administrative correction") }),
+            });
+            await loadLeaderboardPrizes();
+            MelbBeerBusiness.setStatus(statusEl, result.message || (fulfilling ? "Voucher marked fulfilled." : "Voucher voided."));
+          } catch (error) {
+            button.disabled = false;
+            throw error;
+          }
+        },
+      });
     }
 
     function prefillOutreachFromLead(lead) {
@@ -1971,6 +2338,9 @@
     function setLocalNotice(element, message, isWarning = false) {
       element.textContent = message;
       element.className = `notice ${isWarning ? "notice--warning" : ""}`;
+      element.setAttribute("role", isWarning ? "alert" : "status");
+      element.setAttribute("aria-live", isWarning ? "assertive" : "polite");
+      element.setAttribute("aria-atomic", "true");
     }
 
     function adminCatalogLabel(beer) {
@@ -1988,21 +2358,74 @@
       }) || null;
     }
 
-    function renderPendingBeerCatalog(data) {
-      const pending = Array.isArray(data?.pending) ? data.pending : [];
-      const active = Array.isArray(data?.active) ? data.active : [];
-      adminBeerCatalogMergeTargets.innerHTML = active
+    function hasActiveBeerCatalogMergeDraft() {
+      return Array.from(pendingBeerCatalog.querySelectorAll("[data-catalog-merge-target]"))
+        .some((input) => String(input.value || "").trim().length > 0);
+    }
+
+    function renderActiveBeerCatalogTargets(activeBeers) {
+      adminActiveBeerCatalog = Array.isArray(activeBeers) ? activeBeers : [];
+      adminBeerCatalogMergeTargets.innerHTML = adminActiveBeerCatalog
         .slice()
         .sort((left, right) => left.name.localeCompare(right.name))
         .map((beer) => `<option value="${escapeHtml(beer.name)}">${escapeHtml(beer.key)}</option>`)
         .join("");
+    }
+
+    async function loadActiveBeerCatalogTargets(query, scheduledRequestId = null) {
+      const requestId = scheduledRequestId ?? ++adminBeerCatalogSearchRequestId;
+      const requestedQuery = String(query || "").trim();
+      const params = new URLSearchParams({
+        pendingLimit: "1",
+        pendingOffset: "0",
+        activeLimit: "50",
+        activeOffset: "0",
+        activeQ: requestedQuery,
+      });
+      let data;
+      try {
+        data = await MelbBeerBusiness.apiFetch(`/api/business/admin/beer-catalog?${params.toString()}`);
+      } catch (error) {
+        if (requestId !== adminBeerCatalogSearchRequestId) return adminActiveBeerCatalog;
+        throw error;
+      }
+      if (requestId !== adminBeerCatalogSearchRequestId) return adminActiveBeerCatalog;
+      renderActiveBeerCatalogTargets(data.active);
+      return adminActiveBeerCatalog;
+    }
+
+    function scheduleActiveBeerCatalogSearch(query) {
+      window.clearTimeout(adminBeerCatalogSearchTimer);
+      const requestId = ++adminBeerCatalogSearchRequestId;
+      ++adminBeerCatalogReviewRequestId;
+      adminBeerCatalogSearchTimer = window.setTimeout(() => {
+        void loadActiveBeerCatalogTargets(query, requestId).catch((error) => {
+          if (requestId !== adminBeerCatalogSearchRequestId) return;
+          setLocalNotice(adminBeerCatalogStatus, error.message || "Could not search the active beer catalogue.", true);
+        });
+      }, 220);
+    }
+
+    function renderPendingBeerCatalog(data) {
+      const pending = Array.isArray(data?.pending) ? data.pending : [];
+      const active = Array.isArray(data?.active) ? data.active : [];
+      renderActiveBeerCatalogTargets(active);
       setLocalNotice(
         adminBeerCatalogStatus,
         pending.length
-          ? `${pending.length} pending beer ${pending.length === 1 ? "name needs" : "names need"} review.`
+          ? `${pending.length} pending beer ${pending.length === 1 ? "name needs" : "names need"} review on this page.`
           : "No pending beer names.",
         false,
       );
+      const pendingPagination = data?.pagination?.pending || {};
+      adminBeerCatalogTotal = Number(data?.totals?.pending || pending.length);
+      const pendingStart = pending.length ? adminBeerCatalogOffset + 1 : 0;
+      const pendingEnd = adminBeerCatalogOffset + pending.length;
+      const pager = document.getElementById("pendingBeerCatalogPager");
+      if (pager) pager.hidden = adminBeerCatalogTotal <= ADMIN_BEER_CATALOG_PAGE_SIZE && adminBeerCatalogOffset === 0;
+      document.getElementById("pendingBeerCatalogPageStatus").textContent = `${pendingStart}-${pendingEnd} of ${adminBeerCatalogTotal}`;
+      document.getElementById("pendingBeerCatalogPrev").disabled = adminBeerCatalogOffset === 0;
+      document.getElementById("pendingBeerCatalogNext").disabled = !pendingPagination.hasMore;
       if (rejectPendingBeerCatalogButton) {
         rejectPendingBeerCatalogButton.disabled = pending.length === 0;
         rejectPendingBeerCatalogButton.textContent = pending.length
@@ -2045,7 +2468,12 @@
           const sourceKey = button.dataset.mergeCatalogBeer;
           const targetInput = Array.from(pendingBeerCatalog.querySelectorAll("[data-catalog-merge-target]"))
             .find((input) => input.dataset.catalogMergeTarget === sourceKey);
-          const target = findAdminCatalogTarget(targetInput?.value, active);
+          let target = findAdminCatalogTarget(targetInput?.value, adminActiveBeerCatalog);
+          if (!target && String(targetInput?.value || "").trim()) {
+            window.clearTimeout(adminBeerCatalogSearchTimer);
+            const searchedTargets = await loadActiveBeerCatalogTargets(targetInput.value);
+            target = findAdminCatalogTarget(targetInput.value, searchedTargets);
+          }
           if (!target) {
             setLocalNotice(adminBeerCatalogStatus, "Choose a canonical beer from the merge field first.", true);
             targetInput?.focus();
@@ -2059,10 +2487,30 @@
           await reviewCatalogBeer(button.dataset.rejectCatalogBeer, "reject", null, ADMIN_FAST_REJECT_BEER_NOTE);
         });
       });
+      pendingBeerCatalog.querySelectorAll("[data-catalog-merge-target]").forEach((input) => {
+        input.addEventListener("input", () => scheduleActiveBeerCatalogSearch(input.value));
+      });
     }
 
     async function loadBeerCatalogReview() {
-      const data = await MelbBeerBusiness.apiFetch("/api/business/admin/beer-catalog");
+      const requestId = ++adminBeerCatalogReviewRequestId;
+      const requestedOffset = adminBeerCatalogOffset;
+      window.clearTimeout(adminBeerCatalogSearchTimer);
+      ++adminBeerCatalogSearchRequestId;
+      let data;
+      try {
+        data = await MelbBeerBusiness.apiFetch(`/api/business/admin/beer-catalog?pendingLimit=${ADMIN_BEER_CATALOG_PAGE_SIZE}&pendingOffset=${requestedOffset}&activeLimit=100&activeOffset=0`);
+      } catch (error) {
+        if (requestId !== adminBeerCatalogReviewRequestId) return null;
+        throw error;
+      }
+      if (requestId !== adminBeerCatalogReviewRequestId || requestedOffset !== adminBeerCatalogOffset) return null;
+      const pending = Array.isArray(data.pending) ? data.pending : [];
+      adminBeerCatalogTotal = Number(data.totals?.pending || pending.length);
+      if (!pending.length && adminBeerCatalogOffset > 0 && adminBeerCatalogTotal > 0) {
+        adminBeerCatalogOffset = Math.max(0, adminBeerCatalogOffset - ADMIN_BEER_CATALOG_PAGE_SIZE);
+        return loadBeerCatalogReview();
+      }
       renderPendingBeerCatalog(data);
       return data;
     }
@@ -2075,24 +2523,47 @@
         ? requests.map((request) => {
             const executeAfter = new Date(request.execute_after || request.requested_at || 0);
             const due = Number.isFinite(executeAfter.getTime()) && executeAfter.getTime() <= Date.now();
-            const pending = ["pending_review", "approved"].includes(request.status);
+            const actionable = ["pending_review", "approved", "failed", "processing"].includes(request.status);
+            const actionLabel = actionable && !due
+              ? "Safety window"
+              : request.status === "failed"
+                ? "Retry deletion"
+                : request.status === "processing"
+                  ? "Retry if stalled"
+                : actionable
+                  ? "Delete account"
+                  : request.status === "cancelled"
+                      ? "Cancelled"
+                      : "Completed";
             return `
               <article class="listItem dataRow">
                 <div>
                   <strong>${escapeHtml(request.user_id || "Account")}</strong>
-                  <div class="muted">Requested ${MelbBeerBusiness.formatDate(request.requested_at)} · ${pending ? `Eligible ${MelbBeerBusiness.formatDate(request.execute_after)}` : escapeHtml(request.status)}</div>
+                  <div class="muted">Requested ${MelbBeerBusiness.formatDate(request.requested_at)} · ${actionable ? `Eligible ${MelbBeerBusiness.formatDate(request.execute_after)}` : escapeHtml(request.status)}</div>
+                  ${request.processing_step ? `<div class="muted">Current step: ${escapeHtml(request.processing_step)}</div>` : ""}
+                  ${request.last_error ? `<div class="fieldHint fieldHint--error">Last error: ${escapeHtml(request.last_error)}</div>` : ""}
                   ${request.user_message ? `<div class="muted">${escapeHtml(request.user_message)}</div>` : ""}
                 </div>
-                <button class="button button--small button--danger" type="button" data-execute-account-deletion="${escapeHtml(request.id)}" ${!pending || !due ? "disabled" : ""}>${pending && !due ? "Safety window" : pending ? "Delete account" : "Completed"}</button>
+                <button class="button button--small button--danger" type="button" data-execute-account-deletion="${escapeHtml(request.id)}" ${!actionable || !due ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
               </article>`;
           }).join("")
         : '<div class="listItem muted">No account deletion requests.</div>';
       container.querySelectorAll("[data-execute-account-deletion]").forEach((button) => {
         button.addEventListener("click", async () => {
-          if (!window.confirm("Permanently anonymise this account and delete its private evidence?")) return;
+          const reasonInput = document.getElementById("accountDeletionAuditReason");
+          const reason = String(reasonInput?.value || "").trim();
+          if (reason.length < 4) {
+            MelbBeerBusiness.setStatus(statusEl, "Add a deletion audit reason of at least 4 characters before continuing.", true);
+            reasonInput?.focus();
+            return;
+          }
+          if (!window.confirm(`Permanently execute deletion request ${button.dataset.executeAccountDeletion}? This cannot be undone. Confirm the safety window, legal hold state and backup evidence first.`)) return;
           button.disabled = true;
           try {
-            await MelbBeerBusiness.apiFetch(`/api/business/admin/account-deletions/${encodeURIComponent(button.dataset.executeAccountDeletion)}/execute`, { method: "POST", body: "{}" });
+            await MelbBeerBusiness.apiFetch(`/api/business/admin/account-deletions/${encodeURIComponent(button.dataset.executeAccountDeletion)}/execute`, {
+              method: "POST",
+              body: JSON.stringify({ reason }),
+            });
             await loadAccountDeletionRequests();
           } catch (error) {
             MelbBeerBusiness.setStatus(statusEl, error.message || "Account deletion failed.", true);
@@ -2100,12 +2571,373 @@
           }
         });
       });
+
+      const pagination = data?.pagination || {};
+      accountDeletionTotal = Number(data?.total || requests.length);
+      const pageOffset = Number.isFinite(Number(pagination.offset)) ? Number(pagination.offset) : accountDeletionOffset;
+      const start = requests.length ? pageOffset + 1 : 0;
+      const end = pageOffset + requests.length;
+      const pager = document.getElementById("accountDeletionPager");
+      if (pager) pager.hidden = accountDeletionTotal <= ACCOUNT_DELETION_PAGE_SIZE && pageOffset === 0;
+      document.getElementById("accountDeletionPageStatus").textContent = `${start}-${end} of ${accountDeletionTotal}`;
+      document.getElementById("accountDeletionPrev").disabled = pageOffset === 0;
+      document.getElementById("accountDeletionNext").disabled = !pagination.hasMore;
     }
 
     async function loadAccountDeletionRequests() {
-      const data = await MelbBeerBusiness.apiFetch("/api/business/admin/account-deletions");
-      renderAccountDeletionRequests(data);
-      return data;
+      const requestId = ++accountDeletionRequestId;
+      const requestedOffset = accountDeletionOffset;
+      const refreshButton = document.getElementById("refreshAccountDeletionsButton");
+      if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = true;
+      document.getElementById("accountDeletionPrev").disabled = true;
+      document.getElementById("accountDeletionNext").disabled = true;
+      try {
+        const data = await MelbBeerBusiness.apiFetch(`/api/business/admin/account-deletions?limit=${ACCOUNT_DELETION_PAGE_SIZE}&offset=${requestedOffset}`);
+        if (requestId !== accountDeletionRequestId || requestedOffset !== accountDeletionOffset) return null;
+        const requests = Array.isArray(data?.requests) ? data.requests : [];
+        const total = Number(data?.total || data?.pagination?.total || requests.length);
+        if (!requests.length && requestedOffset > 0 && total > 0) {
+          accountDeletionOffset = Math.max(0, requestedOffset - ACCOUNT_DELETION_PAGE_SIZE);
+          return loadAccountDeletionRequests();
+        }
+        renderAccountDeletionRequests(data);
+        return data;
+      } catch (error) {
+        if (requestId !== accountDeletionRequestId || requestedOffset !== accountDeletionOffset) return null;
+        throw error;
+      } finally {
+        if (requestId === accountDeletionRequestId && requestedOffset === accountDeletionOffset) {
+          if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = false;
+        }
+      }
+    }
+
+    function securityAuditRequestParams(offset = securityAuditOffset) {
+      const form = document.getElementById("securityAuditFilterForm");
+      const params = new URLSearchParams({ limit: String(SECURITY_AUDIT_PAGE_SIZE), offset: String(offset) });
+      if (form instanceof HTMLFormElement) {
+        const action = String(form.elements.namedItem("action")?.value || "").trim();
+        const actorUserId = String(form.elements.namedItem("actorUserId")?.value || "").trim();
+        if (action) params.set("action", action);
+        if (actorUserId) params.set("actorUserId", actorUserId);
+      }
+      return params;
+    }
+
+    async function loadSecurityAudit(options = {}) {
+      if (options.resetPage) securityAuditOffset = 0;
+      const requestId = ++securityAuditRequestId;
+      const requestedOffset = securityAuditOffset;
+      const status = document.getElementById("securityAuditStatus");
+      const list = document.getElementById("securityAuditList");
+      const params = securityAuditRequestParams(requestedOffset);
+      const requestedQuery = params.toString();
+      const refreshButton = document.getElementById("refreshSecurityAuditButton");
+      if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = true;
+      document.getElementById("securityAuditPrev").disabled = true;
+      document.getElementById("securityAuditNext").disabled = true;
+      MelbBeerBusiness.setStatus(status, "Loading security audit events...");
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/admin/security-audit?${params.toString()}`);
+        if (requestId !== securityAuditRequestId || requestedOffset !== securityAuditOffset) return;
+        if (requestedQuery !== securityAuditRequestParams(requestedOffset).toString()) {
+          MelbBeerBusiness.setStatus(status, "Filters changed. Apply them to load matching audit events.");
+          return;
+        }
+        const logs = Array.isArray(result.logs) ? result.logs : [];
+        const pagination = result.pagination || {};
+        securityAuditTotal = Number(pagination.total || logs.length);
+        list.innerHTML = logs.length ? logs.map((log) => `
+          <article class="listItem dataRow">
+            <div>
+              <strong>${escapeHtml(String(log.action || "security event").replaceAll("_", " "))}</strong>
+              <div class="muted">${escapeHtml(log.actor_user_id || log.actorUserId || "system")} → ${escapeHtml([log.target_type || log.targetType, log.target_id || log.targetId].filter(Boolean).join(": ") || "no target")}</div>
+              <small>${escapeHtml(MelbBeerBusiness.formatDate(log.created_at || log.createdAt))}${log.request_id || log.requestId ? ` · request ${escapeHtml(log.request_id || log.requestId)}` : ""}</small>
+            </div>
+            <details><summary>Metadata</summary><pre>${escapeHtml(JSON.stringify(log.metadata || {}, null, 2))}</pre></details>
+          </article>
+        `).join("") : '<div class="listItem muted">No audit events match these filters.</div>';
+        const start = logs.length ? requestedOffset + 1 : 0;
+        const end = requestedOffset + logs.length;
+        document.getElementById("securityAuditPage").textContent = `${start}-${end} of ${securityAuditTotal}`;
+        document.getElementById("securityAuditPrev").disabled = requestedOffset === 0;
+        document.getElementById("securityAuditNext").disabled = end >= securityAuditTotal;
+        MelbBeerBusiness.setStatus(status, `Loaded ${logs.length} audited event${logs.length === 1 ? "" : "s"}.`);
+      } catch (error) {
+        if (requestId !== securityAuditRequestId || requestedOffset !== securityAuditOffset) return;
+        list.innerHTML = '<div class="listItem muted">Security audit log unavailable.</div>';
+        MelbBeerBusiness.setStatus(status, error.message || "Could not load security audit events.", true);
+      } finally {
+        if (requestId === securityAuditRequestId && requestedOffset === securityAuditOffset) {
+          if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = false;
+        }
+      }
+    }
+
+    async function loadAdminAccountSessions(options = {}) {
+      const form = document.getElementById("adminAccountContainmentForm");
+      const status = document.getElementById("adminAccountContainmentStatus");
+      const list = document.getElementById("adminAccountSessions");
+      const userId = String(form?.elements.namedItem("userId")?.value || "").trim();
+      if (!userId) {
+        MelbBeerBusiness.setStatus(status, "Enter an exact account ID first.", true);
+        return;
+      }
+      if (options.resetPage || adminAccountSessionUserId !== userId) {
+        adminAccountSessionOffset = 0;
+        adminAccountSessionUserId = userId;
+      }
+      const requestId = ++adminAccountSessionRequestId;
+      const requestedOffset = adminAccountSessionOffset;
+      const loadButton = document.getElementById("loadAdminAccountSessions");
+      if (loadButton instanceof HTMLButtonElement) loadButton.disabled = true;
+      document.getElementById("adminAccountSessionPrev").disabled = true;
+      document.getElementById("adminAccountSessionNext").disabled = true;
+      MelbBeerBusiness.setStatus(status, "Loading account sessions...");
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/admin/accounts/${encodeURIComponent(userId)}/sessions?limit=${ADMIN_ACCOUNT_SESSION_PAGE_SIZE}&offset=${requestedOffset}`);
+        if (requestId !== adminAccountSessionRequestId || requestedOffset !== adminAccountSessionOffset || userId !== adminAccountSessionUserId) return;
+        if (userId !== String(form?.elements.namedItem("userId")?.value || "").trim()) {
+          MelbBeerBusiness.setStatus(status, "Account ID changed. Load sessions for the new account.");
+          return;
+        }
+        const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+        adminAccountSessionTotal = Number(result.total || sessions.length);
+        if (!sessions.length && adminAccountSessionOffset > 0 && adminAccountSessionTotal > 0) {
+          adminAccountSessionOffset = Math.max(0, adminAccountSessionOffset - ADMIN_ACCOUNT_SESSION_PAGE_SIZE);
+          await loadAdminAccountSessions();
+          return;
+        }
+        list.innerHTML = sessions.length ? sessions.map((session) => `
+          <article class="listItem dataRow">
+            <div>
+              <strong>${session.active ? "Active session" : "Inactive session"}</strong>
+              <div class="muted">Created ${escapeHtml(MelbBeerBusiness.formatDate(session.createdAt))} · last used ${escapeHtml(MelbBeerBusiness.formatDate(session.lastUsedAt || session.createdAt))} · expires ${escapeHtml(MelbBeerBusiness.formatDate(session.expiresAt))}</div>
+              <small>Device ${escapeHtml(session.deviceFingerprint || "unknown")} · network ${escapeHtml(session.networkFingerprint || "unknown")}</small>
+            </div>
+            <button class="button button--small button--danger" type="button" data-revoke-account-session="${escapeHtml(session.id)}" ${session.active ? "" : "disabled"}>${session.active ? "Revoke" : "Revoked/expired"}</button>
+          </article>
+        `).join("") : '<div class="listItem muted">No sessions recorded for this account.</div>';
+        list.querySelectorAll("[data-revoke-account-session]").forEach((button) => {
+          button.addEventListener("click", async () => {
+            const reason = String(form.elements.namedItem("reason")?.value || "").trim();
+            if (reason.length < 4) {
+              MelbBeerBusiness.setStatus(status, "Add an audit reason of at least 4 characters before revoking a session.", true);
+              form.elements.namedItem("reason")?.focus();
+              return;
+            }
+            if (!window.confirm(`Revoke session ${button.dataset.revokeAccountSession}? This also invalidates passes tied to it.`)) return;
+            button.disabled = true;
+            try {
+              await MelbBeerBusiness.apiFetch(`/api/business/admin/accounts/${encodeURIComponent(userId)}/sessions/${encodeURIComponent(button.dataset.revokeAccountSession)}`, {
+                method: "DELETE",
+                body: JSON.stringify({ reason }),
+              });
+              await loadAdminAccountSessions();
+              MelbBeerBusiness.setStatus(status, "Session revoked and recorded in the security audit log.");
+            } catch (error) {
+              button.disabled = false;
+              MelbBeerBusiness.setStatus(status, error.message || "Could not revoke session.", true);
+            }
+          });
+        });
+        const start = sessions.length ? adminAccountSessionOffset + 1 : 0;
+        const end = adminAccountSessionOffset + sessions.length;
+        document.getElementById("adminAccountSessionPager").hidden = adminAccountSessionTotal <= ADMIN_ACCOUNT_SESSION_PAGE_SIZE && adminAccountSessionOffset === 0;
+        document.getElementById("adminAccountSessionPageStatus").textContent = `${start}-${end} of ${adminAccountSessionTotal}`;
+        document.getElementById("adminAccountSessionPrev").disabled = adminAccountSessionOffset === 0;
+        document.getElementById("adminAccountSessionNext").disabled = !result.pagination?.hasMore;
+        MelbBeerBusiness.setStatus(status, `${start}-${end} of ${adminAccountSessionTotal} sessions loaded.`);
+      } catch (error) {
+        if (requestId !== adminAccountSessionRequestId) return;
+        list.innerHTML = "";
+        MelbBeerBusiness.setStatus(status, error.message || "Could not load account sessions.", true);
+      } finally {
+        if (requestId === adminAccountSessionRequestId && loadButton instanceof HTMLButtonElement) {
+          loadButton.disabled = false;
+        }
+      }
+    }
+
+    async function updateAdminAccountStatus(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const statusElement = document.getElementById("adminAccountContainmentStatus");
+      const userId = String(form.elements.namedItem("userId").value || "").trim();
+      const status = form.elements.namedItem("status").value;
+      const reason = String(form.elements.namedItem("reason").value || "").trim();
+      if (reason.length < 4) {
+        MelbBeerBusiness.setStatus(statusElement, "Add an audit reason of at least 4 characters.", true);
+        form.elements.namedItem("reason").focus();
+        return;
+      }
+      if (status === "suspended" && !window.confirm("Suspend this account now? Existing sessions will be contained by the server policy and should also be reviewed below.")) return;
+      const body = { status, reason };
+      const trustScore = form.elements.namedItem("trustScore").value;
+      if (trustScore !== "") body.trustScore = Number(trustScore);
+      const submit = event.submitter;
+      if (submit instanceof HTMLButtonElement) submit.disabled = true;
+      try {
+        await MelbBeerBusiness.apiFetch(`/api/business/admin/users/${encodeURIComponent(userId)}/status`, { method: "POST", body: JSON.stringify(body) });
+        MelbBeerBusiness.setStatus(statusElement, `Account status changed to ${status}. Review and revoke active sessions below when containment is required.`);
+        await loadAdminAccountSessions();
+      } catch (error) {
+        MelbBeerBusiness.setStatus(statusElement, error.message || "Could not update account status.", true);
+      } finally {
+        if (submit instanceof HTMLButtonElement) submit.disabled = false;
+      }
+    }
+
+    function missionIsDemo(mission) {
+      return String(mission.id || "").includes("demo:") || String(mission.venueId || "").startsWith("demo:") || /\bdemo\b/i.test(String(mission.reason || ""));
+    }
+
+    function renderAdminMissions() {
+      const list = document.getElementById("adminMissionList");
+      const query = String(document.getElementById("adminMissionFilter")?.value || "").trim().toLowerCase();
+      const visible = adminMissions.filter((mission) => !query || [mission.id, mission.venueId, mission.venueName, mission.reason, missionIsDemo(mission) ? "demo" : ""].join(" ").toLowerCase().includes(query));
+      list.innerHTML = visible.length ? visible.map((mission) => `
+        <article class="listItem dataRow ${missionIsDemo(mission) ? "adminReviewCard--danger" : ""}">
+          <div>
+            <strong>${escapeHtml(mission.venueName || mission.venueId || "Mission")}</strong>
+            <div class="muted">${escapeHtml(mission.id)} · ${escapeHtml(mission.reason || "No reason")} · ${formatCount(mission.points || 0)} points</div>
+            <div class="actionRow actionRow--compact"><span class="pill">${mission.active ? "Active" : "Inactive"}</span>${missionIsDemo(mission) ? '<span class="pill pill--danger">Demo provenance</span>' : ""}</div>
+          </div>
+          <div class="actionRow actionRow--compact">
+            <button class="button button--small" type="button" data-toggle-admin-mission="${escapeHtml(mission.id)}" data-next-active="${mission.active ? "false" : "true"}">${mission.active ? "Deactivate" : "Reactivate"}</button>
+            <button class="button button--small button--danger" type="button" data-delete-admin-mission="${escapeHtml(mission.id)}">Delete if unused</button>
+          </div>
+        </article>
+      `).join("") : '<div class="listItem muted">No missions match this filter.</div>';
+      list.querySelectorAll("[data-toggle-admin-mission]").forEach((button) => button.addEventListener("click", () => void updateAdminMissionLifecycle(button.dataset.toggleAdminMission, button.dataset.nextActive === "true", button)));
+      list.querySelectorAll("[data-delete-admin-mission]").forEach((button) => button.addEventListener("click", () => void deleteAdminMission(button.dataset.deleteAdminMission, button)));
+    }
+
+    async function loadAdminMissions() {
+      const status = document.getElementById("adminMissionStatus");
+      const requestId = ++adminMissionRequestId;
+      const requestedOffset = adminMissionOffset;
+      const refreshButton = document.getElementById("refreshAdminMissionsButton");
+      if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = true;
+      document.getElementById("adminMissionPrev").disabled = true;
+      document.getElementById("adminMissionNext").disabled = true;
+      MelbBeerBusiness.setStatus(status, "Loading mission inventory...");
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/admin/missions?limit=${ADMIN_MISSION_PAGE_SIZE}&offset=${requestedOffset}`);
+        if (requestId !== adminMissionRequestId || requestedOffset !== adminMissionOffset) return;
+        const missions = Array.isArray(result.missions) ? result.missions : [];
+        const total = Number(result.total || missions.length);
+        if (!missions.length && requestedOffset > 0 && total > 0) {
+          adminMissionOffset = Math.max(0, requestedOffset - ADMIN_MISSION_PAGE_SIZE);
+          await loadAdminMissions();
+          return;
+        }
+        adminMissions = missions;
+        adminMissionTotal = total;
+        renderAdminMissions();
+        const demoCount = adminMissions.filter(missionIsDemo).length;
+        const pageStart = adminMissions.length ? requestedOffset + 1 : 0;
+        const pageEnd = requestedOffset + adminMissions.length;
+        document.getElementById("adminMissionPager").hidden = adminMissionTotal <= ADMIN_MISSION_PAGE_SIZE && requestedOffset === 0;
+        document.getElementById("adminMissionPageStatus").textContent = `${pageStart}-${pageEnd} of ${adminMissionTotal}`;
+        document.getElementById("adminMissionPrev").disabled = requestedOffset === 0;
+        document.getElementById("adminMissionNext").disabled = !result.pagination?.hasMore;
+        MelbBeerBusiness.setStatus(status, `${pageStart}-${pageEnd} of ${adminMissionTotal} missions · ${demoCount} demo-provenance row${demoCount === 1 ? "" : "s"} on this page.`, demoCount > 0);
+      } catch (error) {
+        if (requestId !== adminMissionRequestId || requestedOffset !== adminMissionOffset) return;
+        MelbBeerBusiness.setStatus(status, error.message || "Could not load missions.", true);
+      } finally {
+        if (requestId === adminMissionRequestId && requestedOffset === adminMissionOffset) {
+          if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = false;
+        }
+      }
+    }
+
+    async function updateAdminMissionLifecycle(missionId, active, button) {
+      const reasonInput = document.getElementById("adminMissionLifecycleReason");
+      const reason = String(reasonInput?.value || "").trim();
+      if (reason.length < 4) {
+        MelbBeerBusiness.setStatus(document.getElementById("adminMissionStatus"), "Add a lifecycle audit reason of at least 4 characters.", true);
+        reasonInput?.focus();
+        return;
+      }
+      if (!active && !window.confirm(`Deactivate mission ${missionId}? It will stop appearing to users.`)) return;
+      button.disabled = true;
+      try {
+        await MelbBeerBusiness.apiFetch(`/api/business/admin/missions/${encodeURIComponent(missionId)}`, { method: "PATCH", body: JSON.stringify({ active, reason }) });
+        await loadAdminMissions();
+      } catch (error) {
+        button.disabled = false;
+        MelbBeerBusiness.setStatus(document.getElementById("adminMissionStatus"), error.message || "Could not update mission.", true);
+      }
+    }
+
+    async function deleteAdminMission(missionId, button) {
+      const reasonInput = document.getElementById("adminMissionLifecycleReason");
+      const reason = String(reasonInput?.value || "").trim();
+      if (reason.length < 4) {
+        MelbBeerBusiness.setStatus(document.getElementById("adminMissionStatus"), "Add a lifecycle audit reason of at least 4 characters.", true);
+        reasonInput?.focus();
+        return;
+      }
+      if (!window.confirm(`Permanently delete unused mission ${missionId}? Missions with history will be refused and must be deactivated.`)) return;
+      button.disabled = true;
+      try {
+        await MelbBeerBusiness.apiFetch(`/api/business/admin/missions/${encodeURIComponent(missionId)}`, { method: "DELETE", body: JSON.stringify({ reason }) });
+        await loadAdminMissions();
+      } catch (error) {
+        button.disabled = false;
+        MelbBeerBusiness.setStatus(document.getElementById("adminMissionStatus"), error.message || "Could not delete mission.", true);
+      }
+    }
+
+    async function runAdminReportOperation(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const operation = event.submitter?.dataset.reportOperation || "dry-run";
+      const status = document.getElementById("adminReportOpsStatus");
+      if (operation === "deliver" && !window.confirm("Deliver generated reports to configured venue recipients? Confirm the month and production email mode first.")) return;
+      const body = {
+        month: form.elements.namedItem("month").value,
+        venueId: form.elements.namedItem("venueId").value.trim() || null,
+        dryRun: operation === "dry-run",
+      };
+      if (operation === "deliver") body.deliver = true;
+      const path = operation === "deliver" ? "/api/business/admin/reports/monthly/deliver" : "/api/business/admin/reports/monthly/generate";
+      const submit = event.submitter;
+      if (submit instanceof HTMLButtonElement) submit.disabled = true;
+      MelbBeerBusiness.setStatus(status, `${operation === "deliver" ? "Delivering" : "Generating"} monthly reports...`);
+      try {
+        const result = await MelbBeerBusiness.apiFetch(path, { method: "POST", body: JSON.stringify(body) });
+        if (operation === "deliver") {
+          const deliveredCount = Number(result.deliveredCount || 0);
+          const mockedCount = Number(result.mockedCount || 0);
+          const rejectedCount = Number(result.rejectedCount || 0);
+          const uncertainCount = Number(result.uncertainCount || 0);
+          const inProgressCount = Number(result.inProgressCount || 0);
+          const skippedCount = Number(result.skippedPreviouslyProcessedCount || 0)
+            + Number(result.skippedNoEligibleRecipientCount || 0);
+          const hasDeliveryIssue = rejectedCount > 0 || uncertainCount > 0 || inProgressCount > 0;
+          const summary = [
+            `${formatCount(deliveredCount)} delivered`,
+            mockedCount ? `${formatCount(mockedCount)} mocked` : null,
+            rejectedCount ? `${formatCount(rejectedCount)} rejected` : null,
+            uncertainCount ? `${formatCount(uncertainCount)} uncertain` : null,
+            inProgressCount ? `${formatCount(inProgressCount)} still in progress` : null,
+            skippedCount ? `${formatCount(skippedCount)} skipped` : null,
+          ].filter(Boolean).join(" · ");
+          MelbBeerBusiness.setStatus(status, `${result.message || "Delivery run complete."} ${summary}.`, hasDeliveryIssue);
+        } else {
+          const generatedCount = Number(result.generatedCount ?? result.reports?.length ?? 0);
+          const prefix = operation === "dry-run" ? "Preview complete" : "Generation complete";
+          const skipped = result.skippedReason ? ` ${result.skippedReason}` : "";
+          MelbBeerBusiness.setStatus(status, `${prefix}. ${formatCount(generatedCount)} report${generatedCount === 1 ? "" : "s"} generated.${skipped}`);
+        }
+      } catch (error) {
+        MelbBeerBusiness.setStatus(status, error.message || "Report operation failed.", true);
+      } finally {
+        if (submit instanceof HTMLButtonElement) submit.disabled = false;
+      }
     }
 
     async function rejectPendingBeerCatalogJunk() {
@@ -2225,9 +3057,18 @@
           ? Math.max(0, Math.round((Date.now() - updatedAt.getTime()) / 60000))
           : null;
         const ageCopy = ageMinutes == null ? "No run recorded yet." : ageMinutes < 60 ? `${ageMinutes}m ago` : `${Math.round(ageMinutes / 60)}h ago`;
+        const maxAgeMinutes = {
+          "job:offsite_backup": 26 * 60,
+          "job:restore_rehearsal": 35 * 24 * 60,
+          "job:evidence_retention": 26 * 60,
+          "auto_missions_refresh": 26 * 60,
+        }[key];
+        if (state === "succeeded" && maxAgeMinutes && (ageMinutes == null || ageMinutes > maxAgeMinutes)) {
+          return { label: "Stale", copy: `Last success ${ageCopy}; expected within ${maxAgeMinutes < 1440 ? `${Math.round(maxAgeMinutes / 60)} hours` : `${Math.round(maxAgeMinutes / 1440)} days`}. Check the scheduler and owner.`, tone: "warning" };
+        }
         if (state === "succeeded") return { label: "Healthy", copy: `${successCopy} Last success ${ageCopy}.`, tone: "success" };
         if (state === "running") return { label: "Running", copy: `Job started ${ageCopy}.`, tone: "info" };
-        if (state === "failed") return { label: "Failed", copy: `Last run failed ${ageCopy}. Open the relevant workflow and Railway logs.`, tone: "warning" };
+        if (state === "failed") return { label: "Failed", copy: `Last run failed ${ageCopy}.${job?.state?.error ? ` ${job.state.error}` : ""} Open the relevant workflow and Railway logs.`, tone: "warning" };
         return { label: "Not run", copy: "No durable run result is recorded on this deployment yet.", tone: "warning" };
       };
       const rows = [
@@ -2426,58 +3267,84 @@
       `;
     }
 
+    async function hydrateSubmissionEvidencePreview(preview) {
+      if (preview.dataset.evidenceHydrated === "true" || preview.dataset.evidenceLoading === "true") return;
+      preview.dataset.evidenceLoading = "true";
+      const submissionId = preview.dataset.submissionEvidencePreview;
+      if (!submissionId) return;
+      try {
+        const result = await MelbBeerBusiness.apiFetch(`/api/business/submissions/${encodeURIComponent(submissionId)}/source-evidence-url`);
+        const signedUrls = Array.isArray(result.signedUrls) && result.signedUrls.length
+          ? result.signedUrls
+          : result.signedUrl
+            ? [result.signedUrl]
+            : [];
+        const evidence = Array.isArray(result.evidence) && result.evidence.length
+          ? result.evidence
+          : signedUrls.map((url) => ({ url, mimeType: "image/unknown" }));
+        if (!signedUrls.length) {
+          preview.innerHTML = '<div class="adminSubmissionEvidencePreview__placeholder">Source image unavailable</div>';
+          return;
+        }
+        preview.innerHTML = evidence.map((item, index) => {
+          const signedUrl = escapeHtml(item.url);
+          if (item.mimeType === "application/pdf") {
+            return `
+              <div class="adminSubmissionEvidencePreview__document">
+                <div class="adminSubmissionEvidencePreview__pdfTile" role="group" aria-label="Submission PDF menu ${index + 1}">
+                  <span class="adminSubmissionEvidencePreview__pdfIcon" aria-hidden="true">PDF</span>
+                  <div>
+                    <strong>PDF menu ${index + 1}</strong>
+                    <span>Private evidence opens as a secure download for review.</span>
+                  </div>
+                </div>
+                <a class="button button--small" href="${signedUrl}" target="_blank" rel="noopener">Open or download PDF menu ${index + 1}</a>
+              </div>
+            `;
+          }
+          return `
+            <a class="adminSubmissionEvidencePreview__link" href="${signedUrl}" target="_blank" rel="noopener">
+              <img src="${signedUrl}" alt="Submission source evidence ${index + 1}" loading="lazy" />
+              <span>Open image ${index + 1}</span>
+            </a>
+          `;
+        }).join("");
+      } catch {
+        preview.innerHTML = '<div class="adminSubmissionEvidencePreview__placeholder">Could not load source image</div>';
+      } finally {
+        preview.dataset.evidenceHydrated = "true";
+        delete preview.dataset.evidenceLoading;
+      }
+    }
+
     async function hydrateSubmissionEvidencePreviews() {
       const previews = Array.from(pendingSubmissions.querySelectorAll("[data-submission-evidence-preview]"))
         .filter((preview) => preview.textContent?.includes("Loading source image"));
-      await Promise.all(previews.map(async (preview) => {
-        const submissionId = preview.dataset.submissionEvidencePreview;
-        if (!submissionId) return;
-        try {
-          const result = await MelbBeerBusiness.apiFetch(`/api/business/submissions/${encodeURIComponent(submissionId)}/source-evidence-url`);
-          const signedUrls = Array.isArray(result.signedUrls) && result.signedUrls.length
-            ? result.signedUrls
-            : result.signedUrl
-              ? [result.signedUrl]
-              : [];
-          const evidence = Array.isArray(result.evidence) && result.evidence.length
-            ? result.evidence
-            : signedUrls.map((url) => ({ url, mimeType: "image/unknown" }));
-          if (!signedUrls.length) {
-            preview.innerHTML = '<div class="adminSubmissionEvidencePreview__placeholder">Source image unavailable</div>';
-            return;
-          }
-          preview.innerHTML = evidence.map((item, index) => {
-            const signedUrl = escapeHtml(item.url);
-            if (item.mimeType === "application/pdf") {
-              return `
-                <div class="adminSubmissionEvidencePreview__document">
-                  <iframe src="${signedUrl}" title="Submission PDF menu ${index + 1}" loading="lazy"></iframe>
-                  <a class="button button--small" href="${signedUrl}" target="_blank" rel="noopener">Open PDF menu ${index + 1}</a>
-                </div>
-              `;
-            }
-            return `
-              <a class="adminSubmissionEvidencePreview__link" href="${signedUrl}" target="_blank" rel="noopener">
-                <img src="${signedUrl}" alt="Submission source evidence ${index + 1}" loading="lazy" />
-                <span>Open image ${index + 1}</span>
-              </a>
-            `;
-          }).join("");
-        } catch {
-          preview.innerHTML = '<div class="adminSubmissionEvidencePreview__placeholder">Could not load source image</div>';
+      if (!("IntersectionObserver" in window)) {
+        for (let index = 0; index < previews.length; index += 4) {
+          await Promise.allSettled(previews.slice(index, index + 4).map(hydrateSubmissionEvidencePreview));
         }
-      }));
+        return;
+      }
+      const observer = new IntersectionObserver((entries) => {
+        entries.filter((entry) => entry.isIntersecting).slice(0, 4).forEach((entry) => {
+          observer.unobserve(entry.target);
+          void hydrateSubmissionEvidencePreview(entry.target);
+        });
+      }, { rootMargin: "300px 0px" });
+      previews.forEach((preview) => observer.observe(preview));
     }
 
-    function renderAdminTodayQueue(todayKpis, queues, submissions) {
+    function renderAdminTodayQueue(todayKpis, queues, submissions, submissionTotal = null) {
       if (todayKpis || queues || submissions) {
-        latestAdminTodayPayload = { todayKpis, queues, submissions };
+        latestAdminTodayPayload = { todayKpis, queues, submissions, submissionTotal };
       }
 
       const payload = latestAdminTodayPayload || {};
       const metrics = (todayKpis || payload.todayKpis)?.metrics || {};
       const queuePayload = queues || payload.queues || {};
       const pendingSubmissions = Array.isArray(submissions || payload.submissions) ? submissions || payload.submissions : [];
+      const pendingSubmissionTotal = Number(submissionTotal ?? payload.submissionTotal ?? pendingSubmissions.length);
       const newVenueCount = pendingSubmissions.filter((submission) => submission.pendingVenue).length;
       const ocrPending = Array.isArray(window.__adminIngestionQueueItems)
         ? window.__adminIngestionQueueItems.filter((item) => item.status === "pending_review").length
@@ -2495,12 +3362,12 @@
           tone: newVenueCount ? "premium" : "success",
         },
         {
-          title: `${pendingSubmissions.length} price/data ${pendingSubmissions.length === 1 ? "submission" : "submissions"}`,
-          copy: pendingSubmissions.length ? "Approve clean rows first; send unclear rows to evidence." : "No pending user submissions.",
+          title: `${pendingSubmissionTotal} price/data ${pendingSubmissionTotal === 1 ? "submission" : "submissions"}`,
+          copy: pendingSubmissionTotal ? "Approve clean rows first; send unclear rows to evidence." : "No pending user submissions.",
           action: "Review submissions",
           target: "review",
           selector: "#pendingSubmissions",
-          tone: pendingSubmissions.length ? "info" : "success",
+          tone: pendingSubmissionTotal ? "info" : "success",
         },
         {
           title: `${ocrPending} OCR ${ocrPending === 1 ? "source" : "sources"} pending`,
@@ -2615,6 +3482,7 @@
 
     async function searchGoogleVenues() {
       const query = adminGoogleVenueSearch.value.trim();
+      const requestId = ++adminGoogleVenueSearchRequestId;
       if (query.length < 2) {
         adminGoogleVenueResults.innerHTML = "";
         adminGoogleVenueStatus.textContent = "Type at least 2 characters to search Google Maps.";
@@ -2628,6 +3496,7 @@
         adminGoogleVenueStatus.textContent = "Searching Google Maps...";
         const params = new URLSearchParams({ q: query });
         const result = await MelbBeerBusiness.apiFetch(`/api/admin/places/search?${params.toString()}`);
+        if (requestId !== adminGoogleVenueSearchRequestId || adminGoogleVenueSearch.value.trim() !== query) return;
         if (!result.configured) {
           adminGoogleVenueResults.innerHTML = "";
           adminGoogleVenueStatus.textContent = "Google Places is not configured on this deployment. Manual entry is still available.";
@@ -2639,12 +3508,15 @@
           ? "Select the matching venue to fill the form."
           : "No good Google matches found. Try the exact Google Maps name or use manual entry.";
       } catch (error) {
+        if (requestId !== adminGoogleVenueSearchRequestId) return;
         adminGoogleVenueResults.innerHTML = "";
         adminGoogleVenueStatus.textContent = error.message || "Google venue search failed.";
       } finally {
-        adminGoogleVenueButton.textContent = "Search Google Maps";
-        adminGoogleVenueButton.classList.remove("is-loading");
-        syncAdminCaptureControls();
+        if (requestId === adminGoogleVenueSearchRequestId) {
+          adminGoogleVenueButton.textContent = "Search Google Maps";
+          adminGoogleVenueButton.classList.remove("is-loading");
+          syncAdminCaptureControls();
+        }
       }
     }
 
@@ -2658,9 +3530,11 @@
         return;
       }
 
+      const requestId = ++adminGoogleVenueDetailsRequestId;
       try {
         adminGoogleVenueStatus.textContent = "Loading Google venue details...";
         const result = await MelbBeerBusiness.apiFetch(`/api/admin/places/${encodeURIComponent(placeId)}`);
+        if (requestId !== adminGoogleVenueDetailsRequestId) return;
         if (!result.configured) {
           adminGoogleVenueStatus.textContent = "Google Places is not configured on this deployment. Manual entry is still available.";
           return;
@@ -2701,6 +3575,7 @@
           ? `${place.name} details loaded. Check the fields, then create the venue.`
           : `${place.name} details loaded. Check this is really a bar/pub before creating it.`;
       } catch (error) {
+        if (requestId !== adminGoogleVenueDetailsRequestId) return;
         adminGoogleVenueStatus.textContent = error.message || "Could not load Google venue details.";
       }
     }
@@ -3004,6 +3879,7 @@
 
     async function searchManagerAccounts() {
       const query = managerUserSearch.value.trim();
+      const requestId = ++managerUserSearchRequestId;
       selectedManagerAccount = null;
       if (query.length < 2) {
         managerAccountCandidates = [];
@@ -3015,15 +3891,17 @@
       managerUserResults.innerHTML = '<div class="listItem muted">Searching accounts...</div>';
       try {
         const result = await MelbBeerBusiness.apiFetch(`/api/business/admin/accounts?q=${encodeURIComponent(query)}&limit=8`);
+        if (requestId !== managerUserSearchRequestId || managerUserSearch.value.trim() !== query) return;
         managerAccountCandidates = result.accounts || [];
         managerAccountSearchMessage = managerAccountCandidates.length
           ? ""
           : "No matching account found. Ask the staff member to sign up first.";
       } catch (error) {
+        if (requestId !== managerUserSearchRequestId) return;
         managerAccountCandidates = [];
         managerAccountSearchMessage = error.message || "Account search failed.";
       }
-      renderManagerUserResults();
+      if (requestId === managerUserSearchRequestId) renderManagerUserResults();
     }
 
     function scheduleManagerAccountSearch() {
@@ -3079,7 +3957,21 @@
       });
     }
 
+    function isSupportedAdminImage(file) {
+      const mimeType = String(file?.type || "").toLowerCase();
+      return ADMIN_IMAGE_MIME_TYPES.has(mimeType)
+        || ((!mimeType || mimeType === "application/octet-stream") && ADMIN_IMAGE_EXTENSIONS.test(String(file?.name || "")));
+    }
+
     async function compressImageFile(file) {
+      if (!isSupportedAdminImage(file)) {
+        throw new Error(/\.hei[cf]$/i.test(file?.name || "")
+          ? "Convert HEIC/HEIF photos to JPEG before uploading in a web browser."
+          : "Use a JPEG, PNG, or WebP source image. GIF, SVG, AVIF, and other file types are not supported.");
+      }
+      if (Number(file.size || 0) > ADMIN_IMAGE_MAX_RAW_BYTES) {
+        throw new Error("Source images must be 25MB or smaller before OCR or queueing.");
+      }
       const rawDataUrl = await readFileAsDataUrl(file);
       const image = await new Promise((resolve, reject) => {
         const element = new Image();
@@ -3101,15 +3993,30 @@
     }
 
     async function loadAdminVenues() {
+      const requestId = ++adminVenuesRequestId;
       let lookupError = null;
       try {
-        const result = await MelbBeerBusiness.apiFetch("/api/business/venues?limit=1000");
-        adminVenues = result.venues || [];
+        const venues = [];
+        const pageSize = 250;
+        let offset = 0;
+        while (true) {
+          const result = await MelbBeerBusiness.apiFetch(`/api/business/venues?limit=${pageSize}&offset=${offset}`);
+          if (requestId !== adminVenuesRequestId) return;
+          const page = Array.isArray(result.venues) ? result.venues : [];
+          venues.push(...page);
+          if (!result.pagination?.hasMore) break;
+          if (!page.length) throw new Error("Venue lookup pagination stopped before every venue loaded.");
+          offset = Number(result.pagination.offset || offset) + page.length;
+        }
+        if (requestId !== adminVenuesRequestId) return;
+        adminVenues = [...new Map(venues.map((venue) => [venue.id, venue])).values()];
       } catch (error) {
+        if (requestId !== adminVenuesRequestId) return;
         adminVenues = [];
         selectedAdminVenueId = null;
         lookupError = error;
       }
+      if (requestId !== adminVenuesRequestId) return;
       renderAdminVenueOptions();
       renderManagerVenueOptions();
       if (lookupError) {
@@ -3119,9 +4026,13 @@
     }
 
     async function loadAdminStatus() {
+      const requestId = ++adminStatusRequestId;
       try {
-        adminDataToolsStatus = await MelbBeerBusiness.apiFetch("/api/admin/status");
+        const result = await MelbBeerBusiness.apiFetch("/api/admin/status");
+        if (requestId !== adminStatusRequestId) return;
+        adminDataToolsStatus = result;
       } catch (error) {
+        if (requestId !== adminStatusRequestId) return;
         adminDataToolsStatus = {
           enabled: false,
           ocrEnabled: false,
@@ -3132,6 +4043,7 @@
         };
         setLocalNotice(adminCaptureStatus, error.message || "Admin capture tools unavailable.", true);
       }
+      if (requestId !== adminStatusRequestId) return;
       renderAdminCaptureMetrics();
     }
 
@@ -3168,13 +4080,25 @@
     }
 
     async function loadAdminDataTools() {
-      await Promise.all([
-        loadAdminStatus(),
-        loadAdminVenues(),
-        loadAdminIngestionQueue(),
-        loadAccountDeletionRequests(),
-      ]);
-      renderAdminFocusRail();
+      const requestId = ++adminDataToolsRequestId;
+      const refreshButton = document.getElementById("refreshAdminDataTools");
+      if (refreshButton instanceof HTMLButtonElement) refreshButton.disabled = true;
+      try {
+        await Promise.allSettled([
+          loadAdminStatus(),
+          loadAdminVenues(),
+          loadAdminIngestionQueue(),
+          loadAccountDeletionRequests(),
+          loadSecurityAudit(),
+          loadAdminMissions(),
+        ]);
+        if (requestId !== adminDataToolsRequestId) return;
+        renderAdminFocusRail();
+      } finally {
+        if (requestId === adminDataToolsRequestId && refreshButton instanceof HTMLButtonElement) {
+          refreshButton.disabled = false;
+        }
+      }
     }
 
     function confidencePill(confidence) {
@@ -3272,10 +4196,14 @@
     }
 
     function renderSourceEvidence(item) {
-      const source = item.imageDataUrl || item.sourceUrl;
-      const sourceLabel = item.imageDataUrl ? "Uploaded image" : item.sourceUrl ? "Source URL" : "No source";
-      const canPreviewImage = source && (/^data:image\//i.test(source) || /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(source));
+      const evidencePath = item.hasImageData
+        ? `/api/admin/ingestions/${encodeURIComponent(item.id)}/evidence`
+        : "";
+      const source = evidencePath || item.sourceUrl;
+      const sourceLabel = item.hasImageData ? "Uploaded image" : item.sourceUrl ? "Source URL" : "No source";
+      const canPreviewImage = source && (item.hasImageData || /\.(png|jpe?g|webp|gif)(\?.*)?$/i.test(source));
       const copyableSourceUrl = item.sourceUrl ? String(item.sourceUrl) : "";
+      const imageWasRedacted = !item.hasImageData && Boolean(item.imageRedactedAt || item.imageRedactionReason);
       return `
         <aside class="adminSourceEvidence adminSourceEvidence--compact">
           <div class="adminSourceEvidence__top">
@@ -3283,14 +4211,14 @@
               <span class="eyebrow">Evidence</span>
               <strong>${escapeHtml(sourceLabel)}</strong>
             </div>
-            ${source ? `<a href="${escapeHtml(source)}" target="_blank" rel="noopener" class="button button--small adminSourceEvidence__open">Open</a>` : ""}
+            ${source ? `<a href="${item.hasImageData ? "#" : escapeHtml(source)}" data-ingestion-evidence-link="${item.hasImageData ? escapeHtml(source) : ""}" target="_blank" rel="noopener" class="button button--small adminSourceEvidence__open">Open</a>` : ""}
           </div>
           ${canPreviewImage ? `
             <a href="${escapeHtml(source)}" target="_blank" rel="noopener" class="adminSourceEvidence__imageLink" aria-label="Open source image">
-              <img src="${escapeHtml(source)}" alt="Menu source for ${escapeHtml(item.venueName)}" />
+              <img data-ingestion-evidence-src="${escapeHtml(source)}" data-ingestion-evidence-auth="${item.hasImageData ? "true" : "false"}" alt="Menu source for ${escapeHtml(item.venueName)}" />
             </a>
           ` : `
-            <div class="adminSourceEvidence__empty">${escapeHtml(shortSourceLabel(source))}</div>
+            <div class="adminSourceEvidence__empty">${imageWasRedacted ? "Image bytes expired under the review retention policy. Re-source the image to continue." : escapeHtml(shortSourceLabel(source))}</div>
           `}
           ${copyableSourceUrl ? `
             <label class="adminSourceEvidence__urlField">
@@ -3311,6 +4239,9 @@
     }
 
     function renderAdminIngestionQueue(items, pagination = {}) {
+      adminIngestionQueue.querySelectorAll("[data-ingestion-evidence-object-url]").forEach((element) => {
+        URL.revokeObjectURL(element.dataset.ingestionEvidenceObjectUrl);
+      });
       window.__adminIngestionQueueItems = Array.isArray(items) ? items : [];
       adminIngestionTotal = Number.isFinite(Number(pagination.total))
         ? Number(pagination.total)
@@ -3414,14 +4345,54 @@
         rowsContainer.dataset.rowsHydrated = "true";
       };
 
+      const hydrateSourceEvidence = async (article) => {
+        const image = article.querySelector("[data-ingestion-evidence-src]");
+        if (!image || image.getAttribute("src") || image.dataset.evidenceLoading === "true") {
+          return;
+        }
+        const source = image.dataset.ingestionEvidenceSrc;
+        if (image.dataset.ingestionEvidenceAuth !== "true") {
+          image.setAttribute("src", source);
+          return;
+        }
+        image.dataset.evidenceLoading = "true";
+        try {
+          const token = MelbBeerBusiness.getAuthToken();
+          const response = await fetch(source, {
+            credentials: "same-origin",
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
+          if (!response.ok) {
+            const payload = await response.json().catch(() => null);
+            throw new Error(payload?.error?.message || `Evidence could not be loaded (${response.status}).`);
+          }
+          const blob = await response.blob();
+          if (!blob.type.startsWith("image/") || blob.size > 6 * 1024 * 1024) {
+            throw new Error("Evidence response was not a supported image under 6MB.");
+          }
+          const objectUrl = URL.createObjectURL(blob);
+          article.dataset.ingestionEvidenceObjectUrl = objectUrl;
+          image.setAttribute("src", objectUrl);
+          const link = article.querySelector("[data-ingestion-evidence-link]");
+          if (link) link.setAttribute("href", objectUrl);
+        } catch (error) {
+          image.replaceWith(Object.assign(document.createElement("div"), {
+            className: "adminSourceEvidence__empty",
+            textContent: error.message || "Evidence could not be loaded. Re-source the image and retry.",
+          }));
+        }
+      };
+
       adminIngestionQueue.querySelectorAll(".adminIngestionItem").forEach((article, index) => {
         const details = article.querySelector(".adminIngestionReviewDetails");
         if (details?.open) {
           hydrateBeerRows(article, index);
+          void hydrateSourceEvidence(article);
         }
         details?.addEventListener("toggle", () => {
           if (details.open) {
             hydrateBeerRows(article, index);
+            void hydrateSourceEvidence(article);
           }
         });
       });
@@ -3749,7 +4720,68 @@
       }
     }
 
+    function renderVenuePartnerPagers(data) {
+      const totals = data?.totals || {};
+      venuePartnerMaxTotal = Math.max(0, ...Object.values(totals).map((value) => Number(value || 0)));
+      venuePartnerHasMore = Object.values(data?.pagination?.hasMore || {}).some(Boolean);
+      const pageStart = venuePartnerMaxTotal ? venuePartnerOffset + 1 : 0;
+      const pageEnd = Math.min(venuePartnerOffset + VENUE_PARTNER_PAGE_SIZE, venuePartnerMaxTotal);
+      const totalCopy = [
+        `${Number(totals.interests || 0)} interests`,
+        `${Number(totals.claimRequests || 0)} claims`,
+        `${Number(totals.assignments || 0)} assignments`,
+        `${Number(totals.pendingChanges || 0)} pending changes`,
+        `${Number(totals.outreach || 0)} outreach notes`,
+      ].join(" · ");
+      [
+        ["venuePartnerPager", "venuePartnerPageStatus", "venuePartnerPrev", "venuePartnerNext"],
+        ["venuePartnerReviewPager", "venuePartnerReviewPageStatus", "venuePartnerReviewPrev", "venuePartnerReviewNext"],
+      ].forEach(([pagerId, statusId, prevId, nextId]) => {
+        const pager = document.getElementById(pagerId);
+        if (!pager) return;
+        pager.hidden = venuePartnerMaxTotal <= VENUE_PARTNER_PAGE_SIZE && venuePartnerOffset === 0;
+        document.getElementById(statusId).textContent = `Rows ${pageStart}-${pageEnd}; ${totalCopy}`;
+        document.getElementById(prevId).disabled = venuePartnerOffset === 0;
+        document.getElementById(nextId).disabled = !venuePartnerHasMore;
+      });
+    }
+
+    async function loadVenuePartnerPage() {
+      const requestId = ++venuePartnerRequestId;
+      const requestedOffset = venuePartnerOffset;
+      ["venuePartnerPrev", "venuePartnerNext", "venuePartnerReviewPrev", "venuePartnerReviewNext"].forEach((id) => {
+        const button = document.getElementById(id);
+        if (button instanceof HTMLButtonElement) button.disabled = true;
+      });
+      let data;
+      try {
+        data = await MelbBeerBusiness.apiFetch(`/api/business/admin/venue-partners?limit=${VENUE_PARTNER_PAGE_SIZE}&offset=${requestedOffset}`);
+      } catch (error) {
+        if (requestId !== venuePartnerRequestId || requestedOffset !== venuePartnerOffset) return null;
+        throw error;
+      }
+      if (requestId !== venuePartnerRequestId || requestedOffset !== venuePartnerOffset) return null;
+      const hasRows = [data.interests, data.claimRequests, data.assignments, data.pendingChanges, data.outreach]
+        .some((items) => Array.isArray(items) && items.length);
+      const maxTotal = Math.max(0, ...Object.values(data.totals || {}).map((value) => Number(value || 0)));
+      if (!hasRows && requestedOffset > 0 && maxTotal > 0) {
+        venuePartnerOffset = Math.max(0, requestedOffset - VENUE_PARTNER_PAGE_SIZE);
+        return loadVenuePartnerPage();
+      }
+      renderVenuePartners(data);
+      return data;
+    }
+
+    function moveVenuePartnerPage(direction) {
+      if (direction > 0 && !venuePartnerHasMore) return;
+      venuePartnerOffset = Math.max(0, venuePartnerOffset + direction * VENUE_PARTNER_PAGE_SIZE);
+      void loadVenuePartnerPage().catch((error) => {
+        MelbBeerBusiness.setStatus(statusEl, error.message || "Could not load venue partner records.", true);
+      });
+    }
+
     function renderVenuePartners(data) {
+      renderVenuePartnerPagers(data);
       renderOutreachPipeline(data);
       const statuses = ["contacted", "interested", "partner", "not_interested", "closed"];
       venueInterestRequests.innerHTML = data.interests.length
@@ -3764,7 +4796,7 @@
             </div>
           </article>
         `).join("")
-        : '<div class="listItem muted">No venue interest requests yet.</div>';
+        : '<div class="listItem muted">No venue interest requests on this page.</div>';
       venueInterestRequests.querySelectorAll("[data-interest-id]").forEach((button) => {
         button.addEventListener("click", () => updateVenueInterestStatus(button.dataset.interestId, button.dataset.interestStatus));
       });
@@ -3786,7 +4818,7 @@
             ` : ""}
           </article>
         `).join("")
-        : '<div class="listItem muted">No authenticated venue claims yet.</div>';
+        : '<div class="listItem muted">No authenticated venue claims on this page.</div>';
       barClaimRequests.querySelectorAll("[data-review-claim]").forEach((button) => {
         button.addEventListener("click", () => promptVenueClaimReview(
           claimRequests.find((claim) => claim.id === button.dataset.reviewClaim),
@@ -3811,7 +4843,7 @@
           </article>
         `;
         }).join("")
-        : '<div class="listItem muted">No venue managers assigned yet.</div>';
+        : '<div class="listItem muted">No venue manager assignments on this page.</div>';
       venueManagerAssignments.querySelectorAll("[data-revoke-user]").forEach((button) => {
         button.addEventListener("click", () => revokeVenueManager(button.dataset.revokeUser, button.dataset.revokeVenue));
       });
@@ -3842,7 +4874,7 @@
             </div>
           </article>
         `).join("")
-        : '<div class="listItem muted">No outreach notes saved yet. Use a partner lead or save the form above.</div>';
+        : '<div class="listItem muted">No outreach notes on this page. Use a partner lead or save the form above.</div>';
       wireOutreachActions(venueOutreachList);
 
       const pendingChanges = data.pendingChanges || [];
@@ -3863,7 +4895,7 @@
             </div>
           </article>
         `).join("")
-        : '<div class="listItem muted">No pending venue changes.</div>';
+        : '<div class="listItem muted">No pending venue changes on this page.</div>';
       pendingBarChanges.querySelectorAll("[data-review-change]").forEach((button) => {
         const change = pendingChanges.find((item) => item.id === button.dataset.reviewChange);
         button.addEventListener("click", () => promptVenueChangeReview(change, button.dataset.reviewStatus));
@@ -4084,6 +5116,7 @@
     }
 
     async function refreshAdminPage() {
+      const requestId = ++adminRefreshRequestId;
       const button = document.getElementById("refreshAdminPageButton");
       try {
         if (button) {
@@ -4093,10 +5126,11 @@
         updateAdminLoadSummary("Refreshing admin data...");
         await loadAdmin();
       } catch (error) {
+        if (requestId !== adminRefreshRequestId) return;
         updateAdminLoadSummary("Refresh failed.");
         MelbBeerBusiness.setStatus(statusEl, error.message || "Admin refresh failed.", true);
       } finally {
-        if (button) {
+        if (requestId === adminRefreshRequestId && button) {
           button.disabled = false;
           button.textContent = "Refresh";
         }
@@ -4104,10 +5138,37 @@
     }
 
     async function loadAdmin() {
+      const requestId = ++adminLoadRequestId;
       updateAdminLoadSummary("Loading admin data...");
-      const submissions = await MelbBeerBusiness.apiFetch("/api/business/submissions?status=pending&limit=100&includeReviewData=true");
+      const panelErrors = [];
+      let submissions = { submissions: [] };
+      try {
+        submissions = await MelbBeerBusiness.apiFetch(`/api/business/submissions?status=pending&limit=${ADMIN_SUBMISSION_PAGE_SIZE}&offset=${adminSubmissionOffset}&includeReviewData=true`);
+        if (requestId !== adminLoadRequestId) return;
+        adminSubmissionTotal = Number(submissions.pagination?.total || submissions.submissions?.length || 0);
+        if (!(submissions.submissions || []).length && adminSubmissionOffset > 0 && adminSubmissionTotal > 0) {
+          adminSubmissionOffset = Math.max(0, adminSubmissionOffset - ADMIN_SUBMISSION_PAGE_SIZE);
+          return loadAdmin();
+        }
+      } catch (error) {
+        if (requestId !== adminLoadRequestId) return;
+        if (error?.status === 401 || error?.status === 403) throw error;
+        panelErrors.push({ label: "Pending submissions", message: error.message || "Submission queue unavailable." });
+        pendingSubmissions.innerHTML = '<div class="listItem muted">Submission queue unavailable. Other admin panels can still be used.</div>';
+      }
       const prioritySubmissions = [...(submissions.submissions || [])]
         .sort((a, b) => getSubmissionPriority(b) - getSubmissionPriority(a));
+      const submissionPageStatus = document.getElementById("pendingSubmissionsPageStatus");
+      const submissionPageStart = prioritySubmissions.length ? adminSubmissionOffset + 1 : 0;
+      const submissionPageEnd = adminSubmissionOffset + prioritySubmissions.length;
+      if (submissionPageStatus) {
+        submissionPageStatus.textContent = `Showing ${submissionPageStart}-${submissionPageEnd} of ${adminSubmissionTotal} pending submission${adminSubmissionTotal === 1 ? "" : "s"}.`;
+      }
+      const submissionPager = document.getElementById("pendingSubmissionsPager");
+      if (submissionPager) submissionPager.hidden = adminSubmissionTotal <= ADMIN_SUBMISSION_PAGE_SIZE && adminSubmissionOffset === 0;
+      document.getElementById("pendingSubmissionsPagerStatus").textContent = `${submissionPageStart}-${submissionPageEnd} of ${adminSubmissionTotal}`;
+      document.getElementById("pendingSubmissionsPrev").disabled = adminSubmissionOffset === 0;
+      document.getElementById("pendingSubmissionsNext").disabled = !submissions.pagination?.hasMore;
       pendingSubmissions.innerHTML = prioritySubmissions.length
         ? prioritySubmissions.map((submission) => {
           const priority = submissionPriorityLabel(submission);
@@ -4173,47 +5234,105 @@
         button.addEventListener("click", () => promptSubmissionReview(submission, "fraud_flagged"));
       });
       await hydrateSubmissionEvidencePreviews();
+      if (requestId !== adminLoadRequestId) return;
 
-      const [kpis, todayKpis, retention, coverage, leads, queues, venuePartners, leaderboardPrizes, beerCatalog, operationalHealth] = await Promise.all([
-        MelbBeerBusiness.apiFetch(`/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`),
-        MelbBeerBusiness.apiFetch("/api/business/admin/kpis?range=today"),
-        MelbBeerBusiness.apiFetch("/api/business/admin/retention?groupBy=week&limit=12"),
-        MelbBeerBusiness.apiFetch("/api/business/admin/coverage"),
-        MelbBeerBusiness.apiFetch("/api/business/admin/partner-leads"),
-        MelbBeerBusiness.apiFetch("/api/business/admin/queues"),
-        MelbBeerBusiness.apiFetch("/api/business/admin/venue-partners"),
-        MelbBeerBusiness.apiFetch("/api/business/admin/leaderboard-prizes"),
-        MelbBeerBusiness.apiFetch("/api/business/admin/beer-catalog"),
-        MelbBeerBusiness.apiFetch("/api/business/admin/operational-health"),
-      ]);
+      const requestedVenuePartnerOffset = venuePartnerOffset;
+      const requestedBeerCatalogOffset = adminBeerCatalogOffset;
+      const venuePartnerPanelRequestId = ++venuePartnerRequestId;
+      const leaderboardPanelRequestId = ++leaderboardPrizesRequestId;
+      const beerCatalogPanelRequestId = hasActiveBeerCatalogMergeDraft()
+        ? null
+        : ++adminBeerCatalogReviewRequestId;
+      const panelRequests = [
+        ["kpis", "Headline metrics", `/api/business/admin/kpis?range=${encodeURIComponent(rangeSelect.value)}`],
+        ["todayKpis", "Today metrics", "/api/business/admin/kpis?range=today"],
+        ["retention", "Retention", "/api/business/admin/retention?groupBy=week&limit=12"],
+        ["coverage", "Coverage", "/api/business/admin/coverage"],
+        ["leads", "Partner leads", "/api/business/admin/partner-leads"],
+        ["queues", "Review queues", `/api/business/admin/queues?limit=${ADMIN_REVIEW_QUEUE_PAGE_SIZE}&offset=${adminReviewQueueOffset}`],
+        ["venuePartners", "Venue partners", `/api/business/admin/venue-partners?limit=${VENUE_PARTNER_PAGE_SIZE}&offset=${requestedVenuePartnerOffset}`],
+        ["leaderboardPrizes", "Leaderboard prizes", "/api/business/admin/leaderboard-prizes"],
+        ["beerCatalog", "Beer catalogue", `/api/business/admin/beer-catalog?pendingLimit=${ADMIN_BEER_CATALOG_PAGE_SIZE}&pendingOffset=${requestedBeerCatalogOffset}&activeLimit=100&activeOffset=0`],
+        ["operationalHealth", "Operational health", "/api/business/admin/operational-health"],
+      ];
+      const settledPanels = await Promise.allSettled(panelRequests.map(([, , path]) => MelbBeerBusiness.apiFetch(path)));
+      if (requestId !== adminLoadRequestId) return;
+      const panelData = {};
+      settledPanels.forEach((result, index) => {
+        const [key, label] = panelRequests[index];
+        const current = key === "venuePartners"
+          ? venuePartnerPanelRequestId === venuePartnerRequestId && requestedVenuePartnerOffset === venuePartnerOffset
+          : key === "leaderboardPrizes"
+            ? leaderboardPanelRequestId === leaderboardPrizesRequestId
+            : key === "beerCatalog"
+              ? beerCatalogPanelRequestId !== null
+                && beerCatalogPanelRequestId === adminBeerCatalogReviewRequestId
+                && requestedBeerCatalogOffset === adminBeerCatalogOffset
+              : true;
+        if (!current) return;
+        if (result.status === "fulfilled") panelData[key] = result.value;
+        else panelErrors.push({ label, message: result.reason?.message || `${label} unavailable.` });
+      });
+      const {
+        kpis = { metrics: {} },
+        todayKpis = { metrics: {} },
+        retention = {},
+        coverage = {},
+        leads = {},
+        queues = {},
+        venuePartners = {},
+        leaderboardPrizes = {},
+        beerCatalog = {},
+        operationalHealth = { checkedAt: null, jobs: [] },
+      } = panelData;
       adminOperationalHealth = operationalHealth || { checkedAt: null, jobs: [] };
-      renderKpis(kpis);
-      renderAdminTodayQueue(todayKpis, queues, submissions.submissions);
-      renderFieldTestSummary(todayKpis, queues);
-      renderRetention(retention);
-      renderCoverage(coverage);
-      renderPartnerLeads(leads);
-      renderQueues(queues);
-      renderVenuePartners(venuePartners);
-      renderPitchReadiness(leads, venuePartners);
-      renderAdminLeaderboardPrizes(leaderboardPrizes);
-      renderPendingBeerCatalog(beerCatalog);
+      if (panelData.kpis) renderKpis(kpis);
+      renderAdminTodayQueue(panelData.todayKpis, panelData.queues, submissions.submissions, adminSubmissionTotal);
+      if (panelData.todayKpis && panelData.queues) renderFieldTestSummary(todayKpis, queues);
+      if (panelData.retention) renderRetention(retention);
+      if (panelData.coverage) renderCoverage(coverage);
+      if (panelData.leads) renderPartnerLeads(leads);
+      if (panelData.queues) renderQueues(queues);
+      if (panelData.venuePartners) renderVenuePartners(venuePartners);
+      if (panelData.leads && panelData.venuePartners) renderPitchReadiness(leads, venuePartners);
+      if (panelData.leaderboardPrizes) renderAdminLeaderboardPrizes(leaderboardPrizes);
+      if (panelData.beerCatalog) renderPendingBeerCatalog(beerCatalog);
+      const dashboardVenuePartners = panelData.venuePartners || latestAdminDashboardPayload?.venuePartners || {};
+      const dashboardLeaderboardPrizes = panelData.leaderboardPrizes || latestAdminDashboardPayload?.leaderboardPrizes || {};
       renderAdminDashboard({
         todayKpis,
         leads,
         queues,
         submissions: submissions.submissions || [],
-        venuePartners,
-        leaderboardPrizes,
+        submissionTotal: adminSubmissionTotal,
+        venuePartners: dashboardVenuePartners,
+        leaderboardPrizes: dashboardLeaderboardPrizes,
       });
       await loadAdminDataTools();
+      if (requestId !== adminLoadRequestId) return;
       adminContentEl.hidden = false;
-      updateAdminLoadSummary(`Loaded ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-      MelbBeerBusiness.setStatus(statusEl, "Admin tools loaded.");
+      const errorPanel = document.getElementById("adminPanelErrors");
+      if (errorPanel) {
+        errorPanel.hidden = panelErrors.length === 0;
+        errorPanel.innerHTML = panelErrors.length ? `
+          <div><strong>${panelErrors.length} admin panel${panelErrors.length === 1 ? "" : "s"} could not load.</strong> Working panels remain available.</div>
+          <ul>${panelErrors.map((error) => `<li><strong>${escapeHtml(error.label)}:</strong> ${escapeHtml(error.message)}</li>`).join("")}</ul>
+          <button class="button button--small" type="button" data-retry-admin-panels>Retry failed panels</button>
+        ` : "";
+        errorPanel.querySelector("[data-retry-admin-panels]")?.addEventListener("click", refreshAdminPage);
+      }
+      updateAdminLoadSummary(`${panelErrors.length ? "Partially loaded" : "Loaded"} ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+      MelbBeerBusiness.setStatus(statusEl, panelErrors.length ? "Admin tools partially loaded. Review the panel errors below." : "Admin tools loaded.", panelErrors.length > 0);
     }
 
     let statusEl;
     let adminContentEl;
+    window.addEventListener("pagehide", () => {
+      adminIngestionQueue?.querySelectorAll("[data-ingestion-evidence-object-url]").forEach((element) => {
+        URL.revokeObjectURL(element.dataset.ingestionEvidenceObjectUrl);
+      });
+    });
+
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("admin");
       statusEl = document.getElementById("status");
@@ -4224,26 +5343,115 @@
       rejectVisibleIngestionsButton.addEventListener("click", rejectVisibleQueuedIngestions);
       rejectPendingBeerCatalogButton.addEventListener("click", rejectPendingBeerCatalogJunk);
       refreshBeerCatalogButton.addEventListener("click", async () => {
+        const requestId = ++adminBeerCatalogRefreshRequestId;
         try {
           refreshBeerCatalogButton.disabled = true;
           await loadBeerCatalogReview();
         } catch (error) {
+          if (requestId !== adminBeerCatalogRefreshRequestId) return;
           setLocalNotice(adminBeerCatalogStatus, error.message || "Could not refresh beer catalogue.", true);
         } finally {
-          refreshBeerCatalogButton.disabled = false;
+          if (requestId === adminBeerCatalogRefreshRequestId) refreshBeerCatalogButton.disabled = false;
         }
+      });
+      document.getElementById("pendingBeerCatalogPrev")?.addEventListener("click", () => {
+        adminBeerCatalogOffset = Math.max(0, adminBeerCatalogOffset - ADMIN_BEER_CATALOG_PAGE_SIZE);
+        void loadBeerCatalogReview();
+      });
+      document.getElementById("pendingBeerCatalogNext")?.addEventListener("click", () => {
+        if (adminBeerCatalogOffset + ADMIN_BEER_CATALOG_PAGE_SIZE >= adminBeerCatalogTotal) return;
+        adminBeerCatalogOffset += ADMIN_BEER_CATALOG_PAGE_SIZE;
+        void loadBeerCatalogReview();
       });
       reviewDecisionDialog.addEventListener("cancel", () => {
         reviewDecisionState = null;
       });
       document.querySelectorAll("[data-admin-tab-target]").forEach((button) => {
-        button.addEventListener("click", () => showAdminTab(button.dataset.adminTabTarget));
+        button.addEventListener("click", () => showAdminTab(button.dataset.adminTabTarget, { updateHistory: true }));
+        button.addEventListener("keydown", handleAdminTabKeydown);
       });
       document.getElementById("adminMobileTabSelect")?.addEventListener("change", (event) => {
-        showAdminTab(event.target.value);
+        showAdminTab(event.target.value, { updateHistory: true });
         document.querySelector(`[data-admin-tab-panel="${event.target.value}"]`)?.scrollIntoView({ block: "start" });
       });
+      window.addEventListener("popstate", () => showAdminTab(requestedAdminTab()));
       document.getElementById("refreshAccountDeletionsButton")?.addEventListener("click", loadAccountDeletionRequests);
+      document.getElementById("accountDeletionPrev")?.addEventListener("click", () => {
+        accountDeletionOffset = Math.max(0, accountDeletionOffset - ACCOUNT_DELETION_PAGE_SIZE);
+        void loadAccountDeletionRequests();
+      });
+      document.getElementById("accountDeletionNext")?.addEventListener("click", () => {
+        if (accountDeletionOffset + ACCOUNT_DELETION_PAGE_SIZE >= accountDeletionTotal) return;
+        accountDeletionOffset += ACCOUNT_DELETION_PAGE_SIZE;
+        void loadAccountDeletionRequests();
+      });
+      document.getElementById("securityAuditFilterForm")?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        void loadSecurityAudit({ resetPage: true });
+      });
+      document.getElementById("refreshSecurityAuditButton")?.addEventListener("click", () => void loadSecurityAudit());
+      document.getElementById("securityAuditPrev")?.addEventListener("click", () => {
+        securityAuditOffset = Math.max(0, securityAuditOffset - SECURITY_AUDIT_PAGE_SIZE);
+        void loadSecurityAudit();
+      });
+      document.getElementById("securityAuditNext")?.addEventListener("click", () => {
+        if (securityAuditOffset + SECURITY_AUDIT_PAGE_SIZE >= securityAuditTotal) return;
+        securityAuditOffset += SECURITY_AUDIT_PAGE_SIZE;
+        void loadSecurityAudit();
+      });
+      document.getElementById("adminReviewQueuePrev")?.addEventListener("click", () => {
+        adminReviewQueueOffset = Math.max(0, adminReviewQueueOffset - ADMIN_REVIEW_QUEUE_PAGE_SIZE);
+        void loadAdmin();
+      });
+      document.getElementById("adminReviewQueueNext")?.addEventListener("click", () => {
+        adminReviewQueueOffset += ADMIN_REVIEW_QUEUE_PAGE_SIZE;
+        void loadAdmin();
+      });
+      document.getElementById("pendingSubmissionsPrev")?.addEventListener("click", () => {
+        adminSubmissionOffset = Math.max(0, adminSubmissionOffset - ADMIN_SUBMISSION_PAGE_SIZE);
+        void loadAdmin();
+      });
+      document.getElementById("pendingSubmissionsNext")?.addEventListener("click", () => {
+        if (adminSubmissionOffset + ADMIN_SUBMISSION_PAGE_SIZE >= adminSubmissionTotal) return;
+        adminSubmissionOffset += ADMIN_SUBMISSION_PAGE_SIZE;
+        void loadAdmin();
+      });
+      ["venuePartnerPrev", "venuePartnerReviewPrev"].forEach((id) => {
+        document.getElementById(id)?.addEventListener("click", () => moveVenuePartnerPage(-1));
+      });
+      ["venuePartnerNext", "venuePartnerReviewNext"].forEach((id) => {
+        document.getElementById(id)?.addEventListener("click", () => moveVenuePartnerPage(1));
+      });
+      document.getElementById("loadAdminAccountSessions")?.addEventListener("click", () => void loadAdminAccountSessions({ resetPage: true }));
+      document.getElementById("adminAccountSessionPrev")?.addEventListener("click", () => {
+        adminAccountSessionOffset = Math.max(0, adminAccountSessionOffset - ADMIN_ACCOUNT_SESSION_PAGE_SIZE);
+        void loadAdminAccountSessions();
+      });
+      document.getElementById("adminAccountSessionNext")?.addEventListener("click", () => {
+        if (adminAccountSessionOffset + ADMIN_ACCOUNT_SESSION_PAGE_SIZE >= adminAccountSessionTotal) return;
+        adminAccountSessionOffset += ADMIN_ACCOUNT_SESSION_PAGE_SIZE;
+        void loadAdminAccountSessions();
+      });
+      document.getElementById("adminAccountContainmentForm")?.addEventListener("submit", updateAdminAccountStatus);
+      document.getElementById("refreshAdminMissionsButton")?.addEventListener("click", () => void loadAdminMissions());
+      document.getElementById("adminMissionPrev")?.addEventListener("click", () => {
+        adminMissionOffset = Math.max(0, adminMissionOffset - ADMIN_MISSION_PAGE_SIZE);
+        void loadAdminMissions();
+      });
+      document.getElementById("adminMissionNext")?.addEventListener("click", () => {
+        if (adminMissionOffset + ADMIN_MISSION_PAGE_SIZE >= adminMissionTotal) return;
+        adminMissionOffset += ADMIN_MISSION_PAGE_SIZE;
+        void loadAdminMissions();
+      });
+      document.getElementById("adminMissionFilter")?.addEventListener("input", renderAdminMissions);
+      document.getElementById("adminReportOpsForm")?.addEventListener("submit", runAdminReportOperation);
+      const reportMonthInput = document.querySelector('#adminReportOpsForm [name="month"]');
+      if (reportMonthInput instanceof HTMLInputElement && !reportMonthInput.value) {
+        const previousMonth = new Date();
+        previousMonth.setUTCDate(1);
+        previousMonth.setUTCMonth(previousMonth.getUTCMonth() - 1);
+        reportMonthInput.value = `${previousMonth.getUTCFullYear()}-${String(previousMonth.getUTCMonth() + 1).padStart(2, "0")}`;
+      }
       showAdminTab(requestedAdminTab());
       wireAdminJumpActions(adminContentEl);
       renderAdminFocusRail();
@@ -4259,6 +5467,20 @@
       outreachForm.addEventListener("submit", handleOutreach);
       leaderboardPrizeForm.addEventListener("submit", handleLeaderboardPrizeSave);
       finalizeLeaderboardPrizeButton.addEventListener("click", handleLeaderboardPrizeFinalize);
+      adminLeaderboardVouchers.addEventListener("click", (event) => {
+        const copyButton = event.target.closest("[data-copy-voucher-reference]");
+        if (copyButton) {
+          void copyTextToClipboard(copyButton.dataset.copyVoucherReference)
+            .then(() => {
+              copyButton.textContent = "Copied";
+              MelbBeerBusiness.setStatus(statusEl, "Voucher claim reference copied.");
+            })
+            .catch((error) => MelbBeerBusiness.setStatus(statusEl, error.message || "Could not copy the claim reference.", true));
+          return;
+        }
+        const button = event.target.closest("[data-transition-reward-voucher]");
+        if (button) handleRewardVoucherTransitionRequest(button);
+      });
       refreshAdminDataTools.addEventListener("click", loadAdminDataTools);
       adminVenueSearch.addEventListener("input", renderAdminVenueOptions);
       adminVenueSelect.addEventListener("change", () => {
@@ -4286,6 +5508,11 @@
       setBeerRows(adminBeerRows, []);
       renderAdminCaptureMetrics();
       try {
+        const accountResult = await MelbBeerBusiness.apiFetch("/api/business/account").catch(() => null);
+        if (accountResult?.account) {
+          MelbBeerBusiness.setAccountContext(accountResult.account, accountResult.access);
+          nav.innerHTML = MelbBeerBusiness.renderNav("admin");
+        }
         await loadAdmin();
       } catch (error) {
         adminContentEl.hidden = true;

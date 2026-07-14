@@ -8,7 +8,6 @@ window.MELB_BEER_BOT_VIEWER_CONFIG = {
   publicBaseUrl: "https://pintpath.au",
   business: {
     fieldTestMode: true,
-    freePriceRevealsPerDay: 3,
     publicBaseUrl: "https://pintpath.au",
     // Supabase Auth uses the server-provided /config.js values on the hosted app.
     // Only fill these for standalone/static local experiments. Never put a service-role key here.

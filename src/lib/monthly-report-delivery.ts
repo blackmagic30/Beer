@@ -45,6 +45,18 @@ export class ReportEmailDeliveryError extends Error {
 }
 
 export interface ReportDeliveryRepository {
+  getVenueReportDeliverySettings?(venueId: string): {
+    enabled: boolean;
+    recipients: string[];
+    configured: boolean;
+  };
+  setVenueReportDeliverySettings?(input: {
+    venueId: string;
+    enabled: boolean;
+    recipients: string[];
+    updatedBy: string;
+    now: string;
+  }): void;
   listVenueManagerAssignments(input: {
     venueId?: string | undefined;
     activeOnly?: boolean | undefined;
@@ -511,22 +523,21 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
 
   const currentRecipientKeys = new Set<string>();
   for (const report of generated.reports) {
+    const eligible = new Map<string, { email: string }>();
+    const deliverySettings = input.repository.getVenueReportDeliverySettings?.(report.barId);
+    const verifiedManagers = new Map<string, { email: string }>();
     const assignments = input.repository.listVenueManagerAssignments({
       venueId: report.barId,
       activeOnly: true,
-      limit: 50,
+      limit: -1,
     });
-    const eligible = new Map<string, { email: string }>();
-
     for (const assignment of assignments) {
       if (assignment.accessLevel !== "manager") {
         result.skippedCounterStaffCount += 1;
         continue;
       }
       const account = input.repository.getAccountById(assignment.userId);
-      if (!account || account.status !== "active") {
-        continue;
-      }
+      if (!account || account.status !== "active") continue;
       if (
         account.role !== "venue_manager" ||
         !account.ageConfirmedAt ||
@@ -537,7 +548,35 @@ export async function runMonthlyReportDelivery(input: RunMonthlyReportDeliveryIn
         continue;
       }
       const normalizedEmail = account.email.trim().toLowerCase();
-      eligible.set(normalizedEmail, { email: normalizedEmail });
+      verifiedManagers.set(normalizedEmail, { email: normalizedEmail });
+    }
+
+    if (deliverySettings?.enabled !== false && deliverySettings?.recipients.length) {
+      for (const email of deliverySettings.recipients) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const verified = verifiedManagers.get(normalizedEmail);
+        if (verified) eligible.set(normalizedEmail, verified);
+      }
+      if (eligible.size !== deliverySettings.recipients.length) {
+        if (input.repository.setVenueReportDeliverySettings) {
+          input.repository.setVenueReportDeliverySettings({
+            venueId: report.barId,
+            enabled: eligible.size > 0,
+            recipients: [...eligible.keys()],
+            updatedBy: "system:recipient-validation",
+            now,
+          });
+        } else {
+          input.repository.setSystemState(`venue-report-delivery:${report.barId}`, {
+            enabled: eligible.size > 0,
+            recipients: [...eligible.keys()],
+            updatedBy: "system:recipient-validation",
+            scrubbedReason: "recipient_no_longer_active_verified_manager",
+          }, now);
+        }
+      }
+    } else if (deliverySettings?.enabled !== false) {
+      for (const [email, recipient] of verifiedManagers) eligible.set(email, recipient);
     }
 
     if (eligible.size === 0) {
@@ -733,23 +772,24 @@ export function isMonthlyReportDeliveryDue(input: {
   return local.day > input.scheduleDay || (local.day === input.scheduleDay && local.hour >= input.scheduleHour);
 }
 
-export function scheduleMonthlyReportDelivery(config: MonthlyReportSchedulerConfig): { stop: () => void; runNow: () => Promise<void> } {
-  let running = false;
+export function scheduleMonthlyReportDelivery(config: MonthlyReportSchedulerConfig): { stop: () => Promise<void>; runNow: () => Promise<void> } {
+  let activeRun: Promise<void> | null = null;
   let stopped = false;
-  const execute = async () => {
-    if (running || stopped) return;
+  const execute = (): Promise<void> => {
+    if (stopped) return Promise.resolve();
+    if (activeRun) return activeRun;
     const now = config.now?.() ?? new Date();
     if (!isMonthlyReportDeliveryDue({
       now,
       timezone: config.timezone,
       scheduleDay: config.scheduleDay,
       scheduleHour: config.scheduleHour,
-    })) return;
+    })) return Promise.resolve();
 
-    running = true;
-    const startedAt = now.toISOString();
-    config.onStatus?.({ state: "running", startedAt, completedAt: null });
-    try {
+    const pending = (async () => {
+      const startedAt = now.toISOString();
+      config.onStatus?.({ state: "running", startedAt, completedAt: null });
+      try {
       const result = await runMonthlyReportDelivery({
         generator: config.generator,
         repository: config.repository,
@@ -778,7 +818,7 @@ export function scheduleMonthlyReportDelivery(config: MonthlyReportSchedulerConf
       } else if (result.deliveredCount > 0 || result.mockedCount > 0) {
         logger.info("Monthly venue report delivery completed", { ...result });
       }
-    } catch (error) {
+      } catch (error) {
       const failure = {
         state: "failed",
         startedAt,
@@ -787,9 +827,12 @@ export function scheduleMonthlyReportDelivery(config: MonthlyReportSchedulerConf
       };
       config.onStatus?.(failure);
       logger.error("Monthly venue report delivery failed", failure);
-    } finally {
-      running = false;
-    }
+      }
+    })();
+    activeRun = pending.finally(() => {
+      activeRun = null;
+    });
+    return activeRun;
   };
 
   const initialTimer = setTimeout(() => void execute(), config.initialDelayMs ?? 15_000);
@@ -798,10 +841,11 @@ export function scheduleMonthlyReportDelivery(config: MonthlyReportSchedulerConf
   interval.unref();
 
   return {
-    stop() {
+    async stop() {
       stopped = true;
       clearTimeout(initialTimer);
       clearInterval(interval);
+      await activeRun;
     },
     runNow: execute,
   };

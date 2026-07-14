@@ -499,7 +499,7 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
     "map_pin_click",
     "venue_detail_opened",
     "beer_list_viewed",
-    "price_view_revealed",
+    "free_preview_viewed",
     "happy_hour_active_now_used",
     "special_viewed",
     "deal_viewed",
@@ -534,7 +534,7 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
               value === "venue_detail_opened" ? 4 :
               value === "map_pin_click" ? 4 :
               value === "venue_card_viewed" ? 3 :
-              value === "price_view_revealed" ? 2 :
+              value === "free_preview_viewed" ? 2 :
               value.startsWith("saved") ? 0.5 :
               value.includes("shared") || value.includes("share") ? 0.35 :
               1,
@@ -720,7 +720,6 @@ function generateMonthlyReports(database: BetterSqlite3.Database): number {
   const repository = new BusinessRepository(database);
   const service = new BusinessService(repository, {
     PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-    FREE_PRICE_REVEALS_PER_DAY: 5,
     CONTRIBUTOR_UNLOCK_POINTS: 15,
     CONTRIBUTOR_UNLOCK_DAYS: 30,
     DEMO_BILLING_MODE: true,
@@ -745,7 +744,6 @@ function generateMonthlyReports(database: BetterSqlite3.Database): number {
     STRIPE_PRICE_MONTHLY: undefined,
     STRIPE_PRICE_YEARLY: undefined,
     STRIPE_PRO_PRICE_ID: undefined,
-    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: undefined,
     SUPABASE_URL: undefined,
     SUPABASE_ANON_KEY: undefined,
     SUPABASE_SERVICE_ROLE_KEY: undefined,

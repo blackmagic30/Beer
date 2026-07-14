@@ -9,10 +9,23 @@ const productionRequiredEnv = {
   ADMIN_EMAILS: "admin@example.com",
   GOOGLE_MAPS_API_KEY: "test-browser-maps-key",
   GOOGLE_MAPS_MAP_ID: "test-vector-map-id",
+  GOOGLE_PLACES_API_KEY: "fixture-google-places-key",
+  OPENAI_API_KEY: "test-fixture-not-a-real-menu-key",
   SOURCE_EVIDENCE_SIGNING_SECRET: "test-source-evidence-signing-secret-32-bytes",
+  POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
+  SUPABASE_URL: "https://production-project.supabase.co",
+  SUPABASE_ANON_KEY: "fixture-supabase-browser-key",
+  SUPABASE_SERVICE_ROLE_KEY: "test-production-service-role",
+  OFFSITE_BACKUP_SUPABASE_URL: "https://independent-backup-project.supabase.co",
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: "test-independent-service-role",
   REDIS_URL: "redis://localhost:6379",
   DEMO_BILLING_MODE: "",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
+  STRIPE_SECRET_KEY: "test-fixture-not-a-real-stripe-key",
+  STRIPE_WEBHOOK_SECRET: "test-fixture-not-a-real-webhook-secret",
+  STRIPE_PRICE_MONTHLY: "fixture-monthly-price-id",
+  STRIPE_PRICE_YEARLY: "fixture-yearly-price-id",
+  STRIPE_PRO_PRICE_ID: "fixture-venue-pro-price-id",
 };
 
 function stubProductionEnv(overrides: Record<string, string> = {}) {
@@ -109,8 +122,19 @@ describe("environment safety defaults", () => {
     });
 
     await expect(loadEnv()).rejects.toThrow(
-      "SOURCE_EVIDENCE_SIGNING_SECRET is required in production",
+      "SOURCE_EVIDENCE_SIGNING_SECRET must be a unique high-entropy secret",
     );
+  });
+
+  it("rejects short and documented-placeholder HMAC secrets in production", async () => {
+    stubProductionEnv({ SOURCE_EVIDENCE_SIGNING_SECRET: "short" });
+    await expect(loadEnv()).rejects.toThrow("SOURCE_EVIDENCE_SIGNING_SECRET must be a unique high-entropy secret");
+
+    stubProductionEnv({ SOURCE_EVIDENCE_SIGNING_SECRET: "replace_with_32_plus_random_characters" });
+    await expect(loadEnv()).rejects.toThrow("SOURCE_EVIDENCE_SIGNING_SECRET must be a unique high-entropy secret");
+
+    stubProductionEnv({ POS_WEBHOOK_SIGNING_SECRET: "short" });
+    await expect(loadEnv()).rejects.toThrow("POS_WEBHOOK_SIGNING_SECRET must be a unique high-entropy secret");
   });
 
   it("still lets production boot without Redis unless in-memory fallback is explicitly enabled", async () => {
@@ -163,10 +187,15 @@ describe("environment safety defaults", () => {
 
     expect(readinessScript).toContain('checkRequired("STRIPE_PRICE_MONTHLY"');
     expect(readinessScript).toContain('checkRequired("STRIPE_PRICE_YEARLY"');
-    expect(readinessScript).toContain('checkRequired("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY"');
+    expect(readinessScript).not.toContain("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY");
     expect(readinessScript).toContain('checkRequired("GOOGLE_PLACES_API_KEY"');
     expect(readinessScript).toContain('checkRequired("OPENAI_API_KEY"');
     expect(readinessScript).toContain('checkRequired("SUPABASE_SERVICE_ROLE_KEY"');
+    expect(readinessScript).toContain('checkRequired("OFFSITE_BACKUP_SUPABASE_URL"');
+    expect(readinessScript).toContain('checkRequired("OFFSITE_BACKUP_SERVICE_ROLE_KEY"');
+    expect(readinessScript).toContain("requireNoBucketSizeLimit: true");
+    expect(readinessScript).toContain("probeReadWrite: true");
+    expect(readinessScript).toContain('"application/pdf"');
     expect(readinessScript).toContain('checkRequired("POS_WEBHOOK_SIGNING_SECRET"');
     expect(readinessScript).toContain("SUPABASE_PROVIDER_CALLBACK_URL");
     expect(readinessScript).toContain("/auth/v1/callback");

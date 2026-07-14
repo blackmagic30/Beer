@@ -1,10 +1,15 @@
 import OpenAI from "openai";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type BetterSqlite3 from "better-sqlite3";
+import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { isIP } from "node:net";
+import { randomUUID } from "node:crypto";
 
 import { SUBMISSION_LIMITS } from "../../config/business-rules.js";
 import type { AdminIngestionQueueRepository } from "../../db/admin-ingestion-queue.repository.js";
 import { BeerCatalogRepository, type ResolvedBeerCatalogItem } from "../../db/beer-catalog.repository.js";
+import { ACCOUNT_DATA_RETENTION_POLICY } from "../../db/business.repository.js";
 import type {
   AdminIngestionBeerRecord,
   AdminIngestionCrawlerFeedback,
@@ -24,9 +29,10 @@ import type { MenuPhotoOcrResult } from "../../lib/menu-photo-ocr.js";
 import { selectLabeledPintPrice } from "../../lib/menu-price-selection.js";
 import { redactSecrets } from "../../lib/redact.js";
 import {
-  assertResolvedSafeImageSourceHost,
+  createPinnedImageSourceLookup,
   normalizeImageMimeType,
   parseSafeImageSourceUrl,
+  resolveSafeImageSourceAddresses,
   validateImageBytes,
   validateImageDataUrl,
 } from "../../lib/source-image-safety.js";
@@ -98,6 +104,7 @@ const MENU_PHOTO_OCR_REVIEW_PASS_ENABLED =
   (process.env.OPENAI_MENU_OCR_REVIEW_PASS ?? "true").trim().toLowerCase() !== "false";
 const SOURCE_INGESTION_IMAGE_FETCH_TIMEOUT_MS = 6_500;
 const SOURCE_INGESTION_MAX_IMAGE_BYTES = SUBMISSION_LIMITS.maxPhotoBytes;
+const SOURCE_INGESTION_REVIEW_CLAIM_TTL_MS = 15 * 60_000;
 const SOURCE_INGESTION_ALLOWED_MIME_TYPES = SUBMISSION_LIMITS.allowedImageMimeTypes;
 const MENU_PDF_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -379,6 +386,64 @@ async function readImageResponseBodyWithLimit(response: Response, maxBytes: numb
   }
 
   return Buffer.concat(chunks, totalBytes);
+}
+
+interface PinnedImageResponse {
+  status: number;
+  headers: IncomingHttpHeaders;
+  bytes: Buffer;
+}
+
+function firstHttpHeader(headers: IncomingHttpHeaders, name: string): string {
+  const value = headers[name];
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
+
+async function requestPinnedImageSource(
+  url: URL,
+  resolved: { address: string; family: 4 | 6 },
+): Promise<PinnedImageResponse> {
+  return new Promise((resolve, reject) => {
+    const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
+      method: "GET",
+      lookup: createPinnedImageSourceLookup(resolved),
+      family: resolved.family,
+      ...(url.protocol === "https:" ? { servername: url.hostname } : {}),
+      headers: {
+        Accept: "image/avif,image/webp,image/png,image/jpeg,image/heic,image/heif;q=0.9,*/*;q=0.1",
+        "User-Agent": "pint-path-source-ingestion/1.0",
+      },
+    }, (response) => {
+      const status = response.statusCode ?? 0;
+      const contentLength = Number(firstHttpHeader(response.headers, "content-length") || Number.NaN);
+      if (Number.isFinite(contentLength) && contentLength > SOURCE_INGESTION_MAX_IMAGE_BYTES) {
+        response.destroy();
+        reject(new AppError("Source image must be 6MB or smaller.", 400));
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let totalBytes = 0;
+      response.on("data", (value: Buffer | Uint8Array | string) => {
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        totalBytes += chunk.length;
+        if (totalBytes > SOURCE_INGESTION_MAX_IMAGE_BYTES) {
+          response.destroy();
+          reject(new AppError("Source image must be 6MB or smaller.", 400));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.once("end", () => resolve({ status, headers: response.headers, bytes: Buffer.concat(chunks, totalBytes) }));
+      response.once("error", reject);
+    });
+
+    request.setTimeout(SOURCE_INGESTION_IMAGE_FETCH_TIMEOUT_MS, () => {
+      request.destroy(Object.assign(new Error("Source image request timed out"), { code: "ETIMEDOUT" }));
+    });
+    request.once("error", reject);
+    request.end();
+  });
 }
 
 function normalizeConfidence(value: unknown, fallback: number | null = null): number | null {
@@ -778,6 +843,17 @@ export class AdminService {
 
     if (priceRecordDatabase) {
       this.beerCatalogRepository = new BeerCatalogRepository(priceRecordDatabase);
+    }
+
+    if (ingestionQueueRepository) {
+      const now = new Date();
+      const recovered = ingestionQueueRepository.recoverStaleReviewClaims({
+        now: now.toISOString(),
+        staleBefore: new Date(now.getTime() - SOURCE_INGESTION_REVIEW_CLAIM_TTL_MS).toISOString(),
+      });
+      if (recovered > 0) {
+        logger.warn("Recovered stale source-ingestion review claims", { recovered });
+      }
     }
   }
 
@@ -1210,7 +1286,7 @@ export class AdminService {
     const supabase = this.getSupabase();
     const venue = await this.getVenueById(input.venueId);
     const savedAt = new Date().toISOString();
-    const beers = this.standardizeAdminBeerInputs(input.beers, input.source, savedAt);
+    let beers = this.standardizeAdminBeerInputs(input.beers, input.source, savedAt, false);
     let latest: ExistingVenueMenuCaptureSnapshot | null = null;
     const warnings: string[] = [];
 
@@ -1223,6 +1299,31 @@ export class AdminService {
         venueId: input.venueId,
         error: message,
       });
+    }
+
+    let mapPriceRecordCount = 0;
+    let inventoryBeerCount = 0;
+    if (this.priceRecordDatabase) {
+      const publishLocalState = this.priceRecordDatabase.transaction(() => {
+        beers = this.standardizeAdminBeerInputs(input.beers, input.source, savedAt, true);
+        const mapRows = this.publishManualCapturePriceRecords({
+          venue,
+          savedAt,
+          beers,
+          source: input.source,
+        });
+        const inventoryRows = this.syncVenueBeerInventory({
+          venue,
+          savedAt,
+          beers,
+          source: input.source,
+        });
+
+        return { mapRows, inventoryRows };
+      });
+      const localState = publishLocalState();
+      mapPriceRecordCount = localState.mapRows;
+      inventoryBeerCount = localState.inventoryRows;
     }
 
     const row = buildManualVenueCaptureRow({
@@ -1257,30 +1358,6 @@ export class AdminService {
       });
     }
 
-    let mapPriceRecordCount = 0;
-    let inventoryBeerCount = 0;
-    if (this.priceRecordDatabase) {
-      const publishLocalState = this.priceRecordDatabase.transaction(() => {
-        const mapRows = this.publishManualCapturePriceRecords({
-          venue,
-          savedAt,
-          beers,
-          source: input.source,
-        });
-        const inventoryRows = this.syncVenueBeerInventory({
-          venue,
-          savedAt,
-          beers,
-          source: input.source,
-        });
-
-        return { mapRows, inventoryRows };
-      });
-      const localState = publishLocalState();
-      mapPriceRecordCount = localState.mapRows;
-      inventoryBeerCount = localState.inventoryRows;
-    }
-
     logger.info("Saved manual beer capture", {
       venueId: venue.id,
       venueName: venue.name,
@@ -1303,6 +1380,7 @@ export class AdminService {
 
   private async persistSourceIngestionCaptureSnapshot(input: {
     venueId: string;
+    venue?: VenueRow;
     note: string | null;
     beers: AdminBeerInput[];
     savedAt: string;
@@ -1312,7 +1390,7 @@ export class AdminService {
     captureWarning: string | null;
   }> {
     const supabase = this.getSupabase();
-    const venue = await this.getVenueById(input.venueId);
+    const venue = input.venue ?? await this.getVenueById(input.venueId);
     let latest: ExistingVenueMenuCaptureSnapshot | null = null;
     const warnings: string[] = [];
 
@@ -1392,6 +1470,11 @@ export class AdminService {
     }
 
     const now = input.savedAt;
+    this.priceRecordDatabase.prepare(
+      `DELETE FROM venue_price_records
+       WHERE source_type = 'source_ingestion'
+         AND id LIKE ?`,
+    ).run(`source-ingestion:${input.ingestionId}:%`);
     const upsertPriceRecord = this.priceRecordDatabase.prepare(
       `INSERT INTO venue_price_records (
         id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size,
@@ -1574,6 +1657,7 @@ export class AdminService {
     savedAt: string;
     beers: AdminBeerInput[];
     source: AdminManualCaptureInput["source"] | "source_ingestion";
+    sourceIngestionId?: string | null;
   }): number {
     if (!this.priceRecordDatabase) {
       return 0;
@@ -1583,10 +1667,10 @@ export class AdminService {
     const upsertVenueBeer = this.priceRecordDatabase.prepare(
       `INSERT INTO venue_beers (
         id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size,
-        price, currency, on_tap, in_stock, notes, created_at, updated_at
+        price, currency, on_tap, in_stock, notes, source_ingestion_id, created_at, updated_at
       ) VALUES (
         @id, @venueId, @beerName, @normalizedBeerId, @brewery, @style, @abv, @serveSize,
-        @price, 'AUD', @onTap, @inStock, @notes, @createdAt, @updatedAt
+        @price, 'AUD', @onTap, @inStock, @notes, @sourceIngestionId, @createdAt, @updatedAt
       )
       ON CONFLICT(id) DO UPDATE SET
         beer_name = excluded.beer_name,
@@ -1599,6 +1683,7 @@ export class AdminService {
         on_tap = excluded.on_tap,
         in_stock = excluded.in_stock,
         notes = excluded.notes,
+        source_ingestion_id = excluded.source_ingestion_id,
         updated_at = excluded.updated_at
       WHERE venue_beers.venue_id = excluded.venue_id`,
     );
@@ -1640,6 +1725,7 @@ export class AdminService {
         onTap: onTap ? 1 : 0,
         inStock: inStock ? 1 : 0,
         notes,
+        sourceIngestionId: input.sourceIngestionId ?? null,
         createdAt: input.savedAt,
         updatedAt: input.savedAt,
       });
@@ -1655,7 +1741,47 @@ export class AdminService {
 
   private async fetchImageDataUrlFromSourceUrl(sourceUrl: string): Promise<string> {
     const url = parseSafeImageSourceUrl(sourceUrl, "Source URL");
-    await assertResolvedSafeImageSourceHost(url, "Source URL");
+    const safeAddresses = await resolveSafeImageSourceAddresses(url, "Source URL");
+
+    // Literal IP URLs cannot be rebound, so retain the standard fetch path for
+    // them. Hostnames are connected through a lookup pinned to the exact safe
+    // address resolved above, preserving the original Host header and TLS SNI.
+    if (isIP(url.hostname.replace(/^\[|\]$/g, "")) === 0) {
+      let pinnedResponse: PinnedImageResponse;
+      try {
+        pinnedResponse = await requestPinnedImageSource(url, safeAddresses[0]!);
+      } catch (error) {
+        if (error instanceof AppError) {
+          throw error;
+        }
+        const details = getExternalErrorDetails(error);
+        if (details.code === "ETIMEDOUT") {
+          throw new ExternalServiceError("Timed out fetching source image. Try uploading the image instead.", undefined, 504);
+        }
+        throw new ExternalServiceError("Failed to fetch source image. Try uploading the image instead.", {
+          message: getExternalErrorMessage(error),
+        });
+      }
+
+      if (pinnedResponse.status >= 300 && pinnedResponse.status < 400) {
+        throw new AppError("Source URL must point directly to the image, not through a redirect.", 400);
+      }
+      if (pinnedResponse.status < 200 || pinnedResponse.status >= 300) {
+        throw new ExternalServiceError(`Failed to fetch source image (${pinnedResponse.status})`);
+      }
+
+      const contentType = normalizeImageMimeType(firstHttpHeader(pinnedResponse.headers, "content-type"));
+      if (!SOURCE_INGESTION_ALLOWED_MIME_TYPES.includes(contentType as never)) {
+        throw new AppError("For now, source URLs must point directly to a JPEG, PNG, WebP, HEIC, or HEIF image.", 400);
+      }
+      const validated = validateImageBytes(pinnedResponse.bytes, contentType, {
+        allowedMimeTypes: SOURCE_INGESTION_ALLOWED_MIME_TYPES,
+        invalidMimeMessage: "For now, source URLs must point directly to a JPEG, PNG, WebP, HEIC, or HEIF image.",
+        activePayloadMessage: "Source image must be a safe image file, not SVG, HTML, XML, script, or style content.",
+        mismatchMessage: "Source image content does not match the declared file type.",
+      });
+      return `data:${validated.mimeType};base64,${pinnedResponse.bytes.toString("base64")}`;
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), SOURCE_INGESTION_IMAGE_FETCH_TIMEOUT_MS);
@@ -2156,6 +2282,51 @@ export class AdminService {
     return this.getIngestionQueue().count(status);
   }
 
+  getQueuedIngestionEvidence(ingestionId: string): { mimeType: string; bytes: Buffer } {
+    const queueItem = this.getIngestionQueue().getById(ingestionId);
+    if (!queueItem) {
+      throw new AppError("Source ingestion item was not found.", 404);
+    }
+    if (!queueItem.imageDataUrl) {
+      throw new AppError("Source image bytes are no longer available for this review.", 404, {
+        redactedAt: queueItem.imageRedactedAt,
+        redactionReason: queueItem.imageRedactionReason,
+      });
+    }
+    const validated = validateAdminMenuImageDataUrl(queueItem.imageDataUrl);
+    const matched = /^data:([^;,]+);base64,([a-z0-9+/=]+)$/i.exec(validated);
+    if (!matched) {
+      throw new AppError("Stored source image is invalid.", 422);
+    }
+    const bytes = Buffer.from(matched[2]!, "base64");
+    if (bytes.length > SOURCE_INGESTION_MAX_IMAGE_BYTES) {
+      throw new AppError("Stored source image exceeds the 6MB review limit.", 413);
+    }
+    return { mimeType: matched[1]!.toLowerCase(), bytes };
+  }
+
+  getQueuedIngestionImageRetentionStatus(now = new Date().toISOString()) {
+    const cutoff = new Date(now);
+    cutoff.setUTCDate(
+      cutoff.getUTCDate() - ACCOUNT_DATA_RETENTION_POLICY.pendingIngestionImages.hardCapDaysAfterCreation,
+    );
+    return this.getIngestionQueue().getPendingReviewImageRetentionStats({
+      now,
+      hardCutoff: cutoff.toISOString(),
+    });
+  }
+
+  purgeQueuedIngestionImages(now = new Date().toISOString()) {
+    const cutoff = new Date(now);
+    cutoff.setUTCDate(
+      cutoff.getUTCDate() - ACCOUNT_DATA_RETENTION_POLICY.pendingIngestionImages.hardCapDaysAfterCreation,
+    );
+    return this.getIngestionQueue().purgePendingReviewImages({
+      now,
+      hardCutoff: cutoff.toISOString(),
+    });
+  }
+
   async publishQueuedIngestion(
     ingestionId: string,
     input: AdminPublishQueuedIngestionInput,
@@ -2170,6 +2341,11 @@ export class AdminService {
     captureWarning: string | null;
   }> {
     const repository = this.getIngestionQueue();
+    const savedAt = new Date().toISOString();
+    const staleBefore = new Date(
+      new Date(savedAt).getTime() - SOURCE_INGESTION_REVIEW_CLAIM_TTL_MS,
+    ).toISOString();
+    repository.recoverStaleReviewClaims({ staleBefore, now: savedAt });
     const queueItem = repository.getById(ingestionId);
 
     if (!queueItem) {
@@ -2180,12 +2356,13 @@ export class AdminService {
       throw new AppError("This source ingestion item is no longer pending review.", 409);
     }
 
-    const reviewedBeers = this.standardizeAdminBeerInputs(
+    const validatedBeers = this.standardizeAdminBeerInputs(
       input.beers,
       "source_ingestion_review",
-      new Date().toISOString(),
+      savedAt,
+      false,
     );
-    const expectedPriceRecordCount = this.countPublishableMapPriceRows(reviewedBeers);
+    const expectedPriceRecordCount = this.countPublishableMapPriceRows(validatedBeers);
     if (expectedPriceRecordCount > 0 && !this.priceRecordDatabase) {
       throw new AppError("Live map price database is unavailable, so this source cannot be published yet.", 503);
     }
@@ -2195,48 +2372,88 @@ export class AdminService {
       queueItem.sourceUrl ? `Source: ${queueItem.sourceUrl}` : null,
       input.note,
     ].filter(Boolean);
-    const savedAt = new Date().toISOString();
-    const captureResult = await this.persistSourceIngestionCaptureSnapshot({
-      venueId: queueItem.venueId,
-      note: noteParts.length > 0 ? noteParts.join("\n") : null,
-      beers: reviewedBeers,
-      savedAt,
-    });
-    const crawlerFeedback = buildCrawlerFeedback({
-      outcome: "published",
-      extractedBeers: queueItem.extractedBeers,
-      reviewBeers: reviewedBeers,
-      note: input.note,
-      generatedAt: savedAt,
-    });
+    const claimToken = randomUUID();
+    if (!repository.claimPendingReview(ingestionId, "publish", claimToken, savedAt, staleBefore)) {
+      throw new AppError("This source ingestion item is already being reviewed or is no longer pending review.", 409);
+    }
+
+    let venue: VenueRow;
+    let reviewedBeers = validatedBeers;
     let priceRecordCount = 0;
     let inventoryBeerCount = 0;
+    try {
+      venue = await this.getVenueById(queueItem.venueId);
 
-    if (this.priceRecordDatabase) {
-      const publishLocalState = this.priceRecordDatabase.transaction(() => {
-        const published = this.publishIngestionPriceRecords({
-          ingestionId,
-          venue: captureResult.venue,
-          savedAt,
-          beers: reviewedBeers,
-        });
-
-        if (published !== expectedPriceRecordCount) {
-          throw new AppError(
-            `Source review publish wrote ${published} of ${expectedPriceRecordCount} expected live map price row${expectedPriceRecordCount === 1 ? "" : "s"}.`,
-            500,
+      if (this.priceRecordDatabase) {
+        const publishLocalState = this.priceRecordDatabase.transaction(() => {
+          reviewedBeers = this.standardizeAdminBeerInputs(
+            input.beers,
+            "source_ingestion_review",
+            savedAt,
+            true,
           );
-        }
+          const crawlerFeedback = buildCrawlerFeedback({
+            outcome: "published",
+            extractedBeers: queueItem.extractedBeers,
+            reviewBeers: reviewedBeers,
+            note: input.note,
+            generatedAt: savedAt,
+          });
+          this.priceRecordDatabase!.prepare(
+            "DELETE FROM venue_beers WHERE source_ingestion_id = ?",
+          ).run(ingestionId);
+          const published = this.publishIngestionPriceRecords({
+            ingestionId,
+            venue,
+            savedAt,
+            beers: reviewedBeers,
+          });
 
-        const syncedInventory = this.syncVenueBeerInventory({
-          venue: captureResult.venue,
-          savedAt,
-          beers: reviewedBeers,
-          source: "source_ingestion",
+          if (published !== expectedPriceRecordCount) {
+            throw new AppError(
+              `Source review publish wrote ${published} of ${expectedPriceRecordCount} expected live map price row${expectedPriceRecordCount === 1 ? "" : "s"}.`,
+              500,
+            );
+          }
+
+          const syncedInventory = this.syncVenueBeerInventory({
+            venue,
+            savedAt,
+            beers: reviewedBeers,
+            source: "source_ingestion",
+            sourceIngestionId: ingestionId,
+          });
+
+          repository.markPublished(
+            ingestionId,
+            claimToken,
+            reviewedBeers.map((beer) => ({
+              ...beer,
+              confidence: 1,
+              notes: null,
+            })),
+            input.note,
+            crawlerFeedback,
+            savedAt,
+          );
+
+          return { published, syncedInventory };
         });
 
+        const localState = publishLocalState();
+        priceRecordCount = localState.published;
+        inventoryBeerCount = localState.syncedInventory;
+      } else {
+        const crawlerFeedback = buildCrawlerFeedback({
+          outcome: "published",
+          extractedBeers: queueItem.extractedBeers,
+          reviewBeers: reviewedBeers,
+          note: input.note,
+          generatedAt: savedAt,
+        });
         repository.markPublished(
           ingestionId,
+          claimToken,
           reviewedBeers.map((beer) => ({
             ...beer,
             confidence: 1,
@@ -2246,41 +2463,51 @@ export class AdminService {
           crawlerFeedback,
           savedAt,
         );
+      }
+    } catch (error) {
+      repository.releaseReviewClaim(ingestionId, claimToken, new Date().toISOString());
+      throw error;
+    }
 
-        return { published, syncedInventory };
-      });
-
-      const localState = publishLocalState();
-      priceRecordCount = localState.published;
-      inventoryBeerCount = localState.syncedInventory;
-    } else {
-      repository.markPublished(
-        ingestionId,
-        reviewedBeers.map((beer) => ({
-          ...beer,
-          confidence: 1,
-          notes: null,
-        })),
-        input.note,
-        crawlerFeedback,
+    let captureSaved = false;
+    let captureWarning: string | null = null;
+    try {
+      const captureResult = await this.persistSourceIngestionCaptureSnapshot({
+        venueId: queueItem.venueId,
+        venue,
+        note: noteParts.length > 0 ? noteParts.join("\n") : null,
+        beers: reviewedBeers,
         savedAt,
-      );
+      });
+      captureSaved = captureResult.captureSaved;
+      captureWarning = captureResult.captureWarning;
+    } catch (error) {
+      captureWarning = "Menu capture history save failed after live rows were published.";
+      logger.warn("Post-commit source-ingestion capture failed", {
+        ingestionId,
+        error: getExternalErrorMessage(error),
+      });
     }
 
     return {
       queueItem: repository.getById(ingestionId)!,
-      venue: captureResult.venue,
+      venue,
       savedAt,
       beerCount: reviewedBeers.length,
       mapPriceRecordCount: priceRecordCount,
       inventoryBeerCount,
-      captureSaved: captureResult.captureSaved,
-      captureWarning: captureResult.captureWarning,
+      captureSaved,
+      captureWarning,
     };
   }
 
   rejectQueuedIngestion(ingestionId: string, input: AdminRejectQueuedIngestionInput): { queueItem: AdminIngestionQueueRecord } {
     const repository = this.getIngestionQueue();
+    const rejectedAt = new Date().toISOString();
+    const staleBefore = new Date(
+      new Date(rejectedAt).getTime() - SOURCE_INGESTION_REVIEW_CLAIM_TTL_MS,
+    ).toISOString();
+    repository.recoverStaleReviewClaims({ staleBefore, now: rejectedAt });
     const queueItem = repository.getById(ingestionId);
 
     if (!queueItem) {
@@ -2291,15 +2518,22 @@ export class AdminService {
       throw new AppError("This source ingestion item is no longer pending review.", 409);
     }
 
-    const rejectedAt = new Date().toISOString();
-    const crawlerFeedback = buildCrawlerFeedback({
-      outcome: "rejected",
-      extractedBeers: queueItem.extractedBeers,
-      note: input.note,
-      generatedAt: rejectedAt,
-    });
-
-    repository.markRejected(ingestionId, input.note, crawlerFeedback, rejectedAt);
+    const claimToken = randomUUID();
+    if (!repository.claimPendingReview(ingestionId, "reject", claimToken, rejectedAt, staleBefore)) {
+      throw new AppError("This source ingestion item is already being reviewed or is no longer pending review.", 409);
+    }
+    try {
+      const crawlerFeedback = buildCrawlerFeedback({
+        outcome: "rejected",
+        extractedBeers: queueItem.extractedBeers,
+        note: input.note,
+        generatedAt: rejectedAt,
+      });
+      repository.markRejected(ingestionId, claimToken, input.note, crawlerFeedback, rejectedAt);
+    } catch (error) {
+      repository.releaseReviewClaim(ingestionId, claimToken, new Date().toISOString());
+      throw error;
+    }
     return {
       queueItem: repository.getById(ingestionId)!,
     };
@@ -2309,7 +2543,26 @@ export class AdminService {
     queueItems: AdminIngestionQueueRecord[];
     rejectedCount: number;
   } {
-    const queueItems = input.ids.map((id) => this.rejectQueuedIngestion(id, { note: input.note }).queueItem);
+    const repository = this.getIngestionQueue();
+    const uniqueIds = [...new Set(input.ids)];
+    if (uniqueIds.length !== input.ids.length) {
+      throw new AppError("Bulk source rejection contains duplicate item IDs.", 400);
+    }
+    for (const id of uniqueIds) {
+      const item = repository.getById(id);
+      if (!item) {
+        throw new AppError("Source ingestion item was not found.", 404, { ingestionId: id });
+      }
+      if (item.status !== "pending_review") {
+        throw new AppError("Every bulk-rejected source must still be pending review.", 409, {
+          ingestionId: id,
+          status: item.status,
+        });
+      }
+    }
+    const queueItems = repository.transaction(() => uniqueIds.map(
+      (id) => this.rejectQueuedIngestion(id, { note: input.note }).queueItem,
+    ));
 
     return {
       queueItems,

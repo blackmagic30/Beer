@@ -16,7 +16,7 @@
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="./business.css" />
   <script src="./config.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js" integrity="sha384-PsnFqJ58vyp7buRfuvdS2SrjRdUYinBv6lWwJXx3xQ17hWefo/UkwXowVBT53ubG" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
   <script src="./business.js" defer></script>
 </head>
 <body>
@@ -206,7 +206,7 @@
 
     async function loadStats() {
       try {
-        MelbBeerBusiness.renderNav("account");
+        $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
         MelbBeerBusiness.installAccessibilityChrome();
         await MelbBeerBusiness.syncSupabaseSession();
         const result = await MelbBeerBusiness.apiFetch("/api/business/account");

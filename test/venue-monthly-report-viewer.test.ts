@@ -39,7 +39,7 @@ describe("venue monthly report viewer", () => {
     expect(portalHtml).toContain("Report as of");
     expect(portalHtml).toContain("Recorded actions");
     expect(portalHtml).toContain('reportValue(summary, ["directionsClicks"])');
-    expect(portalHtml).toContain('reportValue(summary, ["priceReveals"])');
+    expect(portalHtml).toContain('reportValue(summary, ["pricePreviewViews"])');
     expect(portalHtml).toContain('reportValue(summary, ["savesAndNightPlanAdds"])');
     expect(portalHtml).toContain("Demand snapshot");
     expect(portalHtml).toContain("snapshot?.funnel");

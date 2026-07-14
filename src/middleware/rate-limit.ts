@@ -23,8 +23,28 @@ const buckets = new Map<string, Bucket>();
 let redisClient: Redis | null | undefined;
 let warnedMemoryFallback = false;
 let lastRedisFailureLogAt = 0;
+let redisReadinessCache: { expiresAt: number; value: RedisReadiness } | null = null;
+let redisReadinessInFlight: Promise<RedisReadiness> | null = null;
 const REDIS_CONNECT_TIMEOUT_MS = 1_500;
 const REDIS_FAILURE_LOG_INTERVAL_MS = 60_000;
+const REDIS_READINESS_CACHE_MS = 15_000;
+const REDIS_INCREMENT_SCRIPT = `
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return { count, ttl }
+`;
+
+export type RedisReadiness = {
+  status: "ok" | "failed" | "required_unconfigured" | "optional_unconfigured";
+  configured: boolean;
+  required: boolean;
+  ready: boolean;
+  error?: string;
+};
 
 function warnMemoryFallback(reason: string): void {
   if (warnedMemoryFallback || env.NODE_ENV !== "production") {
@@ -147,6 +167,89 @@ async function ensureRedisReady(client: Redis): Promise<void> {
   });
 }
 
+async function withRedisTimeout<T>(operation: Promise<T>, timeoutMs = REDIS_CONNECT_TIMEOUT_MS): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Redis operation timed out")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export async function probeRateLimitRedis(): Promise<RedisReadiness> {
+  const required = env.NODE_ENV === "production" && !env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION;
+  if (!env.REDIS_URL) {
+    return {
+      status: required ? "required_unconfigured" : "optional_unconfigured",
+      configured: false,
+      required,
+      ready: !required,
+    };
+  }
+
+  const now = Date.now();
+  if (redisReadinessCache && redisReadinessCache.expiresAt > now) {
+    return redisReadinessCache.value;
+  }
+  if (redisReadinessInFlight) {
+    return redisReadinessInFlight;
+  }
+
+  redisReadinessInFlight = (async () => {
+    const client = getRedisClient();
+    if (!client) {
+      return {
+        status: required ? "required_unconfigured" : "optional_unconfigured",
+        configured: false,
+        required,
+        ready: !required,
+      } satisfies RedisReadiness;
+    }
+    try {
+      await ensureRedisReady(client);
+      await withRedisTimeout(client.ping(), REDIS_CONNECT_TIMEOUT_MS);
+      return { status: "ok", configured: true, required, ready: true } satisfies RedisReadiness;
+    } catch (error) {
+      return {
+        status: "failed",
+        configured: true,
+        required,
+        ready: false,
+        error: redisErrorMetadata(error).errorCode ?? redisErrorMetadata(error).errorName ?? "RedisProbeFailed",
+      } satisfies RedisReadiness;
+    }
+  })();
+
+  try {
+    const value = await redisReadinessInFlight;
+    redisReadinessCache = { value, expiresAt: Date.now() + REDIS_READINESS_CACHE_MS };
+    return value;
+  } finally {
+    redisReadinessInFlight = null;
+  }
+}
+
+export async function shutdownRateLimitRedis(): Promise<void> {
+  const client = redisClient;
+  redisClient = undefined;
+  redisReadinessCache = null;
+  redisReadinessInFlight = null;
+  if (!client) return;
+
+  try {
+    if (client.status !== "end") {
+      await withRedisTimeout(client.quit(), REDIS_CONNECT_TIMEOUT_MS);
+    }
+  } catch {
+    client.disconnect(false);
+  }
+}
+
 async function incrementRedisBucket(key: string, windowMs: number, now: number): Promise<Bucket | null> {
   const client = getRedisClient();
   if (!client) {
@@ -155,12 +258,12 @@ async function incrementRedisBucket(key: string, windowMs: number, now: number):
 
   await ensureRedisReady(client);
 
-  const count = await client.incr(key);
-  if (count === 1) {
-    await client.pexpire(key, windowMs);
+  const result = await client.eval(REDIS_INCREMENT_SCRIPT, 1, key, windowMs) as [number | string, number | string];
+  const count = Number(result?.[0]);
+  const ttl = Number(result?.[1]);
+  if (!Number.isFinite(count) || !Number.isFinite(ttl)) {
+    throw new Error("Redis rate-limit script returned an invalid result");
   }
-
-  const ttl = await client.pttl(key);
   return {
     count,
     resetAt: now + (ttl > 0 ? ttl : windowMs),

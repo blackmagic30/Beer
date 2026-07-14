@@ -339,6 +339,28 @@
       (activeDays.has(previousDay) && nowMinutes < endMinutes);
   }
 
+  function isOpeningHoursOpenNow(days, now = new Date()) {
+    if (!days || typeof days !== "object" || !now || typeof now.getTime !== "function" || Number.isNaN(now.getTime())) {
+      return false;
+    }
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const todayKey = DAY_KEYS[now.getDay()];
+    const yesterdayKey = DAY_KEYS[(now.getDay() + 6) % 7];
+    const windowForDay = (dayKey) => {
+      const day = days[dayKey] && typeof days[dayKey] === "object" ? days[dayKey] : {};
+      if (day.open !== true && day.isOpen !== true && day.closed !== false) return null;
+      const start = happyHourTimeToMinutes(day.openTime || day.opens || day.startTime);
+      const end = happyHourTimeToMinutes(day.closeTime || day.closes || day.endTime);
+      return start == null || end == null || start === end ? null : { start, end, overnight: start > end };
+    };
+    const today = windowForDay(todayKey);
+    if (today && (today.overnight ? nowMinutes >= today.start : nowMinutes >= today.start && nowMinutes < today.end)) {
+      return true;
+    }
+    const yesterday = windowForDay(yesterdayKey);
+    return Boolean(yesterday?.overnight && nowMinutes < yesterday.end);
+  }
+
   function normalizeBeerPriceNumeric(source) {
     const availabilityStatus =
       source && typeof source.availability_status === "string"
@@ -736,6 +758,7 @@
     happyHourTextMatchesBeer,
     happyHourMatchesBeerQuery,
     isHappyHourActiveNow,
+    isOpeningHoursOpenNow,
     hasNumericPrice,
     getLowestKnownPrice,
     getPriceTier,

@@ -14,7 +14,7 @@ npm run test:release:pintpath
 git diff --check
 ```
 
-The `test:release:pintpath` script currently runs the Pint Path release-readiness Vitest suite, the local secret scanner, and `npm audit --audit-level=high`.
+The `test:release:pintpath` script runs the full build/test/security gate, validates production-provider configuration, requires every external release-evidence item to be complete, and runs `npm audit --audit-level=high`. Use the ordinary `npm run check` gate during local development; the strict release command is expected to fail until provider and human sign-off evidence is genuinely complete.
 
 After production provider env is configured, also run:
 
@@ -100,5 +100,5 @@ These are launch-critical but require provider/staging verification:
 - Log in, submit a beer price and source photo, and confirm it is pending.
 - Confirm another user cannot see that raw submission/evidence.
 - Approve the submission as admin and confirm the normalized price appears on the map.
-- Assign a venue manager, submit a venue edit, confirm it stays pending, approve it, then confirm it publishes.
+- Assign a venue manager and confirm ordinary profile, beer, and happy-hour edits publish directly for that assigned venue. Then trigger a documented safeguard/restricted change, confirm it stays pending, approve it as admin, and confirm only the approved guarded change publishes.
 - Verify Pro venue analytics remain aggregate-only and hide low-count buckets.

@@ -126,6 +126,8 @@ const envSchema = z.object({
   SUPABASE_URL: optionalHttpUrlFromEnv,
   SUPABASE_ANON_KEY: optionalStringFromEnv,
   SUPABASE_SERVICE_ROLE_KEY: optionalStringFromEnv,
+  OFFSITE_BACKUP_SUPABASE_URL: optionalHttpUrlFromEnv,
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: optionalStringFromEnv,
   SUPABASE_OAUTH_PROVIDERS: z.preprocess(sanitizeEnvString, z.string()).default("google,apple"),
   SUPABASE_MENU_CAPTURE_TABLE: optionalStringFromEnv.default("venue_menu_captures"),
   ADMIN_EMAILS: optionalStringFromEnv,
@@ -133,7 +135,6 @@ const envSchema = z.object({
   GOOGLE_MAPS_MAP_ID: optionalStringFromEnv,
   GOOGLE_PLACES_API_KEY: optionalStringFromEnv,
   OPENAI_API_KEY: optionalStringFromEnv,
-  FREE_PRICE_REVEALS_PER_DAY: z.coerce.number().int().min(0).default(5),
   CONTRIBUTOR_UNLOCK_POINTS: z.coerce.number().int().min(1).default(15),
   CONTRIBUTOR_UNLOCK_DAYS: z.coerce.number().int().min(1).default(30),
   SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
@@ -161,8 +162,8 @@ const envSchema = z.object({
   SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(300),
   SOURCE_EVIDENCE_RETENTION_DAYS: z.coerce.number().int().min(7).max(730).default(90),
   OFFSITE_BACKUP_BUCKET: z.preprocess(sanitizeEnvString, z.string()).default("pintpath-backups"),
-  OFFSITE_BACKUP_INTERVAL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
-  OFFSITE_BACKUP_RETENTION_DAYS: z.coerce.number().int().min(7).max(365).default(30),
+  OFFSITE_BACKUP_INTERVAL_HOURS: z.coerce.number().int().min(1).max(24).default(24),
+  OFFSITE_BACKUP_RETENTION_DAYS: z.coerce.number().int().min(7).max(30).default(30),
   POS_WEBHOOK_SIGNING_SECRET: optionalStringFromEnv,
   FIELD_TEST_MODE: booleanFromEnv.default(false),
   STRIPE_SECRET_KEY: optionalStringFromEnv,
@@ -170,7 +171,6 @@ const envSchema = z.object({
   STRIPE_PRICE_MONTHLY: optionalStringFromEnv,
   STRIPE_PRICE_YEARLY: optionalStringFromEnv,
   STRIPE_PRO_PRICE_ID: optionalStringFromEnv,
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalStringFromEnv,
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -205,6 +205,14 @@ if (parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED && parsedEnv.data.REPORT_EMA
 }
 
 if (parsedEnv.data.NODE_ENV === "production") {
+  const requireStrongSecret = (name: string, value: string | undefined) => {
+    const normalized = value?.trim() ?? "";
+    const documentedPlaceholder = /(?:replace[_ -]?with|change[_ -]?me|placeholder|your[_ -].*secret)/i.test(normalized);
+    const repeatedCharacter = normalized.length > 0 && new Set(normalized).size < 4;
+    if (Buffer.byteLength(normalized, "utf8") < 32 || documentedPlaceholder || repeatedCharacter) {
+      throw new Error(`${name} must be a unique high-entropy secret of at least 32 bytes in production.`);
+    }
+  };
   const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
   if (publicBaseUrl.protocol !== "https:") {
     throw new Error("PUBLIC_BASE_URL must use https:// in production.");
@@ -222,8 +230,43 @@ if (parsedEnv.data.NODE_ENV === "production") {
     throw new Error("GOOGLE_MAPS_MAP_ID is required in production for Google AdvancedMarkerElement/vector map styling.");
   }
 
-  if (!parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET) {
-    throw new Error("SOURCE_EVIDENCE_SIGNING_SECRET is required in production so OCR and source-evidence review links work.");
+  if (!parsedEnv.data.GOOGLE_PLACES_API_KEY) {
+    throw new Error("GOOGLE_PLACES_API_KEY is required in production for venue search and identity verification.");
+  }
+
+  if (!parsedEnv.data.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is required in production for menu evidence extraction.");
+  }
+
+  if (!parsedEnv.data.DEMO_BILLING_MODE) {
+    const missingStripe = [
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET",
+      "STRIPE_PRICE_MONTHLY",
+      "STRIPE_PRICE_YEARLY",
+      "STRIPE_PRO_PRICE_ID",
+    ].filter((name) => !parsedEnv.data[name as keyof typeof parsedEnv.data]);
+    if (missingStripe.length) {
+      throw new Error(`Real production billing requires: ${missingStripe.join(", ")}.`);
+    }
+  }
+
+  requireStrongSecret("SOURCE_EVIDENCE_SIGNING_SECRET", parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET);
+  requireStrongSecret("POS_WEBHOOK_SIGNING_SECRET", parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET);
+
+  if (!parsedEnv.data.SUPABASE_URL || !parsedEnv.data.SUPABASE_ANON_KEY || !parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY are required in production for authentication and durable source-evidence storage.");
+  }
+
+  if (!parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL || !parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY) {
+    throw new Error("OFFSITE_BACKUP_SUPABASE_URL and OFFSITE_BACKUP_SERVICE_ROLE_KEY are required in production.");
+  }
+
+  if (
+    new URL(parsedEnv.data.SUPABASE_URL).origin.toLowerCase() ===
+    new URL(parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL).origin.toLowerCase()
+  ) {
+    throw new Error("OFFSITE_BACKUP_SUPABASE_URL must identify an independent project/provider, not the production Supabase project.");
   }
 
 }

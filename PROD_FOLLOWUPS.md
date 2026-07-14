@@ -10,6 +10,8 @@ These are the remaining actions after the production-readiness pass. Priorities 
 - Account export/deletion foundations now exist: signed-in users can download a quick JSON export and create a tracked deletion-review request. Private evidence files, raw tokens, passwords, and exact stored upload coordinates are not included in quick self-service export.
 - Feedback/support triage now assigns priority metadata so security, privacy, data export, deletion, billing, abuse, and moderation requests are easier for admins to prioritize.
 - A public beta `Status & Incidents` page now documents outage/security/privacy reporting and provider checks without pretending external monitoring/backups are verified.
+- Admin now has a filtered, paginated, redacted security-audit view plus account-session inspection and individual revocation controls.
+- Signed-in users can inspect last-used session fingerprints, revoke individual sessions, or log out all sessions from Account.
 
 ## P0: Admin MFA / Step-Up Protection
 
@@ -37,7 +39,7 @@ These are the remaining actions after the production-readiness pass. Priorities 
 - Why it matters: Billing entitlements are security-sensitive and revenue-critical.
 - Status: In-repo webhook signature verification, timestamp freshness, and event idempotency tests pass locally.
 - Still required: Use Stripe test mode and Stripe CLI forwarding to verify Checkout, signed webhooks, replay idempotency, subscription deletion, and invoice failure behavior against the deployed preview.
-- Blocks production: Yes for paid launch. Not blocking if checkout is disabled and only free/contributor access is used.
+- Blocks production: Yes for the current production build because `DEMO_BILLING_MODE=false` requires complete Stripe configuration. A deliberately payment-free release would need a controlled code/release change that removes checkout entry points; there is no env-only billing-off mode.
 
 ## P1: Supabase RLS Application And Formal Audit
 
@@ -48,9 +50,9 @@ These are the remaining actions after the production-readiness pass. Priorities 
 
 ## P1: Distributed Rate Limiting
 
-- Why it matters: Current in-memory limiter is per-process. Multi-instance Railway scaling or edge bypass can weaken auth, billing, reveal, upload, and feedback abuse controls.
+- Why it matters: Current in-memory limiter is per-process. Multi-instance Railway scaling or edge bypass can weaken auth, billing, price-access, upload, and feedback abuse controls.
 - Status: Redis-backed rate limiting is implemented when `REDIS_URL` is set. Production rate-limited routes now fail closed by default if Redis is missing or unavailable unless `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` is explicitly set. Redis failures fail closed in production unless the same override is set.
-- Still required: Provision Railway Redis/Upstash, set `REDIS_URL`, and smoke-test auth/upload/reveal/payment limits in staging.
+- Still required: Provision Railway Redis/Upstash, set `REDIS_URL`, and smoke-test auth/upload/price-access/payment limits in staging.
 - Blocks production: No once Redis is provisioned and verified. Blocks horizontal/full-scale launch if the explicit in-memory override is used.
 
 ## P1: Production Monitoring And Alerting
@@ -60,12 +62,12 @@ These are the remaining actions after the production-readiness pass. Priorities 
 - Suggested fix: Add external uptime checks for `/health` and `/ready`, app error alerts, Stripe webhook alerts, login/rate-limit alerts, DB size/backup alerts, and incident escalation.
 - Blocks production: Yes for full-scale launch.
 
-## P1: Email Verification For Local Accounts
+## P1: Provider Email Verification Delivery
 
-- Why it matters: The bar dashboard is intended for verified accounts; local email/password accounts do not yet include a complete email-verification workflow.
-- Status: Production server-side guards now block dashboard/upload/verification actions when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true` and the account has no verified email timestamp. Supabase OAuth/session exchange records provider email-confirmation timestamps.
-- Still required: Configure Supabase Confirm Email/custom SMTP and avoid local password-only onboarding unless local email verification is added.
-- Blocks production: No for Supabase/OAuth verified accounts once configured. Yes for open local email/password self-serve onboarding without verification.
+- Why it matters: Public production onboarding depends on Supabase email/OAuth confirmation and verified-email claims before protected actions are allowed.
+- Status: Production onboarding is provider-first; local password signup/login is localhost/development-only. Server-side guards block dashboard/upload/verification actions when `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true` and the provider account has no verified email timestamp.
+- Still required: Configure Supabase Confirm Email/custom SMTP and verify delivery, confirmation links, OAuth claims, and callback handling in staging.
+- Blocks production: Yes until the configured provider confirmation flow is tested; there is no production local-password verification gap to accept.
 
 ## P1: Provider Configuration Verification
 
@@ -79,17 +81,17 @@ These are the remaining actions after the production-readiness pass. Priorities 
 - Suggested fix: After applying `supabase/migrations/20260520010000_venue_menu_captures.sql`, verify whether old `call_logs`, `call_queue`, `call_results`, or `guinness_prices` tables contain data you still need. Export/back up anything important, then drop only the confirmed-unused legacy tables manually in Supabase.
 - Blocks production: No if the old tables are not exposed to browser clients and are ignored by active code. Should be completed before broad operational analytics cleanup.
 
-## P2: Admin Audit Log UI And Export Controls
+## P2: Security Audit Export Controls
 
-- Why it matters: `security_audit_log` exists, but operators need safe review and export workflows for investigations.
-- Suggested fix: Add admin-only audit log view with filters, pagination, redacted metadata, and export safeguards.
-- Blocks production: No, but important soon after launch.
+- Status: The admin-only audit log view, action/actor filters, pagination, and redacted metadata display are implemented.
+- Still required: If operators need downloadable evidence, add a bounded, redacted export with purpose logging, retention limits, and spreadsheet-injection protection. Do not describe the existing review UI as missing.
+- Blocks production: No. The on-screen investigation workflow exists; file export is an optional operational enhancement.
 
-## P2: Device/Session Management UI
+## P2: Cross-Device Session Revocation Verification
 
-- Why it matters: Logout-all exists, but users/admins cannot inspect active sessions.
-- Suggested fix: Add account UI for last-used session fingerprints and revoke controls.
-- Blocks production: No.
+- Status: Account and admin session lists, last-used/device fingerprints, individual revocation, and logout-all are implemented behind recent-authentication checks.
+- Still required: Exercise provider-linked and Pint Path session revocation across two real devices in staging, including admin revocation and a revoked Supabase provider-session retry.
+- Blocks production: No for code completeness; include this in the manual auth/device release evidence.
 
 ## P2: Legal Review Of Terms, Privacy, Consent, And Data Requests
 

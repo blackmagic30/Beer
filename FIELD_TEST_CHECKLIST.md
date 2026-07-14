@@ -17,7 +17,6 @@ Use this before showing the app to real Melbourne users.
 FIELD_TEST_MODE=true
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
-FREE_PRICE_REVEALS_PER_DAY=3
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
 ADMIN_EMAILS=your-admin-email@example.com
@@ -27,7 +26,7 @@ ANALYTICS_MIN_BUCKET_SIZE=5
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 ```
 
-For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you intentionally set `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` and clearly tell testers checkout is simulated. If Stripe test-mode checkout and webhooks have not passed end to end, use free limits, contributor unlocks, or explicit admin overrides instead of live payment claims.
+For a production-hosted private beta, `DEMO_BILLING_MODE=false` requires all five Stripe values at startup. Do not make live-payment claims until test-mode checkout and signed webhooks pass end to end. If Stripe is intentionally unavailable for a private simulated environment, the supported production fallback is `DEMO_BILLING_MODE=true` together with `ALLOW_DEMO_BILLING_IN_PRODUCTION=true`, with billing clearly labelled as simulated.
 
 ## 3. Test Accounts
 
@@ -54,8 +53,8 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 
 - Open `/` while logged out.
 - Confirm venue pins load.
-- Open venue details and reveal exact prices until the free limit is reached.
-- Confirm blocked reveals show a clear upgrade/contribute path instead of exposing exact prices.
+- Open several venue details and confirm the same fixed free preview is available without a counter.
+- Confirm non-preview prices stay locked and show a clear upgrade/contribute path.
 
 ## 7. Contributor Submission Flow
 
@@ -78,7 +77,7 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 ## 9. KPI Dashboard
 
 - Open `/admin.html`.
-- Check the field-test summary for users, searches, reveals, blocked reveals, submissions, reports, feedback, top clicked venues, and top searched beers.
+- Check the field-test summary for users, searches, price-detail views, locked-price interactions, submissions, reports, feedback, top clicked venues, and top searched beers.
 - Check the regular KPI, retention, coverage, and partner-lead sections.
 - Check venue partner interest, outreach status, and manager assignment sections if you are demoing to a venue manager.
 
@@ -108,17 +107,18 @@ For a production-hosted private beta, keep `DEMO_BILLING_MODE=false` unless you 
 
 ## 12. Known Limitations
 
-- Photo/source uploads are demo storage unless private object storage is configured later.
+- Local development may use volume-backed/demo evidence, but production requires the configured private Supabase evidence bucket and server-only service-role access.
 - Production rejects inline demo image uploads unless `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=true` is intentionally enabled.
 - Admin source review is protected, but uploaded files should not contain private personal information.
 - Exact-price access is server-gated, but keep Supabase service-role keys server-only.
 - Demo billing is not a real payment.
 - Venue manager analytics are directional aggregate beta counts only.
-- Paid venue billing, partner rewards, free beer redemption, and brewery dashboards are intentionally disabled.
+- Venue Stripe checkout/portal, Pint Points, and Free Pint Reward code redemption are implemented. They remain pilot-gated until provider testing, participating-venue procedures, age/ID/RSA handling, and release-owner evidence are complete.
+- Brewery-specific dashboards remain outside the current product.
 
 ## 13. Do Not Enable Yet
 
 - Do not use live payments unless Stripe test checkout and webhooks have passed.
-- Do not enable partner rewards or free beer redemption.
+- Do not publicly launch the implemented Pint Points/Free Pint Reward pilot until participating venues, operational ownership, age/ID/RSA procedures, and end-to-end evidence are approved.
 - Do not collect government ID documents.
 - Do not expose individual user clickstream to venues.

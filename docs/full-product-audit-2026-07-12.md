@@ -47,6 +47,7 @@ An isolated browser verification used a temporary assigned venue manager and tem
 - Replaced accidental higher-price ranking with a transparent Best Match score using availability, price, confidence, freshness, distance, and a bounded disclosed Pro boost.
 - Added venue identity aliases and canonicalized price, inventory, detail, and mission reads without overwriting approved local venue data.
 - Replaced the global 500-record map ceiling with current-grain SQL selection and cursor pagination.
+- Removed the unused daily price-reveal setting and aligned web, native, API, and operator copy around the fixed free preview versus entitled full-price access.
 - Added persisted mission progress, structured submission links, approval completion, recurring verification cycles, account history, missing happy-hour work, and a 30-minute refresh cache.
 - Fixed a subtle mission reward defect where unrelated fresh beer data could reduce a missing happy-hour mission from 5 points to 0.1.
 - Added actionable feedback, wrong-price, and venue-request queues with assignment, notes, status transitions, timestamps, links, and audit history.
@@ -62,7 +63,7 @@ An isolated browser verification used a temporary assigned venue manager and tem
 These items cannot be truthfully completed by changing repository code alone, so they are not hidden inside the 9.1 implementation score:
 
 - Deploy the final build and complete one controlled production happy hour, special, OCR/PDF submission, Pint Point, Free Pint Reward, support case, subscription, cancellation, and venue-manager edit.
-- Run `npm run data:backup:rehearse -- --backup=/path/to/latest/downloaded-backup` against a recent production backup and confirm `job:restore_rehearsal` is healthy in Admin.
+- Run `npm run data:backup:rehearse -- --backup=/path/to/latest/downloaded-backup` with the independent backup credentials so immutable deletion-ledger state is reconciled live, then confirm `job:restore_rehearsal` is healthy in Admin.
 - Configure external uptime/readiness alerts with a named owner and escalation destination.
 - Move or verify Railway deployment near Australian users, then measure Melbourne P75 map and API startup latency.
 - Have the published owner/contact identity, terms, privacy, refund wording, and tax treatment reviewed by the responsible Australian legal/accounting owner. No entity details were invented in code.
@@ -72,10 +73,7 @@ These items cannot be truthfully completed by changing repository code alone, so
 
 - Prove the counter flow in at least three real bars during busy service, targeting a median under 15 seconds per member purchase and less than 1% staff correction/error rate.
 - Test camera QR scanning on the venue devices that matter in practice, including current iPhone Safari and Android Chrome, with denied-camera and poor-light fallbacks.
-- Add limited counter-staff accounts so casual staff can validate codes and record/void purchases without receiving profile, billing, stock, or analytics permissions.
-- Add an audited void/correction workflow that reverses incorrectly awarded points without deleting history.
 - Complete native POS integrations for the launch POS systems rather than relying only on manual entry and the generic signed webhook.
-- Add controlled offline/poor-network handling so a bar can safely retry a queued receipt without guessing whether the first request succeeded.
 - Run a benchmark set for OCR/menu capture, publishing measured beer-name, ABV, availability, and pint-price precision/recall by source type.
 - Complete the production workflow, monitoring, Australian latency, backup restore, legal/accounting, and assistive-technology proof listed above.
 

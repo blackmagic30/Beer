@@ -11,7 +11,7 @@ DEVELOPMENT_TEAM =
 // Physical device with local backend: use an HTTPS tunnel or a LAN URL reachable from the device.
 PINT_PATH_API_BASE_URL = https:/$()/pintpath.au
 
-// Optional: public Supabase Auth config for future native Google/Apple OAuth.
+// Optional public Supabase Auth config used by native email/password and Google/Apple OAuth.
 // Email/password login works through the existing Express API without these.
 // Never use a Supabase service-role key here.
 SUPABASE_URL =

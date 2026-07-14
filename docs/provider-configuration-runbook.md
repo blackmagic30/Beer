@@ -65,6 +65,10 @@ OPENAI_API_KEY=your_server_openai_key_for_menu_ocr
 OPENAI_MENU_OCR_MODEL=gpt-5.5
 OPENAI_MENU_OCR_FALLBACK_MODEL=gpt-4.1
 OPENAI_MENU_OCR_REVIEW_PASS=true
+SUPABASE_URL=https://your-production-project.supabase.co
+SUPABASE_ANON_KEY=your_browser_safe_publishable_or_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_server_only_service_role_key
+SUPABASE_OAUTH_PROVIDERS=google,apple
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
 RESEND_API_KEY=
@@ -77,13 +81,27 @@ REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
 REDIS_URL=redis://default:replace_me@host:6379
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
+SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
+POS_WEBHOOK_SIGNING_SECRET=replace_with_a_different_32_plus_random_characters
 ADMIN_EMAILS=owner@example.com
 REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
 REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
+STRIPE_SECRET_KEY=sk_test_or_live_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_PRICE_MONTHLY=price_monthly_499_aud
+STRIPE_PRICE_YEARLY=price_yearly_50_aud
+STRIPE_PRO_PRICE_ID=price_venue_pro_aud
+OFFSITE_BACKUP_SUPABASE_URL=https://your-independent-backup-project.supabase.co
+OFFSITE_BACKUP_SERVICE_ROLE_KEY=your_independent_project_service_role_key
+OFFSITE_BACKUP_BUCKET=pintpath-backups
+OFFSITE_BACKUP_INTERVAL_HOURS=24
+OFFSITE_BACKUP_RETENTION_DAYS=30
 ```
+
+Replace all placeholders with real environment-specific values. The source-evidence and POS secrets must be different high-entropy values. `OFFSITE_BACKUP_SUPABASE_URL` must have a different origin from `SUPABASE_URL`. With `DEMO_BILLING_MODE=false`, all five Stripe values are startup requirements rather than optional checkout-only settings.
 
 Use a persistent Railway volume mounted at `/app/data`. Back it up before each schema-affecting deploy.
 
@@ -128,8 +146,11 @@ Keep `DEMO_BILLING_MODE=false` for real launch. Use Stripe test mode first:
 
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_MONTHLY`
+- `STRIPE_PRICE_YEARLY`
 - `STRIPE_PRO_PRICE_ID`
-- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+
+The browser does not initialise Stripe.js or need a publishable key. Authenticated checkout requests are created server-side and return a Stripe-hosted Checkout URL.
 
 Before live payments:
 
@@ -138,7 +159,7 @@ Before live payments:
 3. Confirm duplicate webhook events do not double-process.
 4. Confirm Pro venue subscriptions downgrade when cancelled or unpaid.
 5. Confirm the pricing page matches the configured Stripe price IDs.
-6. Confirm production uses live-mode `sk_live_` and `pk_live_` keys. Test-mode `sk_test_`/`pk_test_` keys are staging-only.
+6. Confirm production uses a live-mode `sk_live_` secret. Test-mode `sk_test_` secrets and test price IDs are staging-only.
 
 ## Monthly Reports
 
@@ -195,15 +216,25 @@ Before public launch:
 
 ## Backups And Restore Drills
 
-Production automatically backs up the SQLite database and legacy volume-backed source evidence to the private `pintpath-backups` Supabase Storage bucket. Each run uses SQLite's online backup API, writes SHA-256 manifests, uploads every object, downloads and verifies every object, and only then advances `latest.json`.
+Production backs up the SQLite database, legacy volume-backed evidence, and every object in the private production `beermap-source-evidence` bucket. Supabase database backups do **not** contain Storage objects, so this Storage export is required for a complete production snapshot.
+
+The `pintpath-backups` destination must be private and in a genuinely independent Supabase project/provider. A bucket in the production project is not disaster isolation and is rejected by startup, provider readiness, and the backup runner.
+
+Run `ops/supabase/independent-backup-project-storage.sql` manually against that independent project. This file deliberately lives outside `supabase/migrations/`, because the normal migration chain targets the production application project and must never create the backup destination there. The previously recorded `20260712010147` production migration remains as an intentional no-op so existing migration histories stay aligned. The backup bucket has no bucket-level object-size cap: SQLite snapshots can grow beyond 100 MiB. Its allowlist includes JSON, SQLite/octet-stream, PDF, and every supported evidence image MIME.
 
 Configure the schedule and retention with:
 
 ```dotenv
+OFFSITE_BACKUP_SUPABASE_URL=https://independent-backup-project.supabase.co
+OFFSITE_BACKUP_SERVICE_ROLE_KEY=replace_with_independent_project_service_role_key
 OFFSITE_BACKUP_BUCKET=pintpath-backups
 OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
 ```
+
+Each run uses SQLite's online backup API, captures Storage, then lists Storage again. A changed object set, missing database-referenced object, byte-size mismatch, or MIME mismatch retries the entire snapshot up to three times. The manifest records every SHA-256 checksum and original MIME type, the live database-reference count, reconciliation attempt, and any unreferenced/orphan paths. A snapshot is never published with a missing live evidence object. Every uploaded file is downloaded and checksum-verified; Storage MIME is also verified, including `application/pdf`, before `latest.json` advances.
+
+Deletion suppression is stored outside snapshot prefixes in the independent bucket. An immutable genesis record lives at `_control/account-deletion-ledger-genesis.json`; immutable deletion records live under `_control/account-deletion-ledger/v1/`; the verified aggregate is `_control/account-deletion-tombstones.json`; its genesis/immutable-set/count/hash checkpoint is `_control/account-deletion-ledger-checkpoint.json`. A new installation with no completed deletions therefore has a cryptographically bound zero-count genesis/checkpoint state, not a missing ledger. Deletion entries contain only request ID, internal user ID, and completion time. Production account deletion must durably append and verify its tombstone before the local request can become `completed`. Scheduled backups reconcile the ledger again.
 
 Run an immediate off-volume backup with:
 
@@ -218,7 +249,33 @@ npm run data:backup -- --output=/secure/offsite/pint-path-$(date +%F)
 npm run data:backup:verify -- --backup=/secure/offsite/pint-path-$(date +%F)
 ```
 
-Keep both backup buckets private. Once per quarter, restore the latest verified directory into an isolated staging service, set `DATABASE_PATH` and `SOURCE_EVIDENCE_STORAGE_DIR` to the restored paths, and confirm `/ready`, login, map prices, and review evidence before recording the drill result.
+The local command covers SQLite and legacy filesystem evidence only. It is not a complete production backup when the database contains `supabase_private` evidence references.
+
+For an online drill, configure the independent destination credentials and download only the selected snapshot prefix. The command reads the immutable genesis and every deletion object directly, verifies the current aggregate and checkpoint, and accepts a zero-count ledger only when all of that authority agrees:
+
+```bash
+npm run data:backup:rehearse -- --backup=/secure/restore/pint-path-SNAPSHOT --output=/secure/restore/rehearsal
+```
+
+Do not use the ledger hash in `latest.json` as restore authority; it is only the backup-time observation and later completed deletions legitimately advance the ledger. If the destination is temporarily offline, an operator may use a separately downloaded non-empty ledger with its trusted out-of-band SHA-256. A zero-count ledger additionally requires the independently downloaded genesis and checkpoint, each with its own trusted out-of-band SHA-256:
+
+```bash
+npm run data:backup:rehearse -- \
+  --backup=/secure/restore/pint-path-SNAPSHOT \
+  --tombstones=/secure/restore/account-deletion-tombstones.json \
+  --tombstone-sha256=TRUSTED_64_HEX_SHA256 \
+  --tombstone-genesis=/secure/restore/account-deletion-ledger-genesis.json \
+  --tombstone-genesis-sha256=TRUSTED_GENESIS_64_HEX_SHA256 \
+  --tombstone-checkpoint=/secure/restore/account-deletion-ledger-checkpoint.json \
+  --tombstone-checkpoint-sha256=TRUSTED_CHECKPOINT_64_HEX_SHA256 \
+  --output=/secure/restore/rehearsal
+```
+
+Restore fails closed if the independent ledger authority is absent, malformed, stale, tampered, or an empty aggregate is not bound to the verified genesis/checkpoint. It verifies SQLite, filesystem evidence, Storage evidence, reference-to-object reconciliation, checksums, MIME metadata, and the orphan report before applying all later deletion tombstones. Tombstoned account PII and private evidence are removed from the restored copy before success.
+
+Off-site snapshot retention is capped at 30 days, so old snapshots can physically retain pre-deletion bytes for at most 30 days. A completed deletion has zero unprotected restore window: its independent tombstone must be durable before completion. The scheduled 24-hour run is reconciliation and drift detection, not the primary deletion write. If the ledger append fails, deletion remains failed/retryable and production restore is blocked until the ledger is healthy.
+
+Keep both source and destination buckets private. `/ready` requires a fresh successful backup and live destination capability canaries for list/upload/download/remove across PDF, SQLite/octet-stream, and image objects. Once per quarter, restore the latest verified directory into isolated staging, point the database and evidence roots to it, and confirm `/ready`, login, map prices, source-evidence review (including a PDF), the orphan report, and deletion-tombstone counts before recording the drill.
 
 ## No-Go Conditions
 
@@ -231,4 +288,5 @@ Do not launch public production if any of these are true:
 - Automatic report email is presented as live before Resend credentials, verified sender-domain DNS, targeted staging delivery, and scheduler operational state are confirmed.
 - Redis is missing for broad public traffic.
 - Supabase source-evidence Storage is public or untested.
-- There is no recent off-volume backup that passes `data:backup:verify`, or the quarterly restore drill has not been completed.
+- The backup destination shares the production project/provider, either bucket is public, or the independent deletion ledger is unavailable.
+- There is no complete recent off-site backup (SQLite plus Storage evidence) that passes verification, or the quarterly ledger-backed restore drill has not been completed.

@@ -33,7 +33,7 @@ export interface MissionMaintenanceSchedulerConfig<TResult> {
 }
 
 export interface MissionMaintenanceScheduler {
-  stop: () => void;
+  stop: () => Promise<void>;
   runNow: () => Promise<void>;
 }
 
@@ -103,10 +103,14 @@ export function scheduleMissionMaintenance<TResult>(
   void execute("startup");
 
   return {
-    stop() {
-      if (stopped) return;
+    async stop() {
+      if (stopped) {
+        await activeRun;
+        return;
+      }
       stopped = true;
       clearInterval(interval);
+      await activeRun;
     },
     runNow: () => execute("manual"),
   };

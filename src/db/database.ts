@@ -5,11 +5,13 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 
 import { env } from "../config/env.js";
+import { CURRENT_LEGAL_POLICY_VERSION } from "../config/legal.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 
-const CURRENT_DATABASE_SCHEMA_VERSION = 6;
+export const CURRENT_DATABASE_SCHEMA_VERSION = 11;
 const MIGRATION_BACKUP_RETENTION = 3;
+export const MIGRATION_BACKUP_MAX_AGE_DAYS = 30;
 
 function splitSchemaIndexes(schema: string): { baseSchema: string; indexSchema: string } {
   const indexPattern = /CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\b[\s\S]*?;\s*/gi;
@@ -34,10 +36,15 @@ const venueProfilesColumns = [
   { name: "stripe_customer_id", definition: "TEXT" },
   { name: "stripe_subscription_id", definition: "TEXT" },
   { name: "subscription_status", definition: "TEXT" },
+  { name: "stripe_paid_membership_tier", definition: "TEXT" },
   { name: "tier_manual_override", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "accepts_pint_path_codes", definition: "INTEGER NOT NULL DEFAULT 0" },
   { name: "stripe_event_created_at", definition: "TEXT" },
   { name: "pos_webhook_token_version", definition: "INTEGER NOT NULL DEFAULT 1" },
+  { name: "pos_previous_token_version", definition: "INTEGER" },
+  { name: "pos_previous_token_valid_until", definition: "TEXT" },
+  { name: "pos_last_success_at", definition: "TEXT" },
+  { name: "pos_last_terminal_id", definition: "TEXT" },
 ] as const;
 
 const venueAnalyticsEventsColumns = [
@@ -48,6 +55,9 @@ const venueSpecialsColumns = [
   { name: "start_time", definition: "TEXT" },
   { name: "end_time", definition: "TEXT" },
   { name: "savings_amount_cents", definition: "INTEGER" },
+  { name: "recurrence_frequency", definition: "TEXT NOT NULL DEFAULT 'none'" },
+  { name: "days_of_week_json", definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { name: "timezone", definition: "TEXT NOT NULL DEFAULT 'Australia/Melbourne'" },
 ] as const;
 
 const venueHappyHoursColumns = [
@@ -55,6 +65,7 @@ const venueHappyHoursColumns = [
 ] as const;
 
 const authSessionsColumns = [
+  { name: "provider_session_id_hash", definition: "TEXT" },
   { name: "revoked_at", definition: "TEXT" },
   { name: "last_used_at", definition: "TEXT" },
   { name: "last_ip_hash", definition: "TEXT" },
@@ -95,6 +106,8 @@ const accountsColumns = [
   { name: "email_verified_at", definition: "TEXT" },
   { name: "mfa_level", definition: "TEXT NOT NULL DEFAULT 'aal1'" },
   { name: "mfa_verified_at", definition: "TEXT" },
+  { name: "provider_tokens_valid_after", definition: "TEXT" },
+  { name: "stripe_paid_subscription_status", definition: "TEXT" },
   { name: "terms_accepted_at", definition: "TEXT" },
   { name: "privacy_accepted_at", definition: "TEXT" },
   { name: "terms_version", definition: "TEXT" },
@@ -112,6 +125,7 @@ const stripeWebhookEventColumns = [
   { name: "last_error", definition: "TEXT" },
   { name: "received_at", definition: "TEXT" },
   { name: "applied_at", definition: "TEXT" },
+  { name: "processing_token", definition: "TEXT" },
 ] as const;
 
 const profilesColumns = [
@@ -157,14 +171,29 @@ const trustWorkflowColumns = [
   { name: "resolved_by", definition: "TEXT" },
 ] as const;
 
+const venueRequestColumns = [
+  { name: "google_place_id", definition: "TEXT" },
+  { name: "source_submission_id", definition: "TEXT" },
+] as const;
+
 const accountPrivacySettingsColumns = [
-  { name: "consent_version", definition: "TEXT NOT NULL DEFAULT '2026-07-11'" },
+  { name: "consent_version", definition: "TEXT NOT NULL DEFAULT '2026-07-12'" },
   { name: "consented_at", definition: "TEXT" },
 ] as const;
 
 const sourceEvidenceColumns = [
   { name: "retention_expires_at", definition: "TEXT" },
   { name: "deleted_at", definition: "TEXT" },
+] as const;
+
+const accountDeletionRequestColumns = [
+  { name: "processing_started_at", definition: "TEXT" },
+  { name: "identity_deleted_at", definition: "TEXT" },
+  { name: "stripe_customer_deleted_at", definition: "TEXT" },
+  { name: "stripe_customer_id_snapshot", definition: "TEXT" },
+  { name: "deletion_tombstone_recorded_at", definition: "TEXT" },
+  { name: "last_error", definition: "TEXT" },
+  { name: "attempt_count", definition: "INTEGER NOT NULL DEFAULT 0" },
 ] as const;
 
 const venuePartnerOutreachColumns = [
@@ -175,10 +204,18 @@ const venuePartnerOutreachColumns = [
 
 const adminIngestionQueueColumns = [
   { name: "crawler_feedback_json", definition: "TEXT" },
+  { name: "image_retention_expires_at", definition: "TEXT" },
+  { name: "image_redacted_at", definition: "TEXT" },
+  { name: "image_redaction_reason", definition: "TEXT" },
+  { name: "review_claim_token", definition: "TEXT" },
+  { name: "review_claimed_at", definition: "TEXT" },
 ] as const;
 
 const venueBeersColumns = [
   { name: "normalized_beer_id", definition: "TEXT" },
+  { name: "price_verified_at", definition: "TEXT" },
+  { name: "stock_verified_at", definition: "TEXT" },
+  { name: "source_ingestion_id", definition: "TEXT" },
 ] as const;
 
 const PUBLIC_ACCOUNT_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -214,6 +251,13 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_active
       ON auth_sessions (user_id, revoked_at, expires_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_provider_session
+      ON auth_sessions (user_id, provider_session_id_hash);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_account_deletion_requests_unfinished_user
+      ON account_deletion_requests (user_id)
+      WHERE status IN ('pending_review', 'approved', 'processing', 'failed');
 
     CREATE INDEX IF NOT EXISTS idx_accounts_supabase_user
       ON accounts (supabase_user_id);
@@ -257,6 +301,10 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
       ON discount_redemptions (venue_id, idempotency_key)
       WHERE idempotency_key IS NOT NULL;
 
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_discount_redemptions_pass_once
+      ON discount_redemptions (discount_pass_id)
+      WHERE discount_pass_id IS NOT NULL;
+
     CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_user
       ON pint_point_drink_records (user_id, recorded_at DESC);
 
@@ -272,6 +320,10 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_pint_point_drink_records_idempotency
       ON pint_point_drink_records (venue_id, idempotency_key)
       WHERE idempotency_key IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pint_point_drink_records_member_pass_once
+      ON pint_point_drink_records (idempotency_key)
+      WHERE idempotency_key LIKE 'member-pass:%';
 
     CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_user
       ON free_pint_reward_codes (user_id, status, expires_at DESC);
@@ -328,6 +380,8 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
       ON discount_redemptions (discount_pass_id);
     CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_recorded_by
       ON pint_point_drink_records (recorded_by_user_id);
+    CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_voided_by
+      ON pint_point_drink_records (voided_by_user_id);
     CREATE INDEX IF NOT EXISTS idx_pint_point_drink_records_reward
       ON pint_point_drink_records (reward_code_id);
     CREATE INDEX IF NOT EXISTS idx_free_pint_reward_codes_redeemed_by
@@ -371,20 +425,38 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
       ON account_deletion_requests (reviewed_by);
     CREATE INDEX IF NOT EXISTS idx_feedback_user
       ON feedback (user_id);
+    CREATE INDEX IF NOT EXISTS idx_feedback_assigned_to
+      ON feedback (assigned_to);
+    CREATE INDEX IF NOT EXISTS idx_feedback_resolved_by
+      ON feedback (resolved_by);
     CREATE INDEX IF NOT EXISTS idx_feedback_workflow
       ON feedback (status, assigned_to, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_user
       ON wrong_price_reports (user_id);
+    CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_assigned_to
+      ON wrong_price_reports (assigned_to);
+    CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_resolved_by
+      ON wrong_price_reports (resolved_by);
     CREATE INDEX IF NOT EXISTS idx_wrong_price_reports_workflow
       ON wrong_price_reports (status, assigned_to, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_venue_requests_mission
       ON venue_requests (mission_id);
     CREATE INDEX IF NOT EXISTS idx_venue_requests_user
       ON venue_requests (user_id);
+    CREATE INDEX IF NOT EXISTS idx_venue_requests_assigned_to
+      ON venue_requests (assigned_to);
+    CREATE INDEX IF NOT EXISTS idx_venue_requests_resolved_by
+      ON venue_requests (resolved_by);
     CREATE INDEX IF NOT EXISTS idx_venue_requests_workflow
       ON venue_requests (status, assigned_to, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_user
       ON venue_interest_requests (user_id);
+    CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_assigned_to
+      ON venue_interest_requests (assigned_to);
+    CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_resolved_by
+      ON venue_interest_requests (resolved_by);
+    CREATE INDEX IF NOT EXISTS idx_venue_claim_requests_reviewed_by
+      ON venue_claim_requests (reviewed_by);
     CREATE INDEX IF NOT EXISTS idx_venue_interest_requests_workflow
       ON venue_interest_requests (status, assigned_to, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_venue_identity_aliases_canonical
@@ -427,6 +499,210 @@ function normalizeMissionReservations(database: BetterSqlite3.Database): void {
        )`,
     )
     .run(now);
+}
+
+function reconcileCounterOnlyAccountRoles(database: BetterSqlite3.Database): void {
+  database.prepare(
+    `UPDATE accounts
+        SET role = 'user', updated_at = datetime('now')
+      WHERE role = 'venue_manager' AND subscription_status <> 'admin'
+        AND EXISTS (
+          SELECT 1 FROM venue_manager_assignments assignment
+          WHERE assignment.user_id = accounts.id AND assignment.access_level = 'counter_staff'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM venue_manager_assignments assignment
+          WHERE assignment.user_id = accounts.id
+            AND assignment.access_level = 'manager' AND assignment.status = 'active'
+        )`,
+  ).run();
+}
+
+function parseMigrationMetadata(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function appendMigrationReconciliation(
+  metadataJson: unknown,
+  reconciliation: Record<string, unknown>,
+): string {
+  const metadata = parseMigrationMetadata(metadataJson);
+  const existing = Array.isArray(metadata.migrationReconciliations)
+    ? metadata.migrationReconciliations
+    : [];
+  return JSON.stringify({
+    ...metadata,
+    migrationReconciliations: [...existing, reconciliation],
+  });
+}
+
+function reconcileLegacyUniqueConstraints(database: BetterSqlite3.Database): void {
+  const reconciledAt = new Date().toISOString();
+  const reconcile = database.transaction(() => {
+    const unfinishedDeletionRows = database.prepare(
+      `SELECT id, user_id, status, requested_at, updated_at, result_summary_json
+       FROM account_deletion_requests
+       WHERE status IN ('pending_review', 'approved', 'processing', 'failed')
+       ORDER BY user_id ASC,
+         CASE status WHEN 'processing' THEN 0 WHEN 'failed' THEN 1 WHEN 'approved' THEN 2 ELSE 3 END ASC,
+         updated_at DESC, requested_at DESC, id ASC`,
+    ).all() as Array<{
+      id: string;
+      user_id: string;
+      status: string;
+      requested_at: string;
+      updated_at: string;
+      result_summary_json: string | null;
+    }>;
+    const canonicalDeletionByUser = new Map<string, string>();
+    const cancelDeletion = database.prepare(
+      `UPDATE account_deletion_requests
+       SET status = 'cancelled', completed_at = COALESCE(completed_at, ?),
+           result_summary_json = ?, updated_at = ?
+       WHERE id = ?`,
+    );
+    for (const row of unfinishedDeletionRows) {
+      const canonicalId = canonicalDeletionByUser.get(row.user_id);
+      if (!canonicalId) {
+        canonicalDeletionByUser.set(row.user_id, row.id);
+        continue;
+      }
+      cancelDeletion.run(
+        reconciledAt,
+        JSON.stringify({
+          migrationReconciledDuplicate: true,
+          schemaVersion: CURRENT_DATABASE_SCHEMA_VERSION,
+          priorStatus: row.status,
+          canonicalRequestId: canonicalId,
+          priorResultSummary: parseMigrationMetadata(row.result_summary_json),
+        }),
+        reconciledAt,
+        row.id,
+      );
+    }
+
+    const reconcileDiscountDuplicates = (partition: "pass" | "idempotency") => {
+      const partitionSql = partition === "pass"
+        ? "discount_pass_id"
+        : "venue_id, idempotency_key";
+      const whereSql = partition === "pass"
+        ? "discount_pass_id IS NOT NULL"
+        : "idempotency_key IS NOT NULL";
+      const rows = database.prepare(
+        `WITH ranked AS (
+           SELECT id,
+             row_number() OVER (
+               PARTITION BY ${partitionSql}
+               ORDER BY redeemed_at ASC, created_at ASC, id ASC
+             ) AS duplicate_rank
+           FROM discount_redemptions
+           WHERE ${whereSql}
+         )
+         SELECT id FROM ranked WHERE duplicate_rank > 1`,
+      ).all() as Array<{ id: string }>;
+      const getRecord = database.prepare("SELECT * FROM discount_redemptions WHERE id = ?");
+      const quarantine = database.prepare(
+        `INSERT INTO migration_quarantined_records (
+          id, entity_type, original_id, reason, payload_json, quarantined_at
+        ) VALUES (?, 'discount_redemption', ?, ?, ?, ?)`,
+      );
+      const remove = database.prepare("DELETE FROM discount_redemptions WHERE id = ?");
+      for (const row of rows) {
+        const record = getRecord.get(row.id) as Record<string, unknown> | undefined;
+        if (!record) continue;
+        const reason = partition === "pass" ? "duplicate_discount_pass" : "duplicate_idempotency_key";
+        quarantine.run(
+          crypto.randomUUID(),
+          row.id,
+          reason,
+          JSON.stringify({ schemaVersion: CURRENT_DATABASE_SCHEMA_VERSION, record }),
+          reconciledAt,
+        );
+        remove.run(row.id);
+      }
+    };
+    reconcileDiscountDuplicates("pass");
+    reconcileDiscountDuplicates("idempotency");
+
+    const reconcilePintPointDuplicates = (globalMemberPass: boolean) => {
+      const partitionSql = globalMemberPass ? "idempotency_key" : "venue_id, idempotency_key";
+      const whereSql = globalMemberPass
+        ? "idempotency_key LIKE 'member-pass:%'"
+        : "idempotency_key IS NOT NULL";
+      const rows = database.prepare(
+        `WITH ranked AS (
+           SELECT id, user_id, venue_id, points_awarded, status, metadata_json, idempotency_key,
+             row_number() OVER (
+               PARTITION BY ${partitionSql}
+               ORDER BY recorded_at ASC, created_at ASC, id ASC
+             ) AS duplicate_rank
+           FROM pint_point_drink_records
+           WHERE ${whereSql}
+         )
+         SELECT * FROM ranked WHERE duplicate_rank > 1`,
+      ).all() as Array<{
+        id: string;
+        user_id: string;
+        venue_id: string;
+        points_awarded: number;
+        status: string;
+        metadata_json: string | null;
+        idempotency_key: string;
+      }>;
+      const quarantine = database.prepare(
+        `UPDATE pint_point_drink_records
+         SET idempotency_key = NULL, status = 'void', voided_at = COALESCE(voided_at, ?),
+             void_reason = COALESCE(void_reason, ?), metadata_json = ?
+         WHERE id = ?`,
+      );
+      const hasReversal = database.prepare(
+        "SELECT 1 FROM pint_point_ledger WHERE drink_record_id = ? AND type = 'drink_void' LIMIT 1",
+      );
+      const insertReversal = database.prepare(
+        `INSERT INTO pint_point_ledger (
+          id, user_id, venue_id, drink_record_id, reward_code_id, type,
+          points_delta, points_reserved_delta, description, created_at, metadata_json
+        ) VALUES (?, ?, ?, ?, NULL, 'drink_void', ?, 0, ?, ?, ?)`,
+      );
+      for (const row of rows) {
+        const wasActive = row.status !== "void";
+        quarantine.run(
+          reconciledAt,
+          "Migration quarantined a duplicate purchase record.",
+          appendMigrationReconciliation(row.metadata_json, {
+            type: globalMemberPass ? "duplicate_member_pass" : "duplicate_idempotency_key",
+            originalIdempotencyKey: row.idempotency_key,
+            schemaVersion: CURRENT_DATABASE_SCHEMA_VERSION,
+            reconciledAt,
+          }),
+          row.id,
+        );
+        if (wasActive && Number(row.points_awarded) > 0 && !hasReversal.get(row.id)) {
+          insertReversal.run(
+            crypto.randomUUID(),
+            row.user_id,
+            row.venue_id,
+            row.id,
+            -Number(row.points_awarded),
+            `Migration reversal: ${Number(row.points_awarded)} duplicate Pint Point${Number(row.points_awarded) === 1 ? "" : "s"}.`,
+            reconciledAt,
+            JSON.stringify({ migrationReconciliation: true, schemaVersion: CURRENT_DATABASE_SCHEMA_VERSION }),
+          );
+        }
+      }
+    };
+    reconcilePintPointDuplicates(false);
+    reconcilePintPointDuplicates(true);
+  });
+  reconcile();
 }
 
 function ensurePostMigrationIntegrity(database: BetterSqlite3.Database): void {
@@ -782,6 +1058,24 @@ function normalizeVenueTiers(database: BetterSqlite3.Database): void {
   `);
 }
 
+function backfillStripeEntitlementTargets(database: BetterSqlite3.Database): void {
+  database.exec(`
+    UPDATE accounts
+       SET stripe_paid_subscription_status = subscription_status
+     WHERE stripe_paid_subscription_status IS NULL
+       AND subscription_status IN ('premium_monthly', 'premium_yearly');
+
+    UPDATE venue_profiles
+       SET stripe_paid_membership_tier = 'pro'
+     WHERE stripe_paid_membership_tier IS NULL
+       AND membership_tier = 'pro';
+
+    UPDATE venue_profiles
+       SET stripe_paid_membership_tier = 'pro'
+     WHERE stripe_paid_membership_tier IN ('plus', 'super_premium');
+  `);
+}
+
 function shouldCatalogBeerName(value: string | null | undefined, isHappyHour = false): boolean {
   return !isHappyHour && isLikelyBeerName(value);
 }
@@ -874,46 +1168,61 @@ function redactCompletedAdminIngestionImages(database: BetterSqlite3.Database): 
 export function initializeDatabaseSchema(database: BetterSqlite3.Database): void {
   const schema = fs.readFileSync(resolveSchemaPath(), "utf8");
   const { baseSchema, indexSchema } = splitSchemaIndexes(schema);
-
-  // Existing databases can be missing columns referenced by newer indexes.
-  // Create tables first, upgrade columns second, then build every index.
-  database.exec(baseSchema);
-  migrateLegacyVenuePartnerTables(database);
-  ensureColumns(database, "venue_profiles", venueProfilesColumns);
-  ensureColumns(database, "venue_analytics_events", venueAnalyticsEventsColumns);
-  ensureColumns(database, "venue_happy_hours", venueHappyHoursColumns);
-  ensureColumns(database, "venue_specials", venueSpecialsColumns);
-  ensureColumns(database, "accounts", accountsColumns);
-  ensureColumns(database, "stripe_webhook_events", stripeWebhookEventColumns);
-  ensureColumns(database, "profiles", profilesColumns);
-  ensureColumns(database, "auth_sessions", authSessionsColumns);
-  ensureColumns(database, "discount_redemptions", discountRedemptionColumns);
-  ensureColumns(database, "pint_point_drink_records", pintPointDrinkRecordColumns);
-  ensureColumns(database, "venue_manager_assignments", venueManagerAssignmentColumns);
-  ensureColumns(database, "venue_claim_requests", venueClaimRequestColumns);
-  ensureColumns(database, "submissions", submissionColumns);
-  ensureColumns(database, "submission_items", submissionItemColumns);
-  ensureColumns(database, "feedback", feedbackColumns);
-  ensureColumns(database, "wrong_price_reports", trustWorkflowColumns);
-  ensureColumns(database, "venue_requests", trustWorkflowColumns);
-  ensureColumns(database, "venue_interest_requests", trustWorkflowColumns);
-  ensureColumns(database, "account_privacy_settings", accountPrivacySettingsColumns);
-  ensureColumns(database, "source_evidence_objects", sourceEvidenceColumns);
-  ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
-  ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
-  redactCompletedAdminIngestionImages(database);
-  ensureColumns(database, "venue_beers", venueBeersColumns);
-  normalizeMissionReservations(database);
-  ensurePostMigrationIntegrity(database);
-  database.exec(indexSchema);
-  syncStaticBeerCatalog(database);
-  deletePendingNonBeerCatalogItems(database);
-  backfillBeerNames(database);
-  normalizeVenueTiers(database);
-  backfillPublicAccountIds(database);
-  backfillDisplayNameKeys(database);
-  ensureIndexes(database);
-  database.pragma(`user_version = ${CURRENT_DATABASE_SCHEMA_VERSION}`);
+  const transactionalBaseSchema = baseSchema
+    .replace(/PRAGMA\s+journal_mode\s*=\s*WAL\s*;/gi, "")
+    .replace(/PRAGMA\s+foreign_keys\s*=\s*ON\s*;/gi, "");
+  database.pragma("journal_mode = WAL");
+  database.pragma("foreign_keys = ON");
+  const migrate = database.transaction(() => {
+    // Existing databases can be missing columns referenced by newer indexes.
+    // Create tables first, upgrade columns second, reconcile legacy rows, then build every index.
+    database.exec(transactionalBaseSchema);
+    migrateLegacyVenuePartnerTables(database);
+    ensureColumns(database, "venue_profiles", venueProfilesColumns);
+    ensureColumns(database, "venue_analytics_events", venueAnalyticsEventsColumns);
+    ensureColumns(database, "venue_happy_hours", venueHappyHoursColumns);
+    ensureColumns(database, "venue_specials", venueSpecialsColumns);
+    ensureColumns(database, "accounts", accountsColumns);
+    ensureColumns(database, "stripe_webhook_events", stripeWebhookEventColumns);
+    ensureColumns(database, "profiles", profilesColumns);
+    ensureColumns(database, "auth_sessions", authSessionsColumns);
+    ensureColumns(database, "discount_redemptions", discountRedemptionColumns);
+    ensureColumns(database, "pint_point_drink_records", pintPointDrinkRecordColumns);
+    ensureColumns(database, "venue_manager_assignments", venueManagerAssignmentColumns);
+    ensureColumns(database, "venue_claim_requests", venueClaimRequestColumns);
+    ensureColumns(database, "submissions", submissionColumns);
+    ensureColumns(database, "submission_items", submissionItemColumns);
+    ensureColumns(database, "feedback", feedbackColumns);
+    ensureColumns(database, "wrong_price_reports", trustWorkflowColumns);
+    ensureColumns(database, "venue_requests", trustWorkflowColumns);
+    ensureColumns(database, "venue_requests", venueRequestColumns);
+    ensureColumns(database, "venue_interest_requests", trustWorkflowColumns);
+    ensureColumns(database, "account_privacy_settings", accountPrivacySettingsColumns);
+    database.prepare(
+      "UPDATE account_privacy_settings SET consent_version = ? WHERE consent_version <> ?",
+    ).run(CURRENT_LEGAL_POLICY_VERSION, CURRENT_LEGAL_POLICY_VERSION);
+    ensureColumns(database, "source_evidence_objects", sourceEvidenceColumns);
+    ensureColumns(database, "account_deletion_requests", accountDeletionRequestColumns);
+    ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);
+    ensureColumns(database, "admin_ingestion_queue", adminIngestionQueueColumns);
+    redactCompletedAdminIngestionImages(database);
+    ensureColumns(database, "venue_beers", venueBeersColumns);
+    normalizeMissionReservations(database);
+    reconcileCounterOnlyAccountRoles(database);
+    reconcileLegacyUniqueConstraints(database);
+    ensurePostMigrationIntegrity(database);
+    database.exec(indexSchema);
+    syncStaticBeerCatalog(database);
+    deletePendingNonBeerCatalogItems(database);
+    backfillBeerNames(database);
+    normalizeVenueTiers(database);
+    backfillStripeEntitlementTargets(database);
+    backfillPublicAccountIds(database);
+    backfillDisplayNameKeys(database);
+    ensureIndexes(database);
+    database.pragma(`user_version = ${CURRENT_DATABASE_SCHEMA_VERSION}`);
+  });
+  migrate();
 }
 
 function currentDatabaseSchemaVersion(database: BetterSqlite3.Database): number {
@@ -944,6 +1253,8 @@ function createPreMigrationBackup(database: BetterSqlite3.Database, databasePath
   database.prepare("VACUUM INTO ?").run(backupPath);
   fs.chmodSync(backupPath, 0o600);
 
+  purgeExpiredMigrationBackups(databasePath);
+
   const backups = fs
     .readdirSync(backupDirectory, { withFileTypes: true })
     .filter((entry) => entry.isFile() && /^schema-\d+-to-\d+-.*\.sqlite$/.test(entry.name))
@@ -960,10 +1271,27 @@ function createPreMigrationBackup(database: BetterSqlite3.Database, databasePath
   return backupPath;
 }
 
-export function createDatabase(): BetterSqlite3.Database {
-  fs.mkdirSync(path.dirname(env.DATABASE_PATH), { recursive: true });
+export function purgeExpiredMigrationBackups(databasePath: string, now = new Date()): number {
+  if (databasePath === ":memory:") return 0;
+  const backupDirectory = path.join(path.dirname(databasePath), "migration-backups");
+  if (!fs.existsSync(backupDirectory)) return 0;
+  const cutoff = now.getTime() - MIGRATION_BACKUP_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  let deleted = 0;
+  for (const entry of fs.readdirSync(backupDirectory, { withFileTypes: true })) {
+    if (!entry.isFile() || !/^schema-\d+-to-\d+-.*\.sqlite$/.test(entry.name)) continue;
+    const backupPath = path.join(backupDirectory, entry.name);
+    if (fs.statSync(backupPath).mtimeMs > cutoff) continue;
+    fs.rmSync(backupPath, { force: true });
+    deleted += 1;
+  }
+  return deleted;
+}
 
-  const database = new BetterSqlite3(env.DATABASE_PATH);
+export function createDatabase(databasePath = env.DATABASE_PATH): BetterSqlite3.Database {
+  fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+  purgeExpiredMigrationBackups(databasePath);
+
+  const database = new BetterSqlite3(databasePath);
 
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
@@ -975,7 +1303,7 @@ export function createDatabase(): BetterSqlite3.Database {
     );
   }
   if (schemaVersion < CURRENT_DATABASE_SCHEMA_VERSION) {
-    const backupPath = createPreMigrationBackup(database, env.DATABASE_PATH, schemaVersion);
+    const backupPath = createPreMigrationBackup(database, databasePath, schemaVersion);
     if (backupPath) {
       console.info("Created pre-migration database backup", {
         fromVersion: schemaVersion,
@@ -984,7 +1312,12 @@ export function createDatabase(): BetterSqlite3.Database {
       });
     }
   }
-  initializeDatabaseSchema(database);
+  try {
+    initializeDatabaseSchema(database);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
 
   return database;
 }

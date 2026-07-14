@@ -41,10 +41,14 @@
     <section class="hero">
       <div id="pricingEyebrow" class="eyebrow">User pricing</div>
       <h1 id="pricingTitle">Unlock the full Pint Path map.</h1>
-      <p id="pricingLead" class="lead">Signed-out users and normal accounts see personal access plans first. Bar plans appear after a verified venue-manager account signs in.</p>
+      <p id="pricingLead" class="lead">Choose drinker or venue pricing. Pint Path defaults to the view that matches your signed-in account.</p>
+      <div class="pricingAudienceSwitch" role="tablist" aria-label="Choose pricing audience">
+        <button id="consumerPricingTab" class="button" type="button" role="tab" aria-controls="userPricingSection" aria-selected="true" data-pricing-audience="users">For drinkers</button>
+        <button id="venuePricingTab" class="button" type="button" role="tab" aria-controls="venuePricingSection" aria-selected="false" data-pricing-audience="venues">For venues</button>
+      </div>
     </section>
 
-    <section id="userPricingSection" class="consumerPricingSection" aria-labelledby="userPricingTitle">
+    <section id="userPricingSection" class="consumerPricingSection" role="tabpanel" aria-labelledby="consumerPricingTab userPricingTitle">
       <div class="sectionHeader">
         <div>
           <div class="eyebrow">For drinkers</div>
@@ -80,7 +84,7 @@
             <div class="price">A$4.99</div>
             <p class="muted">Best when you want full Pint Path access for this month.</p>
             <ul class="cleanList tierList">
-              <li>Every verified beer price with no daily reveal limit.</li>
+              <li>Every verified beer price, beyond the fixed free preview.</li>
               <li>Value rings on map pins for cheaper-to-expensive beer comparisons.</li>
               <li>Cheapest-night filters: beer search, cheapest sort, verified only, under A$10, and saved areas.</li>
               <li>Rotating discount pass for venue specials where available.</li>
@@ -114,7 +118,7 @@
       </div>
     </section>
 
-    <section id="venuePricingSection" class="venuePricingSection" aria-labelledby="venuePricingTitle" hidden>
+    <section id="venuePricingSection" class="venuePricingSection" role="tabpanel" aria-labelledby="venuePricingTab venuePricingTitle" hidden>
       <div class="sectionHeader">
         <div>
           <div class="eyebrow">For venues</div>
@@ -194,20 +198,45 @@
       const params = new URLSearchParams(window.location.search);
       const forceUserPricing = params.get("audience") === "users";
       const forceVenuePricing = params.get("audience") === "venues";
-      const showVenuePricing = !forceUserPricing && (forceVenuePricing || role === "venue_manager" || role === "admin");
-      const pricingContext = showVenuePricing ? "venue" : "consumer";
+      const initiallyShowVenuePricing = !forceUserPricing && (forceVenuePricing || role === "venue_manager" || role === "admin");
 
-      document.getElementById("userPricingSection").hidden = showVenuePricing;
-      document.getElementById("venuePricingSection").hidden = !showVenuePricing;
-      document.getElementById("pricingEyebrow").textContent = showVenuePricing ? "Venue pricing" : "User pricing";
-      document.getElementById("pricingTitle").textContent = showVenuePricing
-        ? "Bar plans for keeping Pint Path venue data current."
-        : "Unlock the full Pint Path map.";
-      document.getElementById("pricingLead").textContent = showVenuePricing
-        ? "Verified bars use the venue dashboard to publish fresh beer data and happy-hour data. Paid venue tiers add reviewed specials, privacy-safe analytics, and premium display tools."
-        : "Signed-out users and normal accounts can unlock exact prices, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.";
+      function showPricingAudience(audience, options = {}) {
+        const showVenuePricing = audience === "venues";
+        const pricingContext = showVenuePricing ? "venue" : "consumer";
+        const consumerTab = document.getElementById("consumerPricingTab");
+        const venueTab = document.getElementById("venuePricingTab");
+        document.getElementById("userPricingSection").hidden = showVenuePricing;
+        document.getElementById("venuePricingSection").hidden = !showVenuePricing;
+        consumerTab.setAttribute("aria-selected", showVenuePricing ? "false" : "true");
+        venueTab.setAttribute("aria-selected", showVenuePricing ? "true" : "false");
+        consumerTab.setAttribute("tabindex", showVenuePricing ? "-1" : "0");
+        venueTab.setAttribute("tabindex", showVenuePricing ? "0" : "-1");
+        document.getElementById("pricingEyebrow").textContent = showVenuePricing ? "Venue pricing" : "User pricing";
+        document.getElementById("pricingTitle").textContent = showVenuePricing
+          ? "Bar plans for keeping Pint Path venue data current."
+          : "Unlock the full Pint Path map.";
+        document.getElementById("pricingLead").textContent = showVenuePricing
+          ? "Verified bars use the venue dashboard to publish fresh beer data and happy-hour data. Paid venue tiers add reviewed specials, privacy-safe analytics, and premium display tools."
+          : "Signed-out users and normal accounts can unlock exact prices, value rings, premium filters, saved night shortcuts, discount-pass access, and venue special-discount details.";
+        if (options.updateUrl) {
+          const url = new URL(window.location.href);
+          url.searchParams.set("audience", showVenuePricing ? "venues" : "users");
+          window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+        }
+        if (options.focus) (showVenuePricing ? venueTab : consumerTab).focus();
+        void MelbBeerBusiness.trackEvent("pricing_page_viewed", { pricingContext });
+      }
 
-      void MelbBeerBusiness.trackEvent("pricing_page_viewed", { pricingContext });
+      document.querySelectorAll("[data-pricing-audience]").forEach((button) => {
+        button.addEventListener("click", () => showPricingAudience(button.dataset.pricingAudience, { updateUrl: true }));
+      });
+      document.querySelector(".pricingAudienceSwitch").addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const showVenues = event.key === "ArrowRight" || event.key === "End";
+        showPricingAudience(showVenues ? "venues" : "users", { updateUrl: true, focus: true });
+      });
+      showPricingAudience(initiallyShowVenuePricing ? "venues" : "users");
     });
   </script>
 </body>

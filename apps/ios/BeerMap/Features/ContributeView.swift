@@ -1,9 +1,13 @@
+import CoreLocation
+import ImageIO
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct ContributeView: View {
     @EnvironmentObject private var model: BeerMapAppModel
+    @StateObject private var locationProof = OneTimeLocationProof()
     @State private var selectedMode: ContributionMode = .price
     @State private var selectedVenueId = ""
     @State private var beerName = ""
@@ -11,8 +15,9 @@ struct ContributeView: View {
     @State private var servingSize = "pint"
     @State private var notes = ""
     @State private var sourcePhotoItem: PhotosPickerItem?
-    @State private var sourcePhotoData: Data?
+    @State private var sourcePhotoDataURL: String?
     @State private var sourcePhotoStatus = "Choose a clear menu, receipt, tap-list, or happy-hour board photo."
+    @State private var sourcePhotoPreparationTask: Task<Void, Never>?
     @State private var happyOffer = ""
     @State private var happyNotes = ""
     @State private var happyStart = Calendar.current.date(bySettingHour: 16, minute: 0, second: 0, of: Date()) ?? Date()
@@ -23,6 +28,11 @@ struct ContributeView: View {
     @State private var requestSuburb = ""
     @State private var requestNotes = ""
     @State private var requestKind: MissingRequestKind = .venue
+    @State private var priceSubmissionId = "ios-\(UUID().uuidString)"
+    @State private var photoSubmissionId = "ios-photo-\(UUID().uuidString)"
+    @State private var happyHourSubmissionId = "ios-happy-\(UUID().uuidString)"
+    @State private var acceptedMissionId: String?
+    @State private var attachLocationProof = false
 
     private let servingSizes = ["pint", "pot", "schooner", "jug", "bottle", "can", "other"]
     private let dayCodes = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -61,12 +71,19 @@ struct ContributeView: View {
                 SectionHeader(
                     eyebrow: "Add updates",
                     title: "What did you see?",
-                    subtitle: "Pick the shortest path. BeerMap sends everything through the same reviewed backend as the website.",
+                    subtitle: "Pick the shortest path. Pint Path sends everything through the same reviewed backend as the website.",
                     systemImage: "square.and.arrow.up.fill"
                 )
                 .beerMapCard()
 
                 modePicker
+
+                if let acceptedMissionId {
+                    StatusBanner(
+                        message: "Mission reserved. The next update you send from this form will be linked for review.",
+                        systemImage: "checkmark.seal.fill"
+                    )
+                }
 
                 switch selectedMode {
                 case .price:
@@ -94,8 +111,11 @@ struct ContributeView: View {
             ensureVenueSelection()
         }
         .onChange(of: sourcePhotoItem) { _, item in
-            Task { await loadSourcePhoto(item) }
+            sourcePhotoPreparationTask?.cancel()
+            guard item != nil else { return }
+            sourcePhotoPreparationTask = Task { await loadSourcePhoto(item) }
         }
+        .onDisappear { sourcePhotoPreparationTask?.cancel() }
     }
 
     private var modePicker: some View {
@@ -153,16 +173,22 @@ struct ContributeView: View {
             TextField("Notes, optional", text: $notes, axis: .vertical)
                 .lineLimit(3...6)
                 .textFieldStyle(.roundedBorder)
+            locationProofToggle
             PrimaryButton(title: "Send price for review", systemImage: "paperplane.fill", isLoading: model.isLoading) {
                 Task {
-                    await model.submitPriceUpdate(
+                    let location = await requestedLocationProof()
+                    if attachLocationProof && location == nil { return }
+                    let submitted = await model.submitPriceUpdate(
+                        clientSubmissionId: priceSubmissionId,
+                        missionId: acceptedMissionId,
                         venueId: selectedVenueId,
                         beerName: beerName,
                         servingSize: servingSize,
                         priceText: priceText,
-                        notes: notes
+                        notes: notes,
+                        uploadLocation: location
                     )
-                    clearPriceFields()
+                    if submitted { clearPriceFields() }
                 }
             }
             .disabled(!model.isSignedIn || selectedVenueId.isEmpty || beerName.trimmed.isEmpty || priceText.trimmed.isEmpty)
@@ -172,7 +198,7 @@ struct ContributeView: View {
     }
 
     private var sourcePhotoCard: some View {
-        let photoButtonTitle = sourcePhotoData == nil ? "Choose photo" : "Replace photo"
+        let photoButtonTitle = sourcePhotoDataURL == nil ? "Choose photo" : "Replace photo"
 
         return VStack(alignment: .leading, spacing: 12) {
             SectionHeader(
@@ -199,24 +225,34 @@ struct ContributeView: View {
 
             StatusBanner(
                 message: sourcePhotoStatus,
-                isError: sourcePhotoData == nil && sourcePhotoStatus.hasPrefix("Could not"),
-                systemImage: sourcePhotoData == nil ? "photo" : "checkmark.seal.fill"
+                isError: sourcePhotoDataURL == nil && sourcePhotoStatus.hasPrefix("Could not"),
+                systemImage: sourcePhotoDataURL == nil ? "photo" : "checkmark.seal.fill"
             )
             TextField("What should reviewers look for?", text: $notes, axis: .vertical)
                 .lineLimit(3...6)
                 .textFieldStyle(.roundedBorder)
+            locationProofToggle
             PrimaryButton(title: "Upload source for review", systemImage: "arrow.up.doc.fill", isLoading: model.isLoading) {
                 guard let dataURL = sourcePhotoDataURL else {
                     model.errorMessage = "Choose a source photo before uploading."
                     return
                 }
                 Task {
-                    await model.submitSourcePhotoUpdate(venueId: selectedVenueId, sourcePhotoDataUrl: dataURL, notes: notes)
-                    clearPhotoFields()
+                    let location = await requestedLocationProof()
+                    if attachLocationProof && location == nil { return }
+                    let submitted = await model.submitSourcePhotoUpdate(
+                        clientSubmissionId: photoSubmissionId,
+                        missionId: acceptedMissionId,
+                        venueId: selectedVenueId,
+                        sourcePhotoDataUrl: dataURL,
+                        notes: notes,
+                        uploadLocation: location
+                    )
+                    if submitted { clearPhotoFields() }
                 }
             }
-            .disabled(!model.isSignedIn || selectedVenueId.isEmpty || sourcePhotoData == nil)
-            StatusBanner(message: "Native location proof is not wired yet. Uploads still work, but location-based points depend on the backend review rules.")
+            .disabled(!model.isSignedIn || selectedVenueId.isEmpty || sourcePhotoDataURL == nil)
+            StatusBanner(message: "Location proof is optional, requested only when you send, and used only for submission review and points eligibility.")
         }
         .beerMapCard()
     }
@@ -239,17 +275,23 @@ struct ContributeView: View {
             TextField("Notes, optional", text: $happyNotes, axis: .vertical)
                 .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
+            locationProofToggle
             PrimaryButton(title: "Send happy-hour update", systemImage: "clock.badge.checkmark.fill", isLoading: model.isLoading) {
                 Task {
-                    await model.submitHappyHourUpdate(
+                    let location = await requestedLocationProof()
+                    if attachLocationProof && location == nil { return }
+                    let submitted = await model.submitHappyHourUpdate(
+                        clientSubmissionId: happyHourSubmissionId,
+                        missionId: acceptedMissionId,
                         venueId: selectedVenueId,
                         days: Array(happyDays).sorted(),
                         startTime: contributionTime(happyStart),
                         endTime: contributionTime(happyEnd),
                         offerText: happyOffer,
-                        notes: happyNotes
+                        notes: happyNotes,
+                        uploadLocation: location
                     )
-                    clearHappyHourFields()
+                    if submitted { clearHappyHourFields() }
                 }
             }
             .disabled(!model.isSignedIn || selectedVenueId.isEmpty || happyDays.isEmpty || happyOffer.trimmed.isEmpty)
@@ -288,14 +330,14 @@ struct ContributeView: View {
                 .textFieldStyle(.roundedBorder)
             PrimaryButton(title: "Send request", systemImage: "paperplane.fill", isLoading: model.isLoading) {
                 Task {
-                    await model.requestMissing(
+                    let submitted = await model.requestMissing(
                         requestType: requestKind.requestType,
                         venueName: requestVenueName,
                         beerName: requestBeerName,
                         suburb: requestSuburb,
                         notes: requestNotes
                     )
-                    clearRequestFields()
+                    if submitted { clearRequestFields() }
                 }
             }
             .disabled(requestDisabled)
@@ -334,11 +376,32 @@ struct ContributeView: View {
                         Text([mission.suburb, mission.reason].compactMap { $0 }.joined(separator: " - "))
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        if let venueId = mission.venueId {
-                            SecondaryButton(title: "Use this venue", systemImage: "mappin.and.ellipse") {
-                                selectedVenueId = venueId
-                                selectedMode = .price
+                        if mission.userProgress == "accepted" || acceptedMissionId == mission.id {
+                            HStack {
+                                StatusBanner(message: "Reserved until \(mission.reservationExpiresAt ?? "24 hours after acceptance")", systemImage: "clock.badge.checkmark.fill")
+                                Button("Release", role: .destructive) {
+                                    Task {
+                                        if await model.releaseMission(mission) {
+                                            if acceptedMissionId == mission.id { acceptedMissionId = nil }
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.bordered)
                             }
+                        } else if let venueId = mission.venueId {
+                            PrimaryButton(
+                                title: model.isSignedIn ? "Reserve mission" : "Sign in to reserve",
+                                systemImage: "checkmark.seal.fill",
+                                isLoading: model.isLoading
+                            ) {
+                                Task {
+                                    guard await model.acceptMission(mission) else { return }
+                                    acceptedMissionId = mission.id
+                                    selectedVenueId = venueId
+                                    selectedMode = mission.reason?.localizedCaseInsensitiveContains("happy") == true ? .happyHour : .price
+                                }
+                            }
+                            .disabled(!model.isSignedIn)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -387,9 +450,27 @@ struct ContributeView: View {
         }
     }
 
-    private var sourcePhotoDataURL: String? {
-        guard let sourcePhotoData else { return nil }
-        return "data:image/jpeg;base64,\(sourcePhotoData.base64EncodedString())"
+    private var locationProofToggle: some View {
+        Toggle(isOn: $attachLocationProof) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Attach one-time location proof")
+                    .font(.subheadline.weight(.semibold))
+                Text("Optional. Requested only at submit time; never tracked in the background.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @MainActor
+    private func requestedLocationProof() async -> UploadLocationRequest? {
+        guard attachLocationProof else { return nil }
+        do {
+            return try await locationProof.request()
+        } catch {
+            model.errorMessage = error.localizedDescription
+            return nil
+        }
     }
 
     private var requestDisabled: Bool {
@@ -411,23 +492,23 @@ struct ContributeView: View {
         sourcePhotoStatus = "Preparing photo for review..."
         do {
             guard
-                let data = try await item.loadTransferable(type: Data.self),
-                let image = UIImage(data: data),
-                let jpeg = compressedJPEGData(from: image)
+                let data = try await item.loadTransferable(type: Data.self)
             else {
-                sourcePhotoData = nil
-                sourcePhotoStatus = "Could not prepare this image. Try a JPEG, PNG, HEIC, or WebP photo."
+                sourcePhotoDataURL = nil
+                sourcePhotoStatus = "Could not read this photo. Try a JPEG, PNG, HEIC, or WebP image."
                 return
             }
-            guard jpeg.count <= 6 * 1024 * 1024 else {
-                sourcePhotoData = nil
-                sourcePhotoStatus = "Could not attach this photo because it is still larger than 6MB after compression."
-                return
-            }
-            sourcePhotoData = jpeg
-            sourcePhotoStatus = "Photo ready for private review (\(ByteCountFormatter.string(fromByteCount: Int64(jpeg.count), countStyle: .file)))."
+            try Task<Never, Never>.checkCancellation()
+            let preparedPhoto = try await Task.detached(priority: .userInitiated) {
+                try prepareSourcePhoto(data)
+            }.value
+            try Task<Never, Never>.checkCancellation()
+            sourcePhotoDataURL = preparedPhoto.dataURL
+            sourcePhotoStatus = "Photo ready for private review (\(ByteCountFormatter.string(fromByteCount: Int64(preparedPhoto.byteCount), countStyle: .file)))."
+        } catch is CancellationError {
+            return
         } catch {
-            sourcePhotoData = nil
+            sourcePhotoDataURL = nil
             sourcePhotoStatus = "Could not prepare this photo. \(error.localizedDescription)"
         }
     }
@@ -437,19 +518,25 @@ struct ContributeView: View {
         priceText = ""
         notes = ""
         servingSize = "pint"
+        priceSubmissionId = "ios-\(UUID().uuidString)"
+        acceptedMissionId = nil
     }
 
     private func clearPhotoFields() {
         sourcePhotoItem = nil
-        sourcePhotoData = nil
+        sourcePhotoDataURL = nil
         sourcePhotoStatus = "Choose a clear menu, receipt, tap-list, or happy-hour board photo."
         notes = ""
+        photoSubmissionId = "ios-photo-\(UUID().uuidString)"
+        acceptedMissionId = nil
     }
 
     private func clearHappyHourFields() {
         happyOffer = ""
         happyNotes = ""
         happyDays = ["fri"]
+        happyHourSubmissionId = "ios-happy-\(UUID().uuidString)"
+        acceptedMissionId = nil
     }
 
     private func clearRequestFields() {
@@ -460,16 +547,163 @@ struct ContributeView: View {
     }
 }
 
-private func compressedJPEGData(from image: UIImage) -> Data? {
-    let maxEdge: CGFloat = 2200
-    let longestEdge = max(image.size.width, image.size.height)
-    let scale = longestEdge > maxEdge ? maxEdge / longestEdge : 1
-    let outputSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-    let renderer = UIGraphicsImageRenderer(size: outputSize)
-    let rendered = renderer.image { _ in
-        image.draw(in: CGRect(origin: .zero, size: outputSize))
+@MainActor
+private final class OneTimeLocationProof: NSObject, ObservableObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private var continuation: CheckedContinuation<UploadLocationRequest, Error>?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
     }
-    return rendered.jpegData(compressionQuality: 0.84)
+
+    func request() async throws -> UploadLocationRequest {
+        guard continuation == nil else { throw LocationProofError.requestInProgress }
+        switch manager.authorizationStatus {
+        case .denied, .restricted:
+            throw LocationProofError.permissionDenied
+        default:
+            break
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            if manager.authorizationStatus == .notDetermined {
+                manager.requestWhenInUseAuthorization()
+            } else {
+                manager.requestLocation()
+            }
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard continuation != nil else { return }
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            manager.requestLocation()
+        case .denied, .restricted:
+            finish(.failure(LocationProofError.permissionDenied))
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else {
+            finish(.failure(LocationProofError.unavailable))
+            return
+        }
+        finish(.success(UploadLocationRequest(
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude,
+            accuracyMeters: max(0, location.horizontalAccuracy),
+            capturedAt: ISO8601DateFormatter().string(from: location.timestamp)
+        )))
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        finish(.failure(error))
+    }
+
+    private func finish(_ result: Result<UploadLocationRequest, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(with: result)
+    }
+}
+
+private enum LocationProofError: LocalizedError {
+    case permissionDenied
+    case requestInProgress
+    case unavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .permissionDenied:
+            return "Location access is off. Enable While Using the App in Settings, or turn off location proof and submit without it."
+        case .requestInProgress:
+            return "A location request is already in progress."
+        case .unavailable:
+            return "A location fix was not available. Try again outside, or submit without location proof."
+        }
+    }
+}
+
+private enum SourcePhotoPreparationError: LocalizedError {
+    case tooLarge
+    case invalidImage
+    case outputFailed
+    case outputTooLarge
+
+    var errorDescription: String? {
+        switch self {
+        case .tooLarge:
+            return "Choose an image smaller than 24MB."
+        case .invalidImage:
+            return "Try a JPEG, PNG, HEIC, or WebP photo with valid image dimensions."
+        case .outputFailed:
+            return "The image could not be compressed. Try a different photo."
+        case .outputTooLarge:
+            return "The photo is still larger than 6MB after compression. Try a different photo."
+        }
+    }
+}
+
+private struct PreparedSourcePhoto: Sendable {
+    let dataURL: String
+    let byteCount: Int
+}
+
+private func prepareSourcePhoto(_ data: Data) throws -> PreparedSourcePhoto {
+    try Task<Never, Never>.checkCancellation()
+    guard data.count <= 24 * 1024 * 1024 else { throw SourcePhotoPreparationError.tooLarge }
+    let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+    guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else {
+        throw SourcePhotoPreparationError.invalidImage
+    }
+    let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+    let width = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+    let height = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0
+    guard width > 0, height > 0, width <= 100_000, height <= 100_000 else {
+        throw SourcePhotoPreparationError.invalidImage
+    }
+    try Task<Never, Never>.checkCancellation()
+    let thumbnailOptions: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceThumbnailMaxPixelSize: 2_200,
+        kCGImageSourceShouldCacheImmediately: true
+    ]
+    guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
+        throw SourcePhotoPreparationError.invalidImage
+    }
+    try Task<Never, Never>.checkCancellation()
+    let jpeg = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(
+        jpeg,
+        UTType.jpeg.identifier as CFString,
+        1,
+        nil
+    ) else {
+        throw SourcePhotoPreparationError.outputFailed
+    }
+    CGImageDestinationAddImage(
+        destination,
+        thumbnail,
+        [kCGImageDestinationLossyCompressionQuality: 0.84] as CFDictionary
+    )
+    guard CGImageDestinationFinalize(destination) else {
+        throw SourcePhotoPreparationError.outputFailed
+    }
+    try Task<Never, Never>.checkCancellation()
+    let jpegData = jpeg as Data
+    guard jpegData.count <= 6 * 1024 * 1024 else {
+        throw SourcePhotoPreparationError.outputTooLarge
+    }
+    let dataURL = "data:image/jpeg;base64,\(jpegData.base64EncodedString())"
+    try Task<Never, Never>.checkCancellation()
+    return PreparedSourcePhoto(dataURL: dataURL, byteCount: jpegData.count)
 }
 
 private func contributionTime(_ date: Date) -> String {

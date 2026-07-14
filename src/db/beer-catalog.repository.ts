@@ -154,7 +154,11 @@ export class BeerCatalogRepository {
 
     const existing = this.findByAliasKey(aliasKey) ?? (tracked ? this.findByKey(tracked.key) : null);
     if (existing) {
-      if (existing.status === "pending_review" && (input.brewery != null || input.abv != null)) {
+      if (
+        input.createIfMissing !== false &&
+        existing.status === "pending_review" &&
+        (input.brewery != null || input.abv != null)
+      ) {
         this.db
           .prepare(
             `UPDATE beer_catalog_items
@@ -423,18 +427,32 @@ export class BeerCatalogRepository {
       .run(aliasKey, input.beerKey, alias, input.source, input.now);
   }
 
-  listForAdmin(status: BeerCatalogStatus | "all" = "pending_review", limit = 100): BeerCatalogAdminItem[] {
+  listForAdmin(status: BeerCatalogStatus | "all" = "pending_review", limit = 100, offset = 0, query = ""): BeerCatalogAdminItem[] {
+    const normalizedQuery = query.trim().toLowerCase();
     const rows = this.db
       .prepare(
         `SELECT key, name, brewery, style, abv, status, source, review_note, created_at, updated_at
            FROM beer_catalog_items
           WHERE (? = 'all' OR status = ?)
+            AND (? = '' OR instr(lower(name), ?) > 0 OR instr(lower(COALESCE(brewery, '')), ?) > 0
+              OR EXISTS (SELECT 1 FROM beer_catalog_aliases alias WHERE alias.beer_key = beer_catalog_items.key AND instr(lower(alias.alias), ?) > 0))
           ORDER BY CASE status WHEN 'pending_review' THEN 0 ELSE 1 END, updated_at DESC, name COLLATE NOCASE ASC
-          LIMIT ?`,
+          LIMIT ? OFFSET ?`,
       )
-      .all(status, status, limit) as BeerCatalogAdminRow[];
+      .all(status, status, normalizedQuery, normalizedQuery, normalizedQuery, normalizedQuery, limit, Math.max(0, offset)) as BeerCatalogAdminRow[];
     const aliasesByBeerKey = this.aliasesForKeys(rows.map((row) => row.key));
     return rows.map((row) => this.toAdminItem(row, aliasesByBeerKey));
+  }
+
+  countForAdmin(status: BeerCatalogStatus | "all" = "all", query = ""): number {
+    const normalizedQuery = query.trim().toLowerCase();
+    const row = this.db
+      .prepare(`SELECT count(*) AS count FROM beer_catalog_items
+        WHERE (? = 'all' OR status = ?)
+          AND (? = '' OR instr(lower(name), ?) > 0 OR instr(lower(COALESCE(brewery, '')), ?) > 0
+            OR EXISTS (SELECT 1 FROM beer_catalog_aliases alias WHERE alias.beer_key = beer_catalog_items.key AND instr(lower(alias.alias), ?) > 0))`)
+      .get(status, status, normalizedQuery, normalizedQuery, normalizedQuery, normalizedQuery) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 
   approvePendingBeer(input: {
@@ -554,10 +572,11 @@ export class BeerCatalogRepository {
         .prepare(
           `DELETE FROM submission_items
             WHERE normalized_beer_id = ?
-              AND capture_source = 'photo_ocr'
               AND requires_catalog_approval = 1`,
         )
         .run(row.key);
+      this.db.prepare("DELETE FROM venue_price_records WHERE normalized_beer_id = ?").run(row.key);
+      this.db.prepare("DELETE FROM venue_beers WHERE normalized_beer_id = ?").run(row.key);
       this.db.prepare("DELETE FROM beer_catalog_aliases WHERE beer_key = ?").run(row.key);
       this.db.prepare("DELETE FROM beer_catalog_items WHERE key = ? AND status = 'pending_review'").run(row.key);
     });
@@ -574,7 +593,7 @@ export class BeerCatalogRepository {
     return this.toAdminItem(row, this.aliasesForKeys([row.key]));
   }
 
-  listForViewer(limit = 500): BeerCatalogItem[] {
+  listForViewer(limit = -1): BeerCatalogItem[] {
     const rows = this.db
       .prepare(
         `SELECT key, name, brewery, style, abv, status, source
@@ -586,7 +605,7 @@ export class BeerCatalogRepository {
       .all(limit) as BeerCatalogRow[];
 
     if (!rows.length) {
-      return BEER_CATALOG.slice(0, limit);
+      return limit < 0 ? [...BEER_CATALOG] : BEER_CATALOG.slice(0, limit);
     }
 
     const aliasesByBeerKey = this.aliasesForKeys(rows.map((row) => row.key));

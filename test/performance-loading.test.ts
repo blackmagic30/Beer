@@ -8,7 +8,7 @@ function readFile(filePath: string): string {
 }
 
 describe("website performance loading", () => {
-  it("keeps landing-page startup cached, paginated, and complete", () => {
+  it("keeps landing-page startup bounded, paginated, and complete", () => {
     const html = readFile("viewer/index.html");
     const routes = readFile("src/modules/business/business.routes.ts");
     const service = readFile("src/modules/business/business.service.ts");
@@ -17,15 +17,24 @@ describe("website performance loading", () => {
     expect(html).toContain('<link rel="preconnect" href="https://maps.gstatic.com" crossorigin');
     expect(html).toContain('<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin');
     expect(html).toContain('<script src="./business.js" defer></script>');
-    expect(html).not.toContain('<script src="https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer/dist/index.min.js"></script>');
+    expect(html).not.toContain('@googlemaps/markerclusterer/dist/index.min.js');
+    expect(html).toContain('@googlemaps/markerclusterer@2.6.2/dist/index.min.js');
+    expect(html).toContain('script.integrity = "sha384-EVwzhfwoZgEjEQ2ffmvGXq5cOevVMtRZTog22siWEV3jCmD0BahdPQHx8y/VIhbi"');
     expect(html).toContain("function loadMarkerClustererScript()");
     expect(html).toContain("const markerClustererReady = loadMarkerClustererScript().catch");
-    expect(html).toContain("const allVenues = await fetchBusinessViewerVenues();");
-    expect(html).toContain("const priceRecordResponse = await fetchBusinessPriceRecords().catch");
-    expect(html).toContain("cursor = response.nextCursor || null;");
+    expect(html).toContain("const [allVenues, priceRecordResponse] = await Promise.all([");
+    expect(html).toContain("fetchBusinessViewerVenues(),");
+    expect(html).toContain("fetchBusinessPriceRecords().catch");
+    expect(html).toContain("const nextCursor = response.nextCursor || null;");
+    expect(html).toContain("if (!nextCursor) break;");
+    expect(html).toContain("seenCursors.has(nextCursor)");
     expect(routes).toContain("public, max-age=30, stale-while-revalidate=120");
-    expect(service).toContain("private publicVenueCache:");
-    expect(service).toContain("Date.now() - this.publicVenueCache.fetchedAt < 60_000");
+    expect(service).not.toContain("private publicVenueCache:");
+    expect(service).toContain("listPublicVenueDirectoryPage");
+    expect(service).toContain('{ count: "exact" }');
+    expect(service).toContain("request.range(remoteOffset, remoteOffset + remoteFetchLimit - 1)");
+    expect(service).toContain('request.not("id", "in"');
+    expect(service).not.toContain("const prefixSize = normalizedOffset + normalizedLimit");
     expect(html).toContain('window.addEventListener("DOMContentLoaded", () => {');
   });
 
@@ -41,8 +50,24 @@ describe("website performance loading", () => {
       "viewer/auth/callback.html",
       "viewer/stats.html",
     ].forEach((filePath) => {
-      expect(readFile(filePath), filePath).toContain('src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer');
+      const source = readFile(filePath);
+      expect(source, filePath).toContain('src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js"');
+      expect(source, filePath).toContain('integrity="sha384-PsnFqJ58vyp7buRfuvdS2SrjRdUYinBv6lWwJXx3xQ17hWefo/UkwXowVBT53ubG"');
+      expect(source, filePath).toContain('crossorigin="anonymous"');
+      expect(source, filePath).not.toMatch(/@supabase\/supabase-js@(?:2|latest)(?:["/])/);
     });
+  });
+
+  it("pins every jsDelivr executable to an exact version and integrity hash", () => {
+    const htmlFiles = fs.readdirSync(path.resolve(process.cwd(), "viewer"), { recursive: true })
+      .filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".html"));
+    const combined = htmlFiles
+      .map((entry) => readFile(path.join("viewer", entry)))
+      .join("\n");
+
+    expect(combined).not.toMatch(/cdn\.jsdelivr\.net\/npm\/[^"']+@(?:latest|\d+)(?:["/])/);
+    expect(combined).not.toContain("@googlemaps/markerclusterer/dist/index.min.js");
+    expect(combined).toContain("@googlemaps/markerclusterer@2.6.2/dist/index.min.js");
   });
 
   it("serves static website assets with production cache headers", () => {
@@ -51,6 +76,9 @@ describe("website performance loading", () => {
     expect(appSource).toContain("function getStaticAssetCacheControl");
     expect(appSource).toContain("stale-while-revalidate=3600");
     expect(appSource).toContain("stale-while-revalidate=604800");
+    expect(appSource).toContain("public, max-age=0, must-revalidate");
     expect(appSource).toContain("setHeaders: setStaticAssetHeaders");
+    expect(appSource).toContain('import compression from "compression"');
+    expect(appSource).toContain('!req.path.startsWith("/api/")');
   });
 });

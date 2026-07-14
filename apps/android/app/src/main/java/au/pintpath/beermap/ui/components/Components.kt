@@ -2,6 +2,8 @@ package au.pintpath.beermap.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,6 +32,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,6 +44,8 @@ import au.pintpath.beermap.data.Venue
 import au.pintpath.beermap.ui.theme.Amber
 import au.pintpath.beermap.ui.theme.Leaf
 import au.pintpath.beermap.ui.theme.Sky
+
+val LocalActionsEnabled = staticCompositionLocalOf { true }
 
 @Composable
 fun SectionHeader(eyebrow: String?, title: String, subtitle: String? = null, icon: ImageVector? = null) {
@@ -132,9 +137,10 @@ fun MetricCard(label: String, value: String, icon: ImageVector = Icons.Filled.Ba
 
 @Composable
 fun PrimaryAction(label: String, enabled: Boolean = true, icon: ImageVector? = null, onClick: () -> Unit) {
+    val actionsEnabled = LocalActionsEnabled.current
     Button(
         onClick = onClick,
-        enabled = enabled,
+        enabled = enabled && actionsEnabled,
         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
         shape = RoundedCornerShape(8.dp)
     ) {
@@ -148,9 +154,10 @@ fun PrimaryAction(label: String, enabled: Boolean = true, icon: ImageVector? = n
 
 @Composable
 fun SecondaryAction(label: String, enabled: Boolean = true, icon: ImageVector? = null, onClick: () -> Unit) {
+    val actionsEnabled = LocalActionsEnabled.current
     OutlinedButton(
         onClick = onClick,
-        enabled = enabled,
+        enabled = enabled && actionsEnabled,
         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
         shape = RoundedCornerShape(8.dp)
     ) {
@@ -224,7 +231,16 @@ fun FeatureCard(title: String, message: String, icon: ImageVector, tint: Color =
 }
 
 @Composable
-fun FormField(label: String, icon: ImageVector, value: String, onValueChange: (String) -> Unit, minLines: Int = 1, singleLine: Boolean = minLines == 1) {
+fun FormField(
+    label: String,
+    icon: ImageVector,
+    value: String,
+    onValueChange: (String) -> Unit,
+    minLines: Int = 1,
+    singleLine: Boolean = minLines == 1,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -242,7 +258,9 @@ fun FormField(label: String, icon: ImageVector, value: String, onValueChange: (S
             label = { Text(label) },
             modifier = Modifier.fillMaxWidth(),
             minLines = minLines,
-            singleLine = singleLine
+            singleLine = singleLine,
+            keyboardOptions = keyboardOptions,
+            keyboardActions = keyboardActions
         )
     }
 }
@@ -265,6 +283,7 @@ fun LoadingView(message: String) {
 
 @Composable
 fun VenueCard(venue: Venue, onOpen: () -> Unit, onSave: () -> Unit) {
+    val actionsEnabled = LocalActionsEnabled.current
     AppCard {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -282,15 +301,15 @@ fun VenueCard(venue: Venue, onOpen: () -> Unit, onSave: () -> Unit) {
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onSave, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
+            OutlinedButton(onClick = onSave, enabled = actionsEnabled, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
                 Icon(Icons.Filled.Bookmark, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.size(6.dp))
                 Text("Save")
             }
-            Button(onClick = onOpen, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
+            Button(onClick = onOpen, enabled = actionsEnabled, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp)) {
                 Icon(Icons.Filled.LocalBar, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.size(6.dp))
-                Text("Open")
+                Text("View prices")
             }
         }
     }

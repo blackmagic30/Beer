@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { CURRENT_LEGAL_POLICY_VERSION } from "../../config/legal.js";
+import { CONTRIBUTION_POINTS } from "../../config/business-rules.js";
+
 const nullableTrimmedStringSchema = z.preprocess((value) => {
   if (value == null) {
     return null;
@@ -104,7 +107,7 @@ const dataPdfUrlSchema = z
 const uploadLocationSchema = z.object({
   latitude: z.coerce.number().min(-90).max(90),
   longitude: z.coerce.number().min(-180).max(180),
-  accuracyMeters: z.coerce.number().min(0).max(5000).nullable().default(null),
+  accuracyMeters: z.number().min(0).max(CONTRIBUTION_POINTS.maxLocationAccuracyMeters),
   capturedAt: z.string().datetime({ offset: true }),
 }).nullable().default(null);
 
@@ -139,8 +142,76 @@ export const authLoginSchema = z.object({
   password: z.string().min(1).max(128),
 });
 
+export const billingRecoveryPortalSchema = z.object({
+  accessToken: z.string().trim().min(20).max(16_384).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
+  password: z.string().min(1).max(128).optional(),
+  venueId: z.string().trim().min(1).max(200).optional(),
+}).superRefine((value, ctx) => {
+  const providerMode = Boolean(value.accessToken);
+  const passwordMode = Boolean(value.email && value.password);
+  if (providerMode === passwordMode) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide either a provider access token or email and password.",
+    });
+  }
+});
+
+const authConsentSourceSchema = z
+  .enum(["web", "web_oauth", "ios", "ios_app", "android", "android_app"])
+  .transform((source): "web" | "ios" | "android" => {
+    if (source === "web" || source === "web_oauth") return "web";
+    if (source === "ios" || source === "ios_app") return "ios";
+    return "android";
+  });
+
 export const authSupabaseSessionSchema = z.object({
   accessToken: z.string().trim().min(20),
+  ageConfirmed: z.boolean().optional(),
+  termsAccepted: z.boolean().optional(),
+  privacyAccepted: z.boolean().optional(),
+  termsVersion: z.literal(CURRENT_LEGAL_POLICY_VERSION).optional(),
+  privacyVersion: z.literal(CURRENT_LEGAL_POLICY_VERSION).optional(),
+  consentSource: authConsentSourceSchema.optional(),
+  legalAcceptance: z.object({
+    ageConfirmed: z.boolean().refine((value) => value === true, "You must confirm you are 18+."),
+    termsAccepted: z.boolean().refine((value) => value === true, "You must accept the Terms and Conditions."),
+    privacyAccepted: z.boolean().refine((value) => value === true, "You must accept the Privacy Policy."),
+    termsVersion: z.literal(CURRENT_LEGAL_POLICY_VERSION).default(CURRENT_LEGAL_POLICY_VERSION),
+    privacyVersion: z.literal(CURRENT_LEGAL_POLICY_VERSION).default(CURRENT_LEGAL_POLICY_VERSION),
+    source: authConsentSourceSchema.default("web"),
+  }).optional(),
+}).superRefine((value, ctx) => {
+  const hasTopLevelConsent = [
+    value.ageConfirmed,
+    value.termsAccepted,
+    value.privacyAccepted,
+    value.termsVersion,
+    value.privacyVersion,
+    value.consentSource,
+  ].some((item) => item !== undefined);
+  if (hasTopLevelConsent && (
+    value.ageConfirmed !== true ||
+    value.termsAccepted !== true ||
+    value.privacyAccepted !== true ||
+    value.termsVersion !== CURRENT_LEGAL_POLICY_VERSION ||
+    value.privacyVersion !== CURRENT_LEGAL_POLICY_VERSION
+  )) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["termsAccepted"],
+      message: "Complete current age, Terms, and Privacy acceptance together.",
+    });
+  }
+});
+
+export const passwordResetCompleteSchema = z.object({
+  accessToken: z.string().trim().min(20),
+});
+
+export const logoutAllSchema = z.object({
+  accessToken: z.string().trim().min(20).optional(),
 });
 
 export const ageConfirmSchema = z.object({
@@ -150,13 +221,18 @@ export const ageConfirmSchema = z.object({
 export const legalAcceptanceSchema = z.object({
   termsAccepted: z.boolean().refine((value) => value === true, "You must accept the Terms and Conditions."),
   privacyAccepted: z.boolean().refine((value) => value === true, "You must accept the Privacy Policy."),
-  termsVersion: z.string().trim().min(1).max(40).default("2026-05-24"),
-  privacyVersion: z.string().trim().min(1).max(40).default("2026-05-24"),
+  termsVersion: z.literal(CURRENT_LEGAL_POLICY_VERSION).default(CURRENT_LEGAL_POLICY_VERSION),
+  privacyVersion: z.literal(CURRENT_LEGAL_POLICY_VERSION).default(CURRENT_LEGAL_POLICY_VERSION),
 });
 
 export const verificationSchema = z.object({
   result: z.enum(["confirmed", "disputed", "needs_more_evidence"]).default("confirmed"),
   notes: nullableTrimmedStringSchema.default(null),
+});
+
+export const verificationCandidatesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
 });
 
 const stringListSchema = z.array(z.string().trim().min(1).max(80)).max(20).default([]);
@@ -179,11 +255,17 @@ export const accountPrivacySettingsSchema = z.object({
   venueReportInclusionEnabled: z.boolean().default(false),
   productResearchEnabled: z.boolean().default(false),
   emailUpdatesEnabled: z.boolean().default(false),
-  consentVersion: z.string().trim().min(1).max(40).default("2026-07-11"),
+  // Accepted only for backwards compatibility with older web clients. The
+  // service always records the server-owned current legal policy version.
+  consentVersion: z.string().trim().min(1).max(40).optional(),
 });
 
 export const accountDeletionRequestSchema = z.object({
   message: nullableTrimmedStringSchema.default(null),
+});
+
+export const adminReasonSchema = z.object({
+  reason: z.string().trim().min(4).max(500),
 });
 
 export const submissionItemSchema = z.object({
@@ -312,6 +394,7 @@ export const submissionsQuerySchema = z.object({
   status: submissionStatusSchema.optional(),
   mine: z.preprocess((value) => value === "true" || value === true, z.boolean()).default(false),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
   includeReviewData: z.preprocess((value) => value === "true" || value === true, z.boolean()).default(false),
 });
 
@@ -331,6 +414,13 @@ export const missionsQuerySchema = z.object({
   radiusKm: z.coerce.number().min(0.1).max(50).default(5),
   sort: z.enum(["points", "saved", "stale", "no_data", "missing_happy_hour", "most_requested", "high_demand", "nearby"]).default("points"),
   limit: z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+});
+
+export const venuesQuerySchema = z.object({
+  q: optionalTrimmedStringSchema,
+  limit: z.coerce.number().int().min(1).max(1000).default(50),
+  offset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
 });
 
 export const geocodeQuerySchema = z.object({
@@ -344,7 +434,6 @@ export const venuePlaceSearchQuerySchema = z.object({
 export const priceRecordsQuerySchema = z.object({
   venueId: optionalTrimmedStringSchema,
   anonymousSessionId: nullableTrimmedStringSchema.default(null),
-  reveal: z.preprocess((value) => value === "true" || value === true, z.boolean()).default(false),
   cursor: optionalTrimmedStringSchema,
   limit: z.coerce.number().int().min(1).max(500).default(200),
 });
@@ -358,6 +447,11 @@ export const createMissionSchema = z.object({
   points: z.coerce.number().min(0).max(20),
   multiplier: z.coerce.number().min(0).max(5).default(1),
   active: z.boolean().default(true),
+});
+
+export const adminMissionUpdateSchema = z.object({
+  active: z.boolean(),
+  reason: z.string().trim().min(4).max(500),
 });
 
 export const eventTrackSchema = z.object({
@@ -378,8 +472,7 @@ export const eventTrackSchema = z.object({
     "suburb_search_performed",
     "venue_card_viewed",
     "venue_detail_opened",
-    "price_view_revealed",
-    "price_view_blocked_free_limit",
+    "free_preview_viewed",
     "map_filter_used",
     "cheapest_sort_used",
     "happy_hour_active_now_used",
@@ -482,6 +575,7 @@ export const trustWorkflowUpdateSchema = z.object({
   status: z.enum(["open", "in_progress", "resolved", "rejected"]),
   assignedTo: nullableTrimmedStringSchema.default(null),
   resolutionNote: nullableTrimmedStringSchema.default(null),
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
 });
 
 export const wrongPriceReportSchema = z.object({
@@ -501,6 +595,7 @@ export const venueRequestSchema = z.object({
   requestType: requestTypeSchema,
   venueId: nullableTrimmedStringSchema.default(null),
   venueName: nullableTrimmedStringSchema.default(null),
+  googlePlaceId: z.string().trim().min(1).max(255).nullable().optional(),
   beerName: nullableTrimmedStringSchema.default(null),
   suburb: nullableTrimmedStringSchema.default(null),
   notes: nullableTrimmedStringSchema.default(null),
@@ -567,6 +662,11 @@ export const venuePortalQuerySchema = z.object({
   venueId: nullableTrimmedStringSchema.default(null),
 });
 
+export const venueReconciliationQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+});
+
 const dayOfWeekSchema = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
 
 export function normalizeHappyHourTime(value: unknown): string {
@@ -626,6 +726,8 @@ export const barProfileSchema = z.object({
   description: nullableTrimmedStringSchema.default(null),
   openingHours: z.record(z.string(), z.unknown()).default({}),
   venueTags: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  replaceVenueTags: z.boolean().default(false),
+  expectedUpdatedAt: z.string().datetime({ offset: true }).nullable().default(null),
   membershipTier: barMembershipTierSchema.optional(),
   acceptsPintPathCodes: z.boolean().optional(),
   active: z.boolean().default(true),
@@ -648,6 +750,13 @@ export const barBeerSchema = z.object({
   onTap: z.boolean().default(false),
   inStock: z.boolean().default(true),
   notes: nullableTrimmedStringSchema.default(null),
+  priceConfirmed: z.boolean().default(false),
+  stockConfirmed: z.boolean().default(false),
+  expectedUpdatedAt: z.string().datetime({ offset: true }).nullable().default(null),
+});
+
+export const barBeerBulkSchema = z.object({
+  items: z.array(barBeerSchema).min(1).max(100),
 });
 
 const happyHourBeerSchema = z.object({
@@ -670,6 +779,7 @@ export const barHappyHourSchema = z.object({
   description: z.string().trim().min(1).max(800),
   happyHourBeers: z.array(happyHourBeerSchema).max(60).default([]),
   active: z.boolean().default(true),
+  expectedUpdatedAt: z.string().datetime({ offset: true }).nullable().default(null),
 });
 
 export const barSpecialSchema = z.object({
@@ -686,9 +796,26 @@ export const barSpecialSchema = z.object({
   endsAt: nullableTrimmedStringSchema.default(null),
   startTime: timeSchema,
   endTime: timeSchema,
+  recurrence: z.object({
+    frequency: z.enum(["none", "weekly"]).default("none"),
+    daysOfWeek: z.array(dayOfWeekSchema).max(7).default([]),
+    timezone: z.string().trim().min(1).max(80).default("Australia/Melbourne"),
+  }).default({ frequency: "none", daysOfWeek: [], timezone: "Australia/Melbourne" }),
   scheduleNote: nullableTrimmedStringSchema.default(null),
   exclusive: z.boolean().default(false),
   active: z.boolean().default(true),
+  expectedUpdatedAt: z.string().datetime({ offset: true }).nullable().default(null),
+}).superRefine((value, ctx) => {
+  if (value.recurrence.frequency === "weekly" && value.recurrence.daysOfWeek.length === 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["recurrence", "daysOfWeek"], message: "Choose at least one weekday for a weekly special." });
+  }
+  if (value.startTime && value.endTime && value.startTime === value.endTime) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["endTime"], message: "Special start and end times must differ." });
+  }
+});
+
+export const versionedVenueDeleteSchema = z.object({
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
 });
 
 export const barClaimRequestSchema = z.object({
@@ -707,6 +834,11 @@ export const adminDashboardQuerySchema = z.object({
   range: z.enum(["today", "7d", "30d", "month", "all"]).default("7d"),
 });
 
+export const adminPaginationSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+});
+
 export const adminAccountSearchSchema = z.object({
   q: z.string().trim().min(2).max(120),
   limit: z.coerce.number().int().min(1).max(25).default(10),
@@ -716,13 +848,21 @@ export const beerCatalogApproveSchema = z.object({
   reviewNote: nullableTrimmedStringSchema.default(null),
 });
 
+export const beerCatalogAdminQuerySchema = z.object({
+  pendingLimit: z.coerce.number().int().min(1).max(200).default(100),
+  pendingOffset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+  activeLimit: z.coerce.number().int().min(1).max(500).default(100),
+  activeOffset: z.coerce.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
+  activeQ: z.string().trim().max(120).default(""),
+});
+
 export const beerCatalogRejectSchema = z.object({
-  reviewNote: nullableTrimmedStringSchema.default(null),
+  reviewNote: z.string().trim().min(4).max(500),
 });
 
 export const beerCatalogBulkRejectSchema = z.object({
   keys: z.array(z.string().trim().min(1).max(160)).min(1).max(100),
-  reviewNote: nullableTrimmedStringSchema.default(null),
+  reviewNote: z.string().trim().min(4).max(500),
 });
 
 export const beerCatalogMergeSchema = z.object({
@@ -755,6 +895,16 @@ export const monthlyReportGenerateSchema = z.object({
 export const monthlyReportDeliverySchema = monthlyReportGenerateSchema.extend({
   deliver: z.boolean().default(true),
 });
+
+export const venueReportDeliverySettingsSchema = z.object({
+  enabled: z.boolean().default(true),
+  recipients: z.array(
+    z.string().trim().toLowerCase().email().max(254),
+  ).max(10).default([]),
+}).transform((value) => ({
+  ...value,
+  recipients: [...new Set(value.recipients)],
+}));
 
 export const monthlyReportExportQuerySchema = z.object({
   format: z.enum(["json", "csv"]).default("json"),
@@ -804,6 +954,11 @@ export const leaderboardPrizeCampaignSchema = z.object({
 export const leaderboardPrizeFinalizeSchema = z.object({
   monthKey: leaderboardMonthKeySchema,
   force: z.boolean().default(false),
+});
+
+export const rewardVoucherTransitionSchema = z.object({
+  action: z.enum(["fulfill", "void"]),
+  reason: z.string().trim().min(3).max(500),
 });
 
 export const discountRedemptionSchema = z.object({
@@ -862,6 +1017,14 @@ export const freePintRewardDecisionSchema = z.object({
     .transform((value) => value.toUpperCase()),
   action: z.enum(["confirm", "reject"]).default("confirm"),
   reason: nullableTrimmedStringSchema.default(null),
+}).superRefine((value, ctx) => {
+  if (value.action === "reject" && (!value.reason || value.reason.trim().length < 4)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reason"],
+      message: "Add a clear rejection reason so the member and audit trail explain what happened.",
+    });
+  }
 });
 
 export const posDiscountRedemptionSchema = z.object({
@@ -908,11 +1071,15 @@ export const adminUserStatusSchema = z.object({
   status: z.enum(["active", "warned", "suspended"]),
   trustScore: z.coerce.number().int().min(0).max(100).optional(),
   fraudStrikeCount: z.coerce.number().int().min(0).max(10).optional(),
+  reason: z.string().trim().min(4).max(500),
 });
 
 export type AuthSignupInput = z.infer<typeof authSignupSchema>;
 export type AuthLoginInput = z.infer<typeof authLoginSchema>;
+export type BillingRecoveryPortalInput = z.infer<typeof billingRecoveryPortalSchema>;
 export type AuthSupabaseSessionInput = z.infer<typeof authSupabaseSessionSchema>;
+export type PasswordResetCompleteInput = z.infer<typeof passwordResetCompleteSchema>;
+export type LogoutAllInput = z.infer<typeof logoutAllSchema>;
 export type LegalAcceptanceInput = z.infer<typeof legalAcceptanceSchema>;
 export type VerificationInput = z.infer<typeof verificationSchema>;
 export type CreateSubmissionInput = z.infer<typeof createSubmissionSchema>;
@@ -933,8 +1100,10 @@ export type VenueManagerRevokeInput = z.infer<typeof venueManagerRevokeSchema>;
 export type VenueOutreachInput = z.infer<typeof venueOutreachSchema>;
 export type VenueInterestStatusInput = z.infer<typeof venueInterestStatusSchema>;
 export type VenuePortalQuery = z.infer<typeof venuePortalQuerySchema>;
+export type VenueReconciliationQuery = z.infer<typeof venueReconciliationQuerySchema>;
 export type BarProfileInput = z.infer<typeof barProfileSchema>;
 export type BarBeerInput = z.infer<typeof barBeerSchema>;
+export type BarBeerBulkInput = z.infer<typeof barBeerBulkSchema>;
 export type BarHappyHourInput = z.infer<typeof barHappyHourSchema>;
 export type BarSpecialInput = z.infer<typeof barSpecialSchema>;
 export type BarClaimRequestInput = z.infer<typeof barClaimRequestSchema>;
@@ -943,9 +1112,12 @@ export type VenueClaimRequestInput = z.infer<typeof venueClaimRequestSchema>;
 export type VenueClaimReviewInput = z.infer<typeof venueClaimReviewSchema>;
 export type VenuePendingChangeReviewInput = z.infer<typeof venuePendingChangeReviewSchema>;
 export type AdminDashboardQuery = z.infer<typeof adminDashboardQuerySchema>;
+export type AdminPaginationInput = z.infer<typeof adminPaginationSchema>;
+export type BeerCatalogAdminQuery = z.infer<typeof beerCatalogAdminQuerySchema>;
 export type AdminAccountSearchInput = z.infer<typeof adminAccountSearchSchema>;
 export type MonthlyReportGenerateInput = z.infer<typeof monthlyReportGenerateSchema>;
 export type MonthlyReportDeliveryInput = z.infer<typeof monthlyReportDeliverySchema>;
+export type VenueReportDeliverySettingsInput = z.infer<typeof venueReportDeliverySettingsSchema>;
 export type MonthlyReportExportQuery = z.infer<typeof monthlyReportExportQuerySchema>;
 export type RetentionQuery = z.infer<typeof retentionQuerySchema>;
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
@@ -955,6 +1127,7 @@ export type DisplayNameUpdateInput = z.infer<typeof displayNameUpdateSchema>;
 export type PubGolfPlanInput = z.infer<typeof pubGolfPlanSchema>;
 export type LeaderboardPrizeCampaignInput = z.infer<typeof leaderboardPrizeCampaignSchema>;
 export type LeaderboardPrizeFinalizeInput = z.infer<typeof leaderboardPrizeFinalizeSchema>;
+export type RewardVoucherTransitionInput = z.infer<typeof rewardVoucherTransitionSchema>;
 export type DiscountRedemptionInput = z.infer<typeof discountRedemptionSchema>;
 export type PintPointMemberPreviewInput = z.infer<typeof pintPointMemberPreviewSchema>;
 export type PintPointDrinkRecordInput = z.infer<typeof pintPointDrinkRecordSchema>;

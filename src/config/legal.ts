@@ -1,0 +1,1 @@
+export const CURRENT_LEGAL_POLICY_VERSION = "2026-07-12";

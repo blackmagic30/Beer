@@ -55,7 +55,6 @@ function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessS
   const repository = new BusinessRepository(database);
   const service = new BusinessService(repository, {
     PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-    FREE_PRICE_REVEALS_PER_DAY: 5,
     CONTRIBUTOR_UNLOCK_POINTS: 15,
     CONTRIBUTOR_UNLOCK_DAYS: 30,
     DEMO_BILLING_MODE: true,
@@ -79,7 +78,6 @@ function createHarness(overrides: Partial<ConstructorParameters<typeof BusinessS
     STRIPE_PRICE_MONTHLY: undefined,
     STRIPE_PRICE_YEARLY: undefined,
     STRIPE_PRO_PRICE_ID: undefined,
-    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: undefined,
     SUPABASE_URL: undefined,
     SUPABASE_ANON_KEY: undefined,
     SUPABASE_SERVICE_ROLE_KEY: undefined,
@@ -147,6 +145,14 @@ async function signup(
     termsAccepted: input.termsAccepted ?? true,
     privacyAccepted: input.privacyAccepted ?? true,
   });
+  if (email.trim().toLowerCase() === "admin@pintpath.test") {
+    harness.database
+      .prepare("UPDATE accounts SET role = 'admin', subscription_status = 'admin', updated_at = ? WHERE id = ?")
+      .run(NOW, session.account.id);
+    harness.database
+      .prepare("UPDATE profiles SET role = 'admin', updated_at = ? WHERE id = ?")
+      .run(NOW, session.account.id);
+  }
   return {
     token: session.token,
     account: harness.repository.getAccountById(session.account.id)!,
@@ -331,7 +337,7 @@ describe("Pint Path release-readiness security gates", () => {
 
       const hiddenBeforeApproval = await requestJson(
         baseUrl,
-        "/api/business/price-records?venueId=dummy-admin-venue&reveal=true&anonymousSessionId=dummy-before-admin",
+        "/api/business/price-records?venueId=dummy-admin-venue&anonymousSessionId=dummy-before-admin",
         { token: admin.token },
       );
       expect(hiddenBeforeApproval.response.status).toBe(200);
@@ -355,7 +361,7 @@ describe("Pint Path release-readiness security gates", () => {
 
       const publishedAfterAdmin = await requestJson(
         baseUrl,
-        "/api/business/price-records?venueId=dummy-admin-venue&reveal=true&anonymousSessionId=dummy-after-admin",
+        "/api/business/price-records?venueId=dummy-admin-venue&anonymousSessionId=dummy-after-admin",
         { token: admin.token },
       );
       expect(publishedAfterAdmin.response.status).toBe(200);
@@ -393,7 +399,7 @@ describe("Pint Path release-readiness security gates", () => {
 
       const communityHiddenBeforeConsensus = await requestJson(
         baseUrl,
-        "/api/business/price-records?venueId=dummy-community-venue&reveal=true&anonymousSessionId=dummy-before-community",
+        "/api/business/price-records?venueId=dummy-community-venue&anonymousSessionId=dummy-before-community",
         { token: admin.token },
       );
       expect((communityHiddenBeforeConsensus.json?.data as { records: Array<{ beerName: string }> }).records)
@@ -409,7 +415,7 @@ describe("Pint Path release-readiness security gates", () => {
 
       const stillHiddenAfterOne = await requestJson(
         baseUrl,
-        "/api/business/price-records?venueId=dummy-community-venue&reveal=true&anonymousSessionId=dummy-after-one",
+        "/api/business/price-records?venueId=dummy-community-venue&anonymousSessionId=dummy-after-one",
         { token: admin.token },
       );
       expect((stillHiddenAfterOne.json?.data as { records: Array<{ beerName: string }> }).records)
@@ -441,7 +447,7 @@ describe("Pint Path release-readiness security gates", () => {
 
       const publishedByCommunity = await requestJson(
         baseUrl,
-        "/api/business/price-records?venueId=dummy-community-venue&reveal=true&anonymousSessionId=dummy-community-live",
+        "/api/business/price-records?venueId=dummy-community-venue&anonymousSessionId=dummy-community-live",
         { token: admin.token },
       );
       expect(publishedByCommunity.response.status).toBe(200);
@@ -566,7 +572,6 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     expect(harness.service.listPriceRecords(null, {
       venueId: "venue-a",
       anonymousSessionId: "anon-release",
-      reveal: true,
       limit: 20,
     }).records.some((record) => record.beerName === "Asahi Super Dry")).toBe(true);
 
@@ -590,7 +595,6 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
     const publishedRecords = harness.service.listPriceRecords(admin, {
       venueId: "venue-a",
       anonymousSessionId: null,
-      reveal: true,
       limit: 20,
     }).records;
     expect(publishedRecords.some((record) => record.beerName === "Asahi Super Dry" && record.price === 12))
@@ -658,6 +662,7 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
       expect((portal.json?.data as { profile: { name: string }; tier: { analyticsLocked: boolean } }).profile.name)
         .toBe("Owner Journey Bar");
       expect((portal.json?.data as { tier: { analyticsLocked: boolean } }).tier.analyticsLocked).toBe(false);
+      const profileUpdatedAt = (portal.json?.data as { profile: { updatedAt: string } }).profile.updatedAt;
 
       const profileUpdate = await requestJson(baseUrl, "/api/business/venue-portal/venue-owner-journey/profile", {
         method: "POST",
@@ -671,6 +676,7 @@ describe("Pint Path release-readiness venue-manager approval workflow", () => {
           website: "https://owner-journey.example",
           description: "Synthetic owner journey profile update.",
           membershipTier: "pro",
+          expectedUpdatedAt: profileUpdatedAt,
         }),
       });
       expect(profileUpdate.response.status).toBe(200);
@@ -792,6 +798,12 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
     const admin = (await signup(harness, "admin@pintpath.test")).account;
     const user = (await signup(harness, "privacy-user@pintpath.test")).account;
+    harness.service.savePrivacySettings(user, {
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: true,
+      productResearchEnabled: false,
+      emailUpdatesEnabled: false,
+    });
 
     recordSearchEvents(harness.repository, {
       count: 4,
@@ -942,7 +954,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     record("distinct-detail-2", "venue_detail_opened", customerSession);
     record("distinct-beer-list-1", "beer_list_viewed", customerSession);
     record("distinct-beer-list-2", "beer_list_viewed", customerSession);
-    record("distinct-price", "price_view_revealed", customerSession);
+    record("distinct-price", "free_preview_viewed", customerSession);
     record("distinct-directions", "directions_clicked", customerSession);
     record("distinct-directions-legacy", "venue_lookup", customerSession, { interactionType: "directions_click" });
     record("distinct-share", "venue_shared", customerSession);
@@ -979,7 +991,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       barLookups: 1,
       profileViews: 1,
       beerListViews: 1,
-      priceReveals: 1,
+      pricePreviewViews: 1,
       directionsClicks: 1,
       shares: 1,
     }));
@@ -995,7 +1007,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       barLookups: 0,
       profileViews: 0,
       beerListViews: 0,
-      priceReveals: 0,
+      pricePreviewViews: 0,
       directionsClicks: 0,
       shares: 0,
       areaSearches: 0,
@@ -1007,7 +1019,7 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       "barLookups",
       "profileViews",
       "beerListViews",
-      "priceReveals",
+      "pricePreviewViews",
       "directionsClicks",
       "shares",
     ]));
@@ -1529,18 +1541,23 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         body: { month: "2026-05", deliver: true },
       });
       expect(delivered.response.status).toBe(200);
-      const deliveries = (delivered.json?.data as { deliveries: Array<{ status: string; recipients: string[]; venueId: string }> }).deliveries;
-      expect(deliveries).toEqual([
-        expect.objectContaining({
-          venueId: "venue-http-report",
-          status: "mocked",
-          recipients: [owner.account.email],
-        }),
-      ]);
-      expect(JSON.stringify(deliveries)).not.toContain(otherOwner.account.email);
-      expect(JSON.stringify(deliveries)).not.toContain(basicOwner.account.email);
-      expect(JSON.stringify(deliveries)).not.toContain(unverifiedManager.account.email);
-      expect(JSON.stringify(deliveries)).not.toContain(counterStaff.account.email);
+      expect(delivered.json?.data).toEqual(expect.objectContaining({
+        month: "2026-05",
+        dryRun: false,
+        generatedCount: 1,
+        eligibleRecipientCount: 1,
+        mockedCount: 1,
+        rejectedCount: 0,
+        uncertainCount: 0,
+        processedCount: 1,
+        emailMode: "mock",
+      }));
+      const deliveryPayload = JSON.stringify(delivered.json?.data);
+      expect(deliveryPayload).not.toContain(owner.account.email);
+      expect(deliveryPayload).not.toContain(otherOwner.account.email);
+      expect(deliveryPayload).not.toContain(basicOwner.account.email);
+      expect(deliveryPayload).not.toContain(unverifiedManager.account.email);
+      expect(deliveryPayload).not.toContain(counterStaff.account.email);
 
       const ownerExport = await fetch(`${baseUrl}/api/business/venue-portal/venue-http-report/reports/2026-05/export?format=json`, {
         headers: { authorization: `Bearer ${owner.token}` },
@@ -1585,6 +1602,27 @@ describe("Pint Path release-readiness public contracts and accessibility smoke",
     expect(migrations).toMatch(/insert into storage\.buckets[\s\S]*'beermap-source-evidence'[\s\S]*false/i);
     expect(migrations).toMatch(/enable row level security/i);
     expect(migrations).not.toMatch(/create\s+table\s+(?:if\s+not\s+exists\s+)?public\.bars\b/i);
+
+    const hardening = fs.readFileSync(
+      path.resolve(process.cwd(), "supabase/migrations/20260714000000_harden_source_evidence_storage.sql"),
+      "utf8",
+    );
+    expect(hardening).toMatch(/drop policy if exists "source_evidence_owner_insert" on storage\.objects/i);
+    expect(hardening).toMatch(/drop policy if exists "source_evidence_owner_select" on storage\.objects/i);
+    expect(hardening).toMatch(/drop policy if exists "source_evidence_owner_update" on storage\.objects/i);
+    expect(hardening).toMatch(/'beermap-source-evidence'[\s\S]*false[\s\S]*8388608/i);
+    expect(hardening).toContain("'application/pdf'");
+    expect(hardening).not.toMatch(/create\s+policy/i);
+    expect(hardening).not.toMatch(/to\s+(?:anon|authenticated)/i);
+
+    const backupHardening = fs.readFileSync(
+      path.resolve(process.cwd(), "ops/supabase/independent-backup-project-storage.sql"),
+      "utf8",
+    );
+    expect(backupHardening).toContain("'pintpath-backups'");
+    expect(backupHardening).toContain("'application/pdf'");
+    expect(backupHardening).toMatch(/file_size_limit\s*=\s*null/i);
+    expect(backupHardening).not.toContain("104857600");
   });
 
   it("keeps critical public pages semantic, navigable, and free of prototype/admin leakage", () => {

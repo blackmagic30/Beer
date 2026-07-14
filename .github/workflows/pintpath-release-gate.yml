@@ -16,21 +16,15 @@ jobs:
     timeout-minutes: 20
     environment: production
     env:
-      NODE_ENV: test
-      PUBLIC_BASE_URL: http://localhost:3000
-      DATABASE_PATH: ./data/ci-production-release-gate.sqlite
-      ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "true"
       PINTPATH_SMOKE_BASE_URL: https://pintpath.au
-      PINTPATH_SMOKE_USER_TOKEN: ${{ secrets.PINTPATH_SMOKE_USER_TOKEN }}
-      PINTPATH_SMOKE_VENUE_TOKEN: ${{ secrets.PINTPATH_SMOKE_VENUE_TOKEN }}
-      PINTPATH_SMOKE_ADMIN_TOKEN: ${{ secrets.PINTPATH_SMOKE_ADMIN_TOKEN }}
+      PINTPATH_EXPECTED_COMMIT_SHA: ${{ github.sha }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -42,13 +36,53 @@ jobs:
         run: npm run build
 
       - name: Automated release-readiness tests
+        env:
+          NODE_ENV: test
+          DATABASE_PATH: ./data/ci-production-release-gate.sqlite
+          PINTPATH_TEST_DATABASE_PATH: ./data/ci-production-release-gate.sqlite
         run: npm run test:e2e:pintpath
 
-      - name: Verify authenticated production roles
-        run: npm run smoke:production:auth | tee production-role-smoke.json
+      - name: Enforce production provider readiness
+        env:
+          NODE_ENV: production
+          PUBLIC_BASE_URL: https://pintpath.au
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          GOOGLE_MAPS_MAP_ID: ${{ secrets.GOOGLE_MAPS_MAP_ID }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          SOURCE_EVIDENCE_SIGNING_SECRET: ${{ secrets.SOURCE_EVIDENCE_SIGNING_SECRET }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_PRICE_MONTHLY: ${{ secrets.STRIPE_PRICE_MONTHLY }}
+          STRIPE_PRICE_YEARLY: ${{ secrets.STRIPE_PRICE_YEARLY }}
+          STRIPE_PRO_PRICE_ID: ${{ secrets.STRIPE_PRO_PRICE_ID }}
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+          POS_WEBHOOK_SIGNING_SECRET: ${{ secrets.POS_WEBHOOK_SIGNING_SECRET }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          REQUIRE_ADMIN_MFA_IN_PRODUCTION: "true"
+          FIELD_TEST_MODE: "false"
+          OFFSITE_BACKUP_BUCKET: ${{ secrets.OFFSITE_BACKUP_BUCKET }}
+          OFFSITE_BACKUP_SUPABASE_URL: ${{ secrets.OFFSITE_BACKUP_SUPABASE_URL }}
+          OFFSITE_BACKUP_SERVICE_ROLE_KEY: ${{ secrets.OFFSITE_BACKUP_SERVICE_ROLE_KEY }}
+          REPORT_TIMEZONE: Australia/Melbourne
+          REPORT_EMAIL_MODE: ${{ secrets.REPORT_EMAIL_MODE }}
+          REPORT_DELIVERY_SCHEDULE_ENABLED: ${{ secrets.REPORT_DELIVERY_SCHEDULE_ENABLED }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          REPORT_EMAIL_FROM: ${{ secrets.REPORT_EMAIL_FROM }}
+          DEMO_BILLING_MODE: "false"
+          ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: "false"
+        run: npm run readiness:launch | tee provider-readiness-summary.json
 
-      - name: Enforce external launch evidence
-        run: npm run release:evidence:strict | tee release-evidence-summary.json
+      - name: Verify authenticated production roles
+        env:
+          PINTPATH_SMOKE_USER_TOKEN: ${{ secrets.PINTPATH_SMOKE_USER_TOKEN }}
+          PINTPATH_SMOKE_VENUE_TOKEN: ${{ secrets.PINTPATH_SMOKE_VENUE_TOKEN }}
+          PINTPATH_SMOKE_ADMIN_TOKEN: ${{ secrets.PINTPATH_SMOKE_ADMIN_TOKEN }}
+        run: npm run smoke:production:auth | tee production-role-smoke.json
 
       - name: Secret scan
         run: npm run security:scan
@@ -56,13 +90,21 @@ jobs:
       - name: Dependency audit
         run: npm run security:audit
 
+      - name: Record tested immutable commit
+        run: git rev-parse HEAD | tee tested-commit-sha.txt
+
+      - name: Enforce external launch evidence
+        run: npm run release:evidence:strict | tee release-evidence-summary.json
+
       - name: Upload release-gate evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pintpath-production-release-gate
           path: |
             docs/release-evidence.json
             production-role-smoke.json
             release-evidence-summary.json
+            provider-readiness-summary.json
+            tested-commit-sha.txt
           if-no-files-found: warn

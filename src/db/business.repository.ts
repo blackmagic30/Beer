@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import type BetterSqlite3 from "better-sqlite3";
 
 import { VIEWER_TRACKED_BEERS, findTrackedBeerByName } from "../constants/beers.js";
+import { CURRENT_LEGAL_POLICY_VERSION } from "../config/legal.js";
 import { redactSecrets } from "../lib/redact.js";
 import { DEFAULT_REPORT_TIMEZONE, getZonedMonthRangeIso } from "../lib/time.js";
 
@@ -14,6 +15,45 @@ export type SubscriptionStatus =
   | "premium_yearly"
   | "contributor_unlocked"
   | "admin";
+export type PaidSubscriptionStatus = Extract<SubscriptionStatus, "premium_monthly" | "premium_yearly">;
+
+export const ACCOUNT_DATA_RETENTION_POLICY = {
+  version: "2026-07-14",
+  authSessions: { action: "delete", daysAfterExpiryOrRevocation: 30 },
+  revokedProviderSessions: {
+    action: "retain_device_denylist_until_account_deletion",
+    globallyRevokedRowsDaysAfterRevocation: 90,
+  },
+  stripeWebhookPayloads: { action: "redact_payload", daysAfterReceipt: 30 },
+  stripeWebhookEventEnvelope: { action: "delete", daysAfterReceipt: 400 },
+  securityRequestFingerprints: { action: "redact", daysAfterCreation: 30 },
+  securityAuditEnvelope: { action: "retain", daysAfterCreation: 400 },
+  reviewedSubmissionExactLocation: { action: "purge", daysAfterReview: 30 },
+  pendingEvidenceHardCap: { action: "purge_even_if_review_open", daysAfterCreation: 180 },
+  pendingIngestionImages: {
+    action: "redact_bytes_preserve_review_metadata",
+    retentionDaysAfterCreation: 90,
+    hardCapDaysAfterCreation: 180,
+  },
+  migrationQuarantinePayload: { action: "redact", daysAfterQuarantine: 30 },
+  migrationBackups: { action: "delete", daysAfterCreation: 30 },
+  accountDeletion: {
+    delete: [
+      "auth_sessions", "revoked_provider_sessions", "account_discount_passes", "account_preferences",
+      "account_privacy_settings", "saved_items", "recent_searches", "user_activity_events", "events",
+      "age_verifications", "verifications", "mission_progress", "venue_manager_assignments",
+      "discount_redemptions", "pint_point_drink_records", "pint_point_ledger", "free_pint_reward_codes",
+      "free_pint_reward_redemptions", "account_reward_vouchers", "leaderboard_prize_awards",
+    ],
+    redact: [
+      "accounts", "profiles", "submissions", "source_evidence_objects", "feedback", "wrong_price_reports",
+      "venue_requests", "venue_interest_requests", "venue_claim_requests", "venue_pending_changes",
+      "venue_partner_outreach", "system_state venue-report-delivery settings", "security_audit_log",
+      "stripe_webhook_events", "migration_quarantined_records", "account_deletion_requests",
+    ],
+    pseudonymise: ["contribution_ledger"],
+  },
+} as const;
 export type SubmissionStatus =
   | "pending"
   | "needs_more_evidence"
@@ -70,6 +110,8 @@ export interface BusinessAccount {
   emailVerifiedAt: string | null;
   mfaLevel: string;
   mfaVerifiedAt: string | null;
+  providerTokensValidAfter: string | null;
+  stripePaidSubscriptionStatus: PaidSubscriptionStatus | null;
   stripeEventCreatedAt: string | null;
   role: AccountRole;
   ageConfirmedAt: string | null;
@@ -220,8 +262,15 @@ export interface BusinessMission {
   distanceKm?: number | null;
   freshnessLabel?: string;
   userProgress?: MissionProgressStatus | null;
+  reservationAcceptedAt?: string | null;
+  reservationExpiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BusinessMissionFeedItem extends BusinessMission {
+  latitude: number | null;
+  longitude: number | null;
 }
 
 export interface MissionProgress {
@@ -240,6 +289,13 @@ export class MissionReservationError extends Error {
   constructor(message = "Accept this mission before submitting it.") {
     super(message);
     this.name = "MissionReservationError";
+  }
+}
+
+export class OptimisticConcurrencyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OptimisticConcurrencyError";
   }
 }
 
@@ -283,6 +339,11 @@ export interface LocalVenueLookup {
   postcode: string | null;
   latitude: number | null;
   longitude: number | null;
+  phone?: string | null;
+  website?: string | null;
+  instagram?: string | null;
+  description?: string | null;
+  openingHours?: Record<string, unknown>;
   venueTags?: string[];
   isUserSubmittedVenue?: boolean;
 }
@@ -336,6 +397,7 @@ export interface PublicVenuePriceRecord {
   sourceType: string;
   sourceSubmissionId: string | null;
   lastVerifiedAt: string;
+  priceVerifiedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -420,11 +482,13 @@ export interface VenueRequest {
   requestType: RequestType;
   venueId: string | null;
   venueName: string | null;
+  googlePlaceId: string | null;
   beerName: string | null;
   suburb: string | null;
   notes: string | null;
   status: TrustWorkflowStatus | "mission_created";
   missionId: string | null;
+  sourceSubmissionId: string | null;
   assignedTo: string | null;
   resolutionNote: string | null;
   resolvedAt: string | null;
@@ -524,10 +588,15 @@ export interface BarProfile {
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   subscriptionStatus: string | null;
+  stripePaidMembershipTier: BarMembershipTier | null;
   tierManualOverride: boolean;
   acceptsPintPathCodes: boolean;
   stripeEventCreatedAt: string | null;
   posWebhookTokenVersion: number;
+  posPreviousTokenVersion: number | null;
+  posPreviousTokenValidUntil: string | null;
+  posLastSuccessAt: string | null;
+  posLastTerminalId: string | null;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -572,6 +641,8 @@ export interface BarBeer {
   onTap: boolean;
   inStock: boolean;
   notes: string | null;
+  priceVerifiedAt: string | null;
+  stockVerifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -602,6 +673,7 @@ export interface BarSpecial {
   endsAt: string | null;
   startTime: string | null;
   endTime: string | null;
+  recurrence: { frequency: "none" | "weekly"; daysOfWeek: string[]; timezone: string };
   scheduleNote: string | null;
   exclusive: boolean;
   active: boolean;
@@ -649,6 +721,18 @@ export interface SecurityAuditLog {
   ipHash: string | null;
   userAgentHash: string | null;
   createdAt: string;
+}
+
+export interface AccountSession {
+  id: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+  lastIpHash: string | null;
+  userAgentHash: string | null;
+  providerBacked: boolean;
 }
 
 export interface UserActivityEvent {
@@ -904,6 +988,8 @@ interface AccountRow {
   email_verified_at: string | null;
   mfa_level: string;
   mfa_verified_at: string | null;
+  provider_tokens_valid_after: string | null;
+  stripe_paid_subscription_status: PaidSubscriptionStatus | null;
   stripe_event_created_at: string | null;
   role: AccountRole;
   age_confirmed_at: string | null;
@@ -1239,11 +1325,13 @@ interface VenueRequestRow {
   request_type: RequestType;
   venue_id: string | null;
   venue_name: string | null;
+  google_place_id: string | null;
   beer_name: string | null;
   suburb: string | null;
   notes: string | null;
   status: TrustWorkflowStatus | "mission_created";
   mission_id: string | null;
+  source_submission_id: string | null;
   assigned_to: string | null;
   resolution_note: string | null;
   resolved_at: string | null;
@@ -1321,10 +1409,15 @@ interface BarProfileRow {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   subscription_status: string | null;
+  stripe_paid_membership_tier: StoredBarMembershipTier | null;
   tier_manual_override: number;
   accepts_pint_path_codes: number;
   stripe_event_created_at: string | null;
   pos_webhook_token_version: number;
+  pos_previous_token_version: number | null;
+  pos_previous_token_valid_until: string | null;
+  pos_last_success_at: string | null;
+  pos_last_terminal_id: string | null;
   active: number;
   created_at: string;
   updated_at: string;
@@ -1364,6 +1457,8 @@ interface BarBeerRow {
   on_tap: number;
   in_stock: number;
   notes: string | null;
+  price_verified_at: string | null;
+  stock_verified_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1394,6 +1489,9 @@ interface BarSpecialRow {
   ends_at: string | null;
   start_time: string | null;
   end_time: string | null;
+  recurrence_frequency: "none" | "weekly";
+  days_of_week_json: string;
+  timezone: string;
   schedule_note: string | null;
   exclusive: number;
   active: number;
@@ -1558,6 +1656,8 @@ function toAccount(row: AccountRow): BusinessAccount {
     emailVerifiedAt: row.email_verified_at,
     mfaLevel: row.mfa_level,
     mfaVerifiedAt: row.mfa_verified_at,
+    providerTokensValidAfter: row.provider_tokens_valid_after,
+    stripePaidSubscriptionStatus: row.stripe_paid_subscription_status,
     stripeEventCreatedAt: row.stripe_event_created_at,
     role: row.role,
     ageConfirmedAt: row.age_confirmed_at,
@@ -1963,6 +2063,34 @@ function parseJsonObject(value: string): Record<string, unknown> {
   }
 }
 
+function scrubDeletedIdentityJson(
+  rawJson: string,
+  input: { userId: string; email: string; surrogateId: string },
+): string {
+  const scrub = (value: unknown): unknown => {
+    if (typeof value === "string") {
+      if (value === input.userId) return input.surrogateId;
+      const emailPattern = new RegExp(input.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+      return value
+        .replaceAll(input.userId, input.surrogateId)
+        .replace(emailPattern, "[deleted-email]");
+    }
+    if (Array.isArray(value)) return value.map(scrub);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
+        const scrubbedKey = scrub(key);
+        return [typeof scrubbedKey === "string" ? scrubbedKey : "[deleted-key]", scrub(entry)];
+      }));
+    }
+    return value;
+  };
+  try {
+    return JSON.stringify(scrub(JSON.parse(rawJson)));
+  } catch {
+    return '{"redactedAfterAccountDeletion":true}';
+  }
+}
+
 function normalizeAnalyticsBeerId(value: string | null): string | null {
   if (!value) {
     return null;
@@ -2286,11 +2414,13 @@ function toVenueRequest(row: VenueRequestRow): VenueRequest {
     requestType: row.request_type,
     venueId: row.venue_id,
     venueName: row.venue_name,
+    googlePlaceId: row.google_place_id,
     beerName: row.beer_name,
     suburb: row.suburb,
     notes: row.notes,
     status: row.status,
     missionId: row.mission_id,
+    sourceSubmissionId: row.source_submission_id,
     assignedTo: row.assigned_to,
     resolutionNote: row.resolution_note,
     resolvedAt: row.resolved_at,
@@ -2398,10 +2528,17 @@ function toBarProfile(row: BarProfileRow): BarProfile {
     stripeCustomerId: row.stripe_customer_id,
     stripeSubscriptionId: row.stripe_subscription_id,
     subscriptionStatus: row.subscription_status,
+    stripePaidMembershipTier: row.stripe_paid_membership_tier
+      ? normalizeBarMembershipTier(row.stripe_paid_membership_tier)
+      : null,
     tierManualOverride: Boolean(row.tier_manual_override),
     acceptsPintPathCodes: Boolean(row.accepts_pint_path_codes),
     stripeEventCreatedAt: row.stripe_event_created_at,
     posWebhookTokenVersion: Number(row.pos_webhook_token_version || 1),
+    posPreviousTokenVersion: row.pos_previous_token_version == null ? null : Number(row.pos_previous_token_version),
+    posPreviousTokenValidUntil: row.pos_previous_token_valid_until,
+    posLastSuccessAt: row.pos_last_success_at,
+    posLastTerminalId: row.pos_last_terminal_id,
     active: Boolean(row.active),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -2423,6 +2560,8 @@ function toBarBeer(row: BarBeerRow): BarBeer {
     onTap: Boolean(row.on_tap),
     inStock: Boolean(row.in_stock),
     notes: row.notes,
+    priceVerifiedAt: row.price_verified_at,
+    stockVerifiedAt: row.stock_verified_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2457,6 +2596,11 @@ function toBarSpecial(row: BarSpecialRow): BarSpecial {
     endsAt: row.ends_at,
     startTime: row.start_time,
     endTime: row.end_time,
+    recurrence: {
+      frequency: row.recurrence_frequency || "none",
+      daysOfWeek: parseJsonArray(row.days_of_week_json ?? "[]"),
+      timezone: row.timezone || "Australia/Melbourne",
+    },
     scheduleNote: row.schedule_note,
     exclusive: Boolean(row.exclusive),
     active: Boolean(row.active),
@@ -2564,6 +2708,15 @@ function toAgeVerification(row: AgeVerificationRow): AgeVerification {
 
 export class BusinessRepository {
   constructor(private readonly database: BetterSqlite3.Database) {}
+
+  checkDatabaseHealth(): { ok: boolean; foreignKeyViolations: number } {
+    const probe = this.database.prepare("SELECT 1 AS ok").get() as { ok: number } | undefined;
+    const violation = this.database.prepare("PRAGMA foreign_key_check").get() as Record<string, unknown> | undefined;
+    return {
+      ok: probe?.ok === 1 && !violation,
+      foreignKeyViolations: violation ? 1 : 0,
+    };
+  }
 
   private generatePublicAccountId(): string {
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -2792,6 +2945,7 @@ export class BusinessRepository {
   linkSupabaseAccount(input: {
     userId: string;
     supabaseUserId: string;
+    email: string;
     authProvider: string;
     displayName: string | null;
     displayNameKey?: string | null | undefined;
@@ -2802,11 +2956,17 @@ export class BusinessRepository {
     now: string;
   }): BusinessAccount {
     this.database.transaction(() => {
+      const previous = this.database
+        .prepare("SELECT supabase_user_id FROM accounts WHERE id = ?")
+        .get(input.userId) as { supabase_user_id: string | null } | undefined;
+      const establishesProviderCredentialBoundary = previous?.supabase_user_id !== input.supabaseUserId;
       this.database
         .prepare(
           `UPDATE accounts
            SET supabase_user_id = ?,
                auth_provider = ?,
+               email = ?,
+               password_hash = 'supabase-auth',
                display_name = ?,
                display_name_key = ?,
                avatar_url = ?,
@@ -2819,6 +2979,7 @@ export class BusinessRepository {
         .run(
           input.supabaseUserId,
           input.authProvider,
+          input.email,
           input.displayName,
           input.displayNameKey ?? null,
           input.avatarUrl,
@@ -2828,6 +2989,16 @@ export class BusinessRepository {
           input.now,
           input.userId,
         );
+      if (establishesProviderCredentialBoundary) {
+        // A first verified provider link is a credential boundary. Routine
+        // logins for the same provider identity must not revoke other devices.
+        this.database
+          .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL")
+          .run(input.now, input.userId);
+        this.database
+          .prepare("UPDATE account_discount_passes SET status = 'revoked', revoked_at = ? WHERE user_id = ? AND status = 'active'")
+          .run(input.now, input.userId);
+      }
       const account = this.getAccountById(input.userId);
       if (account) {
         this.upsertProfile({
@@ -2923,6 +3094,24 @@ export class BusinessRepository {
     return row ? toAccount(row) : null;
   }
 
+  listActiveAdminAccounts(excludeUserId?: string): BusinessAccount[] {
+    const rows = this.database.prepare(
+      `SELECT * FROM accounts
+        WHERE status = 'active' AND auth_provider <> 'deleted'
+          AND (role = 'admin' OR subscription_status = 'admin')
+          AND (? IS NULL OR id <> ?)
+        ORDER BY created_at ASC`,
+    ).all(excludeUserId ?? null, excludeUserId ?? null) as AccountRow[];
+    return rows.map(toAccount);
+  }
+
+  hasDeletionLock(userId: string): boolean {
+    return Boolean(this.database.prepare(
+      `SELECT 1 FROM account_deletion_requests
+        WHERE user_id = ? AND status IN ('processing', 'failed', 'completed') LIMIT 1`,
+    ).get(userId));
+  }
+
   createSession(input: {
     tokenHash: string;
     userId: string;
@@ -2931,16 +3120,18 @@ export class BusinessRepository {
     lastUsedAt?: string | null | undefined;
     lastIpHash?: string | null | undefined;
     userAgentHash?: string | null | undefined;
+    providerSessionIdHash?: string | null | undefined;
   }): void {
     this.database
       .prepare(
         `INSERT INTO auth_sessions (
-          token_hash, user_id, created_at, expires_at, last_used_at, last_ip_hash, user_agent_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          token_hash, user_id, provider_session_id_hash, created_at, expires_at, last_used_at, last_ip_hash, user_agent_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.tokenHash,
         input.userId,
+        input.providerSessionIdHash ?? null,
         input.createdAt,
         input.expiresAt,
         input.lastUsedAt ?? input.createdAt,
@@ -2977,41 +3168,364 @@ export class BusinessRepository {
     return row?.expires_at ?? null;
   }
 
+  getActiveProviderSessionExpiresAt(input: {
+    tokenHash: string;
+    userId: string;
+    providerSessionIdHash: string;
+    now: string;
+  }): string | null {
+    const row = this.database.prepare(
+      `SELECT expires_at
+       FROM auth_sessions
+       WHERE token_hash = ?
+         AND user_id = ?
+         AND provider_session_id_hash = ?
+         AND revoked_at IS NULL
+         AND expires_at > ?
+       LIMIT 1`,
+    ).get(input.tokenHash, input.userId, input.providerSessionIdHash, input.now) as { expires_at: string } | undefined;
+    return row?.expires_at ?? null;
+  }
+
+  getActiveSessionCreatedAt(input: { tokenHash: string; userId: string; now: string }): string | null {
+    const row = this.database.prepare(
+      `SELECT created_at FROM auth_sessions
+        WHERE token_hash = ? AND user_id = ? AND expires_at > ? AND revoked_at IS NULL`,
+    ).get(input.tokenHash, input.userId, input.now) as { created_at: string } | undefined;
+    return row?.created_at ?? null;
+  }
+
   touchSession(input: {
     tokenHash: string;
     lastUsedAt: string;
     lastIpHash: string | null;
     userAgentHash: string | null;
-  }): void {
-    this.database
+  }): boolean {
+    return this.database
       .prepare(
         `UPDATE auth_sessions
          SET last_used_at = ?, last_ip_hash = ?, user_agent_hash = ?
-         WHERE token_hash = ? AND revoked_at IS NULL`,
+         WHERE token_hash = ? AND revoked_at IS NULL
+           AND (
+             last_used_at IS NULL
+             OR julianday(last_used_at) <= julianday(?, '-2 minutes')
+             OR last_ip_hash IS NOT ?
+             OR user_agent_hash IS NOT ?
+           )`,
       )
-      .run(input.lastUsedAt, input.lastIpHash, input.userAgentHash, input.tokenHash);
+      .run(
+        input.lastUsedAt,
+        input.lastIpHash,
+        input.userAgentHash,
+        input.tokenHash,
+        input.lastUsedAt,
+        input.lastIpHash,
+        input.userAgentHash,
+      ).changes === 1;
   }
 
   revokeSession(input: { tokenHash: string; revokedAt: string }): boolean {
-    const result = this.database
-      .prepare(
-        `UPDATE auth_sessions
-         SET revoked_at = ?
-         WHERE token_hash = ? AND revoked_at IS NULL`,
-      )
-      .run(input.revokedAt, input.tokenHash);
-    return result.changes > 0;
+    return this.database.transaction(() => {
+      const session = this.database.prepare(
+        "SELECT user_id, provider_session_id_hash FROM auth_sessions WHERE token_hash = ? AND revoked_at IS NULL",
+      ).get(input.tokenHash) as { user_id: string; provider_session_id_hash: string | null } | undefined;
+      if (!session) return false;
+      const result = session.provider_session_id_hash
+        ? this.database.prepare(
+            `UPDATE auth_sessions SET revoked_at = ?
+             WHERE user_id = ? AND provider_session_id_hash = ? AND revoked_at IS NULL`,
+          ).run(input.revokedAt, session.user_id, session.provider_session_id_hash)
+        : this.database
+            .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL")
+            .run(input.revokedAt, input.tokenHash);
+      if (session.provider_session_id_hash) {
+        this.revokeProviderSession({
+          userId: session.user_id,
+          providerSessionIdHash: session.provider_session_id_hash,
+          revokedAt: input.revokedAt,
+          reason: "app_session_revoked",
+        });
+        this.database.prepare(
+          `UPDATE account_discount_passes SET status = 'revoked', revoked_at = ?
+           WHERE status = 'active' AND session_token_hash IN (
+             SELECT token_hash FROM auth_sessions WHERE user_id = ? AND provider_session_id_hash = ?
+           )`,
+        ).run(input.revokedAt, session.user_id, session.provider_session_id_hash);
+      }
+      return result.changes > 0;
+    })();
   }
 
   revokeUserSessions(input: { userId: string; revokedAt: string }): number {
-    const result = this.database
+    return this.database.transaction(() => {
+      this.database.prepare(
+        `INSERT OR IGNORE INTO revoked_provider_sessions (user_id, provider_session_id_hash, revoked_at, reason)
+         SELECT user_id, provider_session_id_hash, ?, 'all_app_sessions_revoked'
+         FROM auth_sessions
+         WHERE user_id = ? AND provider_session_id_hash IS NOT NULL`,
+      ).run(input.revokedAt, input.userId);
+      const result = this.database
+        .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL")
+        .run(input.revokedAt, input.userId);
+      return result.changes;
+    })();
+  }
+
+  completePasswordResetContainment(input: {
+    userId: string;
+    providerSessionIdHash: string;
+    providerTokensValidAfter: string;
+    revokedAt: string;
+  }): { revokedSessions: number; revokedDiscountPasses: number; cancelledRewardCodes: number } {
+    return this.database.transaction(() => {
+      this.database.prepare(
+        `INSERT OR IGNORE INTO revoked_provider_sessions (user_id, provider_session_id_hash, revoked_at, reason)
+         SELECT user_id, provider_session_id_hash, ?, 'password_reset_completed'
+         FROM auth_sessions
+         WHERE user_id = ? AND provider_session_id_hash IS NOT NULL`,
+      ).run(input.revokedAt, input.userId);
+      this.database.prepare(
+        `INSERT INTO revoked_provider_sessions (user_id, provider_session_id_hash, revoked_at, reason)
+         VALUES (?, ?, ?, 'password_reset_completed')
+         ON CONFLICT(user_id, provider_session_id_hash) DO UPDATE SET
+           revoked_at = excluded.revoked_at,
+           reason = excluded.reason`,
+      ).run(input.userId, input.providerSessionIdHash, input.revokedAt);
+      const revokedSessions = this.database
+        .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL")
+        .run(input.revokedAt, input.userId).changes;
+      const revokedDiscountPasses = this.database
+        .prepare(
+          `UPDATE account_discount_passes
+           SET status = 'revoked', revoked_at = ?
+           WHERE user_id = ? AND status = 'active'`,
+        )
+        .run(input.revokedAt, input.userId).changes;
+      const cancelledRewardCodes = this.database
+        .prepare(
+          `UPDATE free_pint_reward_codes
+           SET status = 'cancelled', cancelled_at = ?
+           WHERE user_id = ? AND status = 'active'`,
+        )
+        .run(input.revokedAt, input.userId).changes;
+      this.database.prepare(
+        `UPDATE accounts
+         SET provider_tokens_valid_after = ?, updated_at = ?
+         WHERE id = ?`,
+      ).run(input.providerTokensValidAfter, input.revokedAt, input.userId);
+      return { revokedSessions, revokedDiscountPasses, cancelledRewardCodes };
+    })();
+  }
+
+  revokeProviderSession(input: {
+    userId: string;
+    providerSessionIdHash: string;
+    revokedAt: string;
+    reason: string;
+  }): void {
+    this.database.prepare(
+      `INSERT INTO revoked_provider_sessions (user_id, provider_session_id_hash, revoked_at, reason)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id, provider_session_id_hash) DO UPDATE SET
+         revoked_at = excluded.revoked_at,
+         reason = excluded.reason`,
+    ).run(input.userId, input.providerSessionIdHash, input.revokedAt, input.reason);
+  }
+
+  isProviderSessionRevoked(input: { userId: string; providerSessionIdHash: string }): boolean {
+    return Boolean(this.database.prepare(
+      "SELECT 1 FROM revoked_provider_sessions WHERE user_id = ? AND provider_session_id_hash = ? LIMIT 1",
+    ).get(input.userId, input.providerSessionIdHash));
+  }
+
+  listUserSessions(input: { userId: string; now: string; limit?: number; offset?: number }): AccountSession[] {
+    const limit = Math.min(200, Math.max(1, input.limit ?? 100));
+    const rows = this.database
       .prepare(
-        `UPDATE auth_sessions
-         SET revoked_at = ?
-         WHERE user_id = ? AND revoked_at IS NULL`,
+        `SELECT token_hash, user_id, provider_session_id_hash, created_at, expires_at, revoked_at,
+                last_used_at, last_ip_hash, user_agent_hash
+         FROM auth_sessions
+         WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?
+         ORDER BY COALESCE(last_used_at, created_at) DESC
+         LIMIT ? OFFSET ?`,
       )
-      .run(input.revokedAt, input.userId);
-    return result.changes;
+      .all(input.userId, input.now, limit, Math.max(0, input.offset ?? 0)) as Array<{
+        token_hash: string;
+        user_id: string;
+        created_at: string;
+        expires_at: string;
+        revoked_at: string | null;
+        last_used_at: string | null;
+        last_ip_hash: string | null;
+        user_agent_hash: string | null;
+        provider_session_id_hash: string | null;
+      }>;
+    return rows.map((row) => ({
+      id: row.token_hash.slice(0, 24),
+      userId: row.user_id,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+      revokedAt: row.revoked_at,
+      lastUsedAt: row.last_used_at,
+      lastIpHash: row.last_ip_hash,
+      userAgentHash: row.user_agent_hash,
+      providerBacked: Boolean(row.provider_session_id_hash),
+    }));
+  }
+
+  listUserSessionHistory(input: { userId: string; now: string; limit?: number; offset?: number }): AccountSession[] {
+    const limit = Math.min(100, Math.max(1, input.limit ?? 20));
+    const rows = this.database.prepare(
+      `SELECT token_hash, user_id, provider_session_id_hash, created_at, expires_at, revoked_at,
+              last_used_at, last_ip_hash, user_agent_hash
+         FROM auth_sessions
+        WHERE user_id = ? AND (revoked_at IS NOT NULL OR expires_at <= ?)
+        ORDER BY COALESCE(revoked_at, expires_at) DESC
+        LIMIT ? OFFSET ?`,
+    ).all(input.userId, input.now, limit, Math.max(0, input.offset ?? 0)) as Array<{
+      token_hash: string; user_id: string; provider_session_id_hash: string | null;
+      created_at: string; expires_at: string; revoked_at: string | null; last_used_at: string | null;
+      last_ip_hash: string | null; user_agent_hash: string | null;
+    }>;
+    return rows.map((row) => ({
+      id: row.token_hash.slice(0, 24), userId: row.user_id, createdAt: row.created_at,
+      expiresAt: row.expires_at, revokedAt: row.revoked_at, lastUsedAt: row.last_used_at,
+      lastIpHash: row.last_ip_hash, userAgentHash: row.user_agent_hash,
+      providerBacked: Boolean(row.provider_session_id_hash),
+    }));
+  }
+
+  countUserSessionHistory(userId: string, now: string): number {
+    const row = this.database.prepare(
+      "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND (revoked_at IS NOT NULL OR expires_at <= ?)",
+    ).get(userId, now) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
+  countUserSessions(userId: string, now: string): number {
+    const row = this.database.prepare(
+      "SELECT count(*) AS count FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL AND expires_at > ?",
+    ).get(userId, now) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
+  prunePrivacyRetention(input: {
+    authSessionCutoff: string;
+    providerRevocationCutoff: string;
+    stripePayloadCutoff: string;
+    stripeEnvelopeCutoff: string;
+    securityFingerprintCutoff: string;
+    securityEnvelopeCutoff: string;
+    reviewedLocationCutoff: string;
+    migrationQuarantineCutoff: string;
+  }): {
+    authSessionsDeleted: number;
+    providerRevocationsDeleted: number;
+    stripePayloadsRedacted: number;
+    stripeEnvelopesDeleted: number;
+    securityFingerprintsRedacted: number;
+    securityEnvelopesDeleted: number;
+    reviewedLocationsPurged: number;
+    migrationQuarantinePayloadsRedacted: number;
+  } {
+    return this.database.transaction(() => {
+      const authSessionsDeleted = this.database.prepare(
+        `DELETE FROM auth_sessions
+          WHERE (revoked_at IS NOT NULL AND revoked_at <= ?)
+             OR expires_at <= ?`,
+      ).run(input.authSessionCutoff, input.authSessionCutoff).changes;
+      const providerRevocationsDeleted = this.database.prepare(
+        `DELETE FROM revoked_provider_sessions
+          WHERE revoked_at <= ?
+            AND reason IN ('password_reset_completed', 'all_app_sessions_revoked')`,
+      ).run(input.providerRevocationCutoff).changes;
+      const stripePayloadsRedacted = this.database.prepare(
+        `UPDATE stripe_webhook_events SET payload_json = NULL, last_error = NULL
+          WHERE received_at <= ? AND status = 'applied' AND payload_json IS NOT NULL`,
+      ).run(input.stripePayloadCutoff).changes;
+      const stripeEnvelopesDeleted = this.database.prepare(
+        "DELETE FROM stripe_webhook_events WHERE received_at <= ?",
+      ).run(input.stripeEnvelopeCutoff).changes;
+      const securityFingerprintsRedacted = this.database.prepare(
+        `UPDATE security_audit_log SET ip_hash = NULL, user_agent_hash = NULL
+          WHERE created_at <= ? AND (ip_hash IS NOT NULL OR user_agent_hash IS NOT NULL)`,
+      ).run(input.securityFingerprintCutoff).changes;
+      const securityEnvelopesDeleted = this.database.prepare(
+        "DELETE FROM security_audit_log WHERE created_at <= ?",
+      ).run(input.securityEnvelopeCutoff).changes;
+      const reviewedLocationsPurged = this.database.prepare(
+        `UPDATE submissions
+            SET upload_latitude = NULL, upload_longitude = NULL, upload_accuracy_meters = NULL,
+                upload_location_captured_at = NULL
+          WHERE reviewed_at IS NOT NULL AND reviewed_at <= ?
+            AND status NOT IN ('pending', 'needs_more_evidence', 'disputed')
+            AND (upload_latitude IS NOT NULL OR upload_longitude IS NOT NULL
+              OR upload_accuracy_meters IS NOT NULL OR upload_location_captured_at IS NOT NULL)`,
+      ).run(input.reviewedLocationCutoff).changes;
+      const migrationQuarantinePayloadsRedacted = this.database.prepare(
+        `UPDATE migration_quarantined_records
+            SET payload_json = '{"redactedAfterRetention":true}'
+          WHERE quarantined_at <= ? AND payload_json <> '{"redactedAfterRetention":true}'`,
+      ).run(input.migrationQuarantineCutoff).changes;
+      return {
+        authSessionsDeleted,
+        providerRevocationsDeleted,
+        stripePayloadsRedacted,
+        stripeEnvelopesDeleted,
+        securityFingerprintsRedacted,
+        securityEnvelopesDeleted,
+        reviewedLocationsPurged,
+        migrationQuarantinePayloadsRedacted,
+      };
+    })();
+  }
+
+  revokeUserSessionById(input: { userId: string; sessionId: string; revokedAt: string }): {
+    revoked: boolean;
+    revokedDiscountPasses: number;
+  } {
+    return this.database.transaction(() => {
+      const session = this.database
+        .prepare(
+          `SELECT token_hash, provider_session_id_hash
+           FROM auth_sessions
+           WHERE user_id = ? AND substr(token_hash, 1, 24) = ?
+           LIMIT 1`,
+        )
+        .get(input.userId, input.sessionId) as { token_hash: string; provider_session_id_hash: string | null } | undefined;
+      if (!session) {
+        return { revoked: false, revokedDiscountPasses: 0 };
+      }
+      const result = session.provider_session_id_hash
+        ? this.database.prepare(
+            `UPDATE auth_sessions SET revoked_at = ?
+             WHERE user_id = ? AND provider_session_id_hash = ? AND revoked_at IS NULL`,
+          ).run(input.revokedAt, input.userId, session.provider_session_id_hash)
+        : this.database.prepare(
+            `UPDATE auth_sessions SET revoked_at = ?
+             WHERE token_hash = ? AND user_id = ? AND revoked_at IS NULL`,
+          ).run(input.revokedAt, session.token_hash, input.userId);
+      const passes = session.provider_session_id_hash
+        ? this.database.prepare(
+            `UPDATE account_discount_passes SET status = 'revoked', revoked_at = ?
+             WHERE status = 'active' AND session_token_hash IN (
+               SELECT token_hash FROM auth_sessions WHERE user_id = ? AND provider_session_id_hash = ?
+             )`,
+          ).run(input.revokedAt, input.userId, session.provider_session_id_hash)
+        : this.database.prepare(
+            `UPDATE account_discount_passes SET status = 'revoked', revoked_at = ?
+             WHERE session_token_hash = ? AND status = 'active'`,
+          ).run(input.revokedAt, session.token_hash);
+      if (result.changes > 0 && session.provider_session_id_hash) {
+        this.revokeProviderSession({
+          userId: input.userId,
+          providerSessionIdHash: session.provider_session_id_hash,
+          revokedAt: input.revokedAt,
+          reason: "app_session_revoked",
+        });
+      }
+      return { revoked: result.changes > 0, revokedDiscountPasses: passes.changes };
+    })();
   }
 
   updateAgeConfirmed(userId: string, confirmedAt: string): BusinessAccount {
@@ -3036,10 +3550,10 @@ export class BusinessRepository {
       this.database
         .prepare(
           `UPDATE accounts
-           SET terms_accepted_at = COALESCE(terms_accepted_at, ?),
-               privacy_accepted_at = COALESCE(privacy_accepted_at, ?),
-               terms_version = COALESCE(terms_version, ?),
-               privacy_version = COALESCE(privacy_version, ?),
+           SET terms_accepted_at = ?,
+               privacy_accepted_at = ?,
+               terms_version = ?,
+               privacy_version = ?,
                updated_at = ?
            WHERE id = ?`,
         )
@@ -3138,6 +3652,7 @@ export class BusinessRepository {
   updateSubscription(input: {
     userId: string;
     subscriptionStatus: SubscriptionStatus;
+    stripePaidSubscriptionStatus?: PaidSubscriptionStatus | null;
     stripeCustomerId?: string | null;
     premiumUntil?: string | null;
     now: string;
@@ -3147,15 +3662,23 @@ export class BusinessRepository {
       .prepare(
         `UPDATE accounts
          SET subscription_status = ?,
+             stripe_paid_subscription_status = COALESCE(?, stripe_paid_subscription_status),
              stripe_customer_id = COALESCE(?, stripe_customer_id),
              premium_until = ?,
              stripe_event_created_at = COALESCE(?, stripe_event_created_at),
              updated_at = ?
          WHERE id = ?
+           AND auth_provider <> 'deleted'
+           AND NOT EXISTS (
+             SELECT 1 FROM account_deletion_requests deletion
+             WHERE deletion.user_id = accounts.id
+               AND deletion.status IN ('processing', 'failed', 'completed')
+           )
            AND (? IS NULL OR stripe_event_created_at IS NULL OR stripe_event_created_at <= ?)`,
       )
       .run(
         input.subscriptionStatus,
+        input.stripePaidSubscriptionStatus ?? null,
         input.stripeCustomerId ?? null,
         input.premiumUntil ?? null,
         input.stripeEventCreatedAt ?? null,
@@ -3496,19 +4019,30 @@ export class BusinessRepository {
            COALESCE(a.public_account_id, a.id) AS account_id,
            COALESCE(NULLIF(a.display_name, ''), NULLIF(p.display_name, ''), COALESCE(a.public_account_id, a.id)) AS display_name,
            (
-             SELECT count(*)
-               FROM submissions submission
-              WHERE submission.user_id = a.id
-                AND submission.status = 'approved'
-                AND COALESCE(submission.fraud_flagged, 0) = 0
-                ${input.period === "month" ? "AND strftime('%Y-%m', COALESCE(submission.reviewed_at, submission.updated_at)) = ledger.month_key" : ""}
+             ${input.period === "month"
+               ? `SELECT count(DISTINCT counted.submission_id)
+                    FROM contribution_ledger counted
+                   WHERE counted.user_id = a.id
+                     AND counted.month_key = ledger.month_key
+                     AND counted.submission_id IS NOT NULL`
+               : `SELECT count(*)
+                    FROM submissions submission
+                   WHERE submission.user_id = a.id
+                     AND submission.status = 'approved'
+                     AND COALESCE(submission.fraud_flagged, 0) = 0`}
            ) AS approved_submissions,
            COALESCE(sum(ledger.points), 0) AS points,
            min(ledger.created_at) AS first_points_at
          FROM contribution_ledger ledger
          JOIN accounts a ON a.id = ledger.user_id
          LEFT JOIN profiles p ON p.id = a.id
-         WHERE a.status != 'suspended'
+         WHERE a.status = 'active'
+           AND a.role = 'user'
+           AND a.subscription_status <> 'admin'
+           AND NOT EXISTS (
+             SELECT 1 FROM venue_manager_assignments assignment
+             WHERE assignment.user_id = a.id AND assignment.status = 'active'
+           )
            ${monthFilter}
          GROUP BY a.id
          HAVING COALESCE(sum(ledger.points), 0) > 0
@@ -3533,19 +4067,77 @@ export class BusinessRepository {
   }
 
   getLeaderboardRank(input: { userId: string; period: "month" | "all_time"; now: string; monthKey?: string | undefined }): LeaderboardEntry | null {
-    const account = this.getAccountById(input.userId);
-    if (!account) {
-      return null;
+    const values: unknown[] = [];
+    const monthFilter = input.period === "month" ? "AND ledger.month_key = ?" : "";
+    if (input.period === "month") {
+      values.push(input.monthKey ?? input.now.slice(0, 7));
     }
+    values.push(input.userId);
 
-    return (
-      this.listLeaderboard({
-        period: input.period,
-        limit: 10_000,
-        now: input.now,
-        monthKey: input.monthKey,
-      }).find((entry) => entry.accountId === account.publicAccountId) ?? null
-    );
+    const row = this.database
+      .prepare(
+        `WITH leaderboard AS (
+           SELECT
+             a.id AS user_id,
+             COALESCE(a.public_account_id, a.id) AS account_id,
+             COALESCE(NULLIF(a.display_name, ''), NULLIF(p.display_name, ''), COALESCE(a.public_account_id, a.id)) AS display_name,
+             (
+               ${input.period === "month"
+                 ? `SELECT count(DISTINCT counted.submission_id)
+                      FROM contribution_ledger counted
+                     WHERE counted.user_id = a.id
+                       AND counted.month_key = ledger.month_key
+                       AND counted.submission_id IS NOT NULL`
+                 : `SELECT count(*)
+                      FROM submissions submission
+                     WHERE submission.user_id = a.id
+                       AND submission.status = 'approved'
+                       AND COALESCE(submission.fraud_flagged, 0) = 0`}
+             ) AS approved_submissions,
+             COALESCE(sum(ledger.points), 0) AS points,
+             min(ledger.created_at) AS first_points_at
+           FROM contribution_ledger ledger
+           JOIN accounts a ON a.id = ledger.user_id
+           LEFT JOIN profiles p ON p.id = a.id
+           WHERE a.status = 'active'
+             AND a.role = 'user'
+             AND a.subscription_status <> 'admin'
+             AND NOT EXISTS (
+               SELECT 1 FROM venue_manager_assignments assignment
+               WHERE assignment.user_id = a.id AND assignment.status = 'active'
+             )
+             ${monthFilter}
+           GROUP BY a.id
+           HAVING COALESCE(sum(ledger.points), 0) > 0
+         ), ranked AS (
+           SELECT leaderboard.*,
+                  row_number() OVER (
+                    ORDER BY points DESC, approved_submissions DESC, first_points_at ASC, account_id ASC
+                  ) AS rank
+           FROM leaderboard
+         )
+         SELECT rank, account_id, display_name, approved_submissions, points
+         FROM ranked
+         WHERE user_id = ?
+         LIMIT 1`,
+      )
+      .get(...values) as {
+        rank: number;
+        account_id: string;
+        display_name: string;
+        approved_submissions: number;
+        points: number;
+      } | undefined;
+
+    return row
+      ? {
+          rank: Number(row.rank),
+          accountId: row.account_id,
+          displayName: row.display_name,
+          approvedSubmissions: Number(row.approved_submissions ?? 0),
+          points: Number(row.points ?? 0),
+        }
+      : null;
   }
 
   getLeaderboardPrizeCampaign(monthKey: string): LeaderboardPrizeCampaign | null {
@@ -3612,6 +4204,17 @@ export class BusinessRepository {
   }
 
   listAccountRewardVouchers(userId: string, limit: number): AccountRewardVoucher[] {
+    const now = new Date().toISOString();
+    this.database
+      .prepare(
+        `UPDATE account_reward_vouchers
+            SET status = 'expired', updated_at = ?
+          WHERE user_id = ?
+            AND status = 'active'
+            AND expires_at IS NOT NULL
+            AND expires_at <= ?`,
+      )
+      .run(now, userId, now);
     const rows = this.database
       .prepare("SELECT * FROM account_reward_vouchers WHERE user_id = ? ORDER BY issued_at DESC LIMIT ?")
       .all(userId, limit) as AccountRewardVoucherRow[];
@@ -3650,18 +4253,39 @@ export class BusinessRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
 
-      for (const entry of input.entries.slice(0, 3)) {
+      const eligibleEntries = input.entries.flatMap((entry) => {
         const account = this.getAccountByPublicAccountId(entry.accountId);
-        if (!account) {
-          continue;
+        const hasStaffAssignment = account
+          ? Boolean(this.database.prepare(
+              "SELECT 1 FROM venue_manager_assignments WHERE user_id = ? AND status = 'active' LIMIT 1",
+            ).get(account.id))
+          : false;
+        if (
+          !account || account.status !== "active" || account.role !== "user" ||
+          account.subscriptionStatus === "admin" || hasStaffAssignment
+        ) {
+          return [];
         }
-        const amountCents = amountsByRank.get(entry.rank) ?? 0;
+        return [{ account, entry }];
+      }).slice(0, 3);
+
+      for (const [index, candidate] of eligibleEntries.entries()) {
+        const { account, entry } = candidate;
+        const rank = index + 1;
+        const amountCents = amountsByRank.get(rank) ?? 0;
         if (amountCents <= 0) {
           continue;
         }
-        const voucherId = `${campaign.monthKey}:${entry.rank}:${account.id}:voucher`;
-        const awardId = `${campaign.monthKey}:${entry.rank}:${account.id}`;
-        const title = `${campaign.title} ${entry.rank === 1 ? "winner" : `place ${entry.rank}`}`;
+        const voucherId = `${campaign.monthKey}:${rank}:${account.id}:voucher`;
+        const awardId = `${campaign.monthKey}:${rank}:${account.id}`;
+        const title = `${campaign.title} ${rank === 1 ? "winner" : `place ${rank}`}`;
+        const expiresAt = new Date(new Date(input.now).getTime() + (90 * 24 * 60 * 60 * 1_000)).toISOString();
+        const claimReference = `PP-${campaign.monthKey.replace("-", "")}-${crypto
+          .createHash("sha256")
+          .update(voucherId)
+          .digest("hex")
+          .slice(0, 8)
+          .toUpperCase()}`;
         insertVoucher.run(
           voucherId,
           account.id,
@@ -3672,12 +4296,15 @@ export class BusinessRepository {
           amountCents,
           campaign.affiliateBar,
           input.now,
-          null,
+          expiresAt,
           JSON.stringify({
             monthKey: campaign.monthKey,
-            rank: entry.rank,
+            rank,
             points: entry.points,
             approvedSubmissions: entry.approvedSubmissions,
+            fulfillmentMethod: "manual_support",
+            claimReference,
+            fulfillmentInstructions: "Contact Pint Path support with this claim reference. A Pint Path admin will verify and mark the reward fulfilled.",
           }),
           input.now,
           input.now,
@@ -3685,7 +4312,7 @@ export class BusinessRepository {
         insertAward.run(
           awardId,
           campaign.monthKey,
-          entry.rank,
+          rank,
           account.id,
           account.publicAccountId,
           entry.displayName,
@@ -3726,6 +4353,65 @@ export class BusinessRepository {
       .prepare("SELECT * FROM account_reward_vouchers WHERE id = ?")
       .get(id) as AccountRewardVoucherRow | undefined;
     return row ? toAccountRewardVoucher(row) : null;
+  }
+
+  transitionAccountRewardVoucher(input: {
+    id: string;
+    action: "fulfill" | "void";
+    actorUserId: string;
+    reason: string;
+    now: string;
+  }): { voucher: AccountRewardVoucher; idempotent: boolean; conflict: boolean } | null {
+    const transition = this.database.transaction(() => {
+      this.database
+        .prepare(
+          `UPDATE account_reward_vouchers
+              SET status = 'expired', updated_at = ?
+            WHERE id = ?
+              AND status = 'active'
+              AND expires_at IS NOT NULL
+              AND expires_at <= ?`,
+        )
+        .run(input.now, input.id, input.now);
+
+      const current = this.getAccountRewardVoucherById(input.id);
+      if (!current) {
+        return null;
+      }
+      const nextStatus = input.action === "fulfill" ? "redeemed" : "void";
+      if (current.status === nextStatus) {
+        return { voucher: current, idempotent: true, conflict: false };
+      }
+      if (current.status !== "active") {
+        return { voucher: current, idempotent: false, conflict: true };
+      }
+
+      const metadata = {
+        ...current.metadata,
+        fulfillmentMethod: "manual_support",
+        fulfillmentAction: input.action,
+        fulfillmentReason: input.reason,
+        fulfilledBy: input.actorUserId,
+        fulfillmentUpdatedAt: input.now,
+      };
+      const updated = this.database
+        .prepare(
+          `UPDATE account_reward_vouchers
+              SET status = ?,
+                  redeemed_at = CASE WHEN ? = 'redeemed' THEN ? ELSE NULL END,
+                  metadata_json = ?,
+                  updated_at = ?
+            WHERE id = ? AND status = 'active'`,
+        )
+        .run(nextStatus, nextStatus, input.now, JSON.stringify(metadata), input.now, input.id);
+      if (updated.changes !== 1) {
+        const raced = this.getAccountRewardVoucherById(input.id);
+        return raced ? { voucher: raced, idempotent: raced.status === nextStatus, conflict: raced.status !== nextStatus } : null;
+      }
+      return { voucher: this.getAccountRewardVoucherById(input.id)!, idempotent: false, conflict: false };
+    });
+
+    return transition();
   }
 
   listPubGolfVenueCandidates(drinkNames: string[], limitPerDrink: number): PubGolfVenueCandidate[] {
@@ -3838,6 +4524,13 @@ export class BusinessRepository {
     return row ? toAccountDiscountPass(row) : null;
   }
 
+  getDiscountPassByCodeHash(codeHash: string): AccountDiscountPass | null {
+    const row = this.database
+      .prepare("SELECT * FROM account_discount_passes WHERE code_hash = ? LIMIT 1")
+      .get(codeHash) as AccountDiscountPassRow | undefined;
+    return row ? toAccountDiscountPass(row) : null;
+  }
+
   revokeDiscountPassesForSession(input: { sessionTokenHash: string; revokedAt: string }): number {
     const result = this.database
       .prepare(
@@ -3864,16 +4557,17 @@ export class BusinessRepository {
     return result.changes;
   }
 
-  markDiscountPassUsed(input: { id: string; lastUsedAt: string }): void {
-    this.database
+  markDiscountPassUsed(input: { id: string; lastUsedAt: string }): boolean {
+    const result = this.database
       .prepare(
         `UPDATE account_discount_passes
          SET status = 'revoked',
              last_used_at = ?,
              revoked_at = COALESCE(revoked_at, ?)
-         WHERE id = ?`,
+         WHERE id = ? AND status = 'active' AND revoked_at IS NULL AND expires_at > ?`,
       )
-      .run(input.lastUsedAt, input.lastUsedAt, input.id);
+      .run(input.lastUsedAt, input.lastUsedAt, input.id, input.lastUsedAt);
+    return result.changes === 1;
   }
 
   createDiscountRedemption(input: {
@@ -3937,15 +4631,35 @@ export class BusinessRepository {
     return row ? toDiscountRedemption(row) : null;
   }
 
-  rotateBarPosWebhookToken(input: { barId: string; now: string }): BarProfile {
+  getDiscountRedemptionByPassId(discountPassId: string): DiscountRedemption | null {
+    const row = this.database
+      .prepare("SELECT * FROM discount_redemptions WHERE discount_pass_id = ? LIMIT 1")
+      .get(discountPassId) as DiscountRedemptionRow | undefined;
+    return row ? toDiscountRedemption(row) : null;
+  }
+
+  rotateBarPosWebhookToken(input: { barId: string; now: string; previousValidUntil: string }): BarProfile {
     this.database
       .prepare(
         `UPDATE venue_profiles
-         SET pos_webhook_token_version = pos_webhook_token_version + 1, updated_at = ?
+         SET pos_previous_token_version = pos_webhook_token_version,
+             pos_previous_token_valid_until = ?,
+             pos_webhook_token_version = pos_webhook_token_version + 1,
+             updated_at = ?
          WHERE venue_id = ?`,
       )
-      .run(input.now, input.barId);
+      .run(input.previousValidUntil, input.now, input.barId);
     return this.getBarProfile(input.barId)!;
+  }
+
+  recordBarPosWebhookSuccess(input: { barId: string; terminalId: string | null; now: string }): void {
+    this.database
+      .prepare(
+        `UPDATE venue_profiles
+         SET pos_last_success_at = ?, pos_last_terminal_id = ?, updated_at = updated_at
+         WHERE venue_id = ?`,
+      )
+      .run(input.now, input.terminalId, input.barId);
   }
 
   listDiscountRedemptionsForUser(userId: string, limit: number): DiscountRedemption[] {
@@ -3978,11 +4692,18 @@ export class BusinessRepository {
     };
   }
 
-  listDiscountRedemptionsForVenue(venueId: string, limit: number): DiscountRedemption[] {
+  listDiscountRedemptionsForVenue(venueId: string, limit: number, offset = 0): DiscountRedemption[] {
     const rows = this.database
-      .prepare("SELECT * FROM discount_redemptions WHERE venue_id = ? ORDER BY redeemed_at DESC LIMIT ?")
-      .all(venueId, limit) as DiscountRedemptionRow[];
+      .prepare("SELECT * FROM discount_redemptions WHERE venue_id = ? ORDER BY redeemed_at DESC LIMIT ? OFFSET ?")
+      .all(venueId, Math.max(1, Math.min(limit, 100)), Math.max(0, offset)) as DiscountRedemptionRow[];
     return rows.map(toDiscountRedemption);
+  }
+
+  countDiscountRedemptionsForVenue(venueId: string): number {
+    const row = this.database
+      .prepare("SELECT count(*) AS count FROM discount_redemptions WHERE venue_id = ?")
+      .get(venueId) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 
   getDiscountRedemptionStatsForVenue(input: {
@@ -4281,14 +5002,26 @@ export class BusinessRepository {
     quantity: number;
     isAlcoholic: boolean;
     pointsAwarded?: number;
+    dailyCap?: number;
+    dailySince?: string;
     source: string;
     recordedByUserId: string | null;
     idempotencyKey: string;
     recordedAt: string;
     metadata: Record<string, unknown>;
   }): PintPointDrinkRecord {
-    const pointsAwarded = Math.max(0, Math.min(input.quantity, input.pointsAwarded ?? (input.isAlcoholic ? input.quantity : 0)));
+    let pointsAwarded = 0;
     const create = this.database.transaction(() => {
+      const requestedPoints = Math.max(0, Math.min(
+        input.quantity,
+        input.pointsAwarded ?? (input.isAlcoholic ? input.quantity : 0),
+      ));
+      if (input.dailyCap != null && input.dailySince) {
+        const awarded = this.countPintPointsAwardedSince({ userId: input.userId, since: input.dailySince });
+        pointsAwarded = Math.min(requestedPoints, Math.max(0, input.dailyCap - awarded));
+      } else {
+        pointsAwarded = requestedPoints;
+      }
       this.database
         .prepare(
           `INSERT INTO pint_point_drink_records (
@@ -4362,6 +5095,13 @@ export class BusinessRepository {
     return row ? toPintPointDrinkRecord(row) : null;
   }
 
+  getPintPointDrinkRecordByGlobalIdempotencyKey(idempotencyKey: string): PintPointDrinkRecord | null {
+    const row = this.database
+      .prepare("SELECT * FROM pint_point_drink_records WHERE idempotency_key = ? LIMIT 1")
+      .get(idempotencyKey) as PintPointDrinkRecordRow | undefined;
+    return row ? toPintPointDrinkRecord(row) : null;
+  }
+
   listPintPointDrinkRecordsForUser(userId: string, limit: number): PintPointDrinkRecord[] {
     const rows = this.database
       .prepare(
@@ -4374,7 +5114,7 @@ export class BusinessRepository {
     return rows.map(toPintPointDrinkRecord);
   }
 
-  listPintPointDrinkRecordsForVenue(venueId: string, limit: number): VenuePintPointActivity[] {
+  listPintPointDrinkRecordsForVenue(venueId: string, limit: number, offset = 0): VenuePintPointActivity[] {
     const rows = this.database
       .prepare(
         `SELECT
@@ -4395,9 +5135,9 @@ export class BusinessRepository {
          LEFT JOIN accounts a ON a.id = r.user_id
          WHERE r.venue_id = ?
          ORDER BY r.recorded_at DESC
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
       )
-      .all(venueId, Math.max(1, Math.min(limit, 50))) as VenuePintPointActivityRow[];
+      .all(venueId, Math.max(1, Math.min(limit, 100)), Math.max(0, offset)) as VenuePintPointActivityRow[];
 
     return rows.map((row) => ({
       id: row.id,
@@ -4414,6 +5154,13 @@ export class BusinessRepository {
       voidReason: row.void_reason,
       recordedAt: row.recorded_at,
     }));
+  }
+
+  countPintPointDrinkRecordsForVenue(venueId: string): number {
+    const row = this.database
+      .prepare("SELECT count(*) AS count FROM pint_point_drink_records WHERE venue_id = ?")
+      .get(venueId) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 
   countPintPointsAwardedSince(input: { userId: string; since: string }): number {
@@ -4582,6 +5329,10 @@ export class BusinessRepository {
     metadata: Record<string, unknown>;
   }): FreePintRewardCode {
     const create = this.database.transaction(() => {
+      const wallet = this.getPintPointBalance(input.userId);
+      if (wallet.available < 50) {
+        throw new Error("INSUFFICIENT_PINT_POINTS");
+      }
       this.database
         .prepare(
           `INSERT INTO free_pint_reward_codes (
@@ -4662,11 +5413,16 @@ export class BusinessRepository {
       )
       .all(input.userId, input.now) as FreePintRewardCodeRow[];
 
+    let expired = 0;
     const expire = this.database.transaction(() => {
       for (const row of rows) {
-        this.database
+        const updated = this.database
           .prepare("UPDATE free_pint_reward_codes SET status = 'expired' WHERE id = ? AND status = 'active'")
           .run(row.id);
+        if (updated.changes !== 1) {
+          continue;
+        }
+        expired += 1;
         this.createPintPointLedgerEntry({
           id: crypto.randomUUID(),
           userId: row.user_id,
@@ -4684,7 +5440,7 @@ export class BusinessRepository {
     });
 
     expire();
-    return rows.length;
+    return expired;
   }
 
   cancelFreePintRewardCode(input: { userId: string; codeId: string; now: string }): FreePintRewardCode | null {
@@ -4694,9 +5450,12 @@ export class BusinessRepository {
     }
 
     const cancel = this.database.transaction(() => {
-      this.database
+      const updated = this.database
         .prepare("UPDATE free_pint_reward_codes SET status = 'cancelled', cancelled_at = ? WHERE id = ? AND status = 'active'")
         .run(input.now, input.codeId);
+      if (updated.changes !== 1) {
+        return;
+      }
       this.createPintPointLedgerEntry({
         id: crypto.randomUUID(),
         userId: code.userId,
@@ -4730,7 +5489,7 @@ export class BusinessRepository {
     }
 
     const reject = this.database.transaction(() => {
-      this.database
+      const updated = this.database
         .prepare(
           `UPDATE free_pint_reward_codes
            SET status = 'rejected',
@@ -4741,6 +5500,9 @@ export class BusinessRepository {
            WHERE id = ? AND status = 'active'`,
         )
         .run(input.now, input.reason, input.actorUserId, input.venueId, input.codeId);
+      if (updated.changes !== 1) {
+        return;
+      }
       this.createPintPointLedgerEntry({
         id: crypto.randomUUID(),
         userId: code.userId,
@@ -4954,7 +5716,7 @@ export class BusinessRepository {
     };
   }
 
-  listSubmissionsWithItems(filters: { userId?: string | undefined; status?: SubmissionStatus | undefined; limit: number }): BusinessSubmissionWithItems[] {
+  listSubmissionsWithItems(filters: { userId?: string | undefined; status?: SubmissionStatus | undefined; limit: number; offset?: number | undefined }): BusinessSubmissionWithItems[] {
     return this.withSubmissionItems(this.listSubmissions(filters));
   }
 
@@ -4984,7 +5746,7 @@ export class BusinessRepository {
     }));
   }
 
-  listSubmissions(filters: { userId?: string | undefined; status?: SubmissionStatus | undefined; limit: number }): BusinessSubmission[] {
+  listSubmissions(filters: { userId?: string | undefined; status?: SubmissionStatus | undefined; limit: number; offset?: number | undefined }): BusinessSubmission[] {
     const where: string[] = [];
     const values: unknown[] = [];
 
@@ -4998,16 +5760,68 @@ export class BusinessRepository {
       values.push(filters.status);
     }
 
-    values.push(filters.limit);
+    values.push(filters.limit, Math.max(0, filters.offset ?? 0));
     const rows = this.database
       .prepare(
         `SELECT * FROM submissions
          ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
          ORDER BY created_at DESC
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
       )
       .all(...values) as SubmissionRow[];
     return rows.map(toSubmission);
+  }
+
+  countSubmissions(filters: { userId?: string; status?: SubmissionStatus }): number {
+    const where: string[] = [];
+    const values: unknown[] = [];
+    if (filters.userId) { where.push("user_id = ?"); values.push(filters.userId); }
+    if (filters.status) { where.push("status = ?"); values.push(filters.status); }
+    const row = this.database.prepare(
+      `SELECT count(*) AS count FROM submissions ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`,
+    ).get(...values) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
+  listCommunityVerificationCandidates(input: {
+    verifierUserId: string;
+    limit: number;
+    offset: number;
+  }): BusinessSubmissionWithItems[] {
+    const rows = this.database.prepare(
+      `SELECT submission.*
+       FROM submissions submission
+       WHERE submission.status IN ('pending', 'needs_more_evidence')
+         AND submission.user_id != ?
+         AND NOT EXISTS (
+           SELECT 1 FROM verifications verification
+           WHERE verification.upload_id = submission.id
+             AND verification.verifier_user_id = ?
+         )
+       ORDER BY submission.created_at ASC, submission.id ASC
+       LIMIT ? OFFSET ?`,
+    ).all(
+      input.verifierUserId,
+      input.verifierUserId,
+      Math.max(1, Math.min(100, input.limit)),
+      Math.max(0, input.offset),
+    ) as SubmissionRow[];
+    return this.withSubmissionItems(rows.map(toSubmission));
+  }
+
+  countCommunityVerificationCandidates(verifierUserId: string): number {
+    const row = this.database.prepare(
+      `SELECT count(*) AS count
+       FROM submissions submission
+       WHERE submission.status IN ('pending', 'needs_more_evidence')
+         AND submission.user_id != ?
+         AND NOT EXISTS (
+           SELECT 1 FROM verifications verification
+           WHERE verification.upload_id = submission.id
+             AND verification.verifier_user_id = ?
+         )`,
+    ).get(verifierUserId, verifierUserId) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 
   reviewSubmission(input: {
@@ -5044,6 +5858,7 @@ export class BusinessRepository {
       }
 
       let awarded = 0;
+      const isOwnReview = current.submission.userId === input.reviewerId;
 
       if (input.status === "approved") {
         const unresolvedCatalogItem = current.items.find((item) => {
@@ -5057,7 +5872,7 @@ export class BusinessRepository {
           throw new Error(`OCR beer requires catalogue approval: ${unresolvedCatalogItem.beerName}`);
         }
 
-        awarded = submitter.status === "suspended" ? 0 : this.insertContributionLedger({
+        awarded = submitter.status === "suspended" || isOwnReview ? 0 : this.insertContributionLedger({
           userId: submitter.id,
           submissionId: current.submission.id,
           venueId: current.submission.venueId,
@@ -5078,8 +5893,9 @@ export class BusinessRepository {
              WHERE id = ?`,
           )
           .run(input.now, submitter.id);
-      } else {
+      } else if (input.status !== "needs_more_evidence") {
         const isFraud = input.status === "fraud_flagged" || input.fraudFlagged;
+        const trustPenalty = isFraud ? 20 : input.status === "disputed" ? 2 : 4;
         this.database
           .prepare(
             `UPDATE accounts
@@ -5094,7 +5910,19 @@ export class BusinessRepository {
                  updated_at = ?
              WHERE id = ?`,
           )
-          .run(isFraud ? 1 : 0, isFraud ? 20 : 4, isFraud ? 1 : 0, isFraud ? 1 : 0, input.now, submitter.id);
+          .run(isFraud ? 1 : 0, trustPenalty, isFraud ? 1 : 0, isFraud ? 1 : 0, input.now, submitter.id);
+        const accountAfterReview = this.getAccountById(submitter.id);
+        if (accountAfterReview?.status === "suspended") {
+          this.database.prepare(
+            "UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+          ).run(input.now, submitter.id);
+          this.database.prepare(
+            "UPDATE account_discount_passes SET status = 'revoked', revoked_at = ? WHERE user_id = ? AND status = 'active'",
+          ).run(input.now, submitter.id);
+          this.database.prepare(
+            "UPDATE free_pint_reward_codes SET status = 'cancelled', cancelled_at = ? WHERE user_id = ? AND status = 'active'",
+          ).run(input.now, submitter.id);
+        }
       }
 
       this.database
@@ -5115,7 +5943,7 @@ export class BusinessRepository {
           input.reviewerId,
           input.now,
           input.rejectionReason,
-          input.fraudFlagged ? 1 : 0,
+          input.status === "fraud_flagged" || input.fraudFlagged ? 1 : 0,
           input.now,
           input.submissionId,
         );
@@ -5363,11 +6191,15 @@ export class BusinessRepository {
     return result.changes > 0 ? input.points : 0;
   }
 
-  private refreshCurrentMonthPoints(userId: string, monthKey: string): number {
+  getContributionPointsForMonth(userId: string, monthKey: string): number {
     const row = this.database
       .prepare("SELECT COALESCE(sum(points), 0) AS points FROM contribution_ledger WHERE user_id = ? AND month_key = ?")
       .get(userId, monthKey) as { points: number } | undefined;
-    const points = Number(row?.points ?? 0);
+    return Number(row?.points ?? 0);
+  }
+
+  private refreshCurrentMonthPoints(userId: string, monthKey: string): number {
+    const points = this.getContributionPointsForMonth(userId, monthKey);
 
     this.database
       .prepare("UPDATE accounts SET contribution_points_current_month = ? WHERE id = ?")
@@ -5483,6 +6315,19 @@ export class BusinessRepository {
       .run(input.now, input.acceptedBefore).changes;
   }
 
+  releaseAcceptedMission(input: { missionId: string; userId: string; now: string }): MissionProgress | null {
+    const result = this.database
+      .prepare(
+        `UPDATE mission_progress
+         SET status = 'cancelled', completed_at = NULL, updated_at = ?
+         WHERE mission_id = ? AND user_id = ? AND status = 'accepted'`,
+      )
+      .run(input.now, input.missionId, input.userId);
+    return result.changes === 1
+      ? this.getMissionProgress({ missionId: input.missionId, userId: input.userId })
+      : null;
+  }
+
   listUnavailableMissionIds(input: { userId?: string | undefined; acceptedAfter: string }): Set<string> {
     const values: unknown[] = [input.acceptedAfter];
     const otherUserClause = input.userId ? "AND user_id != ?" : "";
@@ -5508,7 +6353,7 @@ export class BusinessRepository {
     return row ? toMissionProgress(row) : null;
   }
 
-  listMissionProgressForUser(userId: string, limit = 200): MissionProgress[] {
+  listMissionProgressForUser(userId: string, limit = -1): MissionProgress[] {
     const rows = this.database
       .prepare("SELECT * FROM mission_progress WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?")
       .all(userId, limit) as MissionProgressRow[];
@@ -5533,10 +6378,35 @@ export class BusinessRepository {
     return row ? toMissionProgress(row) : null;
   }
 
-  setMissionActive(input: { missionId: string; active: boolean; now: string }): void {
-    this.database
+  setMissionActive(input: { missionId: string; active: boolean; now: string }): boolean {
+    const result = this.database
       .prepare("UPDATE missions SET active = ?, updated_at = ? WHERE id = ?")
       .run(input.active ? 1 : 0, input.now, input.missionId);
+    return result.changes === 1;
+  }
+
+  deleteMissionIfUnused(missionId: string): boolean {
+    const result = this.database
+      .prepare(
+        `DELETE FROM missions
+         WHERE id = ?
+           AND NOT EXISTS (SELECT 1 FROM mission_progress WHERE mission_id = missions.id)
+           AND NOT EXISTS (SELECT 1 FROM submissions WHERE mission_id = missions.id)
+           AND NOT EXISTS (SELECT 1 FROM venue_requests WHERE mission_id = missions.id)`,
+      )
+      .run(missionId);
+    return result.changes === 1;
+  }
+
+  deactivateDemoMissions(now: string): number {
+    return this.database
+      .prepare(
+        `UPDATE missions
+         SET active = 0, updated_at = ?
+         WHERE active = 1
+           AND (venue_id LIKE 'demo:%' OR id LIKE 'mission:%' AND venue_id LIKE 'demo:%')`,
+      )
+      .run(now).changes;
   }
 
   getSystemState<T extends Record<string, unknown>>(key: string): { value: T; updatedAt: string } | null {
@@ -5544,6 +6414,50 @@ export class BusinessRepository {
       .prepare("SELECT value_json, updated_at FROM system_state WHERE key = ?")
       .get(key) as { value_json: string; updated_at: string } | undefined;
     return row ? { value: parseJsonObject(row.value_json) as T, updatedAt: row.updated_at } : null;
+  }
+
+  getVenueReportDeliverySettings(venueId: string): {
+    enabled: boolean;
+    recipients: string[];
+    updatedAt: string | null;
+    configured: boolean;
+  } {
+    const stored = this.getSystemState<{ enabled?: unknown; recipients?: unknown }>(
+      `venue-report-delivery:${venueId}`,
+    );
+    if (!stored) {
+      return { enabled: true, recipients: [], updatedAt: null, configured: false };
+    }
+    return {
+      enabled: stored.value.enabled !== false,
+      recipients: Array.isArray(stored.value.recipients)
+        ? stored.value.recipients
+            .filter((value): value is string => typeof value === "string")
+            .map((value) => value.trim().toLowerCase())
+            .filter(Boolean)
+            .slice(0, 10)
+        : [],
+      updatedAt: stored.updatedAt,
+      configured: true,
+    };
+  }
+
+  setVenueReportDeliverySettings(input: {
+    venueId: string;
+    enabled: boolean;
+    recipients: string[];
+    updatedBy: string;
+    now: string;
+  }): void {
+    this.setSystemState(
+      `venue-report-delivery:${input.venueId}`,
+      {
+        enabled: input.enabled,
+        recipients: input.recipients,
+        updatedBy: input.updatedBy,
+      },
+      input.now,
+    );
   }
 
   setSystemState(key: string, value: Record<string, unknown>, now: string): void {
@@ -5579,12 +6493,52 @@ export class BusinessRepository {
     return result.changes === 1;
   }
 
+  acquireSystemLease(input: {
+    key: string;
+    owner: string;
+    now: string;
+    leaseUntil: string;
+  }): boolean {
+    try {
+      return this.database.transaction(() => {
+        const stored = this.getSystemState<{ owner?: unknown; leaseUntil?: unknown }>(input.key);
+        const activeLeaseUntil = typeof stored?.value.leaseUntil === "string"
+          ? Date.parse(stored.value.leaseUntil)
+          : Number.NaN;
+        if (Number.isFinite(activeLeaseUntil) && activeLeaseUntil > Date.parse(input.now)) {
+          return false;
+        }
+        this.setSystemState(input.key, {
+          owner: input.owner,
+          leaseUntil: input.leaseUntil,
+          acquiredAt: input.now,
+        }, input.now);
+        return true;
+      })();
+    } catch {
+      return false;
+    }
+  }
+
+  releaseSystemLease(input: { key: string; owner: string; now: string }): boolean {
+    return this.database.transaction(() => {
+      const stored = this.getSystemState<{ owner?: unknown }>(input.key);
+      if (stored?.value.owner !== input.owner) return false;
+      this.setSystemState(input.key, {
+        owner: input.owner,
+        leaseUntil: input.now,
+        releasedAt: input.now,
+      }, input.now);
+      return true;
+    })();
+  }
+
   countMissions(): number {
     const row = this.database.prepare("SELECT count(*) AS count FROM missions").get() as { count: number } | undefined;
     return Number(row?.count ?? 0);
   }
 
-  listMissions(filters: { activeOnly: boolean; suburb?: string | undefined; limit: number }): BusinessMission[] {
+  listMissions(filters: { activeOnly: boolean; suburb?: string | undefined; limit: number; offset?: number | undefined }): BusinessMission[] {
     const where: string[] = [];
     const values: unknown[] = [];
 
@@ -5597,19 +6551,173 @@ export class BusinessRepository {
       values.push(filters.suburb);
     }
 
-    values.push(filters.limit);
+    values.push(filters.limit, Math.max(0, filters.offset ?? 0));
     const rows = this.database
       .prepare(
         `SELECT * FROM missions
          ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
          ORDER BY (points * multiplier) DESC, updated_at DESC
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
       )
       .all(...values) as MissionRow[];
     return rows.map(toMission);
   }
 
-  listMissionVenueCandidates(limit: number): MissionVenueCandidate[] {
+  listMissionFeedPage(input: {
+    userId?: string | null | undefined;
+    suburb?: string | undefined;
+    searchTerms: string[];
+    savedSuburbs: string[];
+    savedOnly: boolean;
+    latitude?: number | undefined;
+    longitude?: number | undefined;
+    radiusMeters: number;
+    sort: "points" | "saved" | "stale" | "no_data" | "missing_happy_hour" | "most_requested" | "high_demand" | "nearby";
+    limit: number;
+    offset: number;
+    acceptedAfter: string;
+    veryFreshCutoff: string;
+    weekOldCutoff: string;
+    veryFreshPoints: number;
+    weekOldPoints: number;
+    stalePoints: number;
+    newVenuePoints: number;
+  }): { missions: BusinessMissionFeedItem[]; total: number } {
+    if (input.savedOnly && input.savedSuburbs.length === 0) {
+      return { missions: [], total: 0 };
+    }
+    const hasLocation = typeof input.latitude === "number" && typeof input.longitude === "number";
+    const params: Record<string, string | number | null> = {
+      userId: input.userId ?? null,
+      suburb: input.suburb ?? null,
+      acceptedAfter: input.acceptedAfter,
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
+      radiusMeters: input.radiusMeters,
+      veryFreshCutoff: input.veryFreshCutoff,
+      weekOldCutoff: input.weekOldCutoff,
+      veryFreshPoints: input.veryFreshPoints,
+      weekOldPoints: input.weekOldPoints,
+      stalePoints: input.stalePoints,
+      newVenuePoints: input.newVenuePoints,
+      limit: Math.max(1, input.limit),
+      offset: Math.max(0, input.offset),
+    };
+    const searchClauses = input.searchTerms.map((term, index) => {
+      params[`search${index}`] = `%${term.toLowerCase()}%`;
+      return `lower(mission.venue_name || ' ' || COALESCE(mission.suburb, '') || ' ' || COALESCE(profile.address, '') || ' ' || mission.reason) LIKE @search${index}`;
+    });
+    const savedClause = input.savedOnly
+      ? `AND lower(COALESCE(mission.suburb, '')) IN (${input.savedSuburbs.map((suburb, index) => {
+          params[`saved${index}`] = suburb.toLowerCase();
+          return `@saved${index}`;
+        }).join(", ")})`
+      : "";
+    const distanceExpression = `2 * 6371000 * asin(sqrt(min(1,
+      pow(sin(radians(latitude - @latitude) / 2), 2) +
+      cos(radians(@latitude)) * cos(radians(latitude)) *
+      pow(sin(radians(longitude - @longitude) / 2), 2)
+    )))`;
+    const commonCte = `WITH price_freshness AS (
+      SELECT venue_id, max(last_verified_at) AS latest_verified_at
+      FROM venue_price_records
+      GROUP BY venue_id
+    ), base AS (
+      SELECT mission.*,
+        profile.address AS venue_address,
+        location.latitude,
+        location.longitude,
+        progress.status AS user_progress,
+        progress.accepted_at AS reservation_accepted_at,
+        CASE WHEN mission.id LIKE 'auto:%'
+          THEN mission.last_verified_at
+          ELSE COALESCE(price_freshness.latest_verified_at, mission.last_verified_at)
+        END AS effective_last_verified_at
+      FROM missions mission
+      LEFT JOIN venue_profiles profile ON profile.venue_id = mission.venue_id
+      LEFT JOIN venue_location_cache location ON location.venue_id = mission.venue_id
+      LEFT JOIN price_freshness ON price_freshness.venue_id = mission.venue_id
+      LEFT JOIN mission_progress progress
+        ON progress.mission_id = mission.id AND progress.user_id = @userId
+      WHERE mission.active = 1
+        AND (@suburb IS NULL OR lower(COALESCE(mission.suburb, '')) = lower(@suburb))
+        ${savedClause}
+        ${searchClauses.length ? `AND ${searchClauses.join(" AND ")}` : ""}
+        AND NOT EXISTS (
+          SELECT 1 FROM mission_progress unavailable
+          WHERE unavailable.mission_id = mission.id
+            AND (unavailable.status = 'submitted'
+              OR (unavailable.status = 'accepted' AND julianday(unavailable.accepted_at) > julianday(@acceptedAfter)))
+            AND (@userId IS NULL OR unavailable.user_id != @userId)
+        )
+    ), scored AS (
+      SELECT base.*,
+        CASE
+          WHEN effective_last_verified_at IS NULL
+            OR lower(reason) LIKE '%no data%'
+            OR lower(reason) LIKE '%no prices%'
+            OR lower(reason) LIKE '%new venue%'
+            OR ((lower(reason) LIKE '%new%' OR lower(reason) LIKE '%missing%')
+                AND (lower(reason) LIKE '%beer%' OR lower(reason) LIKE '%drink%' OR lower(reason) LIKE '%price%'))
+            THEN @newVenuePoints
+          WHEN effective_last_verified_at >= @veryFreshCutoff THEN @veryFreshPoints
+          WHEN effective_last_verified_at >= @weekOldCutoff THEN @weekOldPoints
+          ELSE @stalePoints
+        END AS dynamic_points,
+        CASE WHEN @latitude IS NOT NULL AND @longitude IS NOT NULL
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          THEN ${distanceExpression}
+          ELSE NULL
+        END AS distance_meters
+      FROM base
+    ), eligible AS (
+      SELECT * FROM scored
+      WHERE @latitude IS NULL OR @longitude IS NULL
+        OR (distance_meters IS NOT NULL AND distance_meters <= @radiusMeters)
+    )`;
+    const orderBy = input.sort === "nearby" && hasLocation
+      ? "distance_meters ASC, (dynamic_points * multiplier) DESC, updated_at DESC, id ASC"
+      : input.sort === "stale"
+        ? "COALESCE(effective_last_verified_at, '') ASC, id ASC"
+        : input.sort === "no_data"
+          ? "CASE WHEN effective_last_verified_at IS NULL THEN 0 ELSE 1 END ASC, (dynamic_points * multiplier) DESC, id ASC"
+          : input.sort === "missing_happy_hour"
+            ? "CASE WHEN lower(reason) LIKE '%happy%' THEN 0 ELSE 1 END ASC, (dynamic_points * multiplier) DESC, id ASC"
+            : "(dynamic_points * multiplier) DESC, updated_at DESC, id ASC";
+    const rows = this.database.prepare(
+      `${commonCte}
+       SELECT * FROM eligible
+       ORDER BY ${orderBy}
+       LIMIT @limit OFFSET @offset`,
+    ).all(params) as Array<MissionRow & {
+      venue_address: string | null;
+      latitude: number | null;
+      longitude: number | null;
+      user_progress: MissionProgressStatus | null;
+      reservation_accepted_at: string | null;
+      effective_last_verified_at: string | null;
+      dynamic_points: number;
+      distance_meters: number | null;
+    }>;
+    const countRow = this.database.prepare(`${commonCte} SELECT count(*) AS count FROM eligible`).get(params) as { count: number };
+    return {
+      missions: rows.map((row) => ({
+        ...toMission(row),
+        points: Number(row.dynamic_points),
+        lastVerifiedAt: row.effective_last_verified_at,
+        venueAddress: row.venue_address,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        distanceMeters: row.distance_meters == null ? null : Math.round(row.distance_meters),
+        distanceKm: row.distance_meters == null ? null : Math.round((row.distance_meters / 1000) * 10) / 10,
+        userProgress: row.user_progress,
+        reservationAcceptedAt: row.user_progress === "accepted" ? row.reservation_accepted_at : null,
+      })),
+      total: Number(countRow.count ?? 0),
+    };
+  }
+
+  listMissionVenueCandidates(limit: number, offset = 0): MissionVenueCandidate[] {
     const rows = this.database
       .prepare(
         `WITH known_venue_ids AS (
@@ -5660,10 +6768,10 @@ export class BusinessRepository {
              ) happy
            ) AS happy_hour_last_verified_at
          FROM known_venue_ids ids
-         ORDER BY latest_verified_at IS NOT NULL, latest_verified_at ASC, venue_name ASC
-         LIMIT ?`,
+         ORDER BY latest_verified_at IS NOT NULL, latest_verified_at ASC, venue_name ASC, ids.venue_id ASC
+         LIMIT ? OFFSET ?`,
       )
-      .all(limit) as Array<{
+      .all(limit, Math.max(0, offset)) as Array<{
         venue_id: string;
         venue_name: string;
         suburb: string | null;
@@ -5814,6 +6922,13 @@ export class BusinessRepository {
     return rows.map(toPriceRecord);
   }
 
+  getPriceRecordById(id: string): PublicVenuePriceRecord | null {
+    const row = this.database
+      .prepare("SELECT * FROM venue_price_records WHERE id = ? LIMIT 1")
+      .get(id) as PriceRecordRow | undefined;
+    return row ? toPriceRecord(row) : null;
+  }
+
   listCurrentPriceRecords(venueIds: string[] = []): PublicVenuePriceRecord[] {
     const normalizedVenueIds = Array.from(new Set(venueIds.map((id) => id.trim()).filter(Boolean)));
     const venueWhere = normalizedVenueIds.length
@@ -5839,6 +6954,67 @@ export class BusinessRepository {
          ORDER BY datetime(last_verified_at) DESC, id DESC`,
       )
       .all(...normalizedVenueIds) as PriceRecordRow[];
+    return rows.map(toPriceRecord);
+  }
+
+  listCurrentPriceRecordPage(input: {
+    venueIds?: string[] | undefined;
+    limit: number;
+    before?: { verifiedAt: string; id: string } | null | undefined;
+  }): PublicVenuePriceRecord[] {
+    const normalizedVenueIds = Array.from(new Set((input.venueIds ?? []).map((id) => id.trim()).filter(Boolean)));
+    const venueWhere = normalizedVenueIds.length
+      ? `WHERE venue_id IN (${normalizedVenueIds.map(() => "?").join(", ")})`
+      : "";
+    const cursorWhere = input.before
+      ? `WHERE last_verified_at < ? OR (last_verified_at = ? AND id < ?)`
+      : "";
+    const values: unknown[] = [...normalizedVenueIds];
+    if (input.before) {
+      values.push(input.before.verifiedAt, input.before.verifiedAt, input.before.id);
+    }
+    values.push(Math.max(1, input.limit));
+    const canonicalVenue = (alias: string) =>
+      `COALESCE((SELECT identity.canonical_venue_id FROM venue_identity_aliases identity WHERE identity.alias_venue_id = ${alias}.venue_id LIMIT 1), ${alias}.venue_id)`;
+    const rows = this.database.prepare(
+      `WITH ranked AS (
+         SELECT *,
+           row_number() OVER (
+             PARTITION BY ${canonicalVenue("venue_price_records")},
+               COALESCE(NULLIF(normalized_beer_id, ''), lower(trim(beer_name))),
+               serving_size,
+               is_happy_hour_price,
+               COALESCE(happy_hour_details, '')
+             ORDER BY last_verified_at DESC, updated_at DESC, id DESC
+           ) AS current_rank
+         FROM venue_price_records
+         ${venueWhere}
+       ), current_records AS (
+         SELECT * FROM ranked WHERE current_rank = 1
+       ), authoritative_records AS (
+         SELECT current.*
+         FROM current_records current
+         WHERE current.is_happy_hour_price = 1
+            OR NOT EXISTS (
+              SELECT 1
+              FROM venue_beers manager_beer
+              INNER JOIN venue_profiles manager_profile
+                ON manager_profile.venue_id = manager_beer.venue_id
+              WHERE manager_beer.on_tap = 1
+                AND manager_beer.in_stock = 1
+                AND manager_profile.active = 1
+                AND ${canonicalVenue("manager_beer")} = ${canonicalVenue("current")}
+                AND COALESCE(NULLIF(manager_beer.normalized_beer_id, ''), lower(trim(manager_beer.beer_name))) =
+                    COALESCE(NULLIF(current.normalized_beer_id, ''), lower(trim(current.beer_name)))
+                AND COALESCE(NULLIF(manager_beer.serve_size, ''), 'other') = COALESCE(NULLIF(current.serving_size, ''), 'other')
+                AND COALESCE(manager_beer.price_verified_at, manager_beer.created_at) >= current.last_verified_at
+            )
+       )
+       SELECT * FROM authoritative_records
+       ${cursorWhere}
+       ORDER BY last_verified_at DESC, id DESC
+       LIMIT ?`,
+    ).all(...values) as PriceRecordRow[];
     return rows.map(toPriceRecord);
   }
 
@@ -5991,6 +7167,8 @@ export class BusinessRepository {
 
   listLocalVenues(input: { query?: string | undefined; limit: number }): LocalVenueLookup[] {
     const query = input.query?.trim().toLowerCase() ?? "";
+    const escapedQuery = query.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+    const pattern = `%${escapedQuery}%`;
     const rows = this.database
       .prepare(
         `SELECT
@@ -5998,38 +7176,39 @@ export class BusinessRepository {
            profile.name AS name,
            profile.address AS address,
            profile.suburb AS suburb,
+           profile.phone AS phone,
+           profile.website AS website,
+           profile.instagram AS instagram,
+           profile.description AS description,
+           profile.opening_hours_json AS opening_hours_json,
            profile.venue_tags_json AS venue_tags_json,
            location.latitude AS latitude,
            location.longitude AS longitude
          FROM venue_profiles profile
          LEFT JOIN venue_location_cache location ON location.venue_id = profile.venue_id
          WHERE profile.active = 1
+           AND (? = '' OR lower(
+             profile.name || ' ' || COALESCE(profile.suburb, '') || ' ' || COALESCE(profile.address, '')
+           ) LIKE ? ESCAPE '\\')
          ORDER BY profile.name COLLATE NOCASE ASC
          LIMIT ?`,
       )
-      .all(Math.max(input.limit * 4, input.limit)) as Array<{
+      .all(query, pattern, input.limit < 0 ? -1 : input.limit) as Array<{
         id: string;
         name: string;
         address: string | null;
         suburb: string | null;
+        phone: string | null;
+        website: string | null;
+        instagram: string | null;
+        description: string | null;
+        opening_hours_json: string;
         venue_tags_json: string | null;
         latitude: number | null;
         longitude: number | null;
       }>;
 
-    return rows
-      .filter((row) => {
-        if (!query) {
-          return true;
-        }
-        return [row.name, row.suburb, row.address]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase()
-          .includes(query);
-      })
-      .slice(0, input.limit)
-      .map((row) => {
+    return rows.map((row) => {
         const venueTags = parseJsonArray(row.venue_tags_json ?? "[]");
         return {
           id: row.id,
@@ -6040,14 +7219,147 @@ export class BusinessRepository {
           postcode: null,
           latitude: row.latitude,
           longitude: row.longitude,
+          phone: row.phone,
+          website: row.website,
+          instagram: row.instagram,
+          description: row.description,
+          openingHours: parseJsonObject(row.opening_hours_json),
           venueTags,
           isUserSubmittedVenue: venueTags.includes("user submitted"),
         };
       });
   }
 
-  listVenueManagerPriceRecords(limit: number, venueId?: string | null): PublicVenuePriceRecord[] {
-    const values = venueId ? [venueId, limit] : [limit];
+  listPublicVenueDirectoryPage(input: {
+    query?: string | undefined;
+    limit: number;
+    offset: number;
+  }): { venues: LocalVenueLookup[]; total: number } {
+    const query = input.query?.trim().toLowerCase() ?? "";
+    const escapedQuery = query.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+    const pattern = `%${escapedQuery}%`;
+    const directoryCte = `WITH candidates AS (
+      SELECT
+        profile.venue_id AS id,
+        profile.name AS name,
+        profile.address AS address,
+        profile.suburb AS suburb,
+        'VIC' AS state,
+        NULL AS postcode,
+        location.latitude AS latitude,
+        location.longitude AS longitude,
+        profile.phone AS phone,
+        profile.website AS website,
+        profile.instagram AS instagram,
+        profile.description AS description,
+        profile.opening_hours_json AS opening_hours_json,
+        profile.venue_tags_json AS venue_tags_json,
+        0 AS source_rank,
+        profile.updated_at AS source_updated_at
+      FROM venue_profiles profile
+      LEFT JOIN venue_location_cache location ON location.venue_id = profile.venue_id
+      WHERE profile.active = 1
+      UNION ALL
+      SELECT
+        mission.venue_id AS id,
+        mission.venue_name AS name,
+        NULL AS address,
+        mission.suburb AS suburb,
+        'VIC' AS state,
+        NULL AS postcode,
+        NULL AS latitude,
+        NULL AS longitude,
+        NULL AS phone,
+        NULL AS website,
+        NULL AS instagram,
+        NULL AS description,
+        '{}' AS opening_hours_json,
+        '[]' AS venue_tags_json,
+        1 AS source_rank,
+        mission.updated_at AS source_updated_at
+      FROM missions mission
+      WHERE mission.active = 1
+    ), ranked AS (
+      SELECT candidates.*,
+        row_number() OVER (
+          PARTITION BY id
+          ORDER BY source_rank ASC, source_updated_at DESC, name COLLATE NOCASE ASC
+        ) AS source_row
+      FROM candidates
+    ), directory AS (
+      SELECT * FROM ranked
+      WHERE source_row = 1
+        AND (? = '' OR lower(
+          name || ' ' || COALESCE(suburb, '') || ' ' || COALESCE(address, '')
+        ) LIKE ? ESCAPE '\\')
+    )`;
+    const rows = this.database.prepare(
+      `${directoryCte}
+       SELECT id, name, address, suburb, state, postcode, latitude, longitude,
+              phone, website, instagram, description, opening_hours_json, venue_tags_json
+       FROM directory
+       ORDER BY name COLLATE NOCASE ASC, id ASC
+       LIMIT ? OFFSET ?`,
+    ).all(query, pattern, input.limit < 0 ? -1 : Math.max(1, input.limit), Math.max(0, input.offset)) as Array<{
+      id: string;
+      name: string;
+      address: string | null;
+      suburb: string | null;
+      state: string | null;
+      postcode: string | null;
+      latitude: number | null;
+      longitude: number | null;
+      phone: string | null;
+      website: string | null;
+      instagram: string | null;
+      description: string | null;
+      opening_hours_json: string;
+      venue_tags_json: string | null;
+    }>;
+    const countRow = this.database.prepare(
+      `${directoryCte} SELECT count(*) AS count FROM directory`,
+    ).get(query, pattern) as { count: number };
+    return {
+      venues: rows.map((row) => {
+        const venueTags = parseJsonArray(row.venue_tags_json ?? "[]");
+        return {
+          id: row.id,
+          name: row.name,
+          address: row.address,
+          suburb: row.suburb,
+          state: row.state,
+          postcode: row.postcode,
+          latitude: row.latitude,
+          longitude: row.longitude,
+          phone: row.phone,
+          website: row.website,
+          instagram: row.instagram,
+          description: row.description,
+          openingHours: parseJsonObject(row.opening_hours_json),
+          venueTags,
+          isUserSubmittedVenue: venueTags.includes("user submitted"),
+        };
+      }),
+      total: Number(countRow.count ?? 0),
+    };
+  }
+
+  listVenueManagerPriceRecords(
+    limit: number,
+    venueId?: string | null,
+    before?: { verifiedAt: string; id: string } | null,
+  ): PublicVenuePriceRecord[] {
+    const boundedLimit = limit < 0 ? -1 : Math.max(1, limit);
+    const canonicalVenue = (alias: string) =>
+      `COALESCE((SELECT identity.canonical_venue_id FROM venue_identity_aliases identity WHERE identity.alias_venue_id = ${alias}.venue_id LIMIT 1), ${alias}.venue_id)`;
+    const cursorClause = (verifiedExpression: string, idExpression: string) => before
+      ? ` AND (${verifiedExpression} < ? OR (${verifiedExpression} = ? AND ${idExpression} < ?))`
+      : "";
+    const valuesFor = () => [
+      ...(venueId ? [venueId] : []),
+      ...(before ? [before.verifiedAt, before.verifiedAt, before.id] : []),
+      boundedLimit,
+    ];
     const beerWhere = venueId
       ? "WHERE beer.venue_id = ? AND beer.on_tap = 1 AND beer.in_stock = 1 AND profile.active = 1"
       : "WHERE beer.on_tap = 1 AND beer.in_stock = 1 AND profile.active = 1";
@@ -6060,24 +7372,47 @@ export class BusinessRepository {
       : `WHERE special.active = 1 AND profile.active = 1 AND ${paidSpecialTierWhere}`;
     const beerRows = this.database
       .prepare(
-        `SELECT
-           beer.*,
-           profile.name AS profile_name,
-           profile.suburb AS profile_suburb,
-           profile.address AS profile_address,
-           profile.membership_tier AS profile_membership_tier,
-           profile.highlighted_name AS profile_highlighted_name,
-           profile.premium_badge AS profile_premium_badge,
-           profile.promoted AS profile_promoted,
-           profile.featured_special_eligible AS profile_featured_special_eligible,
-           profile.accepts_pint_path_codes AS profile_accepts_pint_path_codes
-         FROM venue_beers beer
-         INNER JOIN venue_profiles profile ON profile.venue_id = beer.venue_id
-         ${beerWhere}
-         ORDER BY beer.updated_at DESC
+        `WITH ranked_beers AS (
+           SELECT
+             beer.*,
+             profile.name AS profile_name,
+             profile.suburb AS profile_suburb,
+             profile.address AS profile_address,
+             profile.membership_tier AS profile_membership_tier,
+             profile.highlighted_name AS profile_highlighted_name,
+             profile.premium_badge AS profile_premium_badge,
+             profile.promoted AS profile_promoted,
+             profile.featured_special_eligible AS profile_featured_special_eligible,
+             profile.accepts_pint_path_codes AS profile_accepts_pint_path_codes,
+             COALESCE(beer.price_verified_at, beer.created_at) AS authority_verified_at,
+             row_number() OVER (
+               PARTITION BY ${canonicalVenue("beer")},
+                 COALESCE(NULLIF(beer.normalized_beer_id, ''), lower(trim(beer.beer_name))),
+                 COALESCE(NULLIF(beer.serve_size, ''), 'other')
+               ORDER BY COALESCE(beer.price_verified_at, beer.created_at) DESC, beer.updated_at DESC, beer.id DESC
+             ) AS authority_rank
+           FROM venue_beers beer
+           INNER JOIN venue_profiles profile ON profile.venue_id = beer.venue_id
+           ${beerWhere}
+         )
+         SELECT beer.*
+         FROM ranked_beers beer
+         WHERE beer.authority_rank = 1
+           AND NOT EXISTS (
+             SELECT 1
+             FROM venue_price_records community
+             WHERE community.is_happy_hour_price = 0
+               AND ${canonicalVenue("community")} = ${canonicalVenue("beer")}
+               AND COALESCE(NULLIF(community.normalized_beer_id, ''), lower(trim(community.beer_name))) =
+                   COALESCE(NULLIF(beer.normalized_beer_id, ''), lower(trim(beer.beer_name)))
+               AND COALESCE(NULLIF(community.serving_size, ''), 'other') = COALESCE(NULLIF(beer.serve_size, ''), 'other')
+               AND community.last_verified_at > beer.authority_verified_at
+           )
+         ${cursorClause("beer.authority_verified_at", "'bar_beer:' || beer.id")}
+         ORDER BY beer.authority_verified_at DESC, ('bar_beer:' || beer.id) DESC
          LIMIT ?`,
       )
-      .all(...values) as Array<BarBeerRow & {
+      .all(...valuesFor()) as Array<BarBeerRow & {
         profile_name: string | null;
         profile_suburb: string | null;
         profile_address: string | null;
@@ -6103,11 +7438,11 @@ export class BusinessRepository {
            profile.accepts_pint_path_codes AS profile_accepts_pint_path_codes
          FROM venue_happy_hours happy
          INNER JOIN venue_profiles profile ON profile.venue_id = happy.venue_id
-         ${happyWhere}
-         ORDER BY happy.updated_at DESC
+         ${happyWhere}${cursorClause("happy.updated_at", "'bar_happy_hour:' || happy.id")}
+         ORDER BY happy.updated_at DESC, ('bar_happy_hour:' || happy.id) DESC
          LIMIT ?`,
       )
-      .all(...values) as Array<BarHappyHourRow & {
+      .all(...valuesFor()) as Array<BarHappyHourRow & {
         profile_name: string | null;
         profile_suburb: string | null;
         profile_address: string | null;
@@ -6133,11 +7468,11 @@ export class BusinessRepository {
            profile.accepts_pint_path_codes AS profile_accepts_pint_path_codes
          FROM venue_specials special
          INNER JOIN venue_profiles profile ON profile.venue_id = special.venue_id
-         ${specialWhere}
-         ORDER BY special.exclusive DESC, special.updated_at DESC
+         ${specialWhere}${cursorClause("special.updated_at", "'venue_special:' || special.id")}
+         ORDER BY special.updated_at DESC, ('venue_special:' || special.id) DESC
          LIMIT ?`,
       )
-      .all(...values) as Array<BarSpecialRow & {
+      .all(...valuesFor()) as Array<BarSpecialRow & {
         profile_name: string | null;
         profile_suburb: string | null;
         profile_address: string | null;
@@ -6170,10 +7505,11 @@ export class BusinessRepository {
         happyHourDetails: null,
         displayKind: "beer" as const,
         isOnTap: row.on_tap ? "yes" as const : row.in_stock ? "unknown" as const : "no" as const,
-        confidence: "venue_confirmed" as const,
+        confidence: row.price_verified_at ? "venue_confirmed" as const : "stale" as const,
         sourceType: "venue_manager_portal",
         sourceSubmissionId: null,
-        lastVerifiedAt: row.updated_at,
+        lastVerifiedAt: row.price_verified_at ?? row.created_at,
+        priceVerifiedAt: row.price_verified_at,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       })),
@@ -6246,8 +7582,11 @@ export class BusinessRepository {
         updatedAt: row.updated_at,
       })),
     ]
-      .sort((left, right) => new Date(right.lastVerifiedAt).getTime() - new Date(left.lastVerifiedAt).getTime())
-      .slice(0, limit);
+      .sort((left, right) => {
+        const timestampDifference = Date.parse(right.lastVerifiedAt) - Date.parse(left.lastVerifiedAt);
+        return timestampDifference || right.id.localeCompare(left.id);
+      })
+      .slice(0, limit < 0 ? undefined : limit);
   }
 
   getAccountPreferences(userId: string): AccountPreferences | null {
@@ -6305,7 +7644,7 @@ export class BusinessRepository {
       venueReportInclusionEnabled: false,
       productResearchEnabled: false,
       emailUpdatesEnabled: false,
-      consentVersion: "2026-07-11",
+      consentVersion: CURRENT_LEGAL_POLICY_VERSION,
       consentedAt: null,
       createdAt: now,
       updatedAt: now,
@@ -6463,7 +7802,7 @@ export class BusinessRepository {
     return toFeedback(row);
   }
 
-  listFeedback(limit: number): FeedbackItem[] {
+  listFeedback(limit: number, offset = 0): FeedbackItem[] {
     const rows = this.database
       .prepare(
         `SELECT * FROM feedback
@@ -6475,10 +7814,15 @@ export class BusinessRepository {
              ELSE 3
            END,
            created_at DESC
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
       )
-      .all(limit) as FeedbackRow[];
+      .all(Math.max(1, Math.min(limit, 100)), Math.max(0, offset)) as FeedbackRow[];
     return rows.map(toFeedback);
+  }
+
+  countFeedback(): number {
+    const row = this.database.prepare("SELECT count(*) AS count FROM feedback").get() as { count: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 
   createWrongPriceReport(input: {
@@ -6493,7 +7837,24 @@ export class BusinessRepository {
     notes: string | null;
     sourcePhotoUrl: string | null;
     now: string;
-  }): { report: WrongPriceReport; markedDisputed: boolean } {
+  }): { report: WrongPriceReport; markedDisputed: boolean; duplicate: boolean } {
+    if (input.priceRecordId && (input.userId || input.anonymousSessionId)) {
+      const existing = input.userId
+        ? this.database.prepare(
+            `SELECT * FROM wrong_price_reports
+             WHERE price_record_id = ? AND user_id = ? AND status IN ('open', 'in_progress')
+             ORDER BY created_at DESC LIMIT 1`,
+          ).get(input.priceRecordId, input.userId) as WrongPriceReportRow | undefined
+        : this.database.prepare(
+            `SELECT * FROM wrong_price_reports
+             WHERE price_record_id = ? AND user_id IS NULL AND anonymous_session_id = ?
+               AND status IN ('open', 'in_progress')
+             ORDER BY created_at DESC LIMIT 1`,
+          ).get(input.priceRecordId, input.anonymousSessionId) as WrongPriceReportRow | undefined;
+      if (existing) {
+        return { report: toWrongPriceReport(existing), markedDisputed: false, duplicate: true };
+      }
+    }
     this.database
       .prepare(
         `INSERT INTO wrong_price_reports (
@@ -6519,7 +7880,11 @@ export class BusinessRepository {
     let markedDisputed = false;
     if (input.priceRecordId) {
       const row = this.database
-        .prepare("SELECT count(*) AS count FROM wrong_price_reports WHERE price_record_id = ? AND status = 'open'")
+        .prepare(
+          `SELECT count(DISTINCT user_id) AS count
+           FROM wrong_price_reports
+           WHERE price_record_id = ? AND status = 'open' AND user_id IS NOT NULL`,
+        )
         .get(input.priceRecordId) as { count: number } | undefined;
 
       if (Number(row?.count ?? 0) >= 2) {
@@ -6531,14 +7896,19 @@ export class BusinessRepository {
     }
 
     const reportRow = this.database.prepare("SELECT * FROM wrong_price_reports WHERE id = ?").get(input.id) as WrongPriceReportRow;
-    return { report: toWrongPriceReport(reportRow), markedDisputed };
+    return { report: toWrongPriceReport(reportRow), markedDisputed, duplicate: false };
   }
 
-  listWrongPriceReports(limit: number): WrongPriceReport[] {
+  listWrongPriceReports(limit: number, offset = 0): WrongPriceReport[] {
     const rows = this.database
-      .prepare("SELECT * FROM wrong_price_reports ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as WrongPriceReportRow[];
+      .prepare("SELECT * FROM wrong_price_reports ORDER BY created_at DESC LIMIT ? OFFSET ?")
+      .all(Math.max(1, Math.min(limit, 100)), Math.max(0, offset)) as WrongPriceReportRow[];
     return rows.map(toWrongPriceReport);
+  }
+
+  countWrongPriceReports(): number {
+    const row = this.database.prepare("SELECT count(*) AS count FROM wrong_price_reports").get() as { count: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 
   createVenueRequest(input: {
@@ -6548,6 +7918,7 @@ export class BusinessRepository {
     requestType: RequestType;
     venueId: string | null;
     venueName: string | null;
+    googlePlaceId?: string | null;
     beerName: string | null;
     suburb: string | null;
     notes: string | null;
@@ -6557,8 +7928,8 @@ export class BusinessRepository {
       .prepare(
         `INSERT INTO venue_requests (
           id, user_id, anonymous_session_id, request_type, venue_id, venue_name,
-          beer_name, suburb, notes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          google_place_id, beer_name, suburb, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.id,
@@ -6567,6 +7938,7 @@ export class BusinessRepository {
         input.requestType,
         input.venueId,
         input.venueName,
+        input.googlePlaceId ?? null,
         input.beerName,
         input.suburb,
         input.notes,
@@ -6577,6 +7949,122 @@ export class BusinessRepository {
     return toVenueRequest(row);
   }
 
+  createOrGetVenueRequest(input: {
+    id: string;
+    userId: string | null;
+    anonymousSessionId: string | null;
+    requestType: RequestType;
+    venueId: string | null;
+    venueName: string | null;
+    googlePlaceId: string | null;
+    beerName: string | null;
+    suburb: string | null;
+    notes: string | null;
+    now: string;
+  }): { request: VenueRequest; duplicate: boolean } {
+    const create = this.database.transaction(() => {
+      let existing: VenueRequestRow | undefined;
+      if (input.requestType === "missing_venue" && input.googlePlaceId) {
+        if (input.userId) {
+          existing = this.database.prepare(
+            `SELECT * FROM venue_requests
+             WHERE request_type = 'missing_venue'
+               AND google_place_id = ?
+               AND status IN ('open', 'in_progress', 'mission_created')
+               AND (
+                 user_id = ?
+                 OR (user_id IS NULL AND anonymous_session_id IS NOT NULL AND anonymous_session_id = ?)
+               )
+             ORDER BY CASE WHEN user_id = ? THEN 0 ELSE 1 END, created_at ASC
+             LIMIT 1`,
+          ).get(input.googlePlaceId, input.userId, input.anonymousSessionId, input.userId) as VenueRequestRow | undefined;
+        } else if (input.anonymousSessionId) {
+          existing = this.database.prepare(
+            `SELECT * FROM venue_requests
+             WHERE request_type = 'missing_venue'
+               AND google_place_id = ?
+               AND user_id IS NULL
+               AND anonymous_session_id = ?
+               AND status IN ('open', 'in_progress', 'mission_created')
+             ORDER BY created_at ASC
+             LIMIT 1`,
+          ).get(input.googlePlaceId, input.anonymousSessionId) as VenueRequestRow | undefined;
+        }
+      }
+      if (existing) {
+        if (input.userId && !existing.user_id) {
+          this.database.prepare(
+            `UPDATE venue_requests
+             SET user_id = ?, updated_at = ?
+             WHERE id = ? AND user_id IS NULL`,
+          ).run(input.userId, input.now, existing.id);
+          existing = this.database.prepare("SELECT * FROM venue_requests WHERE id = ?")
+            .get(existing.id) as VenueRequestRow;
+        }
+        return { request: toVenueRequest(existing), duplicate: true };
+      }
+      return { request: this.createVenueRequest(input), duplicate: false };
+    });
+    return create.immediate();
+  }
+
+  resolveGoogleVenueRequestsForSubmission(input: {
+    googlePlaceId: string;
+    venueId: string;
+    submissionId: string;
+    now: string;
+  }): VenueRequest[] {
+    const rows = this.database.prepare(
+      `SELECT * FROM venue_requests
+       WHERE request_type = 'missing_venue'
+         AND google_place_id = ?
+         AND status IN ('open', 'in_progress', 'mission_created')
+       ORDER BY created_at ASC`,
+    ).all(input.googlePlaceId) as VenueRequestRow[];
+    if (!rows.length) return [];
+
+    this.database.prepare(
+      `UPDATE venue_requests
+       SET venue_id = ?,
+           source_submission_id = ?,
+           status = 'resolved',
+           resolution_note = 'Resolved by a Google-verified venue submission.',
+           resolved_at = ?,
+           resolved_by = NULL,
+           updated_at = ?
+       WHERE request_type = 'missing_venue'
+         AND google_place_id = ?
+         AND status IN ('open', 'in_progress', 'mission_created')`,
+    ).run(input.venueId, input.submissionId, input.now, input.now, input.googlePlaceId);
+
+    const missionIds = [...new Set(rows.map((row) => row.mission_id).filter((id): id is string => Boolean(id)))];
+    for (const missionId of missionIds) {
+      this.database.prepare(
+        `UPDATE mission_progress
+         SET status = 'cancelled', completed_at = NULL, updated_at = ?
+         WHERE mission_id = ? AND status IN ('accepted', 'submitted')`,
+      ).run(input.now, missionId);
+      this.database.prepare(
+        `UPDATE submissions
+         SET mission_id = NULL, updated_at = ?
+         WHERE mission_id = ? AND id != ? AND status IN ('pending', 'needs_more_evidence')`,
+      ).run(input.now, missionId, input.submissionId);
+      this.database.prepare("UPDATE missions SET active = 0, updated_at = ? WHERE id = ?")
+        .run(input.now, missionId);
+    }
+
+    return rows.map((row) => toVenueRequest({
+      ...row,
+      venue_id: input.venueId,
+      source_submission_id: input.submissionId,
+      status: "resolved",
+      resolution_note: "Resolved by a Google-verified venue submission.",
+      resolved_at: input.now,
+      resolved_by: null,
+      updated_at: input.now,
+    }));
+  }
+
   markVenueRequestMission(input: { requestId: string; missionId: string; now: string }): VenueRequest {
     this.database
       .prepare("UPDATE venue_requests SET status = 'mission_created', mission_id = ?, updated_at = ? WHERE id = ?")
@@ -6585,11 +8073,63 @@ export class BusinessRepository {
     return toVenueRequest(row);
   }
 
-  listVenueRequests(limit: number): VenueRequest[] {
+  createMissionFromVenueRequest(input: {
+    requestId: string;
+    missionId: string;
+    now: string;
+  }):
+    | { state: "created"; mission: BusinessMission; request: VenueRequest }
+    | { state: "not_found" }
+    | { state: "conflict" } {
+    const create = this.database.transaction(() => {
+      const row = this.database.prepare("SELECT * FROM venue_requests WHERE id = ?")
+        .get(input.requestId) as VenueRequestRow | undefined;
+      if (!row) return { state: "not_found" as const };
+      if (row.mission_id || !["open", "in_progress"].includes(row.status)) {
+        return { state: "conflict" as const };
+      }
+
+      const mission = this.createMission({
+        id: input.missionId,
+        venueId: row.venue_id ?? `request:${row.id}`,
+        venueName: row.venue_name ?? row.beer_name ?? "Requested venue",
+        suburb: row.suburb,
+        reason: row.request_type.replaceAll("_", " "),
+        priority: "normal",
+        points: row.request_type === "verify_beer_at_venue" ? 2 : 4,
+        multiplier: 1,
+        active: true,
+        lastVerifiedAt: null,
+        createdAt: input.now,
+        updatedAt: input.now,
+      });
+      const claimed = this.database.prepare(
+        `UPDATE venue_requests
+         SET status = 'mission_created', mission_id = ?, updated_at = ?
+         WHERE id = ?
+           AND mission_id IS NULL
+           AND status IN ('open', 'in_progress')`,
+      ).run(input.missionId, input.now, input.requestId);
+      if (claimed.changes !== 1) {
+        throw new Error("Venue request mission claim lost");
+      }
+      const updated = this.database.prepare("SELECT * FROM venue_requests WHERE id = ?")
+        .get(input.requestId) as VenueRequestRow;
+      return { state: "created" as const, mission, request: toVenueRequest(updated) };
+    });
+    return create();
+  }
+
+  listVenueRequests(limit: number, offset = 0): VenueRequest[] {
     const rows = this.database
-      .prepare("SELECT * FROM venue_requests ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as VenueRequestRow[];
+      .prepare("SELECT * FROM venue_requests ORDER BY created_at DESC LIMIT ? OFFSET ?")
+      .all(Math.max(1, Math.min(limit, 100)), Math.max(0, offset)) as VenueRequestRow[];
     return rows.map(toVenueRequest);
+  }
+
+  countVenueRequests(): number {
+    const row = this.database.prepare("SELECT count(*) AS count FROM venue_requests").get() as { count: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 
   updateTrustWorkflow(input: {
@@ -6599,8 +8139,12 @@ export class BusinessRepository {
     assignedTo: string | null;
     resolutionNote: string | null;
     resolvedBy: string;
+    expectedUpdatedAt: string;
     now: string;
-  }): FeedbackItem | WrongPriceReport | VenueRequest | VenueInterestRequest {
+  }):
+    | { state: "updated"; item: FeedbackItem | WrongPriceReport | VenueRequest | VenueInterestRequest }
+    | { state: "not_found" }
+    | { state: "conflict" } {
     const tableByKind = {
       feedback: "feedback",
       wrong_price: "wrong_price_reports",
@@ -6618,7 +8162,7 @@ export class BusinessRepository {
              resolved_at = ?,
              resolved_by = ?,
              updated_at = ?
-         WHERE id = ?`,
+         WHERE id = ? AND updated_at = ?`,
       )
       .run(
         input.status,
@@ -6628,16 +8172,18 @@ export class BusinessRepository {
         resolved ? input.resolvedBy : null,
         input.now,
         input.id,
+        input.expectedUpdatedAt,
       );
     if (result.changes !== 1) {
-      throw new Error("Trust queue item not found");
+      const exists = this.database.prepare(`SELECT 1 AS present FROM ${table} WHERE id = ?`).get(input.id);
+      return { state: exists ? "conflict" : "not_found" };
     }
 
     const row = this.database.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(input.id);
-    if (input.kind === "feedback") return toFeedback(row as FeedbackRow);
-    if (input.kind === "wrong_price") return toWrongPriceReport(row as WrongPriceReportRow);
-    if (input.kind === "venue_request") return toVenueRequest(row as VenueRequestRow);
-    return toVenueInterestRequest(row as VenueInterestRequestRow);
+    if (input.kind === "feedback") return { state: "updated", item: toFeedback(row as FeedbackRow) };
+    if (input.kind === "wrong_price") return { state: "updated", item: toWrongPriceReport(row as WrongPriceReportRow) };
+    if (input.kind === "venue_request") return { state: "updated", item: toVenueRequest(row as VenueRequestRow) };
+    return { state: "updated", item: toVenueInterestRequest(row as VenueInterestRequestRow) };
   }
 
   getVenueRequestById(id: string): VenueRequest | null {
@@ -6682,10 +8228,10 @@ export class BusinessRepository {
     return toVenueInterestRequest(row);
   }
 
-  listVenueInterestRequests(limit: number): VenueInterestRequest[] {
+  listVenueInterestRequests(limit: number, offset = 0): VenueInterestRequest[] {
     const rows = this.database
-      .prepare("SELECT * FROM venue_interest_requests ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as VenueInterestRequestRow[];
+      .prepare("SELECT * FROM venue_interest_requests ORDER BY created_at DESC LIMIT ? OFFSET ?")
+      .all(limit, Math.max(0, offset)) as VenueInterestRequestRow[];
     return rows.map(toVenueInterestRequest);
   }
 
@@ -6775,7 +8321,7 @@ export class BusinessRepository {
     return result.changes === 1 ? this.getBarClaimRequestById(input.id) : null;
   }
 
-  listBarClaimRequests(input: { userId?: string | undefined; status?: string | undefined; limit: number }): BarClaimRequest[] {
+  listBarClaimRequests(input: { userId?: string | undefined; status?: string | undefined; limit: number; offset?: number }): BarClaimRequest[] {
     const where: string[] = [];
     const values: unknown[] = [];
 
@@ -6791,8 +8337,8 @@ export class BusinessRepository {
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const rows = this.database
-      .prepare(`SELECT * FROM venue_claim_requests ${whereSql} ORDER BY created_at DESC LIMIT ?`)
-      .all(...values, input.limit) as BarClaimRequestRow[];
+      .prepare(`SELECT * FROM venue_claim_requests ${whereSql} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(...values, input.limit, Math.max(0, input.offset ?? 0)) as BarClaimRequestRow[];
     return rows.map(toBarClaimRequest);
   }
 
@@ -6882,11 +8428,8 @@ export class BusinessRepository {
         )
         .run(status, input.now, input.id, input.userId, input.now);
       if (result.changes !== 1) return null;
-      if (input.decision === "accept") {
-        this.database
-          .prepare("UPDATE accounts SET role = 'venue_manager', updated_at = ? WHERE id = ? AND role = 'user'")
-          .run(input.now, input.userId);
-      }
+      // Counter access is a venue-scoped capability. It must not replace the
+      // member's global contributor persona with the venue-manager role.
       const row = this.database
         .prepare("SELECT * FROM venue_manager_assignments WHERE id = ?")
         .get(input.id) as VenueManagerAssignmentRow;
@@ -6900,7 +8443,7 @@ export class BusinessRepository {
         .prepare("UPDATE venue_manager_assignments SET status = 'revoked', expires_at = NULL, updated_at = ? WHERE user_id = ? AND venue_id = ?")
         .run(input.now, input.userId, input.venueId);
       const active = this.database
-        .prepare("SELECT 1 FROM venue_manager_assignments WHERE user_id = ? AND status = 'active' LIMIT 1")
+        .prepare("SELECT 1 FROM venue_manager_assignments WHERE user_id = ? AND status = 'active' AND access_level = 'manager' LIMIT 1")
         .get(input.userId);
       if (!active) {
         this.database
@@ -6925,7 +8468,7 @@ export class BusinessRepository {
       .run(now, now).changes;
   }
 
-  listVenueManagerAssignments(input: { userId?: string | undefined; venueId?: string | undefined; activeOnly?: boolean | undefined; limit: number }): VenueManagerAssignment[] {
+  listVenueManagerAssignments(input: { userId?: string | undefined; venueId?: string | undefined; activeOnly?: boolean | undefined; limit: number; offset?: number }): VenueManagerAssignment[] {
     const clauses: string[] = [];
     const values: unknown[] = [];
 
@@ -6945,8 +8488,8 @@ export class BusinessRepository {
 
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.database
-      .prepare(`SELECT * FROM venue_manager_assignments ${where} ORDER BY updated_at DESC LIMIT ?`)
-      .all(...values, input.limit) as VenueManagerAssignmentRow[];
+      .prepare(`SELECT * FROM venue_manager_assignments ${where} ORDER BY updated_at DESC LIMIT ? OFFSET ?`)
+      .all(...values, input.limit, Math.max(0, input.offset ?? 0)) as VenueManagerAssignmentRow[];
     return rows.map(toVenueManagerAssignment);
   }
 
@@ -7011,9 +8554,10 @@ export class BusinessRepository {
     tierManualOverride?: boolean | undefined;
     acceptsPintPathCodes?: boolean | undefined;
     active: boolean;
+    expectedUpdatedAt?: string | null;
     now: string;
   }): BarProfile {
-    this.database
+    const result = this.database
       .prepare(
         `INSERT INTO venue_profiles (
           venue_id, name, address, suburb, area, phone, website, instagram, description,
@@ -7043,7 +8587,8 @@ export class BusinessRepository {
           tier_manual_override = excluded.tier_manual_override,
           accepts_pint_path_codes = excluded.accepts_pint_path_codes,
           active = excluded.active,
-          updated_at = excluded.updated_at`,
+          updated_at = excluded.updated_at
+        WHERE (? IS NULL OR venue_profiles.updated_at = ?)`,
       )
       .run(
         input.barId,
@@ -7070,7 +8615,12 @@ export class BusinessRepository {
         input.active ? 1 : 0,
         input.now,
         input.now,
+        input.expectedUpdatedAt ?? null,
+        input.expectedUpdatedAt ?? null,
       );
+    if (result.changes !== 1 && this.getBarProfile(input.barId)) {
+      throw new OptimisticConcurrencyError("Venue profile changed before this update could be saved.");
+    }
     return this.getBarProfile(input.barId)!;
   }
 
@@ -7084,6 +8634,7 @@ export class BusinessRepository {
   updateBarSubscription(input: {
     barId: string;
     membershipTier: BarMembershipTier;
+    stripePaidMembershipTier?: BarMembershipTier | null | undefined;
     stripeCustomerId?: string | null | undefined;
     stripeSubscriptionId?: string | null | undefined;
     subscriptionStatus?: string | null | undefined;
@@ -7098,6 +8649,7 @@ export class BusinessRepository {
       .prepare(
         `UPDATE venue_profiles
          SET membership_tier = ?,
+             stripe_paid_membership_tier = COALESCE(?, stripe_paid_membership_tier),
              stripe_customer_id = COALESCE(?, stripe_customer_id),
              stripe_subscription_id = COALESCE(?, stripe_subscription_id),
              subscription_status = ?,
@@ -7113,6 +8665,7 @@ export class BusinessRepository {
       )
       .run(
         input.membershipTier,
+        input.stripePaidMembershipTier ?? null,
         input.stripeCustomerId ?? null,
         input.stripeSubscriptionId ?? null,
         input.subscriptionStatus ?? null,
@@ -7155,13 +8708,17 @@ export class BusinessRepository {
     onTap: boolean;
     inStock: boolean;
     notes: string | null;
+    priceVerifiedAt?: string | null;
+    stockVerifiedAt?: string | null;
+    expectedUpdatedAt?: string | null;
     now: string;
   }): BarBeer {
-    this.database
+    const result = this.database
       .prepare(
         `INSERT INTO venue_beers (
-          id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size, price, currency, on_tap, in_stock, notes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, venue_id, beer_name, normalized_beer_id, brewery, style, abv, serve_size, price, currency,
+          on_tap, in_stock, notes, price_verified_at, stock_verified_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           beer_name = excluded.beer_name,
           normalized_beer_id = excluded.normalized_beer_id,
@@ -7174,8 +8731,11 @@ export class BusinessRepository {
           on_tap = excluded.on_tap,
           in_stock = excluded.in_stock,
           notes = excluded.notes,
+          price_verified_at = excluded.price_verified_at,
+          stock_verified_at = excluded.stock_verified_at,
           updated_at = excluded.updated_at
-        WHERE venue_beers.venue_id = excluded.venue_id`,
+        WHERE venue_beers.venue_id = excluded.venue_id
+          AND (? IS NULL OR venue_beers.updated_at = ?)`,
       )
       .run(
         input.id,
@@ -7191,9 +8751,16 @@ export class BusinessRepository {
         input.onTap ? 1 : 0,
         input.inStock ? 1 : 0,
         input.notes,
+        input.priceVerifiedAt ?? null,
+        input.stockVerifiedAt ?? null,
         input.now,
         input.now,
+        input.expectedUpdatedAt ?? null,
+        input.expectedUpdatedAt ?? null,
       );
+    if (result.changes !== 1 && this.getBarBeerById(input.id)) {
+      throw new OptimisticConcurrencyError("Beer row changed before this update could be saved.");
+    }
     const row = this.database
       .prepare("SELECT * FROM venue_beers WHERE id = ? AND venue_id = ?")
       .get(input.id, input.barId) as BarBeerRow | undefined;
@@ -7203,8 +8770,14 @@ export class BusinessRepository {
     return toBarBeer(row);
   }
 
-  deleteBarBeer(input: { id: string; barId: string }): boolean {
-    const result = this.database.prepare("DELETE FROM venue_beers WHERE id = ? AND venue_id = ?").run(input.id, input.barId);
+  deleteBarBeer(input: { id: string; barId: string; expectedUpdatedAt?: string | null }): boolean {
+    const result = input.expectedUpdatedAt
+      ? this.database.prepare("DELETE FROM venue_beers WHERE id = ? AND venue_id = ? AND updated_at = ?")
+          .run(input.id, input.barId, input.expectedUpdatedAt)
+      : this.database.prepare("DELETE FROM venue_beers WHERE id = ? AND venue_id = ?").run(input.id, input.barId);
+    if (result.changes !== 1 && input.expectedUpdatedAt && this.getBarBeerById(input.id)) {
+      throw new OptimisticConcurrencyError("Beer row changed before it could be deleted.");
+    }
     return result.changes > 0;
   }
 
@@ -7232,9 +8805,10 @@ export class BusinessRepository {
     description: string;
     happyHourBeers: BarHappyHourBeer[];
     active: boolean;
+    expectedUpdatedAt?: string | null;
     now: string;
   }): BarHappyHour {
-    this.database
+    const result = this.database
       .prepare(
         `INSERT INTO venue_happy_hours (
           id, venue_id, title, days_of_week_json, start_time, end_time, description, happy_hour_beers_json, active, created_at, updated_at
@@ -7248,7 +8822,8 @@ export class BusinessRepository {
           happy_hour_beers_json = excluded.happy_hour_beers_json,
           active = excluded.active,
           updated_at = excluded.updated_at
-        WHERE venue_happy_hours.venue_id = excluded.venue_id`,
+        WHERE venue_happy_hours.venue_id = excluded.venue_id
+          AND (? IS NULL OR venue_happy_hours.updated_at = ?)`,
       )
       .run(
         input.id,
@@ -7262,7 +8837,12 @@ export class BusinessRepository {
         input.active ? 1 : 0,
         input.now,
         input.now,
+        input.expectedUpdatedAt ?? null,
+        input.expectedUpdatedAt ?? null,
       );
+    if (result.changes !== 1 && this.getBarHappyHourById(input.id)) {
+      throw new OptimisticConcurrencyError("Happy hour changed before this update could be saved.");
+    }
     const row = this.database
       .prepare("SELECT * FROM venue_happy_hours WHERE id = ? AND venue_id = ?")
       .get(input.id, input.barId) as BarHappyHourRow | undefined;
@@ -7272,8 +8852,14 @@ export class BusinessRepository {
     return toBarHappyHour(row);
   }
 
-  deleteBarHappyHour(input: { id: string; barId: string }): boolean {
-    const result = this.database.prepare("DELETE FROM venue_happy_hours WHERE id = ? AND venue_id = ?").run(input.id, input.barId);
+  deleteBarHappyHour(input: { id: string; barId: string; expectedUpdatedAt?: string | null }): boolean {
+    const result = input.expectedUpdatedAt
+      ? this.database.prepare("DELETE FROM venue_happy_hours WHERE id = ? AND venue_id = ? AND updated_at = ?")
+          .run(input.id, input.barId, input.expectedUpdatedAt)
+      : this.database.prepare("DELETE FROM venue_happy_hours WHERE id = ? AND venue_id = ?").run(input.id, input.barId);
+    if (result.changes !== 1 && input.expectedUpdatedAt && this.getBarHappyHourById(input.id)) {
+      throw new OptimisticConcurrencyError("Happy hour changed before it could be deleted.");
+    }
     return result.changes > 0;
   }
 
@@ -7301,16 +8887,22 @@ export class BusinessRepository {
     endsAt: string | null;
     startTime: string | null;
     endTime: string | null;
+    recurrenceFrequency?: "none" | "weekly";
+    daysOfWeek?: string[];
+    timezone?: string;
     scheduleNote: string | null;
     exclusive: boolean;
     active: boolean;
+    expectedUpdatedAt?: string | null;
     now: string;
   }): BarSpecial {
-    this.database
+    const result = this.database
       .prepare(
         `INSERT INTO venue_specials (
-          id, venue_id, title, description, price, discount, savings_amount_cents, starts_at, ends_at, start_time, end_time, schedule_note, exclusive, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, venue_id, title, description, price, discount, savings_amount_cents, starts_at, ends_at,
+          start_time, end_time, recurrence_frequency, days_of_week_json, timezone, schedule_note,
+          exclusive, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
           description = excluded.description,
@@ -7321,11 +8913,15 @@ export class BusinessRepository {
           ends_at = excluded.ends_at,
           start_time = excluded.start_time,
           end_time = excluded.end_time,
+          recurrence_frequency = excluded.recurrence_frequency,
+          days_of_week_json = excluded.days_of_week_json,
+          timezone = excluded.timezone,
           schedule_note = excluded.schedule_note,
           exclusive = excluded.exclusive,
           active = excluded.active,
           updated_at = excluded.updated_at
-        WHERE venue_specials.venue_id = excluded.venue_id`,
+        WHERE venue_specials.venue_id = excluded.venue_id
+          AND (? IS NULL OR venue_specials.updated_at = ?)`,
       )
       .run(
         input.id,
@@ -7339,12 +8935,20 @@ export class BusinessRepository {
         input.endsAt,
         input.startTime,
         input.endTime,
+        input.recurrenceFrequency ?? "none",
+        JSON.stringify(input.daysOfWeek ?? []),
+        input.timezone ?? "Australia/Melbourne",
         input.scheduleNote,
         input.exclusive ? 1 : 0,
         input.active ? 1 : 0,
         input.now,
         input.now,
+        input.expectedUpdatedAt ?? null,
+        input.expectedUpdatedAt ?? null,
       );
+    if (result.changes !== 1 && this.getBarSpecialById(input.id)) {
+      throw new OptimisticConcurrencyError("Special changed before this update could be saved.");
+    }
     const row = this.database
       .prepare("SELECT * FROM venue_specials WHERE id = ? AND venue_id = ?")
       .get(input.id, input.barId) as BarSpecialRow | undefined;
@@ -7354,8 +8958,14 @@ export class BusinessRepository {
     return toBarSpecial(row);
   }
 
-  deleteBarSpecial(input: { id: string; barId: string }): boolean {
-    const result = this.database.prepare("DELETE FROM venue_specials WHERE id = ? AND venue_id = ?").run(input.id, input.barId);
+  deleteBarSpecial(input: { id: string; barId: string; expectedUpdatedAt?: string | null }): boolean {
+    const result = input.expectedUpdatedAt
+      ? this.database.prepare("DELETE FROM venue_specials WHERE id = ? AND venue_id = ? AND updated_at = ?")
+          .run(input.id, input.barId, input.expectedUpdatedAt)
+      : this.database.prepare("DELETE FROM venue_specials WHERE id = ? AND venue_id = ?").run(input.id, input.barId);
+    if (result.changes !== 1 && input.expectedUpdatedAt && this.getBarSpecialById(input.id)) {
+      throw new OptimisticConcurrencyError("Special changed before it could be deleted.");
+    }
     return result.changes > 0;
   }
 
@@ -7399,11 +9009,27 @@ export class BusinessRepository {
     return row ? toBarPendingChange(row) : null;
   }
 
+  getPendingBarChangeForTarget(input: {
+    barId: string;
+    changeType: BarPendingChangeType;
+    action: BarPendingChangeAction;
+    targetId: string | null;
+  }): BarPendingChange | null {
+    const row = this.database.prepare(
+      `SELECT * FROM venue_pending_changes
+       WHERE venue_id = ? AND change_type = ? AND action = ? AND target_id IS ? AND status = 'pending'
+       ORDER BY submitted_at DESC
+       LIMIT 1`,
+    ).get(input.barId, input.changeType, input.action, input.targetId) as BarPendingChangeRow | undefined;
+    return row ? toBarPendingChange(row) : null;
+  }
+
   listBarPendingChanges(input: {
     barId?: string | undefined;
     submittedBy?: string | undefined;
     status?: BarPendingChangeStatus | undefined;
     limit: number;
+    offset?: number;
   }): BarPendingChange[] {
     const clauses: string[] = [];
     const values: unknown[] = [];
@@ -7437,9 +9063,9 @@ export class BusinessRepository {
              ELSE 1
            END,
            submitted_at DESC
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
       )
-      .all(...values, input.limit) as BarPendingChangeRow[];
+      .all(...values, input.limit, Math.max(0, input.offset ?? 0)) as BarPendingChangeRow[];
     return rows.map(toBarPendingChange);
   }
 
@@ -7450,7 +9076,7 @@ export class BusinessRepository {
     reviewedAt: string;
     rejectionReason: string | null;
   }): BarPendingChange | null {
-    this.database
+    const result = this.database
       .prepare(
         `UPDATE venue_pending_changes
          SET status = ?,
@@ -7461,6 +9087,9 @@ export class BusinessRepository {
          WHERE id = ? AND status = 'pending'`,
       )
       .run(input.status, input.reviewedBy, input.reviewedAt, input.rejectionReason, input.reviewedAt, input.id);
+    if (result.changes !== 1) {
+      return null;
+    }
     return this.getBarPendingChangeById(input.id);
   }
 
@@ -7683,7 +9312,7 @@ export class BusinessRepository {
       specialsViews: barEventCount(["deal_viewed", "special_viewed", "happy_hour_active_now_used", "happy_hour_near_me_used"]),
       markerClicks: barEventCount(["map_pin_click"]),
       venueSearchQueries,
-      priceReveals: barEventCount(["price_view_revealed"]),
+      pricePreviewViews: barEventCount(["free_preview_viewed", "price_view_revealed"]),
       directionsClicks: barInteractionActorCount("directions_clicked", "$.interactionType", "directions_click"),
       saves: barEventCount(["saved_venue_added", "saved_night_plan_added"]),
       shares: barEventCount(["venue_shared", "share_link_copied", "search_shared"]),
@@ -7701,7 +9330,7 @@ export class BusinessRepository {
       specialsViews: reportableVenueMetric("specialsViews"),
       markerClicks: reportableVenueMetric("markerClicks"),
       venueSearchQueries: reportableVenueMetric("venueSearchQueries"),
-      priceReveals: reportableVenueMetric("priceReveals"),
+      pricePreviewViews: reportableVenueMetric("pricePreviewViews"),
       directionsClicks: reportableVenueMetric("directionsClicks"),
       saves: reportableVenueMetric("saves"),
       shares: reportableVenueMetric("shares"),
@@ -7790,11 +9419,59 @@ export class BusinessRepository {
     return toVenuePartnerOutreach(row);
   }
 
-  listVenuePartnerOutreach(limit: number): VenuePartnerOutreach[] {
+  listVenuePartnerOutreach(limit: number, offset = 0): VenuePartnerOutreach[] {
     const rows = this.database
-      .prepare("SELECT * FROM venue_partner_outreach ORDER BY updated_at DESC LIMIT ?")
-      .all(limit) as VenuePartnerOutreachRow[];
+      .prepare("SELECT * FROM venue_partner_outreach ORDER BY updated_at DESC LIMIT ? OFFSET ?")
+      .all(limit, Math.max(0, offset)) as VenuePartnerOutreachRow[];
     return rows.map(toVenuePartnerOutreach);
+  }
+
+  getVenuePartnerAdminCounts() {
+    const row = this.database.prepare(`SELECT
+      (SELECT count(*) FROM venue_interest_requests) AS interests,
+      (SELECT count(*) FROM venue_claim_requests) AS claim_requests,
+      (SELECT count(*) FROM venue_manager_assignments) AS assignments,
+      (SELECT count(*) FROM venue_pending_changes WHERE status = 'pending') AS pending_changes,
+      (SELECT count(*) FROM venue_partner_outreach) AS outreach,
+      (SELECT count(*) FROM venue_partner_outreach WHERE status NOT IN ('closed', 'not_interested')) AS open_outreach`).get() as Record<string, number>;
+    return {
+      interests: Number(row.interests ?? 0),
+      claimRequests: Number(row.claim_requests ?? 0),
+      assignments: Number(row.assignments ?? 0),
+      pendingChanges: Number(row.pending_changes ?? 0),
+      outreach: Number(row.outreach ?? 0),
+      openOutreach: Number(row.open_outreach ?? 0),
+    };
+  }
+
+  getVenuePartnerLeadContext(venueIds: string[]): {
+    assignedVenueIds: string[];
+    outreachByVenueId: Record<string, VenuePartnerOutreach>;
+  } {
+    const uniqueVenueIds = [...new Set(venueIds.filter(Boolean))];
+    if (!uniqueVenueIds.length) {
+      return { assignedVenueIds: [], outreachByVenueId: {} };
+    }
+
+    const placeholders = uniqueVenueIds.map(() => "?").join(", ");
+    const assignedRows = this.database
+      .prepare(
+        `SELECT DISTINCT venue_id
+         FROM venue_manager_assignments
+         WHERE status = 'active' AND venue_id IN (${placeholders})
+         ORDER BY venue_id`,
+      )
+      .all(...uniqueVenueIds) as Array<{ venue_id: string }>;
+    const outreachRows = this.database
+      .prepare(`SELECT * FROM venue_partner_outreach WHERE venue_id IN (${placeholders})`)
+      .all(...uniqueVenueIds) as VenuePartnerOutreachRow[];
+
+    return {
+      assignedVenueIds: assignedRows.map((row) => row.venue_id),
+      outreachByVenueId: Object.fromEntries(
+        outreachRows.map((row) => [row.venue_id, toVenuePartnerOutreach(row)]),
+      ),
+    };
   }
 
   countKnownVenues(): number {
@@ -7918,11 +9595,48 @@ export class BusinessRepository {
       );
   }
 
-  listSecurityAuditLogs(limit = 100): SecurityAuditLog[] {
+  listSecurityAuditLogs(input: number | {
+    limit?: number;
+    offset?: number;
+    action?: string | null;
+    actorUserId?: string | null;
+  } = 100): SecurityAuditLog[] {
+    const query = typeof input === "number" ? { limit: input, offset: 0, action: null, actorUserId: null } : input;
+    const limit = Math.min(500, Math.max(1, query.limit ?? 100));
+    const offset = Math.max(0, query.offset ?? 0);
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+    if (query.action) {
+      clauses.push("action = ?");
+      params.push(query.action);
+    }
+    if (query.actorUserId) {
+      clauses.push("actor_user_id = ?");
+      params.push(query.actorUserId);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.database
-      .prepare("SELECT * FROM security_audit_log ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as SecurityAuditLogRow[];
+      .prepare(`SELECT * FROM security_audit_log ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset) as SecurityAuditLogRow[];
     return rows.map(toSecurityAuditLog);
+  }
+
+  countSecurityAuditLogs(input: { action?: string | null; actorUserId?: string | null } = {}): number {
+    const clauses: string[] = [];
+    const params: string[] = [];
+    if (input.action) {
+      clauses.push("action = ?");
+      params.push(input.action);
+    }
+    if (input.actorUserId) {
+      clauses.push("actor_user_id = ?");
+      params.push(input.actorUserId);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const row = this.database
+      .prepare(`SELECT COUNT(*) AS count FROM security_audit_log ${where}`)
+      .get(...params) as { count: number };
+    return Number(row.count);
   }
 
   createSourceEvidenceObject(input: {
@@ -7966,7 +9680,24 @@ export class BusinessRepository {
     return row ? toSourceEvidenceObject(row) : null;
   }
 
-  listExpiredSourceEvidence(input: { now: string; limit: number }): SourceEvidenceObject[] {
+  isSourceEvidenceLinked(id: string): boolean {
+    return Boolean(this.database.prepare(
+      "SELECT 1 AS linked FROM submission_source_evidence WHERE evidence_id = ? LIMIT 1",
+    ).get(id));
+  }
+
+  deleteUnlinkedSourceEvidenceObject(id: string): boolean {
+    const result = this.database.prepare(
+      `DELETE FROM source_evidence_objects
+       WHERE id = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM submission_source_evidence link WHERE link.evidence_id = source_evidence_objects.id
+         )`,
+    ).run(id);
+    return result.changes === 1;
+  }
+
+  listExpiredSourceEvidence(input: { now: string; hardCutoff: string; limit: number }): SourceEvidenceObject[] {
     const rows = this.database
       .prepare(
         `SELECT evidence.*
@@ -7974,18 +9705,66 @@ export class BusinessRepository {
          WHERE evidence.deleted_at IS NULL
            AND evidence.retention_expires_at IS NOT NULL
            AND evidence.retention_expires_at <= ?
-           AND NOT EXISTS (
-             SELECT 1
-             FROM submission_source_evidence link
-             JOIN submissions submission ON submission.id = link.submission_id
-             WHERE link.evidence_id = evidence.id
-               AND submission.status IN ('pending', 'needs_more_evidence')
+           AND (
+             evidence.created_at <= ?
+             OR NOT EXISTS (
+               SELECT 1
+               FROM submission_source_evidence link
+               JOIN submissions submission ON submission.id = link.submission_id
+               WHERE link.evidence_id = evidence.id
+                 AND submission.status IN ('pending', 'needs_more_evidence')
+             )
            )
          ORDER BY evidence.retention_expires_at ASC
          LIMIT ?`,
       )
-      .all(input.now, input.limit) as SourceEvidenceObjectRow[];
+      .all(input.now, input.hardCutoff, input.limit) as SourceEvidenceObjectRow[];
     return rows.map(toSourceEvidenceObject);
+  }
+
+  countExpiredSourceEvidence(now: string, hardCutoff: string): number {
+    const row = this.database
+      .prepare(
+        `SELECT count(*) AS count
+         FROM source_evidence_objects evidence
+         WHERE evidence.deleted_at IS NULL
+           AND evidence.retention_expires_at IS NOT NULL
+           AND evidence.retention_expires_at <= ?
+           AND (
+             evidence.created_at <= ?
+             OR NOT EXISTS (
+               SELECT 1
+               FROM submission_source_evidence link
+               JOIN submissions submission ON submission.id = link.submission_id
+               WHERE link.evidence_id = evidence.id
+                 AND submission.status IN ('pending', 'needs_more_evidence')
+             )
+           )`,
+      )
+      .get(now, hardCutoff) as { count: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
+  countOverdueHeldSourceEvidence(now: string, hardCutoff: string): { heldForOpenReview: number; pastHardCap: number } {
+    const row = this.database.prepare(
+      `SELECT
+         count(*) AS held,
+         sum(CASE WHEN evidence.created_at <= ? THEN 1 ELSE 0 END) AS past_hard_cap
+       FROM source_evidence_objects evidence
+       WHERE evidence.deleted_at IS NULL
+         AND evidence.retention_expires_at IS NOT NULL
+         AND evidence.retention_expires_at <= ?
+         AND EXISTS (
+           SELECT 1 FROM submission_source_evidence link
+           JOIN submissions submission ON submission.id = link.submission_id
+           WHERE link.evidence_id = evidence.id
+             AND submission.status IN ('pending', 'needs_more_evidence')
+         )`,
+    ).get(hardCutoff, now) as { held: number; past_hard_cap: number | null } | undefined;
+    return {
+      heldForOpenReview: Number(row?.held ?? 0),
+      pastHardCap: Number(row?.past_hard_cap ?? 0),
+    };
   }
 
   listSourceEvidenceForOwner(ownerUserId: string): SourceEvidenceObject[] {
@@ -8020,7 +9799,7 @@ export class BusinessRepository {
     const existing = this.database
       .prepare(
         `SELECT * FROM account_deletion_requests
-         WHERE user_id = ? AND status IN ('pending_review', 'approved')
+         WHERE user_id = ? AND status IN ('pending_review', 'approved', 'processing', 'failed')
          ORDER BY requested_at DESC LIMIT 1`,
       )
       .get(input.userId) as Record<string, unknown> | undefined;
@@ -8038,49 +9817,547 @@ export class BusinessRepository {
     return this.database.prepare("SELECT * FROM account_deletion_requests WHERE id = ?").get(input.id) as Record<string, unknown>;
   }
 
-  listAccountDeletionRequests(input: { status?: string; limit: number }): Array<Record<string, unknown>> {
+  listAccountDeletionRequests(input: { status?: string; limit: number; offset?: number }): Array<Record<string, unknown>> {
+    const offset = Math.max(0, input.offset ?? 0);
     const rows = input.status
-      ? this.database.prepare("SELECT * FROM account_deletion_requests WHERE status = ? ORDER BY requested_at DESC LIMIT ?").all(input.status, input.limit)
-      : this.database.prepare("SELECT * FROM account_deletion_requests ORDER BY requested_at DESC LIMIT ?").all(input.limit);
+      ? this.database.prepare("SELECT * FROM account_deletion_requests WHERE status = ? ORDER BY requested_at DESC LIMIT ? OFFSET ?").all(input.status, input.limit, offset)
+      : this.database.prepare("SELECT * FROM account_deletion_requests ORDER BY requested_at DESC LIMIT ? OFFSET ?").all(input.limit, offset);
     return rows as Array<Record<string, unknown>>;
+  }
+
+  countAccountDeletionRequests(status?: string): number {
+    const row = status
+      ? this.database.prepare("SELECT count(*) AS count FROM account_deletion_requests WHERE status = ?").get(status)
+      : this.database.prepare("SELECT count(*) AS count FROM account_deletion_requests").get();
+    return Number((row as { count: number } | undefined)?.count ?? 0);
+  }
+
+  getAccountDeletionRequestForUser(userId: string): Record<string, unknown> | null {
+    return (this.database
+      .prepare("SELECT * FROM account_deletion_requests WHERE user_id = ? ORDER BY requested_at DESC LIMIT 1")
+      .get(userId) as Record<string, unknown> | undefined) ?? null;
+  }
+
+  getAccountDeletionRequestById(requestId: string): Record<string, unknown> | null {
+    return (this.database
+      .prepare("SELECT * FROM account_deletion_requests WHERE id = ? LIMIT 1")
+      .get(requestId) as Record<string, unknown> | undefined) ?? null;
+  }
+
+  beginAccountDeletion(input: { requestId: string; reviewedBy: string; now: string; staleBefore: string }): Record<string, unknown> | null {
+    const result = this.database
+      .prepare(
+        `UPDATE account_deletion_requests
+         SET status = 'processing', reviewed_by = ?, reviewed_at = COALESCE(reviewed_at, ?),
+             processing_started_at = ?, last_error = NULL, attempt_count = attempt_count + 1, updated_at = ?
+         WHERE id = ? AND (
+           status IN ('pending_review', 'approved', 'failed')
+           OR (status = 'processing' AND processing_started_at <= ?)
+         )`,
+      )
+      .run(input.reviewedBy, input.now, input.now, input.now, input.requestId, input.staleBefore);
+    if (result.changes !== 1) return null;
+    return this.database.prepare("SELECT * FROM account_deletion_requests WHERE id = ?").get(input.requestId) as Record<string, unknown>;
+  }
+
+  markAccountDeletionIdentityDeleted(input: { requestId: string; now: string }): void {
+    this.database
+      .prepare(
+        `UPDATE account_deletion_requests
+         SET identity_deleted_at = COALESCE(identity_deleted_at, ?), updated_at = ?
+         WHERE id = ? AND status = 'processing'`,
+      )
+      .run(input.now, input.now, input.requestId);
+  }
+
+  markAccountDeletionStripeCustomerDeleted(input: {
+    requestId: string;
+    userId: string;
+    stripeCustomerId: string;
+    now: string;
+  }): void {
+    this.database.transaction(() => {
+      this.database.prepare(
+        `UPDATE account_deletion_requests
+            SET stripe_customer_deleted_at = COALESCE(stripe_customer_deleted_at, ?),
+                stripe_customer_id_snapshot = COALESCE(stripe_customer_id_snapshot, ?), updated_at = ?
+          WHERE id = ? AND user_id = ? AND status = 'processing'`,
+      ).run(input.now, input.stripeCustomerId, input.now, input.requestId, input.userId);
+      this.database.prepare(
+        `UPDATE stripe_webhook_events SET payload_json = NULL, last_error = NULL
+          WHERE payload_json IS NOT NULL AND json_valid(payload_json)
+            AND json_extract(payload_json, '$.data.object.customer') = ?`,
+      ).run(input.stripeCustomerId);
+      this.database.prepare(
+        `UPDATE accounts
+            SET subscription_status = 'free', stripe_paid_subscription_status = NULL,
+                stripe_customer_id = NULL, stripe_event_created_at = NULL, premium_until = NULL,
+                updated_at = ?
+          WHERE id = ?`,
+      ).run(input.now, input.userId);
+    })();
+  }
+
+  markAccountDeletionTombstoneRecorded(input: { requestId: string; recordedAt: string; now: string }): void {
+    this.database.prepare(
+      `UPDATE account_deletion_requests
+          SET deletion_tombstone_recorded_at = COALESCE(deletion_tombstone_recorded_at, ?), updated_at = ?
+        WHERE id = ? AND status = 'processing'`,
+    ).run(input.recordedAt, input.now, input.requestId);
+  }
+
+  failAccountDeletion(input: { requestId: string; error: string; now: string }): void {
+    this.database
+      .prepare(
+        `UPDATE account_deletion_requests
+         SET status = 'failed', last_error = ?, updated_at = ?
+         WHERE id = ? AND status = 'processing'`,
+      )
+      .run(input.error.slice(0, 500), input.now, input.requestId);
+  }
+
+  cancelAccountDeletion(input: { requestId: string; userId: string; now: string }): boolean {
+    const result = this.database
+      .prepare(
+        `UPDATE account_deletion_requests
+         SET status = 'cancelled', updated_at = ?
+         WHERE id = ? AND user_id = ?
+           AND identity_deleted_at IS NULL
+           AND stripe_customer_deleted_at IS NULL
+           AND deletion_tombstone_recorded_at IS NULL
+           AND status IN ('pending_review', 'approved', 'failed')`,
+      )
+      .run(input.now, input.requestId, input.userId);
+    return result.changes === 1;
+  }
+
+  exportAccountRelatedData(input: { userId: string; email: string; stripeCustomerId: string | null }): Record<string, unknown> {
+    const rows = (sql: string, ...values: unknown[]) =>
+      this.database.prepare(sql).all(...values) as Array<Record<string, unknown>>;
+    const row = (sql: string, ...values: unknown[]) =>
+      (this.database.prepare(sql).get(...values) as Record<string, unknown> | undefined) ?? null;
+    const userId = input.userId;
+    const email = input.email.trim().toLowerCase();
+
+    return {
+      accountPrivate: row(
+        `SELECT id, public_account_id, email, display_name, avatar_url, auth_provider, supabase_user_id,
+                email_verified_at, mfa_level, mfa_verified_at, provider_tokens_valid_after, role,
+                age_confirmed_at, terms_accepted_at, privacy_accepted_at, terms_version, privacy_version,
+                age_verification_status, is_over_18_verified, subscription_status, stripe_customer_id,
+                stripe_paid_subscription_status, stripe_event_created_at, premium_until, trust_score,
+                contribution_points_current_month, approved_submission_count, rejected_submission_count,
+                fraud_strike_count, status, created_at, updated_at
+           FROM accounts WHERE id = ?`,
+        userId,
+      ),
+      sessions: rows(
+        `SELECT substr(token_hash, 1, 24) AS session_id, created_at, expires_at, revoked_at, last_used_at,
+                last_ip_hash, user_agent_hash, provider_session_id_hash
+           FROM auth_sessions WHERE user_id = ? ORDER BY created_at`,
+        userId,
+      ),
+      revokedProviderSessions: rows(
+        `SELECT provider_session_id_hash, revoked_at, reason
+           FROM revoked_provider_sessions WHERE user_id = ? ORDER BY revoked_at`,
+        userId,
+      ),
+      discountPasses: rows(
+        `SELECT id, status, created_at, expires_at, revoked_at, last_used_at
+           FROM account_discount_passes WHERE user_id = ? ORDER BY created_at`,
+        userId,
+      ),
+      sourceEvidenceMetadata: rows(
+        `SELECT id, storage_provider, object_path, mime_type, byte_size, retention_expires_at, deleted_at, created_at
+           FROM source_evidence_objects WHERE owner_user_id = ? ORDER BY created_at`,
+        userId,
+      ),
+      submissionsReviewed: rows(
+        "SELECT * FROM submissions WHERE reviewed_by = ? ORDER BY reviewed_at",
+        userId,
+      ),
+      feedback: rows(
+        `SELECT * FROM feedback
+          WHERE user_id = ? OR assigned_to = ? OR resolved_by = ? OR lower(COALESCE(contact_email, '')) = ?
+          ORDER BY created_at`,
+        userId, userId, userId, email,
+      ),
+      wrongPriceReports: rows(
+        `SELECT * FROM wrong_price_reports WHERE user_id = ? OR assigned_to = ? OR resolved_by = ? ORDER BY created_at`,
+        userId, userId, userId,
+      ),
+      venueRequests: rows(
+        `SELECT * FROM venue_requests WHERE user_id = ? OR assigned_to = ? OR resolved_by = ? ORDER BY created_at`,
+        userId, userId, userId,
+      ),
+      venueInterestRequests: rows(
+        `SELECT * FROM venue_interest_requests
+          WHERE user_id = ? OR assigned_to = ? OR resolved_by = ? OR lower(email) = ? ORDER BY created_at`,
+        userId, userId, userId, email,
+      ),
+      venueClaimRequests: rows(
+        `SELECT * FROM venue_claim_requests
+          WHERE user_id = ? OR reviewed_by = ? OR lower(contact_email) = ? ORDER BY created_at`,
+        userId, userId, email,
+      ),
+      ageVerifications: rows("SELECT * FROM age_verifications WHERE user_id = ? ORDER BY created_at", userId),
+      verifications: rows("SELECT * FROM verifications WHERE verifier_user_id = ? ORDER BY created_at", userId),
+      missionProgress: rows("SELECT * FROM mission_progress WHERE user_id = ? ORDER BY accepted_at", userId),
+      venueAssignments: rows(
+        "SELECT * FROM venue_manager_assignments WHERE user_id = ? OR approved_by = ? ORDER BY created_at",
+        userId, userId,
+      ),
+      venuePendingChanges: rows(
+        `SELECT * FROM venue_pending_changes
+          WHERE submitted_by = ? OR reviewed_by = ? OR instr(payload_json, ?) > 0 OR instr(lower(payload_json), ?) > 0
+          ORDER BY created_at`,
+        userId, userId, userId, email,
+      ),
+      venuePartnerOutreach: rows(
+        `SELECT * FROM venue_partner_outreach
+          WHERE updated_by = ? OR instr(lower(COALESCE(notes, '')), ?) > 0 ORDER BY created_at`,
+        userId, email,
+      ),
+      discountRedemptions: rows(
+        "SELECT * FROM discount_redemptions WHERE user_id = ? OR redeemed_by_user_id = ? ORDER BY created_at",
+        userId, userId,
+      ),
+      pintPointDrinkRecords: rows(
+        `SELECT * FROM pint_point_drink_records
+          WHERE user_id = ? OR recorded_by_user_id = ? OR voided_by_user_id = ? ORDER BY created_at`,
+        userId, userId, userId,
+      ),
+      pintPointLedger: rows("SELECT * FROM pint_point_ledger WHERE user_id = ? ORDER BY created_at", userId),
+      freePintRewardCodes: rows(
+        "SELECT * FROM free_pint_reward_codes WHERE user_id = ? OR redeemed_by_user_id = ? ORDER BY created_at",
+        userId, userId,
+      ),
+      freePintRewardRedemptions: rows(
+        "SELECT * FROM free_pint_reward_redemptions WHERE user_id = ? OR redeemed_by_user_id = ? ORDER BY created_at",
+        userId, userId,
+      ),
+      contributionLedger: rows("SELECT * FROM contribution_ledger WHERE user_id = ? ORDER BY created_at", userId),
+      rewardVouchers: rows("SELECT * FROM account_reward_vouchers WHERE user_id = ? ORDER BY created_at", userId),
+      leaderboardPrizeAwards: rows("SELECT * FROM leaderboard_prize_awards WHERE user_id = ? ORDER BY created_at", userId),
+      leaderboardPrizeCampaignsFinalized: rows(
+        "SELECT * FROM leaderboard_prize_campaigns WHERE finalized_by = ? ORDER BY created_at",
+        userId,
+      ),
+      activity: rows("SELECT * FROM user_activity_events WHERE user_id = ? ORDER BY created_at", userId),
+      analyticsEvents: rows("SELECT * FROM events WHERE user_id = ? ORDER BY created_at", userId),
+      securityAudit: rows(
+        `SELECT * FROM security_audit_log
+          WHERE actor_user_id = ? OR (target_type = 'account' AND target_id = ?) ORDER BY created_at`,
+        userId, userId,
+      ),
+      deletionRequests: rows(
+        "SELECT * FROM account_deletion_requests WHERE user_id = ? OR reviewed_by = ? ORDER BY requested_at",
+        userId, userId,
+      ),
+      venueReportDeliverySettings: rows(
+        `SELECT key, value_json, updated_at FROM system_state
+          WHERE key LIKE 'venue-report-delivery:%'
+            AND json_valid(value_json)
+            AND (
+              json_extract(value_json, '$.updatedBy') = ?
+              OR EXISTS (
+                SELECT 1 FROM json_each(value_json, '$.recipients')
+                WHERE lower(CAST(value AS TEXT)) = ?
+              )
+            )
+          ORDER BY updated_at`,
+        userId, email,
+      ),
+      migrationQuarantinedRecords: rows(
+        `SELECT * FROM migration_quarantined_records
+          WHERE instr(payload_json, ?) > 0 OR instr(lower(payload_json), ?) > 0
+          ORDER BY quarantined_at`,
+        userId, email,
+      ),
+      stripeWebhookEvents: input.stripeCustomerId
+        ? rows(
+            `SELECT * FROM stripe_webhook_events
+              WHERE payload_json IS NOT NULL AND json_valid(payload_json)
+                AND (
+                  json_extract(payload_json, '$.data.object.customer') = ?
+                  OR json_extract(payload_json, '$.data.object.metadata.user_id') = ?
+                )
+              ORDER BY received_at`,
+            input.stripeCustomerId, userId,
+          )
+        : rows(
+            `SELECT * FROM stripe_webhook_events
+              WHERE payload_json IS NOT NULL AND json_valid(payload_json)
+                AND json_extract(payload_json, '$.data.object.metadata.user_id') = ?
+              ORDER BY received_at`,
+            userId,
+          ),
+    };
   }
 
   executeAccountAnonymisation(input: { requestId: string; reviewedBy: string; now: string }): Record<string, unknown> {
     return this.database.transaction(() => {
       const request = this.database
         .prepare("SELECT * FROM account_deletion_requests WHERE id = ?")
-        .get(input.requestId) as { user_id: string; status: string; execute_after: string } | undefined;
+        .get(input.requestId) as {
+          user_id: string;
+          status: string;
+          execute_after: string;
+          stripe_customer_id_snapshot: string | null;
+        } | undefined;
       if (!request) throw new Error("Deletion request not found");
-      if (!['pending_review', 'approved'].includes(request.status)) throw new Error("Deletion request is already closed");
+      if (request.status !== 'processing') throw new Error("Deletion request is not in processing state");
 
       const userId = request.user_id;
+      const account = this.database
+        .prepare("SELECT email, stripe_customer_id FROM accounts WHERE id = ?")
+        .get(userId) as { email: string; stripe_customer_id: string | null } | undefined;
+      if (!account) throw new Error("Account not found");
+      const surrogatePublicId = `DEL-${crypto.createHash("sha256").update(userId).digest("hex").slice(0, 12).toUpperCase()}`;
+      const surrogateEmail = `deleted-${userId}@invalid.pintpath.local`;
       const evidenceRows = this.database
         .prepare("SELECT * FROM source_evidence_objects WHERE owner_user_id = ? AND deleted_at IS NULL")
         .all(userId) as SourceEvidenceObjectRow[];
 
       this.database.prepare("DELETE FROM auth_sessions WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM revoked_provider_sessions WHERE user_id = ?").run(userId);
       this.database.prepare("DELETE FROM account_discount_passes WHERE user_id = ?").run(userId);
       this.database.prepare("DELETE FROM account_preferences WHERE user_id = ?").run(userId);
       this.database.prepare("DELETE FROM account_privacy_settings WHERE user_id = ?").run(userId);
       this.database.prepare("DELETE FROM saved_items WHERE user_id = ?").run(userId);
       this.database.prepare("DELETE FROM user_activity_events WHERE user_id = ?").run(userId);
       this.database.prepare("DELETE FROM events WHERE user_id = ?").run(userId);
-      this.database.prepare("UPDATE feedback SET user_id = NULL WHERE user_id = ?").run(userId);
-      this.database.prepare("UPDATE wrong_price_reports SET user_id = NULL WHERE user_id = ?").run(userId);
-      this.database.prepare("UPDATE venue_requests SET user_id = NULL WHERE user_id = ?").run(userId);
-      this.database.prepare("UPDATE submissions SET client_submission_id = NULL, notes = NULL, source_photo_url = NULL, upload_latitude = NULL, upload_longitude = NULL, upload_accuracy_meters = NULL, upload_location_captured_at = NULL WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM age_verifications WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM verifications WHERE verifier_user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM mission_progress WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM venue_manager_assignments WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE venue_manager_assignments SET approved_by = NULL WHERE approved_by = ?").run(userId);
+      this.database.prepare("DELETE FROM discount_redemptions WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE discount_redemptions SET redeemed_by_user_id = NULL WHERE redeemed_by_user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM pint_point_ledger WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM pint_point_drink_records WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE pint_point_drink_records SET recorded_by_user_id = NULL WHERE recorded_by_user_id = ?").run(userId);
+      this.database.prepare("UPDATE pint_point_drink_records SET voided_by_user_id = NULL WHERE voided_by_user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM free_pint_reward_redemptions WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE free_pint_reward_redemptions SET redeemed_by_user_id = NULL WHERE redeemed_by_user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM free_pint_reward_codes WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE free_pint_reward_codes SET redeemed_by_user_id = NULL WHERE redeemed_by_user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM leaderboard_prize_awards WHERE user_id = ?").run(userId);
+      this.database.prepare("DELETE FROM account_reward_vouchers WHERE user_id = ?").run(userId);
+      this.database.prepare("UPDATE leaderboard_prize_campaigns SET finalized_by = NULL WHERE finalized_by = ?").run(userId);
+      this.database.prepare("DELETE FROM venue_pending_changes WHERE submitted_by = ?").run(userId);
+      this.database.prepare(
+        `UPDATE venue_pending_changes
+            SET reviewed_by = CASE WHEN reviewed_by = ? THEN NULL ELSE reviewed_by END,
+                payload_json = CASE WHEN instr(payload_json, ?) > 0 OR instr(lower(payload_json), ?) > 0
+                                    THEN '{"redactedAfterAccountDeletion":true}' ELSE payload_json END,
+                rejection_reason = CASE WHEN reviewed_by = ? THEN NULL ELSE rejection_reason END,
+                updated_at = ?
+          WHERE reviewed_by = ? OR instr(payload_json, ?) > 0 OR instr(lower(payload_json), ?) > 0`,
+      ).run(userId, userId, account.email.toLowerCase(), userId, input.now, userId, userId, account.email.toLowerCase());
+      this.database.prepare(
+        `UPDATE venue_partner_outreach
+            SET updated_by = CASE WHEN updated_by = ? THEN NULL ELSE updated_by END,
+                notes = CASE WHEN updated_by = ? OR instr(lower(COALESCE(notes, '')), ?) > 0 THEN NULL ELSE notes END,
+                updated_at = ?
+          WHERE updated_by = ? OR instr(lower(COALESCE(notes, '')), ?) > 0`,
+      ).run(userId, userId, account.email.toLowerCase(), input.now, userId, account.email.toLowerCase());
+      this.database.prepare(
+        "UPDATE contribution_ledger SET reason = 'Retained anonymised contribution record' WHERE user_id = ?",
+      ).run(userId);
+
+      this.database.prepare(
+        `UPDATE feedback
+            SET user_id = CASE WHEN user_id = ? THEN NULL ELSE user_id END,
+                anonymous_session_id = CASE WHEN user_id = ? OR lower(COALESCE(contact_email, '')) = lower(?) THEN NULL ELSE anonymous_session_id END,
+                contact_email = CASE WHEN user_id = ? OR lower(COALESCE(contact_email, '')) = lower(?) THEN NULL ELSE contact_email END,
+                message = CASE WHEN user_id = ? OR lower(COALESCE(contact_email, '')) = lower(?)
+                               THEN '[redacted after account deletion]' ELSE message END,
+                assigned_to = CASE WHEN assigned_to = ? THEN NULL ELSE assigned_to END,
+                resolved_by = CASE WHEN resolved_by = ? THEN NULL ELSE resolved_by END,
+                resolution_note = CASE WHEN user_id = ? OR lower(COALESCE(contact_email, '')) = lower(?) OR resolved_by = ?
+                                       THEN NULL ELSE resolution_note END,
+                updated_at = ?
+          WHERE user_id = ? OR assigned_to = ? OR resolved_by = ? OR lower(COALESCE(contact_email, '')) = lower(?)`,
+      ).run(
+        userId, userId, account.email, userId, account.email, userId, account.email,
+        userId, userId, userId, account.email, userId, input.now,
+        userId, userId, userId, account.email,
+      );
+      this.database.prepare(
+        `UPDATE wrong_price_reports
+            SET user_id = CASE WHEN user_id = ? THEN NULL ELSE user_id END,
+                anonymous_session_id = CASE WHEN user_id = ? THEN NULL ELSE anonymous_session_id END,
+                notes = CASE WHEN user_id = ? THEN NULL ELSE notes END,
+                source_photo_url = CASE WHEN user_id = ? THEN NULL ELSE source_photo_url END,
+                assigned_to = CASE WHEN assigned_to = ? THEN NULL ELSE assigned_to END,
+                resolved_by = CASE WHEN resolved_by = ? THEN NULL ELSE resolved_by END,
+                resolution_note = CASE WHEN user_id = ? OR resolved_by = ? THEN NULL ELSE resolution_note END,
+                updated_at = ?
+          WHERE user_id = ? OR assigned_to = ? OR resolved_by = ?`,
+      ).run(userId, userId, userId, userId, userId, userId, userId, userId, input.now, userId, userId, userId);
+      this.database.prepare(
+        `UPDATE venue_requests
+            SET user_id = CASE WHEN user_id = ? THEN NULL ELSE user_id END,
+                anonymous_session_id = CASE WHEN user_id = ? THEN NULL ELSE anonymous_session_id END,
+                notes = CASE WHEN user_id = ? THEN NULL ELSE notes END,
+                assigned_to = CASE WHEN assigned_to = ? THEN NULL ELSE assigned_to END,
+                resolved_by = CASE WHEN resolved_by = ? THEN NULL ELSE resolved_by END,
+                resolution_note = CASE WHEN user_id = ? OR resolved_by = ? THEN NULL ELSE resolution_note END,
+                updated_at = ?
+          WHERE user_id = ? OR assigned_to = ? OR resolved_by = ?`,
+      ).run(userId, userId, userId, userId, userId, userId, userId, input.now, userId, userId, userId);
+      this.database.prepare(
+        `UPDATE venue_interest_requests
+            SET user_id = CASE WHEN user_id = ? THEN NULL ELSE user_id END,
+                manager_name = CASE WHEN user_id = ? OR lower(email) = lower(?) THEN 'Deleted account' ELSE manager_name END,
+                email = CASE WHEN user_id = ? OR lower(email) = lower(?) THEN ? ELSE email END,
+                phone = CASE WHEN user_id = ? OR lower(email) = lower(?) THEN NULL ELSE phone END,
+                notes = CASE WHEN user_id = ? OR lower(email) = lower(?) THEN NULL ELSE notes END,
+                assigned_to = CASE WHEN assigned_to = ? THEN NULL ELSE assigned_to END,
+                resolved_by = CASE WHEN resolved_by = ? THEN NULL ELSE resolved_by END,
+                resolution_note = CASE WHEN user_id = ? OR resolved_by = ? THEN NULL ELSE resolution_note END,
+                updated_at = ?
+          WHERE user_id = ? OR assigned_to = ? OR resolved_by = ? OR lower(email) = lower(?)`,
+      ).run(
+        userId, userId, account.email, userId, account.email, surrogateEmail, userId, account.email,
+        userId, account.email, userId, userId, userId, userId, input.now, userId, userId, userId, account.email,
+      );
+      this.database.prepare(
+        `UPDATE venue_claim_requests
+            SET requester_name = CASE WHEN user_id = ? OR lower(contact_email) = lower(?) THEN 'Deleted account' ELSE requester_name END,
+                requester_role = CASE WHEN user_id = ? OR lower(contact_email) = lower(?) THEN 'Deleted account' ELSE requester_role END,
+                contact_email = CASE WHEN user_id = ? OR lower(contact_email) = lower(?) THEN ? ELSE contact_email END,
+                contact_phone = CASE WHEN user_id = ? OR lower(contact_email) = lower(?) THEN NULL ELSE contact_phone END,
+                message = CASE WHEN user_id = ? OR lower(contact_email) = lower(?) THEN NULL ELSE message END,
+                reviewed_by = CASE WHEN reviewed_by = ? THEN NULL ELSE reviewed_by END,
+                review_note = CASE WHEN reviewed_by = ? THEN NULL ELSE review_note END,
+                updated_at = ?
+          WHERE user_id = ? OR reviewed_by = ? OR lower(contact_email) = lower(?)`,
+      ).run(
+        userId, account.email, userId, account.email, userId, account.email, surrogateEmail,
+        userId, account.email, userId, account.email, userId, userId, input.now, userId, userId, account.email,
+      );
+      this.database.prepare(
+        `UPDATE submissions
+            SET client_submission_id = NULL, notes = NULL, source_photo_url = NULL,
+                upload_latitude = NULL, upload_longitude = NULL, upload_accuracy_meters = NULL,
+                upload_location_captured_at = NULL,
+                reviewed_by = CASE WHEN reviewed_by = ? THEN NULL ELSE reviewed_by END
+          WHERE user_id = ? OR reviewed_by = ?`,
+      ).run(userId, userId, userId);
       this.database.prepare("DELETE FROM submission_source_evidence WHERE submission_id IN (SELECT id FROM submissions WHERE user_id = ?)").run(userId);
       this.database.prepare("UPDATE source_evidence_objects SET owner_user_id = NULL WHERE owner_user_id = ?").run(userId);
-      this.database.prepare("UPDATE profiles SET email = ?, username = NULL, avatar_url = NULL, display_name = NULL, display_name_key = NULL, updated_at = ? WHERE id = ?").run(`deleted-${userId}@invalid.pintpath.local`, input.now, userId);
+      const reportSettings = this.database.prepare(
+        `SELECT key, value_json FROM system_state
+          WHERE key LIKE 'venue-report-delivery:%' AND json_valid(value_json)`,
+      ).all() as Array<{ key: string; value_json: string }>;
+      for (const setting of reportSettings) {
+        const value = parseJsonObject(setting.value_json);
+        const recipients = Array.isArray(value.recipients)
+          ? value.recipients.filter((item): item is string => typeof item === "string")
+          : [];
+        const filteredRecipients = recipients.filter((recipient) => recipient.trim().toLowerCase() !== account.email.toLowerCase());
+        const authoredByUser = value.updatedBy === userId;
+        if (!authoredByUser && filteredRecipients.length === recipients.length) continue;
+        this.database.prepare("UPDATE system_state SET value_json = ?, updated_at = ? WHERE key = ?").run(
+          JSON.stringify({
+            ...value,
+            enabled: filteredRecipients.length > 0 ? value.enabled !== false : false,
+            recipients: filteredRecipients,
+            updatedBy: authoredByUser ? null : value.updatedBy,
+            redactedAfterAccountDeletion: true,
+          }),
+          input.now,
+          setting.key,
+        );
+      }
+      this.database.prepare(
+        `UPDATE migration_quarantined_records
+            SET payload_json = '{"redactedAfterAccountDeletion":true}'
+          WHERE instr(payload_json, ?) > 0 OR instr(lower(payload_json), ?) > 0`,
+      ).run(userId, account.email.toLowerCase());
+      this.database.prepare(
+        `UPDATE security_audit_log
+            SET actor_user_id = CASE WHEN actor_user_id = ? THEN NULL ELSE actor_user_id END,
+                actor_role = CASE WHEN actor_user_id = ? THEN NULL ELSE actor_role END,
+                target_id = CASE WHEN target_id = ? THEN ? ELSE target_id END,
+                metadata_json = CASE WHEN actor_user_id = ? OR target_id = ?
+                                     THEN '{"redactedAfterAccountDeletion":true}' ELSE metadata_json END,
+                ip_hash = CASE WHEN actor_user_id = ? THEN NULL ELSE ip_hash END,
+                user_agent_hash = CASE WHEN actor_user_id = ? THEN NULL ELSE user_agent_hash END
+          WHERE actor_user_id = ? OR target_id = ?`,
+      ).run(userId, userId, userId, surrogatePublicId, userId, userId, userId, userId, userId, userId);
+      const jsonIdentityMatches = (
+        table: "security_audit_log" | "events",
+        idColumn: "id",
+      ) => this.database.prepare(
+        `SELECT ${idColumn} AS id, metadata_json
+           FROM ${table}
+          WHERE instr(metadata_json, ?) > 0 OR instr(lower(metadata_json), ?) > 0`,
+      ).all(userId, account.email.toLowerCase()) as Array<{ id: string; metadata_json: string }>;
+      for (const table of ["security_audit_log", "events"] as const) {
+        for (const row of jsonIdentityMatches(table, "id")) {
+          this.database.prepare(`UPDATE ${table} SET metadata_json = ? WHERE id = ?`).run(
+            scrubDeletedIdentityJson(row.metadata_json, {
+              userId,
+              email: account.email,
+              surrogateId: surrogatePublicId,
+            }),
+            row.id,
+          );
+        }
+      }
+      const stripeCustomerId = account.stripe_customer_id ?? request.stripe_customer_id_snapshot;
+      if (stripeCustomerId) {
+        this.database.prepare(
+          `UPDATE stripe_webhook_events SET payload_json = NULL, last_error = NULL
+            WHERE payload_json IS NOT NULL AND json_valid(payload_json)
+              AND (json_extract(payload_json, '$.data.object.customer') = ?
+                   OR json_extract(payload_json, '$.data.object.metadata.user_id') = ?)`,
+        ).run(stripeCustomerId, userId);
+      } else {
+        this.database.prepare(
+          `UPDATE stripe_webhook_events SET payload_json = NULL, last_error = NULL
+            WHERE payload_json IS NOT NULL AND json_valid(payload_json)
+              AND json_extract(payload_json, '$.data.object.metadata.user_id') = ?`,
+        ).run(userId);
+      }
+      this.database.prepare(
+        `UPDATE account_deletion_requests
+            SET user_message = NULL, last_error = NULL, stripe_customer_id_snapshot = NULL
+          WHERE user_id = ?`,
+      ).run(userId);
+      this.database.prepare(
+        "UPDATE account_deletion_requests SET reviewed_by = NULL WHERE reviewed_by = ? AND user_id <> ?",
+      ).run(userId, userId);
+      this.database.prepare(
+        `UPDATE profiles
+            SET public_account_id = ?, email = ?, username = NULL, avatar_url = NULL, display_name = NULL,
+                display_name_key = NULL, role = 'user', account_status = 'suspended',
+                age_verification_status = 'not_started', is_over_18_verified = 0, updated_at = ?
+          WHERE id = ?`,
+      ).run(surrogatePublicId, surrogateEmail, input.now, userId);
       this.database.prepare(
         `UPDATE accounts
-         SET email = ?, password_hash = 'deleted', display_name = NULL, display_name_key = NULL,
-             avatar_url = NULL, supabase_user_id = NULL, role = 'user', subscription_status = 'free',
-             stripe_customer_id = NULL, status = 'suspended', updated_at = ?
+         SET public_account_id = ?, email = ?, password_hash = 'deleted', display_name = NULL, display_name_key = NULL,
+             avatar_url = NULL, auth_provider = 'deleted', supabase_user_id = NULL, email_verified_at = NULL,
+             mfa_level = 'aal1', mfa_verified_at = NULL, provider_tokens_valid_after = NULL,
+             role = 'user', age_confirmed_at = NULL, terms_accepted_at = NULL, privacy_accepted_at = NULL,
+             terms_version = NULL, privacy_version = NULL, age_verification_status = 'not_started',
+             is_over_18_verified = 0, subscription_status = 'free', stripe_customer_id = NULL,
+             stripe_paid_subscription_status = NULL, stripe_event_created_at = NULL, premium_until = NULL,
+             trust_score = 0, contribution_points_current_month = 0, fraud_strike_count = 0,
+             status = 'suspended', updated_at = ?
          WHERE id = ?`,
-      ).run(`deleted-${userId}@invalid.pintpath.local`, input.now, userId);
+      ).run(surrogatePublicId, surrogateEmail, input.now, userId);
 
-      const summary = { anonymisedUserId: userId, evidenceIds: evidenceRows.map((row) => row.id) };
+      const summary = {
+        anonymisedAccount: surrogatePublicId,
+        surrogatePublicId,
+        evidenceIds: evidenceRows.map((row) => row.id),
+        retentionPolicyVersion: ACCOUNT_DATA_RETENTION_POLICY.version,
+      };
       this.database.prepare(
         `UPDATE account_deletion_requests
          SET status = 'completed', reviewed_by = ?, reviewed_at = ?, completed_at = ?,
@@ -8322,7 +10599,7 @@ export class BusinessRepository {
          AND julianday(e.created_at) <= julianday(a.created_at) + 30
          AND e.event_type IN (
            'search_performed', 'beer_search_performed', 'venue_detail_opened',
-           'price_view_revealed', 'submission_completed', 'mission_opened', 'map_filter_used'
+           'free_preview_viewed', 'price_view_revealed', 'submission_completed', 'mission_opened', 'map_filter_used'
          )`,
     );
 
@@ -8339,7 +10616,7 @@ export class BusinessRepository {
                 count(*) AS count,
                 max(json_extract(e.metadata_json, '$.venueName')) AS metadata_label
            FROM events e
-          WHERE e.event_type IN ('venue_card_viewed', 'venue_detail_opened', 'price_view_revealed')
+          WHERE e.event_type IN ('venue_card_viewed', 'venue_detail_opened', 'free_preview_viewed', 'price_view_revealed')
             AND e.venue_id IS NOT NULL
             AND e.venue_id != ''
             ${rangeFor("e.created_at")}
@@ -8382,8 +10659,7 @@ export class BusinessRepository {
       totalVenueSearches: eventCount(["search_performed", "suburb_search_performed"]),
       totalBeerSearches: eventCount(["beer_search_performed"]),
       totalVenueDetailViews: eventCount(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"]),
-      totalExactPriceReveals: eventCount(["price_view_revealed"]),
-      totalBlockedPriceReveals: eventCount(["price_view_blocked_free_limit"]),
+      totalFreePreviewViews: eventCount(["free_preview_viewed", "price_view_revealed"]),
       totalMapFilterUses: eventCount([
         "map_filter_used",
         "cheapest_sort_used",
@@ -8465,7 +10741,7 @@ export class BusinessRepository {
                AND julianday(e.created_at) <= julianday(a.created_at) + ?
                AND e.event_type IN (
                  'search_performed', 'beer_search_performed', 'venue_detail_opened',
-                 'price_view_revealed', 'submission_completed', 'mission_opened', 'map_filter_used'
+                 'free_preview_viewed', 'price_view_revealed', 'submission_completed', 'mission_opened', 'map_filter_used'
                )`,
           )
           .get(cohort.cohort, days) as { count: number } | undefined;
@@ -8627,14 +10903,14 @@ export class BusinessRepository {
            WHERE venue_id = ? AND event_type IN ('venue_card_viewed', 'venue_detail_opened')${rangeClause}`,
           [input.venueId, ...rangeValues],
         ),
-        priceReveals: count(
+        pricePreviewViews: count(
           `SELECT count(DISTINCT CASE
              WHEN NULLIF(user_id, '') IS NOT NULL THEN 'user:' || user_id
              WHEN NULLIF(anonymous_session_id, '') IS NOT NULL THEN 'session:' || anonymous_session_id
              ELSE NULL
            END) AS count
            FROM events
-           WHERE venue_id = ? AND event_type = 'price_view_revealed'${rangeClause}`,
+           WHERE venue_id = ? AND event_type IN ('free_preview_viewed', 'price_view_revealed')${rangeClause}`,
           [input.venueId, ...rangeValues],
         ),
         happyHourClicks: count(
@@ -8790,13 +11066,17 @@ export class BusinessRepository {
     eventCreatedAt: string | null;
     payload: Record<string, unknown>;
     receivedAt: string;
-  }): boolean {
+  }):
+    | { state: "claimed"; processingToken: string }
+    | { state: "applied"; processingToken: null }
+    | { state: "in_progress"; processingToken: null } {
+    const processingToken = crypto.randomUUID();
     const inserted = this.database
       .prepare(
         `INSERT OR IGNORE INTO stripe_webhook_events (
           id, event_type, status, event_created_at, payload_json, attempts,
-          last_error, received_at, applied_at, processed_at
-        ) VALUES (?, ?, 'pending', ?, ?, 1, NULL, ?, NULL, ?)`,
+          last_error, received_at, applied_at, processed_at, processing_token
+        ) VALUES (?, ?, 'processing', ?, ?, 1, NULL, ?, NULL, ?, ?)`,
       )
       .run(
         input.id,
@@ -8805,47 +11085,67 @@ export class BusinessRepository {
         JSON.stringify(redactSecrets(input.payload)),
         input.receivedAt,
         input.receivedAt,
+        processingToken,
       );
     if (inserted.changes > 0) {
-      return true;
+      return { state: "claimed", processingToken };
     }
 
     const row = this.database
-      .prepare("SELECT status FROM stripe_webhook_events WHERE id = ?")
-      .get(input.id) as { status: string } | undefined;
+      .prepare("SELECT status, processed_at FROM stripe_webhook_events WHERE id = ?")
+      .get(input.id) as { status: string; processed_at: string | null } | undefined;
     if (row?.status === "applied") {
-      return false;
+      return { state: "applied", processingToken: null };
+    }
+    const staleBefore = new Date(Date.parse(input.receivedAt) - (5 * 60_000)).toISOString();
+    if (row?.status === "processing" && row.processed_at && row.processed_at > staleBefore) {
+      return { state: "in_progress", processingToken: null };
     }
 
-    this.database
+    const claimed = this.database
       .prepare(
         `UPDATE stripe_webhook_events
-         SET status = 'pending', attempts = attempts + 1, last_error = NULL,
-             received_at = ?, payload_json = ?, event_created_at = COALESCE(?, event_created_at)
-         WHERE id = ?`,
+         SET status = 'processing', attempts = attempts + 1, last_error = NULL,
+             received_at = ?, payload_json = ?, event_created_at = COALESCE(?, event_created_at),
+             processed_at = ?, processing_token = ?
+         WHERE id = ?
+           AND (
+             status IN ('failed', 'pending')
+             OR (status = 'processing' AND (processed_at IS NULL OR processed_at <= ?))
+           )`,
       )
-      .run(input.receivedAt, JSON.stringify(redactSecrets(input.payload)), input.eventCreatedAt, input.id);
-    return true;
+      .run(
+        input.receivedAt,
+        JSON.stringify(redactSecrets(input.payload)),
+        input.eventCreatedAt,
+        input.receivedAt,
+        processingToken,
+        input.id,
+        staleBefore,
+      );
+    return claimed.changes === 1
+      ? { state: "claimed", processingToken }
+      : { state: "in_progress", processingToken: null };
   }
 
-  markStripeEventApplied(input: { id: string; appliedAt: string }): void {
-    this.database
+  markStripeEventApplied(input: { id: string; processingToken: string; appliedAt: string }): boolean {
+    return this.database
       .prepare(
         `UPDATE stripe_webhook_events
-         SET status = 'applied', applied_at = ?, processed_at = ?, last_error = NULL
-         WHERE id = ?`,
+         SET status = 'applied', applied_at = ?, processed_at = ?, last_error = NULL, processing_token = NULL
+         WHERE id = ? AND status = 'processing' AND processing_token = ?`,
       )
-      .run(input.appliedAt, input.appliedAt, input.id);
+      .run(input.appliedAt, input.appliedAt, input.id, input.processingToken).changes === 1;
   }
 
-  markStripeEventFailed(input: { id: string; failedAt: string; error: string }): void {
-    this.database
+  markStripeEventFailed(input: { id: string; processingToken: string; failedAt: string; error: string }): boolean {
+    return this.database
       .prepare(
         `UPDATE stripe_webhook_events
-         SET status = 'failed', processed_at = ?, last_error = ?
-         WHERE id = ?`,
+         SET status = 'failed', processed_at = ?, last_error = ?, processing_token = NULL
+         WHERE id = ? AND status = 'processing' AND processing_token = ?`,
       )
-      .run(input.failedAt, input.error.slice(0, 500), input.id);
+      .run(input.failedAt, input.error.slice(0, 500), input.id, input.processingToken).changes === 1;
   }
 
   runInTransaction<T>(operation: () => T): T {

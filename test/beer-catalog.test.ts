@@ -146,6 +146,33 @@ describe("Pint Path beer catalogue", () => {
     }
   });
 
+  it("keeps active catalogue entries beyond row 500 available to viewer and OCR callers", () => {
+    const database = new BetterSqlite3(":memory:");
+    try {
+      initializeDatabaseSchema(database);
+      const insert = database.prepare(
+        `INSERT INTO beer_catalog_items (
+          key, name, brewery, style, abv, status, source, created_at, updated_at
+        ) VALUES (?, ?, NULL, NULL, NULL, 'active', 'reachability_test', ?, ?)`,
+      );
+      database.transaction(() => {
+        for (let index = 0; index < 510; index += 1) {
+          const suffix = String(index).padStart(3, "0");
+          insert.run(`reachability_beer_${suffix}`, `ZZZ Reachability Beer ${suffix}`, "2026-07-14T00:00:00.000Z", "2026-07-14T00:00:00.000Z");
+        }
+      })();
+      const repository = new BeerCatalogRepository(database);
+
+      expect(repository.listForViewer()).toContainEqual(expect.objectContaining({
+        key: "reachability_beer_509",
+        name: "ZZZ Reachability Beer 509",
+      }));
+      expect(repository.listForViewer(500)).not.toContainEqual(expect.objectContaining({ key: "reachability_beer_509" }));
+    } finally {
+      database.close();
+    }
+  });
+
   it("adds unknown crawler beers as pending system beer candidates", () => {
     const database = new BetterSqlite3(":memory:");
     try {

@@ -4,10 +4,14 @@ struct AccountView: View {
     @EnvironmentObject private var model: BeerMapAppModel
     @State private var showDeleteConfirmation = false
     @State private var showLogoutConfirmation = false
+    @State private var showLogoutAllConfirmation = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                if let context = model.reauthenticationContext {
+                    reauthenticationCard(context)
+                }
                 if model.isSignedIn, let dashboard = model.accountDashboard {
                     signedInView(dashboard)
                 } else {
@@ -20,9 +24,10 @@ struct AccountView: View {
         .navigationTitle("Account")
         .refreshable {
             await model.refreshAccount()
+            await model.refreshVenuePortal()
         }
         .confirmationDialog(
-            "Log out of BeerMap?",
+            "Log out of Pint Path?",
             isPresented: $showLogoutConfirmation,
             titleVisibility: .visible
         ) {
@@ -43,8 +48,41 @@ struct AccountView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("BeerMap will create the same manual deletion review used by the website. Legal, security, billing, and moderation records may be retained when required.")
+            Text("Pint Path will create the same manual deletion review used by the website. Legal, security, billing, and moderation records may be retained when required.")
         }
+        .confirmationDialog(
+            "Sign out on every device?",
+            isPresented: $showLogoutAllConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Sign out all devices", role: .destructive) {
+                Task { await model.logoutAllSessions() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This revokes every active Pint Path session, including this device. You will need to sign in again everywhere.")
+        }
+    }
+
+    private func reauthenticationCard(_ context: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                eyebrow: "Security check",
+                title: "Sign in again to continue",
+                subtitle: "Pint Path did not \(context). A fresh provider sign-in is required before you retry.",
+                systemImage: "lock.shield.fill"
+            )
+            if model.isSignedIn {
+                PrimaryButton(title: "Sign out and sign in again", systemImage: "person.badge.key.fill", isLoading: model.isLoading) {
+                    Task { await model.signOutForReauthentication() }
+                }
+            } else {
+                Text("Use the sign-in form below, then retry the action. It will not run automatically.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .beerMapCard()
     }
 
     private func signedInView(_ dashboard: AccountDashboard) -> some View {
@@ -95,7 +133,15 @@ struct AccountView: View {
 
             specialsCard(dashboard)
 
+            if let invitations = dashboard.counterStaffInvitations, !invitations.isEmpty {
+                counterStaffInvitationsCard(invitations)
+            }
+
             privacyCard(dashboard.privacySettings)
+
+            sessionCard
+
+            deletionStatusCard
 
             if let submissions = dashboard.submissions, !submissions.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
@@ -127,12 +173,32 @@ struct AccountView: View {
             }
 
             VStack(spacing: 10) {
-                SecondaryButton(title: "Refresh account", systemImage: "arrow.clockwise") {
-                    Task { await model.refreshAccount() }
+                if let exportURL = model.accountExportURL {
+                    ShareLink(item: exportURL) {
+                        Label("Share account export", systemImage: "square.and.arrow.up")
+                            .font(.headline.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 50)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("Opens the system share sheet for your JSON account export")
+                } else {
+                    SecondaryButton(title: "Prepare account export", systemImage: "arrow.down.doc") {
+                        Task { await model.prepareAccountExport() }
+                    }
                 }
 
-                SecondaryButton(title: "Request account deletion", systemImage: "person.crop.circle.badge.xmark", isDestructive: true) {
-                    showDeleteConfirmation = true
+                SecondaryButton(title: "Refresh account", systemImage: "arrow.clockwise") {
+                    Task {
+                        await model.refreshAccount()
+                        await model.refreshVenuePortal()
+                    }
+                }
+
+                if model.accountDeletionRequest == nil || model.accountDeletionRequest?.status == "cancelled" {
+                    SecondaryButton(title: "Request account deletion", systemImage: "person.crop.circle.badge.xmark", isDestructive: true) {
+                        showDeleteConfirmation = true
+                    }
                 }
 
                 PrimaryButton(title: "Log out", systemImage: "rectangle.portrait.and.arrow.right", isLoading: model.isLoading) {
@@ -143,15 +209,147 @@ struct AccountView: View {
         }
     }
 
+    private func counterStaffInvitationsCard(_ invitations: [CounterStaffInvitation]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                eyebrow: "Venue access",
+                title: "Counter invitations",
+                subtitle: "Accept only invitations from venues you recognise. Counter access cannot edit venue data or view private analytics.",
+                systemImage: "person.badge.key.fill"
+            )
+            ForEach(invitations) { invitation in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(invitation.venueName)
+                        .font(.headline)
+                    Text([invitation.suburb, invitation.expiresAt.map { "Expires \($0)" }].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        PrimaryButton(title: "Accept", systemImage: "checkmark.circle.fill", isLoading: model.isLoading) {
+                            Task { await model.respondToCounterStaffInvitation(invitation, decision: "accept") }
+                        }
+                        SecondaryButton(title: "Decline", systemImage: "xmark.circle", isDestructive: true) {
+                            Task { await model.respondToCounterStaffInvitation(invitation, decision: "decline") }
+                        }
+                    }
+                }
+                .padding(10)
+                .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .beerMapCard()
+    }
+
+    @ViewBuilder
+    private var deletionStatusCard: some View {
+        if let request = model.accountDeletionRequest, request.status != "cancelled" {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(
+                    eyebrow: "Account deletion",
+                    title: deletionStatusLabel(request.status),
+                    subtitle: request.executeAfter.map { "Earliest processing date: \($0)" },
+                    systemImage: "person.crop.circle.badge.clock"
+                )
+                if let error = request.lastError, !error.isEmpty {
+                    StatusBanner(message: error, isError: true)
+                } else {
+                    StatusBanner(
+                        message: "Your request ID is \(request.id). Pint Path keeps this status visible so you know whether review or processing has started.",
+                        systemImage: "clock.badge.checkmark.fill"
+                    )
+                }
+                if ["pending_review", "approved", "failed"].contains(request.status) {
+                    SecondaryButton(title: "Cancel deletion request", systemImage: "arrow.uturn.backward", isDestructive: true) {
+                        Task { await model.cancelAccountDeletion() }
+                    }
+                }
+            }
+            .beerMapCard()
+        }
+    }
+
+    private func deletionStatusLabel(_ status: String) -> String {
+        switch status {
+        case "pending_review": return "Pending review"
+        case "approved": return "Approved for processing"
+        case "processing": return "Processing"
+        case "completed": return "Completed"
+        case "failed": return "Needs attention"
+        case "cancelled": return "Cancelled"
+        default: return status.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
     private func privacyCard(_ settings: PrivacySettings?) -> some View {
         PrivacySettingsCard(
             settings: settings ?? PrivacySettings(
-                optionalAnalyticsEnabled: true,
-                venueReportInclusionEnabled: true,
-                productResearchEnabled: true,
+                optionalAnalyticsEnabled: false,
+                venueReportInclusionEnabled: false,
+                productResearchEnabled: false,
                 emailUpdatesEnabled: false
             )
         )
+    }
+
+    private var sessionCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                eyebrow: "Security",
+                title: "Signed-in sessions",
+                subtitle: "Review and revoke devices you no longer use.",
+                systemImage: "key.horizontal.fill"
+            )
+            if !model.accountSessionsLoaded {
+                Text("Session details are protected. Load them only when you want to review device access.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Button("Review signed-in sessions") {
+                    Task { await model.loadAccountSessions() }
+                }
+                .buttonStyle(.bordered)
+            } else if model.accountSessions.isEmpty {
+                Text("No active session details are available yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(model.accountSessions) { session in
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(session.current == true ? "This device" : "Signed-in device")
+                                .font(.subheadline.weight(.bold))
+                            Text(session.lastUsedAt.map { "Last used \($0)" } ?? session.createdAt.map { "Created \($0)" } ?? "Session details unavailable")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if session.active == false {
+                                Text("Revoked or expired")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        if session.active != false {
+                            Button(session.current == true ? "Sign out" : "Revoke", role: .destructive) {
+                                Task { await model.revokeAccountSession(session) }
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(10)
+                    .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            if model.accountSessionsLoaded {
+                Button("Refresh session list") {
+                    Task { await model.loadAccountSessions() }
+                }
+                .buttonStyle(.bordered)
+            }
+            Button("Sign out all devices", role: .destructive) {
+                showLogoutAllConfirmation = true
+            }
+            .buttonStyle(.bordered)
+        }
+        .beerMapCard()
     }
 
     private func specialsCard(_ dashboard: AccountDashboard) -> some View {
@@ -255,15 +453,17 @@ private struct RotatingCodeCard: View {
 
 struct PrivacySettingsCard: View {
     @EnvironmentObject private var model: BeerMapAppModel
+    let settings: PrivacySettings
     @State private var optionalAnalytics: Bool
     @State private var venueReports: Bool
     @State private var productResearch: Bool
     @State private var emailUpdates: Bool
 
     init(settings: PrivacySettings) {
-        _optionalAnalytics = State(initialValue: settings.optionalAnalyticsEnabled ?? true)
-        _venueReports = State(initialValue: settings.venueReportInclusionEnabled ?? true)
-        _productResearch = State(initialValue: settings.productResearchEnabled ?? true)
+        self.settings = settings
+        _optionalAnalytics = State(initialValue: settings.optionalAnalyticsEnabled ?? false)
+        _venueReports = State(initialValue: settings.venueReportInclusionEnabled ?? false)
+        _productResearch = State(initialValue: settings.productResearchEnabled ?? false)
         _emailUpdates = State(initialValue: settings.emailUpdatesEnabled ?? false)
     }
 
@@ -293,5 +493,11 @@ struct PrivacySettingsCard: View {
             }
         }
         .beerMapCard()
+        .onChange(of: settings) { _, next in
+            optionalAnalytics = next.optionalAnalyticsEnabled ?? false
+            venueReports = next.venueReportInclusionEnabled ?? false
+            productResearch = next.productResearchEnabled ?? false
+            emailUpdates = next.emailUpdatesEnabled ?? false
+        }
     }
 }

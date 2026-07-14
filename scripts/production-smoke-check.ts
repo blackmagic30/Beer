@@ -1,5 +1,6 @@
 const baseUrl = (process.env.PINTPATH_SMOKE_BASE_URL || "https://pintpath.au").replace(/\/$/, "");
 const strictAuth = process.argv.includes("--strict-auth");
+const expectedCommitSha = process.env.PINTPATH_EXPECTED_COMMIT_SHA?.trim() || null;
 
 interface CheckResult {
   id: string;
@@ -57,6 +58,21 @@ await Promise.all([
   checkHtml("admin_page", "/admin.html", "Pint Path"),
 ]);
 
+if (expectedCommitSha) {
+  await checkJson("deployed_commit", "/ready", (payload) => {
+    const data = nestedData(payload);
+    const deployment = data.deployment && typeof data.deployment === "object"
+      ? data.deployment as Record<string, unknown>
+      : {};
+    const commitSha = String(deployment.commitSha ?? "").trim();
+    return Boolean(commitSha) && (
+      commitSha === expectedCommitSha
+      || commitSha.startsWith(expectedCommitSha)
+      || expectedCommitSha.startsWith(commitSha)
+    );
+  });
+}
+
 const authChecks = [
   {
     id: "user_account",
@@ -73,8 +89,15 @@ const authChecks = [
   {
     id: "admin_queues",
     token: process.env.PINTPATH_SMOKE_ADMIN_TOKEN,
-    path: "/api/business/admin/queues",
-    assert: (payload: unknown) => Object.keys(nestedData(payload)).length > 0,
+    path: "/api/business/admin/queues?limit=1&offset=0",
+    assert: (payload: unknown) => {
+      const data = nestedData(payload);
+      return Array.isArray(data.feedback)
+        && Array.isArray(data.wrongPriceReports)
+        && Array.isArray(data.venueRequests)
+        && Boolean(data.pagination)
+        && Boolean(data.totals);
+    },
   },
 ];
 
@@ -95,6 +118,7 @@ console.log(JSON.stringify({
   ok: failed.length === 0,
   baseUrl,
   strictAuth,
+  expectedCommitSha,
   summary: {
     passed: results.filter((result) => result.status === "pass").length,
     failed: failed.length,

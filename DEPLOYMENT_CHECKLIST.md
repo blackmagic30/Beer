@@ -43,9 +43,8 @@ HOST=0.0.0.0
 PORT=8080
 PUBLIC_BASE_URL=https://pintpath.au
 DATABASE_PATH=/app/data/pint-path.sqlite
-TRUST_PROXY=true
+TRUST_PROXY_HOPS=1
 FIELD_TEST_MODE=true
-FREE_PRICE_REVEALS_PER_DAY=3
 CONTRIBUTOR_UNLOCK_POINTS=15
 CONTRIBUTOR_UNLOCK_DAYS=30
 # Optional until the official owner/admin email is approved.
@@ -53,6 +52,8 @@ CONTRIBUTOR_UNLOCK_DAYS=30
 ADMIN_EMAILS=
 GOOGLE_MAPS_API_KEY=browser_key_restricted_to_live_domain
 GOOGLE_MAPS_MAP_ID=javascript_vector_map_id
+GOOGLE_PLACES_API_KEY=server_key_restricted_to_places_and_geocoding
+OPENAI_API_KEY=your_openai_api_key
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
 RESEND_API_KEY=
@@ -73,12 +74,27 @@ ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
+SOURCE_EVIDENCE_STORAGE_DIR=/app/data/source-evidence
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
-SUPABASE_URL=https://your-project.supabase.co
+POS_WEBHOOK_SIGNING_SECRET=replace_with_a_different_32_plus_random_characters
+SUPABASE_URL=https://your-production-project.supabase.co
 SUPABASE_ANON_KEY=your-browser-safe-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-key
 SUPABASE_OAUTH_PROVIDERS=google,apple
+OFFSITE_BACKUP_SUPABASE_URL=https://your-independent-backup-project.supabase.co
+OFFSITE_BACKUP_SERVICE_ROLE_KEY=your-independent-project-service-role-key
+OFFSITE_BACKUP_BUCKET=pintpath-backups
+OFFSITE_BACKUP_INTERVAL_HOURS=24
+OFFSITE_BACKUP_RETENTION_DAYS=30
+STRIPE_SECRET_KEY=sk_test_or_live_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_PRICE_MONTHLY=price_monthly_499_aud
+STRIPE_PRICE_YEARLY=price_yearly_50_aud
+STRIPE_PRO_PRICE_ID=price_venue_pro_aud
 ```
+
+Replace every placeholder with a real environment-specific value. Production startup requires the Google Places, OpenAI, Supabase, independent-backup, source-evidence, POS-signing, and billing values shown above. The two Supabase URLs must identify different projects/providers.
 
 If you intentionally use simulated checkout for the private field test, set both:
 
@@ -92,8 +108,8 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 ## 4. Stripe Modes
 
 - Demo billing: works without Stripe keys, but production blocks it unless `ALLOW_DEMO_BILLING_IN_PRODUCTION=true`.
-- Stripe test mode: set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, `STRIPE_PRO_PRICE_ID`, and `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
-- No billing: keep `DEMO_BILLING_MODE=false` and leave Stripe keys empty; free limits, admin overrides, and contributor unlocks still work.
+- Stripe test mode: set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, and `STRIPE_PRO_PRICE_ID`; the server creates Stripe-hosted Checkout URLs, so no browser publishable key is required.
+- Production currently has no env-only "billing disabled" mode. With `DEMO_BILLING_MODE=false`, all five Stripe values are required at startup even if checkout is not yet promoted. A private simulated environment must instead set both demo flags above and clearly label billing as simulated.
 - Do not process live payments until Stripe Checkout and webhook forwarding have been tested with Stripe CLI.
 - Stripe webhooks must reject missing/invalid signatures when `DEMO_BILLING_MODE=false`; smoke-test this before enabling paid checkout.
 
@@ -105,6 +121,7 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - New hardening/auth tables/columns are additive: `profiles`, `verifications`, `user_activity_events`, `age_verifications`, `security_audit_log`, session revocation/last-used fields, and supporting indexes.
 - If using Supabase Auth/OAuth writes directly, apply and review `supabase/migrations/20260512000000_auth_profiles_activity.sql` in Supabase before field testing uploads/verifications through Supabase-backed clients.
 - Verify the Supabase private Storage bucket `beermap-source-evidence` exists, is not public, and has owner-only object policies before accepting source evidence at scale.
+- Run `ops/supabase/independent-backup-project-storage.sql` only against the separate backup project. Never include that destination DDL in a production-project `supabase db push`.
 - Verify `/health` after deploy, then confirm account signup and map load.
 - Verify `/ready` after deploy; if it fails, inspect app logs before allowing user traffic.
 - If migration fails, stop the deployment, restore the DB backup, and redeploy the previous production commit.
@@ -121,14 +138,14 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Open the live site logged out and confirm the map loads.
 - Confirm `/health` and `/ready` both return success.
 - Confirm no admin/debug UI is visible.
-- Open a venue and confirm exact prices are limited/redacted for anonymous users.
-- Directly request `/api/business/price-records` logged out and confirm prices are redacted unless a server-counted reveal is used.
+- Open several venues and confirm anonymous users always receive the same fixed free preview while non-preview prices stay redacted.
+- Directly request `/api/business/price-records` logged out and confirm only happy hours and the named preview-beer pint prices are exact.
 - Run `POST /api/business/auth/logout` and confirm the same bearer token can no longer access `/api/business/account`.
 - Run a sensitive admin action and confirm a row appears in `security_audit_log`.
 - Confirm production inline `sourcePhotoDataUrl` submissions are rejected unless `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=true` is intentionally set.
 - Confirm source evidence signed URLs are available only to the uploader/admin and expire after `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS`.
 - Create or log in as a test user and confirm 18+.
-- Hit the free reveal limit.
+- Confirm repeated venue opens never widen the fixed preview or expose the full catalogue.
 - Submit venue data and confirm it appears as pending in account.
 - Log in as admin and approve the submission.
 - Confirm points are awarded only after approval.
@@ -173,10 +190,9 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - If data migration caused issues, stop the app, restore the pre-deploy database backup, then redeploy the previous commit.
 - Fast feature-disable env switches:
   - `FIELD_TEST_MODE=false`
-  - `DEMO_BILLING_MODE=false`
-  - `FREE_PRICE_REVEALS_PER_DAY=0`
   - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`
-  - Remove Stripe price IDs to disable live checkout safely.
+  - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false`
+- There is no production env-only checkout-off switch. Do not remove Stripe price IDs while `DEMO_BILLING_MODE=false`, because production validation will stop the app from booting. Stop checkout by redeploying the previous known-good release or by shipping a controlled change that removes its entry points.
 
 ## 10. Merge Commands
 

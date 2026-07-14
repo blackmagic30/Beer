@@ -1,207 +1,45 @@
-# Mobile QA Report
+# Pint Path Native QA Report
 
-Date: 2026-06-30
-Branch: `codex/mobile-apps-ios-android`
-
-## July 2026 App-Store Continuation QA
-
-Date: 2026-07-13
-Branch/worktree: `main`
-
-Scope completed in this pass:
-
-- Continued the existing native iOS and Android apps in `apps/ios` and `apps/android`.
-- Reworked navigation labels/order to `Find`, `Add`, `Bars`, `Account`, `Help`.
-- Added iOS and Android photo/source image upload flows through the native system photo pickers.
-- Added image compression before source upload: iOS resizes/compresses to JPEG; Android decodes/compresses to JPEG when possible.
-- Added iOS and Android happy-hour contribution forms using the existing `happy_hour_update` submission contract.
-- Added account special-code and Free Pint Reward code API calls/cards.
-- Added venue daily specials planner, redemption, and Pint Points summary cards.
-- Did not intentionally edit website UI/routes/styles/backend files in this pass.
-
-Checks run for this pass:
-
-```bash
-swiftc -parse $(rg --files apps/ios/BeerMap -g '*.swift')
-git diff --check -- apps/ios apps/android
-plutil -lint apps/ios/BeerMap.xcodeproj/project.pbxproj apps/ios/BeerMap/Info.plist
-cd apps/android && ./gradlew --version
-kotlinc -version
-```
-
-Results:
-
-- iOS Swift parse passed.
-- iOS project and `Info.plist` lint passed.
-- Mobile diff whitespace check passed.
-- Android Gradle check is blocked because no Java Runtime is installed.
-- Standalone `kotlinc` is not installed in this environment.
-
-Manual device QA still required:
-
-- Submit price update, photo/source upload, and happy-hour update on signed-in iOS and Android devices.
-- Generate Pint Path special and Free Pint Reward codes on both platforms with eligible accounts.
-- Open Bars with a venue-manager account and confirm planner/redemption cards render for Pro/eligible venues.
-- Verify Android image picker/compression against large real camera photos.
-- Verify VoiceOver/TalkBack labels and form focus on small devices.
+Status date: 14 July 2026
 
 ## Scope
 
-Continued the existing native mobile apps in:
+This report covers the native source, manifests, project configuration, mobile/backend request contracts, sensitive-session handling, and locally available build/static gates. It does not substitute for signed real-device or store-review testing.
 
-- `apps/ios`
-- `apps/android`
+## Static and contract checks
 
-No duplicate mobile app was created. No `viewer/`, `src/`, `scripts/`, `test/`, or Supabase files were modified during this continuation.
+- Swift source parsing: `swiftc -parse $(rg --files apps/ios/BeerMap -g '*.swift')`
+- Apple plist/privacy manifest: `plutil -lint apps/ios/BeerMap/Info.plist apps/ios/BeerMap/PrivacyInfo.xcprivacy`
+- Native remediation assertions: `npx vitest run test/native-mobile-remediation.test.ts`
+- Diff hygiene: `git diff --check -- apps/ios apps/android MOBILE_APP_README.md MOBILE_STATUS_REPORT.md MOBILE_APP_STORE_CHECKLIST.md MOBILE_APP_RELEASE_NOTES_DRAFT.md QA_REPORT.md test/native-mobile-remediation.test.ts`
 
-This report was also updated after a premium UI/UX polish pass on the existing native mobile apps. That pass focused on app-like hierarchy, reusable UI components, owner workflow polish, loading/empty/error states, destructive-action confirmations, accessibility labels/content descriptions, and light/dark compatible styling without changing backend behavior.
+Local result: Swift parsing passed; both Apple files listed above passed `plutil`; all 26 native remediation tests passed; scoped diff hygiene passed. The tests include live-schema contracts, current server-authority navigation, authoritative upload totals beyond the 12-row recent-history window, offset pagination, cursor pagination, production Supabase auth, fixed-preview pricing, PKCE, secure token storage, mutation deduplication, and image-orientation handling.
 
-## What Was Checked
-
-Repository state:
-
-```bash
-git status --short --branch
-```
-
-Initial result:
-
-```text
-## codex/mobile-apps-ios-android...origin/codex/mobile-apps-ios-android
-?? MOBILE_STATUS_REPORT.md
-```
-
-Mobile build checks attempted:
+## Full build gates
 
 ```bash
-xcodebuild -list -project apps/ios/BeerMap.xcodeproj
-xcrun simctl list devices available
-cd apps/android && ./gradlew assembleDebug
+xcodebuild -project apps/ios/BeerMap.xcodeproj -scheme BeerMap -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project apps/ios/BeerMap.xcodeproj -scheme BeerMap -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO archive
+(cd apps/android && ./gradlew --no-daemon lintDebug lintRelease testDebugUnitTest assembleDebug assembleRelease)
 ```
 
-Static checks run after edits:
+The shared CI workflow runs these with full Xcode, JDK 17, and the Android SDK. On this machine, `xcodebuild` stopped because the active developer directory is Command Line Tools rather than full Xcode, and Gradle stopped before configuration because no Java runtime is installed. Those are recorded environment limitations, not passing build evidence and not source-test failures.
 
-```bash
-git diff --check
-plutil -lint apps/ios/BeerMap.xcodeproj/project.pbxproj apps/ios/BeerMap/Info.plist
-node -e 'const fs=require("fs"); for (const f of process.argv.slice(1)) { JSON.parse(fs.readFileSync(f,"utf8")); console.log(`${f}: OK`); }' apps/ios/BeerMap/Assets.xcassets/Contents.json apps/ios/BeerMap/Assets.xcassets/AppIcon.appiconset/Contents.json apps/ios/BeerMap/Assets.xcassets/AccentColor.colorset/Contents.json apps/ios/BeerMap/Assets.xcassets/LaunchBackground.colorset/Contents.json
-rg -n "ContributeView|PINT_PATH_API_BASE_URL|SUPABASE_URL|SUPABASE_ANON_KEY" apps/ios/BeerMap.xcodeproj/project.pbxproj apps/ios/BeerMap/Features/RootView.swift apps/ios/BeerMap/Features/ContributeView.swift
-rg -n "Contribute|submitPriceUpdate|reportWrongPrice|requestMissing|missing_venue|missing_beer|toBuildConfigString" apps/android/app/src/main/java/au/pintpath/beermap apps/android/app/build.gradle.kts
-git diff --name-only -- viewer src scripts test supabase package.json package-lock.json railway.toml README.md docs .github
-```
+## Required manual device matrix
 
-Additional polish-pass checks:
+Run on at least one currently supported small and large iPhone and one Android device at minimum SDK/current target SDK:
 
-```bash
-rg -n "confirmationDialog|showLogoutConfirmation|EmptyStateView|FeatureCard|FormField|LoadingView|AlertDialog" apps/ios apps/android
-git diff --name-only -- apps/ios apps/android MOBILE_STATUS_REPORT.md QA_REPORT.md MOBILE_APP_README.md
-```
+- Fresh install, upgrade, uninstall/reinstall, sign in/out, token refresh, session revoke.
+- Google and Apple success, cancellation, denial, callback replay, interrupted browser return, and unconfigured-provider errors.
+- Account creation requiring email verification and password reset browser handoff.
+- Location deny/approximate/precise/off/no-fix, then submit with and without proof.
+- Valid, oversized, corrupt, HEIC/JPEG/PNG photo selections and picker cancellation.
+- Every contribution type, mission reserve/release, duplicate submission prevention, and backend rejection copy.
+- Account privacy, export, deletion request/cancel, reward code, invitation accept/decline.
+- All assigned-venue sections, switching venues with unsaved fields, stale-write conflict, report exports, and counter actions.
+- VoiceOver/TalkBack, Dynamic Type/font scaling, keyboard navigation, contrast, reduced motion, landscape/foldable layouts.
+- Offline, timeout, slow network, background/foreground, process recreation, and concurrent refresh actions.
 
-## Results
+## Acceptance rule
 
-Passed:
-
-- `git diff --check` completed with no whitespace errors.
-- `plutil` validated the iOS Xcode project file and `Info.plist`.
-- Node JSON parsing validated the iOS asset catalog `Contents.json` files.
-- iOS project file references for `ContributeView.swift` are present in the file reference, group, and source build phase.
-- iOS API config defaults are present in the Xcode project.
-- Android contributor calls and Add tab wiring are present by static search.
-- Changed file list is limited to mobile folders, mobile docs, `MOBILE_STATUS_REPORT.md`, `QA_REPORT.md`, `MOBILE_APP_README.md`, and `.gitignore`.
-- Swift syntax parsing completed successfully for the iOS Swift files with `swiftc -parse $(rg --files apps/ios/BeerMap -g '*.swift')`.
-- Polish-pass component/static searches confirmed the new iOS confirmation, loading, empty-state, and form wrappers plus Android `AlertDialog`, `FeatureCard`, `FormField`, and `LoadingView` usage.
-- A final isolation check found unrelated website/test diffs in the worktree. Those diffs were not part of the mobile changes made in this continuation and were left untouched:
-  - `test/account-page.test.ts`
-  - `test/pricing-entitlements.test.ts`
-  - `test/viewer-map-logic.test.ts`
-  - `viewer/business.css`
-  - `viewer/business.js`
-  - `viewer/index.html`
-  - `viewer/pricing.html`
-  - `viewer/trust.html`
-  - `viewer/venue-portal.html`
-
-Blocked by local environment:
-
-- `xcodebuild -list -project apps/ios/BeerMap.xcodeproj` failed because active developer tools are Command Line Tools, not full Xcode.
-- `xcrun simctl list devices available` failed because `simctl` is unavailable with the current developer tools selection.
-- `./gradlew assembleDebug` failed because no Java Runtime is installed.
-
-Representative failure text:
-
-```text
-xcode-select: error: tool 'xcodebuild' requires Xcode, but active developer directory '/Library/Developer/CommandLineTools' is a command line tools instance
-```
-
-```text
-xcrun: error: unable to find utility "simctl", not a developer tool or in PATH
-```
-
-```text
-The operation could not be completed. Unable to locate a Java Runtime.
-```
-
-## Manual QA Checklist For A Provisioned Machine
-
-iOS:
-
-```bash
-xcode-select -p
-xcodebuild -project apps/ios/BeerMap.xcodeproj -scheme BeerMap -destination 'platform=iOS Simulator,name=iPhone 15' build
-```
-
-Android:
-
-```bash
-java -version
-cd apps/android
-./gradlew assembleDebug
-```
-
-Runtime smoke test:
-
-1. Launch the app against `https://pintpath.au` or a local backend.
-2. Confirm Discover loads venues and missions.
-3. Sign up with explicit 18+, Terms, and Privacy selections.
-4. Log out and log back in.
-5. Open Add and submit a beer-price update with a signed-in account.
-6. Send a wrong-price report.
-7. Send a missing venue or missing beer request.
-8. Open Account and verify stats/privacy/logout states.
-9. Open Bars with a venue-manager account and save profile/contact info, beer stock, happy hour, and Pro special where permitted.
-10. Open Settings and send a support note.
-
-## Not Verified Here
-
-- Native iOS compile.
-- Native Android compile.
-- Simulator/emulator runtime behavior.
-- Network smoke tests against production or localhost.
-- Native OAuth.
-- Camera/photo evidence flow.
-- Location proof flow.
-- Store signing/archive/bundle release.
-- Accessibility pass.
-
-## Website Isolation
-
-No main website files were intentionally changed for the mobile work:
-
-- No `src/` files changed.
-- No `scripts/` files changed.
-- No `test/` files were edited for the mobile implementation or polish pass.
-- No `supabase/` files changed.
-
-Final worktree note:
-
-- The following website/test files currently have unrelated worktree diffs. They were not edited as part of this mobile continuation or polish pass and should be reviewed separately before staging:
-  - `test/account-page.test.ts`
-  - `test/pricing-entitlements.test.ts`
-  - `test/viewer-map-logic.test.ts`
-  - `viewer/business.css`
-  - `viewer/business.js`
-  - `viewer/index.html`
-  - `viewer/pricing.html`
-  - `viewer/trust.html`
-  - `viewer/venue-portal.html`
-- The only root config change made for this mobile work outside mobile docs was `.gitignore`, updated to ignore mobile local config, build output, user data, and signing artifacts.
+Do not mark the mobile release ready until CI is green and the manual matrix has named devices, OS versions, tester, date, outcome, and linked evidence. A source parse or emulator build alone is not a store-readiness sign-off.

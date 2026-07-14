@@ -11,7 +11,7 @@
     { "id": "backup_restore", "label": "Production backup restore rehearsal completed and dated", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
     { "id": "accessibility_devices", "label": "Keyboard, screen reader, iPhone Safari, and Android Chrome checks signed off", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
     { "id": "legal_billing", "label": "Privacy, terms, alcohol wording, refund, and cancellation review signed off", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "ios_release", "label": "iOS signing, privacy declarations, screenshots, and TestFlight build approved", "required": false, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
-    { "id": "android_release", "label": "Android signing, data safety, screenshots, and internal-test build approved", "required": false, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null }
+    { "id": "ios_release", "label": "iOS signing, privacy declarations, screenshots, and TestFlight build approved", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null },
+    { "id": "android_release", "label": "Android signing, data safety, screenshots, and internal-test build approved", "required": true, "status": "pending", "evidence": null, "verifiedAt": null, "verifiedBy": null }
   ]
 }

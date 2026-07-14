@@ -66,6 +66,7 @@
           <div>
             <h3>Queued uploads</h3>
             <p id="submissionQueueSummary" class="muted">No uploads waiting to send.</p>
+            <p class="fieldHint">Evidence and exact location proof stay only on this device, expire after 24 hours, and are cleared when you request account deletion.</p>
           </div>
           <div class="queuedSubmissionsPanel__actions">
             <button id="retryQueuedSubmissionsButton" class="button" type="button">Retry now</button>
@@ -74,7 +75,32 @@
         </div>
         <div id="submissionQueueList" class="queuedSubmissionsList"></div>
       </section>
+      <section id="legacyQueueWarning" class="notice notice--warning" hidden>
+        <strong>Older ownerless offline uploads found.</strong>
+        <span>For privacy, Pint Path will not attach them to this account or upload them automatically.</span>
+        <button id="discardLegacyQueueButton" class="button button--danger" type="button">Discard ownerless uploads</button>
+      </section>
       <form id="submissionForm" class="form submitForm">
+        <section class="submitRecoveryBar" aria-label="Draft and location tools">
+          <div>
+            <strong id="draftStatusPill">Checking for a saved draft...</strong>
+            <span class="fieldHint">Drafts are private to this signed-in account on this device. Reattach evidence files after restoring.</span>
+          </div>
+          <div class="actionRow">
+            <button id="restoreDraftButton" class="button" type="button" disabled>Restore draft</button>
+            <button id="clearDraftButton" class="button" type="button" disabled>Discard draft</button>
+          </div>
+        </section>
+        <section class="submitRecoveryBar" aria-label="Optional upload location proof">
+          <div>
+            <strong id="locationStatusPill">Location optional</strong>
+            <span class="fieldHint">One-time location proof can make a submission eligible for location points. It is private review evidence, not public map data.</span>
+          </div>
+          <div class="actionRow">
+            <button id="captureLocationButton" class="button" type="button">Use my location for points</button>
+            <button id="clearLocationButton" class="button" type="button" hidden>Remove location proof</button>
+          </div>
+        </section>
         <section class="submitStep" aria-labelledby="submitVenueStepTitle">
           <div class="submitStep__header">
             <span class="submitStep__number" aria-hidden="true">1</span>
@@ -85,7 +111,7 @@
           </div>
           <div class="grid grid--two submitVenueGrid">
             <label class="field">Search venue
-              <input id="venueSearchInput" type="search" placeholder="Venue, area, or street" autocomplete="off" autocapitalize="words" spellcheck="false" />
+              <input id="venueSearchInput" type="search" role="combobox" aria-autocomplete="list" aria-controls="venueSuggestionList" aria-expanded="false" aria-describedby="venueSearchHelp" placeholder="Venue, area, or street" autocomplete="off" autocapitalize="words" spellcheck="false" />
               <datalist id="venueSuggestions"></datalist>
               <div id="venueSuggestionList" class="venueSuggestionList" role="listbox" aria-label="Venue suggestions" hidden></div>
               <span id="venueSearchHelp" class="fieldHint">Type 2 or more characters, then tap a venue.</span>
@@ -157,9 +183,9 @@
             </select>
           </label>
           <div id="missionContext" class="notice missionContext is-hidden"></div>
-          <label id="sourcePhotoField" class="field is-hidden">Source photo/menu/receipt/happy-hour board
-            <input id="sourcePhoto" type="file" accept="image/*,application/pdf" multiple disabled />
-            <span id="sourcePhotoHint" class="fieldHint">Upload up to 6 clear images, or one flat PDF menu. One close crop per menu section gives the best reading.</span>
+          <label id="sourcePhotoField" class="field">Optional source photo/menu/receipt/happy-hour board
+            <input id="sourcePhoto" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,application/pdf,.pdf" multiple />
+            <span id="sourcePhotoHint" class="fieldHint" role="status" aria-live="polite">Evidence is optional for data-entry modes and required for Photo/upload source. Upload up to 6 JPEG, PNG, or WebP images (25MB maximum each), or one flat PDF menu (8MB maximum). Convert HEIC/HEIF photos to JPEG first because web-browser decoding is inconsistent.</span>
             <div id="sourcePhotoList" class="sourcePhotoList" aria-live="polite" hidden></div>
           </label>
           <div id="happyHourSection" class="submitModeBlock is-hidden">
@@ -217,6 +243,8 @@
     let venueSearchTimer = null;
     let venueSearchRequestId = 0;
     let newVenueGoogleSearchTimer = null;
+    let newVenueGoogleSearchRequestId = 0;
+    let newVenueGoogleDetailsRequestId = 0;
     let lastVenueQuery = "";
     let draftSaveTimer = null;
     let uploadLocation = null;
@@ -226,6 +254,7 @@
     let selectedNewVenueGooglePlace = null;
     let submittedNewVenueRequestPlaceId = null;
     let isSubmittingNewVenueRequest = false;
+    let activeSubmissionAccountId = null;
     const UPLOAD_LOCATION_STORAGE_KEY = "pintPathUploadLocationProof";
     const FIELD_DRAFT_STORAGE_KEY = "pintPathSubmitDraft";
     const SUBMISSION_QUEUE_STORAGE_KEY = "pintPathQueuedSubmissions";
@@ -234,12 +263,20 @@
     const SUBMISSION_QUEUE_STORE_NAME = "queuedSubmissions";
     const SOURCE_PHOTO_MAX_EDGE = 2200;
     const SOURCE_PHOTO_MAX_FILES = 6;
+    const SOURCE_PHOTO_MAX_RAW_BYTES = 25 * 1024 * 1024;
     const SOURCE_PDF_MAX_BYTES = 8 * 1024 * 1024;
+    const SOURCE_PHOTO_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+    const SOURCE_PHOTO_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i;
+    const SOURCE_IMAGE_COMBINED_MAX_BYTES = 8 * 1024 * 1024;
+    const SOURCE_EVIDENCE_COMBINED_MAX_BYTES = 11 * 1024 * 1024;
+    const SOURCE_EVIDENCE_ENCODED_MAX_CHARS = 15 * 1024 * 1024;
     const SOURCE_PHOTO_OUTPUT_TYPE = "image/jpeg";
     const SOURCE_PHOTO_OUTPUT_QUALITY = 0.86;
     const UPLOAD_LOCATION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
     const FIELD_DRAFT_MAX_AGE_MS = 18 * 60 * 60 * 1000;
     const SUBMISSION_QUEUE_MAX_ITEMS = 20;
+    const SUBMISSION_QUEUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    const SUBMISSION_QUEUE_CLOCK_SKEW_MS = 5 * 60 * 1000;
     const VENUE_SEARCH_LIMIT = 12;
     const VENUE_QUERY_MIN_LENGTH = 2;
     const VENUE_SEARCH_DEBOUNCE_MS = 320;
@@ -260,6 +297,26 @@
     const statusEl = document.getElementById("status");
     const networkStatusPill = document.getElementById("networkStatusPill");
     const locationStatusPill = document.getElementById("locationStatusPill");
+
+    function requireActiveSubmissionAccountId() {
+      const accountId = activeSubmissionAccountId || MelbBeerBusiness.getAccountScopeId();
+      if (!accountId) {
+        throw new Error("Your signed-in account could not be verified. Sign in again before using private drafts or offline uploads.");
+      }
+      return accountId;
+    }
+
+    function readAccountScopedValue(key) {
+      return MelbBeerBusiness.getAccountScopedStorage(key, { accountId: requireActiveSubmissionAccountId() });
+    }
+
+    function writeAccountScopedValue(key, value) {
+      return MelbBeerBusiness.setAccountScopedStorage(key, value, { accountId: requireActiveSubmissionAccountId() });
+    }
+
+    function removeAccountScopedValue(key) {
+      MelbBeerBusiness.removeAccountScopedStorage(key, { accountId: requireActiveSubmissionAccountId() });
+    }
 
     function escapeHtml(value) {
       return String(value ?? "")
@@ -445,6 +502,12 @@
       return file?.type === "application/pdf" || /\.pdf$/i.test(file?.name || "");
     }
 
+    function isSupportedSourceImage(file) {
+      const mimeType = String(file?.type || "").toLowerCase();
+      return SOURCE_PHOTO_MIME_TYPES.has(mimeType)
+        || (!mimeType && SOURCE_PHOTO_EXTENSIONS.test(String(file?.name || "")));
+    }
+
     function sourcePreviewUrl(file) {
       if (isPdfSourceFile(file)) return null;
       const key = sourcePhotoFileKey(file);
@@ -508,6 +571,21 @@
         return;
       }
 
+      const unsupportedImage = incomingFiles.find((file) => !isPdfSourceFile(file) && !isSupportedSourceImage(file));
+      if (unsupportedImage) {
+        sourcePhoto.value = "";
+        sourcePhotoHint.textContent = /\.hei[cf]$/i.test(unsupportedImage.name || "")
+          ? "Convert HEIC/HEIF photos to JPEG before uploading in a web browser."
+          : "Use JPEG, PNG, WebP, or one flat PDF. GIF, SVG, AVIF, and other file types are not supported.";
+        return;
+      }
+      const oversizedImage = incomingFiles.find((file) => isSupportedSourceImage(file) && file.size > SOURCE_PHOTO_MAX_RAW_BYTES);
+      if (oversizedImage) {
+        sourcePhoto.value = "";
+        sourcePhotoHint.textContent = `Each source image must be 25MB or smaller. ${oversizedImage.name || "This image"} was not added.`;
+        return;
+      }
+
       const incomingPdf = incomingFiles.find(isPdfSourceFile);
       if (incomingPdf) {
         if (incomingPdf.size > SOURCE_PDF_MAX_BYTES) {
@@ -524,7 +602,7 @@
       const nextFiles = [...selectedSourcePhotoFiles];
       for (const file of incomingFiles) {
         const key = sourcePhotoFileKey(file);
-        if (!file.type?.startsWith("image/") || /svg/i.test(file.type) || existingKeys.has(key) || nextFiles.length >= SOURCE_PHOTO_MAX_FILES) {
+        if (!isSupportedSourceImage(file) || existingKeys.has(key) || nextFiles.length >= SOURCE_PHOTO_MAX_FILES) {
           continue;
         }
         existingKeys.add(key);
@@ -567,10 +645,17 @@
     function queueItemMeta(item) {
       const payload = item?.payload || {};
       const itemCount = Array.isArray(payload.items) ? payload.items.length : 0;
+      const photoCount = Array.isArray(payload.sourcePhotoDataUrls)
+        ? payload.sourcePhotoDataUrls.filter(Boolean).length
+        : (payload.sourcePhotoDataUrl ? 1 : 0);
+      const evidenceTypes = [
+        photoCount ? `${photoCount} photo${photoCount === 1 ? "" : "s"}` : "",
+        payload.sourceDocumentDataUrl ? "PDF" : "",
+      ].filter(Boolean);
       const parts = [
         submissionTypeLabel(payload.submissionType),
         itemCount ? `${itemCount} row${itemCount === 1 ? "" : "s"}` : "",
-        payload.sourcePhotoDataUrl ? "photo ready" : "",
+        evidenceTypes.length ? `${evidenceTypes.join(" + ")} ready` : "",
         formatQueuedTime(item.queuedAt),
       ].filter(Boolean);
       return parts.join(" · ");
@@ -612,9 +697,17 @@
         : `queued-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     }
 
+    function isRetainedQueuedSubmission(item, now = Date.now()) {
+      const queuedAt = Date.parse(item?.queuedAt || "");
+      return Number.isFinite(queuedAt)
+        && queuedAt <= now + SUBMISSION_QUEUE_CLOCK_SKEW_MS
+        && queuedAt > now - SUBMISSION_QUEUE_MAX_AGE_MS;
+    }
+
     function sortQueuedSubmissions(queue) {
+      const accountId = requireActiveSubmissionAccountId();
       return (Array.isArray(queue) ? queue : [])
-        .filter((item) => item && typeof item === "object")
+        .filter((item) => item && typeof item === "object" && item.ownerAccountId === accountId && isRetainedQueuedSubmission(item))
         .map((item) => ({
           ...item,
           id: item.id || createQueuedSubmissionId(),
@@ -629,21 +722,27 @@
 
     function readLegacySubmissionQueue() {
       try {
-        const parsed = JSON.parse(localStorage.getItem(SUBMISSION_QUEUE_STORAGE_KEY) || "[]");
-        return sortQueuedSubmissions(parsed);
+        const parsed = JSON.parse(readAccountScopedValue(SUBMISSION_QUEUE_STORAGE_KEY) || "[]");
+        const cleanQueue = sortQueuedSubmissions(parsed).slice(0, SUBMISSION_QUEUE_MAX_ITEMS);
+        if (cleanQueue.length) {
+          writeAccountScopedValue(SUBMISSION_QUEUE_STORAGE_KEY, JSON.stringify(cleanQueue));
+        } else {
+          removeAccountScopedValue(SUBMISSION_QUEUE_STORAGE_KEY);
+        }
+        return cleanQueue;
       } catch {
-        localStorage.removeItem(SUBMISSION_QUEUE_STORAGE_KEY);
+        removeAccountScopedValue(SUBMISSION_QUEUE_STORAGE_KEY);
         return [];
       }
     }
 
     function writeLegacySubmissionQueue(queue) {
-      localStorage.setItem(SUBMISSION_QUEUE_STORAGE_KEY, JSON.stringify(queue));
+      writeAccountScopedValue(SUBMISSION_QUEUE_STORAGE_KEY, JSON.stringify(queue));
     }
 
     function clearLegacySubmissionQueue() {
       try {
-        localStorage.removeItem(SUBMISSION_QUEUE_STORAGE_KEY);
+        removeAccountScopedValue(SUBMISSION_QUEUE_STORAGE_KEY);
       } catch {
         // Local storage can fail in private browsing.
       }
@@ -677,7 +776,7 @@
       });
     }
 
-    async function readSubmissionQueueFromDb(db) {
+    async function readAllSubmissionQueueFromDb(db) {
       const transaction = db.transaction(SUBMISSION_QUEUE_STORE_NAME, "readonly");
       const done = transactionDone(transaction);
       const store = transaction.objectStore(SUBMISSION_QUEUE_STORE_NAME);
@@ -687,14 +786,71 @@
         request.onerror = () => reject(request.error || new Error("Could not read local submission queue."));
       });
       await done;
-      return sortQueuedSubmissions(submissions);
+      return Array.isArray(submissions) ? submissions : [];
     }
 
-    async function replaceSubmissionQueueInDb(db, queue) {
+    async function readSubmissionQueueFromDb(db) {
+      return sortQueuedSubmissions(await readAllSubmissionQueueFromDb(db));
+    }
+
+    async function purgeExpiredSubmissionQueueInDb(db) {
+      const allSubmissions = await readAllSubmissionQueueFromDb(db);
+      const expired = allSubmissions.filter((submission) => !isRetainedQueuedSubmission(submission));
+      if (!expired.length) {
+        return;
+      }
       const transaction = db.transaction(SUBMISSION_QUEUE_STORE_NAME, "readwrite");
       const done = transactionDone(transaction);
       const store = transaction.objectStore(SUBMISSION_QUEUE_STORE_NAME);
-      store.clear();
+      expired.forEach((submission) => store.delete(submission.id));
+      await done;
+    }
+
+    function purgeExpiredLegacySubmissionQueuesForAllOwners() {
+      const keys = [];
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index) || "";
+        if (key === SUBMISSION_QUEUE_STORAGE_KEY || key.startsWith(`${SUBMISSION_QUEUE_STORAGE_KEY}:account:`)) {
+          keys.push(key);
+        }
+      }
+      keys.forEach((key) => {
+        try {
+          const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+          const retained = Array.isArray(parsed)
+            ? parsed.filter((item) => isRetainedQueuedSubmission(item)).slice(0, SUBMISSION_QUEUE_MAX_ITEMS)
+            : [];
+          if (retained.length) {
+            localStorage.setItem(key, JSON.stringify(retained));
+          } else {
+            localStorage.removeItem(key);
+          }
+        } catch {
+          localStorage.removeItem(key);
+        }
+      });
+    }
+
+    async function purgeExpiredSubmissionDataBeforeAuth() {
+      purgeExpiredLegacySubmissionQueuesForAllOwners();
+      try {
+        const db = await openSubmissionQueueDb();
+        await purgeExpiredSubmissionQueueInDb(db);
+        db.close();
+      } catch {
+        // A denied IndexedDB open must not prevent sign-in; the next available page load retries the purge.
+      }
+    }
+
+    async function replaceSubmissionQueueInDb(db, queue) {
+      const accountId = requireActiveSubmissionAccountId();
+      const allSubmissions = await readAllSubmissionQueueFromDb(db);
+      const transaction = db.transaction(SUBMISSION_QUEUE_STORE_NAME, "readwrite");
+      const done = transactionDone(transaction);
+      const store = transaction.objectStore(SUBMISSION_QUEUE_STORE_NAME);
+      allSubmissions
+        .filter((submission) => submission?.ownerAccountId === accountId)
+        .forEach((submission) => store.delete(submission.id));
       sortQueuedSubmissions(queue).forEach((submission) => store.put(submission));
       await done;
     }
@@ -721,9 +877,62 @@
       clearLegacySubmissionQueue();
     }
 
+    function ownerlessLegacyQueueCount() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(SUBMISSION_QUEUE_STORAGE_KEY) || "[]");
+        const retained = Array.isArray(parsed) ? parsed.filter((item) => isRetainedQueuedSubmission(item)) : [];
+        if (retained.length) {
+          localStorage.setItem(SUBMISSION_QUEUE_STORAGE_KEY, JSON.stringify(retained));
+        } else {
+          localStorage.removeItem(SUBMISSION_QUEUE_STORAGE_KEY);
+        }
+        return retained.length;
+      } catch {
+        localStorage.removeItem(SUBMISSION_QUEUE_STORAGE_KEY);
+        return 0;
+      }
+    }
+
+    async function ownerlessIndexedDbQueueCount() {
+      try {
+        const db = await openSubmissionQueueDb();
+        await purgeExpiredSubmissionQueueInDb(db);
+        const all = await readAllSubmissionQueueFromDb(db);
+        return all.filter((item) => !item?.ownerAccountId).length;
+      } catch {
+        return 0;
+      }
+    }
+
+    async function renderLegacyQueueWarning() {
+      const count = ownerlessLegacyQueueCount() + await ownerlessIndexedDbQueueCount();
+      legacyQueueWarning.hidden = count === 0;
+      if (count) {
+        legacyQueueWarning.querySelector("span").textContent = `${count} older upload${count === 1 ? "" : "s"} cannot be linked safely. For privacy, they will never upload automatically.`;
+      }
+    }
+
+    async function discardOwnerlessLegacyQueue() {
+      localStorage.removeItem(SUBMISSION_QUEUE_STORAGE_KEY);
+      try {
+        const db = await openSubmissionQueueDb();
+        const all = await readAllSubmissionQueueFromDb(db);
+        const transaction = db.transaction(SUBMISSION_QUEUE_STORE_NAME, "readwrite");
+        const done = transactionDone(transaction);
+        const store = transaction.objectStore(SUBMISSION_QUEUE_STORE_NAME);
+        all.filter((item) => !item?.ownerAccountId).forEach((item) => store.delete(item.id));
+        await done;
+      } catch {
+        // The localStorage copy is still cleared; IndexedDB can be retried later.
+      }
+      await renderLegacyQueueWarning();
+      MelbBeerBusiness.setStatus(statusEl, "Ownerless legacy uploads discarded from this device.");
+    }
+
     async function readSubmissionQueue() {
       try {
         const db = await openSubmissionQueueDb();
+        await purgeExpiredSubmissionQueueInDb(db);
         await migrateLegacySubmissionQueueToDb(db);
         return readSubmissionQueueFromDb(db);
       } catch {
@@ -795,27 +1004,34 @@
     function updateLocationStatus() {
       if (!uploadLocation) {
         setFieldStatusPill(locationStatusPill, "Location optional", "info");
+        if (typeof clearLocationButton !== "undefined") clearLocationButton.hidden = true;
+        if (typeof captureLocationButton !== "undefined") captureLocationButton.textContent = "Use my location for points";
         return;
       }
 
       setFieldStatusPill(locationStatusPill, `Location ${formatAccuracy(uploadLocation.accuracyMeters)}`, "success");
+      if (typeof clearLocationButton !== "undefined") clearLocationButton.hidden = false;
+      if (typeof captureLocationButton !== "undefined") captureLocationButton.textContent = "Refresh location proof";
     }
 
     function readStoredDraft() {
       try {
-        const raw = localStorage.getItem(FIELD_DRAFT_STORAGE_KEY);
+        const raw = readAccountScopedValue(FIELD_DRAFT_STORAGE_KEY);
         if (!raw) {
           return null;
         }
         const draft = JSON.parse(raw);
         const savedAt = Date.parse(draft?.savedAt || "");
         if (!Number.isFinite(savedAt) || Date.now() - savedAt > FIELD_DRAFT_MAX_AGE_MS) {
-          localStorage.removeItem(FIELD_DRAFT_STORAGE_KEY);
+          removeAccountScopedValue(FIELD_DRAFT_STORAGE_KEY);
+          return null;
+        }
+        if (draft.ownerAccountId !== requireActiveSubmissionAccountId()) {
           return null;
         }
         return draft;
       } catch {
-        localStorage.removeItem(FIELD_DRAFT_STORAGE_KEY);
+        removeAccountScopedValue(FIELD_DRAFT_STORAGE_KEY);
         return null;
       }
     }
@@ -900,6 +1116,7 @@
 
     function collectFieldDraft() {
       return {
+        ownerAccountId: requireActiveSubmissionAccountId(),
         savedAt: new Date().toISOString(),
         venueSearch: venueSearchInput.value,
         venueId: venueSelect.value,
@@ -930,7 +1147,7 @@
 
     function saveFieldDraft(silent = false) {
       try {
-        localStorage.setItem(FIELD_DRAFT_STORAGE_KEY, JSON.stringify(collectFieldDraft()));
+        writeAccountScopedValue(FIELD_DRAFT_STORAGE_KEY, JSON.stringify(collectFieldDraft()));
         updateDraftStatus();
         if (!silent) {
           MelbBeerBusiness.setStatus(statusEl, "Draft saved on this device.");
@@ -949,7 +1166,7 @@
 
     function clearFieldDraft(silent = false) {
       try {
-        localStorage.removeItem(FIELD_DRAFT_STORAGE_KEY);
+        removeAccountScopedValue(FIELD_DRAFT_STORAGE_KEY);
       } catch {
         // Local storage can fail in private browsing.
       }
@@ -1049,15 +1266,17 @@
       if (!query || query.length < VENUE_QUERY_MIN_LENGTH || !suggestions.length || isNewVenueMode) {
         venueSuggestionList.innerHTML = "";
         venueSuggestionList.hidden = true;
+        venueSearchInput.setAttribute("aria-expanded", "false");
         return;
       }
 
       venueSuggestionList.hidden = false;
-      venueSuggestionList.innerHTML = suggestions.map((venue) => {
+      venueSearchInput.setAttribute("aria-expanded", "true");
+      venueSuggestionList.innerHTML = suggestions.map((venue, index) => {
         const selected = venue.id === venueSelect.value;
         const meta = [venue.suburb, venue.address].filter(Boolean).join(" · ");
         return `
-          <button class="venueSuggestionButton" type="button" role="option" aria-selected="${selected ? "true" : "false"}" data-venue-id="${escapeHtml(venue.id)}">
+          <button id="venueSuggestion${index}" class="venueSuggestionButton" type="button" role="option" aria-selected="${selected ? "true" : "false"}" data-venue-id="${escapeHtml(venue.id)}">
             <span>${escapeHtml(venue.name)}</span>
             ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
           </button>
@@ -1097,6 +1316,7 @@
       venueChoiceHelp.textContent = "Chosen venue locked. Continue with the submission type and details below.";
       venueSuggestionList.innerHTML = "";
       venueSuggestionList.hidden = true;
+      venueSearchInput.setAttribute("aria-expanded", "false");
     }
 
     function clearSelectedVenue(message = "No venue chosen yet. Search above and tap a venue suggestion.") {
@@ -1210,6 +1430,7 @@
 
     async function searchNewVenueGooglePlaces() {
       const query = newVenueGoogleSearch.value.trim();
+      const requestId = ++newVenueGoogleSearchRequestId;
       if (query.length < VENUE_QUERY_MIN_LENGTH) {
         newVenueGoogleResults.innerHTML = "";
         newVenueGoogleResults.hidden = true;
@@ -1223,16 +1444,20 @@
       try {
         const params = new URLSearchParams({ q: query });
         const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-places/search?${params.toString()}`);
+        if (requestId !== newVenueGoogleSearchRequestId || newVenueGoogleSearch.value.trim() !== query) return;
         if (!result.configured) {
           newVenueGoogleStatus.textContent = "Google venue lookup is not configured yet. New venue submissions are temporarily unavailable.";
           return;
         }
         renderNewVenueGoogleResults(result.places);
       } catch (error) {
+        if (requestId !== newVenueGoogleSearchRequestId) return;
         newVenueGoogleStatus.textContent = error.message || "Google venue search failed. Try again before submitting a new venue.";
       } finally {
-        newVenueGoogleButton.disabled = false;
-        newVenueGoogleButton.textContent = "Search Google Maps";
+        if (requestId === newVenueGoogleSearchRequestId) {
+          newVenueGoogleButton.disabled = false;
+          newVenueGoogleButton.textContent = "Search Google Maps";
+        }
       }
     }
 
@@ -1250,9 +1475,11 @@
         return;
       }
 
+      const requestId = ++newVenueGoogleDetailsRequestId;
       newVenueGoogleStatus.textContent = "Loading venue details...";
       try {
         const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-places/${encodeURIComponent(placeId)}`);
+        if (requestId !== newVenueGoogleDetailsRequestId) return;
         if (!result.configured) {
           newVenueGoogleStatus.textContent = "Google venue lookup is not configured yet. New venue submissions are temporarily unavailable.";
           return;
@@ -1284,6 +1511,7 @@
         fillNewVenueFieldsFromGoogle(place);
         scheduleDraftAutosave();
       } catch (error) {
+        if (requestId !== newVenueGoogleDetailsRequestId) return;
         newVenueGoogleStatus.textContent = error.message || "Could not load that venue. Try another Google result.";
       }
     }
@@ -1409,11 +1637,12 @@
       newVenueGoogleStatus.textContent = "Submitting new venue for admin review...";
 
       try {
-        await MelbBeerBusiness.apiFetch("/api/business/requests", {
+        const result = await MelbBeerBusiness.apiFetch("/api/business/requests", {
           method: "POST",
           body: JSON.stringify({
             anonymousSessionId: MelbBeerBusiness.getAnonymousSessionId(),
             requestType: "missing_venue",
+            googlePlaceId: newVenue.googlePlaceId,
             venueId: null,
             venueName: newVenue.name,
             suburb: newVenue.suburb,
@@ -1421,10 +1650,12 @@
           }),
         });
         submittedNewVenueRequestPlaceId = newVenue.googlePlaceId;
-        const message = `${newVenue.name} has been added to the admin review queue. Add beer, cider, or happy-hour data below and use Submit for review to link drinks to this venue.`;
+        const message = result.message || (result.duplicate
+          ? `${newVenue.name} is already in the admin review queue. Add venue data below to link and resolve that request.`
+          : `${newVenue.name} has been added to the admin review queue. Add beer, cider, or happy-hour data below and use Submit for review to link drinks to this venue.`);
         newVenueSelectedSummary.classList.remove("notice--warning");
         newVenueSelectedSummary.innerHTML = `
-          <strong>${escapeHtml(newVenue.name)} added for review</strong>
+          <strong>${escapeHtml(newVenue.name)} ${result.duplicate ? "already queued" : "added for review"}</strong>
           <span class="fieldHint">${escapeHtml(newVenue.address || newVenue.suburb || "Admin will verify this Google Maps venue.")}</span>
         `;
         newVenueGoogleStatus.textContent = message;
@@ -1533,11 +1764,8 @@
       beerRowsSection.classList.toggle("is-hidden", !usesBeerRows);
       happyHourSection.classList.toggle("is-hidden", !isHappyHour);
       addBeerRowButton.classList.toggle("is-hidden", isSingle);
-      sourcePhotoField.classList.toggle("is-hidden", !isPhotoOnly);
-      sourcePhoto.disabled = !isPhotoOnly;
-      if (!isPhotoOnly) {
-        clearSelectedSourcePhotos();
-      }
+      sourcePhotoField.classList.remove("is-hidden");
+      sourcePhoto.disabled = false;
       happyHourStartTime.required = isHappyHour;
       happyHourEndTime.required = isHappyHour;
       happyHourSpecialsInput.required = isHappyHour;
@@ -1554,17 +1782,17 @@
 
       const copy = {
         full_venue_update: {
-          source: "Use Photo/source upload if you only want to send a menu, tap-list, receipt, or venue board.",
+          source: "Optional: attach a menu, tap list, receipt, or venue board to help reviewers verify these rows.",
           rowsTitle: "Multiple beer submission",
           rowsHint: "Add 3 or more beers with serving size, price, and tap status when possible.",
         },
         single_beer_price: {
-          source: "Use Photo/source upload for evidence-only submissions.",
+          source: "Optional: attach a receipt, tap list, or menu showing this price.",
           rowsTitle: "Single beer price",
           rowsHint: "Add one beer, serving size, and price. Pint is the standard default.",
         },
         happy_hour_update: {
-          source: "Use Photo/source upload if you want to send a happy-hour board photo instead.",
+          source: "Optional: attach the happy-hour board or menu so reviewers can confirm days, times, and conditions.",
           rowsTitle: "",
           rowsHint: "",
         },
@@ -1714,7 +1942,7 @@
         image.onload = () => resolve({ image, objectUrl });
         image.onerror = () => {
           URL.revokeObjectURL(objectUrl);
-          reject(new Error("Could not prepare this photo. Try a JPEG, PNG, WebP, or HEIC photo."));
+          reject(new Error("Could not prepare this photo. Try a JPEG, PNG, or WebP photo."));
         };
         image.src = objectUrl;
       });
@@ -1746,8 +1974,11 @@
         return null;
       }
 
-      if (!file.type || !file.type.startsWith("image/") || /svg/i.test(file.type)) {
-        throw new Error("Attach a real photo or screenshot image, not a document or SVG.");
+      if (!isSupportedSourceImage(file)) {
+        throw new Error("Attach a JPEG, PNG, or WebP photo or screenshot. Convert HEIC/HEIF photos to JPEG first.");
+      }
+      if (file.size > SOURCE_PHOTO_MAX_RAW_BYTES) {
+        throw new Error("Each source image must be 25MB or smaller before it is prepared for upload.");
       }
 
       const { image, objectUrl } = await loadImageFromFile(file);
@@ -1803,6 +2034,26 @@
       });
     }
 
+    function decodedDataUrlBytes(dataUrl) {
+      const base64 = String(dataUrl || "").split(",", 2)[1] || "";
+      const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+      return Math.max(0, Math.floor(base64.length * 3 / 4) - padding);
+    }
+
+    function assertPreparedEvidenceFits(sourcePhotoDataUrls, sourceDocumentDataUrl) {
+      const imageBytes = sourcePhotoDataUrls.reduce((total, dataUrl) => total + decodedDataUrlBytes(dataUrl), 0);
+      const documentBytes = decodedDataUrlBytes(sourceDocumentDataUrl);
+      const combinedBytes = imageBytes + documentBytes;
+      const encodedChars = sourcePhotoDataUrls.reduce((total, dataUrl) => total + String(dataUrl || "").length, 0)
+        + String(sourceDocumentDataUrl || "").length;
+      if (imageBytes > SOURCE_IMAGE_COMBINED_MAX_BYTES) {
+        throw new Error("Prepared source images exceed the 8MB combined limit. Remove one or more images, then submit again.");
+      }
+      if (combinedBytes > SOURCE_EVIDENCE_COMBINED_MAX_BYTES || encodedChars > SOURCE_EVIDENCE_ENCODED_MAX_CHARS) {
+        throw new Error("Prepared evidence is too large for one submission. Remove an image or PDF, then submit again (11MB combined maximum).");
+      }
+    }
+
     function formatAccuracy(meters) {
       if (!Number.isFinite(Number(meters))) {
         return "accuracy unavailable";
@@ -1815,11 +2066,14 @@
     function persistUploadLocation(location) {
       try {
         if (!location) {
-          localStorage.removeItem(UPLOAD_LOCATION_STORAGE_KEY);
+          removeAccountScopedValue(UPLOAD_LOCATION_STORAGE_KEY);
           updateLocationStatus();
           return;
         }
-        localStorage.setItem(UPLOAD_LOCATION_STORAGE_KEY, JSON.stringify(location));
+        writeAccountScopedValue(UPLOAD_LOCATION_STORAGE_KEY, JSON.stringify({
+          ...location,
+          ownerAccountId: requireActiveSubmissionAccountId(),
+        }));
         updateLocationStatus();
       } catch {
         // Local storage may be unavailable in private browsing. The in-memory proof still works.
@@ -1828,17 +2082,26 @@
 
     function restoreUploadLocation() {
       try {
-        const raw = localStorage.getItem(UPLOAD_LOCATION_STORAGE_KEY);
+        const raw = readAccountScopedValue(UPLOAD_LOCATION_STORAGE_KEY);
         if (!raw) {
           return;
         }
         const saved = JSON.parse(raw);
+        if (saved.ownerAccountId !== requireActiveSubmissionAccountId()) {
+          persistUploadLocation(null);
+          return;
+        }
         const capturedAt = Date.parse(saved?.capturedAt || "");
         if (!Number.isFinite(capturedAt) || Date.now() - capturedAt > UPLOAD_LOCATION_MAX_AGE_MS) {
           persistUploadLocation(null);
           return;
         }
-        uploadLocation = saved;
+        uploadLocation = {
+          latitude: saved.latitude,
+          longitude: saved.longitude,
+          accuracyMeters: saved.accuracyMeters,
+          capturedAt: saved.capturedAt,
+        };
         updateLocationStatus();
       } catch {
         persistUploadLocation(null);
@@ -1871,7 +2134,7 @@
           () => {
             uploadLocation = null;
             persistUploadLocation(null);
-            MelbBeerBusiness.setStatus(statusEl, "Submitting without location proof is allowed for field testing. This upload will not earn location-based points.");
+            MelbBeerBusiness.setStatus(statusEl, "Location permission was denied or unavailable. You can still submit for review, but it will not earn location-based points.");
             resolve(false);
           },
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
@@ -1887,7 +2150,7 @@
       }
 
       updateLocationStatus();
-      MelbBeerBusiness.setStatus(statusEl, "Location proof is optional for now. Submitting without it means no location-based points.");
+      MelbBeerBusiness.setStatus(statusEl, "Location proof is optional. Submitting without it means no location-based points.");
       return true;
     }
 
@@ -1910,6 +2173,7 @@
       payload.clientSubmissionId = clientSubmissionId;
       const queuedSubmission = {
         id: clientSubmissionId,
+        ownerAccountId: requireActiveSubmissionAccountId(),
         queuedAt: new Date().toISOString(),
         attempts: 0,
         payload,
@@ -1942,6 +2206,9 @@
       try {
         while (queue.length) {
           const [next, ...rest] = queue;
+          if (next.ownerAccountId !== requireActiveSubmissionAccountId()) {
+            throw new Error("A queued upload belongs to another account and was blocked from sending.");
+          }
           renderSubmissionQueue(queue, next.id);
           MelbBeerBusiness.setStatus(statusEl, `Sending queued submission ${sent + 1} of ${sent + queue.length}...`);
           try {
@@ -2031,6 +2298,10 @@
           window.location.assign("/venue-portal.html");
           return false;
         }
+        activeSubmissionAccountId = accountResult?.account?.id || MelbBeerBusiness.getAccountScopeId();
+        if (!activeSubmissionAccountId) {
+          throw new Error("Your account identity could not be verified.");
+        }
         loginRequiredPanel.classList.add("is-hidden");
         submissionPanel.classList.remove("is-hidden");
         return true;
@@ -2046,6 +2317,7 @@
 
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("submit");
+      await purgeExpiredSubmissionDataBeforeAuth();
       const canSubmit = await requireSubmitLogin();
       if (!canSubmit) {
         return;
@@ -2057,6 +2329,7 @@
       const missionReason = params.get("missionReason") || "";
       const initialSubmissionType = params.get("type");
       seedTrackedBeerLookup();
+      void renderLegacyQueueWarning();
       populateTrackedBeerSuggestions();
       void requestPersistentSubmissionStorage();
       void updateNetworkStatus();
@@ -2079,6 +2352,35 @@
       updateLocationStatus();
       setNewVenueMode(false);
       void flushQueuedSubmissions();
+      restoreDraftButton.addEventListener("click", () => {
+        void restoreFieldDraft();
+      });
+      clearDraftButton.addEventListener("click", () => {
+        if (window.confirm("Discard this account's saved draft on this device?")) clearFieldDraft();
+      });
+      captureLocationButton.addEventListener("click", () => {
+        captureLocationButton.disabled = true;
+        void captureUploadLocation().finally(() => {
+          captureLocationButton.disabled = false;
+          updateLocationStatus();
+        });
+      });
+      clearLocationButton.addEventListener("click", () => {
+        uploadLocation = null;
+        persistUploadLocation(null);
+        saveFieldDraft(true);
+        MelbBeerBusiness.setStatus(statusEl, "Location proof removed from this account's draft.");
+      });
+      discardLegacyQueueButton.addEventListener("click", () => {
+        if (window.confirm("Discard ownerless offline uploads from older Pint Path versions? They cannot be assigned safely to an account.")) {
+          void discardOwnerlessLegacyQueue();
+        }
+      });
+      window.addEventListener("pintpath:account-context-changed", (event) => {
+        if (event.detail?.accountId !== activeSubmissionAccountId) {
+          window.location.reload();
+        }
+      });
       window.addEventListener("online", () => {
         void updateNetworkStatus();
         void flushQueuedSubmissions();
@@ -2095,7 +2397,7 @@
         void flushQueuedSubmissions();
       });
       clearQueuedSubmissionsButton.addEventListener("click", () => {
-        if (!window.confirm("Clear all queued uploads saved on this device? This cannot be undone.")) {
+        if (!window.confirm("Clear all queued uploads for this account on this device? This cannot be undone.")) {
           return;
         }
         clearSubmissionQueue()
@@ -2216,6 +2518,34 @@
           }
         }, VENUE_SEARCH_DEBOUNCE_MS);
       });
+      venueSearchInput.addEventListener("keydown", (event) => {
+        const options = Array.from(venueSuggestionList.querySelectorAll('[role="option"]'));
+        if (event.key === "ArrowDown" && options.length) {
+          event.preventDefault();
+          options[0].focus();
+        } else if (event.key === "Escape" && !venueSuggestionList.hidden) {
+          event.preventDefault();
+          venueSuggestionList.hidden = true;
+          venueSearchInput.setAttribute("aria-expanded", "false");
+        }
+      });
+      venueSuggestionList.addEventListener("keydown", (event) => {
+        const options = Array.from(venueSuggestionList.querySelectorAll('[role="option"]'));
+        const index = options.indexOf(document.activeElement);
+        if (index < 0) return;
+        if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+          event.preventDefault();
+          const nextIndex = event.key === "Home" ? 0
+            : event.key === "End" ? options.length - 1
+              : (index + (event.key === "ArrowUp" ? -1 : 1) + options.length) % options.length;
+          options[nextIndex].focus();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          venueSuggestionList.hidden = true;
+          venueSearchInput.setAttribute("aria-expanded", "false");
+          venueSearchInput.focus();
+        }
+      });
       venueSearchInput.value = initialVenueName;
       await loadVenues(initialVenueName);
       if (initialVenueId && Array.from(venueSelect.options).some((option) => option.value === initialVenueId)) {
@@ -2247,12 +2577,9 @@
               selectedSourcePhotoFiles.length === 1 ? "Preparing photo for review..." : `Preparing ${selectedSourcePhotoFiles.length} photos for review...`,
             );
           }
-          const sourcePhotoDataUrls = submissionTypeSelect.value === "photo_upload"
-            ? await readSourcePhotoSelectionDataUrls(selectedSourcePhotoFiles)
-            : [];
-          const sourceDocumentDataUrl = submissionTypeSelect.value === "photo_upload"
-            ? await readPdfDataUrl(selectedSourcePhotoFiles.find(isPdfSourceFile))
-            : null;
+          const sourcePhotoDataUrls = await readSourcePhotoSelectionDataUrls(selectedSourcePhotoFiles);
+          const sourceDocumentDataUrl = await readPdfDataUrl(selectedSourcePhotoFiles.find(isPdfSourceFile));
+          assertPreparedEvidenceFits(sourcePhotoDataUrls, sourceDocumentDataUrl);
           const items = collectItems();
           const newVenue = collectNewVenue();
           const newVenueError = validateNewVenue(newVenue);

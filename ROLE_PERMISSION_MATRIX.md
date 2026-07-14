@@ -9,13 +9,13 @@ Can:
 - Search venues, suburbs, and beers using public preview data.
 - Use map filters that do not require exact-price access.
 - Create feedback, venue/beer requests, venue-interest requests, and wrong-price reports.
-- Reveal exact prices only through `/api/business/price-records` within the server-side anonymous daily reveal limit.
+- See the fixed free preview through `/api/business/price-records`: happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.
 
 Cannot:
 - Upload venue data submissions.
 - Verify submissions.
 - View account pages, saved items, private submissions, admin queues, venue portal data, analytics, or monthly reports.
-- Fetch unlimited exact prices or directly read private Supabase/service-role data.
+- Fetch non-preview exact prices without premium/contributor/admin access, or directly read private Supabase/service-role data.
 
 Private data never exposed:
 - Account emails, user IDs tied to submissions, source-photo data URLs, session tokens, admin notes, security audit logs, private report internals, and exact user location.
@@ -27,14 +27,14 @@ Can:
 - Submit venue data after login and 18+ confirmation.
 - Verify another user's submission.
 - See their own submissions, verifications, saved items, contribution progress, age-verification status, and activity summary.
-- Use server-limited free exact-price reveals.
+- Use the same fixed free preview as signed-out visitors, without a daily counter.
 - Report wrong prices, send feedback, request venues/beers, and use contributor flows.
 
 Cannot:
 - Verify their own upload.
 - Approve/reject/fraud-flag submissions.
 - Self-award points or edit contribution totals.
-- Access admin APIs, venue portal data, paid map access beyond reveal limits, venue analytics, or another user's private account/submission data.
+- Access admin APIs, venue portal data, the full paid/contributor price catalogue, venue analytics, or another user's private account/submission data.
 
 Approval / validation:
 - Submissions stay `pending` until admin review.
@@ -165,6 +165,6 @@ Cannot:
 
 ## Known Beta Limitations
 
-- Local email/password accounts do not yet include a full email-verification workflow; Supabase OAuth/email verification should be preferred for public beta onboarding.
+- Public production onboarding is provider-first through Supabase email/OAuth with provider-confirmed email state. Local password signup/login is limited to localhost/development and is not a production onboarding path.
 - Portal-managed stock/happy-hour rows can be displayed as venue-supplied data for assigned managers; broader trusted-public publishing and disputes still need operational policy.
 - Provider-side Supabase MFA verification, storage access tests, Redis provisioning, and a formal Supabase RLS audit remain in `PROD_FOLLOWUPS.md`.

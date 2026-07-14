@@ -46,7 +46,7 @@ Use a fresh staging owner account and record pass/fail evidence:
 1. Create account or OAuth login.
 2. Confirm email/verified account state.
 3. Admin assigns venue-manager access.
-4. Owner opens `/venue-portal`.
+4. Owner opens `/venue-portal.html`.
 5. Owner submits profile update.
 6. Owner adds beer/stock row.
 7. Owner adds happy-hour row.
@@ -54,7 +54,7 @@ Use a fresh staging owner account and record pass/fail evidence:
 9. Owner opens support from the portal.
 10. Owner views report/analytics gate appropriate to Free/Pro tier.
 11. Another owner is blocked from that venue.
-12. Admin approves pending changes and public map shows only approved data.
+12. Owner confirms ordinary assigned-venue profile, beer, and happy-hour edits publish directly. Admin then verifies that restricted fields and safeguard-triggered changes stay queued until review.
 
 The local release suite now covers this path synthetically, but staging still needs real browser/auth/provider confirmation.
 
@@ -73,7 +73,7 @@ Run Lighthouse or WebPageTest against staging on mobile and desktop for:
 
 - `/`
 - `/pricing.html`
-- `/venue-portal`
+- `/venue-portal.html`
 - `/account.html`
 
 Target before a 9/10 launch:

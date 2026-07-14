@@ -348,6 +348,55 @@ describe("manual capture helpers", () => {
     ]);
   });
 
+  it("does not write remote capture history or catalogue rows before local publish commits", async () => {
+    database = new BetterSqlite3(":memory:");
+    initializeDatabaseSchema(database);
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      undefined,
+      undefined,
+      database,
+    );
+    const { insertedCaptures, venue } = attachManualCaptureSupabase(service);
+    const internals = service as unknown as {
+      publishManualCapturePriceRecords: (...args: unknown[]) => number;
+    };
+    const original = internals.publishManualCapturePriceRecords.bind(service);
+    internals.publishManualCapturePriceRecords = () => {
+      throw new Error("forced manual local failure");
+    };
+    const input = {
+      venueId: venue.id,
+      source: "menu_photo_ocr" as const,
+      note: "Ordering regression.",
+      beers: [{
+        name: "Manual Rollback Lager",
+        servingSize: "pint" as const,
+        priceNumeric: 16,
+        priceText: "$16",
+        availabilityStatus: "on_tap" as const,
+        availableOnTap: true,
+        availablePackageOnly: false,
+        unavailableReason: null,
+        needsReview: false,
+      }],
+    };
+
+    await expect(service.saveManualCapture(input)).rejects.toThrow("forced manual local failure");
+    expect(insertedCaptures).toHaveLength(0);
+    expect(database.prepare("SELECT count(*) AS count FROM beer_catalog_items WHERE name = ?")
+      .get("Manual Rollback Lager")).toEqual({ count: 0 });
+
+    internals.publishManualCapturePriceRecords = original;
+    await expect(service.saveManualCapture(input)).resolves.toEqual(expect.objectContaining({ captureSaved: true }));
+    expect(insertedCaptures).toHaveLength(1);
+    expect(database.prepare("SELECT count(*) AS count FROM beer_catalog_items WHERE name = ?")
+      .get("Manual Rollback Lager")).toEqual({ count: 1 });
+  });
+
   it("turns source review decisions into crawler feedback scores", () => {
     const extractedBeer = {
       name: "Stomping Ground Pale Ale",

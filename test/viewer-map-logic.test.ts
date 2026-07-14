@@ -72,7 +72,19 @@ describe("viewer map price logic", () => {
         getTrackedBeerMeta?: (value: string | null | undefined) => Record<string, unknown> | null;
       },
     ) => boolean;
+    isOpeningHoursOpenNow: (days: Record<string, unknown>, now: Date) => boolean;
   };
+
+  it("handles overnight opening hours only on the correct side of midnight", () => {
+    const days = {
+      fri: { open: true, openTime: "18:00", closeTime: "02:00" },
+    };
+
+    expect(logic.isOpeningHoursOpenNow(days, new Date(2026, 6, 17, 1, 0))).toBe(false);
+    expect(logic.isOpeningHoursOpenNow(days, new Date(2026, 6, 17, 18, 0))).toBe(true);
+    expect(logic.isOpeningHoursOpenNow(days, new Date(2026, 6, 18, 1, 59))).toBe(true);
+    expect(logic.isOpeningHoursOpenNow(days, new Date(2026, 6, 18, 2, 0))).toBe(false);
+  });
 
   it("does not convert unknown, zero, unavailable, or off-tap prices into cheap numeric prices", () => {
     expect(logic.normalizeBeerPriceNumeric({ availability_status: "on_tap", price_numeric: null })).toBeNull();
@@ -330,6 +342,33 @@ describe("viewer map price logic", () => {
 describe("viewer map UI wiring", () => {
   const html = fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
   const venuePortalHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/venue-portal.html"), "utf8");
+
+  it("loads every public venue through the paginated venue contract", () => {
+    expect(html).toContain("async function fetchBusinessViewerVenues(pageSize = 250)");
+    expect(html).toContain("/api/business/venues?limit=${pageSize}&offset=${offset}");
+    expect(html).toContain("if (!response.pagination?.hasMore) break;");
+    expect(html).toContain("Venue pagination stopped before every venue could be loaded.");
+  });
+
+  it("keeps coordinate-free venues reachable when Google Maps falls back to list mode", () => {
+    expect(html).toContain("async function loadBusinessVenueRows(includeUnmappable = false)");
+    expect(html).toContain("includeUnmappable || Boolean(getMappableVenueLatLng(venue))");
+    expect(html).toContain("await loadBusinessVenueRows(true)");
+    expect(html).toContain("The full venue directory remains usable when map tiles cannot load");
+    expect(html).toContain("listed venues");
+    expect(html).toContain("Google Maps is not configured; using venue list mode.");
+    expect(html).toContain('aria-label="Area or venue"');
+    expect(html).toContain("const googleMapsLoadError = await googleMapsReady");
+  });
+
+  it("loads global and venue-specific price records until cursor exhaustion", () => {
+    expect(html).toContain("const seenCursors = new Set()");
+    expect(html).toContain("while (true)");
+    expect(html).toContain("if (!nextCursor) break;");
+    expect(html).toContain("seenCursors.has(nextCursor)");
+    expect(html).not.toContain("for (let page = 0; page < 20; page += 1)");
+    expect(html).not.toContain("if (!cursor || options.venueId) break;");
+  });
   const businessCss = fs.readFileSync(path.resolve(process.cwd(), "viewer/business.css"), "utf8");
 
   it("renders advanced markers with visible map panels and list-mode fallback", () => {
@@ -356,7 +395,8 @@ describe("viewer map UI wiring", () => {
     expect(html).not.toContain('libraries: "marker,places"');
     expect(html).toContain('loading: "async"');
     expect(html).toContain("EFFECTIVE_GOOGLE_MAPS_MAP_ID");
-    expect(html).toContain("useConfiguredGoogleMapsMapId");
+    expect(html).toContain("GOOGLE_MAPS_MAP_ID");
+    expect(html).toContain("IS_LOCAL_VIEWER_ORIGIN");
     expect(html).toContain("PINT_PATH_CLEAN_MAP_TYPE_ID");
     expect(html).toContain("PINT_PATH_BASE_MAP_STYLES");
     expect(html).toContain('featureType: "poi", elementType: "all"');
@@ -451,7 +491,7 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("search_this_area");
     expect(html).toContain("venue_shared");
     expect(html).toContain("search_shared");
-    expect(html).toContain('trackBusinessEvent("price_view_revealed"');
+    expect(html).toContain('trackBusinessEvent("free_preview_viewed"');
     expect(html).toContain('trackVenueAnalytics("saved_night_plan_added"');
   });
 
@@ -523,17 +563,17 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain("function syncRedemptionItemSelection");
     expect(venuePortalHtml).toContain('<select name="itemName" required>');
     expect(venuePortalHtml).toContain('optgroup label="Pint Path specials"');
-    expect(venuePortalHtml).toContain('optgroup label="Beers / stock"');
+    expect(venuePortalHtml).not.toContain('optgroup label="Beers / stock"');
     expect(venuePortalHtml).not.toContain("Common app discount");
     expect(venuePortalHtml).not.toContain('data-savings-dollars="0">$0');
     expect(venuePortalHtml).toContain('name="estimatedSavingsDollars" type="hidden" value="0"');
-    expect(venuePortalHtml).toContain("added automatically");
+    expect(venuePortalHtml).toContain("Discount redemption does not separately award Pint Points.");
     expect(venuePortalHtml).not.toContain("Fixed-price special selected. Enter actual savings if you want it tracked.");
     expect(venuePortalHtml).not.toContain("Issue Pint Points");
     expect(venuePortalHtml).not.toContain("Fast drink labels");
     expect(venuePortalHtml).toContain("data-discount-special-id");
     expect(venuePortalHtml).toContain('data-jump-tab="redemption"');
-    expect(venuePortalHtml).toContain('specialId: field(discountRedemptionFormElement, "specialId").value || null');
+    expect(venuePortalHtml).toContain('const selectedSpecial = (currentPortal?.inventory?.specials || [])');
   });
 
   it("gives venue managers support and structured opening-hour controls", () => {
@@ -580,8 +620,8 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain('id="premiumVenueDashboard"');
     expect(venuePortalHtml).toContain('id="dashboardSetupProgress"');
     expect(venuePortalHtml).toContain('id="venueDailyActions"');
-    expect(venuePortalHtml).toContain('id="venuePulseGrid"');
-    expect(venuePortalHtml).toContain('id="weeklyActionCard"');
+    expect(venuePortalHtml).not.toContain('id="venuePulseGrid"');
+    expect(venuePortalHtml).not.toContain('id="weeklyActionCard"');
     expect(venuePortalHtml).toContain('id="businessToolkit"');
     expect(venuePortalHtml).toContain('id="qualityScore"');
     expect(venuePortalHtml).toContain('id="priceRecords"');
@@ -598,8 +638,7 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain('data-focus-venue-field="beerName"');
     expect(venuePortalHtml).toContain("formatAppValueHeadline");
     expect(venuePortalHtml).toContain("No app redemptions logged yet");
-    expect(venuePortalHtml).toContain("No redemptions yet");
-    expect(venuePortalHtml).toContain("Record codes in staff mode");
+    expect(venuePortalHtml).toContain("This week's value is unavailable");
     expect(venuePortalHtml).toContain("Invite staff");
     expect(venuePortalHtml).toContain("visibleActions.length < 4");
     expect(venuePortalHtml).toContain("VENUE_DASHBOARD_FEATURES");
@@ -749,6 +788,15 @@ describe("viewer map UI wiring", () => {
     expect(html).not.toContain("debugToggle");
   });
 
+  it("does not let a stale venue-detail request reopen or overwrite the active card", () => {
+    expect(html).toContain("let venueDetailRequestSequence = 0");
+    expect(html).toContain("venueDetailRequestSequence += 1");
+    expect(html).toContain("const requestSequence = ++venueDetailRequestSequence");
+    expect(html).toContain("requestSequence !== venueDetailRequestSequence");
+    expect(html).toContain("activeVenueRecord !== record");
+    expect(html).toContain('venueDetailOverlayEl.classList.contains("is-hidden-panel")');
+  });
+
   it("keeps venue claims behind manual admin approval", () => {
     expect(venuePortalHtml).toContain("Request access to your venue");
     expect(venuePortalHtml).toContain('id="venueClaimForm"');
@@ -756,7 +804,7 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain("Log in to request access");
     expect(venuePortalHtml).toContain("/api/business/venue-claim-requests");
     expect(venuePortalHtml).toContain("pintPath.counterReceiptQueue.v1");
-    expect(venuePortalHtml).toContain("Rotating member codes are never stored");
+    expect(venuePortalHtml.toLowerCase()).toContain("rotating member codes are never stored");
     expect(venuePortalHtml).toContain("This browser could not save the receipt");
     expect(venuePortalHtml).not.toContain("Create your Basic bar account");
     expect(venuePortalHtml).not.toContain('<select name="membershipTier">');

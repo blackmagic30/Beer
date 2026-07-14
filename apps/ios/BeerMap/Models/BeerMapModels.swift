@@ -54,22 +54,41 @@ struct APIEnvelope<T: Decodable>: Decodable {
 
 struct APIErrorPayload: Decodable {
     let message: String?
+    let code: String?
+    let recovery: APIErrorRecovery?
+    let details: APIErrorDetails?
+}
+
+struct APIErrorRecovery: Decodable {
+    let eligible: Bool?
+    let endpoint: String?
+    let consumer: Bool?
+    let venues: [BillingRecoveryVenue]?
+}
+
+struct APIErrorDetails: Decodable {
+    let reauthenticationRequired: Bool?
+    let billingRecoveryEligible: Bool?
+    let billingRecoveryEndpoint: String?
 }
 
 struct EmptyResponse: Codable {}
 
+struct LogoutAllRequest: Codable {
+    let accessToken: String?
+}
+
 struct PublicConfig: Codable {
     let pricing: JSONValue?
-    let freePriceRevealsPerDay: Int?
     let contributorUnlockPoints: Int?
     let contributorUnlockDays: Int?
-    let stripePublishableKey: String?
     let supabaseUrl: String?
     let supabaseAnonKey: String?
     let supabaseOauthProviders: [String]?
     let demoBillingMode: Bool?
     let fieldTestMode: Bool?
     let trackedBeers: [TrackedBeer]?
+    let legalPolicyVersion: String?
 }
 
 struct TrackedBeer: Codable, Identifiable, Hashable {
@@ -91,13 +110,96 @@ struct SignupRequest: Codable {
     let privacyAccepted: Bool
 }
 
+struct SupabaseSignupRequest: Codable {
+    let email: String
+    let password: String
+    let data: [String: JSONValue]
+}
+
 struct LoginRequest: Codable {
     let email: String
     let password: String
 }
 
+struct BillingRecoveryProviderRequest: Codable {
+    let accessToken: String
+    let venueId: String?
+}
+
+struct BillingRecoveryPasswordRequest: Codable {
+    let email: String
+    let password: String
+    let venueId: String?
+}
+
+struct BillingRecoveryVenue: Codable, Identifiable, Hashable {
+    let venueId: String
+    let venueName: String
+
+    var id: String { venueId }
+}
+
+struct BillingRecoveryResult: Codable {
+    let portalUrl: String
+    let accountId: String?
+    let message: String?
+}
+
+struct PasswordRecoveryRequest: Codable {
+    let email: String
+    let redirectTo: String
+
+    enum CodingKeys: String, CodingKey {
+        case email
+        case redirectTo = "redirect_to"
+    }
+}
+
+struct SupabaseRefreshRequest: Codable {
+    let refreshToken: String
+
+    enum CodingKeys: String, CodingKey {
+        case refreshToken = "refresh_token"
+    }
+}
+
+struct SupabasePKCERequest: Codable {
+    let authCode: String
+    let codeVerifier: String
+
+    enum CodingKeys: String, CodingKey {
+        case authCode = "auth_code"
+        case codeVerifier = "code_verifier"
+    }
+}
+
 struct SupabaseSessionRequest: Codable {
     let accessToken: String
+    let ageConfirmed: Bool?
+    let termsAccepted: Bool?
+    let privacyAccepted: Bool?
+    let termsVersion: String?
+    let privacyVersion: String?
+    let consentSource: String?
+}
+
+struct SupabaseAuthTokens: Codable {
+    let accessToken: String?
+    let refreshToken: String?
+    let expiresIn: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case refreshToken = "refresh_token"
+        case expiresIn = "expires_in"
+    }
+}
+
+struct SupabaseSignupOutcome {
+    let authResult: AuthResult?
+    let refreshToken: String?
+    let accessToken: String?
+    let confirmationRequired: Bool
 }
 
 struct AccountDashboard: Codable {
@@ -110,6 +212,39 @@ struct AccountDashboard: Codable {
     let leaderboard: LeaderboardContext?
     let discounts: AccountDiscountSummary?
     let pintPoints: AccountPintPoints?
+    let counterStaffInvitations: [CounterStaffInvitation]?
+
+    enum CodingKeys: String, CodingKey {
+        case account
+        case stats = "dashboardStats"
+        case savedItems
+        case submissions
+        case privacySettings
+        case access
+        case leaderboard
+        case discounts
+        case pintPoints
+        case counterStaffInvitations
+    }
+}
+
+struct CounterStaffInvitation: Codable, Identifiable, Hashable {
+    let id: String
+    let venueId: String
+    let venueName: String
+    let suburb: String?
+    let invitedAt: String?
+    let expiresAt: String?
+}
+
+struct CounterStaffInvitationResponse: Codable {
+    let assignment: VenueAssignment?
+    let account: Account?
+    let message: String?
+}
+
+struct CounterStaffInvitationDecision: Codable {
+    let decision: String
 }
 
 struct Account: Codable, Identifiable, Hashable {
@@ -134,6 +269,14 @@ struct AccountStats: Codable, Hashable {
     let pendingSubmissions: Int?
     let totalSavingsCents: Int?
     let trustScore: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case totalSubmissions = "totalUploads"
+        case approvedSubmissions = "verifiedCount"
+        case pendingSubmissions = "pendingVerificationCount"
+        case totalSavingsCents
+        case trustScore
+    }
 }
 
 struct SavedItem: Codable, Identifiable, Hashable {
@@ -162,13 +305,71 @@ struct PrivacySettings: Codable, Hashable {
     var emailUpdatesEnabled: Bool?
 }
 
+struct PrivacySettingsSaveResult: Codable, Hashable {
+    let privacySettings: PrivacySettings
+}
+
+struct AccountDeletionStatusResponse: Codable, Hashable {
+    let request: AccountDeletionStatus?
+}
+
+struct AccountDeletionStatus: Codable, Identifiable, Hashable {
+    let id: String
+    let status: String
+    let userMessage: String?
+    let requestedAt: String?
+    let executeAfter: String?
+    let reviewedAt: String?
+    let completedAt: String?
+    let lastError: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case status
+        case userMessage = "user_message"
+        case requestedAt = "requested_at"
+        case executeAfter = "execute_after"
+        case reviewedAt = "reviewed_at"
+        case completedAt = "completed_at"
+        case lastError = "last_error"
+    }
+}
+
+struct AccountSessionsResponse: Codable, Hashable {
+    let sessions: [AccountSession]
+    let total: Int?
+    let pagination: OffsetPagination?
+}
+
+struct OffsetPagination: Codable, Hashable {
+    let total: Int?
+    let limit: Int
+    let offset: Int
+    let hasMore: Bool
+}
+
+struct AccountSession: Codable, Identifiable, Hashable {
+    let id: String
+    let createdAt: String?
+    let expiresAt: String?
+    let lastUsedAt: String?
+    let active: Bool?
+    let revokedAt: String?
+    let current: Bool?
+    let deviceFingerprint: String?
+    let networkFingerprint: String?
+}
+
 struct AccessState: Codable, Hashable {
-    let tier: String?
-    let subscriptionStatus: String?
+    let status: String?
+    let isAuthenticated: Bool?
+    let accountRole: String?
+    let isAdmin: Bool?
     let hasFullAccess: Bool?
-    let contributorAccessActive: Bool?
-    let freePriceRevealsRemaining: Int?
-    let freePriceRevealsPerDay: Int?
+    let ageConfirmed: Bool?
+    let priceAccessModel: String?
+    let canViewAllPrices: Bool?
+    let freePreviewScope: String?
 }
 
 struct LeaderboardContext: Codable, Hashable {
@@ -201,6 +402,7 @@ struct RotatingCodeResult: Codable, Hashable {
 
 struct VenueListResponse: Codable {
     let venues: [Venue]
+    let pagination: OffsetPagination?
 }
 
 struct Venue: Codable, Identifiable, Hashable {
@@ -226,8 +428,14 @@ struct Venue: Codable, Identifiable, Hashable {
 struct PriceRecordsResponse: Codable {
     let records: [PriceRecord]
     let access: AccessState?
-    let revealed: Bool?
-    let blocked: Bool?
+    let preview: PricePreview?
+    let nextCursor: String?
+}
+
+struct PricePreview: Codable, Hashable {
+    let model: String
+    let includedCount: Int
+    let lockedCount: Int
 }
 
 struct PriceRecord: Codable, Identifiable, Hashable {
@@ -262,6 +470,7 @@ struct PriceRecord: Codable, Identifiable, Hashable {
 
 struct MissionListResponse: Codable {
     let missions: [Mission]
+    let pagination: OffsetPagination?
 }
 
 struct Mission: Codable, Identifiable, Hashable {
@@ -273,6 +482,17 @@ struct Mission: Codable, Identifiable, Hashable {
     let priority: String?
     let points: Double?
     let multiplier: Double?
+    let userProgress: String?
+    let reservationAcceptedAt: String?
+    let reservationExpiresAt: String?
+}
+
+struct MissionActionResponse: Codable {
+    let mission: Mission?
+    let missionId: String?
+    let released: Bool?
+    let reservationAcceptedAt: String?
+    let reservationExpiresAt: String?
 }
 
 struct EventRequest: Codable {
@@ -377,6 +597,7 @@ struct VenueRequestPayload: Codable {
 
 struct VenuePortalData: Codable {
     let isAdmin: Bool?
+    let accessLevel: String?
     let accessState: String?
     let assignments: [VenueAssignment]?
     let selectedVenue: SelectedVenue?
@@ -403,6 +624,7 @@ struct VenueAssignment: Codable, Identifiable, Hashable {
     let venueId: String
     let venueName: String
     let suburb: String?
+    let accessLevel: String?
 
     var stableId: String { id ?? venueId }
 }
@@ -426,6 +648,15 @@ struct BarProfile: Codable, Hashable {
     var venueTags: [String]?
     var membershipTier: String?
     var active: Bool?
+    var updatedAt: String?
+    var replaceVenueTags: Bool? = nil
+    var expectedUpdatedAt: String? = nil
+}
+
+struct BarProfileSaveResult: Codable {
+    let profile: BarProfile
+    let tier: TierCapabilities?
+    let message: String?
 }
 
 struct TierCapabilities: Codable, Hashable {
@@ -456,8 +687,17 @@ struct BarBeer: Codable, Identifiable, Hashable {
     var onTap: Bool
     var inStock: Bool
     var notes: String?
+    var updatedAt: String? = nil
+    var expectedUpdatedAt: String? = nil
+    var priceConfirmed: Bool? = nil
+    var stockConfirmed: Bool? = nil
 
     var stableId: String { id ?? beerName }
+}
+
+struct BarBeerSaveResult: Codable {
+    let beer: BarBeer
+    let message: String?
 }
 
 struct BarHappyHour: Codable, Identifiable, Hashable {
@@ -470,6 +710,11 @@ struct BarHappyHour: Codable, Identifiable, Hashable {
     var active: Bool
 
     var stableId: String { id ?? "\(title)-\(startTime)" }
+}
+
+struct BarHappyHourSaveResult: Codable {
+    let happyHour: BarHappyHour
+    let message: String?
 }
 
 struct BarSpecial: Codable, Identifiable, Hashable {
@@ -489,6 +734,11 @@ struct BarSpecial: Codable, Identifiable, Hashable {
     var stableId: String { id ?? "\(title)-\(startTime)" }
 }
 
+struct BarSpecialSaveResult: Codable {
+    let special: BarSpecial
+    let message: String?
+}
+
 struct PendingChange: Codable, Identifiable, Hashable {
     let id: String
     let section: String?
@@ -502,7 +752,7 @@ struct VenueAnalytics: Codable, Hashable {
     let profileViews: Int?
     let beerListViews: Int?
     let specialsViews: Int?
-    let priceReveals: Int?
+    let pricePreviewViews: Int?
     let directionsClicks: Int?
     let privacyFloorMet: Bool?
     let privacyThreshold: Int?
@@ -577,6 +827,59 @@ struct VenuePintPointSummary: Codable, Hashable {
     let month: JSONValue?
     let rewardThreshold: Int?
     let copy: String?
+}
+
+struct CounterMemberPreview: Codable, Hashable {
+    let accountId: String
+    let checkoutToken: String
+    let authorizationExpiresAt: String?
+    let pointsRemainingToday: Int?
+    let privacyCopy: String?
+}
+
+struct CounterPurchaseRecord: Codable, Hashable {
+    let id: String?
+}
+
+struct CounterPurchaseResult: Codable, Hashable {
+    let record: CounterPurchaseRecord?
+    let accountId: String?
+    let pointsEarned: Int?
+    let idempotentReplay: Bool?
+    let copy: String?
+    let progressCopy: String?
+    let rewardCopy: String?
+}
+
+struct CounterRewardResult: Codable, Hashable {
+    let status: String?
+    let accountId: String?
+    let copy: String?
+    let instruction: String?
+}
+
+struct CounterMemberPreviewRequest: Codable {
+    let code: String
+    let transactionReference: String
+}
+
+struct CounterPurchaseRequest: Codable {
+    let checkoutToken: String
+    let itemName: String?
+    let beverageCategory: String
+    let quantity: Int
+    let transactionReference: String
+    let notes: String?
+}
+
+struct CounterVoidRequest: Codable {
+    let reason: String
+}
+
+struct CounterRewardDecisionRequest: Codable {
+    let code: String
+    let action: String
+    let reason: String?
 }
 
 struct AccountDeletionRequest: Codable {

@@ -1151,6 +1151,35 @@
       text-align: center;
     }
 
+    .legalFooter {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 0 20px 14px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(148, 163, 184, 0.18);
+      color: rgba(203, 213, 225, 0.78);
+      font-size: 12px;
+    }
+
+    .legalFooter nav {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .legalFooter a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      color: inherit;
+      padding: 8px;
+      text-underline-offset: 3px;
+    }
+
     #mapLegend {
       position: absolute;
       left: 20px;
@@ -1488,6 +1517,107 @@
 
     .venueDetailOverlay__body .beerPopup__actions {
       margin-top: 18px;
+    }
+
+    .wrongPriceDialog {
+      width: min(540px, calc(100vw - 28px));
+      max-height: calc(100dvh - 28px);
+      padding: 0;
+      overflow: auto;
+      color: #f8fafc;
+      color-scheme: dark;
+      border: 1px solid rgba(245, 197, 66, 0.45);
+      border-radius: 24px;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(34, 211, 238, 0.12), transparent 42%),
+        #111827;
+      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.56);
+    }
+
+    .wrongPriceDialog::backdrop {
+      background: rgba(2, 6, 23, 0.82);
+      backdrop-filter: blur(4px);
+    }
+
+    .wrongPriceDialog .form {
+      display: grid;
+      gap: 16px;
+      padding: clamp(20px, 4vw, 30px);
+    }
+
+    .wrongPriceDialog h2,
+    .wrongPriceDialog p {
+      margin: 0;
+    }
+
+    .wrongPriceDialog .field {
+      display: grid;
+      gap: 8px;
+      color: #e2e8f0;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .wrongPriceDialog select,
+    .wrongPriceDialog textarea {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.92);
+      color: #f8fafc;
+      padding: 12px 14px;
+      font: inherit;
+    }
+
+    .wrongPriceDialog textarea {
+      min-height: 112px;
+      resize: vertical;
+    }
+
+    .wrongPriceDialog select:focus,
+    .wrongPriceDialog textarea:focus {
+      outline: 3px solid rgba(34, 211, 238, 0.4);
+      outline-offset: 2px;
+      border-color: #22d3ee;
+    }
+
+    .wrongPriceDialog .actionRow {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .wrongPriceDialog .button {
+      min-height: 46px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.9);
+      color: #f8fafc;
+      padding: 10px 16px;
+      font: inherit;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .wrongPriceDialog .button--primary {
+      border-color: transparent;
+      background: linear-gradient(135deg, #38bdf8, #22d3ee 48%, #8b5cf6);
+      color: #06101f;
+    }
+
+    .wrongPriceDialog .button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .wrongPriceDialog .notice {
+      border: 1px solid rgba(248, 113, 113, 0.42);
+      border-radius: 14px;
+      background: rgba(127, 29, 29, 0.2);
+      color: #fecaca;
+      padding: 12px;
     }
 
     .venueRail__header {
@@ -2426,6 +2556,28 @@
       text-transform: uppercase;
     }
 
+    .beerPopup__publicProfile {
+      display: grid;
+      gap: 10px;
+      margin: 14px 0;
+      padding: 12px 14px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 16px;
+      background: rgba(2, 6, 23, 0.34);
+      color: #dbeafe;
+    }
+
+    .beerPopup__publicProfile p { margin: 0; line-height: 1.55; }
+    .beerPopup__publicLinks { display: flex; flex-wrap: wrap; gap: 8px; }
+    .beerPopup__publicLinks a { color: #67e8f9; font-weight: 800; }
+    .beerPopup__hours summary { cursor: pointer; color: #e2e8f0; font-weight: 800; }
+    .beerPopup__hours dl { display: grid; gap: 5px; margin: 10px 0 0; }
+    .beerPopup__hours dl div { display: flex; justify-content: space-between; gap: 16px; }
+    .beerPopup__hours dt { color: #a8b0bf; }
+    .beerPopup__hours dd { margin: 0; text-align: right; }
+    .beerPopup__openState { color: #fca5a5; }
+    .beerPopup__openState.is-open { color: #86efac; }
+
     .beerPopup__metaBadge--plus {
       border-color: rgba(34, 211, 238, 0.35);
       background: linear-gradient(135deg, rgba(34, 211, 238, 0.16), rgba(139, 92, 246, 0.13));
@@ -3090,7 +3242,7 @@
       }
 
       .controlInput {
-        min-height: 42px;
+        min-height: 44px;
         padding: 9px 11px;
         border-radius: 13px;
         font-size: 16px;
@@ -3511,7 +3663,7 @@
       <div id="toolbar">
         <label class="controlGroup controlGroup--suburb" for="venueSearch">
           <span>Area or venue</span>
-          <input id="venueSearch" class="controlInput" type="search" placeholder="Area or venue" autocomplete="off" />
+          <input id="venueSearch" class="controlInput" type="search" placeholder="Area or venue" aria-label="Area or venue" autocomplete="off" />
         </label>
 
         <label class="controlGroup controlGroup--beer" for="beerSearch">
@@ -3539,8 +3691,8 @@
       <div class="specialsFilterRow" aria-label="Specials filters">
         <div class="filterGroup chipRow__inline">
           <span class="filterGroup__label">Specials</span>
-          <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now">Happy hour active now</button>
-          <button class="filterChip" type="button" data-filter-chip="pint_path_specials">Pint Path specials</button>
+          <button class="filterChip" type="button" data-filter-chip="happy_hour_active_now" aria-pressed="false">Happy hour active now</button>
+          <button class="filterChip" type="button" data-filter-chip="pint_path_specials" aria-pressed="false">Pint Path specials</button>
         </div>
       </div>
 
@@ -3583,25 +3735,25 @@
           <section class="advancedFilterSection" aria-label="Freshness and verification filters">
             <span class="advancedFilterSection__title">Freshness and trust</span>
             <div class="filterGroup">
-              <button class="filterChip" type="button" data-filter-chip="recently_verified">Recently verified</button>
-              <button class="filterChip" type="button" data-filter-chip="recently_verified_near_me" data-premium-filter="true">Recently verified near me</button>
-              <button class="filterChip" type="button" data-filter-chip="verified_only" data-premium-filter="true">Verified only</button>
+              <button class="filterChip" type="button" data-filter-chip="recently_verified" aria-pressed="false">Recently verified</button>
+              <button class="filterChip" type="button" data-filter-chip="recently_verified_near_me" data-premium-filter="true" aria-pressed="false">Recently verified near me</button>
+              <button class="filterChip" type="button" data-filter-chip="verified_only" data-premium-filter="true" aria-pressed="false">Verified only</button>
             </div>
           </section>
 
           <section class="advancedFilterSection" aria-label="Price filters">
             <span class="advancedFilterSection__title">Price</span>
             <div class="filterGroup">
-              <button class="filterChip" type="button" data-filter-chip="nearest" data-premium-filter="true">Nearest</button>
-              <button class="filterChip" type="button" data-filter-chip="cheapest_near_me" data-premium-filter="true">Cheapest near me</button>
-              <button class="filterChip" type="button" data-filter-chip="under_10" data-premium-filter="true">Under A$10</button>
+              <button class="filterChip" type="button" data-filter-chip="nearest" data-premium-filter="true" aria-pressed="false">Nearest</button>
+              <button class="filterChip" type="button" data-filter-chip="cheapest_near_me" data-premium-filter="true" aria-pressed="false">Cheapest near me</button>
+              <button class="filterChip" type="button" data-filter-chip="under_10" data-premium-filter="true" aria-pressed="false">Under A$10</button>
             </div>
           </section>
 
           <section class="advancedFilterSection" aria-label="Personal filters">
             <span class="advancedFilterSection__title">Personal</span>
             <div class="filterGroup">
-              <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs" data-premium-filter="true">My saved areas</button>
+              <button class="filterChip" type="button" data-filter-chip="my_saved_suburbs" data-premium-filter="true" aria-pressed="false">My saved areas</button>
             </div>
           </section>
         </div>
@@ -3652,16 +3804,39 @@
         <div id="legendItems" class="legend__list"></div>
         <div id="legendHint" class="legend__hint"></div>
       </aside>
-      <aside id="venueDetailOverlay" class="is-hidden-panel" role="dialog" aria-live="polite" aria-labelledby="venueDetailOverlayTitle" aria-hidden="true" inert>
+      <aside id="venueDetailOverlay" class="is-hidden-panel" role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="venueDetailOverlayTitle" aria-describedby="venueDetailOverlayHint" aria-hidden="true" inert>
         <div class="venueDetailOverlay__chrome">
           <div>
             <div id="venueDetailOverlayTitle" class="venueDetailOverlay__eyebrow">Venue details</div>
-            <div class="venueDetailOverlay__hint">Close this panel to return to the map.</div>
+            <div id="venueDetailOverlayHint" class="venueDetailOverlay__hint">Close this panel to return to the map.</div>
           </div>
           <button id="closeVenueDetail" class="venueDetailOverlay__close" type="button" aria-label="Close venue details">×</button>
         </div>
         <div id="venueDetailBody" class="venueDetailOverlay__body"></div>
       </aside>
+      <dialog id="wrongPriceDialog" class="panel wrongPriceDialog" aria-labelledby="wrongPriceDialogTitle">
+        <form id="wrongPriceForm" class="form" method="dialog">
+          <h2 id="wrongPriceDialogTitle">Report an incorrect price</h2>
+          <p id="wrongPriceContext" class="muted"></p>
+          <label class="field">What is wrong?
+            <select name="reason" required>
+              <option value="price_changed">Price changed</option>
+              <option value="beer_not_available">Beer no longer available</option>
+              <option value="wrong_serving_size">Wrong serving size</option>
+              <option value="happy_hour_changed">Happy-hour details changed</option>
+              <option value="other">Something else</option>
+            </select>
+          </label>
+          <label class="field">What did you see? <span class="muted">(optional)</span>
+            <textarea name="notes" maxlength="500" placeholder="Current price, serving size, or useful detail for reviewers"></textarea>
+          </label>
+          <div id="wrongPriceStatus" class="notice" role="status" aria-live="polite" hidden></div>
+          <div class="actionRow">
+            <button class="button" type="button" data-cancel-wrong-price>Cancel</button>
+            <button class="button button--primary" type="submit">Send for review</button>
+          </div>
+        </form>
+      </dialog>
     </div>
 
     <div id="belowMapInsights" class="belowMapInsights" hidden>
@@ -3701,16 +3876,14 @@
         ? window.MELB_BEER_BOT_VIEWER_CONFIG
         : {};
     const params = new URLSearchParams(window.location.search);
+    const IS_LOCAL_VIEWER_ORIGIN = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
     const DEFAULT_GOOGLE_MAPS_KEY = viewerConfig.googleMapsApiKey || "";
     const GOOGLE_MAPS_MAP_ID = viewerConfig.googleMapsMapId || "";
     const GOOGLE_MAPS_DEMO_MAP_ID = "DEMO_MAP_ID";
-    const useConfiguredGoogleMapsMapId = params.get("useConfiguredMapId") === "1";
     const EFFECTIVE_GOOGLE_MAPS_MAP_ID =
-      params.get("googleMapsMapId") ||
-      params.get("mapId") ||
-      (useConfiguredGoogleMapsMapId && GOOGLE_MAPS_MAP_ID
-        ? GOOGLE_MAPS_MAP_ID
-        : GOOGLE_MAPS_DEMO_MAP_ID);
+      (IS_LOCAL_VIEWER_ORIGIN && (params.get("googleMapsMapId") || params.get("mapId"))) ||
+      GOOGLE_MAPS_MAP_ID ||
+      GOOGLE_MAPS_DEMO_MAP_ID;
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers)
       ? viewerConfig.trackedBeers
           .filter((beer) => beer && typeof beer === "object")
@@ -3741,12 +3914,9 @@
       { featureType: "transit", elementType: "labels.text", stylers: [{ visibility: "off" }] },
     ]);
     const GOOGLE_MAPS_KEY =
-      params.get("googleMapsKey") ||
-      window.localStorage.getItem("googleMapsKey") ||
+      (IS_LOCAL_VIEWER_ORIGIN && (params.get("googleMapsKey") || window.localStorage.getItem("googleMapsKey"))) ||
       DEFAULT_GOOGLE_MAPS_KEY;
     const BUSINESS_CONFIG = viewerConfig.business || {};
-    const PRICE_REVEAL_DAY_KEY = new Date().toISOString().slice(0, 10);
-    const PRICE_REVEAL_STORAGE_KEY = `melbBeerRevealedVenues:${PRICE_REVEAL_DAY_KEY}`;
     const LOCATION_PREFERENCE_STORAGE_KEY = "pintPathLocationPreference";
     const LOCAL_SAVED_VENUES_STORAGE_KEY = "pintPathLocalSavedVenues";
     const RECENTLY_VIEWED_STORAGE_KEY = "pintPathRecentlyViewedVenues";
@@ -3831,8 +4001,14 @@
     let savedVenueRecords = [];
     let recentlyViewedVenues = [];
     let nightPlanVenues = [];
+    let nightPlanPersistRequestedVersion = 0;
+    let nightPlanPersistCompletedVersion = 0;
+    let nightPlanPersistRunning = false;
     let activeVenueRecord = null;
+    let venueDetailRequestSequence = 0;
     let venueDetailReturnFocus = null;
+    let venueDetailInertedElements = [];
+    let wrongPriceReportContext = null;
     let initialSharedVenueId = params.get("venueId") || "";
     let initialSharedVenueOpened = false;
     let venueRailSortMode = "smart";
@@ -3855,13 +4031,12 @@
       isAdmin: false,
       ageConfirmed: false,
       priceAccessModel: "fixed_preview",
-      canRevealPrice: false,
+      freePreviewScope: "Happy hours plus the named fixed beer-price preview.",
       canUseCheapestSort: false,
       canUseBeerSearch: false,
       canUseHappyHourActiveNow: false,
       canUseVerifiedOnly: false,
     };
-    const revealedVenueIds = new Set(readJsonArray(PRICE_REVEAL_STORAGE_KEY));
     const MAP_OVERLAYS_ENABLED = true;
     const MAP_OVERLAY_STORAGE_KEY = "melbBeerMapOverlayState";
     const mobileOverlayQuery = window.matchMedia("(max-width: 900px)");
@@ -3874,15 +4049,6 @@
         }
       });
     });
-    function readJsonArray(storageKey) {
-      try {
-        const parsed = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
-        return Array.isArray(parsed) ? parsed.filter((value) => typeof value === "string") : [];
-      } catch {
-        return [];
-      }
-    }
-
     function readJsonObjectArray(storageKey) {
       try {
         const parsed = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
@@ -3900,6 +4066,15 @@
       } catch {
         // Local retention features are convenience-only; storage failures should not block the map.
       }
+    }
+
+    function getPersonalStorageKey(baseKey) {
+      const accountId = window.MelbBeerBusiness?.getAccountScopeId?.();
+      if (accountId) {
+        return window.MelbBeerBusiness.getAccountScopedStorageKey(baseKey, accountId);
+      }
+      const anonymousId = window.MelbBeerBusiness?.getAnonymousSessionId?.() || "anonymous";
+      return `${baseKey}:anonymous:${encodeURIComponent(anonymousId)}`;
     }
 
     function showToast(message) {
@@ -3938,10 +4113,6 @@
       return copied;
     }
 
-    function persistRevealedVenueIds() {
-      window.localStorage.setItem(PRICE_REVEAL_STORAGE_KEY, JSON.stringify(Array.from(revealedVenueIds)));
-    }
-
     function hasSavedLocationPreference() {
       try {
         return window.localStorage.getItem(LOCATION_PREFERENCE_STORAGE_KEY) === "enabled";
@@ -3972,9 +4143,9 @@
         const response = await window.MelbBeerBusiness.apiFetch(
           `/api/business/access?anonymousSessionId=${encodeURIComponent(anonymousSessionId)}`,
         );
-        if (response.isAuthenticated && !window.MelbBeerBusiness.getAccountContext()) {
+        if (response.isAuthenticated) {
           await window.MelbBeerBusiness.apiFetch("/api/business/account");
-        } else if (!response.isAuthenticated && window.MelbBeerBusiness.getAccountContext()) {
+        } else if (window.MelbBeerBusiness.getAccountContext()) {
           window.MelbBeerBusiness.setAccountContext(null);
         }
         businessAccess = {
@@ -3982,6 +4153,7 @@
           ...response,
         };
       } catch (error) {
+        window.MelbBeerBusiness.setAccountContext(null);
         console.warn("Could not load business access state", error);
       }
 
@@ -4559,7 +4731,7 @@
       return typeof record.getContent === "function" ? record.getContent() : record.content;
     }
 
-    async function maybeRevealVenuePrices(row, markerId) {
+    async function loadVenuePreviewPrices(row, markerId) {
       if (
         businessAccess.hasFullAccess ||
         !rowHasRevealablePrice(row)
@@ -4577,7 +4749,6 @@
 
       const response = await fetchBusinessPriceRecords({
         venueId,
-        reveal: true,
         limit: 100,
       });
 
@@ -4588,16 +4759,17 @@
         };
       }
 
-      if (response.revealed) {
+      const visiblePriceCount = Array.isArray(response.records)
+        ? response.records.filter((record) => record?.price != null).length
+        : 0;
+      if (visiblePriceCount > 0) {
         applyBusinessPriceRecordsToRow(row, response.records);
-        void trackBusinessEvent("price_view_revealed", getAnalyticsContext({
+        void trackBusinessEvent("free_preview_viewed", getAnalyticsContext({
           venueId,
           venueName: venue.name || cleaned.venue_name || null,
           suburb: venue.suburb || row.suburb || null,
-          source: "venue_detail_price_reveal",
-          visiblePriceCount: Array.isArray(response.records)
-            ? response.records.filter((record) => record?.price != null).length
-            : 0,
+          source: "venue_detail_fixed_preview",
+          visiblePriceCount,
         }));
       }
 
@@ -4605,10 +4777,15 @@
     }
 
     function hideVenueDetailOverlay() {
+      venueDetailRequestSequence += 1;
       venueDetailOverlayEl.classList.add("is-hidden-panel");
       venueDetailOverlayEl.setAttribute("aria-hidden", "true");
       venueDetailOverlayEl.inert = true;
       venueDetailBodyEl.removeAttribute("aria-busy");
+      venueDetailInertedElements.forEach((element) => {
+        element.inert = false;
+      });
+      venueDetailInertedElements = [];
       activeVenueRecord = null;
       if (venueDetailReturnFocus && typeof venueDetailReturnFocus.focus === "function" && document.contains(venueDetailReturnFocus)) {
         venueDetailReturnFocus.focus({ preventScroll: true });
@@ -4620,6 +4797,14 @@
       venueDetailOverlayEl.classList.remove("is-hidden-panel");
       venueDetailOverlayEl.setAttribute("aria-hidden", "false");
       venueDetailOverlayEl.inert = false;
+      venueDetailInertedElements = [
+        ...Array.from(document.body.children).filter((element) => element !== mainContent && element !== mapToastEl),
+        ...Array.from(mainContent.children).filter((element) => element !== mapShell),
+        ...Array.from(mapShell.children).filter((element) => element !== venueDetailOverlayEl && element !== wrongPriceDialog),
+      ].filter((element) => !element.inert);
+      venueDetailInertedElements.forEach((element) => {
+        element.inert = true;
+      });
       venueDetailBodyEl.setAttribute("aria-busy", "true");
       venueDetailBodyEl.innerHTML = `
         <div class="beerPopup">
@@ -4637,13 +4822,21 @@
         return;
       }
 
+      const requestSequence = ++venueDetailRequestSequence;
       activeVenueRecord = record;
       venueDetailReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       showVenueDetailLoading();
       try {
-        await maybeRevealVenuePrices(record.row, record.id);
+        await loadVenuePreviewPrices(record.row, record.id);
       } catch (error) {
-        console.warn("Could not reveal latest venue prices", error);
+        console.warn("Could not load the latest venue price preview", error);
+      }
+      if (
+        requestSequence !== venueDetailRequestSequence
+        || activeVenueRecord !== record
+        || venueDetailOverlayEl.classList.contains("is-hidden-panel")
+      ) {
+        return;
       }
       venueDetailBodyEl.removeAttribute("aria-busy");
       venueDetailBodyEl.innerHTML = getVenueDetailContent(record);
@@ -4666,12 +4859,29 @@
     closeVenueDetailEl.addEventListener("click", hideVenueDetailOverlay);
 
     document.addEventListener("keydown", (event) => {
+      if (wrongPriceDialog.open) {
+        return;
+      }
       if (event.key === "Escape" && !venueDetailOverlayEl.classList.contains("is-hidden-panel")) {
         hideVenueDetailOverlay();
+        return;
+      }
+      if (event.key === "Tab" && !wrongPriceDialog.open && !venueDetailOverlayEl.classList.contains("is-hidden-panel")) {
+        const focusable = Array.from(venueDetailOverlayEl.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     });
 
-    if (params.get("googleMapsKey")) {
+    if (IS_LOCAL_VIEWER_ORIGIN && params.get("googleMapsKey")) {
       window.localStorage.setItem("googleMapsKey", params.get("googleMapsKey"));
     }
 
@@ -4862,26 +5072,56 @@
       if (!reportButton) {
         return;
       }
+      wrongPriceReportContext = {
+        button: reportButton,
+        venueId: reportButton.dataset.venueId,
+        venueName: reportButton.dataset.venueName,
+        priceRecordId: reportButton.dataset.priceRecordId || null,
+        beerName: reportButton.dataset.beerName || null,
+      };
+      wrongPriceForm.reset();
+      wrongPriceStatus.hidden = true;
+      wrongPriceContext.textContent = `${wrongPriceReportContext.beerName || "Price"} at ${wrongPriceReportContext.venueName || "this venue"}.`;
+      wrongPriceDialog.showModal();
+      wrongPriceForm.reason.focus();
+    });
 
-      const notes = window.prompt("What changed? Optional note for admin review.");
+    document.querySelector("[data-cancel-wrong-price]").addEventListener("click", () => {
+      wrongPriceDialog.close("cancel");
+    });
+
+    wrongPriceDialog.addEventListener("close", () => {
+      wrongPriceReportContext?.button?.focus?.();
+      wrongPriceReportContext = null;
+    });
+
+    wrongPriceForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!wrongPriceReportContext) return;
+      const submitButton = wrongPriceForm.querySelector('button[type="submit"]');
+      const formData = new FormData(wrongPriceForm);
+      submitButton.disabled = true;
       try {
         await window.MelbBeerBusiness.apiFetch("/api/business/wrong-price-reports", {
           method: "POST",
           body: JSON.stringify({
             anonymousSessionId: window.MelbBeerBusiness.getAnonymousSessionId(),
-            venueId: reportButton.dataset.venueId,
-            venueName: reportButton.dataset.venueName,
-            priceRecordId: reportButton.dataset.priceRecordId || null,
-            beerName: reportButton.dataset.beerName || null,
-            reason: "other",
-            notes: notes || null,
+            venueId: wrongPriceReportContext.venueId,
+            venueName: wrongPriceReportContext.venueName,
+            priceRecordId: wrongPriceReportContext.priceRecordId,
+            beerName: wrongPriceReportContext.beerName,
+            reason: formData.get("reason"),
+            notes: String(formData.get("notes") || "").trim() || null,
             sourcePhotoDataUrl: null,
             sourcePhotoUrl: null,
           }),
         });
+        wrongPriceDialog.close("submitted");
         showToast("Thanks. That price has been sent for review.");
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "Could not report that price.");
+        window.MelbBeerBusiness.setStatus(wrongPriceStatus, error instanceof Error ? error.message : "Could not report that price.", true);
+      } finally {
+        submitButton.disabled = false;
       }
     });
 
@@ -4908,8 +5148,8 @@
     clearNightPlanEl.addEventListener("click", () => {
       nightPlanVenues = [];
       renderNightPlanPanel();
+      showToast(window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.() ? "Night plan cleared here. Syncing your account…" : "Night plan cleared on this device.");
       void persistAccountNightPlan();
-      showToast("Night plan cleared.");
     });
 
     if (typeof mobileOverlayQuery.addEventListener === "function") {
@@ -5033,7 +5273,7 @@
       beerChipHostEl.innerHTML = '<span class="filterGroup__label">Popular beers</span>' + FREE_PREVIEW_BEER_CHIPS
         .map(
           (beer) => `
-            <button class="filterChip" type="button" data-beer-chip="${escapeHtml(beer.query)}">
+            <button class="filterChip" type="button" data-beer-chip="${escapeHtml(beer.query)}" aria-pressed="false">
               ${escapeHtml(beer.label)}
             </button>
           `,
@@ -5216,36 +5456,54 @@
       if (!days) {
         return false;
       }
+      return window.MelbBeerMapLogic.isOpeningHoursOpenNow(days, getMelbourneNow());
+    }
 
-      const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-      const melbourneNow = getMelbourneNow();
-      const nowMinutes = melbourneNow.getHours() * 60 + melbourneNow.getMinutes();
-      const todayKey = dayNames[melbourneNow.getDay()];
-      const yesterdayKey = dayNames[(melbourneNow.getDay() + 6) % 7];
+    function safePublicHttpUrl(value) {
+      try {
+        const url = new URL(String(value || "").trim());
+        return ["https:", "http:"].includes(url.protocol) ? url.toString() : null;
+      } catch {
+        return null;
+      }
+    }
 
-      const isOpenForDay = (dayKey, allowOvernightOnly = false) => {
-        const day = isObjectRecord(days[dayKey]) ? days[dayKey] : {};
-        if (day.open !== true && day.isOpen !== true && day.closed !== false) {
-          return false;
-        }
-
-        const startMinutes = timeTextToMinutes(day.openTime || day.opens || day.startTime);
-        const endMinutes = timeTextToMinutes(day.closeTime || day.closes || day.endTime);
-        if (startMinutes == null || endMinutes == null) {
-          return false;
-        }
-
-        const overnight = startMinutes > endMinutes;
-        if (allowOvernightOnly) {
-          return overnight && nowMinutes <= endMinutes;
-        }
-
-        return overnight
-          ? nowMinutes >= startMinutes || nowMinutes <= endMinutes
-          : nowMinutes >= startMinutes && nowMinutes <= endMinutes;
-      };
-
-      return isOpenForDay(todayKey) || isOpenForDay(yesterdayKey, true);
+    function renderVenuePublicProfileMarkup(row, venue) {
+      const description = String(venue?.description || "").trim();
+      const website = safePublicHttpUrl(venue?.website);
+      const instagram = safePublicHttpUrl(venue?.instagram);
+      const phone = String(venue?.phone || "").trim();
+      const phoneHref = phone && /^[+0-9()\s.-]+$/.test(phone) ? `tel:${phone.replace(/[^+0-9]/g, "")}` : null;
+      const days = getVenueOpeningHours(row);
+      const dayLabels = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" };
+      const scheduleRows = days ? Object.entries(dayLabels).map(([key, label]) => {
+        const day = isObjectRecord(days[key]) ? days[key] : null;
+        if (!day) return "";
+        const isOpen = day.open === true || day.isOpen === true || day.closed === false;
+        const start = formatClockLabel(day.openTime || day.opens || day.startTime);
+        const end = formatClockLabel(day.closeTime || day.closes || day.endTime);
+        const hours = isOpen && start && end ? `${start}–${end}` : "Closed";
+        return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(hours)}</dd></div>`;
+      }).filter(Boolean).join("") : "";
+      const links = [
+        phoneHref ? `<a href="${escapeHtml(phoneHref)}" aria-label="Call ${escapeHtml(venue.name || "venue")}">${escapeHtml(phone)}</a>` : "",
+        website ? `<a href="${escapeHtml(website)}" target="_blank" rel="noopener noreferrer">Website</a>` : "",
+        instagram ? `<a href="${escapeHtml(instagram)}" target="_blank" rel="noopener noreferrer">Instagram</a>` : "",
+      ].filter(Boolean).join("");
+      if (!description && !links && !scheduleRows) return "";
+      const openNow = scheduleRows ? window.MelbBeerMapLogic.isOpeningHoursOpenNow(days, getMelbourneNow()) : false;
+      return `
+        <section class="beerPopup__publicProfile" aria-label="Venue contact and opening information">
+          ${description ? `<p>${escapeHtml(description)}</p>` : ""}
+          ${links ? `<div class="beerPopup__publicLinks">${links}</div>` : ""}
+          ${scheduleRows ? `
+            <details class="beerPopup__hours">
+              <summary><span class="beerPopup__openState ${openNow ? "is-open" : ""}">${openNow ? "Open now" : "Closed now"}</span> · Opening hours</summary>
+              <dl>${scheduleRows}</dl>
+            </details>
+          ` : ""}
+        </section>
+      `;
     }
 
     function hasHappyHourProbe(row) {
@@ -6111,45 +6369,63 @@
       return row;
     }
 
-    async function fetchBusinessViewerVenues(limit = 1000) {
+    async function fetchBusinessViewerVenues(pageSize = 250) {
       if (!window.MelbBeerBusiness) {
         return [];
       }
 
-      const response = await window.MelbBeerBusiness.apiFetch(`/api/business/venues?limit=${limit}`);
-      return Array.isArray(response.venues) ? response.venues : [];
+      const venues = [];
+      let offset = 0;
+      while (true) {
+        const response = await window.MelbBeerBusiness.apiFetch(`/api/business/venues?limit=${pageSize}&offset=${offset}`);
+        const page = Array.isArray(response.venues) ? response.venues : [];
+        venues.push(...page);
+        if (!response.pagination?.hasMore) break;
+        if (!page.length) {
+          throw new Error("Venue pagination stopped before every venue could be loaded.");
+        }
+        offset = Number(response.pagination.offset || offset) + page.length;
+      }
+      return [...new Map(venues.map((venue) => [venue.id, venue])).values()];
     }
 
     async function fetchBusinessPriceRecords(options = {}) {
       if (!window.MelbBeerBusiness) {
-        return { records: [], access: null, revealed: false, blocked: false };
+        return { records: [], access: null };
       }
       const records = [];
       let cursor = null;
-      let response = { records: [], access: null, revealed: false, blocked: false, nextCursor: null };
-      for (let page = 0; page < 20; page += 1) {
+      const seenCursors = new Set();
+      let response = { records: [], access: null, nextCursor: null };
+      while (true) {
         const query = new URLSearchParams();
         query.set("anonymousSessionId", window.MelbBeerBusiness.getAnonymousSessionId());
         query.set("limit", String(options.limit || 500));
         if (options.venueId) query.set("venueId", options.venueId);
-        if (options.reveal) query.set("reveal", "true");
         if (cursor) query.set("cursor", cursor);
         response = await window.MelbBeerBusiness.apiFetch(`/api/business/price-records?${query.toString()}`);
         records.push(...(Array.isArray(response.records) ? response.records : []));
-        cursor = response.nextCursor || null;
-        if (!cursor || options.venueId) break;
+        const nextCursor = response.nextCursor || null;
+        if (!nextCursor) break;
+        if (nextCursor === cursor || seenCursors.has(nextCursor)) {
+          throw new Error("Price record pagination returned a repeated cursor before completion.");
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
       }
       return { ...response, records };
     }
 
-    async function loadBusinessVenueRows() {
+    async function loadBusinessVenueRows(includeUnmappable = false) {
       const rows = [];
       let businessPriceRecords = [];
-      const allVenues = await fetchBusinessViewerVenues();
-      const priceRecordResponse = await fetchBusinessPriceRecords().catch((error) => {
-        console.warn("Approved submission price records unavailable", error);
-        return null;
-      });
+      const [allVenues, priceRecordResponse] = await Promise.all([
+        fetchBusinessViewerVenues(),
+        fetchBusinessPriceRecords().catch((error) => {
+          console.warn("Approved submission price records unavailable", error);
+          return null;
+        }),
+      ]);
 
       if (priceRecordResponse) {
         businessPriceRecords = Array.isArray(priceRecordResponse.records) ? priceRecordResponse.records : [];
@@ -6203,7 +6479,7 @@
       });
 
       const allVenueRows = allVenues
-        .filter((venue) => Boolean(getMappableVenueLatLng(venue)))
+        .filter((venue) => includeUnmappable || Boolean(getMappableVenueLatLng(venue)))
         .map((venue) => {
           const mergedRow = buildMergedVenueRow(
             venue,
@@ -6764,6 +7040,7 @@
       scopeChipEls.forEach((chipEl) => {
         const isActive = !beerSearchEl.value.trim() && chipEl.dataset.scope === activeScope;
         chipEl.classList.toggle("is-active", isActive);
+        chipEl.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
     }
 
@@ -6772,13 +7049,17 @@
 
       beerChipEls.forEach((chipEl) => {
         const chipKey = toSearchKey(chipEl.dataset.beerChip || "");
-        chipEl.classList.toggle("is-active", Boolean(activeBeerKey) && chipKey === activeBeerKey);
+        const isActive = Boolean(activeBeerKey) && chipKey === activeBeerKey;
+        chipEl.classList.toggle("is-active", isActive);
+        chipEl.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
     }
 
     function syncHighValueChipState() {
       highValueChipEls.forEach((chipEl) => {
-        chipEl.classList.toggle("is-active", activeFilterChips.has(chipEl.dataset.filterChip));
+        const isActive = activeFilterChips.has(chipEl.dataset.filterChip);
+        chipEl.classList.toggle("is-active", isActive);
+        chipEl.setAttribute("aria-pressed", isActive ? "true" : "false");
       });
       syncAdvancedFilterLocks();
     }
@@ -6875,6 +7156,38 @@
     function getLegendConfig(filteredRows, viewState) {
       const capturedCount = filteredRows.filter((row) => hasCapturedBeerData(row)).length;
       const missingCount = filteredRows.length - capturedCount;
+
+      if (!googleMapInstance) {
+        const resultCounts = viewState.beerQuery ? getBeerResultCounts(filteredRows, viewState) : null;
+        const listTitle = viewState.beerQuery
+          ? viewState.beerQuery
+          : viewState.scope === "needs_data"
+            ? "Needs data"
+            : "Venue directory";
+        return {
+          title: listTitle,
+          subtitle: viewState.beerQuery
+            ? "Directory cards separate verified, unknown, unavailable, and locked prices without treating unknown prices as cheap."
+            : "The full venue directory remains usable when map tiles cannot load, including listings that do not have coordinates yet.",
+          stats: viewState.beerQuery
+            ? [
+                `${filteredRows.length} matching venues`,
+                `${resultCounts?.priced ?? 0} with verified prices`,
+                `${resultCounts?.unknown ?? 0} price unknown`,
+              ]
+            : [
+                `${filteredRows.length} listed venues`,
+                `${missingCount} still need data`,
+              ],
+          items: [
+            ["neutral", "Free listing", "Captured venue information and community-verified details."],
+            ["pro", "Premium venue", "Paid venue with premium discovery treatment."],
+            ["codes", "Accepts Pint Path codes", "Staff can enter a Pint Path member code for supported rewards."],
+            ["needs", "Needs data", "Beer prices, happy-hour details, or source evidence still need verification."],
+          ],
+          hint: "Search or filter the directory, then open any card for details. Prices may change; check with the venue before ordering.",
+        };
+      }
 
       if (viewState.filters.includes("best_options")) {
         return {
@@ -7441,6 +7754,7 @@
         `;
       const happyHourMarkup = happyHourDetails ? renderHappyHourPopupMarkup(happyHourDetails) : "";
       const specialMarkup = renderSpecialPopupMarkup(specials);
+      const publicProfileMarkup = renderVenuePublicProfileMarkup(row, venue);
 
       return `
         <div class="beerPopup beerPopup--tier-${escapeHtml(tierMeta.tier)}">
@@ -7455,6 +7769,7 @@
               ${summaryBadges}
             </div>
           </div>
+          ${publicProfileMarkup}
           <div class="beerPopup__simpleSummary">
             <div class="beerPopup__simpleLine">
               <strong>${escapeHtml(happyHourBrief || (knownPriceCount ? `${knownPriceCount} known price${knownPriceCount === 1 ? "" : "s"}` : "Needs a price check"))}</strong>
@@ -7649,7 +7964,7 @@
       let allVenueRows = [];
       let venueRows = [];
       try {
-        ({ allVenueRows, venueRows } = await loadBusinessVenueRows());
+        ({ allVenueRows, venueRows } = await loadBusinessVenueRows(true));
       } catch (error) {
         renderMapFailure(`${message} Venue list mode could not load venue data. Refresh to try again.`);
         venueRailTitleEl.textContent = "Venue list unavailable";
@@ -7758,7 +8073,7 @@
     }
 
     function readStoredVenues(storageKey, maxItems) {
-      const venues = readJsonObjectArray(storageKey)
+      const venues = readJsonObjectArray(getPersonalStorageKey(storageKey))
         .map(normalizeStoredVenue)
         .filter(Boolean);
       return venues.slice(0, maxItems);
@@ -7769,7 +8084,7 @@
         .map(normalizeStoredVenue)
         .filter(Boolean)
         .slice(0, maxItems);
-      writeJsonObjectArray(storageKey, normalized);
+      writeJsonObjectArray(getPersonalStorageKey(storageKey), normalized);
       return normalized;
     }
 
@@ -7799,8 +8114,8 @@
         .slice(0, MAX_NIGHT_PLAN_STOPS);
     }
 
-    function getNightPlanSavedItemPayload() {
-      const stops = nightPlanVenues.slice(0, MAX_NIGHT_PLAN_STOPS);
+    function getNightPlanSavedItemPayload(sourceVenues = nightPlanVenues) {
+      const stops = sourceVenues.slice(0, MAX_NIGHT_PLAN_STOPS);
       return {
         itemType: "night_plan",
         itemId: NIGHT_PLAN_ACCOUNT_ITEM_ID,
@@ -7973,7 +8288,11 @@
         ? nightPlanVenues
         : [...nightPlanVenues, snapshot].slice(0, MAX_NIGHT_PLAN_STOPS);
       renderNightPlanPanel();
-      showToast(alreadyPlanned ? "Already in your night plan." : "Added to your night plan.");
+      showToast(alreadyPlanned
+        ? "Already in your night plan."
+        : window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.()
+          ? "Added here. Syncing your night plan to your account…"
+          : "Added to the night plan on this device.");
       if (!alreadyPlanned) {
         void persistAccountNightPlan();
       }
@@ -7986,8 +8305,8 @@
     function removeVenueFromNightPlan(venueId) {
       nightPlanVenues = nightPlanVenues.filter((venue) => venue.id !== venueId);
       renderNightPlanPanel();
+      showToast(window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.() ? "Removed here. Syncing your account…" : "Removed from the night plan on this device.");
       void persistAccountNightPlan();
-      showToast("Removed from your night plan.");
       if (activeVenueRecord) {
         venueDetailBodyEl.innerHTML = getVenueDetailContent(activeVenueRecord);
       }
@@ -8008,25 +8327,37 @@
       if (!window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.()) {
         return;
       }
-
+      nightPlanPersistRequestedVersion += 1;
+      if (nightPlanPersistRunning) return;
+      nightPlanPersistRunning = true;
       try {
-        if (nightPlanVenues.length === 0) {
-          await window.MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
-            method: "DELETE",
-            body: JSON.stringify({
-              itemType: "night_plan",
-              itemId: NIGHT_PLAN_ACCOUNT_ITEM_ID,
-            }),
-          });
-          return;
+        while (nightPlanPersistCompletedVersion < nightPlanPersistRequestedVersion) {
+          const version = nightPlanPersistRequestedVersion;
+          const snapshot = nightPlanVenues.map((venue) => ({ ...venue }));
+          try {
+            if (snapshot.length === 0) {
+              await window.MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
+                method: "DELETE",
+                body: JSON.stringify({ itemType: "night_plan", itemId: NIGHT_PLAN_ACCOUNT_ITEM_ID }),
+              });
+            } else {
+              await window.MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
+                method: "POST",
+                body: JSON.stringify(getNightPlanSavedItemPayload(snapshot)),
+              });
+            }
+            if (version === nightPlanPersistRequestedVersion) showToast("Night plan synced to your account.");
+          } catch (error) {
+            console.warn("Could not persist night plan to account", error);
+            if (version === nightPlanPersistRequestedVersion) {
+              showToast("Night plan is saved on this device, but account sync failed. Make another edit or retry after reconnecting.");
+            }
+          }
+          nightPlanPersistCompletedVersion = version;
         }
-
-        await window.MelbBeerBusiness.apiFetch("/api/business/account/saved-items", {
-          method: "POST",
-          body: JSON.stringify(getNightPlanSavedItemPayload()),
-        });
-      } catch (error) {
-        console.warn("Could not persist night plan to account", error);
+      } finally {
+        nightPlanPersistRunning = false;
+        if (nightPlanPersistCompletedVersion < nightPlanPersistRequestedVersion) void persistAccountNightPlan();
       }
     }
 
@@ -8200,7 +8531,10 @@
 
       window.__melbBeerBotMarkerClustererPromise = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer/dist/index.min.js";
+        script.src = "https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer@2.6.2/dist/index.min.js";
+        script.integrity = "sha384-EVwzhfwoZgEjEQ2ffmvGXq5cOevVMtRZTog22siWEV3jCmD0BahdPQHx8y/VIhbi";
+        script.crossOrigin = "anonymous";
+        script.referrerPolicy = "no-referrer";
         script.async = true;
         script.defer = true;
         script.addEventListener("load", () => {
@@ -8310,14 +8644,20 @@
     async function init() {
       try {
         syncAuthenticatedNavLinks();
+        const googleMapsReady = loadGoogleMapsScript().then(
+          () => null,
+          (error) => error,
+        );
+        await refreshBusinessAccess();
         recentlyViewedVenues = readStoredVenues(RECENTLY_VIEWED_STORAGE_KEY, MAX_RECENT_VENUES);
         nightPlanVenues = readStoredVenues(NIGHT_PLAN_STORAGE_KEY, MAX_NIGHT_PLAN_STOPS);
-        const googleMapsReady = loadGoogleMapsScript();
-        await refreshBusinessAccess();
         await loadSavedVenueState();
         renderRecentlyViewedPanel();
         renderNightPlanPanel();
-        await googleMapsReady;
+        const googleMapsLoadError = await googleMapsReady;
+        if (googleMapsLoadError) {
+          throw googleMapsLoadError;
+        }
         if (googleMapsAuthFailed) {
           throw new Error("Google Maps authentication failed");
         }
@@ -8792,6 +9132,7 @@
                 </div>
               `;
               const specialMarkup = renderSpecialPopupMarkup(liveSpecials);
+              const publicProfileMarkup = renderVenuePublicProfileMarkup(item, venue);
               const detailRecord = { id: markerId, row: item, venue };
               const detailVenueId = getRecordVenueId(detailRecord);
               const isSavedVenue = savedVenueIds.has(detailVenueId);
@@ -8811,6 +9152,7 @@
                     <div class="beerPopup__address">${safeAddress}</div>
                     <div class="beerPopup__metaStrip">${tierBadgeMarkup}${metaBadges}</div>
                   </div>
+                  ${publicProfileMarkup}
                   ${summaryMarkup}
                   ${featuredBeerMarkup}
                   <div class="beerPopup__section">
@@ -9145,9 +9487,15 @@
 
             if (filter === "my_saved_suburbs" && savedSuburbFilters.length === 0 && window.MelbBeerBusiness.hasAuthenticatedSessionHint()) {
               const account = await window.MelbBeerBusiness.apiFetch("/api/business/account").catch(() => null);
-              savedSuburbFilters = (account?.savedItems || [])
-                .filter((item) => item.itemType === "suburb")
-                .map((item) => item.label);
+              savedSuburbFilters = [...new Set([
+                ...(account?.savedItems || []).filter((item) => item.itemType === "suburb").map((item) => item.label),
+                ...(account?.preferences?.preferredSuburbs || []),
+              ].filter(Boolean))];
+              if (savedSuburbFilters.length === 0) {
+                showToast("No saved areas yet. Add preferred suburbs in Account → Preferences.");
+                activeFilterChips.delete(filter);
+                return;
+              }
             }
 
             if ((filter === "happy_hour_near_me" || filter === "recently_verified_near_me") && activeFilterChips.has(filter)) {
@@ -9228,8 +9576,12 @@
           });
         }
       } catch (error) {
-        fail("Viewer failed", error);
         const message = error instanceof Error ? error.message : "Viewer failed before the map could load.";
+        if (!GOOGLE_MAPS_KEY && message === "Missing Google Maps browser key") {
+          console.info("Google Maps is not configured; using venue list mode.");
+        } else {
+          fail("Viewer failed", error);
+        }
         try {
           await renderVenueListFallback(message);
         } catch (fallbackError) {

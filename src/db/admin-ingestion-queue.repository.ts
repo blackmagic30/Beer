@@ -17,6 +17,10 @@ interface RawAdminIngestionQueueRecord {
   sourceType: AdminIngestionSourceType;
   sourceUrl: string | null;
   imageDataUrl: string | null;
+  hasImageData: number;
+  imageRetentionExpiresAt: string | null;
+  imageRedactedAt: string | null;
+  imageRedactionReason: string | null;
   note: string | null;
   status: AdminIngestionStatus;
   venueNameGuess: string | null;
@@ -38,6 +42,7 @@ interface CreateAdminIngestionInput {
   sourceType: AdminIngestionSourceType;
   sourceUrl: string | null;
   imageDataUrl: string | null;
+  imageRetentionExpiresAt?: string | null;
   note: string | null;
   status: AdminIngestionStatus;
   venueNameGuess: string | null;
@@ -45,6 +50,14 @@ interface CreateAdminIngestionInput {
   overallConfidence: number | null;
   extractedBeers: AdminIngestionBeerRecord[];
   errorMessage: string | null;
+}
+
+const DEFAULT_PENDING_IMAGE_RETENTION_DAYS = 90;
+
+function defaultImageRetentionExpiry(createdAt: string): string {
+  const expiry = new Date(createdAt);
+  expiry.setUTCDate(expiry.getUTCDate() + DEFAULT_PENDING_IMAGE_RETENTION_DAYS);
+  return expiry.toISOString();
 }
 
 function parseBeerRecords(value: string | null): AdminIngestionBeerRecord[] | null {
@@ -79,6 +92,10 @@ function parseCrawlerFeedback(value: string | null): AdminIngestionCrawlerFeedba
 export class AdminIngestionQueueRepository {
   constructor(private readonly db: BetterSqlite3.Database) {}
 
+  transaction<T>(work: () => T): T {
+    return this.db.transaction(work)();
+  }
+
   create(input: CreateAdminIngestionInput): AdminIngestionQueueRecord {
     const timestamp = new Date().toISOString();
     const id = randomUUID();
@@ -92,6 +109,7 @@ export class AdminIngestionQueueRepository {
           source_type,
           source_url,
           image_data_url,
+          image_retention_expires_at,
           note,
           status,
           venue_name_guess,
@@ -108,6 +126,7 @@ export class AdminIngestionQueueRepository {
           @sourceType,
           @sourceUrl,
           @imageDataUrl,
+          @imageRetentionExpiresAt,
           @note,
           @status,
           @venueNameGuess,
@@ -126,6 +145,9 @@ export class AdminIngestionQueueRepository {
         sourceType: input.sourceType,
         sourceUrl: input.sourceUrl,
         imageDataUrl: input.imageDataUrl,
+        imageRetentionExpiresAt: input.imageDataUrl
+          ? input.imageRetentionExpiresAt ?? defaultImageRetentionExpiry(timestamp)
+          : null,
         note: input.note,
         status: input.status,
         venueNameGuess: input.venueNameGuess,
@@ -150,6 +172,10 @@ export class AdminIngestionQueueRepository {
           source_type AS sourceType,
           source_url AS sourceUrl,
           image_data_url AS imageDataUrl,
+          CASE WHEN image_data_url IS NULL THEN 0 ELSE 1 END AS hasImageData,
+          image_retention_expires_at AS imageRetentionExpiresAt,
+          image_redacted_at AS imageRedactedAt,
+          image_redaction_reason AS imageRedactionReason,
           note,
           status,
           venue_name_guess AS venueNameGuess,
@@ -182,7 +208,11 @@ export class AdminIngestionQueueRepository {
                 venue_name AS venueName,
                 source_type AS sourceType,
                 source_url AS sourceUrl,
-                image_data_url AS imageDataUrl,
+                NULL AS imageDataUrl,
+                CASE WHEN image_data_url IS NULL THEN 0 ELSE 1 END AS hasImageData,
+                image_retention_expires_at AS imageRetentionExpiresAt,
+                image_redacted_at AS imageRedactedAt,
+                image_redaction_reason AS imageRedactionReason,
                 note,
                 status,
                 venue_name_guess AS venueNameGuess,
@@ -211,7 +241,11 @@ export class AdminIngestionQueueRepository {
                 venue_name AS venueName,
                 source_type AS sourceType,
                 source_url AS sourceUrl,
-                image_data_url AS imageDataUrl,
+                NULL AS imageDataUrl,
+                CASE WHEN image_data_url IS NULL THEN 0 ELSE 1 END AS hasImageData,
+                image_retention_expires_at AS imageRetentionExpiresAt,
+                image_redacted_at AS imageRedactedAt,
+                image_redaction_reason AS imageRedactionReason,
                 note,
                 status,
                 venue_name_guess AS venueNameGuess,
@@ -246,57 +280,201 @@ export class AdminIngestionQueueRepository {
     return Number(row?.total || 0);
   }
 
+  recoverStaleReviewClaims(input: { staleBefore: string; now: string }): number {
+    return this.db.prepare(
+      `UPDATE admin_ingestion_queue
+       SET status = 'pending_review',
+           review_claim_token = NULL,
+           review_claimed_at = NULL,
+           updated_at = @now,
+           error_message = 'A stale review claim was recovered; review and retry.'
+       WHERE status IN ('publishing', 'rejecting')
+         AND (review_claimed_at IS NULL OR review_claimed_at <= @staleBefore)`,
+    ).run(input).changes;
+  }
+
+  claimPendingReview(
+    id: string,
+    action: "publish" | "reject",
+    claimToken: string,
+    claimedAt: string,
+    staleBefore?: string,
+  ): boolean {
+    const result = this.db.prepare(
+      `UPDATE admin_ingestion_queue
+       SET status = @status,
+           review_claim_token = @claimToken,
+           review_claimed_at = @claimedAt,
+           updated_at = @claimedAt
+       WHERE id = @id
+         AND (
+           (status = 'pending_review' AND review_claim_token IS NULL)
+           OR (
+             status IN ('publishing', 'rejecting')
+             AND (review_claimed_at IS NULL OR review_claimed_at <= @staleBefore)
+           )
+         )`,
+    ).run({
+      id,
+      status: action === "publish" ? "publishing" : "rejecting",
+      claimToken,
+      claimedAt,
+      staleBefore: staleBefore ?? claimedAt,
+    });
+    return result.changes === 1;
+  }
+
+  releaseReviewClaim(id: string, claimToken: string, updatedAt: string): boolean {
+    const result = this.db.prepare(
+      `UPDATE admin_ingestion_queue
+       SET status = 'pending_review',
+           review_claim_token = NULL,
+           review_claimed_at = NULL,
+           updated_at = @updatedAt
+       WHERE id = @id
+         AND status IN ('publishing', 'rejecting')
+         AND review_claim_token = @claimToken`,
+    ).run({ id, claimToken, updatedAt });
+    return result.changes === 1;
+  }
+
   markPublished(
     id: string,
+    claimToken: string,
     reviewBeers: AdminIngestionBeerRecord[],
     note: string | null,
     crawlerFeedback: AdminIngestionCrawlerFeedback,
     updatedAt: string,
   ): void {
-    this.db
+    const result = this.db
       .prepare(
         `UPDATE admin_ingestion_queue
          SET status = 'published',
              review_beers_json = @reviewBeersJson,
              crawler_feedback_json = @crawlerFeedbackJson,
              image_data_url = NULL,
+             image_redacted_at = @updatedAt,
+             image_redaction_reason = 'review_completed',
+             review_claim_token = NULL,
+             review_claimed_at = NULL,
+             error_message = NULL,
              note = COALESCE(@note, note),
              updated_at = @updatedAt,
              published_at = @updatedAt
-         WHERE id = @id`,
+         WHERE id = @id
+           AND status = 'publishing'
+           AND review_claim_token = @claimToken`,
       )
       .run({
         id,
+        claimToken,
         reviewBeersJson: JSON.stringify(reviewBeers),
         crawlerFeedbackJson: JSON.stringify(crawlerFeedback),
         note,
         updatedAt,
       });
+    if (result.changes !== 1) {
+      throw new Error("Source ingestion publish claim is no longer current");
+    }
   }
 
   markRejected(
     id: string,
+    claimToken: string,
     note: string | null,
     crawlerFeedback: AdminIngestionCrawlerFeedback,
     updatedAt: string,
   ): void {
-    this.db
+    const result = this.db
       .prepare(
         `UPDATE admin_ingestion_queue
          SET status = 'rejected',
              image_data_url = NULL,
+             image_redacted_at = @updatedAt,
+             image_redaction_reason = 'review_completed',
+             review_claim_token = NULL,
+             review_claimed_at = NULL,
+             error_message = NULL,
              note = COALESCE(@note, note),
              crawler_feedback_json = @crawlerFeedbackJson,
              updated_at = @updatedAt,
              rejected_at = @updatedAt
-         WHERE id = @id`,
+         WHERE id = @id
+           AND status = 'rejecting'
+           AND review_claim_token = @claimToken`,
       )
       .run({
         id,
+        claimToken,
         note,
         crawlerFeedbackJson: JSON.stringify(crawlerFeedback),
         updatedAt,
       });
+    if (result.changes !== 1) {
+      throw new Error("Source ingestion rejection claim is no longer current");
+    }
+  }
+
+  purgePendingReviewImages(input: { now: string; hardCutoff: string }): {
+    purged: number;
+    purgedCharacters: number;
+    heldForOpenReview: number;
+    pastHardCap: number;
+    retainedCharacters: number;
+  } {
+    const before = this.getPendingReviewImageRetentionStats(input);
+    const purge = this.db.transaction(() => {
+      const size = this.db.prepare(
+        `SELECT COALESCE(sum(length(image_data_url)), 0) AS characters
+         FROM admin_ingestion_queue
+         WHERE status = 'pending_review'
+           AND image_data_url IS NOT NULL
+           AND created_at <= ?`,
+      ).get(input.hardCutoff) as { characters: number };
+      const result = this.db.prepare(
+        `UPDATE admin_ingestion_queue
+         SET image_data_url = NULL,
+             image_redacted_at = @now,
+             image_redaction_reason = 'open_review_hard_cap',
+             updated_at = @now
+         WHERE status = 'pending_review'
+           AND image_data_url IS NOT NULL
+           AND created_at <= @hardCutoff`,
+      ).run(input);
+      return { purged: result.changes, purgedCharacters: Number(size.characters ?? 0) };
+    })();
+    const after = this.getPendingReviewImageRetentionStats(input);
+    return {
+      ...purge,
+      heldForOpenReview: after.heldForOpenReview,
+      pastHardCap: before.pastHardCap,
+      retainedCharacters: after.retainedCharacters,
+    };
+  }
+
+  getPendingReviewImageRetentionStats(input: { now: string; hardCutoff: string }): {
+    heldForOpenReview: number;
+    pastHardCap: number;
+    retainedCharacters: number;
+  } {
+    const row = this.db.prepare(
+      `SELECT
+         sum(CASE
+           WHEN image_retention_expires_at IS NOT NULL
+            AND image_retention_expires_at <= @now
+            AND created_at > @hardCutoff
+           THEN 1 ELSE 0 END) AS held,
+         sum(CASE WHEN created_at <= @hardCutoff THEN 1 ELSE 0 END) AS past_hard_cap,
+         COALESCE(sum(length(image_data_url)), 0) AS retained_characters
+       FROM admin_ingestion_queue
+       WHERE status = 'pending_review'
+         AND image_data_url IS NOT NULL`,
+    ).get(input) as { held: number | null; past_hard_cap: number | null; retained_characters: number | null };
+    return {
+      heldForOpenReview: Number(row?.held ?? 0),
+      pastHardCap: Number(row?.past_hard_cap ?? 0),
+      retainedCharacters: Number(row?.retained_characters ?? 0),
+    };
   }
 
   private mapRow(row: RawAdminIngestionQueueRecord): AdminIngestionQueueRecord {
@@ -307,6 +485,10 @@ export class AdminIngestionQueueRepository {
       sourceType: row.sourceType,
       sourceUrl: row.sourceUrl,
       imageDataUrl: row.imageDataUrl,
+      hasImageData: Boolean(row.hasImageData),
+      imageRetentionExpiresAt: row.imageRetentionExpiresAt,
+      imageRedactedAt: row.imageRedactedAt,
+      imageRedactionReason: row.imageRedactionReason,
       note: row.note,
       status: row.status,
       venueNameGuess: row.venueNameGuess,

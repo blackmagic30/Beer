@@ -19,6 +19,7 @@ describe("website accessibility polish", () => {
     expect(css).toContain(".skipLink");
     expect(css).toContain('[aria-invalid="true"]');
     expect(css).toContain("min-height: 44px");
+    expect(css).not.toContain(".venueLogoutButton {\n    grid-column: 1 / -1;\n    min-height: 36px");
   });
 
   it("keeps account and recovery forms understandable to assistive tech", () => {
@@ -42,7 +43,9 @@ describe("website accessibility polish", () => {
     const portalHtml = readFile("viewer/venue-portal.html");
 
     expect(mapHtml).toContain('id="map" role="region" aria-label="Interactive Pint Path beer map"');
-    expect(mapHtml).toContain('role="dialog" aria-live="polite" aria-labelledby="venueDetailOverlayTitle"');
+    expect(mapHtml).toContain('role="dialog" aria-modal="true" aria-live="polite" aria-labelledby="venueDetailOverlayTitle"');
+    expect(mapHtml).toContain('id="wrongPriceDialog"');
+    expect(mapHtml).toContain("venueDetailInertedElements");
     expect(mapHtml).toContain("venueDetailReturnFocus");
     expect(portalHtml).toContain('class="tabNav" role="tablist" aria-label="Bar dashboard sections"');
     expect(portalHtml).toContain("function configurePortalTabs");

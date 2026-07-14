@@ -15,7 +15,7 @@
   <meta property="og:image" content="https://pintpath.au/assets/pint-path-logo.png" />
   <link rel="stylesheet" href="../business.css" />
   <script src="/config.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js" integrity="sha384-PsnFqJ58vyp7buRfuvdS2SrjRdUYinBv6lWwJXx3xQ17hWefo/UkwXowVBT53ubG" crossorigin="anonymous" referrerpolicy="no-referrer" defer></script>
   <script src="/business.js" defer></script>
 </head>
 <body>
@@ -24,7 +24,17 @@
       <div class="eyebrow">Secure sign in</div>
       <h1>Finishing your Pint Path login</h1>
       <p id="callbackStatus" class="lead">Checking your Supabase session and returning you to Pint Path...</p>
-      <a class="button" href="/account.html">Back to account</a>
+      <form id="callbackAcceptanceForm" class="form" hidden>
+        <fieldset class="field consentField" aria-describedby="callbackAcceptanceHelp">
+          <legend>Before creating your Pint Path account</legend>
+          <label class="consentLine"><input name="ageConfirmed" type="checkbox" required /> <span>I confirm I am 18 or older.</span></label>
+          <label class="consentLine"><input name="termsAccepted" type="checkbox" required /> <span>I accept the current <a href="/terms.html" target="_blank" rel="noopener">Terms and Conditions</a>.</span></label>
+          <label class="consentLine"><input name="privacyAccepted" type="checkbox" required /> <span>I accept the current <a href="/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
+        </fieldset>
+        <p id="callbackAcceptanceHelp" class="helperCopy">Your signup acceptance was missing or expired on this device. Confirm it here; Pint Path never treats editable provider profile metadata as consent.</p>
+        <button id="callbackAcceptanceButton" class="button button--primary" type="submit">Accept and finish account</button>
+      </form>
+      <button id="callbackCancelButton" class="button" type="button">Cancel and sign out</button>
     </section>
   </main>
 
@@ -46,17 +56,117 @@
       );
     }
 
-    function redirectWithError(message) {
+    function callbackAuthFlowNonce() {
+      return new URLSearchParams(window.location.search).get("authFlow") || "";
+    }
+
+    function redirectWithError(message, options = {}) {
+      if (options.clearAcceptance) MelbBeerBusiness.clearPendingLegalAcceptance();
       const accountUrl = new URL("/account.html", window.location.origin);
       accountUrl.searchParams.set("authError", message || "Login failed. Please try again.");
       window.location.replace(accountUrl.toString());
     }
 
-    window.addEventListener("DOMContentLoaded", async () => {
+    function redirectToBillingRecovery(error) {
+      if (error?.recovery) {
+        window.sessionStorage.setItem("pintPathBillingRecoveryOptions", JSON.stringify(error.recovery));
+      }
+      const accountUrl = new URL("/account.html", window.location.origin);
+      accountUrl.searchParams.set("billingRecovery", "1");
+      accountUrl.searchParams.set("authError", error?.message || "Account access is suspended. Billing-only recovery remains available.");
+      window.location.replace(accountUrl.toString());
+    }
+
+    function needsBillingRecovery(error) {
+      return (error?.code === "ACCOUNT_SUSPENDED_BILLING_RECOVERY" && error?.recovery?.eligible === true)
+        || error?.details?.billingRecoveryEligible === true;
+    }
+
+    function needsFirstAccountAcceptance(error) {
+      return error?.legalAcceptanceMismatch === true || (
+        [403, 409].includes(Number(error?.status))
+        && /accept the current terms and privacy policy/i.test(String(error?.message || ""))
+      );
+    }
+
+    function showCallbackAcceptance() {
+      document.getElementById("callbackStatus").textContent = "Confirm your age and accept the current policies to finish signing in or creating this account.";
+      document.getElementById("callbackAcceptanceForm").hidden = false;
+      document.querySelector('#callbackAcceptanceForm [name="ageConfirmed"]')?.focus();
+    }
+
+    async function cancelCallbackLogin() {
+      const button = document.getElementById("callbackCancelButton");
+      button.disabled = true;
+      MelbBeerBusiness.clearPendingLegalAcceptance();
+      MelbBeerBusiness.clearSensitiveAuthReturnState();
+      try {
+        await MelbBeerBusiness.getSupabaseClient()?.auth.signOut({ scope: "local" }).catch(() => null);
+      } finally {
+        MelbBeerBusiness.setAuthToken(null);
+        window.localStorage.removeItem("pintPathAuthReturnTo");
+        redirectWithError("Sign-in cancelled. No policy choices were saved.", { clearAcceptance: true });
+      }
+    }
+
+    async function finishCallbackLogin(authFlowNonce = callbackAuthFlowNonce()) {
       const status = document.getElementById("callbackStatus");
+      const result = await MelbBeerBusiness.syncSupabaseSession({
+        applyPendingLegalAcceptance: true,
+        authFlowNonce,
+      });
+      if (!result.synced) {
+        throw new Error(result.error || "No Supabase session was returned. Please try signing in again.");
+      }
+
+      status.textContent = "Signed in. Taking you back...";
+      const returnPath = safeReturnPath();
+      const sensitiveReturnPath = MelbBeerBusiness.consumeSensitiveAuthReturnPath();
+      if (returnPath.startsWith("/reset-password.html") || returnPath.startsWith("/reset-password")) {
+        MelbBeerBusiness.markPasswordRecoverySession(result.account?.id);
+      }
+      let destination = returnPath;
+      if (!returnPath.startsWith("/reset-password") && result.account?.role === "venue_manager") {
+        const venueReturnPath = sensitiveReturnPath || returnPath;
+        destination = venueReturnPath.startsWith("/venue-portal.html") ? venueReturnPath : "/venue-portal.html";
+      }
+      window.localStorage.removeItem("pintPathAuthReturnTo");
+      window.location.replace(destination);
+    }
+
+    window.addEventListener("DOMContentLoaded", async () => {
+      const acceptanceForm = document.getElementById("callbackAcceptanceForm");
+      document.getElementById("callbackCancelButton").addEventListener("click", cancelCallbackLogin);
+      acceptanceForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = document.getElementById("callbackAcceptanceButton");
+        button.disabled = true;
+        try {
+          const binding = await MelbBeerBusiness.setPendingLegalAcceptanceForCurrentSession({
+            ageConfirmed: acceptanceForm.ageConfirmed.checked,
+            termsAccepted: acceptanceForm.termsAccepted.checked,
+            privacyAccepted: acceptanceForm.privacyAccepted.checked,
+            termsVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION,
+            privacyVersion: MelbBeerBusiness.LEGAL_POLICY_VERSION,
+          }, { authFlowNonce: callbackAuthFlowNonce() });
+          await finishCallbackLogin(binding.authFlowNonce);
+        } catch (error) {
+          button.disabled = false;
+          if (needsBillingRecovery(error)) {
+            redirectToBillingRecovery(error);
+            return;
+          }
+          if (needsFirstAccountAcceptance(error)) {
+            showCallbackAcceptance();
+            return;
+          }
+          redirectWithError(error.message);
+        }
+      });
+
       const errorMessage = callbackErrorMessage();
       if (errorMessage) {
-        redirectWithError(errorMessage);
+        redirectWithError(errorMessage, { clearAcceptance: true });
         return;
       }
 
@@ -74,20 +184,16 @@
           }
         }
 
-        const result = await MelbBeerBusiness.syncSupabaseSession();
-        if (!result.synced) {
-          throw new Error(result.error || "No Supabase session was returned. Please try signing in again.");
-        }
-
-        await MelbBeerBusiness.applyPendingLegalAcceptance();
-        status.textContent = "Signed in. Taking you back...";
-        const returnPath = safeReturnPath();
-        const destination = returnPath.startsWith("/reset-password.html") || returnPath.startsWith("/reset-password")
-          ? returnPath
-          : result.account?.role === "venue_manager" ? "/venue-portal.html" : returnPath;
-        window.localStorage.removeItem("pintPathAuthReturnTo");
-        window.location.replace(destination);
+        await finishCallbackLogin(callbackAuthFlowNonce());
       } catch (error) {
+        if (needsBillingRecovery(error)) {
+          redirectToBillingRecovery(error);
+          return;
+        }
+        if (needsFirstAccountAcceptance(error)) {
+          showCallbackAcceptance();
+          return;
+        }
         redirectWithError(error.message);
       }
     });

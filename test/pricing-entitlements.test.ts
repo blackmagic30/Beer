@@ -36,7 +36,13 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain('href="/missions.html"');
     expect(pricingHtml).toContain("A$4.99");
     expect(pricingHtml).toContain("A$50");
-    expect(pricingHtml).toContain("Every verified beer price with no daily reveal limit.");
+    expect(pricingHtml).toContain("Every verified beer price, beyond the fixed free preview.");
+    expect(envExample).not.toContain("FREE_PRICE_REVEALS_PER_DAY");
+    expect(readRepoFile("viewer/config.example.js")).not.toContain("freePriceRevealsPerDay");
+    expect(readRepoFile("src/config/env.ts")).not.toContain("FREE_PRICE_REVEALS_PER_DAY");
+    expect(readme).not.toContain("FREE_PRICE_REVEALS_PER_DAY");
+    expect(readme).not.toContain("freePriceRevealsPerDay");
+    expect(readme).toContain("The free preview is fixed rather than quota-based");
     expect(pricingHtml).toContain("Value rings on map pins");
     expect(pricingHtml).toContain("Cheapest-night filters");
     expect(pricingHtml).toContain("Rotating discount pass for venue specials");
@@ -79,7 +85,9 @@ describe("premium pricing and entitlements", () => {
     expect(pricingHtml).toContain("Pro placement never fakes popularity or reviews.");
     expect(pricingHtml).toContain('href="/venue-portal.html"');
     expect(pricingHtml).toContain('id="venuePricingSection"');
-    expect(pricingHtml).toContain('id="venuePricingSection" class="venuePricingSection" aria-labelledby="venuePricingTitle" hidden');
+    expect(pricingHtml).toContain('id="venuePricingSection" class="venuePricingSection" role="tabpanel" aria-labelledby="venuePricingTab venuePricingTitle" hidden');
+    expect(pricingHtml).toContain('id="userPricingSection" class="consumerPricingSection" role="tabpanel"');
+    expect(pricingHtml).toContain('class="pricingAudienceSwitch" role="tablist"');
     expect(pricingHtml).toContain('class="venuePricingSection"');
     expect(pricingHtml).toContain('params.get("audience") === "users"');
     expect(pricingHtml).toContain('role === "venue_manager" || role === "admin"');

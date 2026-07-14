@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 
+import compression from "compression";
 import express from "express";
 import helmet from "helmet";
 import type { Request, RequestHandler, Response } from "express";
@@ -11,8 +12,10 @@ import { AppError } from "./lib/errors.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
 import { redactSecrets } from "./lib/redact.js";
+import { getSessionAuthorization } from "./lib/session-cookie.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { notFoundHandler } from "./middleware/not-found.js";
+import { createRateLimiter } from "./middleware/rate-limit.js";
 import { captureRawBody } from "./middleware/raw-body.js";
 import type { BusinessService } from "./modules/business/business.service.js";
 
@@ -20,9 +23,37 @@ type LazyRouters = {
   adminRouter: RequestHandler;
   businessRouter: RequestHandler;
   businessService: BusinessService;
+  getOffsiteBackupLastSuccess: () => string | null;
+  shutdown: () => Promise<void>;
 };
 
 let lazyRoutersPromise: Promise<LazyRouters> | undefined;
+
+export const LARGE_JSON_BODY_LIMIT_BYTES = 16 * 1024 * 1024;
+const LARGE_JSON_UPLOAD_PATHS = new Set([
+  "/api/business/submissions",
+  "/api/admin/captures/menu-photo-ocr",
+  "/api/admin/ingestions/queue",
+]);
+
+function acceptsLargeJsonPayload(req: Request): boolean {
+  return ["POST", "PUT", "PATCH"].includes(req.method) && LARGE_JSON_UPLOAD_PATHS.has(req.path);
+}
+
+function hasSyntacticallyValidSession(req: Request): boolean {
+  const authorization = getSessionAuthorization(req);
+  return Boolean(authorization && /^Bearer\s+\S{20,}$/i.test(authorization));
+}
+
+function deploymentMetadata() {
+  const rawCommit = process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown";
+  const rawVersion = process.env.PINT_PATH_VERSION ?? process.env.npm_package_version ?? "0.1.0";
+  return {
+    version: /^[a-z0-9._-]{1,80}$/i.test(rawVersion) ? rawVersion : "unknown",
+    commitSha: /^[a-f0-9]{7,64}$/i.test(rawCommit) ? rawCommit : "unknown",
+    environment: env.NODE_ENV,
+  };
+}
 
 async function buildLazyRouters(): Promise<LazyRouters> {
   console.info("Initializing backend services...");
@@ -60,54 +91,152 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
     database,
   );
-  const businessService = new BusinessService(businessRepository, env, beerCatalogRepository, {
-    extract: (input) => adminService.ocrMenuPhotos(input),
-  });
+  const deletionTombstoneWriter = env.NODE_ENV === "production"
+    ? async (tombstone: { requestId: string; userId: string; completedAt: string }) => {
+        if (
+          !env.SUPABASE_URL ||
+          !env.OFFSITE_BACKUP_SUPABASE_URL ||
+          !env.OFFSITE_BACKUP_SERVICE_ROLE_KEY
+        ) {
+          throw new Error("Independent account-deletion ledger is not configured.");
+        }
+        const { appendAccountDeletionTombstone } = await import("./lib/offsite-backup.js");
+        await appendAccountDeletionTombstone({
+          sourceSupabaseUrl: env.SUPABASE_URL,
+          destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+          destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+          bucketName: env.OFFSITE_BACKUP_BUCKET,
+        }, tombstone);
+      }
+    : undefined;
+  const businessService = new BusinessService(
+    businessRepository,
+    env,
+    beerCatalogRepository,
+    { extract: (input) => adminService.ocrMenuPhotos(input) },
+    undefined,
+    deletionTombstoneWriter,
+  );
+  const schedulerStops: Array<() => Promise<void>> = [];
+  const schedulerOwner = `${process.pid}:${crypto.randomUUID()}`;
+  const backgroundTasks = new Set<Promise<unknown>>();
+  const trackBackgroundTask = (task: Promise<unknown>) => {
+    backgroundTasks.add(task);
+    void task.finally(() => backgroundTasks.delete(task));
+  };
   businessService.logStartupSummary();
   const recordOperationalState = (key: string, value: Record<string, unknown>) => {
     const recordedAt = new Date().toISOString();
     businessRepository.setSystemState(`job:${key}`, { ...value, recordedAt }, recordedAt);
   };
-  const evidenceMaintenanceStartedAt = new Date().toISOString();
-  recordOperationalState("evidence_retention", { state: "running", startedAt: evidenceMaintenanceStartedAt });
-  void businessService.purgeExpiredSourceEvidence().then((result) => {
-    recordOperationalState("evidence_retention", {
-      state: result.failed ? "failed" : "succeeded",
-      startedAt: evidenceMaintenanceStartedAt,
-      completedAt: new Date().toISOString(),
-      ...result,
+  const runEvidenceRetention = async () => {
+    const now = new Date();
+    const leaseKey = "lease:evidence_retention";
+    const acquired = businessRepository.acquireSystemLease({
+      key: leaseKey,
+      owner: schedulerOwner,
+      now: now.toISOString(),
+      leaseUntil: new Date(now.getTime() + 55 * 60 * 1000).toISOString(),
     });
-    if (result.purged || result.failed) {
-      console.info("Source evidence retention maintenance completed", result);
+    if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
+    try {
+      const evidence = await businessService.purgeExpiredSourceEvidence(100);
+      const ingestionImages = adminService.purgeQueuedIngestionImages(now.toISOString());
+      const privacyRetention = businessService.runPrivacyRetention();
+      return { ...evidence, ingestionImages, privacyRetention };
+    } finally {
+      businessRepository.releaseSystemLease({ key: leaseKey, owner: schedulerOwner, now: new Date().toISOString() });
     }
-  }).catch((error) => {
-    recordOperationalState("evidence_retention", {
-      state: "failed",
-      startedAt: evidenceMaintenanceStartedAt,
-      completedAt: new Date().toISOString(),
-      error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Evidence retention failed",
-    });
-  });
+  };
+  if (env.NODE_ENV === "test") {
+    trackBackgroundTask(runEvidenceRetention().then((result) => {
+      recordOperationalState("evidence_retention", {
+        state: "succeeded",
+        trigger: "startup",
+        completedAt: new Date().toISOString(),
+        ...result,
+      });
+    }).catch((error) => {
+      recordOperationalState("evidence_retention", {
+        state: "failed",
+        trigger: "startup",
+        completedAt: new Date().toISOString(),
+        error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Evidence retention failed",
+      });
+    }));
+  }
   if (env.NODE_ENV !== "test") {
     const { scheduleMissionMaintenance } = await import("./lib/mission-maintenance.js");
-    scheduleMissionMaintenance({
-      run: () => businessService.runMissionMaintenance(),
+    const evidenceScheduler = scheduleMissionMaintenance({
+      run: runEvidenceRetention,
+      intervalMinutes: 60,
+      onStatus: (status) => recordOperationalState("evidence_retention", status.state === "succeeded"
+        ? { ...status, ...status.result }
+        : status),
+    });
+    schedulerStops.push(evidenceScheduler.stop);
+    const scheduler = scheduleMissionMaintenance({
+      run: async () => {
+        const now = new Date();
+        const leaseKey = "lease:mission_maintenance";
+        const acquired = businessRepository.acquireSystemLease({
+          key: leaseKey,
+          owner: schedulerOwner,
+          now: now.toISOString(),
+          leaseUntil: new Date(now.getTime() + 25 * 60 * 1000).toISOString(),
+        });
+        if (!acquired) return { skipped: true, reason: "lease_held_by_another_instance" };
+        try {
+          return businessService.runMissionMaintenance();
+        } finally {
+          businessRepository.releaseSystemLease({ key: leaseKey, owner: schedulerOwner, now: new Date().toISOString() });
+        }
+      },
       intervalMinutes: 30,
       onStatus: (status) => recordOperationalState("mission_maintenance", { ...status }),
     });
+    schedulerStops.push(scheduler.stop);
   }
-  if (env.NODE_ENV === "production" && env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (
+    env.NODE_ENV === "production" &&
+    env.SUPABASE_URL &&
+    env.SUPABASE_SERVICE_ROLE_KEY &&
+    env.OFFSITE_BACKUP_SUPABASE_URL &&
+    env.OFFSITE_BACKUP_SERVICE_ROLE_KEY
+  ) {
     const { scheduleOffsiteBackups } = await import("./lib/offsite-backup.js");
-    scheduleOffsiteBackups({
+    const scheduler = scheduleOffsiteBackups({
       databasePath: env.DATABASE_PATH,
       evidencePath: env.SOURCE_EVIDENCE_STORAGE_DIR,
-      supabaseUrl: env.SUPABASE_URL,
-      serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+      sourceSupabaseUrl: env.SUPABASE_URL,
+      sourceServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+      destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+      destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
       bucketName: env.OFFSITE_BACKUP_BUCKET,
       intervalHours: env.OFFSITE_BACKUP_INTERVAL_HOURS,
       retentionDays: env.OFFSITE_BACKUP_RETENTION_DAYS,
-      onStatus: (status) => recordOperationalState("offsite_backup", status),
+      acquireLease: () => {
+        const now = new Date();
+        return businessRepository.acquireSystemLease({
+          key: "lease:offsite_backup",
+          owner: schedulerOwner,
+          now: now.toISOString(),
+          leaseUntil: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+        });
+      },
+      releaseLease: () => {
+        businessRepository.releaseSystemLease({
+          key: "lease:offsite_backup",
+          owner: schedulerOwner,
+          now: new Date().toISOString(),
+        });
+      },
+      onStatus: (status) => {
+        recordOperationalState("offsite_backup", status);
+        if (status.state === "succeeded") recordOperationalState("offsite_backup_success", status);
+      },
     });
+    schedulerStops.push(scheduler.stop);
   }
   if (env.NODE_ENV === "production" && env.REPORT_DELIVERY_SCHEDULE_ENABLED) {
     const {
@@ -117,7 +246,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     if (env.REPORT_EMAIL_MODE !== "resend" || !env.RESEND_API_KEY || !env.REPORT_EMAIL_FROM) {
       throw new Error("Monthly report scheduling requires Resend delivery configuration.");
     }
-    scheduleMonthlyReportDelivery({
+    const scheduler = scheduleMonthlyReportDelivery({
       generator: businessService,
       repository: businessRepository,
       provider: createResendReportEmailProvider({ apiKey: env.RESEND_API_KEY }),
@@ -130,6 +259,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       checkIntervalMinutes: env.REPORT_DELIVERY_CHECK_INTERVAL_MINUTES,
       onStatus: (status) => recordOperationalState("monthly_report_delivery", status),
     });
+    schedulerStops.push(scheduler.stop);
   }
 
   console.info("Backend services initialized.");
@@ -138,6 +268,19 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     adminRouter: createAdminRouter(adminService, businessService),
     businessRouter: createBusinessRouter(businessService),
     businessService,
+    getOffsiteBackupLastSuccess: () => {
+      const state = businessRepository.getSystemState<{ completedAt?: unknown }>("job:offsite_backup_success");
+      return typeof state?.value.completedAt === "string" ? state.value.completedAt : null;
+    },
+    shutdown: async () => {
+      await Promise.allSettled(schedulerStops.splice(0).map((stop) => stop()));
+      if (backgroundTasks.size > 0) {
+        await Promise.allSettled([...backgroundTasks]);
+      }
+      const { shutdownRateLimitRedis } = await import("./middleware/rate-limit.js");
+      await shutdownRateLimitRedis();
+      database.close();
+    },
   };
 }
 
@@ -158,8 +301,8 @@ function safeJsonForHtml(value: unknown): string {
   return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
 
-function getStaticAssetCacheControl(filePath: string): string {
-  if (env.NODE_ENV !== "production") {
+export function getStaticAssetCacheControl(filePath: string, nodeEnv = env.NODE_ENV): string {
+  if (nodeEnv !== "production") {
     return "no-store";
   }
 
@@ -170,7 +313,13 @@ function getStaticAssetCacheControl(filePath: string): string {
     return "no-store";
   }
 
-  if ([".js", ".css", ".txt", ".xml", ".webmanifest"].includes(extension)) {
+  if ([".js", ".css"].includes(extension)) {
+    // These files are deliberately unversioned in viewer HTML. Revalidate on
+    // every navigation so a deploy cannot pair new markup with hour-stale code.
+    return "public, max-age=0, must-revalidate";
+  }
+
+  if ([".txt", ".xml", ".webmanifest"].includes(extension)) {
     return "public, max-age=300, stale-while-revalidate=3600";
   }
 
@@ -304,6 +453,14 @@ export async function initializeAppServices(): Promise<void> {
   await getLazyRouters();
 }
 
+export async function shutdownAppServices(): Promise<void> {
+  const active = lazyRoutersPromise;
+  lazyRoutersPromise = undefined;
+  if (!active) return;
+  const routers = await active.catch(() => null);
+  await routers?.shutdown();
+}
+
 function createLazyMount(selector: (routers: LazyRouters) => RequestHandler): RequestHandler {
   return async (req, res, next) => {
     try {
@@ -383,27 +540,30 @@ export function createApp() {
   app.use(
     helmet({
       crossOriginEmbedderPolicy: false,
+      xFrameOptions: { action: "deny" },
       contentSecurityPolicy: {
         useDefaults: true,
         directives: {
           "default-src": ["'self'"],
           "base-uri": ["'self'"],
           "object-src": ["'none'"],
-          "frame-ancestors": ["'self'"],
+          "frame-ancestors": ["'none'"],
           "form-action": ["'self'", "https://checkout.stripe.com"],
           "script-src": [
             "'self'",
             (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`,
             "https://maps.googleapis.com",
             "https://maps.gstatic.com",
-            "https://cdn.jsdelivr.net",
+            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js",
+            "https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer@2.6.2/dist/index.min.js",
           ],
           "script-src-elem": [
             "'self'",
             (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`,
             "https://maps.googleapis.com",
             "https://maps.gstatic.com",
-            "https://cdn.jsdelivr.net",
+            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.103.0/dist/umd/supabase.min.js",
+            "https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer@2.6.2/dist/index.min.js",
           ],
           "script-src-attr": ["'none'"],
           "style-src": ["'self'", (_req, res) => `'nonce-${String((res as Response).locals.cspNonce)}'`, "https://fonts.googleapis.com"],
@@ -431,6 +591,10 @@ export function createApp() {
       referrerPolicy: { policy: "strict-origin-when-cross-origin" },
     }),
   );
+  app.use(compression({
+    threshold: 1024,
+    filter: (req, res) => !req.path.startsWith("/api/") && compression.filter(req, res),
+  }));
   app.use((_req, res, next) => {
     res.setHeader("Permissions-Policy", "camera=(self), geolocation=(self), microphone=(), payment=(self)");
     next();
@@ -441,8 +605,11 @@ export function createApp() {
     if (origin && isTrustedOrigin(req, origin, allowedOrigins)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Stripe-Signature,X-Requested-With");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type,Authorization,Stripe-Signature,X-Requested-With,X-Pint-Path-Reauth-Token,X-Pint-Path-Current-Password",
+      );
     }
 
     if (req.method === "OPTIONS") {
@@ -479,33 +646,86 @@ export function createApp() {
     }
     next();
   });
-  const standardJsonParser = express.json({ limit: "1mb", verify: captureRawBody });
-  const imageJsonParser = express.json({ limit: "50mb", verify: captureRawBody });
+  const largePayloadPreparseLimiter = createRateLimiter({
+    windowMs: 10 * 60 * 1000,
+    max: 12,
+    keyPrefix: "preparse:large-json",
+    keyGenerator: (req) => req.ip ?? req.socket.remoteAddress ?? "unknown",
+  });
   app.use((req, res, next) => {
-    const acceptsImagePayload =
-      req.path === "/api/business/submissions" ||
-      req.path === "/api/admin/ocr" ||
-      req.path.startsWith("/api/admin/ingestions");
-    (acceptsImagePayload ? imageJsonParser : standardJsonParser)(req, res, next);
+    if (!acceptsLargeJsonPayload(req)) {
+      next();
+      return;
+    }
+
+    const rawContentLength = req.get("content-length");
+    const contentLength = rawContentLength == null ? null : Number(rawContentLength);
+    if (
+      contentLength != null &&
+      (!Number.isSafeInteger(contentLength) || contentLength < 0 || contentLength > LARGE_JSON_BODY_LIMIT_BYTES)
+    ) {
+      next(new AppError("Request body is too large.", 413));
+      return;
+    }
+
+    // Reject anonymous and obviously malformed credentials before buffering a
+    // multi-megabyte base64 envelope. Full session and role validation remains
+    // in the mounted route after parsing.
+    if (!hasSyntacticallyValidSession(req)) {
+      next(new AppError("Authentication required.", 401));
+      return;
+    }
+
+    largePayloadPreparseLimiter(req, res, next);
+  });
+  const standardJsonParser = express.json({ limit: "1mb", verify: captureRawBody });
+  const imageJsonParser = express.json({ limit: LARGE_JSON_BODY_LIMIT_BYTES, verify: captureRawBody });
+  app.use((req, res, next) => {
+    (acceptsLargeJsonPayload(req) ? imageJsonParser : standardJsonParser)(req, res, next);
   });
   app.use(express.urlencoded({ extended: true, limit: "1mb", verify: captureRawBody }));
 
   app.get("/health", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     res.json(
       success({
         service: "pint-path",
         status: "ok",
+        deployment: deploymentMetadata(),
       }),
     );
   });
 
   app.get("/ready", async (_req, res, next) => {
     try {
-      await getLazyRouters();
-      res.json(
+      res.setHeader("Cache-Control", "no-store");
+      const { businessService, getOffsiteBackupLastSuccess } = await getLazyRouters();
+      const [readiness, rateLimiterRedis, offsiteBackup] = await Promise.all([
+        businessService.getOperationalReadiness(),
+        import("./middleware/rate-limit.js").then(({ probeRateLimitRedis }) => probeRateLimitRedis()),
+        import("./lib/offsite-backup.js").then(({ probeOffsiteBackupReadiness }) => (
+          probeOffsiteBackupReadiness({
+            sourceSupabaseUrl: env.SUPABASE_URL,
+            destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+            destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+            bucketName: env.OFFSITE_BACKUP_BUCKET,
+            lastSuccessfulAt: getOffsiteBackupLastSuccess(),
+            maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
+            required: env.NODE_ENV === "production",
+          })
+        )),
+      ]);
+      const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok";
+      res.status(ready ? 200 : 503).json(
         success({
           service: "pint-path",
-          status: "ready",
+          status: ready ? "ready" : "not_ready",
+          deployment: deploymentMetadata(),
+          dependencies: {
+            ...readiness.dependencies,
+            rateLimiterRedis,
+            offsiteBackup,
+          },
         }),
       );
     } catch (error) {
@@ -533,6 +753,7 @@ export function createApp() {
           contributorUnlockDays: env.CONTRIBUTOR_UNLOCK_DAYS,
           demoBillingMode: env.DEMO_BILLING_MODE,
           fieldTestMode: env.FIELD_TEST_MODE,
+          legalPolicyVersion: publicConfig.legalPolicyVersion,
           pricing: {
             monthly: PREMIUM_PRICING.monthlyLabel,
             yearly: PREMIUM_PRICING.yearlyLabel,

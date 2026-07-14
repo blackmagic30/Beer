@@ -55,6 +55,9 @@ describe("business route hardening", () => {
       'router.post("/account/saved-items", writeLimiter',
       'router.delete("/account/saved-items", writeLimiter',
     ].forEach((route) => expect(source).toContain(route));
+
+    expect(source).toContain('router.get("/verification-candidates", lookupLimiter');
+    expect(source).toContain('router.post("/submissions/:id/verifications", writeLimiter');
   });
 
   it("does not let caller-controlled anonymous session ids or auth headers split rate limit buckets", () => {

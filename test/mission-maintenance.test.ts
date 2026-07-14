@@ -76,6 +76,27 @@ describe("mission maintenance scheduler", () => {
     scheduler.stop();
   });
 
+  it("waits for an in-flight run before stop resolves", async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    const run = vi.fn(() => new Promise<void>((resolve) => {
+      release = resolve;
+    }));
+    const scheduler = scheduleMissionMaintenance({ run, intervalMinutes: 30 });
+    expect(run).toHaveBeenCalledOnce();
+
+    let stopped = false;
+    const stopPromise = scheduler.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    release?.();
+    await stopPromise;
+    expect(stopped).toBe(true);
+  });
+
   it("unrefs its interval and ignores status callback errors", async () => {
     const unref = vi.fn();
     const interval = { unref } as unknown as NodeJS.Timeout;

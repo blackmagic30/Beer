@@ -11,7 +11,7 @@ struct SettingsView: View {
                     SectionHeader(
                         eyebrow: "Configuration",
                         title: "Backend connection",
-                        subtitle: "The native app reuses the existing BeerMap/Pint Path API and data.",
+                        subtitle: "The native app reuses the existing Pint Path API and data.",
                         systemImage: "server.rack"
                     )
                     row("API base URL", AppConfig.apiBaseURL.absoluteString)
@@ -41,7 +41,7 @@ struct SettingsView: View {
                     SectionHeader(
                         eyebrow: "Safety",
                         title: "Responsible use",
-                        subtitle: "BeerMap is 18+ only. Prices and availability can change, and venues may refuse service under RSA obligations.",
+                        subtitle: "Pint Path is 18+ only. Prices and availability can change, and venues may refuse service under RSA obligations.",
                         systemImage: "checkmark.shield.fill"
                     )
                     Label("Location is opt-in and one-time where used.", systemImage: "location.circle.fill")

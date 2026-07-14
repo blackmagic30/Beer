@@ -20,6 +20,23 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).not.toContain("grant truncate");
   });
 
+  it("guards every optional legacy relation so the clean migration chain does not require it", () => {
+    const sql = migration("20260712013512_harden_browser_table_grants.sql");
+
+    for (const relation of [
+      "call_logs",
+      "call_queue",
+      "call_results",
+      "guinness_prices",
+      "venue_billing",
+      "venues",
+    ]) {
+      expect(sql).toContain(`to_regclass('public.${relation}') is not null`);
+    }
+    expect(sql).toContain("execute 'drop policy if exists \"public read\" on public.call_results'");
+    expect(sql).toContain("execute 'revoke all on table public.venues from anon, authenticated'");
+  });
+
   it("keeps user uploads private and prevents normal users from self-verifying uploads", () => {
     const sql = migration("20260520000000_harden_auth_upload_rls.sql");
 

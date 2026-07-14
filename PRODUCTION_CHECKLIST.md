@@ -31,15 +31,18 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 ## Required Production Environment
 
 - `NODE_ENV=production`
-- `PUBLIC_BASE_URL=https://pintpath.au` or the production HTTPS origin.
+- `PUBLIC_BASE_URL=https://pintpath.au`. The current production validator intentionally rejects preview domains and alternate canonical hosts.
 - Supabase Auth site URL is `https://pintpath.au` and redirect URLs include `https://pintpath.au/auth/callback`.
 - `DATABASE_PATH` points to a persistent Railway volume path.
+- `TRUST_PROXY_HOPS=1` for the current single Railway proxy hop; do not use the obsolete `TRUST_PROXY` variable.
 - `ADMIN_EMAILS` is set to the exact admin owner email list before enabling admin access. If the official ABN/admin email is pending, leave it blank and confirm admin routes return `403`.
 - `REQUIRE_ADMIN_MFA_IN_PRODUCTION=true`.
 - `ADMIN_MFA_MAX_AGE_MINUTES=720` or a stricter value.
 - `REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION=true`.
 - `GOOGLE_MAPS_API_KEY` is set and HTTP-referrer restricted to the live domain.
 - `GOOGLE_MAPS_MAP_ID` is set to a JavaScript/vector Map ID from Google Maps Platform.
+- `GOOGLE_PLACES_API_KEY` is set as a server-only key restricted to Places/Geocoding APIs.
+- `OPENAI_API_KEY` is set as the server-only menu-evidence extraction key.
 - `REPORT_TIMEZONE=Australia/Melbourne`.
 - Keep `REPORT_EMAIL_MODE=disabled` and `REPORT_DELIVERY_SCHEDULE_ENABLED=false` until the Resend domain, sending-only key, sender, and monitored reply path are configured and a targeted staging delivery passes.
 - Before claiming automatic delivery, set `REPORT_EMAIL_MODE=resend`, verify only active email-verified manager assignments receive the report, then set `REPORT_DELIVERY_SCHEDULE_ENABLED=true` and confirm `job:monthly_report_delivery` succeeds. Counter staff must remain excluded.
@@ -47,11 +50,13 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false` for normal production. If it is ever set to `true`, record the incident reason, owner, expiry time, and rollback plan.
 - `SOURCE_EVIDENCE_SIGNING_SECRET` is a unique 32+ character random secret.
 - `SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300` or shorter for production.
+- `POS_WEBHOOK_SIGNING_SECRET` is a different unique 32+ character random secret.
 - `DEMO_BILLING_MODE=false` unless a private beta intentionally enables demo billing with `ALLOW_DEMO_BILLING_IN_PRODUCTION=true`.
 - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`.
-- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, and `STRIPE_PRO_PRICE_ID` are set before enabling paid checkout.
-- `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set if OAuth quick login is enabled.
-- `SUPABASE_SERVICE_ROLE_KEY` stays server-side only and is never exposed in public config.
+- With `DEMO_BILLING_MODE=false`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY`, and `STRIPE_PRO_PRICE_ID` are all required at startup. There is no production env-only billing-off mode.
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are all required in production for provider-backed authentication and private evidence storage. The service-role key stays server-side and is never exposed in public config.
+- `OFFSITE_BACKUP_SUPABASE_URL` and `OFFSITE_BACKUP_SERVICE_ROLE_KEY` point to a genuinely independent project/provider, not the production Supabase origin.
+- `OFFSITE_BACKUP_BUCKET=pintpath-backups`, with the configured interval and retention reviewed against the release RPO.
 - Supabase Auth leaked-password protection is enabled.
 - Supabase live project is not on deprecated Postgres 14.
 - `ANALYTICS_MIN_BUCKET_SIZE` is at least `5`; use a higher value for paid venue analytics if needed.
@@ -63,6 +68,7 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 - Confirm `src/db/schema.sql` contains any new tables/indexes needed by the release.
 - Confirm the app can initialize a fresh local database from `src/db/schema.sql`.
 - If Supabase-backed app writes are enabled, apply and review migrations in `supabase/migrations/`.
+- Run `ops/supabase/independent-backup-project-storage.sql` only against the separate backup project; the production migration chain must not create `pintpath-backups`.
 - Confirm any newly created Supabase tables have intentional Data API exposure/grants plus RLS; do not assume public-schema tables are automatically exposed.
 - Confirm Supabase RLS policies block anonymous uploads/verifications and protect private profile/activity data.
 - Confirm the private Supabase Storage bucket `beermap-source-evidence` exists, is not public, and has owner-only object policies.
@@ -83,15 +89,15 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 
 - Open the public site logged out.
 - Confirm map loads and no admin/debug UI is visible.
-- Open a venue and confirm exact prices are redacted/limited for anonymous users.
-- Directly request `/api/business/price-records` logged out and confirm it does not leak all prices.
+- Open several venues and confirm anonymous users always receive the fixed free preview while non-preview prices stay redacted.
+- Directly request `/api/business/price-records` logged out and confirm only happy hours and the named preview-beer pint prices are exact.
 - Create/login a normal test user.
 - Confirm 18+ flow.
 - Confirm uploads require login and store the authenticated user, not a client-supplied user id.
 - Confirm users cannot verify their own uploads.
 - Confirm signed-in Account page can download a quick account export and that the JSON does not include raw evidence URLs, raw tokens, passwords, or exact stored upload coordinates.
 - Confirm signed-in Account page can create an account deletion-review request and that the request appears in the admin support/feedback queue as high priority.
-- Confirm free reveal limit is enforced server-side.
+- Confirm repeated venue opens do not widen the fixed free preview or expose the full catalogue.
 - Submit venue data and confirm it is pending.
 - Log in as admin and approve/reject a submission.
 - Confirm points are awarded only after approval.
@@ -115,7 +121,7 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 ## Monitoring And Alerting Checklist
 
 - Configure Railway/app uptime monitoring for `/health` and `/ready`.
-- Record incident owner/on-call contact: `TODO: owner name/email/phone`.
+- Before deployment, record the incident owner and on-call escalation contact in the private operations system; do not commit personal contact details to this repository.
 - Target beta RPO: `24 hours` until provider PITR is verified. Target beta RTO: `4 hours` until restore drill is proven.
 - Configure automated Railway volume/database backup and alert if the newest backup is older than the agreed RPO.
 - Run one staging restore drill before full-scale public launch and record the date/commit/source backup.
@@ -137,7 +143,7 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
   - `DEMO_BILLING_MODE=false`
   - `ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false`
   - `FIELD_TEST_MODE=false`
-  - remove Stripe price IDs to disable checkout
+- Do not remove Stripe price IDs while `DEMO_BILLING_MODE=false`; production validation requires all five Stripe values. There is no production env-only checkout-off switch, so stop checkout by rolling back/redeploying a known-good release or shipping a controlled change that removes its entry points.
 - If schema/data is impacted, stop the app, restore the pre-deploy DB backup, then redeploy the previous commit.
 - After rollback, verify `/health`, `/ready`, map load, account login, admin access, and price gating.
 

@@ -50,8 +50,6 @@
             <option value="stale">Stale data</option>
             <option value="no_data">No data</option>
             <option value="missing_happy_hour">Missing happy hour</option>
-            <option value="most_requested">Most requested</option>
-            <option value="high_demand">High demand</option>
           </select>
           </label>
         </div>
@@ -75,7 +73,9 @@
         </div>
       </div>
       <p id="missionsHelp" class="helperCopy missionHelp">Tip: try an area like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.</p>
-      <div id="missionsList" class="list missionList"></div>
+      <div id="missionsStatus" class="notice" role="status" aria-live="polite" aria-atomic="true">Loading missions...</div>
+      <div id="missionsList" class="list missionList" aria-busy="true"></div>
+      <button id="retryMissionsButton" class="button" type="button" hidden>Retry loading missions</button>
     </section>
 
     <p class="footerCopy">Mission points change with data freshness: recent updates are worth less, stale updates are worth more, and venues with no data are highest value. Points only unlock after review and location proof near the venue.</p>
@@ -85,8 +85,14 @@
     let missionCache = [];
     let searchTimer = null;
     let missionLocation = null;
+    let missionRequestController = null;
+    let missionRequestId = 0;
+    let missionAreaRequestId = 0;
+    let missionPagination = { total: 0, limit: 50, offset: 0, hasMore: false };
+    let savedMissionAreas = [];
     const INITIAL_MISSION_COUNT = 5;
     const MISSION_PAGE_SIZE = 5;
+    const MISSION_SERVER_PAGE_SIZE = 50;
     let visibleMissionCount = INITIAL_MISSION_COUNT;
 
     function $(id) {
@@ -182,13 +188,16 @@
       const filteredMissions = missionCache.filter((mission) => missionMatches(mission, query));
       const missions = orderedMissionsForDisplay(filteredMissions);
       const visibleMissions = missions.slice(0, visibleMissionCount);
-      const hiddenCount = Math.max(0, missions.length - visibleMissions.length);
+      const totalMissionCount = Math.max(missions.length, Number(missionPagination.total || 0));
+      const hiddenCount = Math.max(0, totalMissionCount - visibleMissions.length);
 
       missionsHelp.textContent = query
         ? `Showing missions matching "${query}". You can search partial area names, venue names, or reasons like stale prices and happy hour.`
         : missionLocation?.source === "area_lookup"
           ? `Showing missions within ${missionRadiusSelect.value} km of ${missionLocation.label}.`
-        : "Tip: try an area like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.";
+        : missionSort.value === "saved"
+          ? "Showing missions in the areas saved to your account. If this is empty, save a suburb in Account preferences or choose another sort."
+          : "Tip: try an area like Fitzroy, Sandringham, or South Melbourne, or search for a venue name.";
 
       missionsList.innerHTML = missions.length
         ? visibleMissions.map((mission) => {
@@ -216,6 +225,11 @@
           const acceptAttribute = submissionPending || alreadyAccepted
             ? ""
             : ` data-mission="${escapeHtml(mission.id)}"`;
+          const reservationCopy = alreadyAccepted
+            ? mission.reservationExpiresAt
+              ? `Reserved to your account until ${MelbBeerBusiness.formatDate(mission.reservationExpiresAt)}.`
+              : "Reserved to your account for 24 hours after acceptance."
+            : "";
 
           return `
             <article class="listItem missionCard">
@@ -233,12 +247,16 @@
               </div>
               <div class="missionCard__actionCopy">${escapeHtml(mission.freshnessLabel || "Freshness unknown")} · Last verified: ${escapeHtml(MelbBeerBusiness.formatDate(mission.lastVerifiedAt))}</div>
               <div class="missionCard__actionCopy">Suggested action: ${escapeHtml(suggestedAction)}</div>
-              <a class="button button--primary missionCard__action" href="${escapeHtml(actionHref)}"${acceptAttribute}>${actionLabel}</a>
+              ${alreadyAccepted ? `<div class="missionCard__actionCopy">${escapeHtml(reservationCopy)} Complete it before the reservation expires.</div>` : ""}
+              <div class="actionRow">
+                <a class="button button--primary missionCard__action" href="${escapeHtml(actionHref)}"${acceptAttribute}>${actionLabel}</a>
+                ${alreadyAccepted ? `<button class="button" type="button" data-release-mission="${escapeHtml(mission.id)}">Release mission</button>` : ""}
+              </div>
             </article>
           `;
         }).join("") + (hiddenCount ? `
           <div class="missionLoadMore">
-            <span class="helperCopy">Showing ${visibleMissions.length} of ${missions.length} missions.</span>
+            <span class="helperCopy">Showing ${visibleMissions.length} of ${totalMissionCount} missions.</span>
             <button id="loadMoreMissionsButton" class="button" type="button">Load more</button>
           </div>
         ` : "")
@@ -273,10 +291,37 @@
           }
         });
       });
+      missionsList.querySelectorAll("[data-release-mission]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          if (!window.confirm("Release this mission so another contributor can accept it?")) return;
+          button.disabled = true;
+          button.textContent = "Releasing...";
+          try {
+            await MelbBeerBusiness.apiFetch(`/api/business/missions/${encodeURIComponent(button.dataset.releaseMission)}/accept`, {
+              method: "DELETE",
+            });
+            MelbBeerBusiness.setStatus(missionsStatus, "Mission released.");
+            await loadMissions();
+          } catch (error) {
+            button.disabled = false;
+            button.textContent = "Release mission";
+            MelbBeerBusiness.setStatus(missionsStatus, error.message || "Mission could not be released.", true);
+          }
+        });
+      });
       const loadMoreButton = $("loadMoreMissionsButton");
       if (loadMoreButton) {
-        loadMoreButton.addEventListener("click", () => {
-          visibleMissionCount += MISSION_PAGE_SIZE;
+        loadMoreButton.addEventListener("click", async () => {
+          if (visibleMissionCount < missions.length) {
+            visibleMissionCount += MISSION_PAGE_SIZE;
+            renderMissions();
+            return;
+          }
+          if (!missionPagination.hasMore) return;
+          loadMoreButton.disabled = true;
+          loadMoreButton.textContent = "Loading...";
+          const loaded = await loadMissions({ append: true });
+          if (loaded) visibleMissionCount += MISSION_PAGE_SIZE;
           renderMissions();
         });
       }
@@ -300,10 +345,19 @@
       useMissionLocationButton.textContent = "Location on";
     }
 
-    async function loadMissions() {
+    async function loadMissions(options = {}) {
+      const append = options.append === true;
+      missionRequestController?.abort();
+      const controller = new AbortController();
+      missionRequestController = controller;
+      const requestId = ++missionRequestId;
+      missionsList.setAttribute("aria-busy", "true");
+      if (!append) retryMissionsButton.hidden = true;
+      MelbBeerBusiness.setStatus(missionsStatus, append ? "Loading more missions..." : "Loading current missions...");
       const params = new URLSearchParams({
         sort: missionSort.value,
-        limit: "200",
+        limit: String(MISSION_SERVER_PAGE_SIZE),
+        offset: String(append ? missionCache.length : 0),
       });
       const query = suburbFilter.value.trim();
       if (query && missionLocation?.source !== "area_lookup") {
@@ -314,20 +368,50 @@
         params.set("longitude", String(missionLocation.longitude));
         params.set("radiusKm", missionRadiusSelect.value);
       }
-      const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?${params.toString()}`);
-      missionCache = data.missions || [];
-      await MelbBeerBusiness.trackEvent("mission_board_viewed", {
-        search: suburbFilter.value || null,
-        sort: missionSort.value,
-        radiusKm: missionLocation ? missionRadiusSelect.value : null,
-        locationEnabled: Boolean(missionLocation),
-        locationSource: missionLocation?.source || null,
-      });
-      renderMissions();
+      try {
+        const data = await MelbBeerBusiness.apiFetch(`/api/business/missions?${params.toString()}`, { signal: controller.signal });
+        if (requestId !== missionRequestId) return false;
+        const page = Array.isArray(data.missions) ? data.missions : [];
+        missionCache = append
+          ? [...new Map([...missionCache, ...page].map((mission) => [mission.id, mission])).values()]
+          : page;
+        missionPagination = data.pagination || {
+          total: missionCache.length,
+          limit: MISSION_SERVER_PAGE_SIZE,
+          offset: append ? Math.max(0, missionCache.length - page.length) : 0,
+          hasMore: false,
+        };
+        if (!append) {
+          await MelbBeerBusiness.trackEvent("mission_board_viewed", {
+            search: suburbFilter.value || null,
+            sort: missionSort.value,
+            radiusKm: missionLocation ? missionRadiusSelect.value : null,
+            locationEnabled: Boolean(missionLocation),
+            locationSource: missionLocation?.source || null,
+          });
+        }
+        renderMissions();
+        const total = Number(missionPagination.total || missionCache.length);
+        MelbBeerBusiness.setStatus(missionsStatus, `${total} mission${total === 1 ? "" : "s"} available.`);
+        return true;
+      } catch (error) {
+        if (error?.name === "AbortError" || requestId !== missionRequestId) return false;
+        if (!append) {
+          missionCache = [];
+          missionPagination = { total: 0, limit: MISSION_SERVER_PAGE_SIZE, offset: 0, hasMore: false };
+        }
+        renderMissions();
+        retryMissionsButton.hidden = append;
+        MelbBeerBusiness.setStatus(missionsStatus, error.message || "Missions could not be loaded. Check your connection and retry.", true);
+        return false;
+      } finally {
+        if (requestId === missionRequestId) missionsList.setAttribute("aria-busy", "false");
+      }
     }
 
     async function resolveMissionArea() {
       const query = suburbFilter.value.trim();
+      const requestId = ++missionAreaRequestId;
       if (query.length < 2) {
         missionLocationStatus.textContent = "Enter an area, street, or venue first.";
         return;
@@ -339,6 +423,7 @@
       resetVisibleMissions();
       try {
         const data = await MelbBeerBusiness.apiFetch(`/api/business/geocode?q=${encodeURIComponent(query)}`);
+        if (requestId !== missionAreaRequestId || suburbFilter.value.trim() !== query) return;
         if (!data.location) {
           missionLocation = null;
           updateMissionLocationStatus();
@@ -355,21 +440,19 @@
         };
         missionSort.value = "nearby";
         updateMissionLocationStatus();
-        await MelbBeerBusiness.trackEvent("mission_area_lookup_used", {
-          query,
-          radiusKm: missionRadiusSelect.value,
-          lookupSource: data.location.source || null,
-          confidence: data.location.confidence || null,
-        });
+        await MelbBeerBusiness.trackEvent("search_performed", { searchType: "mission_area", queryLength: query.length, radiusKm: missionRadiusSelect.value });
         await loadMissions();
       } catch {
+        if (requestId !== missionAreaRequestId) return;
         missionLocation = null;
         updateMissionLocationStatus();
         missionsHelp.textContent = "Area lookup is unavailable right now. You can still search by area, venue, or reason.";
         await loadMissions();
       } finally {
-        resolveMissionAreaButton.disabled = false;
-        resolveMissionAreaButton.textContent = "Find missions near this area";
+        if (requestId === missionAreaRequestId) {
+          resolveMissionAreaButton.disabled = false;
+          resolveMissionAreaButton.textContent = "Find missions near this area";
+        }
       }
     }
 
@@ -390,6 +473,7 @@
       useMissionLocationButton.textContent = "Finding nearby missions...";
       missionLocationStatus.textContent = "Use your location to show nearby missions. We do not continuously track it.";
       resetVisibleMissions();
+      await MelbBeerBusiness.trackEvent("location_permission_requested", { source: "missions" });
       try {
         const position = await new Promise((resolve, reject) => {
           navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -406,21 +490,26 @@
         };
         missionSort.value = "nearby";
         updateMissionLocationStatus();
-        await MelbBeerBusiness.trackEvent("mission_location_enabled", { radiusKm: missionRadiusSelect.value });
+        await MelbBeerBusiness.trackEvent("location_permission_granted", { source: "missions" });
+        await MelbBeerBusiness.trackEvent("near_me_enabled", { source: "missions", radiusKm: missionRadiusSelect.value });
         await loadMissions();
       } catch {
         missionLocation = null;
-        updateMissionLocationStatus();
         missionLocationStatus.textContent = "Location permission was denied or unavailable. Search an area, street, or venue instead.";
+        useMissionLocationButton.textContent = "Use my location";
+        clearMissionAreaButton.hidden = true;
+        await MelbBeerBusiness.trackEvent("location_permission_denied", { source: "missions" });
       } finally {
         useMissionLocationButton.disabled = false;
-        updateMissionLocationStatus();
       }
     }
 
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("missions");
       suburbFilter.addEventListener("input", () => {
+        missionAreaRequestId += 1;
+        resolveMissionAreaButton.disabled = false;
+        resolveMissionAreaButton.textContent = "Find missions near this area";
         if (missionLocation?.source === "area_lookup") {
           missionLocation = null;
           updateMissionLocationStatus();
@@ -442,7 +531,7 @@
       missionRadiusSelect.addEventListener("change", async () => {
         if (missionLocation) {
           updateMissionLocationStatus();
-          await MelbBeerBusiness.trackEvent("mission_radius_changed", { radiusKm: missionRadiusSelect.value });
+          await MelbBeerBusiness.trackEvent("radius_filter_changed", { source: "missions", radiusKm: missionRadiusSelect.value });
           resetVisibleMissions();
           await loadMissions();
         }
@@ -450,6 +539,14 @@
       useMissionLocationButton.addEventListener("click", enableMissionLocation);
       resolveMissionAreaButton.addEventListener("click", resolveMissionArea);
       clearMissionAreaButton.addEventListener("click", clearMissionArea);
+      retryMissionsButton.addEventListener("click", () => void loadMissions());
+      if (MelbBeerBusiness.hasAuthenticatedSessionHint()) {
+        const account = await MelbBeerBusiness.apiFetch("/api/business/account").catch(() => null);
+        savedMissionAreas = [...new Set([
+          ...(account?.savedItems || []).filter((item) => item.itemType === "suburb").map((item) => item.label),
+          ...(account?.preferences?.preferredSuburbs || []),
+        ].filter(Boolean))];
+      }
       await loadMissions();
     });
   </script>

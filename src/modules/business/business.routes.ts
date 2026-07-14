@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 
+import { AppError } from "../../lib/errors.js";
 import { success } from "../../lib/http.js";
 import { getSessionAuthorization, SESSION_COOKIE_NAME } from "../../lib/session-cookie.js";
 import { parseWithSchema } from "../../lib/validation.js";
@@ -7,21 +8,27 @@ import { createRateLimiter } from "../../middleware/rate-limit.js";
 
 import {
   accountPreferencesSchema,
+  adminReasonSchema,
   accountDeletionRequestSchema,
   accountPrivacySettingsSchema,
   adminAccountSearchSchema,
   adminDashboardQuerySchema,
+  adminPaginationSchema,
+  adminMissionUpdateSchema,
   adminUserStatusSchema,
   ageConfirmSchema,
   barBeerSchema,
+  barBeerBulkSchema,
   barHappyHourSchema,
   barProfileSchema,
   barSpecialSchema,
   barTierCheckoutSchema,
   authLoginSchema,
+  billingRecoveryPortalSchema,
   authSupabaseSessionSchema,
   authSignupSchema,
   beerCatalogApproveSchema,
+  beerCatalogAdminQuerySchema,
   beerCatalogBulkRejectSchema,
   beerCatalogMergeSchema,
   beerCatalogRejectSchema,
@@ -38,6 +45,7 @@ import {
   geocodeQuerySchema,
   leaderboardPrizeCampaignSchema,
   leaderboardPrizeFinalizeSchema,
+  rewardVoucherTransitionSchema,
   leaderboardQuerySchema,
   legalAcceptanceSchema,
   missionsQuerySchema,
@@ -45,6 +53,8 @@ import {
   monthlyReportExportQuerySchema,
   monthlyReportGenerateSchema,
   monthlyReportParamsSchema,
+  logoutAllSchema,
+  passwordResetCompleteSchema,
   pintPointMemberPreviewSchema,
   pintPointDrinkRecordSchema,
   pintPointDrinkVoidSchema,
@@ -61,6 +71,7 @@ import {
   venueClaimRequestSchema,
   venueClaimReviewSchema,
   verificationSchema,
+  verificationCandidatesQuerySchema,
   venuePendingChangeReviewSchema,
   venueInterestSchema,
   venueInterestStatusSchema,
@@ -70,8 +81,12 @@ import {
   venueCounterStaffInvitationResponseSchema,
   venueOutreachSchema,
   venuePortalQuerySchema,
+  venueReportDeliverySettingsSchema,
+  venueReconciliationQuerySchema,
   venuePlaceSearchQuerySchema,
+  venuesQuerySchema,
   wrongPriceReportSchema,
+  versionedVenueDeleteSchema,
 } from "./business.schemas.js";
 import type { BusinessService } from "./business.service.js";
 
@@ -106,6 +121,13 @@ function getRequestContext(req: Request) {
   return {
     ip: req.ip ?? req.socket.remoteAddress ?? null,
     userAgent: req.get("user-agent") ?? null,
+  };
+}
+
+function getReauthenticationProof(req: Request) {
+  return {
+    accessToken: req.get("x-pint-path-reauth-token"),
+    password: req.get("x-pint-path-current-password"),
   };
 }
 
@@ -191,10 +213,42 @@ const sourceEvidenceLimiter = createRateLimiter({
   keyGenerator: rateLimitIdentity,
 });
 
+const posVenueLimiter = createRateLimiter({
+  keyPrefix: "business:pos-venue",
+  windowMs: 10 * 60_000,
+  max: 600,
+  keyGenerator: (req) => {
+    const venueId = typeof req.body?.venueId === "string" ? req.body.venueId.trim() : "unknown-venue";
+    const bearerToken = getSessionAuthorization(req)?.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
+    const token = req.header("x-pint-path-pos-token") ?? bearerToken;
+    return `${venueId}:${token || "missing-token"}`;
+  },
+});
+
+const posIpGuardLimiter = createRateLimiter({
+  keyPrefix: "business:pos-ip-guard",
+  windowMs: 10 * 60_000,
+  max: 1_200,
+  keyGenerator: rateLimitIdentity,
+});
+
+const accountExportLimiter = createRateLimiter({
+  keyPrefix: "business:account-export",
+  windowMs: 60 * 60_000,
+  max: 2,
+  keyGenerator: rateLimitIdentity,
+});
+
 export function createBusinessRouter(businessService: BusinessService): Router {
   const router = Router();
 
+  router.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "private, no-store");
+    next();
+  });
+
   router.get("/config", (_req, res) => {
+    res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
     res.json(success(businessService.getPublicConfig()));
   });
 
@@ -223,8 +277,19 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.post("/auth/supabase-session", authLimiter, async (req, res, next) => {
     try {
       const body = parseWithSchema(authSupabaseSessionSchema, req.body, "Invalid Supabase auth payload");
-      const result = await businessService.loginWithSupabaseAccessToken(body, getRequestContext(req));
+      const result = await businessService.loginWithSupabaseAccessToken(body, getRequestContext(req), getAuthorization(req));
       setSessionCookie(res, result.token, result.expiresAt);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/auth/password-reset-complete", authLimiter, async (req, res, next) => {
+    try {
+      const body = parseWithSchema(passwordResetCompleteSchema, req.body, "Invalid password reset completion payload");
+      const result = await businessService.completePasswordReset(body, getRequestContext(req));
+      clearSessionCookie(res);
       res.json(success(result));
     } catch (error) {
       next(error);
@@ -244,17 +309,47 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success({ migrated: true, expiresAt }));
   });
 
+  router.get("/auth/session", (req, res) => {
+    const account = getOptionalAccount(req, businessService);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(success(businessService.getAuthSession(account)));
+  });
+
   router.post("/auth/logout", authLimiter, (req, res) => {
     const result = businessService.logout(getAuthorization(req), getRequestContext(req));
     clearSessionCookie(res);
     res.json(success(result));
   });
 
-  router.post("/auth/logout-all", authLimiter, (req, res) => {
+  router.post("/auth/logout-all", authLimiter, async (req, res, next) => {
+    try {
+      const account = requireAccount(req, businessService);
+      await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+      const body = parseWithSchema(logoutAllSchema, req.body ?? {}, "Invalid logout-all payload");
+      const result = await businessService.logoutAll(account, body, getRequestContext(req));
+      clearSessionCookie(res);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/account/sessions", async (req, res) => {
     const account = requireAccount(req, businessService);
-    const result = businessService.logoutAll(account, getRequestContext(req));
-    clearSessionCookie(res);
-    res.json(success(result));
+    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+    const query = parseWithSchema(adminPaginationSchema, req.query, "Invalid session pagination");
+    res.json(success(businessService.listAccountSessions(account, getAuthorization(req), query)));
+  });
+
+  router.delete("/account/sessions/:sessionId", writeLimiter, async (req, res) => {
+    const account = requireAccount(req, businessService);
+    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+    res.json(success(businessService.revokeAccountSession(
+      account,
+      account.id,
+      String(req.params.sessionId ?? ""),
+      getRequestContext(req),
+    )));
   });
 
   router.get("/account", (req, res) => {
@@ -322,26 +417,77 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.savePrivacySettings(account, body)));
   });
 
-  router.get("/account/export", (req, res) => {
+  router.get("/account/export", accountExportLimiter, async (req, res) => {
     const account = requireAccount(req, businessService);
-    res.json(success(businessService.exportAccountData(account)));
+    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+    const encoded = JSON.stringify(success(businessService.exportAccountData(account)));
+    if (Buffer.byteLength(encoded) > 25 * 1024 * 1024) {
+      throw new AppError("Account export is too large for self-service delivery. Contact privacy support for a secure export.", 413);
+    }
+    res.type("application/json").send(encoded);
   });
 
-  router.post("/account/delete-request", writeLimiter, (req, res) => {
+  router.post("/account/delete-request", writeLimiter, async (req, res) => {
     const account = requireAccount(req, businessService);
+    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
     const body = parseWithSchema(accountDeletionRequestSchema, req.body, "Invalid deletion request payload");
     res.json(success(businessService.requestAccountDeletion(account, body)));
   });
 
+  router.get("/account/delete-request", (req, res) => {
+    const account = requireAccount(req, businessService);
+    res.json(success(businessService.getAccountDeletionStatus(account)));
+  });
+
+  router.delete("/account/delete-request/:id", writeLimiter, async (req, res) => {
+    const account = requireAccount(req, businessService);
+    await businessService.requireRecentAuthentication(account, getAuthorization(req), getReauthenticationProof(req));
+    res.json(success(businessService.cancelAccountDeletion(account, String(req.params.id ?? ""))));
+  });
+
   router.get("/admin/account-deletions", adminReviewLimiter, (req, res) => {
     const admin = requireAdmin(req, businessService);
-    res.json(success(businessService.listAccountDeletionRequests(admin)));
+    const query = parseWithSchema(adminPaginationSchema, req.query, "Invalid account deletion pagination");
+    res.json(success(businessService.listAccountDeletionRequests(admin, query)));
+  });
+
+  router.get("/admin/accounts/:userId/sessions", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const query = parseWithSchema(adminPaginationSchema, req.query, "Invalid session pagination");
+    res.json(success(businessService.listAdminAccountSessions(admin, String(req.params.userId ?? ""), query)));
+  });
+
+  router.delete("/admin/accounts/:userId/sessions/:sessionId", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(adminReasonSchema, req.body, "A reason is required to revoke another account's session");
+    res.json(success(businessService.revokeAccountSession(
+      admin,
+      String(req.params.userId ?? ""),
+      String(req.params.sessionId ?? ""),
+      getRequestContext(req),
+      body.reason,
+    )));
+  });
+
+  router.get("/admin/security-audit", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : 100;
+    const offset = typeof req.query.offset === "string" ? Number(req.query.offset) : 0;
+    const action = typeof req.query.action === "string" ? req.query.action.trim().slice(0, 120) : null;
+    const actorUserId = typeof req.query.actorUserId === "string" ? req.query.actorUserId.trim().slice(0, 180) : null;
+    res.json(success(businessService.getAdminSecurityAuditLogs(admin, {
+      limit: Number.isFinite(limit) ? limit : 100,
+      offset: Number.isFinite(offset) ? offset : 0,
+      action: action || null,
+      actorUserId: actorUserId || null,
+    })));
   });
 
   router.post("/admin/account-deletions/:id/execute", adminReviewLimiter, async (req, res, next) => {
     try {
       const admin = requireAdmin(req, businessService);
-      res.json(success(await businessService.executeAccountDeletion(admin, String(req.params.id ?? ""))));
+      const body = parseWithSchema(adminReasonSchema, req.body, "A reason is required to execute account deletion");
+      res.json(success(await businessService.executeAccountDeletion(admin, String(req.params.id ?? ""), body.reason)));
     } catch (error) {
       next(error);
     }
@@ -368,14 +514,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.get("/venues", async (req, res, next) => {
     try {
-      const query = typeof req.query.q === "string" ? req.query.q : undefined;
-      const limit =
-        typeof req.query.limit === "string" && Number.isFinite(Number(req.query.limit))
-          ? Math.min(1000, Math.max(1, Number(req.query.limit)))
-          : 50;
-      const venues = await businessService.listVenues(query, limit);
+      const query = parseWithSchema(venuesQuerySchema, req.query, "Invalid venue query");
+      const result = await businessService.listVenuesPage(query.q, query.limit, query.offset);
       res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
-      res.json(success({ venues }));
+      res.json(success(result));
     } catch (error) {
       next(error);
     }
@@ -423,8 +565,17 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/submissions", (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const query = parseWithSchema(submissionsQuerySchema, req.query, "Invalid submissions query");
-    const submissions = businessService.listSubmissions(account, query);
-    res.json(success({ submissions }));
+    res.json(success(businessService.getSubmissionsPage(account, query)));
+  });
+
+  router.get("/verification-candidates", lookupLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const query = parseWithSchema(
+      verificationCandidatesQuerySchema,
+      req.query,
+      "Invalid verification candidate query",
+    );
+    res.json(success(businessService.getCommunityVerificationCandidates(account, query)));
   });
 
   router.get("/submissions/:id/source-evidence-url", sourceEvidenceLimiter, (req, res) => {
@@ -447,6 +598,11 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
 
     res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    if (delivery.mimeType === "application/pdf") {
+      const safeId = String(req.params.id ?? "evidence").replace(/[^a-z0-9_-]/gi, "").slice(0, 80) || "evidence";
+      res.setHeader("Content-Disposition", `attachment; filename="${safeId}.pdf"`);
+    }
     res.type(delivery.mimeType).send(delivery.bytes);
     } catch (error) {
       next(error);
@@ -471,13 +627,22 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.get("/missions", (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const query = parseWithSchema(missionsQuerySchema, req.query, "Invalid missions query");
-    const missions = businessService.listMissions(query, account);
-    res.json(success({ missions }));
+    res.json(success(businessService.getMissionsPage(query, account)));
   });
 
   router.post("/missions/:id/accept", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     res.json(success(businessService.acceptMission(account, String(req.params.id ?? ""))));
+  });
+
+  router.delete("/missions/:id/accept", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    res.json(success(businessService.releaseMission(account, String(req.params.id ?? ""))));
+  });
+
+  router.post("/missions/:id/release", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    res.json(success(businessService.releaseMission(account, String(req.params.id ?? ""))));
   });
 
   router.get("/geocode", lookupLimiter, async (req, res, next) => {
@@ -547,7 +712,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   router.post("/events", eventLimiter, (req, res) => {
     const account = getOptionalAccount(req, businessService);
     const body = parseWithSchema(eventTrackSchema, req.body, "Invalid analytics event payload");
-    businessService.trackEvent(account, body);
+    businessService.trackClientEvent(account, body, getRequestContext(req));
     res.status(201).json(success({ recorded: true }));
   });
 
@@ -584,7 +749,39 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       .json(success({ report }));
   });
 
-  router.post("/pos/discount-redemptions", writeLimiter, (req, res) => {
+  router.get("/venue-portal/:venueId/report-delivery", (req, res) => {
+    const account = requireAccount(req, businessService);
+    const venueId = String(req.params.venueId ?? "");
+    res
+      .setHeader("Cache-Control", "private, no-store")
+      .json(success(businessService.getVenueReportDeliverySettings(account, venueId)));
+  });
+
+  router.get("/venue-portal/:venueId/reconciliation", (req, res) => {
+    const account = requireAccount(req, businessService);
+    const venueId = String(req.params.venueId ?? "");
+    const query = parseWithSchema(
+      venueReconciliationQuerySchema,
+      req.query,
+      "Invalid reconciliation pagination",
+    );
+    res
+      .setHeader("Cache-Control", "private, no-store")
+      .json(success(businessService.getVenueReconciliation(account, venueId, query)));
+  });
+
+  router.put("/venue-portal/:venueId/report-delivery", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const venueId = String(req.params.venueId ?? "");
+    const body = parseWithSchema(
+      venueReportDeliverySettingsSchema,
+      req.body,
+      "Invalid monthly report delivery settings",
+    );
+    res.json(success(businessService.updateVenueReportDeliverySettings(account, venueId, body)));
+  });
+
+  router.post("/pos/discount-redemptions", posIpGuardLimiter, posVenueLimiter, (req, res) => {
     const body = parseWithSchema(posDiscountRedemptionSchema, req.body, "Invalid POS discount redemption payload");
     const bearerToken = getAuthorization(req)?.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
     const token = req.header("x-pint-path-pos-token") ?? bearerToken;
@@ -623,11 +820,19 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.status(201).json(success(businessService.upsertBarBeer(account, venueId, body)));
   });
 
+  router.post("/venue-portal/:venueId/beers/bulk", writeLimiter, (req, res) => {
+    const account = requireAccount(req, businessService);
+    const body = parseWithSchema(barBeerBulkSchema, req.body, "Invalid bulk beer inventory payload");
+    const venueId = String(req.params.venueId ?? "");
+    res.json(success(businessService.bulkUpsertBarBeers(account, venueId, body)));
+  });
+
   router.delete("/venue-portal/:venueId/beers/:beerId", writeLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const venueId = String(req.params.venueId ?? "");
     const beerId = String(req.params.beerId ?? "");
-    res.json(success(businessService.deleteBarBeer(account, venueId, beerId)));
+    const body = parseWithSchema(versionedVenueDeleteSchema, req.body, "A current beer-row version is required");
+    res.json(success(businessService.deleteBarBeer(account, venueId, beerId, body.expectedUpdatedAt)));
   });
 
   router.post("/venue-portal/:venueId/happy-hours", writeLimiter, (req, res) => {
@@ -641,7 +846,8 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const account = requireAccount(req, businessService);
     const venueId = String(req.params.venueId ?? "");
     const happyHourId = String(req.params.happyHourId ?? "");
-    res.json(success(businessService.deleteBarHappyHour(account, venueId, happyHourId)));
+    const body = parseWithSchema(versionedVenueDeleteSchema, req.body, "A current happy-hour version is required");
+    res.json(success(businessService.deleteBarHappyHour(account, venueId, happyHourId, body.expectedUpdatedAt)));
   });
 
   router.post("/venue-portal/:venueId/specials", writeLimiter, (req, res) => {
@@ -718,7 +924,8 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const account = requireAccount(req, businessService);
     const venueId = String(req.params.venueId ?? "");
     const specialId = String(req.params.specialId ?? "");
-    res.json(success(businessService.deleteBarSpecial(account, venueId, specialId)));
+    const body = parseWithSchema(versionedVenueDeleteSchema, req.body, "A current special version is required");
+    res.json(success(businessService.deleteBarSpecial(account, venueId, specialId, body.expectedUpdatedAt)));
   });
 
   router.post("/venue-portal/:venueId/billing/checkout", billingLimiter, async (req, res, next) => {
@@ -755,10 +962,14 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     res.json(success(businessService.generateVenueMonthlyReports(admin, body)));
   });
 
-  router.post("/admin/reports/monthly/deliver", adminWriteLimiter, (req, res) => {
-    const admin = requireAdmin(req, businessService);
-    const body = parseWithSchema(monthlyReportDeliverySchema, req.body, "Invalid monthly report delivery payload");
-    res.json(success(businessService.deliverVenueMonthlyReports(admin, body)));
+  router.post("/admin/reports/monthly/deliver", adminWriteLimiter, async (req, res, next) => {
+    try {
+      const admin = requireAdmin(req, businessService);
+      const body = parseWithSchema(monthlyReportDeliverySchema, req.body, "Invalid monthly report delivery payload");
+      res.json(success(await businessService.deliverVenueMonthlyReports(admin, body)));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get("/admin/retention", (req, res) => {
@@ -779,7 +990,8 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.get("/admin/queues", (req, res) => {
     const admin = requireAdmin(req, businessService);
-    res.json(success(businessService.getAdminQueues(admin)));
+    const query = parseWithSchema(adminPaginationSchema, req.query, "Invalid admin queue pagination");
+    res.json(success(businessService.getAdminQueues(admin, query)));
   });
 
   router.get("/admin/operational-health", (req, res) => {
@@ -789,7 +1001,8 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.get("/admin/beer-catalog", (req, res) => {
     const admin = requireAdmin(req, businessService);
-    res.json(success(businessService.getAdminBeerCatalog(admin)));
+    const query = parseWithSchema(beerCatalogAdminQuerySchema, req.query, "Invalid beer catalogue pagination");
+    res.json(success(businessService.getAdminBeerCatalog(admin, query)));
   });
 
   router.post("/admin/beer-catalog/reject-pending", adminReviewLimiter, (req, res) => {
@@ -821,7 +1034,8 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.get("/admin/venue-partners", (req, res) => {
     const admin = requireAdmin(req, businessService);
-    res.json(success(businessService.getVenuePartnerAdmin(admin)));
+    const query = parseWithSchema(adminPaginationSchema, req.query, "Invalid venue partner pagination");
+    res.json(success(businessService.getVenuePartnerAdmin(admin, query)));
   });
 
   router.post("/admin/venue-claims/:id/review", adminReviewLimiter, (req, res) => {
@@ -846,6 +1060,13 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const admin = requireAdmin(req, businessService);
     const body = parseWithSchema(leaderboardPrizeFinalizeSchema, req.body, "Invalid leaderboard finalization payload");
     res.json(success(businessService.finalizeLeaderboardPrizeCampaign(admin, body)));
+  });
+
+  router.post("/admin/reward-vouchers/:id/transition", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(rewardVoucherTransitionSchema, req.body, "Invalid reward voucher transition payload");
+    const voucherId = String(req.params.id ?? "");
+    res.json(success(businessService.transitionRewardVoucher(admin, voucherId, body)));
   });
 
   router.get("/admin/accounts", (req, res) => {
@@ -890,6 +1111,24 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const admin = requireAdmin(req, businessService);
     const requestId = String(req.params.id ?? "");
     res.status(201).json(success(businessService.createMissionFromRequest(admin, requestId)));
+  });
+
+  router.get("/admin/missions", adminReviewLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const query = parseWithSchema(adminPaginationSchema, req.query, "Invalid mission pagination");
+    res.json(success(businessService.listAdminMissions(admin, query)));
+  });
+
+  router.patch("/admin/missions/:id", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(adminMissionUpdateSchema, req.body, "Invalid mission lifecycle payload");
+    res.json(success(businessService.updateAdminMission(admin, String(req.params.id ?? ""), body)));
+  });
+
+  router.delete("/admin/missions/:id", adminWriteLimiter, (req, res) => {
+    const admin = requireAdmin(req, businessService);
+    const body = parseWithSchema(adminReasonSchema, req.body, "A reason is required to delete a mission");
+    res.json(success(businessService.deleteAdminMission(admin, String(req.params.id ?? ""), body.reason)));
   });
 
   router.post("/admin/trust/:kind/:id", adminWriteLimiter, (req, res) => {
@@ -939,16 +1178,32 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     }
   });
 
+  router.post("/billing/recovery-portal", authLimiter, billingLimiter, async (req, res, next) => {
+    try {
+      const body = parseWithSchema(billingRecoveryPortalSchema, req.body, "Invalid billing recovery payload");
+      res.status(201).json(success(await businessService.createSuspendedAccountBillingPortal(
+        body,
+        getRequestContext(req),
+      )));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post("/billing/demo-subscribe", billingLimiter, (req, res) => {
     const account = requireAccount(req, businessService);
     const body = parseWithSchema(checkoutSchema, req.body, "Invalid demo subscription payload");
     res.json(success(businessService.handleDemoSubscription(account, body.plan)));
   });
 
-  router.post("/billing/webhook", (req, res) => {
-    const raw = req.rawBody ? Buffer.from(req.rawBody) : Buffer.from(JSON.stringify(req.body ?? {}));
-    const result = businessService.handleStripeWebhook(raw, req.header("stripe-signature") ?? undefined);
-    res.json(success(result));
+  router.post("/billing/webhook", async (req, res, next) => {
+    try {
+      const raw = req.rawBody ? Buffer.from(req.rawBody) : Buffer.from(JSON.stringify(req.body ?? {}));
+      const result = await businessService.handleStripeWebhook(raw, req.header("stripe-signature") ?? undefined);
+      res.json(success(result));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/admin/users/:id/status", adminWriteLimiter, (req, res) => {

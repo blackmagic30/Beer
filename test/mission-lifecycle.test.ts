@@ -6,6 +6,7 @@ import BetterSqlite3 from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BeerCatalogRepository } from "../src/db/beer-catalog.repository.js";
+import { CURRENT_LEGAL_POLICY_VERSION } from "../src/config/legal.js";
 import {
   BusinessRepository,
   MissionReservationError,
@@ -52,7 +53,6 @@ function createHarness(): Harness {
   const repository = new BusinessRepository(database);
   const service = new BusinessService(repository, {
     PUBLIC_BASE_URL: "http://127.0.0.1:3000",
-    FREE_PRICE_REVEALS_PER_DAY: 5,
     CONTRIBUTOR_UNLOCK_POINTS: 15,
     CONTRIBUTOR_UNLOCK_DAYS: 30,
     DEMO_BILLING_MODE: true,
@@ -77,7 +77,6 @@ function createHarness(): Harness {
     STRIPE_PRICE_MONTHLY: undefined,
     STRIPE_PRICE_YEARLY: undefined,
     STRIPE_PRO_PRICE_ID: undefined,
-    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: undefined,
     SUPABASE_URL: undefined,
     SUPABASE_ANON_KEY: undefined,
     SUPABASE_SERVICE_ROLE_KEY: undefined,
@@ -102,6 +101,10 @@ function createAccount(
     role,
     subscriptionStatus: role === "admin" ? "admin" : "free",
     emailVerifiedAt: START,
+    termsAcceptedAt: START,
+    privacyAcceptedAt: START,
+    termsVersion: CURRENT_LEGAL_POLICY_VERSION,
+    privacyVersion: CURRENT_LEGAL_POLICY_VERSION,
     now: START,
   });
   return repository.updateAgeConfirmed(account.id, START);
@@ -358,6 +361,63 @@ describe("autonomous mission lifecycle", () => {
     expect(service.listMissions({ limit: 200 }, null).some((candidate) => candidate.id === mission.id)).toBe(false);
   });
 
+  it("keeps every mission reachable beyond the first 200 results", () => {
+    const { service } = createHarness();
+    const createdIds = new Set<string>();
+    for (let index = 0; index < 205; index += 1) {
+      const mission = createMission(service, `venue-page-${String(index).padStart(3, "0")}`, `Paged Venue ${index}`);
+      createdIds.add(mission.id);
+    }
+
+    const returnedIds = new Set<string>();
+    let offset = 0;
+    let page = service.getMissionsPage({ limit: 200, offset, sort: "points" });
+    expect(page.pagination).toMatchObject({ limit: 200, offset: 0, hasMore: true });
+    while (true) {
+      page.missions.forEach((mission) => returnedIds.add(mission.id));
+      if (!page.pagination.hasMore) break;
+      offset += page.pagination.limit;
+      page = service.getMissionsPage({ limit: 200, offset, sort: "points" });
+    }
+
+    expect(page.pagination.hasMore).toBe(false);
+    expect(returnedIds.size).toBe(page.pagination.total);
+    expect([...createdIds].every((id) => returnedIds.has(id))).toBe(true);
+  });
+
+  it("retains completion state beyond 200 mission-progress rows", () => {
+    const { database, repository, service } = createHarness();
+    const contributor = createAccount(repository, "mission-progress-heavy-user");
+    let oldestMissionId = "";
+    for (let index = 0; index < 201; index += 1) {
+      const mission = createMission(
+        service,
+        `progress-venue-${String(index).padStart(3, "0")}`,
+        index === 0 ? "Oldest Completed Venue" : `Progress Filler Venue ${index}`,
+      );
+      if (index === 0) oldestMissionId = mission.id;
+      repository.acceptMission({
+        missionId: mission.id,
+        userId: contributor.id,
+        now: START,
+        acceptedAfter: "2020-01-01T00:00:00.000Z",
+      });
+      database.prepare(
+        "UPDATE mission_progress SET status = 'completed', completed_at = ?, updated_at = ? WHERE mission_id = ? AND user_id = ?",
+      ).run(
+        START,
+        index === 0 ? "2025-01-01T00:00:00.000Z" : `2026-07-14T01:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        mission.id,
+        contributor.id,
+      );
+    }
+
+    expect(repository.listMissionProgressForUser(contributor.id)).toHaveLength(201);
+    expect(service.listMissions({ q: "Oldest Completed Venue", limit: 10 }, contributor)
+      .find((mission) => mission.id === oldestMissionId))
+      .toEqual(expect.objectContaining({ id: oldestMissionId, userProgress: "completed" }));
+  });
+
   it("expires abandoned acceptances during maintenance without waiting for another user", () => {
     const { repository, service } = createHarness();
     const contributor = createAccount(repository, "mission-expired-acceptor");
@@ -431,6 +491,37 @@ describe("autonomous mission lifecycle", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS total FROM missions WHERE id LIKE 'auto:venue:venue-needing-coverage:%' AND active = 1",
     ).get()).toMatchObject({ total: 1 });
+  });
+
+  it("traverses every venue candidate in bounded pages beyond the old 2,000-venue ceiling", () => {
+    const { database, repository, service } = createHarness();
+    const insert = database.prepare(
+      `INSERT INTO venue_location_cache (
+        venue_id, venue_name, suburb, latitude, longitude, updated_at
+      ) VALUES (?, ?, 'Melbourne', -37.81, 144.96, ?)`,
+    );
+    database.transaction(() => {
+      for (let index = 0; index < 2_001; index += 1) {
+        const suffix = String(index).padStart(4, "0");
+        insert.run(`deep-mission-venue-${suffix}`, `Deep Mission Venue ${suffix}`, START);
+      }
+    })();
+    const pageSpy = vi.spyOn(repository, "listMissionVenueCandidates");
+
+    const result = service.runMissionMaintenance({ forceRefresh: true });
+
+    expect(result.candidates).toBe(2_001);
+    expect(result.generated).toBe(2_001);
+    expect(pageSpy.mock.calls).toEqual([
+      [500, 0],
+      [500, 500],
+      [500, 1_000],
+      [500, 1_500],
+      [500, 2_000],
+    ]);
+    expect(repository.getMissionById("auto:venue:deep-mission-venue-2000:coverage")).toEqual(
+      expect.objectContaining({ venueId: "deep-mission-venue-2000", active: true }),
+    );
   });
 
   it("normalizes duplicate legacy reservations before restoring the exclusive database index", () => {
