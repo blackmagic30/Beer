@@ -1926,6 +1926,68 @@ describe("production hardening", () => {
     ]);
   });
 
+  it("deduplicates local and Supabase venue rows by ID while preserving the official address", async () => {
+    const { repository } = createRepository();
+    const venueId = "north-port-hotel";
+
+    repository.upsertBarProfile({
+      barId: venueId,
+      name: "North Port Hotel",
+      address: "146 Evans St",
+      suburb: "Port Melbourne",
+      area: "Port Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "pro",
+      highlightedName: true,
+      premiumBadge: "Local Pro",
+      promoted: true,
+      featuredSpecialEligible: true,
+      acceptsPintPathCodes: true,
+      active: true,
+      now: NOW,
+    });
+
+    const officialVenue = {
+      id: venueId,
+      name: "North Port Hotel",
+      address: "146 Evans Street, Port Melbourne VIC 3207",
+      suburb: "Port Melbourne",
+      state: "VIC",
+      postcode: "3207",
+      latitude: -37.8308,
+      longitude: 144.9497,
+    };
+    const supabaseVenueBuilder = {
+      select: vi.fn(() => supabaseVenueBuilder),
+      limit: vi.fn(() => supabaseVenueBuilder),
+      order: vi.fn(async () => ({ data: [officialVenue], error: null })),
+    };
+    const service = createBusinessService(
+      repository,
+      {},
+      undefined,
+      { from: vi.fn(() => supabaseVenueBuilder) } as never,
+    );
+
+    const venues = await service.listVenues(undefined, 10);
+
+    expect(venues).toHaveLength(1);
+    expect(venues[0]).toEqual(expect.objectContaining({
+      ...officialVenue,
+      membershipTier: "pro",
+      highlightedName: true,
+      premiumBadge: "Local Pro",
+      promoted: true,
+      featuredSpecialEligible: true,
+      acceptsPintPathCodes: true,
+    }));
+  });
+
   it("deduplicates public price records that are also present in venue inventory", () => {
     const { database, repository } = createRepository();
     const service = createBusinessService(repository);
@@ -1945,6 +2007,28 @@ describe("production hardening", () => {
       "Melbourne",
       "Carlton Draught",
       "carlton_draft",
+      "pint",
+      13,
+      "yes",
+      "photo_verified",
+      "source_ingestion",
+      now,
+      now,
+      now,
+    );
+    database.prepare(
+      `INSERT INTO venue_price_records (
+        id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size,
+        price, is_happy_hour_price, happy_hour_details, is_on_tap, confidence,
+        source_type, source_submission_id, last_verified_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, NULL, ?, ?, ?)`,
+    ).run(
+      "source-record-2",
+      "dedupe-venue",
+      "Dedupe Hotel",
+      "Melbourne",
+      "Guinness",
+      "guinness",
       "pint",
       13,
       "yes",
@@ -1998,11 +2082,15 @@ describe("production hardening", () => {
     }).records;
 
     expect(records.filter((record) => record.beerName === "Carlton Draught")).toHaveLength(1);
-    expect(records[0]).toEqual(expect.objectContaining({
+    expect(records.find((record) => record.beerName === "Carlton Draught")).toEqual(expect.objectContaining({
       venueId: "dedupe-venue",
       beerName: "Carlton Draught",
       sourceType: "venue_manager_portal",
     }));
+    expect(records.filter((record) => record.price === 13)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ beerName: "Carlton Draught" }),
+      expect.objectContaining({ beerName: "Guinness" }),
+    ]));
     expect(records).not.toEqual(expect.arrayContaining([
       expect.objectContaining({
         beerName: "Hahn Super Dry",
@@ -6805,6 +6893,9 @@ describe("business demo contribution model", () => {
     expect(freeVenue?.membershipTier).toBe("basic");
     expect(freeVenue?.premiumBadge).toBeNull();
     expect(freeVenue?.acceptsPintPathCodes).toBe(false);
+    expect(venues).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "demo:sandringham-hotel" }),
+    ]));
   });
 
   it("serves a public venue detail lookup without private billing metadata", async () => {

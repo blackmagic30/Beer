@@ -5292,18 +5292,27 @@ export class BusinessService {
     );
   }
 
-  private mergeVenueRows(primary: VenueRow[], secondary: VenueRow[], limit: number): VenueRow[] {
-    const byIdentity = new Map<string, VenueRow>();
-    const byId = new Map<string, VenueRow>();
+  private mergeVenueRows(
+    primary: VenueRow[],
+    secondary: VenueRow[],
+    limit: number,
+    preferSecondaryDetails = false,
+  ): VenueRow[] {
+    const venuesByCanonicalId = new Map<string, VenueRow>();
+    const canonicalIdByVenueId = new Map<string, string>();
+    const canonicalIdByIdentity = new Map<string, string>();
     const now = nowIso();
 
-    for (const venue of [...primary, ...secondary]) {
+    for (const [index, venue] of [...primary, ...secondary].entries()) {
       const enriched = { ...venue, ...this.getPublicVenueTierMetadata(venue.id) };
       const identity = venueIdentityKey(enriched) ?? `id:${enriched.id}`;
-      const existing = byIdentity.get(identity);
-      if (!existing) {
-        byIdentity.set(identity, enriched);
-        byId.set(enriched.id, enriched);
+      const canonicalId =
+        canonicalIdByVenueId.get(enriched.id) ??
+        canonicalIdByIdentity.get(identity);
+      if (!canonicalId) {
+        venuesByCanonicalId.set(enriched.id, enriched);
+        canonicalIdByVenueId.set(enriched.id, enriched.id);
+        canonicalIdByIdentity.set(identity, enriched.id);
         this.repository.upsertVenueIdentityAlias({
           aliasVenueId: enriched.id,
           canonicalVenueId: enriched.id,
@@ -5313,15 +5322,25 @@ export class BusinessService {
         continue;
       }
 
+      const existing = venuesByCanonicalId.get(canonicalId);
+      if (!existing) {
+        continue;
+      }
+
+      const preferIncomingDetails =
+        preferSecondaryDetails &&
+        index >= primary.length &&
+        enriched.id === existing.id;
       const canonical = {
         ...enriched,
         ...existing,
-        address: existing.address ?? enriched.address,
-        suburb: existing.suburb ?? enriched.suburb,
-        state: existing.state ?? enriched.state,
-        postcode: existing.postcode ?? enriched.postcode,
-        latitude: existing.latitude ?? enriched.latitude,
-        longitude: existing.longitude ?? enriched.longitude,
+        name: preferIncomingDetails ? enriched.name || existing.name : existing.name || enriched.name,
+        address: preferIncomingDetails ? enriched.address ?? existing.address : existing.address ?? enriched.address,
+        suburb: preferIncomingDetails ? enriched.suburb ?? existing.suburb : existing.suburb ?? enriched.suburb,
+        state: preferIncomingDetails ? enriched.state ?? existing.state : existing.state ?? enriched.state,
+        postcode: preferIncomingDetails ? enriched.postcode ?? existing.postcode : existing.postcode ?? enriched.postcode,
+        latitude: preferIncomingDetails ? enriched.latitude ?? existing.latitude : existing.latitude ?? enriched.latitude,
+        longitude: preferIncomingDetails ? enriched.longitude ?? existing.longitude : existing.longitude ?? enriched.longitude,
         membershipTier: existing.membershipTier === "pro" || enriched.membershipTier === "pro" ? "pro" : "basic",
         highlightedName: Boolean(existing.highlightedName || enriched.highlightedName),
         premiumBadge: existing.premiumBadge ?? enriched.premiumBadge ?? null,
@@ -5329,17 +5348,18 @@ export class BusinessService {
         featuredSpecialEligible: Boolean(existing.featuredSpecialEligible || enriched.featuredSpecialEligible),
         acceptsPintPathCodes: Boolean(existing.acceptsPintPathCodes || enriched.acceptsPintPathCodes),
       } satisfies VenueRow;
-      byIdentity.set(identity, canonical);
-      byId.set(existing.id, canonical);
+      venuesByCanonicalId.set(canonicalId, canonical);
+      canonicalIdByVenueId.set(enriched.id, canonicalId);
+      canonicalIdByIdentity.set(identity, canonicalId);
       this.repository.upsertVenueIdentityAlias({
         aliasVenueId: enriched.id,
-        canonicalVenueId: existing.id,
+        canonicalVenueId: canonicalId,
         identityKey: identity,
         now,
       });
     }
 
-    return Array.from(byIdentity.values()).slice(0, limit);
+    return Array.from(venuesByCanonicalId.values()).slice(0, limit);
   }
 
   private assertAccountCanSubmit(account: BusinessAccount, options: { allowVenueManager?: boolean } = {}): void {
@@ -6915,7 +6935,7 @@ export class BusinessService {
     return this.mergeVenueRows(localVenues, venues.map((venue) => ({
       ...venue,
       ...this.getPublicVenueTierMetadata(venue.id),
-    })), limit);
+    })), limit, true);
   }
 
   async getPublicVenueById(venueId: string): Promise<VenueRow | null> {
@@ -7305,7 +7325,6 @@ export class BusinessService {
       ["mission:railway-hotel-south-melb", "demo:railway-south-melb", "Railway Hotel", "South Melbourne", "stale prices", 3, 1],
       ["mission:fitzroy-beer-garden", "demo:fitzroy-beer-garden", "Fitzroy Beer Garden", "Fitzroy", "missing happy hour", 4, 1],
       ["mission:brighton-pub", "demo:brighton-pub", "Brighton Pub", "Brighton", "outside dense CBD cluster", 5, 1.5],
-      ["mission:sandringham-hotel", "demo:sandringham-hotel", "Sandringham Hotel", "Sandringham", "high demand", 5, 2],
     ] as const;
 
     missions.forEach(([id, venueId, venueName, suburb, reason, points, multiplier]) => {
