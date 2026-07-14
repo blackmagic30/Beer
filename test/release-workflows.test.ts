@@ -110,6 +110,12 @@ describe("release workflow contracts", () => {
     }
   });
 
+  it("fetches commit history wherever release-evidence validation runs", () => {
+    for (const name of ["ci.yml", "pintpath-release-readiness.yml", "pintpath-release-gate.yml"]) {
+      expect(workflow(name), name).toContain("fetch-depth: 0");
+    }
+  });
+
   it("pins every JavaScript action to the audited Node 24 release", () => {
     const source = allWorkflows()
       .map(workflow)
