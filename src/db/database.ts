@@ -8,7 +8,7 @@ import { env } from "../config/env.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 
-const CURRENT_DATABASE_SCHEMA_VERSION = 5;
+const CURRENT_DATABASE_SCHEMA_VERSION = 6;
 const MIGRATION_BACKUP_RETENTION = 3;
 
 function splitSchemaIndexes(schema: string): { baseSchema: string; indexSchema: string } {
@@ -76,6 +76,7 @@ const pintPointDrinkRecordColumns = [
 
 const venueManagerAssignmentColumns = [
   { name: "access_level", definition: "TEXT NOT NULL DEFAULT 'manager'" },
+  { name: "expires_at", definition: "TEXT" },
 ] as const;
 
 const venueClaimRequestColumns = [
@@ -392,6 +393,8 @@ function ensureIndexes(database: BetterSqlite3.Database): void {
       ON venue_manager_assignments (approved_by);
     CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_access
       ON venue_manager_assignments (venue_id, access_level, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_expiry
+      ON venue_manager_assignments (status, access_level, expires_at);
     CREATE INDEX IF NOT EXISTS idx_venue_pending_changes_reviewed_by
       ON venue_pending_changes (reviewed_by);
     CREATE INDEX IF NOT EXISTS idx_venue_partner_outreach_updated_by
@@ -442,6 +445,16 @@ function ensurePostMigrationIntegrity(database: BetterSqlite3.Database): void {
     UPDATE venue_manager_assignments
     SET status = 'revoked'
     WHERE status NOT IN ('active', 'pending', 'revoked');
+    UPDATE venue_manager_assignments
+    SET status = 'revoked', expires_at = NULL
+    WHERE status = 'pending' AND access_level != 'counter_staff';
+    UPDATE venue_manager_assignments
+    SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', updated_at, '+72 hours')
+    WHERE status = 'pending' AND access_level = 'counter_staff'
+      AND (expires_at IS NULL OR julianday(expires_at) IS NULL);
+    UPDATE venue_manager_assignments
+    SET expires_at = NULL
+    WHERE status != 'pending' AND expires_at IS NOT NULL;
 
     UPDATE venue_claim_requests
     SET status = 'pending'
@@ -450,6 +463,22 @@ function ensurePostMigrationIntegrity(database: BetterSqlite3.Database): void {
     SET reviewed_by = NULL
     WHERE reviewed_by IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM accounts WHERE accounts.id = venue_claim_requests.reviewed_by);
+    UPDATE venue_claim_requests
+    SET reviewed_by = NULL, reviewed_at = NULL
+    WHERE status = 'pending';
+    UPDATE venue_claim_requests
+    SET reviewed_at = COALESCE(
+      strftime('%Y-%m-%dT%H:%M:%fZ', reviewed_at),
+      strftime('%Y-%m-%dT%H:%M:%fZ', updated_at),
+      strftime('%Y-%m-%dT%H:%M:%fZ', created_at),
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    )
+    WHERE status IN ('approved', 'rejected') AND julianday(reviewed_at) IS NULL;
+
+    DROP TRIGGER IF EXISTS validate_venue_assignment_insert;
+    DROP TRIGGER IF EXISTS validate_venue_assignment_update;
+    DROP TRIGGER IF EXISTS validate_venue_claim_insert;
+    DROP TRIGGER IF EXISTS validate_venue_claim_update;
 
     CREATE TRIGGER IF NOT EXISTS validate_pint_point_status_insert
     BEFORE INSERT ON pint_point_drink_records
@@ -482,13 +511,17 @@ function ensurePostMigrationIntegrity(database: BetterSqlite3.Database): void {
     BEFORE INSERT ON venue_manager_assignments
     WHEN NEW.access_level NOT IN ('manager', 'counter_staff')
       OR NEW.status NOT IN ('active', 'pending', 'revoked')
+      OR (NEW.status = 'pending' AND (NEW.access_level != 'counter_staff' OR julianday(NEW.expires_at) IS NULL))
+      OR (NEW.status != 'pending' AND NEW.expires_at IS NOT NULL)
     BEGIN
       SELECT RAISE(ABORT, 'invalid venue assignment state');
     END;
     CREATE TRIGGER IF NOT EXISTS validate_venue_assignment_update
-    BEFORE UPDATE OF access_level, status ON venue_manager_assignments
+    BEFORE UPDATE OF access_level, status, expires_at ON venue_manager_assignments
     WHEN NEW.access_level NOT IN ('manager', 'counter_staff')
       OR NEW.status NOT IN ('active', 'pending', 'revoked')
+      OR (NEW.status = 'pending' AND (NEW.access_level != 'counter_staff' OR julianday(NEW.expires_at) IS NULL))
+      OR (NEW.status != 'pending' AND NEW.expires_at IS NOT NULL)
     BEGIN
       SELECT RAISE(ABORT, 'invalid venue assignment state');
     END;
@@ -497,13 +530,17 @@ function ensurePostMigrationIntegrity(database: BetterSqlite3.Database): void {
     BEFORE INSERT ON venue_claim_requests
     WHEN NEW.status NOT IN ('pending', 'approved', 'rejected')
       OR (NEW.reviewed_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = NEW.reviewed_by))
+      OR (NEW.status = 'pending' AND (NEW.reviewed_by IS NOT NULL OR NEW.reviewed_at IS NOT NULL))
+      OR (NEW.status IN ('approved', 'rejected') AND julianday(NEW.reviewed_at) IS NULL)
     BEGIN
       SELECT RAISE(ABORT, 'invalid venue claim review state');
     END;
     CREATE TRIGGER IF NOT EXISTS validate_venue_claim_update
-    BEFORE UPDATE OF status, reviewed_by ON venue_claim_requests
+    BEFORE UPDATE OF status, reviewed_by, reviewed_at ON venue_claim_requests
     WHEN NEW.status NOT IN ('pending', 'approved', 'rejected')
       OR (NEW.reviewed_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM accounts WHERE id = NEW.reviewed_by))
+      OR (NEW.status = 'pending' AND (NEW.reviewed_by IS NOT NULL OR NEW.reviewed_at IS NOT NULL))
+      OR (NEW.status IN ('approved', 'rejected') AND julianday(NEW.reviewed_at) IS NULL)
     BEGIN
       SELECT RAISE(ABORT, 'invalid venue claim review state');
     END;

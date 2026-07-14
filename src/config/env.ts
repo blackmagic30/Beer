@@ -89,6 +89,25 @@ const optionalHttpUrlFromEnv = z.preprocess((value) => {
   return normalised.length === 0 ? undefined : normalised;
 }, z.string().url().optional());
 
+const timeZoneFromEnv = z.preprocess(
+  sanitizeEnvString,
+  z.string().min(1).refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en-AU", { timeZone: value }).format(new Date(0));
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Use a valid IANA timezone, for example Australia/Melbourne."),
+);
+
+function isSafeConfiguredEmail(value: string): boolean {
+  if (/[\r\n]/.test(value)) return false;
+  const friendlyAddress = value.match(/^[^<>]*<([^<>]+)>$/);
+  const address = (friendlyAddress?.[1] ?? value).trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address);
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   TARGET_BEER: z.enum(["guinness", "carlton_draft", "stone_and_wood", "happy_hour"]).default("guinness"),
@@ -123,8 +142,15 @@ const envSchema = z.object({
   ADMIN_MFA_MAX_AGE_MINUTES: z.coerce.number().int().min(5).max(1440).default(720),
   REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: booleanFromEnv.default(true),
   ANALYTICS_MIN_BUCKET_SIZE: z.coerce.number().int().min(1).max(100).default(5),
-  REPORT_TIMEZONE: z.preprocess(sanitizeEnvString, z.string().min(1)).default("Australia/Melbourne"),
-  REPORT_EMAIL_MODE: z.enum(["disabled", "mock"]).default("disabled"),
+  REPORT_TIMEZONE: timeZoneFromEnv.default("Australia/Melbourne"),
+  REPORT_EMAIL_MODE: z.enum(["disabled", "mock", "resend"]).default("disabled"),
+  RESEND_API_KEY: optionalStringFromEnv,
+  REPORT_EMAIL_FROM: optionalStringFromEnv,
+  REPORT_EMAIL_REPLY_TO: optionalStringFromEnv,
+  REPORT_DELIVERY_SCHEDULE_ENABLED: booleanFromEnv.default(false),
+  REPORT_DELIVERY_DAY: z.coerce.number().int().min(1).max(28).default(2),
+  REPORT_DELIVERY_HOUR: z.coerce.number().int().min(0).max(23).default(9),
+  REPORT_DELIVERY_CHECK_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   REDIS_URL: optionalStringFromEnv,
   ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(false),
   DEMO_BILLING_MODE: demoBillingModeFromEnv,
@@ -159,6 +185,23 @@ if (
   !parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION
 ) {
   throw new Error("DEMO_BILLING_MODE cannot be true in production unless ALLOW_DEMO_BILLING_IN_PRODUCTION=true.");
+}
+
+if (parsedEnv.data.REPORT_EMAIL_MODE === "resend") {
+  if (!parsedEnv.data.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY is required when REPORT_EMAIL_MODE=resend.");
+  }
+  if (!parsedEnv.data.REPORT_EMAIL_FROM || !isSafeConfiguredEmail(parsedEnv.data.REPORT_EMAIL_FROM)) {
+    throw new Error("REPORT_EMAIL_FROM must be a configured sender address when REPORT_EMAIL_MODE=resend.");
+  }
+}
+
+if (parsedEnv.data.REPORT_EMAIL_REPLY_TO && !isSafeConfiguredEmail(parsedEnv.data.REPORT_EMAIL_REPLY_TO)) {
+  throw new Error("REPORT_EMAIL_REPLY_TO must be a valid email address when configured.");
+}
+
+if (parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED && parsedEnv.data.REPORT_EMAIL_MODE !== "resend") {
+  throw new Error("REPORT_DELIVERY_SCHEDULE_ENABLED requires REPORT_EMAIL_MODE=resend.");
 }
 
 if (parsedEnv.data.NODE_ENV === "production") {

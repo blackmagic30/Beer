@@ -55,6 +55,13 @@ GOOGLE_MAPS_API_KEY=browser_key_restricted_to_live_domain
 GOOGLE_MAPS_MAP_ID=javascript_vector_map_id
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
+RESEND_API_KEY=
+REPORT_EMAIL_FROM="Pint Path <reports@pintpath.au>"
+REPORT_EMAIL_REPLY_TO=
+REPORT_DELIVERY_SCHEDULE_ENABLED=false
+REPORT_DELIVERY_DAY=2
+REPORT_DELIVERY_HOUR=9
+REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
 SESSION_TTL_DAYS=60
 ADMIN_SESSION_TTL_DAYS=7
 REQUIRE_ADMIN_MFA_IN_PRODUCTION=true
@@ -135,6 +142,8 @@ In that mode, the pricing UI must be treated as beta/demo billing, not real paym
 - Confirm the venue portal can save profile details, beer/on-tap rows, happy hours, and deals/specials for the assigned venue only.
 - Confirm a Basic venue tier sees analytics/monthly report upgrade prompts, and Pro tiers can see aggregate-only suburb analytics once the privacy threshold is met.
 - Run `npm run reports:generate -- --month=YYYY-MM --dry-run` and confirm only active Pro venue reports are generated.
+- Run `npm run reports:deliver -- --month=YYYY-MM --dry-run`, then a targeted Resend staging delivery after domain verification. Confirm only active, email-verified manager assignments receive one message; counter staff and unverified accounts receive none.
+- Enable `REPORT_DELIVERY_SCHEDULE_ENABLED=true` only after that staging proof, then confirm the Railway operational state `job:monthly_report_delivery` records the previous Melbourne month as succeeded and later checks do not regenerate or resend it.
 - Export a Pro venue report from `/api/business/venue-portal/:venueId/reports/:month/export?format=json` as the assigned venue manager and confirm another manager gets `403`.
 - Confirm authenticated non-admin users cannot submit public claim requests and only see the invite-only venue portal message.
 - Submit a venue-manager update and confirm it remains pending review.

@@ -205,6 +205,7 @@ const AUTO_MISSION_TARGET_BEERS = [
   SUPPORTED_BEERS.stone_and_wood,
 ] as const;
 const STRIPE_WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
+const COUNTER_STAFF_INVITATION_TTL_MINUTES = 72 * 60;
 const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_club"] as const;
 const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
 
@@ -1402,9 +1403,9 @@ function buildVenueDemandSnapshot(input: {
   const demandHighlights = [
     topBeer
       ? `${topBeer.key} is the strongest privacy-safe beer search near this venue.`
-      : `Area search volume has not reached the ${analytics.privacyThreshold}-event privacy floor yet.`,
+      : `Area search volume has not reached the ${analytics.privacyThreshold}-contributor privacy floor yet.`,
     topStyle
-      ? `${topStyle.key} style searches are showing enough demand to guide tap-list wording.`
+      ? `${topStyle.key} has enough distinct searching accounts/sessions to guide tap-list wording.`
       : "Beer-style demand will appear once enough users search nearby.",
     missingBeer
       ? `${missingBeer.key} is searched nearby but is not covered by this venue's current verified rows.`
@@ -1417,7 +1418,7 @@ function buildVenueDemandSnapshot(input: {
     privacyThreshold: analytics.privacyThreshold,
     opportunityScore,
     funnel: [
-      { label: "Discovery interest", value: analytics.barLookups, helper: "Map pins, cards, detail opens and lookups." },
+      { label: "Discovery interest", value: analytics.barLookups, helper: "Map pins, venue cards and explicit venue lookups." },
       { label: "Beer-price intent", value: analytics.beerListViews + analytics.priceReveals, helper: "Beer-list views and price reveals." },
       { label: "Specials intent", value: analytics.specialsViews, helper: "Pint Path special and happy-hour interest." },
       { label: "Action intent", value: actionIntent, helper: "Directions, saves, night-plan adds and shares." },
@@ -1435,6 +1436,71 @@ function buildVenueDemandSnapshot(input: {
         : "Use the monthly report export in staff or owner meetings to track demand shifts.",
     ],
   };
+}
+
+function buildHistoricalVenueDemandSnapshot(
+  analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>,
+) {
+  const actionIntent = getTotalVenueActionIntent(analytics);
+  const interactionTotal = analytics.barLookups + analytics.profileViews + analytics.beerListViews + analytics.specialsViews;
+  const topBeer = analytics.privacyFloorMet ? analytics.areaBeerSearches[0] ?? null : null;
+  const topStyle = analytics.privacyFloorMet ? analytics.areaStyleSearches[0] ?? null : null;
+  const opportunityScore = interactionTotal === 0 && actionIntent === 0
+    ? null
+    : Math.min(100, Math.round(Math.min(interactionTotal, 100) * 0.75 + Math.min(actionIntent * 5, 25)));
+
+  return {
+    title: analytics.privacyFloorMet ? "Reporting-period demand snapshot" : "Reporting-period demand building",
+    privacyFloorMet: analytics.privacyFloorMet,
+    privacyThreshold: analytics.privacyThreshold,
+    opportunityScore,
+    funnel: [
+      { label: "Discovery accounts/sessions", value: analytics.barLookups, helper: "Distinct signed-in accounts or anonymous sessions that used a map pin, venue card, or explicit lookup." },
+      { label: "Beer-list accounts/sessions", value: analytics.beerListViews, helper: "Distinct signed-in accounts or anonymous sessions that opened the beer list." },
+      { label: "Specials accounts/sessions", value: analytics.specialsViews, helper: "Distinct signed-in accounts or anonymous sessions that viewed specials or happy-hour offers." },
+      { label: "Action accounts/sessions", value: actionIntent, helper: "Distinct accounts/sessions within each directions, save, or share action metric; this combined figure is directional." },
+    ],
+    demandHighlights: [
+      topBeer
+        ? `${topBeer.count} distinct accounts/sessions searched for ${formatBeerInsightName(topBeer.key)} in the venue area.`
+        : `Area beer demand did not reach the ${analytics.privacyThreshold}-contributor privacy floor.`,
+      topStyle
+        ? `${topStyle.count} distinct accounts/sessions searched for the ${formatBeerInsightName(topStyle.key)} style in the venue area.`
+        : "No beer-style bucket reached the distinct-contributor privacy floor.",
+      actionIntent > 0
+        ? "Accounts/sessions used at least one directions, save, night-plan, or share action during the reporting period."
+        : "No reportable action-intent activity was recorded during the reporting period.",
+    ],
+    recommendedNextActions: [
+      topBeer
+        ? `Keep ${formatBeerInsightName(topBeer.key)} availability and pricing current for the next reporting period.`
+        : "Keep the highest-priority tap-list rows current while local demand builds.",
+      analytics.specialsViews > 0
+        ? "Keep one clear special current so specials interest lands on an accurate offer."
+        : "Consider one simple reviewed special to create a clearer reason to visit.",
+      actionIntent > 0
+        ? "Recheck address, hours, and offer conditions because accounts/sessions showed action intent."
+        : "Strengthen the venue call-to-action and track whether action intent improves next month.",
+    ],
+  };
+}
+
+function getHistoricalVenueRecommendations(
+  analytics: ReturnType<BusinessRepository["getVenueAreaAnalytics"]>,
+): string[] {
+  const topBeer = analytics.privacyFloorMet ? analytics.areaBeerSearches[0]?.key : null;
+  const topStyle = analytics.privacyFloorMet ? analytics.areaStyleSearches[0]?.key : null;
+  return [
+    topBeer
+      ? `Plan the next offer around reporting-period ${formatBeerInsightName(topBeer)} demand and measure the result next month.`
+      : "Keep one broad, easy-to-understand offer active while local demand reaches the privacy floor.",
+    topStyle
+      ? `Use ${formatBeerInsightName(topStyle)} wording consistently in current tap-list rows so future searches can match accurately.`
+      : "Add clear beer styles and serve sizes to current rows to improve future discovery matching.",
+    getTotalVenueActionIntent(analytics) > 0
+      ? "Review the reporting-period action funnel with venue managers and keep customer-facing details accurate."
+      : "Test one stronger venue call-to-action and compare distinct action accounts/sessions in the next report.",
+  ];
 }
 
 function getProVenueRecommendations(input: {
@@ -1590,7 +1656,7 @@ function buildVenueDemandDashboard(input: {
     headline: topBeer
       ? `${topBeer.key} is the strongest beer search near ${input.area || "this venue"}.`
       : topStyle
-        ? `${topStyle.key} style searches are building near ${input.area || "this venue"}.`
+        ? `${topStyle.key} is attracting distinct searching accounts/sessions near ${input.area || "this venue"}.`
         : "Nearby demand is still building toward the privacy threshold.",
     proAdvantage: isPro
       ? [
@@ -1658,7 +1724,7 @@ function buildPaidVenueIntelligence(input: {
           key: normalizeTrackedBeerId(row.key),
           beerName,
           searchCount: row.count,
-          copy: `${beerName} was searched ${row.count} time${row.count === 1 ? "" : "s"} in ${area}.`,
+          copy: `${row.count} distinct accounts/sessions searched for ${beerName} in ${area}.`,
         };
       })
     : [];
@@ -1680,7 +1746,7 @@ function buildPaidVenueIntelligence(input: {
     .filter((row) => !stockKeys.has(row.key))
     .map((row) => ({
       ...row,
-      copy: `${row.beerName} was searched ${row.searchCount} time${row.searchCount === 1 ? "" : "s"} in ${area}, but your venue does not list it.`,
+      copy: `${row.searchCount} distinct accounts/sessions searched for ${row.beerName} in ${area}, but your venue does not list it.`,
     }));
 
   const previousStyleCounts = new Map((input.previousAnalytics?.areaStyleSearches ?? []).map((row) => [row.key, row.count]));
@@ -2005,7 +2071,10 @@ function sanitizeMonthlyReportValue(value: unknown, depth = 0): unknown {
   }
 
   if (typeof value === "string") {
-    return redactSecrets(value.slice(0, 500)).replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted]");
+    return redactSecrets(value.slice(0, 500))
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted]")
+      .replace(/(?:\+?61|0)[\s().-]?(?:\d[\s().-]?){8,10}\d/g, "[redacted]")
+      .replace(/\bhttps?:\/\/\S+/gi, "[redacted]");
   }
 
   if (Array.isArray(value)) {
@@ -2024,6 +2093,30 @@ function sanitizeMonthlyReportValue(value: unknown, depth = 0): unknown {
   }
 
   return null;
+}
+
+const MONTHLY_REPORT_SCHEMA_VERSION = 2;
+
+function isValidMonthlyReportMonth(month: string): boolean {
+  const match = month.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (!match) return false;
+  const year = Number(match[1]);
+  return year >= 2020 && year <= 2100;
+}
+
+function isCurrentMonthlyReportSchema(report: MonthlyBarReport | null): report is MonthlyBarReport {
+  return report?.data.schemaVersion === MONTHLY_REPORT_SCHEMA_VERSION;
+}
+
+function isCompletedMonthlyReportSnapshot(report: MonthlyBarReport | null): report is MonthlyBarReport {
+  if (!isCurrentMonthlyReportSchema(report) || report.data.generated !== true) {
+    return false;
+  }
+
+  const reportingPeriod = objectFromUnknown(report.data.reportingPeriod);
+  const generatedAt = typeof report.data.generatedAt === "string" ? Date.parse(report.data.generatedAt) : Number.NaN;
+  const periodEnd = typeof reportingPeriod.endIso === "string" ? Date.parse(reportingPeriod.endIso) : Number.NaN;
+  return Number.isFinite(generatedAt) && Number.isFinite(periodEnd) && generatedAt >= periodEnd;
 }
 
 function sanitizeMonthlyReport(report: MonthlyBarReport | null): MonthlyBarReport | null {
@@ -4322,6 +4415,7 @@ export class BusinessService {
     authorizedByUserId: string;
     transactionReference: string;
     now: string;
+    allowExpired?: boolean;
   }): BusinessAccount {
     const [payload, signature, extra] = input.token.split(".");
     if (!payload || !signature || extra) {
@@ -4351,7 +4445,7 @@ export class BusinessService {
     ) {
       throw new AppError("Member checkout authorization does not match this purchase. Check the member code again.", 401);
     }
-    if (Date.parse(claims.expiresAt) <= Date.parse(input.now)) {
+    if (!input.allowExpired && Date.parse(claims.expiresAt) <= Date.parse(input.now)) {
       throw new AppError("Member checkout authorization expired. Check the member code again.", 410);
     }
     const user = this.repository.getAccountById(claims.userId);
@@ -4368,6 +4462,7 @@ export class BusinessService {
     venueId: string;
     transactionReference: string;
     now: string;
+    allowExpiredCheckoutToken?: boolean;
   }) {
     if (input.code) {
       const pass = this.repository.getActiveDiscountPassByCodeHash({
@@ -4391,6 +4486,9 @@ export class BusinessService {
         authorizedByUserId: input.account.id,
         transactionReference: input.transactionReference,
         now: input.now,
+        ...(input.allowExpiredCheckoutToken === undefined
+          ? {}
+          : { allowExpired: input.allowExpiredCheckoutToken }),
       });
     }
 
@@ -4545,6 +4643,8 @@ export class BusinessService {
       throw new AppError("This venue is not currently enabled to accept Pint Path codes.", 403);
     }
     const now = nowIso();
+    const idempotencyKey = `manual:${normalizePintPointTransactionReference(input.transactionReference)}`;
+    const existingRecord = this.repository.getPintPointDrinkRecordByIdempotencyKey({ venueId, idempotencyKey });
     const user = this.resolvePintPointUser({
       code: input.code,
       checkoutToken: input.checkoutToken,
@@ -4552,15 +4652,14 @@ export class BusinessService {
       venueId,
       transactionReference: input.transactionReference,
       now,
+      allowExpiredCheckoutToken: Boolean(existingRecord && input.checkoutToken),
     });
 
     if (!isFullAccess(user)) {
       throw new AppError("This Pint Path account cannot receive Pint Points right now.", 403);
     }
 
-    const isAlcoholic = input.isAlcoholic ?? input.beverageCategory === "alcoholic";
-    const idempotencyKey = `manual:${normalizePintPointTransactionReference(input.transactionReference)}`;
-    const existingRecord = this.repository.getPintPointDrinkRecordByIdempotencyKey({ venueId, idempotencyKey });
+    const isAlcoholic = input.beverageCategory === "alcoholic";
     if (existingRecord) {
       const itemMatches = (existingRecord.itemName ?? "") === (input.itemName ?? "");
       const payloadMatches = existingRecord.userId === user.id
@@ -4900,6 +4999,8 @@ export class BusinessService {
   }
 
   getAccountDashboard(account: BusinessAccount) {
+    const dashboardNow = nowIso();
+    this.repository.expireVenueCounterStaffInvitations(dashboardNow);
     const preferences = this.repository.getAccountPreferences(account.id);
     const privacySettings =
       this.repository.getAccountPrivacySettings(account.id) ??
@@ -4951,7 +5052,6 @@ export class BusinessService {
     const rejectedCount = submissions.filter((submission) =>
       ["rejected", "disputed", "fraud_flagged"].includes(submission.status),
     ).length;
-    const dashboardNow = nowIso();
     const timezone = this.config.REPORT_TIMEZONE || DEFAULT_REPORT_TIMEZONE;
     const monthKey = getZonedMonthKey(new Date(dashboardNow), timezone);
     const campaign = this.getOrCreateLeaderboardPrizeCampaign(monthKey, dashboardNow);
@@ -4970,6 +5070,7 @@ export class BusinessService {
         venueName: assignment.venueName,
         suburb: assignment.suburb,
         invitedAt: assignment.updatedAt,
+        expiresAt: assignment.expiresAt,
       }));
     const hasFullAccess = isFullAccess(account);
     const missionHistory = this.repository.listMissionProgressForUser(account.id, 12).map((progress) => {
@@ -6234,6 +6335,11 @@ export class BusinessService {
       consentVersion: input.consentVersion ?? "2026-07-11",
       now,
     });
+    if (!privacySettings.optionalAnalyticsEnabled) {
+      this.repository.deleteUserEventsByPrivacyScopes(account.id, ["optional_analytics", "venue_insight"]);
+    } else if (!privacySettings.venueReportInclusionEnabled) {
+      this.repository.deleteUserEventsByPrivacyScopes(account.id, ["venue_insight"]);
+    }
     this.recordUserActivity({
       account,
       eventType: "account_privacy_settings_updated",
@@ -6275,7 +6381,11 @@ export class BusinessService {
       venueId: input.itemType === "venue" ? input.itemId : null,
       beerId: input.itemType === "beer" ? normalizeTrackedBeerId(input.label) : null,
       suburb: input.itemType === "suburb" ? input.label : input.suburb,
-      metadata: { itemId: input.itemId, label: input.label },
+      metadata: {
+        itemId: input.itemId,
+        label: input.label,
+        privacyScope: input.itemType === "venue" ? "venue_insight" : "optional_analytics",
+      },
     });
 
     return { savedItem };
@@ -8062,14 +8172,16 @@ export class BusinessService {
     try {
       const privacyScope = typeof input.metadata.privacyScope === "string" ? input.metadata.privacyScope : null;
       if (account && privacyScope === "optional_analytics") {
-        const settings = this.repository.getAccountPrivacySettings(account.id);
-        if (settings && !settings.optionalAnalyticsEnabled) {
+        const settings = this.repository.getAccountPrivacySettings(account.id) ??
+          this.repository.getDefaultAccountPrivacySettings(account.id);
+        if (!settings.optionalAnalyticsEnabled) {
           return;
         }
       }
       if (account && privacyScope === "venue_insight") {
-        const settings = this.repository.getAccountPrivacySettings(account.id);
-        if (settings && (!settings.optionalAnalyticsEnabled || !settings.venueReportInclusionEnabled)) {
+        const settings = this.repository.getAccountPrivacySettings(account.id) ??
+          this.repository.getDefaultAccountPrivacySettings(account.id);
+        if (!settings.optionalAnalyticsEnabled || !settings.venueReportInclusionEnabled) {
           return;
         }
       }
@@ -8115,6 +8227,12 @@ export class BusinessService {
     return getPreviousZonedMonthKey(new Date(), this.getReportTimezone());
   }
 
+  private requireCompletedReportMonth(month: string): void {
+    if (month > this.getDefaultReportMonth()) {
+      throw new AppError("Only completed calendar months can be generated, exported, or delivered.", 400);
+    }
+  }
+
   private buildVenueMonthlyReportData(profile: BarProfile, month: string) {
     const timezone = this.getReportTimezone();
     const privacyThreshold = Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE);
@@ -8122,46 +8240,43 @@ export class BusinessService {
     const analytics = this.repository.getVenueAreaAnalytics({
       venueId: profile.barId,
       venueName: profile.name,
-      area: profile.area ?? profile.suburb,
+      area: profile.suburb ?? profile.area,
       month,
       timezone,
       privacyThreshold,
     });
-    const insights = this.sanitizeVenueManagerInsights(
-      this.repository.getVenueManagerInsights({
-        venueId: profile.barId,
-        suburb: profile.suburb,
-        staleBefore: range.startIso,
-      }),
-      { includeAggregate: true, privacyThreshold },
-    );
     const suggestedActions = analytics.privacyFloorMet
       ? [
           analytics.directionsClicks > 0
-            ? "Keep your address, opening hours, and happy-hour conditions current because users are requesting directions."
+            ? "Keep your address, opening hours, and happy-hour conditions current because aggregate activity includes direction requests."
             : "Improve your listing call-to-action by keeping beer rows and happy-hour details fresh.",
           analytics.areaBeerSearches.length > 0
             ? "Match your tap-list updates to the top privacy-safe beer searches in your area."
             : "Add clearer beer styles and specials so nearby search demand has more useful matches.",
         ]
-      : ["Not enough area data yet. Your report will become more useful as more users search nearby."];
+      : ["Not enough area data yet. Your report will become more useful as more accounts or anonymous sessions search nearby."];
     const capabilities = getBarTierCapabilities(profile.membershipTier);
     const demandSnapshot = capabilities.analytics
-      ? buildVenueDemandSnapshot({ analytics, insights })
+      ? buildHistoricalVenueDemandSnapshot(analytics)
       : null;
     const proRecommendations = capabilities.advancedRecommendations
-      ? getProVenueRecommendations({ analytics, insights })
+      ? getHistoricalVenueRecommendations(analytics)
       : [];
-    const proGrowthPlan = capabilities.advancedRecommendations
-      ? buildProVenueGrowthPlan({ analytics, insights })
-      : null;
     const discountSummary = this.getVenueDiscountSummary({
       venueId: profile.barId,
       startIso: range.startIso,
       endIso: range.endIso,
     });
+    const discountPrivacyFloorMet = discountSummary.uniqueAccounts >= privacyThreshold;
+    const suppressedMetrics = [
+      ...analytics.suppressedVenueMetrics,
+      ...(!discountPrivacyFloorMet
+        ? ["discountRedemptions", "discountItemsRedeemed", "uniqueDiscountRedeemers", "estimatedDiscountSavingsCents", "topDiscountItems"]
+        : []),
+    ];
 
     return sanitizeMonthlyReportValue({
+      schemaVersion: MONTHLY_REPORT_SCHEMA_VERSION,
       generated: true,
       generatedAt: nowIso(),
       reportingPeriod: {
@@ -8177,42 +8292,36 @@ export class BusinessService {
         tier: profile.membershipTier,
       },
       summary: {
-        totalBarLookups: analytics.barLookups,
-        totalProfileViews: analytics.profileViews,
-        totalBeerListViews: analytics.beerListViews,
-        totalSpecialsDealsViews: analytics.specialsViews,
+        uniqueBarLookups: analytics.barLookups,
+        uniqueProfileViews: analytics.profileViews,
+        uniqueBeerListViews: analytics.beerListViews,
+        uniqueSpecialsDealsViews: analytics.specialsViews,
         mapMarkerClicks: analytics.markerClicks,
         directionsClicks: analytics.directionsClicks,
         priceReveals: analytics.priceReveals,
         savesAndNightPlanAdds: analytics.saves,
         shares: analytics.shares,
         areaSearches: analytics.areaSearches,
-        discountRedemptions: discountSummary.totalRedemptions,
-        discountItemsRedeemed: discountSummary.totalQuantity,
-        uniqueDiscountRedeemers: discountSummary.uniqueAccounts,
-        estimatedDiscountSavingsCents: discountSummary.estimatedSavingsCents,
-        topDiscountItems: discountSummary.topItems,
+        discountRedemptions: discountPrivacyFloorMet ? discountSummary.totalRedemptions : 0,
+        discountItemsRedeemed: discountPrivacyFloorMet ? discountSummary.totalQuantity : 0,
+        uniqueDiscountRedeemers: discountPrivacyFloorMet ? discountSummary.uniqueAccounts : 0,
+        estimatedDiscountSavingsCents: discountPrivacyFloorMet ? discountSummary.estimatedSavingsCents : 0,
+        topDiscountItems: discountPrivacyFloorMet ? discountSummary.topItems : [],
         mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
         mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
-        listingQualityScore: insights.listingQuality.score,
-        openWrongPriceReports: insights.wrongPriceReports.filter((report) => report.status === "open").length,
-        openVenueRequests: insights.requests.filter((request) => request.status === "open").length,
         suggestedActions,
         demandSnapshot,
         proRecommendations,
-        proGrowthPlan,
-        discoveryPlacement: capabilities.discoveryBoost
-          ? {
-              premiumDisplay: true,
-              discoveryBoost: true,
-              featuredSpecials: true,
-              priorityReview: true,
-            }
-          : null,
+        operationalSnapshotExcluded: true,
+        historicalDataScope: "Reporting-period events and redemptions only. Current listing quality, open requests, disputes, tier placement, and inventory snapshots are excluded.",
       },
       privacy: {
         aggregateOnly: true,
         suppressedBelowCount: privacyThreshold,
+        minimumDistinctContributors: privacyThreshold,
+        countingUnit: "distinct account or anonymous session",
+        suppressedMetrics,
+        areaMetricsSuppressed: !analytics.privacyFloorMet,
         excludesUserEmails: true,
         excludesSessionIds: true,
         excludesExactLocation: true,
@@ -8221,14 +8330,28 @@ export class BusinessService {
     }) as Record<string, unknown>;
   }
 
-  private generateVenueMonthlyReportsInternal(input: MonthlyReportGenerateInput) {
+  private generateVenueMonthlyReportsInternal(
+    input: MonthlyReportGenerateInput,
+    options: { reuseCurrentReports?: boolean } = {},
+  ) {
     const month = input.month ?? this.getDefaultReportMonth();
+    if (!isValidMonthlyReportMonth(month)) {
+      throw new AppError("Report month must use a valid YYYY-MM value.", 400);
+    }
+    this.requireCompletedReportMonth(month);
     const venues = this.repository.listReportableBarProfiles({
       venueId: input.venueId,
       limit: input.venueId ? 1 : 1000,
     });
 
     const reports = venues.map((profile) => {
+      if (!input.dryRun && options.reuseCurrentReports) {
+        const stored = this.repository.getVenueMonthlyReport({ venueId: profile.barId, month });
+        if (isCompletedMonthlyReportSnapshot(stored)) {
+          return stored;
+        }
+      }
+
       const data = this.buildVenueMonthlyReportData(profile, month);
       if (input.dryRun) {
         return {
@@ -8285,7 +8408,7 @@ export class BusinessService {
   }
 
   generateScheduledVenueMonthlyReports(input: MonthlyReportGenerateInput) {
-    const result = this.generateVenueMonthlyReportsInternal(input);
+    const result = this.generateVenueMonthlyReportsInternal(input, { reuseCurrentReports: true });
     this.auditSecurity({
       actor: null,
       action: "venue_monthly_reports_generated",
@@ -8304,8 +8427,16 @@ export class BusinessService {
   private getVenueReportRecipients(venueId: string) {
     return this.repository
       .listVenueManagerAssignments({ venueId, activeOnly: true, limit: 50 })
+      .filter((assignment) => assignment.accessLevel === "manager")
       .map((assignment) => this.repository.getAccountById(assignment.userId))
-      .filter((account): account is BusinessAccount => Boolean(account && account.status === "active" && account.email));
+      .filter((account): account is BusinessAccount => Boolean(
+        account &&
+        account.role === "venue_manager" &&
+        account.status === "active" &&
+        account.email &&
+        account.emailVerifiedAt &&
+        account.ageConfirmedAt,
+      ));
   }
 
   deliverVenueMonthlyReports(admin: BusinessAccount, input: MonthlyReportDeliveryInput) {
@@ -8434,11 +8565,47 @@ export class BusinessService {
     };
   }
 
+  getVenueMonthlyReport(account: BusinessAccount, venueId: string, month: string) {
+    this.requireVerifiedBarAccount(account);
+    this.requireAssignedVenue(account, venueId);
+    if (!isValidMonthlyReportMonth(month)) {
+      throw new AppError("Report month must use a valid YYYY-MM value.", 400);
+    }
+    const currentMonth = getZonedMonthKey(new Date(), this.getReportTimezone());
+    if (month > currentMonth) {
+      throw new AppError("Future monthly reports are not available.", 400);
+    }
+
+    const profile = this.repository.getBarProfile(venueId);
+    const capabilities = getBarTierCapabilities(profile?.membershipTier ?? "basic", this.isAdmin(account));
+    if (!capabilities.monthlyReports) {
+      throw new AppError("Pro venue tier required to view monthly reports.", 403);
+    }
+
+    const stored = this.repository.getVenueMonthlyReport({ venueId, month });
+    if (month < currentMonth && isCompletedMonthlyReportSnapshot(stored)) {
+      return sanitizeMonthlyReport(stored)!;
+    }
+
+    const reportProfile = profile ?? this.getOrBuildBarProfile({ barId: venueId, name: venueId, suburb: null });
+    return {
+      id: null,
+      barId: venueId,
+      month,
+      data: {
+        ...this.buildVenueMonthlyReportData(reportProfile, month),
+        generated: false,
+        generatedAt: null,
+      },
+      createdAt: null,
+    };
+  }
+
   exportVenueMonthlyReport(account: BusinessAccount, venueId: string, month: string, query: MonthlyReportExportQuery) {
     this.requireVerifiedBarAccount(account);
     this.requireAssignedVenue(account, venueId);
-    if (!/^\d{4}-\d{2}$/.test(month)) {
-      throw new AppError("Report month must use YYYY-MM format.", 400);
+    if (!isValidMonthlyReportMonth(month)) {
+      throw new AppError("Report month must use a valid YYYY-MM value.", 400);
     }
 
     const profile = this.repository.getBarProfile(venueId);
@@ -8446,10 +8613,13 @@ export class BusinessService {
     if (!capabilities.monthlyReports) {
       throw new AppError("Pro venue tier required to export monthly reports.", 403);
     }
+    this.requireCompletedReportMonth(month);
 
+    const stored = this.repository.getVenueMonthlyReport({ venueId, month });
     const report = sanitizeMonthlyReport(
-      this.repository.getVenueMonthlyReport({ venueId, month }) ??
-        this.repository.upsertVenueMonthlyReport({
+      isCompletedMonthlyReportSnapshot(stored)
+        ? stored
+        : this.repository.upsertVenueMonthlyReport({
           id: crypto.randomUUID(),
           venueId,
           month,
@@ -8482,6 +8652,7 @@ export class BusinessService {
 
   getVenuePortal(account: BusinessAccount, query: VenuePortalQuery) {
     this.requireVerifiedBarAccount(account);
+    this.repository.expireVenueCounterStaffInvitations(nowIso());
     const isAdmin = this.isAdmin(account);
     const assignments = isAdmin
       ? this.repository.listVenueManagerAssignments({ activeOnly: true, limit: 100 })
@@ -8634,15 +8805,16 @@ export class BusinessService {
     const capabilities = getBarTierCapabilities(profile.membershipTier, isAdmin);
     const venueInsightPrivacyThreshold = Math.max(10, this.config.ANALYTICS_MIN_BUCKET_SIZE);
     const reportTimezone = this.getReportTimezone();
-    const reportMonth = getZonedMonthKey(new Date(), reportTimezone);
-    const reportMonthRange = monthKeyRange(reportMonth, reportTimezone);
+    const analyticsMonth = getZonedMonthKey(new Date(), reportTimezone);
+    const analyticsMonthRange = monthKeyRange(analyticsMonth, reportTimezone);
+    const monthlyReportMonth = this.getDefaultReportMonth();
     const todayRange = getZonedDayRangeIso(new Date(), reportTimezone);
     const analytics = capabilities.analytics
       ? this.repository.getVenueAreaAnalytics({
           venueId: selectedVenueId,
           venueName: profile.name,
           area: venueArea,
-          month: reportMonth,
+          month: analyticsMonth,
           timezone: reportTimezone,
           privacyThreshold: venueInsightPrivacyThreshold,
         })
@@ -8674,8 +8846,8 @@ export class BusinessService {
     const areaPurchasedBeers = capabilities.analytics
       ? this.repository.listVenueAreaPurchasedBeers({
           area: venueArea,
-          startIso: reportMonthRange.startsAt,
-          endIso: reportMonthRange.endsAt,
+          startIso: analyticsMonthRange.startsAt,
+          endIso: analyticsMonthRange.endsAt,
           privacyThreshold: venueInsightPrivacyThreshold,
           limit: 8,
         })
@@ -8691,8 +8863,11 @@ export class BusinessService {
       includeAggregate: capabilities.analytics,
       privacyThreshold: venueInsightPrivacyThreshold,
     });
-    const savedMonthlyReport = capabilities.monthlyReports
-      ? sanitizeMonthlyReport(this.repository.getVenueMonthlyReport({ venueId: selectedVenueId, month: reportMonth }))
+    const storedMonthlyReport = capabilities.monthlyReports
+      ? this.repository.getVenueMonthlyReport({ venueId: selectedVenueId, month: monthlyReportMonth })
+      : null;
+    const savedMonthlyReport = isCompletedMonthlyReportSnapshot(storedMonthlyReport)
+      ? sanitizeMonthlyReport(storedMonthlyReport)
       : null;
     const demandSnapshot = analytics && capabilities.analytics
       ? buildVenueDemandSnapshot({ analytics, insights })
@@ -8755,8 +8930,8 @@ export class BusinessService {
     });
     const pintPointMonthStats = this.repository.getPintPointStatsForVenue({
       venueId: selectedVenueId,
-      startIso: reportMonthRange.startsAt,
-      endIso: reportMonthRange.endsAt,
+      startIso: analyticsMonthRange.startsAt,
+      endIso: analyticsMonthRange.endsAt,
     });
     const recentPintPointActivity = this.repository
       .listPintPointDrinkRecordsForVenue(selectedVenueId, 12)
@@ -8772,6 +8947,7 @@ export class BusinessService {
           displayName: staffAccount?.displayName ?? null,
           accessLevel: item.accessLevel,
           status: item.status,
+          expiresAt: item.expiresAt,
           createdAt: item.createdAt,
         };
       });
@@ -8780,50 +8956,11 @@ export class BusinessService {
       ? savedMonthlyReport ?? {
           id: null,
           barId: selectedVenueId,
-          month: reportMonth,
+          month: monthlyReportMonth,
           data: {
+            ...this.buildVenueMonthlyReportData(profile, monthlyReportMonth),
             generated: false,
-            summary: analytics
-              ? {
-                  totalBarLookups: analytics.barLookups,
-                  totalProfileViews: analytics.profileViews,
-                  totalBeerListViews: analytics.beerListViews,
-                  totalSpecialsDealsViews: analytics.specialsViews,
-                  discountRedemptions: discountSummary.totalRedemptions,
-                  discountItemsRedeemed: discountSummary.totalQuantity,
-                  uniqueDiscountRedeemers: discountSummary.uniqueAccounts,
-                  estimatedDiscountSavingsCents: discountSummary.estimatedSavingsCents,
-                  topDiscountItems: discountSummary.topItems,
-                  mostSearchedBeerStylesInArea: analytics.privacyFloorMet ? analytics.areaStyleSearches : [],
-                  mostSearchedBeersInArea: analytics.privacyFloorMet ? analytics.areaBeerSearches : [],
-                  topBeersBoughtInArea: paidVenueIntelligence?.topPurchasedBeers ?? [],
-                  searchTimesByDay: paidVenueIntelligence?.searchTimesByDay ?? [],
-                  searchTimesByHour: paidVenueIntelligence?.searchTimesByHour ?? [],
-                  searchVsStockGap: paidVenueIntelligence?.searchStockGaps ?? [],
-                  localBeerTrendReport: paidVenueIntelligence?.localTrendReport ?? [],
-                  priceBenchmarks: paidVenueIntelligence?.priceBenchmarks ?? [],
-                  demandSnapshot,
-                  dailySpecialsPlanner,
-                  suggestedActions: analytics.privacyFloorMet
-                    ? [
-                        "Keep your tap list current so nearby search demand has an accurate listing to land on.",
-                        "Add happy-hour details if they are missing; users often filter by active specials.",
-                      ]
-                    : ["Not enough area data yet. Your report will become more useful as more users search nearby."],
-                  proRecommendations: capabilities.advancedRecommendations
-                    ? getProVenueRecommendations({ analytics, insights })
-                    : [],
-                  proGrowthPlan,
-                  discoveryPlacement: capabilities.discoveryBoost
-                    ? {
-                        premiumDisplay: true,
-                        discoveryBoost: true,
-                        featuredSpecials: true,
-                        priorityReview: true,
-                      }
-                    : null,
-                }
-              : null,
+            generatedAt: null,
           },
           createdAt: null,
         }
@@ -8914,6 +9051,7 @@ export class BusinessService {
     this.requireVerifiedBarAccount(staffAccount);
     this.requireCounterStaffInvitationAvailable(staffAccount.id, venueId);
 
+    const invitedAt = nowIso();
     const assignment = this.repository.inviteVenueCounterStaff({
       id: crypto.randomUUID(),
       userId: staffAccount.id,
@@ -8921,7 +9059,8 @@ export class BusinessService {
       venueName: managerAssignment?.venueName ?? this.repository.getBarProfile(venueId)?.name ?? venueId,
       suburb: managerAssignment?.suburb ?? this.repository.getBarProfile(venueId)?.suburb ?? null,
       approvedBy: account.id,
-      now: nowIso(),
+      now: invitedAt,
+      expiresAt: addMinutes(invitedAt, COUNTER_STAFF_INVITATION_TTL_MINUTES),
     });
 
     this.auditSecurity({
@@ -8936,7 +9075,7 @@ export class BusinessService {
     });
 
     return {
-      message: "Counter-staff invitation sent. Access starts only after the account owner accepts it.",
+      message: "Counter-staff invitation sent. Access starts only after the account owner accepts it within 72 hours.",
       assignment: {
         ...assignment,
         userId: undefined,
@@ -8947,6 +9086,7 @@ export class BusinessService {
   }
 
   private requireCounterStaffInvitationAvailable(userId: string, venueId: string): void {
+    this.repository.expireVenueCounterStaffInvitations(nowIso());
     const existing = this.repository.getVenueManagerAssignment({
       userId,
       venueId,
@@ -8968,14 +9108,16 @@ export class BusinessService {
     input: VenueCounterStaffInvitationResponseInput,
   ) {
     this.requireVerifiedBarAccount(account);
+    const respondedAt = nowIso();
+    this.repository.expireVenueCounterStaffInvitations(respondedAt);
     const assignment = this.repository.respondVenueCounterStaffInvitation({
       id: assignmentId,
       userId: account.id,
       decision: input.decision,
-      now: nowIso(),
+      now: respondedAt,
     });
     if (!assignment) {
-      throw new AppError("Pending counter-staff invitation not found.", 404);
+      throw new AppError("Pending counter-staff invitation not found or it has expired.", 404);
     }
 
     this.auditSecurity({
@@ -9606,6 +9748,7 @@ export class BusinessService {
     if (accessLevel === "counter_staff") {
       this.requireCounterStaffInvitationAvailable(user.id, input.venueId);
     }
+    const assignedAt = nowIso();
     const assignment = accessLevel === "counter_staff"
       ? this.repository.inviteVenueCounterStaff({
           id: crypto.randomUUID(),
@@ -9614,7 +9757,8 @@ export class BusinessService {
           venueName: input.venueName,
           suburb: input.suburb,
           approvedBy: admin.id,
-          now: nowIso(),
+          now: assignedAt,
+          expiresAt: addMinutes(assignedAt, COUNTER_STAFF_INVITATION_TTL_MINUTES),
         })
       : this.repository.assignVenueManager({
           id: crypto.randomUUID(),
@@ -9624,7 +9768,7 @@ export class BusinessService {
           suburb: input.suburb,
           accessLevel,
           approvedBy: admin.id,
-          now: nowIso(),
+          now: assignedAt,
         });
     this.auditSecurity({
       actor: admin,
@@ -9655,7 +9799,7 @@ export class BusinessService {
     return {
       assignment,
       message: accessLevel === "counter_staff"
-        ? "Counter-staff invitation sent. Access starts after the account owner accepts it."
+        ? "Counter-staff invitation sent. Access starts after the account owner accepts it within 72 hours."
         : "Venue manager assigned.",
     };
   }

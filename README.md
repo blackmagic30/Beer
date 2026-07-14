@@ -149,7 +149,7 @@ Venue owner TODOs before paid partner rollout:
 - Add a full Stripe Customer Portal/manage-billing flow for venue tiers if paid venue subscriptions move beyond Checkout.
 - Add an admin approval interface for authenticated `venue_claim_requests`; claims are stored for manual review today.
 - Add stronger claim verification such as business email, phone, or document checks.
-- Integrate a real report email provider after staging verifies recipient scoping; current report delivery is disabled/mock-only.
+- Complete the external Resend domain/key setup and one targeted staging delivery before enabling the implemented monthly report scheduler in production; delivery remains opt-in and fail-closed by default.
 - Expand generated monthly reports from the aggregate `events` pipeline as production search/click volume grows.
 - Assigned venue-manager profile, beer, and happy-hour updates publish directly as venue-managed data; a venue-wide burst guard holds the fourth beer deletion in an hour for admin review.
 - Replace suburb-based analytics with custom Pint Path areas such as Melbourne CBD, Fitzroy, Richmond, or Chapel Street once those boundaries are defined.
@@ -224,6 +224,13 @@ GOOGLE_MAPS_API_KEY=your_google_maps_browser_key
 GOOGLE_MAPS_MAP_ID=your_google_vector_map_id
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
+RESEND_API_KEY=
+REPORT_EMAIL_FROM="Pint Path <reports@pintpath.au>"
+REPORT_EMAIL_REPLY_TO=
+REPORT_DELIVERY_SCHEDULE_ENABLED=false
+REPORT_DELIVERY_DAY=2
+REPORT_DELIVERY_HOUR=9
+REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
 REDIS_URL=redis://default:replace_me@host:6379
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
@@ -305,6 +312,7 @@ CONTRIBUTOR_UNLOCK_DAYS=30
 ANALYTICS_MIN_BUCKET_SIZE=5
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
+REPORT_DELIVERY_SCHEDULE_ENABLED=false
 REDIS_URL=
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 DEMO_BILLING_MODE=true
@@ -350,7 +358,13 @@ What each one does:
 - `CONTRIBUTOR_UNLOCK_DAYS`: legacy fallback setting. Contributor unlocks now expire at the end of the current month after the monthly point threshold is reached.
 - `ANALYTICS_MIN_BUCKET_SIZE`: minimum aggregate bucket count before dashboard analytics reveal a beer, suburb, or venue identity.
 - `REPORT_TIMEZONE`: timezone used for generated monthly report boundaries. Keep `Australia/Melbourne` for the current market.
-- `REPORT_EMAIL_MODE`: `disabled` prevents any report email payloads; `mock` is for staging/tests only and does not send real email.
+- `REPORT_EMAIL_MODE`: `disabled` prevents delivery, `mock` is isolated staging/test delivery, and `resend` enables the real HTTPS provider only when its key and sender are configured.
+- `RESEND_API_KEY`: private sending-only Resend key. Required when `REPORT_EMAIL_MODE=resend`; never expose it in browser config.
+- `REPORT_EMAIL_FROM`: sender on a verified Resend domain, for example `Pint Path <reports@pintpath.au>`.
+- `REPORT_EMAIL_REPLY_TO`: optional monitored reply mailbox.
+- `REPORT_DELIVERY_SCHEDULE_ENABLED`: opt-in production scheduler. It cannot be enabled unless `REPORT_EMAIL_MODE=resend` passes configuration validation.
+- `REPORT_DELIVERY_DAY` / `REPORT_DELIVERY_HOUR`: Melbourne-local monthly delivery threshold, defaulting to day 2 at 09:00. The previous completed month is sent once and missed windows catch up later.
+- `REPORT_DELIVERY_CHECK_INTERVAL_MINUTES`: due-check interval, default `60`. Completed monthly state short-circuits before report regeneration.
 - `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Configure this for Railway/production before exposing auth, uploads, price reveals, feedback, or checkout publicly.
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: emergency fallback for a single-instance controlled beta only. Defaults to `false`; leave it false for full-scale production so protected routes fail closed if Redis is missing or unavailable.
 - `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without live Stripe. Keep this `false` for production beta.
@@ -456,6 +470,11 @@ GOOGLE_MAPS_API_KEY=your_google_maps_browser_key
 GOOGLE_MAPS_MAP_ID=your_google_vector_map_id
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
+RESEND_API_KEY=
+REPORT_EMAIL_FROM="Pint Path <reports@pintpath.au>"
+REPORT_DELIVERY_SCHEDULE_ENABLED=false
+REPORT_DELIVERY_DAY=2
+REPORT_DELIVERY_HOUR=9
 DEMO_BILLING_MODE=false
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
 OFFSITE_BACKUP_BUCKET=pintpath-backups

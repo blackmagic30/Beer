@@ -611,18 +611,19 @@
               <div class="sectionHeader">
                 <div>
                   <h2>Monthly report</h2>
-                  <p class="muted">This preview uses current beta analytics where available. Exportable reports stay scoped to this venue.</p>
+                  <p class="muted">Choose a month to review the aggregate report for this venue. Exports contain the same venue-scoped reporting period.</p>
                 </div>
-                <div class="reportToolbar">
+                <div class="reportToolbar" role="group" aria-label="Monthly report controls">
                   <label class="field compactField">Month
-                    <input id="reportMonth" type="month" />
+                    <input id="reportMonth" type="month" required aria-describedby="monthlyReportStatus" />
                   </label>
                   <button id="exportReportCsv" class="button button--small" type="button">Export CSV</button>
                   <button id="exportReportJson" class="button button--small" type="button">Export JSON</button>
                 </div>
               </div>
-              <div id="monthlyReport" class="list"></div>
-              <div id="reportExportStatus" class="notice is-hidden" role="status"></div>
+              <div id="monthlyReportStatus" class="reportLoadStatus muted" role="status" aria-live="polite" aria-atomic="true"></div>
+              <div id="monthlyReport" class="monthlyReport" aria-busy="false"></div>
+              <div id="reportExportStatus" class="notice is-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
             </article>
           </section>
 
@@ -689,15 +690,18 @@
     let currentDemandPeriod = "today";
     let dashboardPreviewPlan = null;
     let premiumDashboardSection = "action_centre";
+    let monthlyReportRequestSequence = 0;
     let activeMemberPreviewCode = "";
     let activeMemberPreviewAccountId = "";
     let activeMemberCheckoutToken = "";
+    let activeMemberCheckoutExpiresAt = "";
     let activeMemberPreviewReference = "";
     let pendingVoidRecordId = "";
     let memberQrStream = null;
     let memberQrTimer = null;
     const COUNTER_RECEIPT_QUEUE_KEY = "pintPath.counterReceiptQueue.v1";
     const COUNTER_RECEIPT_QUEUE_TTL_MS = 30 * 60 * 1000;
+    const COUNTER_RECEIPT_RECONCILIATION_GRACE_MS = 10 * 60 * 1000;
     const COUNTER_RECEIPT_QUEUE_LIMIT = 20;
     const viewerConfig = window.MELB_BEER_BOT_VIEWER_CONFIG || {};
     const TRACKED_BEERS = Array.isArray(viewerConfig.trackedBeers) && viewerConfig.trackedBeers.length
@@ -1493,7 +1497,7 @@
         <div class="listItem dataRow">
           <div>
             <strong>${escapeHtml(assignment.displayName || assignment.publicAccountId || "Counter staff")}</strong>
-            <div class="muted">${escapeHtml(assignment.publicAccountId || "Public account ID unavailable")} · ${assignment.status === "pending" ? "invitation pending" : `active since ${MelbBeerBusiness.formatDate(assignment.createdAt)}`}</div>
+            <div class="muted">${escapeHtml(assignment.publicAccountId || "Public account ID unavailable")} · ${assignment.status === "pending" ? `invitation pending${assignment.expiresAt ? ` until ${MelbBeerBusiness.formatDate(assignment.expiresAt)}` : ""}` : `active since ${MelbBeerBusiness.formatDate(assignment.createdAt)}`}</div>
           </div>
           <div class="actionRow actionRow--compact">
             <span class="pill">${assignment.status === "pending" ? "Pending" : "Active"}</span>
@@ -2663,6 +2667,7 @@
       activeMemberPreviewCode = "";
       activeMemberPreviewAccountId = "";
       activeMemberCheckoutToken = "";
+      activeMemberCheckoutExpiresAt = "";
       activeMemberPreviewReference = "";
       const preview = document.getElementById("memberPreviewStatus");
       const fields = document.getElementById("memberPurchaseFields");
@@ -2692,7 +2697,7 @@
           <span><strong>${formatCount(result.pointsRemainingToday || 0)}</strong> points left today</span>
           <span><strong>${formatCount(wallet.available || 0)} / ${formatCount(wallet.threshold || 50)}</strong> reward progress</span>
         </div>
-        <small>${escapeHtml(result.privacyCopy || "Only the public member ID and Pint Points eligibility are shown to venue staff.")}</small>
+        <small>${escapeHtml(result.privacyCopy || "Only the public member ID and Pint Points eligibility are shown to venue staff.")}${result.authorizationExpiresAt ? ` Authorization valid until ${escapeHtml(MelbBeerBusiness.formatDate(result.authorizationExpiresAt))}.` : ""}</small>
       `;
       fields.disabled = false;
       field(document.getElementById("memberPurchaseForm"), "itemName")?.focus({ preventScroll: true });
@@ -2709,7 +2714,15 @@
         const now = Date.now();
         return (Array.isArray(parsed) ? parsed : [])
           .filter((entry) => entry && typeof entry === "object")
-          .filter((entry) => Number.isFinite(Date.parse(entry.createdAt)) && now - Date.parse(entry.createdAt) <= COUNTER_RECEIPT_QUEUE_TTL_MS)
+          .filter((entry) => {
+            const createdAt = Date.parse(entry.createdAt);
+            if (!Number.isFinite(createdAt)) return false;
+            const authorizationExpiresAt = Date.parse(entry.authorizationExpiresAt);
+            const retentionExpiresAt = Number.isFinite(authorizationExpiresAt)
+              ? authorizationExpiresAt + COUNTER_RECEIPT_RECONCILIATION_GRACE_MS
+              : createdAt + COUNTER_RECEIPT_QUEUE_TTL_MS;
+            return now <= retentionExpiresAt;
+          })
           .slice(-COUNTER_RECEIPT_QUEUE_LIMIT);
       } catch {
         window.localStorage.removeItem(COUNTER_RECEIPT_QUEUE_KEY);
@@ -2726,7 +2739,7 @@
       }
     }
 
-    function queuePendingCounterReceipt(venueId, accountId, payload) {
+    function queuePendingCounterReceipt(venueId, accountId, payload, authorizationExpiresAt) {
       const id = `${venueId}:${String(payload.transactionReference || "").toLowerCase()}`;
       const entries = readPendingCounterReceipts().filter((entry) => entry.id !== id);
       entries.push({
@@ -2735,6 +2748,7 @@
         venueName: currentPortal?.selectedVenue?.venueName || currentPortal?.profile?.name || venueId,
         accountId,
         payload,
+        authorizationExpiresAt,
         createdAt: new Date().toISOString(),
         attempts: 0,
         lastError: null,
@@ -2800,7 +2814,7 @@
           <div>
             <div class="eyebrow">Saved on this device</div>
             <h3>Pending receipts</h3>
-            <p class="muted">Retry promptly with the same receipt reference when the connection returns. Rotating member codes are never stored; the signed checkout authorization expires after 30 minutes.</p>
+            <p class="muted">Retry promptly with the same receipt reference when the connection returns. Rotating member codes are never stored. A late retry can confirm an already-recorded receipt, but an expired authorization cannot create a new one.</p>
           </div>
           <span class="pill">${formatCount(entries.length)} pending</span>
         </div>
@@ -2809,7 +2823,7 @@
             <div class="listItem dataRow">
               <div>
                 <strong>${escapeHtml(entry.payload?.itemName || "Member purchase")}</strong>
-                <div class="muted">${escapeHtml(entry.accountId || "Member")} · ${escapeHtml(entry.payload?.transactionReference || "No reference")} · ${MelbBeerBusiness.formatDate(entry.createdAt)}</div>
+                <div class="muted">${escapeHtml(entry.accountId || "Member")} · ${escapeHtml(entry.payload?.transactionReference || "No reference")} · ${MelbBeerBusiness.formatDate(entry.createdAt)}${Number.isFinite(Date.parse(entry.authorizationExpiresAt)) && Date.parse(entry.authorizationExpiresAt) <= Date.now() ? " · authorization expired; reconcile only" : ""}</div>
                 ${entry.lastError ? `<small class="fieldHint fieldHint--error">${escapeHtml(entry.lastError)}</small>` : ""}
               </div>
               <div class="actionRow actionRow--compact">
@@ -2861,6 +2875,7 @@
         activeMemberPreviewCode = code;
         activeMemberPreviewAccountId = String(result.accountId || "");
         activeMemberCheckoutToken = String(result.checkoutToken || "");
+        activeMemberCheckoutExpiresAt = String(result.authorizationExpiresAt || "");
         activeMemberPreviewReference = transactionReference;
         renderMemberPreview(result);
         clearStatus(status);
@@ -3809,11 +3824,446 @@
       areaStyleSearches.innerHTML = renderTrendRows(analytics.areaStyleSearches);
     }
 
+    function getCurrentReportMonthKey() {
+      const parts = new Intl.DateTimeFormat("en-AU", {
+        timeZone: openingHoursTimezone,
+        year: "numeric",
+        month: "2-digit",
+      }).formatToParts(new Date());
+      const year = parts.find((part) => part.type === "year")?.value;
+      const month = parts.find((part) => part.type === "month")?.value;
+      return year && month ? `${year}-${month}` : new Date().toISOString().slice(0, 7);
+    }
+
+    function isValidReportMonthKey(value) {
+      const match = String(value || "").match(/^(\d{4})-(\d{2})$/);
+      if (!match) return false;
+      const month = Number(match[2]);
+      return month >= 1 && month <= 12;
+    }
+
+    function getPreviousReportMonthKey() {
+      const current = getCurrentReportMonthKey().match(/^(\d{4})-(\d{2})$/);
+      if (!current) return new Date().toISOString().slice(0, 7);
+      const date = new Date(Date.UTC(Number(current[1]), Number(current[2]) - 2, 1));
+      return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    }
+
+    function formatReportMonth(month) {
+      const match = String(month || "").match(/^(\d{4})-(\d{2})$/);
+      if (!match) return String(month || "Monthly report");
+      return new Intl.DateTimeFormat("en-AU", { month: "long", year: "numeric", timeZone: "UTC" })
+        .format(new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)));
+    }
+
+    function reportDateFormatter(timezone, options) {
+      try {
+        return new Intl.DateTimeFormat("en-AU", { ...options, timeZone: timezone || openingHoursTimezone });
+      } catch {
+        return new Intl.DateTimeFormat("en-AU", { ...options, timeZone: openingHoursTimezone });
+      }
+    }
+
+    function formatReportDate(value, timezone, exclusiveEnd = false) {
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return "Date unavailable";
+      if (exclusiveEnd) parsed.setTime(parsed.getTime() - 1);
+      return reportDateFormatter(timezone, { day: "numeric", month: "short", year: "numeric" }).format(parsed);
+    }
+
+    function formatReportTimestamp(value, timezone) {
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return "As-of time unavailable";
+      return reportDateFormatter(timezone, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(parsed);
+    }
+
+    function reportNumber(value) {
+      if (value === "" || value == null) return null;
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    function reportValue(source, keys) {
+      if (!source || typeof source !== "object") return null;
+      for (const key of keys) {
+        if (source[key] !== undefined && source[key] !== null) return source[key];
+      }
+      return null;
+    }
+
+    function reportRows(value) {
+      return Array.isArray(value) ? value.filter((item) => item != null) : [];
+    }
+
+    function reportTextRows(value) {
+      return reportRows(value).map((item) => String(item || "").trim()).filter(Boolean);
+    }
+
+    function readableReportKey(value) {
+      const cleaned = String(value || "")
+        .replace(/[_-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      return cleaned ? `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}` : "Other";
+    }
+
+    function monthlyReportFromResponse(payload) {
+      if (!payload || typeof payload !== "object") return null;
+      const candidate = payload.report ?? payload.monthlyReport ?? payload;
+      return candidate && typeof candidate === "object" && candidate.data && typeof candidate.data === "object"
+        ? candidate
+        : null;
+    }
+
+    function setMonthlyReportExportAvailability(available) {
+      [exportReportCsv, exportReportJson].forEach((button) => {
+        button.disabled = !available;
+      });
+    }
+
+    function renderMonthlyReportLoading(month) {
+      const monthLabel = formatReportMonth(month);
+      monthlyReport.setAttribute("aria-busy", "true");
+      monthlyReportStatus.textContent = `Loading ${monthLabel} report...`;
+      setMonthlyReportExportAvailability(false);
+      monthlyReport.innerHTML = `
+        <div class="reportLoading" aria-hidden="true">
+          ${Array.from({ length: 4 }, () => '<div class="skeletonCard"></div>').join("")}
+        </div>
+      `;
+    }
+
+    function renderMonthlyReportEmpty(month) {
+      const monthLabel = formatReportMonth(month);
+      monthlyReport.setAttribute("aria-busy", "false");
+      monthlyReportStatus.textContent = `No report is available for ${monthLabel}.`;
+      setMonthlyReportExportAvailability(false);
+      monthlyReport.innerHTML = `
+        <div class="emptyState reportStateCard">
+          <strong>No ${escapeHtml(monthLabel)} report yet</strong>
+          <span>This venue does not have a report for the selected month. Choose another completed month or try again later.</span>
+        </div>
+      `;
+    }
+
+    function renderMonthlyReportError(month, message) {
+      const monthLabel = formatReportMonth(month);
+      monthlyReport.setAttribute("aria-busy", "false");
+      monthlyReportStatus.textContent = `Could not load the ${monthLabel} report.`;
+      setMonthlyReportExportAvailability(false);
+      monthlyReport.innerHTML = `
+        <div class="emptyState reportStateCard reportStateCard--error">
+          <strong>Report could not be loaded</strong>
+          <span>${escapeHtml(message || "Please check your connection and try again.")}</span>
+          <div class="actionRow actionRow--compact">
+            <button class="button button--small" type="button" data-retry-monthly-report>Try again</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderReportMetricCards(items) {
+      const visibleItems = items.filter((item) => item[1] !== null && item[1] !== undefined);
+      if (!visibleItems.length) return "";
+      return `
+        <div class="reportMetricGrid">
+          ${visibleItems.map(([label, value, helper]) => `
+            <div class="metricCard reportMetricCard">
+              <div class="metricValue">${escapeHtml(typeof value === "number" ? formatCount(value) : value)}</div>
+              <div class="metricLabel">${escapeHtml(label)}</div>
+              ${helper ? `<p>${escapeHtml(helper)}</p>` : ""}
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderReportTrendList(rows, emptyCopy) {
+      if (!rows.length) {
+        return `<div class="emptyState reportTrendEmpty">${escapeHtml(emptyCopy)}</div>`;
+      }
+      return `
+        <ol class="reportTrendList">
+          ${rows.slice(0, 8).map((row) => {
+            const source = row && typeof row === "object" ? row : { key: row };
+            const label = source.beerName || source.label || readableReportKey(source.key);
+            const count = reportNumber(source.searchCount ?? source.count ?? source.value);
+            const trendCopy = source.copy ? String(source.copy) : "";
+            return `
+              <li class="reportTrendRow">
+                <span>
+                  <strong>${escapeHtml(label)}</strong>
+                  ${trendCopy ? `<small>${escapeHtml(trendCopy)}</small>` : ""}
+                </span>
+                ${count === null ? "" : `<span class="pill">${escapeHtml(formatCount(count))} accounts/sessions</span>`}
+              </li>
+            `;
+          }).join("")}
+        </ol>
+      `;
+    }
+
+    function renderMonthlyReportDocument(report) {
+      const data = report.data || {};
+      const summary = data.summary && typeof data.summary === "object" ? data.summary : null;
+      if (!summary) {
+        renderMonthlyReportEmpty(report.month || reportMonth.value);
+        return false;
+      }
+
+      const period = data.reportingPeriod && typeof data.reportingPeriod === "object" ? data.reportingPeriod : {};
+      const privacy = data.privacy && typeof data.privacy === "object" ? data.privacy : {};
+      const month = report.month || period.month || reportMonth.value;
+      const monthLabel = formatReportMonth(month);
+      const timezone = period.timezone || openingHoursTimezone;
+      const periodCopy = period.startIso && period.endIso
+        ? `${formatReportDate(period.startIso, timezone)} - ${formatReportDate(period.endIso, timezone, true)}`
+        : monthLabel;
+      const generatedAt = data.generatedAt || report.createdAt || null;
+      const generatedCopy = generatedAt ? formatReportTimestamp(generatedAt, timezone) : "As-of time unavailable";
+      const suppressedMetrics = new Set(reportTextRows(privacy.suppressedMetrics));
+      const privacyMetricValue = (metricKey, value, options = {}) => {
+        if (suppressedMetrics.has(metricKey) || (options.area && privacy.areaMetricsSuppressed)) {
+          return "Below privacy threshold";
+        }
+        return reportNumber(value);
+      };
+
+      const headlineMetrics = [
+        ["Venue lookups", privacyMetricValue("barLookups", reportValue(summary, ["uniqueBarLookups", "totalBarLookups"])) ?? 0, "Aggregate venue discovery activity."],
+        ["Profile opens", privacyMetricValue("profileViews", reportValue(summary, ["uniqueProfileViews", "totalProfileViews"])) ?? 0, "Interest in this venue's details."],
+        ["Beer-list opens", privacyMetricValue("beerListViews", reportValue(summary, ["uniqueBeerListViews", "totalBeerListViews"])) ?? 0, "Interest in listed beer and price details."],
+        ["Special views", privacyMetricValue("specialsViews", reportValue(summary, ["uniqueSpecialsDealsViews", "totalSpecialsDealsViews"])) ?? 0, "Interest in Pint Path specials and offers."],
+      ];
+      const actionMetrics = [
+        ["Map marker opens", privacyMetricValue("markerClicks", reportValue(summary, ["mapMarkerClicks"]))],
+        ["Directions requests", privacyMetricValue("directionsClicks", reportValue(summary, ["directionsClicks"]))],
+        ["Price reveals", privacyMetricValue("priceReveals", reportValue(summary, ["priceReveals"]))],
+        ["Saves + night plans", privacyMetricValue("saves", reportValue(summary, ["savesAndNightPlanAdds"]))],
+        ["Shares", privacyMetricValue("shares", reportValue(summary, ["shares"]))],
+        ["Area searches", privacyMetricValue("areaSearches", reportValue(summary, ["areaSearches"]), { area: true })],
+      ];
+      const operationsMetrics = [
+        ["Listing quality", reportNumber(reportValue(summary, ["listingQualityScore"])) === null ? null : `${formatCount(reportNumber(reportValue(summary, ["listingQualityScore"])))} / 100`],
+        ["Discount redemptions", privacyMetricValue("discountRedemptions", reportValue(summary, ["discountRedemptions"]))],
+        ["Items redeemed", privacyMetricValue("discountItemsRedeemed", reportValue(summary, ["discountItemsRedeemed"]))],
+        ["Unique redeemers", privacyMetricValue("uniqueDiscountRedeemers", reportValue(summary, ["uniqueDiscountRedeemers"]))],
+        ["Tracked savings", suppressedMetrics.has("estimatedDiscountSavingsCents")
+          ? "Below privacy threshold"
+          : reportNumber(reportValue(summary, ["estimatedDiscountSavingsCents"])) === null
+            ? null
+            : formatCurrency(reportNumber(reportValue(summary, ["estimatedDiscountSavingsCents"])) / 100)],
+        ["Open price reports", reportNumber(reportValue(summary, ["openWrongPriceReports"]))],
+        ["Open venue requests", reportNumber(reportValue(summary, ["openVenueRequests"]))],
+      ];
+      const beerSearches = reportRows(reportValue(summary, ["mostSearchedBeersInArea", "topSearchedBeersInArea"]));
+      const styleSearches = reportRows(reportValue(summary, ["mostSearchedBeerStylesInArea", "topSearchedStylesInArea"]));
+      const localTrends = reportRows(reportValue(summary, ["localBeerTrendReport", "localTrendReport"]));
+      const snapshot = reportValue(summary, ["demandSnapshot", "plusDemandSnapshot"]);
+      const demandFunnel = reportRows(snapshot?.funnel);
+      const demandMetricKeyByLabel = {
+        "Discovery visitors": "barLookups",
+        "Discovery accounts/sessions": "barLookups",
+        "Beer-list visitors": "beerListViews",
+        "Beer-list accounts/sessions": "beerListViews",
+        "Specials visitors": "specialsViews",
+        "Specials accounts/sessions": "specialsViews",
+      };
+      const actionMetricsSuppressed = ["directionsClicks", "saves", "shares"].some((key) => suppressedMetrics.has(key));
+      const demandMetricItems = [
+        ["Opportunity score", reportNumber(snapshot?.opportunityScore) === null ? null : `${formatCount(reportNumber(snapshot?.opportunityScore))} / 100`, "A directional score based on aggregate discovery and action signals."],
+        ...demandFunnel.map((item) => [
+          item.label || "Demand signal",
+          ["Action visitors", "Action accounts/sessions"].includes(item.label) && actionMetricsSuppressed
+            ? "Below privacy threshold"
+            : privacyMetricValue(demandMetricKeyByLabel[item.label], item.value),
+          item.helper || "",
+        ]),
+      ];
+      const recommendationRows = Array.from(new Set([
+        ...reportTextRows(summary.suggestedActions),
+        ...reportTextRows(snapshot?.recommendedNextActions),
+        ...reportTextRows(summary.proRecommendations),
+      ]));
+      const demandHighlights = reportTextRows(snapshot?.demandHighlights);
+      const discoveryPlacement = summary.discoveryPlacement && typeof summary.discoveryPlacement === "object"
+        ? Object.entries(summary.discoveryPlacement).filter(([, active]) => Boolean(active)).map(([key]) => readableReportKey(key))
+        : [];
+      const privacyThreshold = reportNumber(
+        privacy.minimumDistinctContributors
+          ?? privacy.minimumContributors
+          ?? privacy.suppressedBelowContributors
+          ?? privacy.suppressedBelowCount,
+      );
+      const countingUnitCopy = String(privacy.countingUnit || "").includes("distinct")
+        ? "Each metric counts distinct signed-in accounts or anonymous sessions for that action; the figures are not added together as a people total."
+        : "Aggregate activity for this venue. No individual customer history is shown.";
+
+      monthlyReport.setAttribute("aria-busy", "false");
+      monthlyReportStatus.textContent = `${monthLabel} report loaded.`;
+      setMonthlyReportExportAvailability(data.generated === true && month <= getPreviousReportMonthKey());
+      monthlyReport.innerHTML = `
+        <header class="monthlyReportHeader">
+          <div>
+            <div class="eyebrow">${escapeHtml(monthLabel)}</div>
+            <h3>Venue performance summary</h3>
+            <p>${escapeHtml(periodCopy)} · ${escapeHtml(timezone)}</p>
+          </div>
+          <div class="reportAsOf">
+            <span>Report as of</span>
+            ${generatedAt ? `<time datetime="${escapeHtml(generatedAt)}">${escapeHtml(generatedCopy)}</time>` : `<strong>${escapeHtml(generatedCopy)}</strong>`}
+            <small>${data.generated === false ? "Current preview" : "Generated monthly report"}</small>
+          </div>
+        </header>
+
+        <section class="monthlyReportSection" aria-labelledby="reportDiscoveryHeading">
+          <div class="reportSectionHeading">
+            <div>
+              <h3 id="reportDiscoveryHeading">Discovery and interest</h3>
+              <p>${escapeHtml(countingUnitCopy)}</p>
+            </div>
+          </div>
+          ${renderReportMetricCards(headlineMetrics)}
+        </section>
+
+        ${actionMetrics.some((item) => item[1] !== null) ? `
+          <section class="monthlyReportSection" aria-labelledby="reportActionsHeading">
+            <div class="reportSectionHeading">
+              <div>
+                <h3 id="reportActionsHeading">Recorded actions</h3>
+                <p>Aggregate intent signals recorded after this venue or its offers were discovered.</p>
+              </div>
+            </div>
+            ${renderReportMetricCards(actionMetrics)}
+          </section>
+        ` : ""}
+
+        <section class="monthlyReportSection" aria-labelledby="reportDemandHeading">
+          <div class="reportSectionHeading">
+            <div>
+              <h3 id="reportDemandHeading">Demand snapshot</h3>
+              <p>Privacy-safe area demand and the strongest aggregate signals available for this period.</p>
+            </div>
+          </div>
+          ${renderReportMetricCards(demandMetricItems) || '<div class="emptyState reportTrendEmpty">Demand metrics have not reached the reporting threshold for this month.</div>'}
+          ${demandHighlights.length ? `<ul class="featureList reportHighlights">${demandHighlights.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+        </section>
+
+        <section class="monthlyReportSection" aria-labelledby="reportSearchHeading">
+          <div class="reportSectionHeading">
+            <div>
+              <h3 id="reportSearchHeading">Local search trends</h3>
+              <p>Only aggregate area searches that clear the report's privacy threshold appear here.</p>
+            </div>
+          </div>
+          <div class="reportTrendGrid">
+            <div class="reportTrendPanel">
+              <h4>Most searched beer terms</h4>
+              ${renderReportTrendList(beerSearches, "No beer-search term cleared the privacy threshold this month.")}
+            </div>
+            <div class="reportTrendPanel">
+              <h4>Most searched styles</h4>
+              ${renderReportTrendList(styleSearches, "No style-search trend cleared the privacy threshold this month.")}
+            </div>
+          </div>
+          ${localTrends.length ? `
+            <div class="reportTrendPanel reportTrendPanel--wide">
+              <h4>Month-on-month signals</h4>
+              ${renderReportTrendList(localTrends, "")}
+            </div>
+          ` : ""}
+        </section>
+
+        ${operationsMetrics.some((item) => item[1] !== null) ? `
+          <section class="monthlyReportSection" aria-labelledby="reportOperationsHeading">
+            <div class="reportSectionHeading">
+              <div>
+                <h3 id="reportOperationsHeading">Listing and offer health</h3>
+                <p>Operational signals that can guide listing maintenance and in-venue follow-up.</p>
+              </div>
+            </div>
+            ${renderReportMetricCards(operationsMetrics)}
+          </section>
+        ` : ""}
+
+        ${recommendationRows.length || discoveryPlacement.length ? `
+          <section class="monthlyReportSection reportRecommendations" aria-labelledby="reportRecommendationsHeading">
+            <div class="reportSectionHeading">
+              <div>
+                <h3 id="reportRecommendationsHeading">Recommended next moves</h3>
+                <p>Use these prompts as a starting point for the next month's listing and offer plan.</p>
+              </div>
+            </div>
+            ${recommendationRows.length ? `<ol class="reportActionList">${recommendationRows.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>` : ""}
+            ${discoveryPlacement.length ? `<div class="miniStatRow" aria-label="Active Pro placement features">${discoveryPlacement.map((item) => `<span>${escapeHtml(item)} active</span>`).join("")}</div>` : ""}
+          </section>
+        ` : ""}
+
+        <aside class="reportPrivacyNote" aria-labelledby="reportPrivacyHeading">
+          <div>
+            <div class="eyebrow">Privacy</div>
+            <h3 id="reportPrivacyHeading">Aggregate reporting only</h3>
+          </div>
+          <p>
+            Pint Path does not show venues individual user clickstreams, email addresses, session IDs or exact user locations.
+            ${privacyThreshold === null ? "Low-volume trends are suppressed until the configured privacy threshold is met." : `Aggregate trend groups below the configured threshold (${formatCount(privacyThreshold)}) are suppressed.`}
+          </p>
+        </aside>
+      `;
+      return true;
+    }
+
+    async function loadMonthlyReport(month = reportMonth.value) {
+      const venueId = selectedVenueId();
+      if (!venueId) return;
+      if (!isValidReportMonthKey(month)) {
+        renderMonthlyReportError(month, "Choose a valid report month.");
+        return;
+      }
+
+      const requestSequence = ++monthlyReportRequestSequence;
+      const requestedVenueId = venueId;
+      reportExportStatus.classList.add("is-hidden");
+      renderMonthlyReportLoading(month);
+      try {
+        const payload = await MelbBeerBusiness.apiFetch(
+          `/api/business/venue-portal/${encodeURIComponent(requestedVenueId)}/reports/${encodeURIComponent(month)}`,
+        );
+        if (requestSequence !== monthlyReportRequestSequence || requestedVenueId !== selectedVenueId()) return;
+        const report = monthlyReportFromResponse(payload);
+        if (!report) {
+          renderMonthlyReportEmpty(month);
+          return;
+        }
+        if (currentPortal) currentPortal.monthlyReport = report;
+        const url = new URL(window.location.href);
+        url.searchParams.set("month", month);
+        window.history.replaceState(window.history.state, "", url);
+        renderMonthlyReportDocument(report);
+      } catch (error) {
+        if (requestSequence !== monthlyReportRequestSequence || requestedVenueId !== selectedVenueId()) return;
+        if (error?.status === 404) {
+          renderMonthlyReportEmpty(month);
+          return;
+        }
+        renderMonthlyReportError(month, error?.message || "Please check your connection and try again.");
+      }
+    }
+
     function renderMonthlyReport(data) {
       const locked = data.tier?.analyticsLocked;
       reportGate.classList.toggle("is-hidden", !locked);
       reportContent.classList.toggle("is-hidden", locked);
       if (locked) {
+        monthlyReportRequestSequence += 1;
+        monthlyReportStatus.textContent = "Monthly reports require a Pro venue plan.";
+        setMonthlyReportExportAvailability(false);
         reportGate.innerHTML = `
           <h2>Monthly reports are a Pro feature</h2>
           <p class="muted">Reports summarise your venue lookups, beer-list interest, special views and privacy-safe area trends.</p>
@@ -3824,51 +4274,20 @@
         `;
         return;
       }
-
-      const report = data.monthlyReport?.data?.summary || {};
-      reportMonth.value = data.monthlyReport?.month || new Date().toISOString().slice(0, 7);
-      const suggestedActions = report.suggestedActions || ["Keep your tap list current and add happy-hour conditions clearly."];
-      const proRecommendations = report.proRecommendations || [];
-      const discoveryPlacement = report.discoveryPlacement || null;
-      monthlyReport.innerHTML = `
-        <div class="grid grid--four">
-          ${[
-            ["Venue lookups", report.totalBarLookups],
-            ["Profile views", report.totalProfileViews],
-            ["Beer list views", report.totalBeerListViews],
-            ["Pint Path special views", report.totalSpecialsDealsViews],
-          ].map(([label, value]) => `<div class="metricCard"><div class="metricValue">${Number(value || 0)}</div><div class="metricLabel">${escapeHtml(label)}</div></div>`).join("")}
-        </div>
-        <div class="listItem" style="margin-top:12px;">
-          <strong>Suggested actions</strong>
-          <ul class="featureList">${suggestedActions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-        </div>
-        ${(() => {
-          const snapshot = report.demandSnapshot || report.plusDemandSnapshot;
-          return snapshot ? `
-          <div class="listItem" style="margin-top:12px;">
-            <strong>Demand snapshot</strong>
-            <ul class="featureList">${(snapshot.recommendedNextActions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-          </div>
-        ` : "";
-        })()}
-        ${proRecommendations.length ? `
-          <div class="listItem reportProPlan">
-            <div>
-              <span class="tierBadge tierBadge--pro">Pro growth plan</span>
-              <strong>Priority moves for this month</strong>
-              <ul class="featureList">${proRecommendations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-            </div>
-            ${discoveryPlacement ? `
-              <div class="miniStatRow">
-                <span>Premium display active</span>
-                <span>Pint Path special treatment active</span>
-                <span>Priority review active</span>
-              </div>
-            ` : ""}
-          </div>
-        ` : ""}
-      `;
+      const embeddedReport = data.monthlyReport;
+      const latestCompletedMonth = getPreviousReportMonthKey();
+      const requestedMonth = new URL(window.location.href).searchParams.get("month");
+      const initialMonth = isValidReportMonthKey(requestedMonth) && requestedMonth <= latestCompletedMonth
+        ? requestedMonth
+        : embeddedReport?.data?.generated === true && isValidReportMonthKey(embeddedReport?.month)
+          ? embeddedReport.month
+          : getPreviousReportMonthKey();
+      reportMonth.max = latestCompletedMonth;
+      reportMonth.value = initialMonth;
+      if (embeddedReport && embeddedReport.month === initialMonth && renderMonthlyReportDocument(embeddedReport)) {
+        return;
+      }
+      void loadMonthlyReport(initialMonth);
     }
 
     function reportFilenameFromHeader(header, fallback) {
@@ -4137,7 +4556,17 @@
             MelbBeerBusiness.setStatus(memberPurchaseStatus, "Check the current member code before recording this purchase.", true);
             return;
           }
-          const queuedReceipt = queuePendingCounterReceipt(venueId, activeMemberPreviewAccountId, payload);
+          if (!Number.isFinite(Date.parse(activeMemberCheckoutExpiresAt)) || Date.parse(activeMemberCheckoutExpiresAt) <= Date.now()) {
+            MelbBeerBusiness.setStatus(memberPurchaseStatus, "Member authorization expired. Check the current code again before recording this purchase.", true);
+            await checkMemberCode();
+            return;
+          }
+          const queuedReceipt = queuePendingCounterReceipt(
+            venueId,
+            activeMemberPreviewAccountId,
+            payload,
+            activeMemberCheckoutExpiresAt,
+          );
           const submitButton = document.getElementById("recordMemberPurchaseButton");
           if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
           MelbBeerBusiness.setStatus(memberPurchaseStatus, "Recording member purchase...");
@@ -4530,6 +4959,14 @@
         renderHappyHourBeerChoices();
       });
       resetSpecialForm.addEventListener("click", resetSpecialFormState);
+      reportMonth.addEventListener("change", () => {
+        void loadMonthlyReport(reportMonth.value);
+      });
+      monthlyReport.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement) || !target.closest("[data-retry-monthly-report]")) return;
+        void loadMonthlyReport(reportMonth.value);
+      });
       [
         ["csv", exportReportCsv],
         ["json", exportReportJson],

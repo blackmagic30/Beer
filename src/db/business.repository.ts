@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 import type BetterSqlite3 from "better-sqlite3";
 
-import { findTrackedBeerByName } from "../constants/beers.js";
+import { VIEWER_TRACKED_BEERS, findTrackedBeerByName } from "../constants/beers.js";
 import { redactSecrets } from "../lib/redact.js";
 import { DEFAULT_REPORT_TIMEZONE, getZonedMonthRangeIso } from "../lib/time.js";
 
@@ -463,6 +463,7 @@ export interface VenueManagerAssignment {
   accessLevel: VenueAccessLevel;
   status: string;
   approvedBy: string | null;
+  expiresAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1279,6 +1280,7 @@ interface VenueManagerAssignmentRow {
   access_level: VenueAccessLevel;
   status: string;
   approved_by: string | null;
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1969,6 +1971,63 @@ function normalizeAnalyticsBeerId(value: string | null): string | null {
   return findTrackedBeerByName(value)?.key ?? value;
 }
 
+const REPORT_TREND_CONTACT_PATTERN = /(?:\bhttps?:\/\/|\bwww\.|@|\b(?:call|text|phone|mobile|email|contact)\b)/i;
+const REPORT_TREND_PHONE_PATTERN = /(?:\+?\d[\s().-]*){7,}/;
+const REPORT_STYLE_BY_KEY = new Map<string, string>();
+
+for (const style of [
+  ...VIEWER_TRACKED_BEERS.map((beer) => beer.style ?? ""),
+  "ale",
+  "lager",
+  "stout",
+  "porter",
+  "pilsner",
+  "ipa",
+  "xpa",
+  "pale ale",
+  "hazy ipa",
+  "hazy pale ale",
+  "wheat beer",
+  "sour",
+  "cider",
+  "pacific ale",
+]) {
+  const label = style.trim().toLowerCase().replace(/\s+/g, " ");
+  const key = label.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (key && !REPORT_STYLE_BY_KEY.has(key)) REPORT_STYLE_BY_KEY.set(key, label);
+}
+
+function hasUnsafeReportTrendText(value: string | null | undefined): boolean {
+  const text = String(value ?? "").trim();
+  return !text || text.length > 80 || REPORT_TREND_CONTACT_PATTERN.test(text) || REPORT_TREND_PHONE_PATTERN.test(text);
+}
+
+function safeReportBeerTrend(row: AnalyticsBucket): AnalyticsBucket | null {
+  const tracked = findTrackedBeerByName(row.key) ?? findTrackedBeerByName(row.label);
+  if (tracked) return { key: tracked.key, count: row.count };
+  if (hasUnsafeReportTrendText(row.key) || hasUnsafeReportTrendText(row.label)) return null;
+  const key = row.key.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (key.length < 2 || key.length > 60 || !/[a-z]/.test(key)) return null;
+  return { key, count: row.count };
+}
+
+function safeReportStyleTrend(row: AnalyticsBucket): AnalyticsBucket | null {
+  if (hasUnsafeReportTrendText(row.key) || hasUnsafeReportTrendText(row.label)) return null;
+  const key = row.key.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const label = REPORT_STYLE_BY_KEY.get(key);
+  return label ? { key: label, count: row.count } : null;
+}
+
+function mergeReportTrendRows(rows: Array<AnalyticsBucket | null>): AnalyticsBucket[] {
+  const merged = new Map<string, AnalyticsBucket>();
+  for (const row of rows) {
+    if (!row) continue;
+    const existing = merged.get(row.key);
+    if (!existing || row.count > existing.count) merged.set(row.key, row);
+  }
+  return [...merged.values()].sort((left, right) => right.count - left.count).slice(0, 8);
+}
+
 function normalizeBeerInsightKey(value: string | null | undefined): string {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) {
@@ -2028,7 +2087,11 @@ function formatHourLabel(hour: number): string {
   return hour > 12 ? `${hour - 12} pm` : `${hour} am`;
 }
 
-function buildSearchTimeBuckets(rows: Array<{ created_at: string }>, timezone: string): {
+function buildSearchTimeBuckets(
+  rows: Array<{ created_at: string; actor_key: string }>,
+  timezone: string,
+  privacyThreshold: number,
+): {
   byDay: SearchTimeBucket[];
   byHour: SearchTimeBucket[];
 } {
@@ -2042,8 +2105,8 @@ function buildSearchTimeBuckets(rows: Array<{ created_at: string }>, timezone: s
     hourCycle: "h23",
   });
   const dayOrder = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const dayCounts = new Map<string, number>();
-  const hourCounts = new Map<number, number>();
+  const dayActors = new Map<string, Set<string>>();
+  const hourActors = new Map<number, Set<string>>();
 
   for (const row of rows) {
     const date = new Date(row.created_at);
@@ -2052,30 +2115,36 @@ function buildSearchTimeBuckets(rows: Array<{ created_at: string }>, timezone: s
     }
 
     const dayLabel = dayFormatter.format(date);
-    dayCounts.set(dayLabel, (dayCounts.get(dayLabel) ?? 0) + 1);
+    const actorsForDay = dayActors.get(dayLabel) ?? new Set<string>();
+    actorsForDay.add(row.actor_key);
+    dayActors.set(dayLabel, actorsForDay);
 
     const hour = Number(hourFormatter.format(date));
     if (Number.isInteger(hour) && hour >= 0 && hour <= 23) {
-      hourCounts.set(hour, (hourCounts.get(hour) ?? 0) + 1);
+      const actorsForHour = hourActors.get(hour) ?? new Set<string>();
+      actorsForHour.add(row.actor_key);
+      hourActors.set(hour, actorsForHour);
     }
   }
 
   return {
-    byDay: Array.from(dayCounts.entries())
-      .map(([label, count]) => ({
+    byDay: Array.from(dayActors.entries())
+      .map(([label, actors]) => ({
         key: label.toLowerCase(),
         label,
-        count,
+        count: actors.size,
         sort: dayOrder.indexOf(label),
       }))
+      .filter((bucket) => bucket.count >= privacyThreshold)
       .sort((a, b) => b.count - a.count || a.sort - b.sort),
-    byHour: Array.from(hourCounts.entries())
-      .map(([hour, count]) => ({
+    byHour: Array.from(hourActors.entries())
+      .map(([hour, actors]) => ({
         key: String(hour).padStart(2, "0"),
         label: formatHourLabel(hour),
-        count,
+        count: actors.size,
         sort: hour,
       }))
+      .filter((bucket) => bucket.count >= privacyThreshold)
       .sort((a, b) => b.count - a.count || a.sort - b.sort),
   };
 }
@@ -2262,6 +2331,7 @@ function toVenueManagerAssignment(row: VenueManagerAssignmentRow): VenueManagerA
     accessLevel: row.access_level ?? "manager",
     status: row.status,
     approvedBy: row.approved_by,
+    expiresAt: row.expires_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -5485,6 +5555,30 @@ export class BusinessRepository {
       .run(key, JSON.stringify(value), now);
   }
 
+  compareAndSetSystemState(
+    key: string,
+    expectedUpdatedAt: string | null,
+    value: Record<string, unknown>,
+    now: string,
+  ): boolean {
+    const serialized = JSON.stringify(value);
+    const result = expectedUpdatedAt === null
+      ? this.database
+          .prepare(
+            `INSERT INTO system_state (key, value_json, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO NOTHING`,
+          )
+          .run(key, serialized, now)
+      : this.database
+          .prepare(
+            `UPDATE system_state
+             SET value_json = ?, updated_at = ?
+             WHERE key = ? AND updated_at = ?`,
+          )
+          .run(serialized, now, key, expectedUpdatedAt);
+    return result.changes === 1;
+  }
+
   countMissions(): number {
     const row = this.database.prepare("SELECT count(*) AS count FROM missions").get() as { count: number } | undefined;
     return Number(row?.count ?? 0);
@@ -6724,6 +6818,7 @@ export class BusinessRepository {
           access_level = excluded.access_level,
           status = 'active',
           approved_by = excluded.approved_by,
+          expires_at = NULL,
           updated_at = excluded.updated_at`,
         )
         .run(input.id, input.userId, input.venueId, input.venueName, input.suburb, input.accessLevel ?? "manager", input.approvedBy, input.now, input.now);
@@ -6747,21 +6842,23 @@ export class BusinessRepository {
     suburb: string | null;
     approvedBy: string;
     now: string;
+    expiresAt: string;
   }): VenueManagerAssignment {
     this.database
       .prepare(
         `INSERT INTO venue_manager_assignments (
-          id, user_id, venue_id, venue_name, suburb, access_level, status, approved_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'counter_staff', 'pending', ?, ?, ?)
+          id, user_id, venue_id, venue_name, suburb, access_level, status, approved_by, expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'counter_staff', 'pending', ?, ?, ?, ?)
         ON CONFLICT(user_id, venue_id) DO UPDATE SET
           venue_name = excluded.venue_name,
           suburb = excluded.suburb,
           access_level = 'counter_staff',
           status = 'pending',
           approved_by = excluded.approved_by,
+          expires_at = excluded.expires_at,
           updated_at = excluded.updated_at`,
       )
-      .run(input.id, input.userId, input.venueId, input.venueName, input.suburb, input.approvedBy, input.now, input.now);
+      .run(input.id, input.userId, input.venueId, input.venueName, input.suburb, input.approvedBy, input.expiresAt, input.now, input.now);
     const row = this.database
       .prepare("SELECT * FROM venue_manager_assignments WHERE user_id = ? AND venue_id = ?")
       .get(input.userId, input.venueId) as VenueManagerAssignmentRow;
@@ -6779,10 +6876,11 @@ export class BusinessRepository {
       const result = this.database
         .prepare(
           `UPDATE venue_manager_assignments
-           SET status = ?, updated_at = ?
-           WHERE id = ? AND user_id = ? AND access_level = 'counter_staff' AND status = 'pending'`,
+           SET status = ?, expires_at = NULL, updated_at = ?
+           WHERE id = ? AND user_id = ? AND access_level = 'counter_staff' AND status = 'pending'
+             AND julianday(expires_at) > julianday(?)`,
         )
-        .run(status, input.now, input.id, input.userId);
+        .run(status, input.now, input.id, input.userId, input.now);
       if (result.changes !== 1) return null;
       if (input.decision === "accept") {
         this.database
@@ -6799,7 +6897,7 @@ export class BusinessRepository {
   revokeVenueManager(input: { userId: string; venueId: string; now: string }): VenueManagerAssignment | null {
     this.database.transaction(() => {
       this.database
-        .prepare("UPDATE venue_manager_assignments SET status = 'revoked', updated_at = ? WHERE user_id = ? AND venue_id = ?")
+        .prepare("UPDATE venue_manager_assignments SET status = 'revoked', expires_at = NULL, updated_at = ? WHERE user_id = ? AND venue_id = ?")
         .run(input.now, input.userId, input.venueId);
       const active = this.database
         .prepare("SELECT 1 FROM venue_manager_assignments WHERE user_id = ? AND status = 'active' LIMIT 1")
@@ -6814,6 +6912,17 @@ export class BusinessRepository {
       .prepare("SELECT * FROM venue_manager_assignments WHERE user_id = ? AND venue_id = ?")
       .get(input.userId, input.venueId) as VenueManagerAssignmentRow | undefined;
     return row ? toVenueManagerAssignment(row) : null;
+  }
+
+  expireVenueCounterStaffInvitations(now: string): number {
+    return this.database
+      .prepare(
+        `UPDATE venue_manager_assignments
+         SET status = 'revoked', expires_at = NULL, updated_at = ?
+         WHERE access_level = 'counter_staff' AND status = 'pending'
+           AND (julianday(expires_at) IS NULL OR julianday(expires_at) <= julianday(?))`,
+      )
+      .run(now, now).changes;
   }
 
   listVenueManagerAssignments(input: { userId?: string | undefined; venueId?: string | undefined; activeOnly?: boolean | undefined; limit: number }): VenueManagerAssignment[] {
@@ -7371,7 +7480,9 @@ export class BusinessRepository {
       .prepare(
         `INSERT INTO venue_monthly_reports (id, venue_id, month, data_json, created_at)
          VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(venue_id, month) DO UPDATE SET data_json = excluded.data_json`,
+         ON CONFLICT(venue_id, month) DO UPDATE SET
+           data_json = excluded.data_json,
+           created_at = excluded.created_at`,
       )
       .run(input.id, input.barId, input.month, JSON.stringify(input.data), input.createdAt);
     return this.getMonthlyBarReport({ barId: input.barId, month: input.month })!;
@@ -7454,12 +7565,19 @@ export class BusinessRepository {
       this.database.prepare(sql).all(...values) as AnalyticsBucket[];
     const rangeClause = dateRange ? "AND created_at >= ? AND created_at < ?" : "";
     const rangeValues = dateRange ? [dateRange.startIso, dateRange.endIso] : [];
-    const eventAreaClause = input.area ? "AND lower(COALESCE(suburb, '')) = lower(?)" : "";
-    const barAreaClause = input.area ? "AND lower(COALESCE(suburb, area, '')) = lower(?)" : "";
-    const areaValues = input.area ? [input.area] : [];
+    const area = input.area?.trim() || null;
+    // Area analytics must never silently widen to all users when a venue has no
+    // suburb/area. Venue-specific counters below remain available in that case.
+    const eventAreaClause = area ? "AND lower(COALESCE(suburb, '')) = lower(?)" : "AND 1 = 0";
+    const areaValues = area ? [area] : [];
+    const actorExpression = `CASE
+      WHEN NULLIF(user_id, '') IS NOT NULL THEN 'user:' || user_id
+      WHEN NULLIF(anonymous_session_id, '') IS NOT NULL THEN 'session:' || anonymous_session_id
+      ELSE NULL
+    END`;
     const venueSearchQueries = input.venueName?.trim()
       ? count(
-          `SELECT count(*) AS count
+          `SELECT count(DISTINCT ${actorExpression}) AS count
            FROM events
            WHERE event_type IN ('search_performed', 'suburb_search_performed')
              ${eventAreaClause}
@@ -7472,7 +7590,7 @@ export class BusinessRepository {
     const barEventCount = (eventTypes: string[]) => {
       const placeholders = eventTypes.map(() => "?").join(", ");
       return count(
-        `SELECT count(*) AS count
+        `SELECT count(DISTINCT ${actorExpression}) AS count
          FROM events
          WHERE venue_id = ?
            AND event_type IN (${placeholders})
@@ -7480,46 +7598,63 @@ export class BusinessRepository {
         [input.barId, ...eventTypes, ...rangeValues],
       );
     };
-    const barMetadataEventCount = (eventType: string, metadataPath: string, metadataValue: string) =>
+    const barInteractionActorCount = (eventType: string, metadataPath: string, metadataValue: string) =>
       count(
-        `SELECT count(*) AS count
+        `SELECT count(DISTINCT ${actorExpression}) AS count
          FROM events
          WHERE venue_id = ?
-           AND event_type = ?
-           AND json_extract(metadata_json, ?) = ?
+           AND (
+             event_type = ?
+             OR (event_type = 'venue_lookup' AND json_extract(metadata_json, ?) = ?)
+           )
            ${rangeClause}`,
         [input.barId, eventType, metadataPath, metadataValue, ...rangeValues],
       );
 
-    const areaBeerSearches = grouped(
-      `SELECT COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer') AS key, count(*) AS count
+    const areaBeerSearches = mergeReportTrendRows(grouped(
+      `SELECT COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer') AS key,
+              max(json_extract(metadata_json, '$.query')) AS label,
+              count(DISTINCT ${actorExpression}) AS count
        FROM events
        WHERE event_type = 'beer_search_performed'
          ${eventAreaClause}
          ${rangeClause}
        GROUP BY COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer')
-       HAVING count(*) >= ?
+       HAVING count(DISTINCT ${actorExpression}) >= ?
        ORDER BY count DESC
-       LIMIT 8`,
+       LIMIT 24`,
       [...areaValues, ...rangeValues, privacyThreshold],
-    );
-    const areaStyleSearches = grouped(
-      `SELECT COALESCE(beer_style, query_text, 'style') AS key, count(*) AS count
-       FROM venue_analytics_events
-       WHERE event_type IN ('beer_style_search', 'beer_search')
-         ${barAreaClause}
+    ).map(safeReportBeerTrend));
+    const styleKeyExpression = `COALESCE(
+      NULLIF(trim(json_extract(metadata_json, '$.beerStyle')), ''),
+      NULLIF(trim(json_extract(metadata_json, '$.query')), '')
+    )`;
+    const areaStyleSearches = mergeReportTrendRows(grouped(
+      `SELECT ${styleKeyExpression} AS key,
+              max(json_extract(metadata_json, '$.query')) AS label,
+              count(DISTINCT ${actorExpression}) AS count
+       FROM events
+       WHERE (
+           event_type = 'style_search'
+           OR (
+             event_type = 'beer_search_performed'
+             AND lower(COALESCE(json_extract(metadata_json, '$.searchKind'), '')) = 'style'
+           )
+         )
+         AND ${styleKeyExpression} IS NOT NULL
+         ${eventAreaClause}
          ${rangeClause}
-       GROUP BY COALESCE(beer_style, query_text, 'style')
-       HAVING count(*) >= ?
+       GROUP BY ${styleKeyExpression}
+       HAVING count(DISTINCT ${actorExpression}) >= ?
        ORDER BY count DESC
-       LIMIT 8`,
+       LIMIT 24`,
       [...areaValues, ...rangeValues, privacyThreshold],
-    );
+    ).map(safeReportStyleTrend));
 
     const areaSearches = count(
-      `SELECT count(*) AS count
+      `SELECT count(DISTINCT ${actorExpression}) AS count
        FROM events
-       WHERE event_type IN ('search_performed', 'beer_search_performed', 'suburb_search_performed')
+       WHERE event_type IN ('search_performed', 'beer_search_performed', 'suburb_search_performed', 'style_search')
            ${eventAreaClause}
            ${rangeClause}`,
       [...areaValues, ...rangeValues],
@@ -7527,32 +7662,55 @@ export class BusinessRepository {
     const privacyFloorMet = areaSearches >= privacyThreshold;
     const searchTimeRows = this.database
       .prepare(
-        `SELECT created_at
+        `SELECT created_at, ${actorExpression} AS actor_key
          FROM events
-         WHERE event_type IN ('search_performed', 'beer_search_performed', 'suburb_search_performed')
+         WHERE event_type IN ('search_performed', 'beer_search_performed', 'suburb_search_performed', 'style_search')
+           AND ${actorExpression} IS NOT NULL
            ${eventAreaClause}
            ${rangeClause}`,
       )
-      .all(...[...areaValues, ...rangeValues]) as Array<{ created_at: string }>;
-    const searchTimes = buildSearchTimeBuckets(searchTimeRows, input.timezone ?? DEFAULT_REPORT_TIMEZONE);
+      .all(...[...areaValues, ...rangeValues]) as Array<{ created_at: string; actor_key: string }>;
+    const searchTimes = buildSearchTimeBuckets(
+      searchTimeRows,
+      input.timezone ?? DEFAULT_REPORT_TIMEZONE,
+      privacyThreshold,
+    );
 
-    return {
-      barLookups: barEventCount(["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"]),
-      profileViews: barEventCount(["venue_detail_opened", "venue_profile_viewed", "venue_portal_viewed"]),
-      beerListViews: barEventCount(["beer_list_viewed", "price_view_revealed", "venue_detail_opened"]),
+    const rawVenueMetrics = {
+      barLookups: barEventCount(["map_pin_click", "venue_card_viewed", "venue_lookup"]),
+      profileViews: barEventCount(["venue_detail_opened", "venue_profile_viewed"]),
+      beerListViews: barEventCount(["beer_list_viewed"]),
       specialsViews: barEventCount(["deal_viewed", "special_viewed", "happy_hour_active_now_used", "happy_hour_near_me_used"]),
       markerClicks: barEventCount(["map_pin_click"]),
       venueSearchQueries,
       priceReveals: barEventCount(["price_view_revealed"]),
-      directionsClicks: barEventCount(["directions_clicked"]) +
-        barMetadataEventCount("venue_lookup", "$.interactionType", "directions_click"),
+      directionsClicks: barInteractionActorCount("directions_clicked", "$.interactionType", "directions_click"),
       saves: barEventCount(["saved_venue_added", "saved_night_plan_added"]),
       shares: barEventCount(["venue_shared", "share_link_copied", "search_shared"]),
-      areaSearches,
+    };
+    const suppressedVenueMetrics = Object.entries(rawVenueMetrics)
+      .filter(([, value]) => value < privacyThreshold)
+      .map(([key]) => key);
+    const reportableVenueMetric = (key: keyof typeof rawVenueMetrics) =>
+      rawVenueMetrics[key] >= privacyThreshold ? rawVenueMetrics[key] : 0;
+
+    return {
+      barLookups: reportableVenueMetric("barLookups"),
+      profileViews: reportableVenueMetric("profileViews"),
+      beerListViews: reportableVenueMetric("beerListViews"),
+      specialsViews: reportableVenueMetric("specialsViews"),
+      markerClicks: reportableVenueMetric("markerClicks"),
+      venueSearchQueries: reportableVenueMetric("venueSearchQueries"),
+      priceReveals: reportableVenueMetric("priceReveals"),
+      directionsClicks: reportableVenueMetric("directionsClicks"),
+      saves: reportableVenueMetric("saves"),
+      shares: reportableVenueMetric("shares"),
+      areaSearches: privacyFloorMet ? areaSearches : 0,
       areaBeerSearches: privacyFloorMet ? areaBeerSearches : [],
       areaStyleSearches: privacyFloorMet ? areaStyleSearches : [],
       searchTimesByDay: privacyFloorMet ? searchTimes.byDay : [],
       searchTimesByHour: privacyFloorMet ? searchTimes.byHour : [],
+      suppressedVenueMetrics,
       privacyFloorMet,
       privacyThreshold,
       timezone: input.timezone ?? DEFAULT_REPORT_TIMEZONE,
@@ -7687,6 +7845,18 @@ export class BusinessRepository {
         JSON.stringify(input.metadata),
         input.createdAt,
       );
+  }
+
+  deleteUserEventsByPrivacyScopes(userId: string, scopes: Array<"optional_analytics" | "venue_insight">): number {
+    if (scopes.length === 0) return 0;
+    const placeholders = scopes.map(() => "?").join(", ");
+    return this.database
+      .prepare(
+        `DELETE FROM events
+         WHERE user_id = ?
+           AND json_extract(metadata_json, '$.privacyScope') IN (${placeholders})`,
+      )
+      .run(userId, ...scopes).changes;
   }
 
   countRecentVenueManagerDeletes(input: {
@@ -8364,42 +8534,64 @@ export class BusinessRepository {
     };
   }
 
-  getVenueManagerInsights(input: { venueId: string; suburb: string | null; staleBefore: string }) {
+  getVenueManagerInsights(input: {
+    venueId: string;
+    suburb: string | null;
+    staleBefore: string;
+    startIso?: string | undefined;
+    endIso?: string | undefined;
+  }) {
     const count = (sql: string, values: unknown[] = []) => {
       const row = this.database.prepare(sql).get(...values) as { count: number } | undefined;
       return Number(row?.count ?? 0);
     };
-    const priceRecords = this.listLatestPriceRecords(100, input.venueId);
+    const rangeClause = `${input.startIso ? " AND created_at >= ?" : ""}${input.endIso ? " AND created_at < ?" : ""}`;
+    const rangeValues = [
+      ...(input.startIso ? [input.startIso] : []),
+      ...(input.endIso ? [input.endIso] : []),
+    ];
+    // Current price rows are snapshots rather than a history table. For a
+    // historical report, exclude rows whose current snapshot did not yet exist
+    // or had not yet been verified by the end of that reporting period.
+    const priceRecords = this.listLatestPriceRecords(100, input.venueId)
+      .filter((record) => !input.endIso || (record.createdAt < input.endIso && record.lastVerifiedAt < input.endIso));
     const verifiedRecords = priceRecords.filter((record) =>
       ["admin_verified", "venue_confirmed", "photo_verified", "community_confirmed"].includes(record.confidence),
     );
     const beerIds = new Set(priceRecords.map((record) => record.normalizedBeerId).filter(Boolean));
     const wrongPriceReports = this.database
-      .prepare("SELECT * FROM wrong_price_reports WHERE venue_id = ? ORDER BY created_at DESC LIMIT 25")
-      .all(input.venueId) as WrongPriceReportRow[];
+      .prepare(`SELECT * FROM wrong_price_reports WHERE venue_id = ?${rangeClause} ORDER BY created_at DESC LIMIT 25`)
+      .all(input.venueId, ...rangeValues) as WrongPriceReportRow[];
     const requests = this.database
       .prepare(
         `SELECT * FROM venue_requests
-         WHERE venue_id = ? OR lower(COALESCE(venue_name, '')) = lower(?)
+         WHERE (venue_id = ? OR lower(COALESCE(venue_name, '')) = lower(?))
+           ${rangeClause}
          ORDER BY created_at DESC
          LIMIT 25`,
       )
-      .all(input.venueId, priceRecords[0]?.venueName ?? input.venueId) as VenueRequestRow[];
+      .all(input.venueId, priceRecords[0]?.venueName ?? input.venueId, ...rangeValues) as VenueRequestRow[];
     const submissions = this.database
-      .prepare("SELECT * FROM submissions WHERE venue_id = ? ORDER BY created_at DESC LIMIT 25")
-      .all(input.venueId) as SubmissionRow[];
+      .prepare(`SELECT * FROM submissions WHERE venue_id = ?${rangeClause} ORDER BY created_at DESC LIMIT 25`)
+      .all(input.venueId, ...rangeValues) as SubmissionRow[];
     const topBeersNearby = input.suburb
       ? this.database
           .prepare(
-            `SELECT COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer') AS key, count(*) AS count
+            `SELECT COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer') AS key,
+                    count(DISTINCT CASE
+                      WHEN NULLIF(user_id, '') IS NOT NULL THEN 'user:' || user_id
+                      WHEN NULLIF(anonymous_session_id, '') IS NOT NULL THEN 'session:' || anonymous_session_id
+                      ELSE NULL
+                    END) AS count
              FROM events
              WHERE event_type = 'beer_search_performed'
                AND lower(COALESCE(suburb, '')) = lower(?)
+               ${rangeClause}
              GROUP BY COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'beer')
              ORDER BY count DESC
              LIMIT 8`,
           )
-          .all(input.suburb) as Array<{ key: string; count: number }>
+          .all(input.suburb, ...rangeValues) as Array<{ key: string; count: number }>
       : [];
     const missingBeerSearches = topBeersNearby.filter((row) => !beerIds.has(row.key)).slice(0, 5);
     const latestVerifiedAt = priceRecords
@@ -8426,12 +8618,45 @@ export class BusinessRepository {
       submissions: submissions.map(toSubmission),
       aggregateInsights: {
         venueViews: count(
-          "SELECT count(*) AS count FROM events WHERE venue_id = ? AND event_type IN ('venue_card_viewed', 'venue_detail_opened')",
-          [input.venueId],
+          `SELECT count(DISTINCT CASE
+             WHEN NULLIF(user_id, '') IS NOT NULL THEN 'user:' || user_id
+             WHEN NULLIF(anonymous_session_id, '') IS NOT NULL THEN 'session:' || anonymous_session_id
+             ELSE NULL
+           END) AS count
+           FROM events
+           WHERE venue_id = ? AND event_type IN ('venue_card_viewed', 'venue_detail_opened')${rangeClause}`,
+          [input.venueId, ...rangeValues],
         ),
-        priceReveals: count("SELECT count(*) AS count FROM events WHERE venue_id = ? AND event_type = 'price_view_revealed'", [input.venueId]),
-        happyHourClicks: count("SELECT count(*) AS count FROM events WHERE venue_id = ? AND event_type IN ('happy_hour_active_now_used', 'happy_hour_near_me_used')", [input.venueId]),
-        markerClicks: count("SELECT count(*) AS count FROM events WHERE venue_id = ? AND event_type = 'venue_card_viewed'", [input.venueId]),
+        priceReveals: count(
+          `SELECT count(DISTINCT CASE
+             WHEN NULLIF(user_id, '') IS NOT NULL THEN 'user:' || user_id
+             WHEN NULLIF(anonymous_session_id, '') IS NOT NULL THEN 'session:' || anonymous_session_id
+             ELSE NULL
+           END) AS count
+           FROM events
+           WHERE venue_id = ? AND event_type = 'price_view_revealed'${rangeClause}`,
+          [input.venueId, ...rangeValues],
+        ),
+        happyHourClicks: count(
+          `SELECT count(DISTINCT CASE
+             WHEN NULLIF(user_id, '') IS NOT NULL THEN 'user:' || user_id
+             WHEN NULLIF(anonymous_session_id, '') IS NOT NULL THEN 'session:' || anonymous_session_id
+             ELSE NULL
+           END) AS count
+           FROM events
+           WHERE venue_id = ? AND event_type IN ('happy_hour_active_now_used', 'happy_hour_near_me_used')${rangeClause}`,
+          [input.venueId, ...rangeValues],
+        ),
+        markerClicks: count(
+          `SELECT count(DISTINCT CASE
+             WHEN NULLIF(user_id, '') IS NOT NULL THEN 'user:' || user_id
+             WHEN NULLIF(anonymous_session_id, '') IS NOT NULL THEN 'session:' || anonymous_session_id
+             ELSE NULL
+           END) AS count
+           FROM events
+           WHERE venue_id = ? AND event_type = 'map_pin_click'${rangeClause}`,
+          [input.venueId, ...rangeValues],
+        ),
         wrongPriceReports: wrongPriceReports.length,
         verifyRequests: requests.length,
         updatesReceived: submissions.length,

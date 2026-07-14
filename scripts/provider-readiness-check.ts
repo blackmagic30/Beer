@@ -146,6 +146,44 @@ const offsiteBackupBucketCheck = await checkPrivateStorageBucket({
   label: "Private off-site backup bucket",
   bucketName: offsiteBackupBucketName,
 });
+const reportEmailMode = getValue("REPORT_EMAIL_MODE") || "disabled";
+const reportScheduleEnabled = getValue("REPORT_DELIVERY_SCHEDULE_ENABLED") === "true";
+const reportEmailModeCheck: ProviderCheck = {
+  id: "REPORT_EMAIL_MODE",
+  label: "Report email delivery mode",
+  status: !["disabled", "mock", "resend"].includes(reportEmailMode)
+    ? "fail"
+    : isProduction() && reportEmailMode === "mock"
+      ? "fail"
+      : isProduction() && reportEmailMode !== "resend"
+        ? "warn"
+        : "pass",
+  action: reportEmailMode === "resend"
+    ? null
+    : isProduction()
+      ? "Set REPORT_EMAIL_MODE=resend only after the Resend sending domain, API key, and sender address are verified."
+      : null,
+};
+const reportScheduleCheck: ProviderCheck = {
+  id: "REPORT_DELIVERY_SCHEDULE_ENABLED",
+  label: "Automatic monthly report schedule",
+  status: reportScheduleEnabled && reportEmailMode !== "resend"
+    ? "fail"
+    : isProduction() && !reportScheduleEnabled
+      ? "warn"
+      : "pass",
+  action: reportScheduleEnabled
+    ? null
+    : isProduction()
+      ? "After a successful Resend dry run, set REPORT_DELIVERY_SCHEDULE_ENABLED=true."
+      : null,
+};
+const resendApiKeyCheck: ProviderCheck = reportEmailMode === "resend" || reportScheduleEnabled
+  ? checkRequired("RESEND_API_KEY", "Resend report-email API key", "Create a sending-only Resend API key and set RESEND_API_KEY.")
+  : { id: "RESEND_API_KEY", label: "Resend report-email API key", status: "pass", action: null };
+const reportEmailFromCheck: ProviderCheck = reportEmailMode === "resend" || reportScheduleEnabled
+  ? checkRequired("REPORT_EMAIL_FROM", "Verified report sender address", "Set REPORT_EMAIL_FROM to an address on the verified Resend sending domain.")
+  : { id: "REPORT_EMAIL_FROM", label: "Verified report sender address", status: "pass", action: null };
 
 const checks: ProviderCheck[] = [
   checkRequired("GOOGLE_MAPS_API_KEY", "Google Maps browser API key", "Create/restrict a browser key and set GOOGLE_MAPS_API_KEY."),
@@ -194,14 +232,10 @@ const checks: ProviderCheck[] = [
       ? null
       : "Set REPORT_TIMEZONE=Australia/Melbourne unless you intentionally change the reporting market.",
   },
-  {
-    id: "REPORT_EMAIL_MODE",
-    label: "Report email delivery mode",
-    status: process.env.REPORT_EMAIL_MODE === "disabled" || process.env.REPORT_EMAIL_MODE === "mock" ? "pass" : "warn",
-    action: process.env.REPORT_EMAIL_MODE === "disabled" || process.env.REPORT_EMAIL_MODE === "mock"
-      ? null
-      : "Set REPORT_EMAIL_MODE=disabled for production until a real email provider is integrated; use mock only in staging/tests.",
-  },
+  reportEmailModeCheck,
+  reportScheduleCheck,
+  resendApiKeyCheck,
+  reportEmailFromCheck,
   {
     id: "DEMO_BILLING_MODE",
     label: "Demo billing disabled for production",

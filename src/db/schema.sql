@@ -858,8 +858,13 @@ CREATE TABLE IF NOT EXISTS venue_manager_assignments (
   access_level TEXT NOT NULL DEFAULT 'manager' CHECK (access_level IN ('manager', 'counter_staff')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending', 'revoked')),
   approved_by TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  expires_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  CHECK (
+    (status = 'pending' AND access_level = 'counter_staff' AND julianday(expires_at) IS NOT NULL)
+    OR (status != 'pending' AND expires_at IS NULL)
+  ),
   UNIQUE (user_id, venue_id)
 );
 
@@ -868,6 +873,9 @@ CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_user
 
 CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_venue
   ON venue_manager_assignments (venue_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_venue_manager_assignments_expiry
+  ON venue_manager_assignments (status, access_level, expires_at);
 
 CREATE TABLE IF NOT EXISTS venue_profiles (
   venue_id TEXT PRIMARY KEY,
@@ -1043,7 +1051,11 @@ CREATE TABLE IF NOT EXISTS venue_claim_requests (
   reviewed_by TEXT REFERENCES accounts(id) ON DELETE SET NULL,
   reviewed_at TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  CHECK (
+    (status = 'pending' AND reviewed_at IS NULL AND reviewed_by IS NULL)
+    OR (status IN ('approved', 'rejected') AND julianday(reviewed_at) IS NOT NULL)
+  )
 );
 
 CREATE INDEX IF NOT EXISTS idx_venue_claim_requests_user

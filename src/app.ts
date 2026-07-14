@@ -109,6 +109,28 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       onStatus: (status) => recordOperationalState("offsite_backup", status),
     });
   }
+  if (env.NODE_ENV === "production" && env.REPORT_DELIVERY_SCHEDULE_ENABLED) {
+    const {
+      createResendReportEmailProvider,
+      scheduleMonthlyReportDelivery,
+    } = await import("./lib/monthly-report-delivery.js");
+    if (env.REPORT_EMAIL_MODE !== "resend" || !env.RESEND_API_KEY || !env.REPORT_EMAIL_FROM) {
+      throw new Error("Monthly report scheduling requires Resend delivery configuration.");
+    }
+    scheduleMonthlyReportDelivery({
+      generator: businessService,
+      repository: businessRepository,
+      provider: createResendReportEmailProvider({ apiKey: env.RESEND_API_KEY }),
+      publicBaseUrl: env.PUBLIC_BASE_URL,
+      from: env.REPORT_EMAIL_FROM,
+      ...(env.REPORT_EMAIL_REPLY_TO ? { replyTo: env.REPORT_EMAIL_REPLY_TO } : {}),
+      timezone: env.REPORT_TIMEZONE,
+      scheduleDay: env.REPORT_DELIVERY_DAY,
+      scheduleHour: env.REPORT_DELIVERY_HOUR,
+      checkIntervalMinutes: env.REPORT_DELIVERY_CHECK_INTERVAL_MINUTES,
+      onStatus: (status) => recordOperationalState("monthly_report_delivery", status),
+    });
+  }
 
   console.info("Backend services initialized.");
 

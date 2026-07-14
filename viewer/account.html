@@ -2291,7 +2291,7 @@
         <div class="listItem dataRow">
           <div>
             <strong>${escapeHtml(invitation.venueName || "Venue")}</strong>
-            <div class="muted">${escapeHtml(invitation.suburb || "Melbourne")} · invited ${MelbBeerBusiness.formatDate(invitation.invitedAt)}</div>
+            <div class="muted">${escapeHtml(invitation.suburb || "Melbourne")} · invited ${MelbBeerBusiness.formatDate(invitation.invitedAt)}${invitation.expiresAt ? ` · expires ${MelbBeerBusiness.formatDate(invitation.expiresAt)}` : ""}</div>
           </div>
           <div class="actionRow actionRow--compact">
             <button class="button button--primary" type="button" data-counter-invite="${escapeHtml(invitation.id)}" data-decision="accept" aria-label="Accept counter access for ${escapeHtml(invitation.venueName || "venue")}">Accept</button>

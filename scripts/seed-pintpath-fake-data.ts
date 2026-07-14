@@ -1,9 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 import BetterSqlite3 from "better-sqlite3";
 
+import { BusinessRepository } from "../src/db/business.repository.js";
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { findTrackedBeerByName, normalizeBeerSearchKey } from "../src/constants/beers.js";
+import { getZonedMonthRangeIso } from "../src/lib/time.js";
+import { BusinessService } from "../src/modules/business/business.service.js";
 
 const TEST_PREFIX = "pintpath-release";
 const DEFAULT_DATABASE_PATH = "data/pintpath-release-test.sqlite";
@@ -12,6 +17,10 @@ const USER_COUNT = Number(process.env.PINTPATH_FAKE_USER_COUNT ?? 420);
 const BAR_COUNT = Number(process.env.PINTPATH_FAKE_BAR_COUNT ?? 48);
 const OWNER_COUNT = Number(process.env.PINTPATH_FAKE_OWNER_COUNT ?? 12);
 const ANALYTICS_PRIVACY_FLOOR = Number(process.env.ANALYTICS_MIN_BUCKET_SIZE ?? 5);
+const RANDOM_SEED = Number(process.env.PINTPATH_FAKE_SEED ?? 0x70696e74);
+const DEMO_OWNER_ID = `${TEST_PREFIX}:owner:001`;
+const DEMO_OWNER_EMAIL = "owner-001@pintpath.test";
+const DEMO_OWNER_PASSWORD = process.env.PINTPATH_FAKE_OWNER_PASSWORD ?? `${crypto.randomBytes(18).toString("base64url")}!aA1`;
 
 type Tier = "basic" | "pro";
 
@@ -33,9 +42,10 @@ interface FakeUser {
   subscription: "free" | "premium_monthly" | "premium_yearly" | "admin";
   displayName: string;
   createdAt: string;
+  venueReportOptIn: boolean;
 }
 
-function monthRange(month: string): { start: Date; end: Date; startIso: string; endIso: string } {
+function monthRange(month: string): { start: Date; end: Date; startIso: string; endIso: string; dayCount: number } {
   if (!/^\d{4}-\d{2}$/.test(month)) {
     throw new Error("PINTPATH_FAKE_MONTH must use YYYY-MM, for example 2026-05.");
   }
@@ -43,13 +53,20 @@ function monthRange(month: string): { start: Date; end: Date; startIso: string; 
   const [yearPart, monthPart] = month.split("-");
   const year = Number(yearPart);
   const monthNumber = Number(monthPart);
-  if (!Number.isInteger(year) || !Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) {
-    throw new Error("PINTPATH_FAKE_MONTH must use a valid YYYY-MM month.");
+  if (!Number.isInteger(year) || year < 2020 || year > 2100 || !Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 12) {
+    throw new Error("PINTPATH_FAKE_MONTH must use a valid YYYY-MM month from 2020 to 2100.");
   }
 
-  const start = new Date(Date.UTC(year, monthNumber - 1, 1, 0, 0, 0, 0));
-  const end = new Date(Date.UTC(year, monthNumber, 1, 0, 0, 0, 0));
-  return { start, end, startIso: start.toISOString(), endIso: end.toISOString() };
+  const zonedRange = getZonedMonthRangeIso(month, "Australia/Melbourne");
+  const start = new Date(zonedRange.startIso);
+  const end = new Date(zonedRange.endIso);
+  return {
+    start,
+    end,
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+    dayCount: new Date(Date.UTC(year, monthNumber, 0)).getUTCDate(),
+  };
 }
 
 function assertSafeTarget(): string {
@@ -82,7 +99,11 @@ function mulberry32(seed: number) {
   };
 }
 
-const random = mulberry32(0x70696e74);
+if (!Number.isInteger(RANDOM_SEED)) {
+  throw new Error("PINTPATH_FAKE_SEED must be an integer so the synthetic run can be reproduced.");
+}
+
+const random = mulberry32(RANDOM_SEED);
 
 function pick<T>(values: T[]): T {
   return values[Math.floor(random() * values.length)]!;
@@ -120,7 +141,11 @@ function dayTimestamp(monthStart: Date, dayIndex: number, sequence: number, even
         { value: 23, weight: isWeekend ? 3 : 1 },
       ])
     : Math.floor(random() * 16) + 8;
-  date.setUTCHours(hour, sequence % 60, Math.floor(random() * 60), 0);
+  date.setTime(date.getTime() + (
+    hour * 60 * 60 * 1000 +
+    (sequence % 60) * 60 * 1000 +
+    Math.floor(random() * 60) * 1000
+  ));
   return date.toISOString();
 }
 
@@ -129,6 +154,7 @@ function cleanupSyntheticRows(database: BetterSqlite3.Database): void {
   const testEmailLike = "%@pintpath.test";
 
   database.prepare("DELETE FROM events WHERE id LIKE ? OR anonymous_session_id LIKE ? OR user_id LIKE ?").run(prefixLike, prefixLike, prefixLike);
+  database.prepare("DELETE FROM discount_redemptions WHERE id LIKE ? OR user_id LIKE ? OR venue_id LIKE ?").run(prefixLike, prefixLike, prefixLike);
   database.prepare("DELETE FROM venue_analytics_events WHERE id LIKE ?").run(prefixLike);
   database.prepare("DELETE FROM saved_items WHERE id LIKE ? OR user_id LIKE ?").run(prefixLike, prefixLike);
   database.prepare("DELETE FROM feedback WHERE id LIKE ? OR user_id LIKE ? OR anonymous_session_id LIKE ?").run(prefixLike, prefixLike, prefixLike);
@@ -179,11 +205,12 @@ const beers = [
   { name: "Young Henrys Newtowner", brewery: "Young Henrys", style: "Ale", price: 12 },
 ];
 const searchTerms = ["guinness", "lager", "stout", "xpa", "happy hour", "rooftop", "live music", "cheap pint", "craft beer"];
+const beerSearchTerms = ["guinness", "carlton draught", "stone & wood", "lager", "stout", "xpa", "pilsner", "pacific ale"];
 
 function buildUsers(range: ReturnType<typeof monthRange>): FakeUser[] {
   const users: FakeUser[] = [];
   for (let index = 0; index < USER_COUNT; index += 1) {
-    const createdDay = Math.floor(random() * 30);
+    const createdDay = Math.floor(random() * range.dayCount);
     const paidRoll = random();
     users.push({
       id: `${TEST_PREFIX}:user:${String(index + 1).padStart(4, "0")}`,
@@ -192,6 +219,7 @@ function buildUsers(range: ReturnType<typeof monthRange>): FakeUser[] {
       subscription: paidRoll > 0.94 ? "premium_yearly" : paidRoll > 0.86 ? "premium_monthly" : "free",
       displayName: `Fake User ${index + 1}`,
       createdAt: dayTimestamp(range.start, createdDay, index, false),
+      venueReportOptIn: index % 17 !== 0,
     });
   }
 
@@ -203,6 +231,7 @@ function buildUsers(range: ReturnType<typeof monthRange>): FakeUser[] {
       subscription: "free",
       displayName: `Fake Venue Owner ${index + 1}`,
       createdAt: dayTimestamp(range.start, Math.floor(random() * 12), index, false),
+      venueReportOptIn: true,
     });
   }
 
@@ -213,6 +242,7 @@ function buildUsers(range: ReturnType<typeof monthRange>): FakeUser[] {
     subscription: "admin",
     displayName: "Fake Admin",
     createdAt: range.startIso,
+    venueReportOptIn: true,
   });
 
   return users;
@@ -241,12 +271,14 @@ function buildVenues(): FakeVenue[] {
 }
 
 function insertAccounts(database: BetterSqlite3.Database, users: FakeUser[], now: string): void {
+  const demoOwnerSalt = crypto.randomBytes(16).toString("hex");
+  const demoOwnerPasswordHash = `scrypt:${demoOwnerSalt}:${crypto.scryptSync(DEMO_OWNER_PASSWORD, demoOwnerSalt, 64).toString("hex")}`;
   const insertAccount = database.prepare(`
     INSERT INTO accounts (
       id, public_account_id, email, password_hash, display_name, auth_provider, email_verified_at,
       role, age_confirmed_at, terms_accepted_at, privacy_accepted_at, terms_version, privacy_version,
       subscription_status, status, created_at, updated_at
-    ) VALUES (?, ?, ?, 'synthetic-test-hash', ?, 'local', ?, ?, ?, ?, ?, '2026-05-24', '2026-05-24', ?, 'active', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, 'local', ?, ?, ?, ?, ?, '2026-05-24', '2026-05-24', ?, 'active', ?, ?)
   `);
   const insertProfile = database.prepare(`
     INSERT INTO profiles (
@@ -267,6 +299,7 @@ function insertAccounts(database: BetterSqlite3.Database, users: FakeUser[], now
       user.id,
       publicId,
       user.email,
+      user.id === DEMO_OWNER_ID ? demoOwnerPasswordHash : "synthetic-test-hash",
       user.displayName,
       now,
       user.role,
@@ -278,8 +311,7 @@ function insertAccounts(database: BetterSqlite3.Database, users: FakeUser[], now
       now,
     );
     insertProfile.run(user.id, publicId, user.email, user.displayName, user.role, user.createdAt, now);
-    const optsOut = user.role === "user" && index % 17 === 0;
-    insertPrivacy.run(user.id, optsOut ? 0 : 1, optsOut ? 0 : 1, now, now);
+    insertPrivacy.run(user.id, user.venueReportOptIn ? 1 : 0, user.venueReportOptIn ? 1 : 0, now, now);
   });
 }
 
@@ -400,6 +432,11 @@ function insertVenues(database: BetterSqlite3.Database, venues: FakeVenue[], now
 
 function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], venues: FakeVenue[], range: ReturnType<typeof monthRange>): number {
   const normalUsers = users.filter((user) => user.role === "user");
+  const reportUsers = normalUsers.filter((user) => user.venueReportOptIn);
+  const anonymousSessions = Array.from(
+    { length: Math.max(80, Math.round(USER_COUNT * 0.4)) },
+    (_, index) => `${TEST_PREFIX}:anon-session:${String(index + 1).padStart(4, "0")}`,
+  );
   const activeVenues = venues.filter((venue) => venue.active);
   const venueWeights = activeVenues.map((venue, index) => ({
     value: venue,
@@ -444,6 +481,13 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
       status, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, NULL, 'Owner', ?, 'open', ?, ?)
   `);
+  const insertDiscountRedemption = database.prepare(`
+    INSERT INTO discount_redemptions (
+      id, user_id, public_account_id, venue_id, venue_name, suburb, special_id, item_name,
+      quantity, estimated_savings_cents, discount_pass_id, redeemed_by_user_id,
+      idempotency_key, redeemed_at, metadata_json, created_at
+    ) VALUES (?, ?, (SELECT public_account_id FROM accounts WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+  `);
 
   let eventCount = 0;
   const eventTypes = [
@@ -457,6 +501,9 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
     "beer_list_viewed",
     "price_view_revealed",
     "happy_hour_active_now_used",
+    "special_viewed",
+    "deal_viewed",
+    "directions_clicked",
     "venue_lookup",
     "saved_venue_added",
     "saved_night_plan_added",
@@ -464,7 +511,7 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
     "share_link_copied",
   ];
 
-  for (let dayIndex = 0; dayIndex < 30; dayIndex += 1) {
+  for (let dayIndex = 0; dayIndex < range.dayCount; dayIndex += 1) {
     const date = addDays(range.start, dayIndex);
     if (date >= range.end) {
       break;
@@ -473,7 +520,7 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
     const eventsToday = isWeekend ? 390 : 190;
     for (let sequence = 0; sequence < eventsToday; sequence += 1) {
       const venue = weightedPick(venueWeights);
-      const user = random() > 0.28 ? pick(normalUsers) : null;
+      const user = random() > 0.28 ? pick(reportUsers) : null;
       const isSearch = random() < 0.28;
       const eventType = isSearch
         ? weightedPick([
@@ -492,11 +539,13 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
               value.includes("shared") || value.includes("share") ? 0.35 :
               1,
           })));
-      const searchTerm = pick(searchTerms);
-      const beerId = eventType === "beer_search_performed" ? searchTerm : random() > 0.72 ? pick(beers).name.toLowerCase() : null;
+      const searchTerm = eventType === "beer_search_performed" ? pick(beerSearchTerms) : pick(searchTerms);
+      const beerId = eventType === "beer_search_performed"
+        ? findTrackedBeerByName(searchTerm)?.key ?? normalizeBeerSearchKey(searchTerm)
+        : random() > 0.72 ? findTrackedBeerByName(pick(beers).name)?.key ?? null : null;
       const eventVenue = isSearch && random() > 0.22 ? null : venue;
       const createdAt = dayTimestamp(range.start, dayIndex, sequence);
-      const anonymousSessionId = user ? null : `${TEST_PREFIX}:anon:${dayIndex}:${sequence}`;
+      const anonymousSessionId = user ? null : pick(anonymousSessions);
 
       insertEvent.run(
         `${TEST_PREFIX}:event:${dayIndex}:${sequence}`,
@@ -517,6 +566,7 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
       eventCount += 1;
 
       if (eventType === "beer_search_performed" || random() > 0.965) {
+        const beerStyle = pick(["lager", "stout", "xpa", "ale", "pilsner"]);
         insertVenueAnalytics.run(
           `${TEST_PREFIX}:venue-analytics:${dayIndex}:${sequence}`,
           null,
@@ -525,9 +575,28 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
           random() > 0.35 ? "beer_style_search" : "beer_search",
           searchTerm,
           eventType === "beer_search_performed" ? searchTerm : null,
-          pick(["lager", "stout", "xpa", "ale", "pilsner"]),
+          beerStyle,
           createdAt,
         );
+        insertEvent.run(
+          `${TEST_PREFIX}:style-event:${dayIndex}:${sequence}`,
+          user?.id ?? null,
+          anonymousSessionId,
+          "style_search",
+          null,
+          null,
+          venue.suburb,
+          JSON.stringify({
+            synthetic: true,
+            query: beerStyle,
+            beerStyle,
+            searchKind: "style",
+            source: "synthetic-style-search",
+            privacyScope: "optional_analytics",
+          }),
+          createdAt,
+        );
+        eventCount += 1;
       }
 
       if (user && (eventType === "saved_venue_added" || eventType === "saved_night_plan_added")) {
@@ -545,10 +614,37 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
     }
   }
 
+  for (const [venueIndex, venue] of activeVenues.filter((item) => item.tier === "pro" && item.ownerId).entries()) {
+    const redemptionCount = 8 + Math.floor(random() * 12);
+    for (let index = 0; index < redemptionCount; index += 1) {
+      const user = pick(reportUsers);
+      const quantity = random() > 0.82 ? 2 : 1;
+      const createdAt = dayTimestamp(range.start, (venueIndex * 3 + index * 2) % range.dayCount, index);
+      insertDiscountRedemption.run(
+        `${TEST_PREFIX}:discount:${venue.id}:${index}`,
+        user.id,
+        user.id,
+        venue.id,
+        venue.name,
+        venue.suburb,
+        `${TEST_PREFIX}:special:${String(venues.indexOf(venue) + 1).padStart(3, "0")}`,
+        index % 3 === 0 ? "$10 selected pint" : index % 3 === 1 ? "Pint Path happy hour" : "Featured venue special",
+        quantity,
+        quantity * (200 + (index % 3) * 100),
+        venue.ownerId,
+        `synthetic:${venue.id}:${index}`,
+        createdAt,
+        JSON.stringify({ synthetic: true, source: "release-readiness-seed" }),
+        createdAt,
+      );
+      eventCount += 1;
+    }
+  }
+
   for (let index = 0; index < 65; index += 1) {
     const venue = weightedPick(venueWeights);
     const user = random() > 0.25 ? pick(normalUsers) : null;
-    const createdAt = dayTimestamp(range.start, Math.floor(random() * 30), index);
+    const createdAt = dayTimestamp(range.start, Math.floor(random() * range.dayCount), index);
     insertWrongPrice.run(
       `${TEST_PREFIX}:wrong-price:${index}`,
       user?.id ?? null,
@@ -566,7 +662,7 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
   for (let index = 0; index < 110; index += 1) {
     const venue = random() > 0.18 ? weightedPick(venueWeights) : null;
     const user = random() > 0.2 ? pick(normalUsers) : null;
-    const createdAt = dayTimestamp(range.start, Math.floor(random() * 30), index, false);
+    const createdAt = dayTimestamp(range.start, Math.floor(random() * range.dayCount), index, false);
     insertRequest.run(
       `${TEST_PREFIX}:request:${index}`,
       user?.id ?? null,
@@ -586,7 +682,7 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
     const venue = random() > 0.45 ? weightedPick(venueWeights) : null;
     const user = random() > 0.3 ? pick(normalUsers) : null;
     const feedbackType = pick(["bug", "wrong_data", "feature_idea", "general_feedback", "privacy_request"] as const);
-    const createdAt = dayTimestamp(range.start, Math.floor(random() * 30), index, false);
+    const createdAt = dayTimestamp(range.start, Math.floor(random() * range.dayCount), index, false);
     insertFeedback.run(
       `${TEST_PREFIX}:feedback:${index}`,
       user?.id ?? null,
@@ -603,7 +699,7 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
   }
 
   for (const venue of venues.filter((item) => !item.ownerId).slice(0, 8)) {
-    const createdAt = dayTimestamp(range.start, Math.floor(random() * 30), Number(venue.id.at(-1) ?? "0"), false);
+    const createdAt = dayTimestamp(range.start, Math.floor(random() * range.dayCount), Number(venue.id.at(-1) ?? "0"), false);
     insertInterest.run(
       `${TEST_PREFIX}:interest:${venue.id}`,
       null,
@@ -620,76 +716,50 @@ function insertActivity(database: BetterSqlite3.Database, users: FakeUser[], ven
   return eventCount;
 }
 
-function generateMonthlyReports(database: BetterSqlite3.Database, venues: FakeVenue[], range: ReturnType<typeof monthRange>, now: string): number {
-  const insertReport = database.prepare(`
-    INSERT INTO venue_monthly_reports (id, venue_id, month, data_json, created_at)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(venue_id, month) DO UPDATE SET data_json = excluded.data_json
-  `);
-  const countEvents = (venueId: string, eventTypes: string[]) => {
-    const placeholders = eventTypes.map(() => "?").join(", ");
-    const row = database.prepare(`
-      SELECT count(*) AS count
-      FROM events
-      WHERE venue_id = ?
-        AND event_type IN (${placeholders})
-        AND created_at >= ?
-        AND created_at < ?
-    `).get(venueId, ...eventTypes, range.startIso, range.endIso) as { count: number } | undefined;
-    return Number(row?.count ?? 0);
-  };
-  const topSearches = (suburb: string) =>
-    database.prepare(`
-      SELECT COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'search') AS key, count(*) AS count
-      FROM events
-      WHERE event_type IN ('beer_search_performed', 'search_performed', 'suburb_search_performed')
-        AND lower(COALESCE(suburb, '')) = lower(?)
-        AND created_at >= ?
-        AND created_at < ?
-      GROUP BY COALESCE(beer_id, json_extract(metadata_json, '$.query'), 'search')
-      HAVING count(*) >= ?
-      ORDER BY count DESC
-      LIMIT 6
-    `).all(suburb, range.startIso, range.endIso, ANALYTICS_PRIVACY_FLOOR) as Array<{ key: string; count: number }>;
+function generateMonthlyReports(database: BetterSqlite3.Database): number {
+  const repository = new BusinessRepository(database);
+  const service = new BusinessService(repository, {
+    PUBLIC_BASE_URL: "http://127.0.0.1:3000",
+    FREE_PRICE_REVEALS_PER_DAY: 5,
+    CONTRIBUTOR_UNLOCK_POINTS: 15,
+    CONTRIBUTOR_UNLOCK_DAYS: 30,
+    DEMO_BILLING_MODE: true,
+    FIELD_TEST_MODE: false,
+    SESSION_TTL_DAYS: 60,
+    ADMIN_SESSION_TTL_DAYS: 7,
+    REQUIRE_ADMIN_MFA_IN_PRODUCTION: true,
+    ADMIN_MFA_MAX_AGE_MINUTES: 720,
+    REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: true,
+    ANALYTICS_MIN_BUCKET_SIZE: Math.max(1, ANALYTICS_PRIVACY_FLOOR),
+    REPORT_TIMEZONE: "Australia/Melbourne",
+    REPORT_EMAIL_MODE: "disabled",
+    ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: false,
+    SOURCE_EVIDENCE_STORAGE_DIR: path.resolve("data/pintpath-release-source-evidence"),
+    SOURCE_EVIDENCE_SIGNING_SECRET: "synthetic-release-readiness-only",
+    SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS: 300,
+    SOURCE_EVIDENCE_RETENTION_DAYS: 30,
+    POS_WEBHOOK_SIGNING_SECRET: "synthetic-release-readiness-pos-only",
+    NODE_ENV: "test",
+    STRIPE_SECRET_KEY: undefined,
+    STRIPE_WEBHOOK_SECRET: undefined,
+    STRIPE_PRICE_MONTHLY: undefined,
+    STRIPE_PRICE_YEARLY: undefined,
+    STRIPE_PRO_PRICE_ID: undefined,
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: undefined,
+    SUPABASE_URL: undefined,
+    SUPABASE_ANON_KEY: undefined,
+    SUPABASE_SERVICE_ROLE_KEY: undefined,
+    SUPABASE_OAUTH_PROVIDERS: "google,apple",
+    ADMIN_EMAILS: "admin@pintpath.test",
+    GOOGLE_MAPS_API_KEY: undefined,
+    GOOGLE_PLACES_API_KEY: undefined,
+  });
 
-  let reports = 0;
-  for (const venue of venues.filter((item) => item.tier !== "basic")) {
-    const summary = {
-      generated: true,
-      synthetic: true,
-      month: SIMULATION_MONTH,
-      venueTier: venue.tier,
-      totalBarLookups: countEvents(venue.id, ["map_pin_click", "venue_card_viewed", "venue_detail_opened", "venue_lookup"]),
-      totalProfileViews: countEvents(venue.id, ["venue_detail_opened", "venue_profile_viewed", "venue_portal_viewed"]),
-      totalBeerListViews: countEvents(venue.id, ["beer_list_viewed", "price_view_revealed", "venue_detail_opened"]),
-      totalSpecialsDealsViews: countEvents(venue.id, ["deal_viewed", "special_viewed", "happy_hour_active_now_used", "happy_hour_near_me_used"]),
-      mapMarkerClicks: countEvents(venue.id, ["map_pin_click"]),
-      savesAndNightPlanAdds: countEvents(venue.id, ["saved_venue_added", "saved_night_plan_added"]),
-      shares: countEvents(venue.id, ["venue_shared", "share_link_copied"]),
-      mostSearchedBeersInArea: topSearches(venue.suburb),
-      suggestedActions: [
-        "Keep beer rows and happy-hour times fresh before Thursday evening.",
-        venue.tier === "pro" ? "Use Pro visibility on Friday/Saturday peaks." : "Upgrade to Pro if you want a stronger listing treatment.",
-      ],
-      privacy: {
-        aggregateOnly: true,
-        suppressedBelowCount: ANALYTICS_PRIVACY_FLOOR,
-        excludesUserEmails: true,
-        excludesSessionIds: true,
-        excludesExactLocation: true,
-      },
-    };
-    insertReport.run(
-      `${TEST_PREFIX}:monthly-report:${venue.id}:${SIMULATION_MONTH}`,
-      venue.id,
-      SIMULATION_MONTH,
-      JSON.stringify({ summary }),
-      now,
-    );
-    reports += 1;
-  }
-
-  return reports;
+  return service.generateScheduledVenueMonthlyReports({
+    month: SIMULATION_MONTH,
+    venueId: null,
+    dryRun: false,
+  }).generatedCount;
 }
 
 const range = monthRange(SIMULATION_MONTH);
@@ -710,8 +780,9 @@ database.transaction(() => {
   insertAccounts(database, users, now);
   insertVenues(database, venues, now);
   generatedEvents = insertActivity(database, users, venues, range);
-  generatedReports = generateMonthlyReports(database, venues, range, now);
 })();
+
+generatedReports = generateMonthlyReports(database);
 
 database.close();
 
@@ -719,6 +790,7 @@ const normalUserCount = users.filter((user) => user.role === "user").length;
 const ownerCount = users.filter((user) => user.role === "venue_manager").length;
 const claimedBars = venues.filter((venue) => venue.ownerId).length;
 const proBars = venues.filter((venue) => venue.tier === "pro").length;
+const demoOwnerVenue = venues.find((venue) => venue.ownerId === DEMO_OWNER_ID && venue.tier === "pro" && venue.active) ?? null;
 
 console.log(JSON.stringify({
   ok: true,
@@ -726,6 +798,7 @@ console.log(JSON.stringify({
   simulationMonth: SIMULATION_MONTH,
   dateRange: { start: range.startIso, endExclusive: range.endIso },
   fakeUsers: normalUserCount,
+  venueReportOptInUsers: users.filter((user) => user.role === "user" && user.venueReportOptIn).length,
   fakeBarOwners: ownerCount,
   fakeBars: venues.length,
   claimedBars,
@@ -733,5 +806,12 @@ console.log(JSON.stringify({
   proBars,
   fakeInteractions: generatedEvents,
   generatedReports,
+  randomSeed: RANDOM_SEED,
+  demoVenueOwner: demoOwnerVenue ? {
+    email: DEMO_OWNER_EMAIL,
+    password: DEMO_OWNER_PASSWORD,
+    venueId: demoOwnerVenue.id,
+    portalUrl: `/venue-portal.html?venueId=${encodeURIComponent(demoOwnerVenue.id)}&month=${SIMULATION_MONTH}`,
+  } : null,
   safety: "synthetic local/test data only; production targets refused",
 }, null, 2));

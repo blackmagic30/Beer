@@ -4590,6 +4590,15 @@
 
       if (response.revealed) {
         applyBusinessPriceRecordsToRow(row, response.records);
+        void trackBusinessEvent("price_view_revealed", getAnalyticsContext({
+          venueId,
+          venueName: venue.name || cleaned.venue_name || null,
+          suburb: venue.suburb || row.suburb || null,
+          source: "venue_detail_price_reveal",
+          visiblePriceCount: Array.isArray(response.records)
+            ? response.records.filter((record) => record?.price != null).length
+            : 0,
+        }));
       }
 
       syncBusinessAccessUi();
@@ -4803,18 +4812,18 @@
           showToast(copied ? "Venue link copied." : "Could not copy the link. Use your browser share menu.");
           trackVenueAnalytics("venue_shared", activeVenueRecord, "venue_detail", {
             interactionType: "share_button",
+            copied,
           });
-          void trackBusinessEvent("share_link_copied", getVenueAnalyticsMetadata(activeVenueRecord, "venue_detail", {
-            shareType: "venue",
-          }));
           return;
         }
 
         if (action === "plan") {
-          addVenueToNightPlan(activeVenueRecord);
-          trackVenueAnalytics("venue_lookup", activeVenueRecord, "venue_detail", {
-            interactionType: "night_plan_add",
-          });
+          const added = addVenueToNightPlan(activeVenueRecord);
+          if (added) {
+            trackVenueAnalytics("saved_night_plan_added", activeVenueRecord, "venue_detail", {
+              interactionType: "night_plan_add",
+            });
+          }
           return;
         }
 
@@ -7956,7 +7965,7 @@
       const snapshot = getVenueSnapshot(record);
       if (!snapshot) {
         showToast("Could not add this venue to your night plan.");
-        return;
+        return false;
       }
 
       const alreadyPlanned = nightPlanVenues.some((venue) => venue.id === snapshot.id);
@@ -7971,6 +7980,7 @@
       if (activeVenueRecord) {
         venueDetailBodyEl.innerHTML = getVenueDetailContent(activeVenueRecord);
       }
+      return !alreadyPlanned;
     }
 
     function removeVenueFromNightPlan(venueId) {

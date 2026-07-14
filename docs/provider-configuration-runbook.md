@@ -67,6 +67,13 @@ OPENAI_MENU_OCR_FALLBACK_MODEL=gpt-4.1
 OPENAI_MENU_OCR_REVIEW_PASS=true
 REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
+RESEND_API_KEY=
+REPORT_EMAIL_FROM="Pint Path <reports@pintpath.au>"
+REPORT_EMAIL_REPLY_TO=
+REPORT_DELIVERY_SCHEDULE_ENABLED=false
+REPORT_DELIVERY_DAY=2
+REPORT_DELIVERY_HOUR=9
+REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
 REDIS_URL=redis://default:replace_me@host:6379
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
@@ -135,22 +142,40 @@ Before live payments:
 
 ## Monthly Reports
 
-Monthly reports are generated from aggregate events only. They do not include user names, emails, raw coordinates, individual clickstreams, or source evidence.
+Monthly reports are generated from privacy-thresholded aggregate events and reporting-period venue redemption totals. They do not include user or account IDs, names, emails, raw coordinates, individual clickstreams, recent redemption rows, or source evidence.
 
 Local/staging commands:
 
 ```bash
 npm run reports:generate -- --month=2026-05 --dry-run
-REPORT_EMAIL_MODE=mock npm run reports:generate -- --month=2026-05 --deliver --dry-run
 npm run reports:deliver:mock -- --month=2026-05 --dry-run
+REPORT_EMAIL_MODE=mock npm run reports:deliver:mock -- --month=2026-05
+npm run reports:deliver -- --month=2026-05 --dry-run
 ```
 
-Production defaults:
+Real delivery is implemented through the Resend HTTPS API but remains opt-in. Before enabling it:
+
+1. Add and verify a Pint Path sending domain or dedicated sending subdomain in Resend. Configure SPF and DKIM, and add DMARC before public rollout.
+2. Create a sending-only API key and store it in Railway as `RESEND_API_KEY`.
+3. Set `REPORT_EMAIL_FROM` to an address on that verified domain. Set `REPORT_EMAIL_REPLY_TO` to a monitored inbox if replies should be accepted.
+4. Keep `REPORT_EMAIL_MODE=disabled` and `REPORT_DELIVERY_SCHEDULE_ENABLED=false` while running `npm run reports:deliver -- --month=YYYY-MM --dry-run` against staging.
+5. Set `REPORT_EMAIL_MODE=resend`, leave the automatic schedule off, and run one targeted staging delivery with `--venue-id=...`.
+6. Confirm the expected verified manager received one email and attachment, then set `REPORT_DELIVERY_SCHEDULE_ENABLED=true` in production.
+
+Production schedule:
 
 - `REPORT_TIMEZONE=Australia/Melbourne`
-- `REPORT_EMAIL_MODE=disabled`
+- `REPORT_DELIVERY_DAY=2`
+- `REPORT_DELIVERY_HOUR=9`
+- `REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60`
 
-`REPORT_EMAIL_MODE=mock` is for staging/tests only. A real email provider is not integrated yet, so do not claim automated report email delivery is live until that provider is implemented and tested.
+The web service checks asynchronously after 09:00 Melbourne time on day 2 and delivers the previous completed month. A missed window within that calendar month is caught up later. If an older month remains incomplete after the calendar rolls over, deliver it explicitly with `npm run reports:deliver -- --month=YYYY-MM`. Successful months are recorded in persistent `system_state` and short-circuited before regeneration on later checks. Each provider request also has a venue/month/recipient idempotency key. `sending` or uncertain outcomes are not automatically retried; inspect the operational state before an explicit `--retry-rejected` run.
+
+Prefer a maintenance window for manual backfills so their status is easy to audit. The delivery ledger uses atomic SQLite recipient claims, and Resend requests use stable idempotency keys, so overlapping scheduler workers cannot intentionally claim the same venue/month/recipient send. The provider also spaces requests to stay below the normal API rate. A provider `429` is recorded as rejected and must be retried explicitly after the reported limit clears with `--retry-rejected`. The command exits non-zero when no reports were generated, a report has no eligible verified manager, another worker still holds an active send lease, or any delivery is rejected or uncertain; treat those outcomes as an incomplete run rather than a successful no-op.
+
+Only active, email-verified assignments with `accessLevel=manager` are eligible. Counter staff are excluded. Delivery state stores a recipient hash rather than an email address. `REPORT_EMAIL_MODE=mock` uses a separate state namespace and cannot mark a Resend delivery complete.
+
+Keep real delivery disabled until the external Resend account, verified domain, key, sender, and monitored reply path are configured. See the official [send-email API](https://resend.com/docs/api-reference/emails/send-email) and [domain verification](https://resend.com/docs/dashboard/domains/introduction) documentation.
 
 Protected export route:
 
@@ -203,7 +228,7 @@ Do not launch public production if any of these are true:
 - `GOOGLE_MAPS_MAP_ID` is missing.
 - Admin access is enabled without MFA/verified admin allowlist.
 - Stripe live checkout is enabled before signed webhook tests pass.
-- Report email mode is presented as real delivery while still disabled/mock-only.
+- Automatic report email is presented as live before Resend credentials, verified sender-domain DNS, targeted staging delivery, and scheduler operational state are confirmed.
 - Redis is missing for broad public traffic.
 - Supabase source-evidence Storage is public or untested.
 - There is no recent off-volume backup that passes `data:backup:verify`, or the quarterly restore drill has not been completed.

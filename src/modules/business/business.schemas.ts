@@ -730,7 +730,21 @@ export const beerCatalogMergeSchema = z.object({
   reviewNote: nullableTrimmedStringSchema.default(null),
 });
 
-const reportMonthSchema = z.string().trim().regex(/^\d{4}-\d{2}$/, "Use YYYY-MM, for example 2026-05.");
+const reportMonthSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}$/, "Use YYYY-MM, for example 2026-05.")
+  .refine((value) => {
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(5));
+    return Number.isInteger(year) && year >= 2020 && year <= 2100 &&
+      Number.isInteger(month) && month >= 1 && month <= 12;
+  }, "Use a valid calendar month from 2020 to 2100, for example 2026-05.");
+
+export const monthlyReportParamsSchema = z.object({
+  venueId: z.string().trim().min(1).max(200),
+  month: reportMonthSchema,
+});
 
 export const monthlyReportGenerateSchema = z.object({
   month: reportMonthSchema.optional(),
@@ -819,7 +833,6 @@ export const pintPointDrinkRecordSchema = z.object({
   itemName: nullableTrimmedStringSchema.default(null),
   beverageCategory: z.enum(["alcoholic", "non_alcoholic", "food"]).default("alcoholic"),
   quantity: z.coerce.number().int().min(1).max(4).default(1),
-  isAlcoholic: z.boolean().optional(),
   transactionReference: z.string().trim().min(4).max(120),
   notes: nullableTrimmedStringSchema.default(null),
 }).refine((value) => Boolean(value.code) !== Boolean(value.checkoutToken), {

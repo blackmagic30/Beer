@@ -1,0 +1,68 @@
+name: Pint Path Release Gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pintpath-production-release-gate
+  cancel-in-progress: false
+
+jobs:
+  production-release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      NODE_ENV: test
+      PUBLIC_BASE_URL: http://localhost:3000
+      DATABASE_PATH: ./data/ci-production-release-gate.sqlite
+      ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "true"
+      PINTPATH_SMOKE_BASE_URL: https://pintpath.au
+      PINTPATH_SMOKE_USER_TOKEN: ${{ secrets.PINTPATH_SMOKE_USER_TOKEN }}
+      PINTPATH_SMOKE_VENUE_TOKEN: ${{ secrets.PINTPATH_SMOKE_VENUE_TOKEN }}
+      PINTPATH_SMOKE_ADMIN_TOKEN: ${{ secrets.PINTPATH_SMOKE_ADMIN_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Automated release-readiness tests
+        run: npm run test:e2e:pintpath
+
+      - name: Verify authenticated production roles
+        run: npm run smoke:production:auth | tee production-role-smoke.json
+
+      - name: Enforce external launch evidence
+        run: npm run release:evidence:strict | tee release-evidence-summary.json
+
+      - name: Secret scan
+        run: npm run security:scan
+
+      - name: Dependency audit
+        run: npm run security:audit
+
+      - name: Upload release-gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pintpath-production-release-gate
+          path: |
+            docs/release-evidence.json
+            production-role-smoke.json
+            release-evidence-summary.json
+          if-no-files-found: warn

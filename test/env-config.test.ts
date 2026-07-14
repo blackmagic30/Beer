@@ -40,6 +40,58 @@ describe("environment safety defaults", () => {
     expect(env.DEMO_BILLING_MODE).toBe(false);
   });
 
+  it("keeps real monthly report delivery and scheduling disabled by default", async () => {
+    stubProductionEnv();
+
+    const { env } = await loadEnv();
+
+    expect(env.REPORT_EMAIL_MODE).toBe("disabled");
+    expect(env.REPORT_DELIVERY_SCHEDULE_ENABLED).toBe(false);
+    expect(env.REPORT_DELIVERY_DAY).toBe(2);
+    expect(env.REPORT_DELIVERY_HOUR).toBe(9);
+  });
+
+  it("rejects invalid report timezones before reports or scheduler timers start", async () => {
+    stubProductionEnv({ REPORT_TIMEZONE: "Mars/HappyHour" });
+
+    await expect(loadEnv()).rejects.toThrow("valid IANA timezone");
+  });
+
+  it("fails closed when Resend mode is missing delivery credentials", async () => {
+    stubProductionEnv({
+      REPORT_EMAIL_MODE: "resend",
+      RESEND_API_KEY: "",
+      REPORT_EMAIL_FROM: "Pint Path <reports@pintpath.au>",
+    });
+
+    await expect(loadEnv()).rejects.toThrow("RESEND_API_KEY is required");
+  });
+
+  it("does not allow the automatic report schedule with a non-sending email mode", async () => {
+    stubProductionEnv({
+      REPORT_EMAIL_MODE: "disabled",
+      REPORT_DELIVERY_SCHEDULE_ENABLED: "true",
+    });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "REPORT_DELIVERY_SCHEDULE_ENABLED requires REPORT_EMAIL_MODE=resend",
+    );
+  });
+
+  it("accepts explicit Resend credentials before enabling the report schedule", async () => {
+    stubProductionEnv({
+      REPORT_EMAIL_MODE: "resend",
+      RESEND_API_KEY: "re_test_report_delivery",
+      REPORT_EMAIL_FROM: "Pint Path <reports@pintpath.au>",
+      REPORT_DELIVERY_SCHEDULE_ENABLED: "true",
+    });
+
+    const { env } = await loadEnv();
+
+    expect(env.REPORT_EMAIL_MODE).toBe("resend");
+    expect(env.REPORT_DELIVERY_SCHEDULE_ENABLED).toBe(true);
+  });
+
   it("does not block public production boot while the official admin email is pending", async () => {
     stubProductionEnv({ ADMIN_EMAILS: "", DEMO_BILLING_MODE: "" });
 
@@ -121,6 +173,9 @@ describe("environment safety defaults", () => {
     expect(readinessScript).toContain("ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION");
     expect(readinessScript).toContain("REQUIRE_ADMIN_MFA_IN_PRODUCTION");
     expect(readinessScript).toContain("OFFSITE_BACKUP_BUCKET");
+    expect(readinessScript).toContain("RESEND_API_KEY");
+    expect(readinessScript).toContain("REPORT_EMAIL_FROM");
+    expect(readinessScript).toContain("REPORT_DELIVERY_SCHEDULE_ENABLED");
     expect(readinessScript).toContain("LAUNCH_READINESS_STRICT");
     expect(readinessScript).toContain("blockingWarnings");
     expect(packageJson.scripts["readiness:launch"]).toContain("LAUNCH_READINESS_STRICT=true NODE_ENV=production");

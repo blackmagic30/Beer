@@ -56,7 +56,9 @@ try {
           skippedCount: deliveries.filter((delivery) => String(delivery.status).startsWith("skipped")).length,
           warning: env.REPORT_EMAIL_MODE === "mock"
             ? "Mock delivery payloads are captured in admin route tests; this script does not send real email."
-            : "REPORT_EMAIL_MODE is disabled, so no report emails were sent.",
+            : env.REPORT_EMAIL_MODE === "resend"
+              ? "This legacy generation command never sends real email. Use npm run reports:deliver after a dry run."
+              : "REPORT_EMAIL_MODE is disabled, so no report emails were sent.",
         }
       : null,
   }, null, 2));

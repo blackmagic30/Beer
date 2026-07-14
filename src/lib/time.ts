@@ -50,15 +50,10 @@ function zonedLocalTimeToUtc(input: {
   second?: number | undefined;
   timezone: string;
 }): Date {
-  const targetUtc = Date.UTC(
-    input.year,
-    input.month - 1,
-    input.day,
-    input.hour ?? 0,
-    input.minute ?? 0,
-    input.second ?? 0,
-    0,
-  );
+  const targetDate = new Date(0);
+  targetDate.setUTCFullYear(input.year, input.month - 1, input.day);
+  targetDate.setUTCHours(input.hour ?? 0, input.minute ?? 0, input.second ?? 0, 0);
+  const targetUtc = targetDate.getTime();
   let guess = targetUtc;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {

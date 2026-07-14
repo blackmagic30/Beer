@@ -608,7 +608,7 @@ describe("Supabase account and verification foundation", () => {
     expect(drinkColumns).toEqual(expect.arrayContaining(["points_awarded", "idempotency_key"]));
     expect(redemptionIndexes).toContain("idx_discount_redemptions_idempotency");
     expect(drinkIndexes).toContain("idx_pint_point_drink_records_idempotency");
-    expect(database.pragma("user_version", { simple: true })).toBe(5);
+    expect(database.pragma("user_version", { simple: true })).toBe(6);
     database.prepare(
       `INSERT INTO pint_point_drink_records (
         id, user_id, venue_id, venue_name, recorded_at, created_at
@@ -617,6 +617,32 @@ describe("Supabase account and verification foundation", () => {
     expect(() => database.prepare("UPDATE pint_point_drink_records SET status = 'broken' WHERE id = 'migration-record'").run()).toThrow(
       "invalid pint point record status",
     );
+    const migrationRepository = new BusinessRepository(database);
+    const migrationAccount = createAccount(migrationRepository, "migration-assignment-user");
+    expect(() => database.prepare(
+      `INSERT INTO venue_manager_assignments (
+        id, user_id, venue_id, venue_name, access_level, status, expires_at, created_at, updated_at
+      ) VALUES ('invalid-pending-manager', ?, 'migration-venue', 'Migration Venue', 'manager', 'pending', ?, ?, ?)`,
+    ).run(migrationAccount.id, PREMIUM_UNTIL, NOW, NOW)).toThrow("invalid venue assignment state");
+    expect(() => database.prepare(
+      `INSERT INTO venue_manager_assignments (
+        id, user_id, venue_id, venue_name, access_level, status, expires_at, created_at, updated_at
+      ) VALUES ('invalid-invitation-expiry', ?, 'migration-venue', 'Migration Venue', 'counter_staff', 'pending', 'not-a-date', ?, ?)`,
+    ).run(migrationAccount.id, NOW, NOW)).toThrow("invalid venue assignment state");
+    expect(() => database.prepare(
+      `INSERT INTO venue_claim_requests (
+        id, user_id, venue_name, requester_name, requester_role, contact_email,
+        status, reviewed_at, created_at, updated_at
+      ) VALUES ('invalid-approved-claim', ?, 'Migration Venue', 'Manager', 'Owner', 'owner@example.com',
+        'approved', NULL, ?, ?)`,
+    ).run(migrationAccount.id, NOW, NOW)).toThrow("invalid venue claim review state");
+    expect(() => database.prepare(
+      `INSERT INTO venue_claim_requests (
+        id, user_id, venue_name, requester_name, requester_role, contact_email,
+        status, reviewed_at, created_at, updated_at
+      ) VALUES ('invalid-claim-review-time', ?, 'Migration Venue', 'Manager', 'Owner', 'owner@example.com',
+        'approved', 'not-a-date', ?, ?)`,
+    ).run(migrationAccount.id, NOW, NOW)).toThrow("invalid venue claim review state");
   });
 
   it("creates an app-facing profile row when an account is created", () => {
@@ -1041,6 +1067,15 @@ describe("Supabase account and verification foundation", () => {
       emailUpdatesEnabled: false,
     }));
 
+    service.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "map_pin_click",
+      venueId: "privacy-venue-before-consent",
+      beerId: null,
+      suburb: "Richmond",
+      metadata: { privacyScope: "venue_insight" },
+    });
+
     const saved = service.savePrivacySettings(account, {
       optionalAnalyticsEnabled: false,
       venueReportInclusionEnabled: false,
@@ -1079,6 +1114,35 @@ describe("Supabase account and verification foundation", () => {
       beerId: null,
       suburb: null,
       metadata: { feedbackType: "privacy_request" },
+    });
+    service.saveItem(account, {
+      itemType: "venue",
+      itemId: "privacy-venue",
+      label: "Privacy Venue",
+      suburb: "Richmond",
+      metadata: {},
+    });
+    service.savePrivacySettings(account, {
+      optionalAnalyticsEnabled: true,
+      venueReportInclusionEnabled: true,
+      productResearchEnabled: false,
+      emailUpdatesEnabled: false,
+    });
+    service.trackEvent(account, {
+      anonymousSessionId: null,
+      eventType: "map_pin_click",
+      venueId: "privacy-venue-after-opt-in",
+      beerId: null,
+      suburb: "Richmond",
+      metadata: { privacyScope: "venue_insight" },
+    });
+    expect(database.prepare("SELECT count(*) AS count FROM events WHERE venue_id = ?").get("privacy-venue-after-opt-in"))
+      .toEqual({ count: 1 });
+    service.savePrivacySettings(account, {
+      optionalAnalyticsEnabled: false,
+      venueReportInclusionEnabled: false,
+      productResearchEnabled: false,
+      emailUpdatesEnabled: false,
     });
 
     const eventRows = database
@@ -3539,7 +3603,6 @@ describe("business demo contribution model", () => {
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
-      isAlcoholic: undefined,
       transactionReference: "receipt-points-1",
       notes: null,
     })).toThrow("does not match this purchase");
@@ -3551,7 +3614,6 @@ describe("business demo contribution model", () => {
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
-      isAlcoholic: undefined,
       transactionReference: "receipt-points-1",
       notes: null,
     });
@@ -3567,7 +3629,6 @@ describe("business demo contribution model", () => {
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
-      isAlcoholic: undefined,
       transactionReference: "receipt-points-1",
       notes: null,
     });
@@ -3580,19 +3641,30 @@ describe("business demo contribution model", () => {
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
-      isAlcoholic: undefined,
       transactionReference: "receipt-points-different",
       notes: null,
     })).toThrow("does not match this purchase");
+    const unusedPreview = service.previewPintPointMember(assignedManager, "pint-points-venue", {
+      code: memberPass.code,
+      transactionReference: "receipt-expired-unrecorded",
+    });
     vi.setSystemTime(new Date("2026-05-04T08:31:00.000Z"));
-    expect(() => service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+    expect(service.recordPintPointDrink(assignedManager, "pint-points-venue", {
       checkoutToken: memberPreview.checkoutToken,
       code: undefined,
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
-      isAlcoholic: undefined,
       transactionReference: "receipt-points-1",
+      notes: null,
+    })).toEqual(expect.objectContaining({ idempotentReplay: true, pointsEarned: 2 }));
+    expect(() => service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+      checkoutToken: unusedPreview.checkoutToken,
+      code: undefined,
+      itemName: "Guinness pint",
+      beverageCategory: "alcoholic",
+      quantity: 1,
+      transactionReference: "receipt-expired-unrecorded",
       notes: null,
     })).toThrow("authorization expired");
     vi.setSystemTime(new Date(NOW));
@@ -3602,21 +3674,22 @@ describe("business demo contribution model", () => {
       itemName: "Different purchase",
       beverageCategory: "alcoholic",
       quantity: 1,
-      isAlcoholic: undefined,
       transactionReference: "receipt-points-1",
       notes: null,
     })).toThrow("already attached to a different purchase");
 
-    const zeroPointDrink = service.recordPintPointDrink(assignedManager, "pint-points-venue", {
+    const foodPayload = pintPointDrinkRecordSchema.parse({
       checkoutToken: undefined,
       code: memberPass.code,
       itemName: "Burger",
       beverageCategory: "food",
       quantity: 3,
-      isAlcoholic: undefined,
+      isAlcoholic: true,
       transactionReference: "receipt-food-1",
       notes: "Food should not earn points.",
     });
+    expect(foodPayload).not.toHaveProperty("isAlcoholic");
+    const zeroPointDrink = service.recordPintPointDrink(assignedManager, "pint-points-venue", foodPayload);
     expect(zeroPointDrink.pointsEarned).toBe(0);
     expect(zeroPointDrink.wallet.available).toBe(2);
 
@@ -3627,7 +3700,6 @@ describe("business demo contribution model", () => {
         itemName: "Carlton Draught pint",
         beverageCategory: "alcoholic",
         quantity,
-        isAlcoholic: undefined,
         transactionReference: `receipt-points-${index + 2}`,
         notes: null,
       });
@@ -3734,6 +3806,45 @@ describe("business demo contribution model", () => {
       pointsAwarded: 2,
     }));
     expect(JSON.stringify(portal.pintPoints.recentActivity)).not.toContain(user.id);
+  });
+
+  it("expires counter-staff invitations after 72 hours and allows a fresh invitation", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "expiring-counter-admin", "admin");
+    const manager = createAccount(repository, "expiring-counter-manager");
+    const staff = createAccount(repository, "expiring-counter-staff");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "expiring-counter-venue",
+      venueName: "Expiring Counter Venue",
+      suburb: "Carlton",
+    });
+    const managerAccount = repository.getAccountById(manager.id)!;
+    const invitation = service.assignVenueCounterStaff(managerAccount, "expiring-counter-venue", {
+      accountId: staff.publicAccountId,
+    });
+    expect(invitation.assignment).toEqual(expect.objectContaining({
+      status: "pending",
+      expiresAt: "2026-05-07T08:00:00.000Z",
+    }));
+
+    vi.setSystemTime(new Date("2026-05-07T09:00:00.000Z"));
+    expect(service.getAccountDashboard(repository.getAccountById(staff.id)!).counterStaffInvitations).toEqual([]);
+    expect(() => service.respondToVenueCounterStaffInvitation(
+      repository.getAccountById(staff.id)!,
+      invitation.assignment.id,
+      { decision: "accept" },
+    )).toThrow("not found or it has expired");
+
+    const replacement = service.assignVenueCounterStaff(managerAccount, "expiring-counter-venue", {
+      accountId: staff.publicAccountId,
+    });
+    expect(replacement.assignment).toEqual(expect.objectContaining({
+      status: "pending",
+      expiresAt: "2026-05-10T09:00:00.000Z",
+    }));
   });
 
   it("scopes counter staff to checkout tools and reverses mistaken Pint Points with an audit trail", async () => {
@@ -3843,7 +3954,6 @@ describe("business demo contribution model", () => {
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
-      isAlcoholic: undefined,
       transactionReference: "counter-receipt-1",
       notes: null,
     });
@@ -3870,7 +3980,6 @@ describe("business demo contribution model", () => {
       itemName: "Guinness pint",
       beverageCategory: "alcoholic",
       quantity: 2,
-      isAlcoholic: undefined,
       transactionReference: "counter-receipt-1",
       notes: null,
     })).toEqual(expect.objectContaining({ idempotentReplay: true, voided: true, pointsEarned: 0 }));
@@ -3888,7 +3997,6 @@ describe("business demo contribution model", () => {
       itemName: "Carlton Draught pint",
       beverageCategory: "alcoholic",
       quantity: 1,
-      isAlcoholic: undefined,
       transactionReference: "counter-receipt-2",
       notes: null,
     });
@@ -6480,15 +6588,15 @@ describe("business demo contribution model", () => {
       createdAt: NOW,
     });
     for (let index = 0; index < 18; index += 1) {
-      repository.recordVenueAnalyticsEvent({
+      repository.recordEvent({
         id: `bar-tier-current-style-${index}`,
+        userId: null,
+        anonymousSessionId: `bar-tier-current-style-actor-${index}`,
+        eventType: "style_search",
         venueId: null,
-        area: "South Melbourne",
+        beerId: null,
         suburb: "South Melbourne",
-        eventType: "beer_style_search",
-        queryText: "lager",
-        beerName: null,
-        beerStyle: "lager",
+        metadata: { query: "lager", searchKind: "style" },
         createdAt: `2026-05-${String(index + 1).padStart(2, "0")}T08:00:00.000Z`,
       });
     }
@@ -6504,15 +6612,15 @@ describe("business demo contribution model", () => {
         metadata: { query: "lager" },
         createdAt: `2026-04-${String(index + 1).padStart(2, "0")}T08:00:00.000Z`,
       });
-      repository.recordVenueAnalyticsEvent({
+      repository.recordEvent({
         id: `bar-tier-previous-style-${index}`,
+        userId: null,
+        anonymousSessionId: `bar-tier-previous-style-actor-${index}`,
+        eventType: "style_search",
         venueId: null,
-        area: "South Melbourne",
+        beerId: null,
         suburb: "South Melbourne",
-        eventType: "beer_style_search",
-        queryText: "lager",
-        beerName: null,
-        beerStyle: "lager",
+        metadata: { query: "lager", searchKind: "style" },
         createdAt: `2026-04-${String(index + 1).padStart(2, "0")}T08:00:00.000Z`,
       });
     }
@@ -6632,7 +6740,7 @@ describe("business demo contribution model", () => {
     expect(proPortal.tier.featuredSpecials).toBe(true);
     expect(proPortal.tier.priorityReview).toBe(true);
     expect(proPortal.tier.advancedRecommendations).toBe(true);
-    expect(proPortal.analytics?.barLookups).toBe(1);
+    expect(proPortal.analytics?.barLookups).toBe(0);
     expect(proPortal.analytics?.privacyFloorMet).toBe(true);
     expect(proPortal.analytics?.areaBeerSearches.length).toBeGreaterThan(0);
     expect(proPortal.monthlyReport?.data).toBeTruthy();
@@ -6647,13 +6755,13 @@ describe("business demo contribution model", () => {
       periodOrder: ["today", "week", "month"],
       periods: expect.objectContaining({
         today: expect.objectContaining({
-          venueSearches: 2,
-          venueSearchQueries: 1,
-          venueOpens: 1,
+          venueSearches: 0,
+          venueSearchQueries: 0,
+          venueOpens: 0,
           topAreaBeer: { key: "lager", count: 10 },
         }),
         month: expect.objectContaining({
-          venueSearches: 2,
+          venueSearches: 0,
           beerIntent: expect.any(Number),
           recommendedAction: expect.stringContaining("lager"),
         }),
@@ -6670,7 +6778,7 @@ describe("business demo contribution model", () => {
     }));
     expect(proPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
       demandSnapshot: expect.objectContaining({
-        opportunityScore: expect.any(Number),
+        opportunityScore: null,
       }),
     }));
     expect(proPortal.businessToolkit?.demandDashboard).toEqual(expect.objectContaining({
@@ -6731,32 +6839,22 @@ describe("business demo contribution model", () => {
       ]),
     }));
     expect(proPortal.businessToolkit?.dailySpecialsPlanner).toEqual(proPortal.dailySpecialsPlanner);
-    expect(proPortal.monthlyReport?.data?.summary).toEqual(expect.objectContaining({
+    expect(proPortal.monthlyReport?.month).toBe("2026-04");
+    const completedMonthSummary = proPortal.monthlyReport?.data?.summary as Record<string, unknown>;
+    expect(completedMonthSummary).toEqual(expect.objectContaining({
+      operationalSnapshotExcluded: true,
+      historicalDataScope: expect.stringContaining("Current listing quality"),
       proRecommendations: expect.arrayContaining([
         expect.any(String),
       ]),
-      dailySpecialsPlanner: expect.objectContaining({
-        title: "Specials planner",
-      }),
-      topBeersBoughtInArea: expect.arrayContaining([
-        expect.objectContaining({ beerName: "Guinness" }),
-      ]),
-      searchVsStockGap: expect.arrayContaining([
-        expect.objectContaining({ key: "lager" }),
-      ]),
-      priceBenchmarks: expect.arrayContaining([
-        expect.objectContaining({ beerName: "Carlton Draught" }),
-      ]),
-      proGrowthPlan: expect.objectContaining({
-        title: "Pro growth studio",
-      }),
-      discoveryPlacement: expect.objectContaining({
-        premiumDisplay: true,
-        discoveryBoost: true,
-        featuredSpecials: true,
-        priorityReview: true,
+      demandSnapshot: expect.objectContaining({
+        title: "Reporting-period demand snapshot",
       }),
     }));
+    expect(completedMonthSummary).not.toHaveProperty("dailySpecialsPlanner");
+    expect(completedMonthSummary).not.toHaveProperty("priceBenchmarks");
+    expect(completedMonthSummary).not.toHaveProperty("proGrowthPlan");
+    expect(completedMonthSummary).not.toHaveProperty("discoveryPlacement");
 
     const proSpecial = service.upsertBarSpecial(managerAccount, "bar-tier-1", {
       id: null,

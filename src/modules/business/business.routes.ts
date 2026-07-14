@@ -44,6 +44,7 @@ import {
   monthlyReportDeliverySchema,
   monthlyReportExportQuerySchema,
   monthlyReportGenerateSchema,
+  monthlyReportParamsSchema,
   pintPointMemberPreviewSchema,
   pintPointDrinkRecordSchema,
   pintPointDrinkVoidSchema,
@@ -572,6 +573,15 @@ export function createBusinessRouter(businessService: BusinessService): Router {
       .setHeader("Cache-Control", "private, no-store")
       .setHeader("Content-Disposition", `attachment; filename="${result.filename}"`)
       .send(result.body);
+  });
+
+  router.get("/venue-portal/:venueId/reports/:month", (req, res) => {
+    const account = requireAccount(req, businessService);
+    const params = parseWithSchema(monthlyReportParamsSchema, req.params, "Invalid monthly report request");
+    const report = businessService.getVenueMonthlyReport(account, params.venueId, params.month);
+    res
+      .setHeader("Cache-Control", "private, no-store")
+      .json(success({ report }));
   });
 
   router.post("/pos/discount-redemptions", writeLimiter, (req, res) => {

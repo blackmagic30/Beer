@@ -868,15 +868,15 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         createdAt: NOW,
       });
     }
-    harness.repository.recordVenueAnalyticsEvent({
+    harness.repository.recordEvent({
       id: "style-below-floor",
+      userId: null,
+      anonymousSessionId: "anon-floor:0",
+      eventType: "style_search",
       venueId: null,
-      area: "Fitzroy",
+      beerId: null,
       suburb: "Fitzroy",
-      eventType: "beer_style_search",
-      queryText: "lager",
-      beerName: null,
-      beerStyle: "lager",
+      metadata: { query: "lager", searchKind: "style" },
       createdAt: NOW,
     });
 
@@ -898,15 +898,15 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       createdAt: NOW,
     });
     for (let index = 0; index < 10; index += 1) {
-      harness.repository.recordVenueAnalyticsEvent({
+      harness.repository.recordEvent({
         id: `style-at-floor:${index}`,
+        userId: null,
+        anonymousSessionId: `anon-floor:${index}`,
+        eventType: "style_search",
         venueId: null,
-        area: "Fitzroy",
+        beerId: null,
         suburb: "Fitzroy",
-        eventType: "beer_style_search",
-        queryText: "lager",
-        beerName: null,
-        beerStyle: "lager",
+        metadata: { query: "lager", searchKind: "style" },
         createdAt: NOW,
       });
     }
@@ -914,10 +914,237 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
     const atFloorPortal = harness.service.getVenuePortal(updatedManager, { venueId: "venue-pro" });
     expect(atFloorPortal.analytics?.privacyFloorMet).toBe(true);
     expect(atFloorPortal.monthlyReport?.data).toBeTruthy();
-    expect(atFloorPortal.analytics?.areaStyleSearches).toEqual([{ key: "lager", count: 11 }]);
+    expect(atFloorPortal.analytics?.areaStyleSearches).toEqual([{ key: "lager", count: 10 }]);
+  });
+
+  it("counts distinct venue actors, suppresses unsafe trend buckets, and never widens a missing area globally", () => {
+    const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
+    const venueId = "venue-distinct-reporting";
+    const suburb = "Fitzroy";
+    const customerSession = "distinct-customer";
+    const record = (id: string, eventType: string, anonymousSessionId: string | null, metadata: Record<string, unknown> = {}) => {
+      harness.repository.recordEvent({
+        id,
+        userId: null,
+        anonymousSessionId,
+        eventType,
+        venueId: eventType.includes("search") ? null : venueId,
+        beerId: eventType === "beer_search_performed" ? "lager" : null,
+        suburb,
+        metadata,
+        createdAt: NOW,
+      });
+    };
+
+    record("distinct-pin-1", "map_pin_click", customerSession);
+    record("distinct-pin-2", "map_pin_click", customerSession);
+    record("distinct-detail-1", "venue_detail_opened", customerSession);
+    record("distinct-detail-2", "venue_detail_opened", customerSession);
+    record("distinct-beer-list-1", "beer_list_viewed", customerSession);
+    record("distinct-beer-list-2", "beer_list_viewed", customerSession);
+    record("distinct-price", "price_view_revealed", customerSession);
+    record("distinct-directions", "directions_clicked", customerSession);
+    record("distinct-directions-legacy", "venue_lookup", customerSession, { interactionType: "directions_click" });
+    record("distinct-share", "venue_shared", customerSession);
+    record("distinct-share-copy", "share_link_copied", customerSession);
+    record("owner-portal", "venue_portal_viewed", "venue-owner-session");
+    record("unknown-actor-pin", "map_pin_click", null);
+
+    for (let index = 0; index < 12; index += 1) {
+      record(`repeat-beer-search:${index}`, "beer_search_performed", customerSession, { query: "lager" });
+      record(`repeat-style-search:${index}`, "style_search", customerSession, { query: "lager", searchKind: "style" });
+    }
+    for (let index = 0; index < 12; index += 1) {
+      harness.repository.recordVenueAnalyticsEvent({
+        id: `legacy-style-without-actor:${index}`,
+        venueId: null,
+        area: suburb,
+        suburb,
+        eventType: "beer_style_search",
+        queryText: "private-style",
+        beerName: null,
+        beerStyle: "private-style",
+        createdAt: NOW,
+      });
+    }
+
+    const distinctCounts = harness.repository.getVenueAreaAnalytics({
+      venueId,
+      venueName: "Distinct Reporting Venue",
+      area: suburb,
+      month: "2026-05",
+      privacyThreshold: 1,
+    });
+    expect(distinctCounts).toEqual(expect.objectContaining({
+      barLookups: 1,
+      profileViews: 1,
+      beerListViews: 1,
+      priceReveals: 1,
+      directionsClicks: 1,
+      shares: 1,
+    }));
+
+    const belowFloor = harness.repository.getVenueAreaAnalytics({
+      venueId,
+      venueName: "Distinct Reporting Venue",
+      area: suburb,
+      month: "2026-05",
+      privacyThreshold: 10,
+    });
+    expect(belowFloor).toEqual(expect.objectContaining({
+      barLookups: 0,
+      profileViews: 0,
+      beerListViews: 0,
+      priceReveals: 0,
+      directionsClicks: 0,
+      shares: 0,
+      areaSearches: 0,
+      privacyFloorMet: false,
+      areaBeerSearches: [],
+      areaStyleSearches: [],
+    }));
+    expect(belowFloor.suppressedVenueMetrics).toEqual(expect.arrayContaining([
+      "barLookups",
+      "profileViews",
+      "beerListViews",
+      "priceReveals",
+      "directionsClicks",
+      "shares",
+    ]));
+
+    for (let index = 1; index < 10; index += 1) {
+      const actor = `distinct-area-actor:${index}`;
+      record(`distinct-area-beer:${index}`, "beer_search_performed", actor, { query: "lager" });
+      record(`distinct-area-style:${index}`, "style_search", actor, { query: "lager", searchKind: "style" });
+    }
+
+    const atFloor = harness.repository.getVenueAreaAnalytics({
+      venueId,
+      venueName: "Distinct Reporting Venue",
+      area: suburb,
+      month: "2026-05",
+      privacyThreshold: 10,
+    });
+    expect(atFloor.areaSearches).toBe(10);
+    expect(atFloor.areaBeerSearches).toEqual([{ key: "lager", count: 10 }]);
+    expect(atFloor.areaStyleSearches).toEqual([{ key: "lager", count: 10 }]);
+    expect(JSON.stringify(atFloor)).not.toContain("private-style");
+    expect(atFloor.searchTimesByDay[0]?.count).toBe(10);
+    expect(atFloor.searchTimesByHour[0]?.count).toBe(10);
+
+    const missingArea = harness.repository.getVenueAreaAnalytics({
+      venueId,
+      venueName: "Distinct Reporting Venue",
+      area: null,
+      month: "2026-05",
+      privacyThreshold: 10,
+    });
+    expect(missingArea.areaSearches).toBe(0);
+    expect(missingArea.privacyFloorMet).toBe(false);
+    expect(missingArea.areaBeerSearches).toEqual([]);
+    expect(missingArea.areaStyleSearches).toEqual([]);
+  });
+
+  it("freezes saved reports, omits present-day operational snapshots, and refreshes regeneration timestamps", async () => {
+    vi.setSystemTime(new Date("2026-07-14T00:00:00.000Z"));
+    const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
+    const admin = await signup(harness, "admin@pintpath.test");
+    const owner = await signup(harness, "historical-report-owner@pintpath.test");
+    const venueId = "venue-historical-report";
+    harness.service.assignVenueManager(admin.account, {
+      userId: owner.account.id,
+      venueId,
+      venueName: "Historical Report Venue",
+      suburb: "Richmond",
+    });
+    harness.service.upsertBarProfile(admin.account, venueId, venueProfileInput({
+      name: "Historical Report Venue",
+      suburb: "Richmond",
+      area: "Inner East",
+      membershipTier: "pro",
+    }));
+    for (let index = 0; index < 10; index += 1) {
+      harness.repository.recordEvent({
+        id: `historical-report-open:${index}`,
+        userId: null,
+        anonymousSessionId: `historical-report-actor:${index}`,
+        eventType: "venue_detail_opened",
+        venueId,
+        beerId: null,
+        suburb: "Richmond",
+        metadata: {},
+        createdAt: "2026-05-10T10:00:00.000Z",
+      });
+      harness.repository.recordEvent({
+        id: `historical-report-area-search:${index}`,
+        userId: null,
+        anonymousSessionId: `historical-report-actor:${index}`,
+        eventType: "beer_search_performed",
+        venueId: null,
+        beerId: "lager",
+        suburb: "Richmond",
+        metadata: { query: "lager" },
+        createdAt: "2026-05-10T10:05:00.000Z",
+      });
+    }
+
+    const generated = harness.service.generateVenueMonthlyReports(admin.account, {
+      month: "2026-05",
+      venueId,
+      dryRun: false,
+    });
+    expect(generated.generatedCount).toBe(1);
+    const firstSaved = harness.repository.getVenueMonthlyReport({ venueId, month: "2026-05" })!;
+    const firstSummary = firstSaved.data.summary as Record<string, unknown>;
+    expect(firstSummary.uniqueProfileViews).toBe(10);
+    expect(firstSummary.mostSearchedBeersInArea).toEqual([{ key: "lager", count: 10 }]);
+    expect(firstSummary.operationalSnapshotExcluded).toBe(true);
+    expect(firstSummary.historicalDataScope).toContain("Current listing quality");
+    expect(firstSummary).not.toHaveProperty("listingQualityScore");
+    expect(firstSummary).not.toHaveProperty("openWrongPriceReports");
+    expect(firstSummary).not.toHaveProperty("openVenueRequests");
+    expect(firstSummary).not.toHaveProperty("discoveryPlacement");
+
+    harness.repository.recordEvent({
+      id: "historical-report-late-open",
+      userId: null,
+      anonymousSessionId: "historical-report-late-actor",
+      eventType: "venue_detail_opened",
+      venueId,
+      beerId: null,
+      suburb: "Richmond",
+      metadata: {},
+      createdAt: "2026-05-11T10:00:00.000Z",
+    });
+    const scheduledRetry = harness.service.generateScheduledVenueMonthlyReports({
+      month: "2026-05",
+      venueId,
+      dryRun: false,
+    });
+    expect((scheduledRetry.reports[0]?.data.summary as Record<string, unknown>).uniqueProfileViews).toBe(10);
+    expect(harness.repository.getVenueMonthlyReport({ venueId, month: "2026-05" })?.createdAt)
+      .toBe(firstSaved.createdAt);
+    const ownerAccount = harness.repository.getAccountById(owner.account.id)!;
+    const frozen = harness.service.getVenueMonthlyReport(ownerAccount, venueId, "2026-05");
+    expect((frozen.data.summary as Record<string, unknown>).uniqueProfileViews).toBe(10);
+    expect(() => harness.service.getVenueMonthlyReport(ownerAccount, venueId, "2026-13"))
+      .toThrow("valid YYYY-MM");
+    expect(() => harness.service.getVenueMonthlyReport(ownerAccount, venueId, "0000-01"))
+      .toThrow("valid YYYY-MM");
+
+    const refreshedAt = "2026-07-01T00:00:00.000Z";
+    harness.repository.upsertVenueMonthlyReport({
+      id: "ignored-on-conflict",
+      venueId,
+      month: "2026-05",
+      data: firstSaved.data,
+      createdAt: refreshedAt,
+    });
+    expect(harness.repository.getVenueMonthlyReport({ venueId, month: "2026-05" })?.createdAt).toBe(refreshedAt);
   });
 
   it("keeps monthly reports scoped to the exact month, assigned owner, and privacy-safe fields", async () => {
+    vi.setSystemTime(new Date("2026-07-14T00:00:00.000Z"));
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5 });
     const admin = (await signup(harness, "admin@pintpath.test")).account;
     const owner = (await signup(harness, "report-owner@pintpath.test")).account;
@@ -982,15 +1209,15 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         metadata: { query: "stout" },
         createdAt: `2026-05-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
       });
-      harness.repository.recordVenueAnalyticsEvent({
+      harness.repository.recordEvent({
         id: `may-style:${index}`,
+        userId: null,
+        anonymousSessionId: `anon-may-search:${index}`,
+        eventType: "style_search",
         venueId: null,
-        area: "Richmond",
+        beerId: null,
         suburb: "Richmond",
-        eventType: "beer_style_search",
-        queryText: "stout",
-        beerName: null,
-        beerStyle: "stout",
+        metadata: { query: "stout", searchKind: "style" },
         createdAt: `2026-05-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
       });
       harness.repository.recordEvent({
@@ -1004,16 +1231,40 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         metadata: { query: "lager" },
         createdAt: `2026-06-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
       });
-      harness.repository.recordVenueAnalyticsEvent({
+      harness.repository.recordEvent({
         id: `june-style:${index}`,
+        userId: null,
+        anonymousSessionId: `anon-june-search:${index}`,
+        eventType: "style_search",
         venueId: null,
-        area: "Richmond",
+        beerId: null,
         suburb: "Richmond",
-        eventType: "beer_style_search",
-        queryText: "lager",
-        beerName: null,
-        beerStyle: "lager",
+        metadata: { query: "lager", searchKind: "style" },
         createdAt: `2026-06-${String(index + 3).padStart(2, "0")}T11:00:00.000Z`,
+      });
+    }
+    for (let index = 0; index < 10; index += 1) {
+      harness.repository.recordEvent({
+        id: `may-contact-beer:${index}`,
+        userId: null,
+        anonymousSessionId: `anon-may-contact:${index}`,
+        eventType: "beer_search_performed",
+        venueId: null,
+        beerId: "call_0412_345_678",
+        suburb: "Richmond",
+        metadata: { query: "Call 0412 345 678" },
+        createdAt: `2026-05-${String(index + 3).padStart(2, "0")}T12:00:00.000Z`,
+      });
+      harness.repository.recordEvent({
+        id: `may-contact-style:${index}`,
+        userId: null,
+        anonymousSessionId: `anon-may-contact:${index}`,
+        eventType: "style_search",
+        venueId: null,
+        beerId: null,
+        suburb: "Richmond",
+        metadata: { query: "text@example.com", beerStyle: "text@example.com", searchKind: "style" },
+        createdAt: `2026-05-${String(index + 3).padStart(2, "0")}T12:01:00.000Z`,
       });
     }
     harness.repository.upsertVenueMonthlyReport({
@@ -1025,8 +1276,21 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
         summary: {
           totalBarLookups: 999,
           userId: "should-not-leak",
-          topTerms: ["stout", "person@example.com"],
+          topTerms: ["stout", "person@example.com", "Call 0412 345 678"],
           nested: { anonymousSessionId: "anon-secret", safeAggregate: 12 },
+        },
+      },
+    });
+    harness.repository.upsertVenueMonthlyReport({
+      id: "monthly-report-sensitive-embedded",
+      venueId: "venue-monthly",
+      month: "2026-04",
+      createdAt: NOW,
+      data: {
+        summary: {
+          totalBarLookups: 888,
+          safeAggregate: 8,
+          listingQualityScore: 100,
         },
       },
     });
@@ -1037,27 +1301,102 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       month: "2026-05",
       privacyThreshold: 10,
     });
-    expect(directMayAnalytics.barLookups).toBe(3);
+    expect(directMayAnalytics.barLookups).toBe(0);
+    expect(directMayAnalytics.suppressedVenueMetrics).toContain("barLookups");
     expect(directMayAnalytics.areaBeerSearches).toEqual([{ key: "stout", count: 10 }]);
     expect(directMayAnalytics.areaStyleSearches).toEqual([{ key: "stout", count: 10 }]);
     expect(JSON.stringify(directMayAnalytics)).not.toContain("lager");
+    expect(JSON.stringify(directMayAnalytics)).not.toContain("0412");
+    expect(JSON.stringify(directMayAnalytics)).not.toContain("example.com");
 
     const ownerPortal = harness.service.getVenuePortal(ownerAccount, { venueId: "venue-monthly" });
-    expect(ownerPortal.monthlyReport?.month).toBe("2026-05");
-    const serializedReport = JSON.stringify(ownerPortal.monthlyReport);
+    expect(ownerPortal.monthlyReport?.month).toBe("2026-06");
+    expect(ownerPortal.monthlyReport?.data.schemaVersion).toBe(2);
+    expect(JSON.stringify(ownerPortal.monthlyReport)).not.toContain("safeAggregate");
+    expect(JSON.stringify(ownerPortal.monthlyReport)).not.toContain("listingQualityScore");
+    const selectedMayReport = harness.service.getVenueMonthlyReport(ownerAccount, "venue-monthly", "2026-05");
+    const serializedReport = JSON.stringify(selectedMayReport);
+    expect(selectedMayReport.data.schemaVersion).toBe(2);
     expect(serializedReport).not.toContain("should-not-leak");
     expect(serializedReport).not.toContain("anon-secret");
     expect(serializedReport).not.toContain("person@example.com");
-    expect(serializedReport).toContain("safeAggregate");
+    expect(serializedReport).not.toContain("0412 345 678");
+    expect(serializedReport).not.toContain("safeAggregate");
+
+    const regeneratedExport = harness.service.exportVenueMonthlyReport(
+      ownerAccount,
+      "venue-monthly",
+      "2026-05",
+      { format: "json" },
+    );
+    expect(regeneratedExport.body).toContain('"schemaVersion": 2');
+    expect(regeneratedExport.body).not.toContain("safeAggregate");
+    expect(harness.repository.getVenueMonthlyReport({ venueId: "venue-monthly", month: "2026-05" })?.data.schemaVersion).toBe(2);
+
+    const currentPreview = harness.service.getVenueMonthlyReport(ownerAccount, "venue-monthly", "2026-07");
+    expect(currentPreview.data.generated).toBe(false);
+    expect(harness.repository.getVenueMonthlyReport({ venueId: "venue-monthly", month: "2026-07" })).toBeNull();
+    expect(() => harness.service.exportVenueMonthlyReport(
+      ownerAccount,
+      "venue-monthly",
+      "2026-07",
+      { format: "json" },
+    )).toThrow("completed calendar months");
+    expect(() => harness.service.getVenueMonthlyReport(ownerAccount, "venue-monthly", "2026-08"))
+      .toThrow("Future monthly reports");
+
+    harness.repository.upsertVenueMonthlyReport({
+      id: "premature-june-embedded-snapshot",
+      venueId: "venue-monthly",
+      month: "2026-06",
+      createdAt: "2026-06-15T00:00:00.000Z",
+      data: {
+        schemaVersion: 2,
+        generated: true,
+        generatedAt: "2026-06-15T00:00:00.000Z",
+        reportingPeriod: { endIso: "2026-06-30T14:00:00.000Z" },
+        summary: { prematureEmbeddedSnapshot: true },
+      },
+    });
+    const portalWithPrematureSavedReport = harness.service.getVenuePortal(ownerAccount, { venueId: "venue-monthly" });
+    expect(portalWithPrematureSavedReport.monthlyReport?.month).toBe("2026-06");
+    expect(portalWithPrematureSavedReport.monthlyReport?.data.generated).toBe(false);
+    expect(JSON.stringify(portalWithPrematureSavedReport.monthlyReport)).not.toContain("prematureEmbeddedSnapshot");
+
+    harness.repository.upsertVenueMonthlyReport({
+      id: "premature-july-snapshot",
+      venueId: "venue-monthly",
+      month: "2026-07",
+      createdAt: "2026-07-14T00:00:00.000Z",
+      data: {
+        schemaVersion: 2,
+        generated: true,
+        generatedAt: "2026-07-14T00:00:00.000Z",
+        reportingPeriod: { endIso: "2026-07-31T14:00:00.000Z" },
+        summary: { prematureSnapshot: true },
+      },
+    });
+    vi.setSystemTime(new Date("2026-08-02T00:00:00.000Z"));
+    const regeneratedJuly = harness.service.generateScheduledVenueMonthlyReports({
+      month: "2026-07",
+      venueId: "venue-monthly",
+      dryRun: false,
+    });
+    expect(JSON.stringify(regeneratedJuly.reports[0])).not.toContain("prematureSnapshot");
+    expect(Date.parse(String(regeneratedJuly.reports[0]?.data.generatedAt)))
+      .toBeGreaterThanOrEqual(Date.parse("2026-07-31T14:00:00.000Z"));
 
     expect(() => harness.service.getVenuePortal(otherOwnerAccount, { venueId: "venue-monthly" }))
       .toThrow("assigned venues");
   });
 
   it("generates, mock-delivers, and exports monthly reports only to authorised venue owners", async () => {
+    vi.setSystemTime(new Date("2026-07-14T00:00:00.000Z"));
     const harness = createHarness({ ANALYTICS_MIN_BUCKET_SIZE: 5, REPORT_EMAIL_MODE: "mock" });
     const admin = await signup(harness, "admin@pintpath.test");
     const owner = await signup(harness, "http-report-owner@pintpath.test");
+    const unverifiedManager = await signup(harness, "http-report-unverified@pintpath.test");
+    const counterStaff = await signup(harness, "http-report-counter@pintpath.test");
     const otherOwner = await signup(harness, "http-report-other-owner@pintpath.test");
     const basicOwner = await signup(harness, "http-report-basic-owner@pintpath.test");
 
@@ -1066,6 +1405,32 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       venueId: "venue-http-report",
       venueName: "HTTP Report Venue",
       suburb: "Richmond",
+    });
+    harness.service.assignVenueManager(admin.account, {
+      userId: unverifiedManager.account.id,
+      venueId: "venue-http-report",
+      venueName: "HTTP Report Venue",
+      suburb: "Richmond",
+    });
+    harness.repository.assignVenueManager({
+      id: "http-report-counter-assignment",
+      userId: counterStaff.account.id,
+      venueId: "venue-http-report",
+      venueName: "HTTP Report Venue",
+      suburb: "Richmond",
+      accessLevel: "counter_staff",
+      approvedBy: admin.account.id,
+      now: NOW,
+    });
+    harness.repository.updateAccountSecurityClaims({
+      userId: owner.account.id,
+      emailVerifiedAt: NOW,
+      now: NOW,
+    });
+    harness.repository.updateAccountSecurityClaims({
+      userId: counterStaff.account.id,
+      emailVerifiedAt: NOW,
+      now: NOW,
     });
     harness.service.assignVenueManager(admin.account, {
       userId: otherOwner.account.id,
@@ -1127,6 +1492,37 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       expect((generated.json?.data as { generatedCount: number }).generatedCount).toBe(1);
       expect(JSON.stringify(generated.json)).not.toContain("venue-http-basic");
 
+      const ownerPreview = await requestJson(
+        baseUrl,
+        "/api/business/venue-portal/venue-http-report/reports/2026-05",
+        { token: owner.token },
+      );
+      expect(ownerPreview.response.status).toBe(200);
+      expect(ownerPreview.response.headers.get("cache-control")).toContain("private");
+      expect(ownerPreview.response.headers.get("cache-control")).toContain("no-store");
+      expect((ownerPreview.json?.data as { report: { month: string } }).report.month).toBe("2026-05");
+
+      const crossOwnerPreview = await requestJson(
+        baseUrl,
+        "/api/business/venue-portal/venue-http-report/reports/2026-05",
+        { token: otherOwner.token },
+      );
+      expect(crossOwnerPreview.response.status).toBe(403);
+
+      const basicOwnerPreview = await requestJson(
+        baseUrl,
+        "/api/business/venue-portal/venue-http-basic/reports/2026-05",
+        { token: basicOwner.token },
+      );
+      expect(basicOwnerPreview.response.status).toBe(403);
+
+      const invalidMonthPreview = await requestJson(
+        baseUrl,
+        "/api/business/venue-portal/venue-http-report/reports/2026-13",
+        { token: owner.token },
+      );
+      expect(invalidMonthPreview.response.status).toBe(400);
+
       const delivered = await requestJson(baseUrl, "/api/business/admin/reports/monthly/deliver", {
         method: "POST",
         token: admin.token,
@@ -1143,6 +1539,8 @@ describe("Pint Path release-readiness analytics and report privacy", () => {
       ]);
       expect(JSON.stringify(deliveries)).not.toContain(otherOwner.account.email);
       expect(JSON.stringify(deliveries)).not.toContain(basicOwner.account.email);
+      expect(JSON.stringify(deliveries)).not.toContain(unverifiedManager.account.email);
+      expect(JSON.stringify(deliveries)).not.toContain(counterStaff.account.email);
 
       const ownerExport = await fetch(`${baseUrl}/api/business/venue-portal/venue-http-report/reports/2026-05/export?format=json`, {
         headers: { authorization: `Bearer ${owner.token}` },

@@ -24,9 +24,13 @@ const invalid = data.items.filter((item) =>
 );
 const incomplete = data.items.filter((item) => item.required && item.status !== "pass");
 const unsupportedPasses = data.items.filter((item) => item.status === "pass" && (!item.evidence || !item.verifiedAt || !item.verifiedBy));
+const valid = invalid.length === 0 && unsupportedPasses.length === 0;
+const launchReady = valid && incomplete.length === 0;
 
 console.log(JSON.stringify({
-  ok: invalid.length === 0 && unsupportedPasses.length === 0 && (!strict || incomplete.length === 0),
+  ok: launchReady,
+  valid,
+  launchReady,
   strict,
   summary: {
     total: data.items.length,

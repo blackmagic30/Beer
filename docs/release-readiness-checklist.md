@@ -24,6 +24,23 @@ npm run readiness:launch
 
 This strict launch gate treats provider warnings as blockers. See `docs/launch-9-readiness-gates.md` for the manual evidence pack that local tests cannot prove.
 
+GitHub keeps these two signals deliberately separate:
+
+- **Pint Path Automated Readiness** runs on pushes and pull requests. It proves the build, local release suite, security scan, dependency audit, and reports external evidence without claiming that evidence is complete.
+- **Pint Path Release Gate** is a manual production-environment workflow. It runs strict authenticated production smoke checks and `release:evidence:strict`, so it cannot pass with skipped roles or incomplete sign-offs.
+
+The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Only the strict command is a launch gate.
+
+Configure fresh production-environment secrets before running the manual gate:
+
+```text
+PINTPATH_SMOKE_USER_TOKEN
+PINTPATH_SMOKE_VENUE_TOKEN
+PINTPATH_SMOKE_ADMIN_TOKEN
+```
+
+These are short-lived Pint Path bearer sessions for dedicated smoke accounts. Never commit them or print them in evidence notes. The admin token must represent a currently MFA-verified admin session.
+
 ## Synthetic Data
 
 Use only clearly marked synthetic data:
@@ -71,7 +88,7 @@ These are launch-critical but require provider/staging verification:
 - **Storage bucket live audit:** Verify `beermap-source-evidence` is private, has the intended file-size limit, and owner-only policies work in Supabase Storage.
 - **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
 - **Stripe:** Do not enable live payments until Stripe CLI or dashboard test webhooks prove signed webhook verification, duplicate-event idempotency, subscription updates, cancellations, and failed invoices.
-- **Report email:** Current delivery is disabled/mock-only. Do not announce real monthly report email delivery until an email provider is integrated and recipient tests pass in staging.
+- **Report email:** The Resend adapter and monthly scheduler are implemented but opt-in. Do not announce live delivery until the sending domain/key/from address are configured, a targeted staging email proves manager-only recipient scoping, and Railway records a successful `job:monthly_report_delivery` state.
 - **Redis rate limiting:** Full-scale production should use `REDIS_URL`; in-memory fallback is acceptable only for controlled beta/preview.
 - **DAST/mobile E2E:** Do not run dynamic scanners against production. Run any ZAP/Lighthouse/Playwright mobile pass only against local, preview, or staging.
 - **Backups/restore:** Run and document a provider-level restore drill before full-scale launch.

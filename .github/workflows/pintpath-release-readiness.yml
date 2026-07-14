@@ -1,4 +1,4 @@
-name: Pint Path Release Readiness
+name: Pint Path Automated Readiness
 
 on:
   pull_request:
@@ -35,7 +35,7 @@ jobs:
       - name: Automated release-readiness tests
         run: npm run test:e2e:pintpath
 
-      - name: Report external launch evidence status
+      - name: Report external launch evidence status (informational)
         run: npm run release:evidence | tee release-evidence-summary.json
 
       - name: Upload launch evidence report

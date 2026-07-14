@@ -451,6 +451,8 @@ describe("viewer map UI wiring", () => {
     expect(html).toContain("search_this_area");
     expect(html).toContain("venue_shared");
     expect(html).toContain("search_shared");
+    expect(html).toContain('trackBusinessEvent("price_view_revealed"');
+    expect(html).toContain('trackVenueAnalytics("saved_night_plan_added"');
   });
 
   it("lets venue managers refresh beer prices in a fast checklist flow", () => {

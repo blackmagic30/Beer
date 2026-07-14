@@ -41,7 +41,8 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 - `GOOGLE_MAPS_API_KEY` is set and HTTP-referrer restricted to the live domain.
 - `GOOGLE_MAPS_MAP_ID` is set to a JavaScript/vector Map ID from Google Maps Platform.
 - `REPORT_TIMEZONE=Australia/Melbourne`.
-- `REPORT_EMAIL_MODE=disabled` until a real email provider is integrated and tested; `mock` is staging/test-only.
+- Keep `REPORT_EMAIL_MODE=disabled` and `REPORT_DELIVERY_SCHEDULE_ENABLED=false` until the Resend domain, sending-only key, sender, and monitored reply path are configured and a targeted staging delivery passes.
+- Before claiming automatic delivery, set `REPORT_EMAIL_MODE=resend`, verify only active email-verified manager assignments receive the report, then set `REPORT_DELIVERY_SCHEDULE_ENABLED=true` and confirm `job:monthly_report_delivery` succeeds. Counter staff must remain excluded.
 - `REDIS_URL` is set to Railway Redis/Upstash/managed Redis. Do not use `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true` except for a time-boxed emergency beta.
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false` for normal production. If it is ever set to `true`, record the incident reason, owner, expiry time, and rollback plan.
 - `SOURCE_EVIDENCE_SIGNING_SECRET` is a unique 32+ character random secret.
