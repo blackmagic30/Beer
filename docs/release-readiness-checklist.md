@@ -31,6 +31,8 @@ GitHub keeps these two signals deliberately separate:
 
 The informational evidence command exits successfully when the evidence file is structurally valid, but its JSON keeps `launchReady: false` until every required sign-off passes. Only the strict command is a launch gate.
 
+Use the [external launch evidence checklist](external-launch-signoffs.md) for the ordered owner, command, pass/fail, stop-condition, and evidence checklist for all 12 required IDs.
+
 Configure fresh production-environment secrets before running the manual gate:
 
 ```text
@@ -85,9 +87,9 @@ These are launch-critical but require provider/staging verification:
 - **Supabase RLS live audit:** Apply migrations, then test anonymous/authenticated access in the Supabase dashboard or staging client. Local SQL parsing is not a substitute for live policy verification.
 - **Supabase database version:** Confirm the live project is not on deprecated Postgres 14 before launch.
 - **Supabase Data API exposure:** Confirm any new public-schema tables have intentional grants/exposure plus RLS; do not assume new tables are auto-exposed.
-- **Storage bucket live audit:** Verify `beermap-source-evidence` is private, has the intended file-size limit, and owner-only policies work in Supabase Storage.
+- **Storage bucket live audit:** Verify `beermap-source-evidence` is private, has the intended file-size/MIME limits, and has no direct `anon` or `authenticated` object policies. Prove ordinary clients are denied and only the server-authorized API/admin signed-URL paths work.
 - **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
-- **Stripe:** Do not enable live payments until Stripe CLI or dashboard test webhooks prove signed webhook verification, duplicate-event idempotency, subscription updates, cancellations, and failed invoices.
+- **Stripe:** Test-mode signed webhooks must first prove verification, duplicate-event idempotency, subscription updates, cancellations, and failed invoices. Before public paid entry points open, complete the controlled smallest-value live checkout/webhook/portal/cancel/refund reconciliation in [`external-launch-signoffs.md`](external-launch-signoffs.md#10-legal_billing); test mode alone is not live-provider evidence.
 - **Report email:** The Resend adapter and monthly scheduler are implemented but opt-in. Do not announce live delivery until the sending domain/key/from address are configured, a targeted staging email proves manager-only recipient scoping, and Railway records a successful `job:monthly_report_delivery` state.
 - **Redis rate limiting:** Full-scale production should use `REDIS_URL`; in-memory fallback is acceptable only for controlled beta/preview.
 - **DAST/mobile E2E:** Do not run dynamic scanners against production. Run any ZAP/Lighthouse/Playwright mobile pass only against local, preview, or staging.

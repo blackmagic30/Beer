@@ -21,10 +21,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -75,14 +77,18 @@ jobs:
           REPORT_EMAIL_FROM: ${{ secrets.REPORT_EMAIL_FROM }}
           DEMO_BILLING_MODE: "false"
           ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: "false"
-        run: npm run readiness:launch | tee provider-readiness-summary.json
+        run: |
+          set -o pipefail
+          npm run --silent readiness:launch | tee provider-readiness-summary.json
 
       - name: Verify authenticated production roles
         env:
           PINTPATH_SMOKE_USER_TOKEN: ${{ secrets.PINTPATH_SMOKE_USER_TOKEN }}
           PINTPATH_SMOKE_VENUE_TOKEN: ${{ secrets.PINTPATH_SMOKE_VENUE_TOKEN }}
           PINTPATH_SMOKE_ADMIN_TOKEN: ${{ secrets.PINTPATH_SMOKE_ADMIN_TOKEN }}
-        run: npm run smoke:production:auth | tee production-role-smoke.json
+        run: |
+          set -o pipefail
+          npm run --silent smoke:production:auth | tee production-role-smoke.json
 
       - name: Secret scan
         run: npm run security:scan
@@ -91,14 +97,18 @@ jobs:
         run: npm run security:audit
 
       - name: Record tested immutable commit
-        run: git rev-parse HEAD | tee tested-commit-sha.txt
+        run: |
+          set -o pipefail
+          git rev-parse HEAD | tee tested-commit-sha.txt
 
       - name: Enforce external launch evidence
-        run: npm run release:evidence:strict | tee release-evidence-summary.json
+        run: |
+          set -o pipefail
+          npm run --silent release:evidence:strict | tee release-evidence-summary.json
 
       - name: Upload release-gate evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pintpath-production-release-gate
           path: |

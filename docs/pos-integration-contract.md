@@ -6,7 +6,7 @@ Pint Path currently provides a vendor-neutral Pro venue webhook and a manual cou
 
 `POST /api/business/pos/discount-redemptions`
 
-Use the per-venue token shown in the manager portal as `X-Pint-Path-POS-Token`. Rotating the token invalidates the previous value immediately. Never place it in browser code, receipts, logs, or a public repository.
+Use the per-venue token shown in the manager portal as `X-Pint-Path-POS-Token`. Rotation reveals the new token once and reports `previousTokenValidUntil`; the previous token remains valid only during that 10-minute handover window, then must return `401`. Never place either token in browser code, receipts, logs, or a public repository.
 
 Example payload:
 
@@ -14,10 +14,10 @@ Example payload:
 {
   "venueId": "venue-id",
   "code": "ABC123",
-  "transactionReference": "pos-order-48391-line-2",
+  "posReference": "pos-order-48391-line-2",
   "itemName": "Guinness pint",
   "quantity": 1,
-  "estimatedSavingsCents": 200,
+  "discountAmountCents": 200,
   "terminalId": "bar-1",
   "redeemedAt": "2026-07-13T10:30:00+10:00",
   "metadata": {
@@ -26,16 +26,18 @@ Example payload:
 }
 ```
 
-`transactionReference` must be stable across retries. Pint Path treats it as the idempotency key so a timeout/retry cannot award twice. The adapter should retry network failures with the same payload and should not generate a new reference.
+`posReference` must be stable across retries. Pint Path treats it as the idempotency key so a timeout/retry cannot create a second discount redemption or count the savings twice. The adapter should retry network failures with the same payload and should not generate a new reference.
+
+This endpoint records the discount redemption and returns `pointsEarned: 0`. It does not record the paid alcoholic purchase that earns Pint Points; staff must use the separate verified-purchase flow for that event.
 
 ## Required adapter behaviour
 
 - Send only after staff confirm the member and eligible item.
-- Treat HTTP 2xx idempotent replay as success.
+- Treat HTTP 2xx idempotent replay as success without recording another redemption or savings amount.
 - Do not retry HTTP 4xx until staff correct the request.
 - Back off and retry HTTP 5xx/network failures using the same transaction reference.
 - Keep token access restricted to the venue and production environment.
 - Do not send customer name, email, phone, payment-card data, or full receipt contents.
-- Reconcile venue POS references against Pint Path activity and reversals at shift close.
+- Reconcile venue `posReference` values against Pint Path discount activity and reversals at shift close.
 
 Until a vendor adapter passes a real venue pilot, the manager portal QR/code flow is the supported fallback.

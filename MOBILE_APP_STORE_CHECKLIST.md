@@ -54,8 +54,8 @@ Checkboxes marked complete are repository-backed. Unchecked items require releas
 - [x] CI builds an unsigned simulator app and validates an unsigned Release archive.
 - [ ] Set the Apple development team, distribution certificate, provisioning profile, and final App Store record.
 - [ ] Validate final app icon and launch appearance on supported devices.
-- [ ] Create a signed archive, run Organizer validation, upload to TestFlight, and clear all warnings.
-- [ ] Run the full device/accessibility/provider matrix and attach evidence.
+- [ ] Create a signed archive, export a signed IPA with private signing/export options, scan it for embedded private secrets/debug configuration, hash it, run Organizer validation, upload to TestFlight, and clear all warnings.
+- [ ] Run the full device/accessibility/provider matrix on minimum-supported iOS 17 and the current iOS release; include uninstall/reinstall and encrypted device-backup/restore or device-transfer session checks.
 - [ ] Provide screenshots, review notes, demo account, privacy answers, export-compliance answers, and phased-release owner.
 
 ## Android submission
@@ -63,8 +63,10 @@ Checkboxes marked complete are repository-backed. Unchecked items require releas
 - [x] Display name is Pint Path; version code/name are `2`/`1.0.0`.
 - [x] OAuth activity uses `singleTop` and declares the callback intent filter.
 - [x] CI runs debug/release lint, unit tests, and assemblies with JDK 17.
-- [ ] Create/protect the upload key and configure Play App Signing without committing secrets.
-- [ ] Build and inspect the signed AAB; run Play pre-launch and internal-testing reports.
+- [ ] Create the Play upload key in the approved secret manager, keep the keystore outside the checkout, enrol it in Play App Signing, record the certificate fingerprint, recovery owner, and rotation procedure, and confirm no signing value appears in Gradle properties, shell history, CI logs, or screenshots.
+- [ ] In a private zsh terminal, follow `apps/android/README.md`: enter all four `PINT_PATH_ANDROID_*` signing values through its interactive prompts, run `./gradlew --no-daemon clean bundleRelease`, and verify its exit trap cleared all four variables.
+- [ ] Verify `app/build/outputs/bundle/release/app-release.aab` with non-strict `jarsigner -verify -verbose -certs` and require `jar verified.`; inspect warnings, certificate validity, and algorithms explicitly because a self-signed Android upload certificate can fail `-strict`. Use `keytool -printcert -jarfile`, match its SHA-256 upload certificate fingerprint to Play, and scan the final AAB for private keys, passwords, tokens, and non-public configuration before upload.
+- [ ] Upload that exact signed AAB to Play internal testing; install it from Play, exercise authentication/provider/deep-link/session/export/deletion and venue-role journeys on physical devices, then clear the pre-launch and internal-testing reports.
 - [ ] Validate adaptive icon, screenshots, phone/tablet/foldable layouts, and target-SDK policy.
 - [ ] Complete Data Safety, content rating, alcohol framing, ads declaration, app-access instructions, and staged-rollout owner.
 
@@ -75,3 +77,4 @@ Checkboxes marked complete are repository-backed. Unchecked items require releas
 - [ ] Zero unresolved critical/high security, privacy, crash, auth, data-loss, or accessibility findings.
 - [ ] Rollback/kill-switch, support escalation, crash/ANR monitoring, and first-72-hour ownership are documented.
 - [ ] Release owner records final go/no-go approval with evidence links.
+- [ ] Treat TestFlight and Play internal-track approval as controlled-beta authorization only. Public native launch remains no-go until the applicable App Store review/release and Play production-track review/rollout are approved and live in the intended storefronts/countries.

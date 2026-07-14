@@ -8,7 +8,7 @@ import { initializeDatabaseSchema } from "../src/db/database.js";
 import { scoreOcrBenchmark, type OcrBenchmarkManifest } from "../src/lib/menu-ocr-benchmark.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 function argumentValue(name: string): string | null {
   const index = process.argv.indexOf(name);

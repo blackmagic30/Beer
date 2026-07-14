@@ -430,6 +430,48 @@ describe("native mobile remediation guardrails", () => {
     expect(read("apps/android/app/src/main/res/xml/data_extraction_rules.xml")).toContain('path="beermap_session.xml"');
   });
 
+  it("requires complete environment-only signing for Android release bundles", () => {
+    for (const variable of [
+      "PINT_PATH_ANDROID_KEYSTORE_PATH",
+      "PINT_PATH_ANDROID_KEYSTORE_PASSWORD",
+      "PINT_PATH_ANDROID_KEY_ALIAS",
+      "PINT_PATH_ANDROID_KEY_PASSWORD",
+    ]) {
+      expect(androidBuild).toContain(`"${variable}"`);
+    }
+    expect(androidBuild).toContain("configuredReleaseSigningVariables.isNotEmpty()");
+    expect(androidBuild).toContain("configuredReleaseSigningVariables.size != releaseSigningVariableNames.size");
+    expect(androidBuild).toContain("gradle.taskGraph.whenReady");
+    expect(androidBuild).toContain('it.name == "bundleRelease"');
+    expect(androidBuild).toContain("if (releaseBundleRequested && !releaseSigningConfigured)");
+    expect(androidBuild).toContain("java.io.File(configuredStorePath)");
+    expect(androidBuild).toContain("if (!unresolvedStoreFile.isAbsolute)");
+    expect(androidBuild.indexOf("if (!unresolvedStoreFile.isAbsolute)")).toBeLessThan(
+      androidBuild.indexOf("unresolvedStoreFile.canonicalFile"),
+    );
+    expect(androidBuild).toContain("configuredStoreFile.toPath().startsWith(repositoryRoot.toPath())");
+    expect(androidBuild).toContain('getByName("release")');
+    expect(androidBuild).toContain('signingConfig = signingConfigs.getByName("release")');
+    expect(androidBuild).not.toMatch(/findProperty\("PINT_PATH_ANDROID_(?:KEYSTORE|KEY)/);
+    expect(androidBuild).not.toMatch(/storePassword\s*=\s*"[^"$]+"/);
+    expect(androidBuild).not.toMatch(/keyPassword\s*=\s*"[^"$]+"/);
+    const signingGuard = sourceSection(androidBuild, "gradle.taskGraph.whenReady", "dependencies {");
+    expect(signingGuard).not.toContain("assembleRelease");
+
+    const androidReadme = read("apps/android/README.md");
+    expect(androidReadme).toContain("./gradlew --no-daemon clean bundleRelease");
+    expect(androidReadme).toContain("set -euo pipefail");
+    expect(androidReadme).toContain("trap cleanup_android_signing EXIT INT TERM");
+    expect(androidReadme).toContain('read -rs "PINT_PATH_ANDROID_KEYSTORE_PASSWORD?');
+    expect(androidReadme).toContain('read -rs "PINT_PATH_ANDROID_KEY_PASSWORD?');
+    expect(androidReadme).toContain("jarsigner -verify -verbose -certs");
+    expect(androidReadme).toContain("grep -F 'jar verified.'");
+    expect(androidReadme).not.toContain("jarsigner -verify -strict");
+    expect(androidReadme).toContain("keytool -printcert -jarfile");
+    expect(androidReadme).toContain("shasum -a 256");
+    expect(androidReadme).toContain("unsigned build artifact and must never be submitted to Play");
+  });
+
   it("matches current account, deletion, invitation, and privacy response envelopes", () => {
     for (const client of [iosAPI, androidAPI]) {
       expect(client).toContain("/api/business/account/privacy-settings");

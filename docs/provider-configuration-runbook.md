@@ -137,7 +137,7 @@ Required checks:
   - `https://auth.pintpath.au/auth/v1/callback` when `SUPABASE_URL=https://auth.pintpath.au`
 - RLS policies from `supabase/migrations/` are applied and tested in staging.
 - New public-schema tables have intentional Data API exposure/grants plus RLS; do not assume new tables are automatically exposed.
-- The `beermap-source-evidence` Storage bucket is private and owner/admin access is verified.
+- The `beermap-source-evidence` Storage bucket is private, has no direct `anon`/`authenticated` object policies, and is accessed only through the authorized server API/admin signed-URL path.
 - Supabase MFA is enabled for admin accounts before public launch.
 
 ## Stripe
@@ -160,6 +160,7 @@ Before live payments:
 4. Confirm Pro venue subscriptions downgrade when cancelled or unpaid.
 5. Confirm the pricing page matches the configured Stripe price IDs.
 6. Confirm production uses a live-mode `sk_live_` secret. Test-mode `sk_test_` secrets and test price IDs are staging-only.
+7. Complete the smallest-value controlled live checkout, signed webhook, billing portal, cancellation, immediate refund, and entitlement/receipt reconciliation in `external-launch-signoffs.md` before opening public paid entry points.
 
 ## Monthly Reports
 
@@ -236,31 +237,61 @@ Each run uses SQLite's online backup API, captures Storage, then lists Storage a
 
 Deletion suppression is stored outside snapshot prefixes in the independent bucket. An immutable genesis record lives at `_control/account-deletion-ledger-genesis.json`; immutable deletion records live under `_control/account-deletion-ledger/v1/`; the verified aggregate is `_control/account-deletion-tombstones.json`; its genesis/immutable-set/count/hash checkpoint is `_control/account-deletion-ledger-checkpoint.json`. A new installation with no completed deletions therefore has a cryptographically bound zero-count genesis/checkpoint state, not a missing ledger. Deletion entries contain only request ID, internal user ID, and completion time. Production account deletion must durably append and verify its tombstone before the local request can become `completed`. Scheduled backups reconcile the ledger again.
 
-Run an immediate off-volume backup with:
+Run an immediate off-volume backup only inside the protected production service/container where `DATABASE_PATH` resolves to the readable live file on the mounted `/app/data` volume. Capture and validate the machine-readable result:
 
 ```bash
-npm run data:backup:offsite
+set -euo pipefail
+umask 077
+BACKUP_RESULT="$(mktemp)"
+trap 'rm -f "$BACKUP_RESULT"' EXIT INT TERM
+test -r "${DATABASE_PATH:?}"
+case "$(realpath "$DATABASE_PATH")" in /app/data/*) ;; *) exit 1 ;; esac
+npm run --silent data:backup:offsite | tee "$BACKUP_RESULT"
+jq -e '.ok == true and (.backupId | type == "string" and length > 0)' "$BACKUP_RESULT"
 ```
+
+Capture the sanitized JSON stdout through the protected operator channel if launch evidence is required; the trap deletes its private remote temporary copy. Running this command in a local checkout can silently capture the wrong SQLite file and does not count as production evidence.
 
 For a local or operator-managed backup, use:
 
 ```bash
-npm run data:backup -- --output=/secure/offsite/pint-path-$(date +%F)
-npm run data:backup:verify -- --backup=/secure/offsite/pint-path-$(date +%F)
+export LOCAL_BACKUP_PATH="${LOCAL_BACKUP_PATH:?set a new private mode-700 destination}"
+test ! -e "$LOCAL_BACKUP_PATH"
+npm run --silent data:backup -- --output="$LOCAL_BACKUP_PATH"
+npm run --silent data:backup:verify -- --backup="$LOCAL_BACKUP_PATH"
 ```
 
 The local command covers SQLite and legacy filesystem evidence only. It is not a complete production backup when the database contains `supabase_private` evidence references.
 
-For an online drill, configure the independent destination credentials and download only the selected snapshot prefix. The command reads the immutable genesis and every deletion object directly, verifies the current aggregate and checkpoint, and accepts a zero-count ledger only when all of that authority agrees:
+For an online drill, take the exact `backupId` from that result and recursively download only `ss:///pintpath-backups/$BACKUP_ID` into a nonexistent mode-`700` destination. The current audited command is pinned because Supabase Storage CLI commands are experimental:
 
 ```bash
-npm run data:backup:rehearse -- --backup=/secure/restore/pint-path-SNAPSHOT --output=/secure/restore/rehearsal
+test "$(./node_modules/.bin/supabase --version)" = "2.109.1"
+SUPABASE_PROJECT_ID="${OFFSITE_BACKUP_PROJECT_REF:?}" \
+SUPABASE_AUTH_SERVICE_ROLE_KEY="$(<"${OFFSITE_BACKUP_SECRET_KEY_FILE:?}")" \
+  ./node_modules/.bin/supabase --experimental \
+  storage cp --linked --recursive --jobs 4 \
+  "ss:///pintpath-backups/$BACKUP_ID" "$BACKUP_PATH"
+npm run --silent data:backup:verify -- --backup="$BACKUP_PATH"
+```
+
+The exact CLI is a locked development dependency installed by `npm ci` before credentials are loaded; do not replace this credentialed command with a runtime `npx` download. The CLI transfer preserves bytes and paths, not trusted object metadata or bucket policies; the verified backup manifest remains the authority. Use only a trusted independent project and ensure `$BACKUP_PATH` does not exist before copying. The complete safe variable setup, captures, and cleanup steps are in [`external-launch-signoffs.md`](external-launch-signoffs.md#8-backup_restore).
+
+The online rehearsal reads the immutable genesis and every deletion object directly, verifies the current aggregate/checkpoint, and accepts a zero-count ledger only when all authority agrees. Set `DATABASE_PATH` to the SQLite file that will be created inside the new rehearsal output, so the operational job state is written only to that isolated restored copy:
+
+```bash
+test ! -e "$REHEARSAL_ROOT"
+DATABASE_PATH="$REHEARSAL_ROOT/pint-path.sqlite" \
+  npm run --silent data:backup:rehearse -- \
+    --backup="$BACKUP_PATH" \
+    --output="$REHEARSAL_ROOT"
 ```
 
 Do not use the ledger hash in `latest.json` as restore authority; it is only the backup-time observation and later completed deletions legitimately advance the ledger. If the destination is temporarily offline, an operator may use a separately downloaded non-empty ledger with its trusted out-of-band SHA-256. A zero-count ledger additionally requires the independently downloaded genesis and checkpoint, each with its own trusted out-of-band SHA-256:
 
 ```bash
-npm run data:backup:rehearse -- \
+DATABASE_PATH=/secure/restore/rehearsal/pint-path.sqlite \
+  npm run --silent data:backup:rehearse -- \
   --backup=/secure/restore/pint-path-SNAPSHOT \
   --tombstones=/secure/restore/account-deletion-tombstones.json \
   --tombstone-sha256=TRUSTED_64_HEX_SHA256 \
@@ -275,7 +306,7 @@ Restore fails closed if the independent ledger authority is absent, malformed, s
 
 Off-site snapshot retention is capped at 30 days, so old snapshots can physically retain pre-deletion bytes for at most 30 days. A completed deletion has zero unprotected restore window: its independent tombstone must be durable before completion. The scheduled 24-hour run is reconciliation and drift detection, not the primary deletion write. If the ledger append fails, deletion remains failed/retryable and production restore is blocked until the ledger is healthy.
 
-Keep both source and destination buckets private. `/ready` requires a fresh successful backup and live destination capability canaries for list/upload/download/remove across PDF, SQLite/octet-stream, and image objects. Once per quarter, restore the latest verified directory into isolated staging, point the database and evidence roots to it, and confirm `/ready`, login, map prices, source-evidence review (including a PDF), the orphan report, and deletion-tombstone counts before recording the drill.
+Keep both source and destination buckets private. `/ready` requires a fresh successful backup and live destination capability canaries for list/upload/download/remove across PDF, SQLite/octet-stream, and image objects. Once per quarter, restore the latest verified directory into isolated staging. Rows with `storage_provider='supabase_private'` cannot be tested by pointing `SOURCE_EVIDENCE_STORAGE_DIR` at the local restored tree. Use `npm run data:backup:stage-evidence -- --backup="$BACKUP_PATH" --restore="$REHEARSAL_ROOT"` to upload the restored objects, with manifest MIME types and original paths, into an empty private `beermap-source-evidence` bucket in a separate staging Supabase project. Configure the isolated staging app with the restored database and that project, disable external writes, then confirm `/ready`, login, map prices, private image/PDF review, the orphan report, deletion-tombstone counts, and staging restore-job state. Purge the staging project/object copy after sign-off.
 
 ## No-Go Conditions
 
@@ -284,7 +315,7 @@ Do not launch public production if any of these are true:
 - `NODE_ENV=production npm run readiness:providers` fails.
 - `GOOGLE_MAPS_MAP_ID` is missing.
 - Admin access is enabled without MFA/verified admin allowlist.
-- Stripe live checkout is enabled before signed webhook tests pass.
+- Stripe live checkout is enabled before test-mode flow coverage and the controlled smallest-value live checkout/webhook/portal/cancel/refund reconciliation pass.
 - Automatic report email is presented as live before Resend credentials, verified sender-domain DNS, targeted staging delivery, and scheduler operational state are confirmed.
 - Redis is missing for broad public traffic.
 - Supabase source-evidence Storage is public or untested.

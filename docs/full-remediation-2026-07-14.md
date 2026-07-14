@@ -357,12 +357,13 @@ The final result came from several independent passes:
 297. Moved the single current-device Log out control and signed-in identity summary outside individual settings panels so logout remains immediately reachable from Stats, Submissions, Saved, Preferences, Privacy, Support, Security, and Beta tools on desktop and phone.
 298. Re-swept public, authenticated, invalid-input, protected, evidence, local/remote venue, pagination-boundary, HTML, alias, and local-asset routes against a disposable database; every response matched its intended 2xx/3xx/4xx class and no unexpected 5xx remained.
 299. Closed the compiler gaps exposed by the authoritative native CI runner: the main-actor Core Location helper uses a Swift 6-compatible pre-concurrency delegate conformance, authenticated operation results are Sendable, OAuth continuation types and Supabase returns are explicit, pagination fallback precedence is unambiguous, the shared trimmed-string helper is module-visible, Android imports `Locale`, invalid labelled Kotlin throws were removed, and static guardrails cover each boundary.
+300. Migrated every pinned GitHub JavaScript action from Node 20 to an immutable Node 24 release, disabled persisted checkout credentials, added weekly action-update tracking and pin regression coverage, expanded the 12 external sign-offs into an executable evidence checklist, hardened evidence validation against schema/gate/timestamp drift, and added a verified isolated-Supabase evidence restore helper for real backup rehearsals.
 
 ## Final verification
 
 - TypeScript build: **passed**
-- Full Vitest suite: **44 files, 556 tests passed**
-- Security scan: **passed across 329 tracked/untracked files**
+- Full Vitest suite: **46 files, 575 tests passed**
+- Security scan: **passed across 334 tracked/untracked files**
 - Dependency audit: **0 known vulnerabilities**
 - Diff whitespace check: **clean**
 - Inline browser scripts: **all parsed**
@@ -371,7 +372,7 @@ The final result came from several independent passes:
 - Local API route sweep: **all checked public/authenticated routes and all 20 HTML pages returned their expected status classes; 36 referenced local routes/assets resolved**
 - Provider-readiness diagnostics in development: **18 passed, 14 external-configuration warnings, 0 blocking warnings, 0 failures**
 - Release-evidence schema: **valid; 0/12 external evidence gates complete; strict mode correctly exits non-zero**
-- Native static regression suite: **27/27 passed**
+- Native static regression suite: **28/28 passed**
 - Swift parser: **passed**
 - iOS plist/privacy manifest lint: **passed**
 - Android Gradle build: **debug/release lint, tests, and assembly passed in GitHub Native Apps; it remains unavailable on this host because no Java runtime is installed**

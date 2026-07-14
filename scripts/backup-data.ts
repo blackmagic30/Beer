@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 
 import { createDataBackup } from "../src/lib/data-backup.js";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 function argumentValue(name: string): string | null {
   const inline = process.argv.find((value) => value.startsWith(`${name}=`));

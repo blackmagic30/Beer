@@ -13,7 +13,7 @@ This report covers the native source, manifests, project configuration, mobile/b
 - Native remediation assertions: `npx vitest run test/native-mobile-remediation.test.ts`
 - Diff hygiene: `git diff --check -- apps/ios apps/android MOBILE_APP_README.md MOBILE_STATUS_REPORT.md MOBILE_APP_STORE_CHECKLIST.md MOBILE_APP_RELEASE_NOTES_DRAFT.md QA_REPORT.md test/native-mobile-remediation.test.ts`
 
-Local result: Swift parsing passed; both Apple files listed above passed `plutil`; all 26 native remediation tests passed; scoped diff hygiene passed. The tests include live-schema contracts, current server-authority navigation, authoritative upload totals beyond the 12-row recent-history window, offset pagination, cursor pagination, production Supabase auth, fixed-preview pricing, PKCE, secure token storage, mutation deduplication, and image-orientation handling.
+Local result: Swift parsing passed; both Apple files listed above passed `plutil`; all 28 native remediation tests passed; scoped diff hygiene passed. The tests include live-schema contracts, current server-authority navigation, authoritative upload totals beyond the 12-row recent-history window, offset pagination, cursor pagination, production Supabase auth, fixed-preview pricing, PKCE, secure token storage, Android release-signing guardrails, mutation deduplication, and image-orientation handling.
 
 ## Full build gates
 

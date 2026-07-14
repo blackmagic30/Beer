@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 type CheckStatus = "pass" | "warn" | "fail";
 

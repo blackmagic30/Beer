@@ -4,6 +4,32 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseSigningVariableNames = listOf(
+    "PINT_PATH_ANDROID_KEYSTORE_PATH",
+    "PINT_PATH_ANDROID_KEYSTORE_PASSWORD",
+    "PINT_PATH_ANDROID_KEY_ALIAS",
+    "PINT_PATH_ANDROID_KEY_PASSWORD",
+)
+val releaseSigningEnvironment = releaseSigningVariableNames.associateWith { System.getenv(it) }
+val configuredReleaseSigningVariables = releaseSigningVariableNames.filter {
+    !releaseSigningEnvironment[it].isNullOrEmpty()
+}
+
+if (configuredReleaseSigningVariables.isNotEmpty()
+    && configuredReleaseSigningVariables.size != releaseSigningVariableNames.size
+) {
+    val missingVariables = releaseSigningVariableNames - configuredReleaseSigningVariables.toSet()
+    throw GradleException(
+        "Android release signing is only partially configured. Set all four environment variables; missing: " +
+            missingVariables.joinToString(", "),
+    )
+}
+
+val releaseSigningConfigured = configuredReleaseSigningVariables.size == releaseSigningVariableNames.size
+val androidAppProjectPath = project.path
+val repositoryRoot = generateSequence(rootProject.projectDir.canonicalFile) { it.parentFile }
+    .firstOrNull { file(it).resolve(".git").exists() }
+
 android {
     namespace = "au.pintpath.beermap"
     compileSdk = 35
@@ -27,6 +53,47 @@ android {
         buildConfigField("String", "SUPABASE_ANON_KEY", supabaseAnonKey.toBuildConfigString())
     }
 
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                val configuredStorePath = releaseSigningEnvironment.getValue(
+                    "PINT_PATH_ANDROID_KEYSTORE_PATH",
+                )!!
+                val unresolvedStoreFile = java.io.File(configuredStorePath)
+                if (!unresolvedStoreFile.isAbsolute) {
+                    throw GradleException(
+                        "PINT_PATH_ANDROID_KEYSTORE_PATH must be an absolute path.",
+                    )
+                }
+                val configuredStoreFile = unresolvedStoreFile.canonicalFile
+                if (repositoryRoot != null
+                    && configuredStoreFile.toPath().startsWith(repositoryRoot.toPath())
+                ) {
+                    throw GradleException(
+                        "PINT_PATH_ANDROID_KEYSTORE_PATH must point outside the repository checkout.",
+                    )
+                }
+                if (!configuredStoreFile.isFile) {
+                    throw GradleException(
+                        "PINT_PATH_ANDROID_KEYSTORE_PATH must point to an existing keystore file.",
+                    )
+                }
+                storeFile = configuredStoreFile
+                storePassword = releaseSigningEnvironment.getValue("PINT_PATH_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = releaseSigningEnvironment.getValue("PINT_PATH_ANDROID_KEY_ALIAS")
+                keyPassword = releaseSigningEnvironment.getValue("PINT_PATH_ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
+
     buildFeatures {
         buildConfig = true
         compose = true
@@ -39,6 +106,19 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+}
+
+gradle.taskGraph.whenReady {
+    val releaseBundleRequested = allTasks.any {
+        it.project.path == androidAppProjectPath && it.name == "bundleRelease"
+    }
+    if (releaseBundleRequested && !releaseSigningConfigured) {
+        throw GradleException(
+            "bundleRelease requires PINT_PATH_ANDROID_KEYSTORE_PATH, " +
+                "PINT_PATH_ANDROID_KEYSTORE_PASSWORD, PINT_PATH_ANDROID_KEY_ALIAS, and " +
+                "PINT_PATH_ANDROID_KEY_PASSWORD. Keep the keystore and values outside the repository.",
+        )
     }
 }
 

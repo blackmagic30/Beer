@@ -3,7 +3,7 @@ import path from "node:path";
 import dotenv from "dotenv";
 import { z } from "zod";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 function sanitizeEnvString(value: unknown): unknown {
   if (typeof value !== "string") {

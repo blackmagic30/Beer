@@ -38,7 +38,54 @@ Provider login requires the callback URI in Supabase's redirect allow list and c
 
 ## Deliberate remaining boundaries
 
-Android currently uses a venue list plus an external Maps handoff rather than bundling a map SDK/API key. The photo picker supports one image. Direct camera capture, multiple images, PDF evidence, offline queues, general plan/checkout changes, and admin moderation remain outside this release. The narrow suspended-account billing-recovery portal is implemented. Signing, real-device/provider testing, screenshots, reviewer accounts, and Play listing/data-safety declarations require release-owner credentials.
+Android currently uses a venue list plus an external Maps handoff rather than bundling a map SDK/API key. The photo picker supports one image. Direct camera capture, multiple images, PDF evidence, offline queues, general plan/checkout changes, and admin moderation remain outside this release. The narrow suspended-account billing-recovery portal is implemented. Real-device/provider testing, screenshots, reviewer accounts, and Play listing/data-safety declarations require release-owner credentials.
+
+## Signed release bundle
+
+Keep the Play upload keystore outside the repository and secret manager values out of shell history, Gradle properties, build logs, and screenshots. The repository ignores in-tree `.jks` and `.keystore` files as a last line of defence, but an absolute path outside the checkout is required. Use the following zsh subshell in a private terminal; no value literal appears in a command, both passwords use non-echoing prompts, and all four values are cleared on success, failure, or interruption:
+
+```zsh
+cd apps/android
+unset PINT_PATH_ANDROID_KEYSTORE_PATH PINT_PATH_ANDROID_KEYSTORE_PASSWORD \
+  PINT_PATH_ANDROID_KEY_ALIAS PINT_PATH_ANDROID_KEY_PASSWORD
+(
+  set -euo pipefail
+  cleanup_android_signing() {
+    unset PINT_PATH_ANDROID_KEYSTORE_PATH PINT_PATH_ANDROID_KEYSTORE_PASSWORD \
+      PINT_PATH_ANDROID_KEY_ALIAS PINT_PATH_ANDROID_KEY_PASSWORD
+  }
+  trap cleanup_android_signing EXIT INT TERM
+  read -r "PINT_PATH_ANDROID_KEYSTORE_PATH?Absolute upload-keystore path: "
+  export PINT_PATH_ANDROID_KEYSTORE_PATH
+  read -rs "PINT_PATH_ANDROID_KEYSTORE_PASSWORD?Keystore password: "
+  export PINT_PATH_ANDROID_KEYSTORE_PASSWORD
+  printf '\n'
+  read -r "PINT_PATH_ANDROID_KEY_ALIAS?Upload key alias: "
+  export PINT_PATH_ANDROID_KEY_ALIAS
+  read -rs "PINT_PATH_ANDROID_KEY_PASSWORD?Upload key password: "
+  export PINT_PATH_ANDROID_KEY_PASSWORD
+  printf '\n'
+  ./gradlew --no-daemon clean bundleRelease
+)
+```
+
+The signed bundle is written to `app/build/outputs/bundle/release/app-release.aab`. Verify its certificate locally before uploading it to the Play Console:
+
+```bash
+(
+  set -euo pipefail
+  umask 077
+  SIGNATURE_LOG="$(mktemp)"
+  trap 'rm -f "$SIGNATURE_LOG"' EXIT INT TERM
+  jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab \
+    2>&1 | tee "$SIGNATURE_LOG"
+  grep -F 'jar verified.' "$SIGNATURE_LOG"
+  keytool -printcert -jarfile app/build/outputs/bundle/release/app-release.aab
+  shasum -a 256 app/build/outputs/bundle/release/app-release.aab
+)
+```
+
+The interactive commands themselves may remain in shell history, but none contains a secret. Require `jar verified.`, inspect every warning, and confirm the signer certificate is within its validity period and uses approved algorithms. Do not use `jarsigner -strict` as a blind pass/fail gate: the intentionally self-signed Android upload certificate can produce a nonzero strict exit even when archive integrity is valid. Match the SHA-256 certificate fingerprint printed by `keytool` to the Play Console upload certificate and record the AAB SHA-256 beside the source commit. `bundleRelease` refuses before task execution when signing is absent, so it cannot create an unsigned final AAB. Supplying only some signing variables also fails with the missing variable names. The CI validation command below intentionally keeps `assembleRelease` usable without release secrets; its APK is an unsigned build artifact and must never be submitted to Play.
 
 ## Validation
 

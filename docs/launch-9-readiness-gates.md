@@ -33,9 +33,9 @@ npm run release:evidence:strict
 - Supabase admin MFA/AAL2 is configured and an admin staging login proves `aal2` before admin actions.
 - Supabase live project is not on deprecated Postgres 14. Supabase support for Postgres 14 ends on 2026-07-01.
 - Supabase RLS and table grants are checked in the dashboard or RLS Tester after migrations are applied. Do not rely only on SQL text tests.
-- Supabase Storage bucket `beermap-source-evidence` is private, not public, and owner/admin access is verified.
+- Supabase Storage bucket `beermap-source-evidence` is private, has no direct `anon`/`authenticated` object policies, and is reachable only through the authorized server API/admin signed-URL path.
 - Google Maps browser key is restricted to approved referrers and `GOOGLE_MAPS_MAP_ID` renders AdvancedMarkerElement markers on staging.
-- Stripe test-mode Checkout and signed webhooks prove subscription create/update/cancel, failed invoice handling, and replay idempotency before live payments.
+- Stripe test-mode Checkout and signed webhooks prove subscription create/update/cancel, failed invoice handling, and replay idempotency; the smallest-value controlled live checkout/webhook/portal/cancel/refund reconciliation in `external-launch-signoffs.md` must also pass before public paid entry points open.
 - Redis is provisioned through `REDIS_URL`; production does not rely on the in-memory rate-limit override for broad traffic.
 - OpenAI and Google Places keys are server-side, restricted where possible, and absent from `/config.js`.
 

@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 
 import { runOffsiteBackup } from "../src/lib/offsite-backup.js";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
