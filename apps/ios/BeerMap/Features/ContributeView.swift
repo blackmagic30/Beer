@@ -548,7 +548,7 @@ struct ContributeView: View {
 }
 
 @MainActor
-private final class OneTimeLocationProof: NSObject, ObservableObject, CLLocationManagerDelegate {
+private final class OneTimeLocationProof: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<UploadLocationRequest, Error>?
 

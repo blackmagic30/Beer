@@ -382,6 +382,16 @@ describe("native mobile remediation guardrails", () => {
     expect(orientation).toBe(6);
   });
 
+  it("keeps compiler-sensitive native concurrency and imports valid", () => {
+    const iosContribute = read("apps/ios/BeerMap/Features/ContributeView.swift");
+    expect(androidAPI).toMatch(/^import java\.util\.Locale$/m);
+    expect(androidAPI).toMatch(/^import kotlinx\.coroutines\.withContext$/m);
+    expect(androidAPI).not.toContain("throw@withContext");
+    expect(iosContribute).toMatch(
+      /@MainActor\s+private final class OneTimeLocationProof:[^{\n]*@preconcurrency\s+CLLocationManagerDelegate/,
+    );
+  });
+
   it("binds native provider login with PKCE instead of a caller-controlled OAuth state", () => {
     for (const source of [iosAuth, androidApp]) {
       expect(source).toContain("code_challenge");

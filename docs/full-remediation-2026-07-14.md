@@ -356,11 +356,12 @@ The final result came from several independent passes:
 296. Prevented account Security from starting a password-gated session inventory on render, made Refresh the explicit step-up action, and replaced raw hosted-auth session errors with provider-aware password/sign-in guidance.
 297. Moved the single current-device Log out control and signed-in identity summary outside individual settings panels so logout remains immediately reachable from Stats, Submissions, Saved, Preferences, Privacy, Support, Security, and Beta tools on desktop and phone.
 298. Re-swept public, authenticated, invalid-input, protected, evidence, local/remote venue, pagination-boundary, HTML, alias, and local-asset routes against a disposable database; every response matched its intended 2xx/3xx/4xx class and no unexpected 5xx remained.
+299. Closed the compiler gaps exposed by the authoritative native CI runner: the main-actor Core Location helper now uses a Swift 6-compatible pre-concurrency delegate conformance, Android imports `Locale`, invalid labelled Kotlin throws were removed, and static guardrails cover each boundary.
 
 ## Final verification
 
 - TypeScript build: **passed**
-- Full Vitest suite: **44 files, 555 tests passed**
+- Full Vitest suite: **44 files, 556 tests passed**
 - Security scan: **passed across 329 tracked/untracked files**
 - Dependency audit: **0 known vulnerabilities**
 - Diff whitespace check: **clean**
@@ -370,10 +371,10 @@ The final result came from several independent passes:
 - Local API route sweep: **all checked public/authenticated routes and all 20 HTML pages returned their expected status classes; 36 referenced local routes/assets resolved**
 - Provider-readiness diagnostics in development: **18 passed, 14 external-configuration warnings, 0 blocking warnings, 0 failures**
 - Release-evidence schema: **valid; 0/12 external evidence gates complete; strict mode correctly exits non-zero**
-- Native static regression suite: **26/26 passed**
+- Native static regression suite: **27/27 passed**
 - Swift parser: **passed**
 - iOS plist/privacy manifest lint: **passed**
-- Android Gradle build: **not runnable on this host because no Java runtime is installed**
+- Android Gradle build: **not runnable on this host because no Java runtime is installed; the GitHub Native Apps workflow is the authoritative debug/release Gradle gate**
 
 ## External evidence still required
 

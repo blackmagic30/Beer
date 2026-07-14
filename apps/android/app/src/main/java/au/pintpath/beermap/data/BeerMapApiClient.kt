@@ -11,6 +11,7 @@ import java.net.URLEncoder
 import java.text.Normalizer
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 class ApiException(
     val status: Int,
@@ -724,7 +725,7 @@ class BeerMapApiClient(
         if (status !in 200..299) {
             val payload = runCatching { JSONObject(text) }.getOrDefault(JSONObject())
             val message = payload.optJSONObject("error")?.stringOrNull("message") ?: "Report export failed ($status)."
-            throw@withContext ApiException(status, message)
+            throw ApiException(status, message)
         }
         text
     }
@@ -865,10 +866,10 @@ class BeerMapApiClient(
     ): JSONObject = withContext(Dispatchers.IO) {
         val supabaseUrl = config.stringOrNull("supabaseUrl")?.trimEnd('/')
             ?: BuildConfig.SUPABASE_URL.trimEnd('/').takeIf { it.isNotBlank() }
-            ?: throw@withContext IOException("Secure account sign-in is temporarily unavailable.")
+            ?: throw IOException("Secure account sign-in is temporarily unavailable.")
         val anonKey = config.stringOrNull("supabaseAnonKey")
             ?: BuildConfig.SUPABASE_ANON_KEY.takeIf { it.isNotBlank() }
-            ?: throw@withContext IOException("Secure account sign-in is temporarily unavailable.")
+            ?: throw IOException("Secure account sign-in is temporarily unavailable.")
         val connection = (URL(supabaseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 15_000
@@ -889,9 +890,9 @@ class BeerMapApiClient(
                 ?: payload?.stringOrNull("error_description")
                 ?: payload?.stringOrNull("message")
                 ?: "Authentication failed ($status)."
-            throw@withContext IOException(message)
+            throw IOException(message)
         }
-        payload ?: throw@withContext IOException("The sign-in provider returned an unreadable response.")
+        payload ?: throw IOException("The sign-in provider returned an unreadable response.")
     }
 
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
