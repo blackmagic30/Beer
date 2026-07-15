@@ -84,6 +84,16 @@
   </main>
 
   <script>
+    async function fetchStatusProbe(pathname, timeoutMs) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(pathname, { cache: "no-store", signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
     window.addEventListener("DOMContentLoaded", async () => {
       nav.innerHTML = MelbBeerBusiness.renderNav("trust");
       const title = document.getElementById("serviceStatusTitle");
@@ -92,8 +102,8 @@
       const checkedAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
       try {
         const [healthResponse, readyResponse] = await Promise.all([
-          fetch("/health", { cache: "no-store", signal: AbortSignal.timeout(10_000) }),
-          fetch("/ready", { cache: "no-store", signal: AbortSignal.timeout(10_000) }),
+          fetchStatusProbe("/health", 10_000),
+          fetchStatusProbe("/ready", 30_000),
         ]);
         if (!healthResponse.ok || !readyResponse.ok) throw new Error("Service check failed");
         title.textContent = "Pint Path is operational";
