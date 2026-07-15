@@ -2243,6 +2243,45 @@ describe("production hardening", () => {
     }
   });
 
+  it("live-probes configured Supabase dependencies during production field testing", async () => {
+    const { repository } = createRepository();
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const readiness = await createBusinessService(repository, {
+        NODE_ENV: "production",
+        FIELD_TEST_MODE: true,
+        SUPABASE_URL: "https://project.supabase.co",
+        SUPABASE_ANON_KEY: "supabase-anon-field-test-key",
+        SUPABASE_SERVICE_ROLE_KEY: "supabase-service-field-test-key",
+        SOURCE_EVIDENCE_SIGNING_SECRET: "production-readiness-source-evidence-secret-32",
+        GOOGLE_PLACES_API_KEY: "google-places-readiness-key",
+        OPENAI_API_KEY: "test-openai-api-key", // security-scan allow: synthetic readiness fixture only
+      }).getOperationalReadiness();
+
+      expect(readiness.ready).toBe(false);
+      expect(readiness.dependencies.supabaseAuth).toEqual(expect.objectContaining({
+        status: "failed",
+        required: false,
+        liveProbe: true,
+        error: "http_503",
+      }));
+      expect(readiness.dependencies.supabaseDatabase).toEqual(expect.objectContaining({
+        status: "failed",
+        required: false,
+        liveProbe: true,
+      }));
+      expect(readiness.dependencies.supabaseEvidenceStorage).toEqual(expect.objectContaining({
+        status: "failed",
+        required: false,
+        liveProbe: true,
+      }));
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("fails Supabase readiness on a public evidence bucket or a bounded probe timeout without leaking secrets", async () => {
     const { repository } = createRepository();
     const config = {
@@ -4563,6 +4602,95 @@ describe("production hardening", () => {
       now: NOW,
     });
     expect(service.getAccountFromAuthorization(`Bearer ${suspended.token}`)).toBeNull();
+  });
+
+  it("keeps only the ten most recently used active app sessions per account", () => {
+    const { database, repository } = createRepository();
+    const account = createAccount(repository, "session-cap-user");
+    for (let index = 0; index < 12; index += 1) {
+      const createdAt = new Date(Date.parse(NOW) + index * 1000).toISOString();
+      repository.createSession({
+        tokenHash: `session-cap-${String(index).padStart(2, "0")}`,
+        userId: account.id,
+        createdAt,
+        expiresAt: PREMIUM_UNTIL,
+        lastUsedAt: createdAt,
+        providerSessionIdHash: index === 0 ? "provider-session-evicted-by-cap" : null,
+      });
+    }
+    repository.createDiscountPass({
+      id: "session-cap-discount-pass",
+      userId: account.id,
+      sessionTokenHash: "session-cap-00",
+      codeHash: "session-cap-discount-code-hash",
+      createdAt: NOW,
+      expiresAt: PREMIUM_UNTIL,
+    });
+
+    expect(repository.revokeExcessActiveSessions({
+      userId: account.id,
+      now: NOW,
+      maxActiveSessions: 10,
+    })).toEqual({
+      revokedSessions: 2,
+      revokedDiscountPasses: 1,
+      revokedProviderSessions: 1,
+    });
+    expect(database.prepare(
+      `SELECT token_hash FROM auth_sessions
+       WHERE user_id = ? AND revoked_at IS NULL
+       ORDER BY last_used_at DESC`,
+    ).all(account.id)).toEqual(
+      Array.from({ length: 10 }, (_, index) => ({
+        token_hash: `session-cap-${String(11 - index).padStart(2, "0")}`,
+      })),
+    );
+    expect(repository.getAccountBySessionTokenHash("session-cap-00", NOW)).toBeNull();
+    expect(repository.getAccountBySessionTokenHash("session-cap-11", NOW)?.id).toBe(account.id);
+    expect(repository.isProviderSessionRevoked({
+      userId: account.id,
+      providerSessionIdHash: "provider-session-evicted-by-cap",
+    })).toBe(true);
+    expect(database.prepare(
+      "SELECT status, revoked_at FROM account_discount_passes WHERE id = ?",
+    ).get("session-cap-discount-pass")).toEqual({ status: "revoked", revoked_at: NOW });
+  });
+
+  it("atomically preserves a newly issued session while enforcing the account cap", () => {
+    const { database, repository } = createRepository();
+    const account = createAccount(repository, "atomic-session-cap-user");
+    for (let index = 1; index <= 10; index += 1) {
+      repository.createSession({
+        tokenHash: `atomic-session-${String(index).padStart(2, "0")}`,
+        userId: account.id,
+        createdAt: NOW,
+        expiresAt: PREMIUM_UNTIL,
+        lastUsedAt: NOW,
+      });
+    }
+
+    expect(repository.createSessionWithLimit({
+      tokenHash: "atomic-session-00",
+      userId: account.id,
+      createdAt: NOW,
+      expiresAt: PREMIUM_UNTIL,
+      lastUsedAt: NOW,
+      maxActiveSessions: 10,
+    }).revokedSessions).toBe(1);
+    expect(repository.getAccountBySessionTokenHash("atomic-session-00", NOW)?.id).toBe(account.id);
+    expect(repository.getAccountBySessionTokenHash("atomic-session-01", NOW)).toBeNull();
+
+    expect(() => repository.createSessionWithLimit({
+      tokenHash: "atomic-session-rollback",
+      userId: account.id,
+      createdAt: NOW,
+      expiresAt: PREMIUM_UNTIL,
+      lastUsedAt: NOW,
+      maxActiveSessions: 0,
+    })).toThrow("positive integer");
+    expect(database.prepare(
+      "SELECT 1 FROM auth_sessions WHERE token_hash = ?",
+    ).get("atomic-session-rollback")).toBeUndefined();
   });
 
   it("keeps a credential-verified billing-only portal available after suspension", async () => {

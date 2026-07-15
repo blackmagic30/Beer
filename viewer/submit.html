@@ -2156,7 +2156,8 @@
 
     function isNetworkSubmissionError(error) {
       const message = String(error?.message || error || "").toLowerCase();
-      return !navigator.onLine ||
+      return error?.code === "REQUEST_TIMEOUT" ||
+        !navigator.onLine ||
         message.includes("failed to fetch") ||
         message.includes("network") ||
         message.includes("offline") ||
@@ -2186,6 +2187,7 @@
       return MelbBeerBusiness.apiFetch("/api/business/submissions", {
         method: "POST",
         body: JSON.stringify(payload),
+        timeoutMs: 120_000,
       });
     }
 

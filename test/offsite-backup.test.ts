@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BusinessRepository } from "../src/db/business.repository.js";
 import { createDatabase } from "../src/db/database.js";
@@ -14,6 +14,7 @@ import {
   fetchVerifiedAccountDeletionLedger,
   probeOffsiteBackupReadiness,
   runOffsiteBackup,
+  scheduleOffsiteBackups,
 } from "../src/lib/offsite-backup.js";
 
 interface FakeObject {
@@ -134,6 +135,8 @@ function immutableTombstonePath(tombstone: {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
   while (roots.length > 0) fs.rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
@@ -185,6 +188,111 @@ function makeFreshDatabase(root: string): string {
 }
 
 describe("off-site backup durability", () => {
+  it("bounds a readiness probe when Supabase Storage never responds", async () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const readiness = await probeOffsiteBackupReadiness({
+      sourceSupabaseUrl: "https://readiness-source.supabase.co",
+      destinationSupabaseUrl: "https://readiness-timeout-destination.supabase.co",
+      destinationServiceRoleKey: "destination-key",
+      bucketName: "readiness-timeout-bucket",
+      lastSuccessfulAt: new Date().toISOString(),
+      maxFreshnessHours: 26,
+      required: true,
+      requestTimeoutMs: 10,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(readiness).toMatchObject({
+      status: "failed",
+      required: true,
+      liveProbe: true,
+      error: "bucket_canary_failed",
+    });
+  });
+
+  it("bounds a backup attempt when Supabase Storage never responds", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-offsite-timeout-test-"));
+    roots.push(root);
+    const fetchMock = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(runOffsiteBackup({
+      databasePath: path.join(root, "unused.sqlite"),
+      evidencePath: path.join(root, "unused-evidence"),
+      sourceSupabaseUrl: "https://backup-timeout-source.supabase.co",
+      sourceServiceRoleKey: "source-key",
+      destinationSupabaseUrl: "https://backup-timeout-destination.supabase.co",
+      destinationServiceRoleKey: "destination-key",
+      bucketName: "pintpath-backups",
+      retentionDays: 30,
+      requestTimeoutMs: 10,
+    })).rejects.toThrow();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries promptly when a startup run encounters an existing lease", async () => {
+    vi.useFakeTimers();
+    let leaseAttempts = 0;
+    const scheduler = scheduleOffsiteBackups({
+      databasePath: "/unused.sqlite",
+      evidencePath: "/unused-evidence",
+      sourceSupabaseUrl: "https://source.supabase.co",
+      sourceServiceRoleKey: "source-key",
+      destinationSupabaseUrl: "https://backup.supabase.co",
+      destinationServiceRoleKey: "destination-key",
+      bucketName: "pintpath-backups",
+      retentionDays: 30,
+      intervalHours: 24,
+      acquireLease: () => {
+        leaseAttempts += 1;
+        return false;
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(leaseAttempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+    expect(leaseAttempts).toBe(2);
+
+    await scheduler.stop();
+  });
+
+  it("contains status and lease-release failures instead of rejecting the scheduler", async () => {
+    vi.useFakeTimers();
+    let statusAttempts = 0;
+    let releaseAttempts = 0;
+    const scheduler = scheduleOffsiteBackups({
+      databasePath: "/unused.sqlite",
+      evidencePath: "/unused-evidence",
+      sourceSupabaseUrl: "https://same.supabase.co",
+      sourceServiceRoleKey: "source-key",
+      destinationSupabaseUrl: "https://same.supabase.co",
+      destinationServiceRoleKey: "destination-key",
+      bucketName: "pintpath-backups",
+      retentionDays: 30,
+      intervalHours: 24,
+      acquireLease: () => true,
+      releaseLease: () => {
+        releaseAttempts += 1;
+        throw new Error("lease store unavailable");
+      },
+      onStatus: async () => {
+        statusAttempts += 1;
+        throw new Error("status store unavailable");
+      },
+    });
+
+    await expect(scheduler.runNow()).resolves.toBeUndefined();
+    expect(statusAttempts).toBe(2);
+    expect(releaseAttempts).toBe(1);
+
+    await scheduler.stop();
+  });
+
   it("authenticates a zero-deletion genesis and rehearses a fresh-install restore", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-offsite-fresh-test-"));
     roots.push(root);

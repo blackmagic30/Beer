@@ -28,7 +28,7 @@ for (const ignoredLocalConfig of IGNORED_LOCAL_CONFIGS_TO_SCAN) {
 const SKIP_FILE = /(?:^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|dist|coverage|node_modules)\b/;
 const BINARY_FILE = /\.(?:png|jpe?g|gif|webp|heic|heif|ico|pdf|woff2?|ttf|eot|zip|gz|sqlite3?|db)$/i;
 const PLACEHOLDER = /(?:your_|example|placeholder|dummy|fake|test[_-]?fixture|xxx|xxxx|optional_|changeme|not[_-]?set|price_|pk_test_xxx|sk_test_xxx|whsec_xxx|ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)/i;
-const SAFE_CONFIG_REFERENCE = /\b(?:optionalStringFromEnv|requiredStringFromEnv|booleanFromEnv|numberFromEnv|z\.object|process\.env)\b/;
+const SAFE_PRIVATE_ASSIGNMENT_REFERENCE = /\b(?:optionalStringFromEnv|requiredStringFromEnv|booleanFromEnv|numberFromEnv|z\.object|process\.env)\b/;
 
 const patterns = [
   {
@@ -68,18 +68,21 @@ for (const file of files) {
   const lines = content.split(/\r?\n/);
 
   lines.forEach((line, index) => {
-    if (PLACEHOLDER.test(line) || SAFE_CONFIG_REFERENCE.test(line) || line.includes("security-scan allow")) {
+    if (line.includes("security-scan allow")) {
       return;
     }
 
     for (const pattern of patterns) {
+      if (pattern.name === "Private config assignment" && SAFE_PRIVATE_ASSIGNMENT_REFERENCE.test(line)) {
+        continue;
+      }
       pattern.regex.lastIndex = 0;
-      if (pattern.regex.test(line)) {
+      const match = pattern.regex.exec(line);
+      if (match && !PLACEHOLDER.test(match[0])) {
         findings.push({
           file,
           line: index + 1,
           type: pattern.name,
-          sample: line.trim().slice(0, 160),
         });
       }
     }
@@ -89,7 +92,7 @@ for (const file of files) {
 if (findings.length > 0) {
   console.error("Potential committed secrets found:");
   for (const finding of findings) {
-    console.error(`- ${finding.file}:${finding.line} ${finding.type}: ${finding.sample}`);
+    console.error(`- ${finding.file}:${finding.line} ${finding.type}: [REDACTED]`);
   }
   console.error("Replace real values with env placeholders, or mark obvious test fixtures with 'security-scan allow'.");
   process.exit(1);

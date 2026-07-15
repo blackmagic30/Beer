@@ -2,12 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import * as QRCode from "qrcode";
 
 import { CONTRIBUTION_POINTS, PREMIUM_PRICING, SUBMISSION_LIMITS } from "../../config/business-rules.js";
 import { CURRENT_LEGAL_POLICY_VERSION } from "../../config/legal.js";
 import type { Env } from "../../config/env.js";
+import { createServerSupabaseClient } from "../../lib/supabase-client.js";
 import {
   BusinessRepository,
   ACCOUNT_DATA_RETENTION_POLICY,
@@ -260,6 +261,7 @@ const USER_GOOGLE_VENUE_TYPES = ["bar", "pub", "restaurant", "brewery", "night_c
 const USER_GOOGLE_VENUE_TYPE_SET = new Set<string>(USER_GOOGLE_VENUE_TYPES);
 const REMOTE_VENUE_SCAN_PAGE_SIZE = 1000;
 const MAX_REMOTE_VENUE_SCAN_ROWS = 5000;
+const MAX_ACTIVE_SESSIONS_PER_ACCOUNT = 10;
 
 function missionAcceptanceCutoff(now: string): string {
   return new Date(new Date(now).getTime() - MISSION_ACCEPTANCE_TTL_MS).toISOString();
@@ -2418,12 +2420,7 @@ export class BusinessService {
     if (supabaseClientOverride) {
       this.supabase = supabaseClientOverride;
     } else if (config.SUPABASE_URL && supabaseServerKey) {
-      this.supabase = createClient(config.SUPABASE_URL, supabaseServerKey, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-      });
+      this.supabase = createServerSupabaseClient(config.SUPABASE_URL, supabaseServerKey);
     }
     this.useSupabaseEvidenceStorage = Boolean(this.supabase && config.SUPABASE_SERVICE_ROLE_KEY);
   }
@@ -4094,8 +4091,9 @@ export class BusinessService {
     const requestHashes = this.getRequestHashes(context);
 
     const expiresAt = addDays(now, ttlDays);
-    this.repository.createSession({
-      tokenHash: hashToken(token),
+    const tokenHash = hashToken(token);
+    this.repository.createSessionWithLimit({
+      tokenHash,
       userId: account.id,
       createdAt: now,
       expiresAt,
@@ -4103,6 +4101,7 @@ export class BusinessService {
       lastIpHash: requestHashes.ipHash,
       userAgentHash: requestHashes.userAgentHash,
       providerSessionIdHash: providerSessionIdHash ?? null,
+      maxActiveSessions: MAX_ACTIVE_SESSIONS_PER_ACCOUNT,
     });
 
     return {
@@ -7714,8 +7713,13 @@ export class BusinessService {
   }
 
   runPrivacyRetention() {
+    const now = nowIso();
     return {
       policyVersion: ACCOUNT_DATA_RETENTION_POLICY.version,
+      sessionLimitEnforcement: this.repository.revokeExcessActiveSessions({
+        now,
+        maxActiveSessions: MAX_ACTIVE_SESSIONS_PER_ACCOUNT,
+      }),
       ...this.repository.prunePrivacyRetention({
         authSessionCutoff: daysAgoIso(ACCOUNT_DATA_RETENTION_POLICY.authSessions.daysAfterExpiryOrRevocation),
         providerRevocationCutoff: daysAgoIso(
@@ -13025,9 +13029,9 @@ export class BusinessService {
       liveProbe: false,
     });
 
-    if (!required || !configured) {
+    if (!configured) {
       return {
-        ready: !required || configured,
+        ready: !required,
         supabaseAuth: commonStatus(),
         supabaseDatabase: commonStatus(),
         supabaseEvidenceStorage: commonStatus(),
@@ -13059,16 +13063,16 @@ export class BusinessService {
           },
         }, 2_500);
         if (!response.ok) {
-          return { status: "failed", required: true, liveProbe: true, error: `http_${response.status}` };
+          return { status: "failed", required, liveProbe: true, error: `http_${response.status}` };
         }
         const validationError = validate ? await validate(response) : null;
         return validationError
-          ? { status: "failed", required: true, liveProbe: true, error: validationError }
-          : { status: "ok", required: true, liveProbe: true };
+          ? { status: "failed", required, liveProbe: true, error: validationError }
+          : { status: "ok", required, liveProbe: true };
       } catch (error) {
         return {
           status: "failed",
-          required: true,
+          required,
           liveProbe: true,
           error: error instanceof Error && error.name === "AbortError" ? "timeout" : "request_failed",
         };

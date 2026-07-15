@@ -27,6 +27,10 @@ function appSource() {
 function loadBusinessHelpers() {
   const localStorage = new Map<string, string>();
   const context = {
+    AbortController,
+    DOMException,
+    clearTimeout,
+    setTimeout,
     URL,
     URLSearchParams,
     crypto: { randomUUID: () => "test-uuid" },
@@ -131,6 +135,10 @@ function loadBusinessAuthHarness(options: {
     };
   };
   const context = {
+    AbortController,
+    DOMException,
+    clearTimeout,
+    setTimeout,
     URL,
     URLSearchParams,
     crypto: { randomUUID: () => "test-uuid" },

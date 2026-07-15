@@ -92,8 +92,8 @@
       const checkedAt = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
       try {
         const [healthResponse, readyResponse] = await Promise.all([
-          fetch("/health", { cache: "no-store" }),
-          fetch("/ready", { cache: "no-store" }),
+          fetch("/health", { cache: "no-store", signal: AbortSignal.timeout(10_000) }),
+          fetch("/ready", { cache: "no-store", signal: AbortSignal.timeout(10_000) }),
         ]);
         if (!healthResponse.ok || !readyResponse.ok) throw new Error("Service check failed");
         title.textContent = "Pint Path is operational";

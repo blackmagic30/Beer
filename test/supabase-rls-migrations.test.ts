@@ -132,6 +132,37 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).not.toMatch(/grant\s+(insert|update|delete).*account_reward_vouchers\s+to\s+authenticated/i);
   });
 
+  it("indexes every reward and leaderboard foreign key reported by the live advisor", () => {
+    const sql = migration("20260715003427_add_missing_foreign_key_indexes.sql");
+
+    for (const [table, column] of [
+      ["free_pint_reward_codes", "redeemed_by_user_id"],
+      ["free_pint_reward_redemptions", "redeemed_by_user_id"],
+      ["free_pint_reward_redemptions", "reward_code_id"],
+      ["leaderboard_prize_awards", "voucher_id"],
+      ["leaderboard_prize_campaigns", "finalized_by"],
+      ["pint_point_drink_records", "recorded_by_user_id"],
+      ["pint_point_drink_records", "reward_code_id"],
+      ["pint_point_ledger", "drink_record_id"],
+      ["pint_point_ledger", "reward_code_id"],
+    ]) {
+      expect(sql).toContain(`on public.${table} (${column})`);
+    }
+  });
+
+  it("keeps future public objects private until a migration grants Data API access", () => {
+    const sql = migration("20260715010000_harden_future_data_api_defaults.sql");
+    const config = fs.readFileSync(path.resolve(process.cwd(), "supabase/config.toml"), "utf8");
+
+    expect(sql).toMatch(/alter default privileges for role postgres in schema public\s+revoke all on tables from anon, authenticated, service_role/i);
+    expect(sql).toMatch(/alter default privileges for role postgres in schema public\s+revoke all on sequences from anon, authenticated, service_role/i);
+    expect(sql).toMatch(/alter default privileges for role postgres in schema public\s+revoke execute on functions from public, anon, authenticated, service_role/i);
+    expect(sql).not.toMatch(/alter default privileges for role supabase_admin/i);
+    expect(config).toMatch(/^auto_expose_new_tables = false$/m);
+    expect(config).toContain("[local_smtp]");
+    expect(config).not.toContain("[inbucket]");
+  });
+
   it("hardens private security-definer helpers against public execution and mutable search paths", () => {
     const sql = migration("20260603000000_harden_private_helper_functions.sql");
 

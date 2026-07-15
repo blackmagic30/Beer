@@ -2,7 +2,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createClient } from "@supabase/supabase-js";
 import BetterSqlite3 from "better-sqlite3";
 
 import {
@@ -11,6 +10,7 @@ import {
   sha256File,
   verifyDataBackup,
 } from "./data-backup.js";
+import { createServerSupabaseClient } from "./supabase-client.js";
 
 const STAGING_EVIDENCE_BUCKET = "beermap-source-evidence";
 const RESTORED_STORAGE_DIRECTORY = "supabase-source-evidence";
@@ -325,9 +325,7 @@ export async function stageRestoredSourceEvidence(
   try {
     client = input.clientFactory
       ? input.clientFactory(stagingOrigin, serviceRoleKey)
-      : createClient(stagingOrigin, serviceRoleKey, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+      : createServerSupabaseClient(stagingOrigin, serviceRoleKey, { timeoutMs: 120_000 });
     const { data: bucket, error: bucketError } = await client.storage.getBucket(STAGING_EVIDENCE_BUCKET);
     if (bucketError || !bucket) throw bucketError ?? new Error("The staging evidence bucket is unavailable.");
     if (bucket.public !== false) throw new Error("The staging evidence bucket must be private.");

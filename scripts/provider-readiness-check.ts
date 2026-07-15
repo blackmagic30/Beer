@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
-import { createClient } from "@supabase/supabase-js";
+
+import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
 
 dotenv.config({ quiet: true });
 
@@ -120,9 +121,7 @@ async function checkPrivateStorageBucket(input: {
   }
 
   try {
-    const client = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
+    const client = createServerSupabaseClient(supabaseUrl, serviceRoleKey, { timeoutMs: 15_000 });
     const { data, error } = await client.storage.getBucket(input.bucketName);
     const privateBucket = !error && data && data.public === false;
     if (!privateBucket) {

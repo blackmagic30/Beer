@@ -8,7 +8,6 @@ import { promisify } from "node:util";
 import zlib from "node:zlib";
 
 import Database from "better-sqlite3";
-import { createClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 
 import { VIEWER_TRACKED_BEERS, canonicalizeTrackedBeerName, isLikelyBeerName } from "../src/constants/beers.js";
@@ -19,6 +18,7 @@ import {
 } from "../src/lib/menu-text-extraction.js";
 import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
 import { selectLabeledPintPrice } from "../src/lib/menu-price-selection.js";
+import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
 import {
   normalizeVenueKey,
   shouldImportBarOrPubPlace,
@@ -507,9 +507,7 @@ async function loadSupabaseVenues(limit: number): Promise<VenueCandidate[]> {
     return [];
   }
 
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: { persistSession: false },
-  });
+  const supabase = createServerSupabaseClient(supabaseUrl, supabaseKey);
   const venues: VenueCandidate[] = [];
   const pageSize = 500;
   let includeWebsite = true;
@@ -761,6 +759,7 @@ async function resolveWebsiteWithGooglePlaces(venue: VenueCandidate): Promise<st
           }
         : undefined,
     }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -3112,6 +3111,7 @@ async function maybeQueueDirectImage(candidate: MenuSourceCandidate): Promise<bo
       sourceUrl: candidate.sourceUrl,
       note: `Menu discovery candidate from official website. Confidence ${candidate.confidence}. Signals: ${candidate.signals.join("; ")}`,
     }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -3128,7 +3128,9 @@ async function main(): Promise<void> {
   const resolvePlaces = hasFlag("resolve-places") || envFlag("MENU_DISCOVERY_RESOLVE_PLACES");
   const venueQuery = normalizeVenueKey(getArg("venue-query") ?? getArg("venue") ?? "");
   const ocrEnabled = envFlag("MENU_DISCOVERY_OCR_IMAGES");
-  const openai = ocrEnabled && process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+  const openai = ocrEnabled && process.env.OPENAI_API_KEY
+    ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 90_000, maxRetries: 0 })
+    : null;
 
   const loadedVenues = mergeVenues([
     ...(await loadSupabaseVenues(limit)),

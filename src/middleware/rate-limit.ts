@@ -258,7 +258,10 @@ async function incrementRedisBucket(key: string, windowMs: number, now: number):
 
   await ensureRedisReady(client);
 
-  const result = await client.eval(REDIS_INCREMENT_SCRIPT, 1, key, windowMs) as [number | string, number | string];
+  const result = await withRedisTimeout(
+    client.eval(REDIS_INCREMENT_SCRIPT, 1, key, windowMs),
+    REDIS_CONNECT_TIMEOUT_MS,
+  ) as [number | string, number | string];
   const count = Number(result?.[0]);
   const ttl = Number(result?.[1]);
   if (!Number.isFinite(count) || !Number.isFinite(ttl)) {

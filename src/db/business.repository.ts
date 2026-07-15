@@ -3140,6 +3140,110 @@ export class BusinessRepository {
       );
   }
 
+  createSessionWithLimit(input: {
+    tokenHash: string;
+    userId: string;
+    createdAt: string;
+    expiresAt: string;
+    lastUsedAt?: string | null | undefined;
+    lastIpHash?: string | null | undefined;
+    userAgentHash?: string | null | undefined;
+    providerSessionIdHash?: string | null | undefined;
+    maxActiveSessions: number;
+  }): { revokedSessions: number; revokedDiscountPasses: number; revokedProviderSessions: number } {
+    return this.database.transaction(() => {
+      this.createSession(input);
+      return this.revokeExcessActiveSessions({
+        userId: input.userId,
+        now: input.createdAt,
+        maxActiveSessions: input.maxActiveSessions,
+        preserveTokenHash: input.tokenHash,
+      });
+    })();
+  }
+
+  revokeExcessActiveSessions(input: {
+    now: string;
+    maxActiveSessions: number;
+    userId?: string | undefined;
+    preserveTokenHash?: string | undefined;
+  }): { revokedSessions: number; revokedDiscountPasses: number; revokedProviderSessions: number } {
+    if (!Number.isInteger(input.maxActiveSessions) || input.maxActiveSessions < 1) {
+      throw new Error("Active session limit must be a positive integer.");
+    }
+    return this.database.transaction(() => {
+      const userClause = input.userId ? "AND user_id = ?" : "";
+      const values = input.userId
+        ? [input.preserveTokenHash ?? null, input.now, input.userId, input.maxActiveSessions]
+        : [input.preserveTokenHash ?? null, input.now, input.maxActiveSessions];
+      const excess = this.database.prepare(
+        `WITH ranked_active_sessions AS (
+           SELECT token_hash, user_id, provider_session_id_hash,
+             row_number() OVER (
+               PARTITION BY user_id
+               ORDER BY CASE WHEN token_hash = ? THEN 1 ELSE 0 END DESC,
+                 COALESCE(last_used_at, created_at) DESC, created_at DESC, token_hash DESC
+             ) AS session_rank
+           FROM auth_sessions
+           WHERE revoked_at IS NULL
+             AND expires_at > ?
+             ${userClause}
+         )
+         SELECT token_hash, user_id, provider_session_id_hash
+         FROM ranked_active_sessions
+         WHERE session_rank > ?`,
+      ).all(...values) as Array<{
+        token_hash: string;
+        user_id: string;
+        provider_session_id_hash: string | null;
+      }>;
+      if (excess.length === 0) {
+        return { revokedSessions: 0, revokedDiscountPasses: 0, revokedProviderSessions: 0 };
+      }
+
+      const placeholders = excess.map(() => "?").join(", ");
+      const tokenHashes = excess.map((session) => session.token_hash);
+      const revokedDiscountPasses = this.database.prepare(
+        `UPDATE account_discount_passes
+         SET status = 'revoked', revoked_at = ?
+         WHERE status = 'active' AND session_token_hash IN (${placeholders})`,
+      ).run(input.now, ...tokenHashes).changes;
+      const revokedSessions = this.database.prepare(
+        `UPDATE auth_sessions
+         SET revoked_at = ?
+         WHERE revoked_at IS NULL AND token_hash IN (${placeholders})`,
+      ).run(input.now, ...tokenHashes).changes;
+
+      let revokedProviderSessions = 0;
+      const providerSessions = new Map<string, { userId: string; providerSessionIdHash: string }>();
+      for (const session of excess) {
+        if (!session.provider_session_id_hash) continue;
+        providerSessions.set(`${session.user_id}:${session.provider_session_id_hash}`, {
+          userId: session.user_id,
+          providerSessionIdHash: session.provider_session_id_hash,
+        });
+      }
+      for (const providerSession of providerSessions.values()) {
+        const stillActive = this.database.prepare(
+          `SELECT 1 FROM auth_sessions
+           WHERE user_id = ? AND provider_session_id_hash = ?
+             AND revoked_at IS NULL AND expires_at > ?
+           LIMIT 1`,
+        ).get(providerSession.userId, providerSession.providerSessionIdHash, input.now);
+        if (stillActive) continue;
+        this.revokeProviderSession({
+          userId: providerSession.userId,
+          providerSessionIdHash: providerSession.providerSessionIdHash,
+          revokedAt: input.now,
+          reason: "session_limit_exceeded",
+        });
+        revokedProviderSessions += 1;
+      }
+
+      return { revokedSessions, revokedDiscountPasses, revokedProviderSessions };
+    })();
+  }
+
   getAccountBySessionTokenHash(tokenHash: string, now: string): BusinessAccount | null {
     const row = this.database
       .prepare(
@@ -6499,25 +6603,21 @@ export class BusinessRepository {
     now: string;
     leaseUntil: string;
   }): boolean {
-    try {
-      return this.database.transaction(() => {
-        const stored = this.getSystemState<{ owner?: unknown; leaseUntil?: unknown }>(input.key);
-        const activeLeaseUntil = typeof stored?.value.leaseUntil === "string"
-          ? Date.parse(stored.value.leaseUntil)
-          : Number.NaN;
-        if (Number.isFinite(activeLeaseUntil) && activeLeaseUntil > Date.parse(input.now)) {
-          return false;
-        }
-        this.setSystemState(input.key, {
-          owner: input.owner,
-          leaseUntil: input.leaseUntil,
-          acquiredAt: input.now,
-        }, input.now);
-        return true;
-      })();
-    } catch {
-      return false;
-    }
+    return this.database.transaction(() => {
+      const stored = this.getSystemState<{ owner?: unknown; leaseUntil?: unknown }>(input.key);
+      const activeLeaseUntil = typeof stored?.value.leaseUntil === "string"
+        ? Date.parse(stored.value.leaseUntil)
+        : Number.NaN;
+      if (Number.isFinite(activeLeaseUntil) && activeLeaseUntil > Date.parse(input.now)) {
+        return false;
+      }
+      this.setSystemState(input.key, {
+        owner: input.owner,
+        leaseUntil: input.leaseUntil,
+        acquiredAt: input.now,
+      }, input.now);
+      return true;
+    })();
   }
 
   releaseSystemLease(input: { key: string; owner: string; now: string }): boolean {

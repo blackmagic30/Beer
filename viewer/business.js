@@ -23,6 +23,49 @@ const LOCAL_SUBMISSION_QUEUE_DB_VERSION = 1;
 const LOCAL_SUBMISSION_QUEUE_STORE_NAME = "queuedSubmissions";
 const LEGAL_ACCEPTANCE_MAX_AGE_MS = 30 * 60 * 1000;
 const PASSWORD_RECOVERY_MAX_AGE_MS = 20 * 60 * 1000;
+const API_REQUEST_TIMEOUT_MS = 20 * 1000;
+const LEGACY_SESSION_MIGRATION_TIMEOUT_MS = 8 * 1000;
+const MAX_API_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+
+function createFetchDeadline(requestedTimeoutMs, callerSignal = null) {
+  const requested = Number(requestedTimeoutMs);
+  const timeoutMs = Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, MAX_API_REQUEST_TIMEOUT_MS)
+    : API_REQUEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+
+  if (callerSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    clear() {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
+}
+
+function requestTimeoutError() {
+  const error = new Error("This request took too long. Check your connection and try again.");
+  error.name = "PintPathRequestTimeoutError";
+  error.status = 408;
+  error.retryable = true;
+  error.code = "REQUEST_TIMEOUT";
+  error.recovery = "Check your connection, then retry the request.";
+  return error;
+}
 
 function escapeHtmlAttribute(value) {
   return String(value ?? "")
@@ -599,6 +642,11 @@ function isFieldTestMode() {
 
 async function apiFetch(path, options = {}) {
   await migrateLegacySessionCookie(path);
+  const {
+    timeoutMs = API_REQUEST_TIMEOUT_MS,
+    signal: callerSignal = null,
+    ...fetchOptions
+  } = options;
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
@@ -609,12 +657,31 @@ async function apiFetch(path, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(path, {
-    ...options,
-    headers,
-    credentials: "same-origin",
-  });
-  const payload = await response.json().catch(() => null);
+  const deadline = createFetchDeadline(timeoutMs, callerSignal);
+  let response;
+  let payload;
+  try {
+    response = await fetch(path, {
+      ...fetchOptions,
+      headers,
+      credentials: "same-origin",
+      signal: deadline.signal,
+    });
+    payload = await response.json().catch((error) => {
+      if (deadline.timedOut()) throw error;
+      return null;
+    });
+    if (deadline.timedOut()) {
+      throw requestTimeoutError();
+    }
+  } catch (error) {
+    if (deadline.timedOut()) {
+      throw requestTimeoutError();
+    }
+    throw error;
+  } finally {
+    deadline.clear();
+  }
 
   if (!response.ok || payload?.ok === false) {
     const error = new Error(payload?.error?.message || payload?.error || `Request failed (${response.status})`);
@@ -732,14 +799,16 @@ async function migrateLegacySessionCookie(path = "") {
   const token = getAuthToken();
   if (!token || path === "/api/business/auth/session-cookie") return;
   if (!legacySessionMigrationPromise) {
+    const deadline = createFetchDeadline(LEGACY_SESSION_MIGRATION_TIMEOUT_MS);
     legacySessionMigrationPromise = fetch("/api/business/auth/session-cookie", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       credentials: "same-origin",
       body: "{}",
+      signal: deadline.signal,
     }).then((response) => {
       if (response.ok) window.localStorage.removeItem(AUTH_TOKEN_KEY);
-    }).catch(() => null);
+    }).catch(() => null).finally(() => deadline.clear());
   }
   await legacySessionMigrationPromise;
 }

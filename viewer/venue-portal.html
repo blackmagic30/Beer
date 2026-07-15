@@ -4614,7 +4614,11 @@
       const token = MelbBeerBusiness.getAuthToken();
       const response = await fetch(
         `/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/reports/${encodeURIComponent(month)}/export?format=${encodeURIComponent(format)}`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: "same-origin" },
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          credentials: "same-origin",
+          signal: AbortSignal.timeout(60_000),
+        },
       );
       if (!response.ok) {
         const payload = await response.json().catch(() => null);

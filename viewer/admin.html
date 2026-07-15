@@ -4361,6 +4361,7 @@
           const response = await fetch(source, {
             credentials: "same-origin",
             headers: token ? { Authorization: `Bearer ${token}` } : {},
+            signal: AbortSignal.timeout(30_000),
           });
           if (!response.ok) {
             const payload = await response.json().catch(() => null);
@@ -4465,6 +4466,7 @@
             venueNameHint: venue.name,
             imageDataUrl,
           }),
+          timeoutMs: 120_000,
         });
         adminCaptureSource = "menu_photo_ocr";
         setBeerRows(adminBeerRows, result.beers || []);
@@ -4578,6 +4580,7 @@
             imageDataUrl,
             note: String(form.get("note") || "").trim() || null,
           }),
+          timeoutMs: 120_000,
         });
         formElement.reset();
         setLocalNotice(adminSourceQueueStatus, `Queued ${result.queueItem.extractedBeers.length} extracted beer item${result.queueItem.extractedBeers.length === 1 ? "" : "s"} for review.`);

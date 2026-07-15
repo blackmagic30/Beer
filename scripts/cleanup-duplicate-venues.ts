@@ -3,8 +3,10 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import Database from "better-sqlite3";
+
+import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
 
 type JsonRow = Record<string, unknown>;
 
@@ -1058,9 +1060,7 @@ async function main(): Promise<void> {
 
   const supabaseUrl = requiredEnvironment("SUPABASE_URL");
   const supabaseServiceRoleKey = requiredEnvironment("SUPABASE_SERVICE_ROLE_KEY");
-  const client = createClient(supabaseUrl, supabaseServiceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+  const client = createServerSupabaseClient(supabaseUrl, supabaseServiceRoleKey);
   const venues = (await fetchAllRows(client, "venues")).map(asVenueRow);
   const { pairs: detectedPairs, unresolved } = findDuplicatePairs(venues);
   const namedVenues = findNamedVenues(venues);

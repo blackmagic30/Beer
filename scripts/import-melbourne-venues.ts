@@ -1,13 +1,12 @@
 import "dotenv/config";
 
-import { createClient } from "@supabase/supabase-js";
-
 import {
   normalizeVenueKey,
   shouldImportBarOrPubPlace,
   type GoogleAddressComponent,
   type GooglePlaceCandidate,
 } from "../src/lib/venue-directory.js";
+import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
 
 const GOOGLE_PLACES_API_URL = "https://places.googleapis.com/v1/places:searchNearby";
 const GOOGLE_TEXT_SEARCH_API_URL = "https://places.googleapis.com/v1/places:searchText";
@@ -43,6 +42,7 @@ const DEFAULT_CITY_CENTER = {
 };
 const DEFAULT_TEXT_SEARCH_PAGE_SIZE = 20;
 const DEFAULT_TEXT_SEARCH_MAX_PAGES = 3;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 interface BackfillArea {
   name: string;
@@ -284,6 +284,7 @@ async function searchNearbyPlaces(apiKey: string, latitude: number, longitude: n
       languageCode: "en",
       regionCode: "AU",
     }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   const payload = await response.json();
@@ -325,6 +326,7 @@ async function searchTextPlaces(
       languageCode: "en",
       regionCode: "AU",
     }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   const payload = await response.json();
@@ -366,12 +368,7 @@ async function fetchExistingVenues() {
     throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   }
 
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
+  const supabase = createServerSupabaseClient(supabaseUrl, supabaseKey);
 
   const rows: VenueRow[] = [];
   const pageSize = 1000;

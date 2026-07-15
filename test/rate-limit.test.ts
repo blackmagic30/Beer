@@ -13,6 +13,7 @@ const redisMockState = vi.hoisted(() => ({
     disconnect: ReturnType<typeof vi.fn>;
   }>,
   connectError: undefined as Error | undefined,
+  evalNeverResolves: false,
 }));
 
 vi.mock("ioredis", () => {
@@ -40,6 +41,9 @@ vi.mock("ioredis", () => {
     pexpire = vi.fn(async () => 1);
     pttl = vi.fn(async () => 60_000);
     eval = vi.fn(async (script: string, _keyCount: number, key: string, windowMs: number) => {
+      if (redisMockState.evalNeverResolves) {
+        return await new Promise<never>(() => undefined);
+      }
       const count = await this.incr(key);
       let ttl = await this.pttl(key);
       if (ttl < 0 && script.includes("if ttl < 0")) {
@@ -146,9 +150,11 @@ async function runLimiter(limiter: ReturnType<typeof import("../src/middleware/r
 
 describe("Redis-backed rate limiting", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllEnvs();
     redisMockState.instances.length = 0;
     redisMockState.connectError = undefined;
+    redisMockState.evalNeverResolves = false;
   });
 
   it("connects the lazy Redis client before writing rate-limit keys", async () => {
@@ -192,6 +198,29 @@ describe("Redis-backed rate limiting", () => {
     expect(error).toEqual(expect.objectContaining({
       message: "Rate limiter unavailable. Please try again shortly.",
       statusCode: 503,
+    }));
+  });
+
+  it("fails closed within the Redis deadline when the atomic increment never resolves", async () => {
+    vi.useFakeTimers();
+    stubProductionEnv();
+    redisMockState.evalNeverResolves = true;
+
+    const { createRateLimiter } = await loadRateLimiter();
+    const limiter = createRateLimiter({
+      keyPrefix: "business:stalled",
+      windowMs: 60_000,
+      max: 2,
+    });
+
+    const pending = runLimiter(limiter);
+    await vi.advanceTimersByTimeAsync(1_501);
+
+    await expect(pending).resolves.toEqual(expect.objectContaining({
+      error: expect.objectContaining({
+        message: "Rate limiter unavailable. Please try again shortly.",
+        statusCode: 503,
+      }),
     }));
   });
 

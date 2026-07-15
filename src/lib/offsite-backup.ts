@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   type AccountDeletionTombstone,
@@ -19,6 +19,7 @@ import {
 } from "./data-backup.js";
 import { logger } from "./logger.js";
 import { redactSecrets } from "./redact.js";
+import { createServerSupabaseClient } from "./supabase-client.js";
 
 export interface OffsiteBackupConfig {
   databasePath: string;
@@ -30,6 +31,7 @@ export interface OffsiteBackupConfig {
   sourceEvidenceBucketName?: string;
   bucketName: string;
   retentionDays: number;
+  requestTimeoutMs?: number | undefined;
   clientFactory?: ((url: string, serviceRoleKey: string) => SupabaseClient) | undefined;
   acquireLease?: (() => boolean | Promise<boolean>) | undefined;
   releaseLease?: (() => void | Promise<void>) | undefined;
@@ -52,6 +54,7 @@ export interface AccountDeletionLedgerConfig {
   destinationSupabaseUrl: string;
   destinationServiceRoleKey: string;
   bucketName: string;
+  requestTimeoutMs?: number | undefined;
   clientFactory?: ((url: string, serviceRoleKey: string) => SupabaseClient) | undefined;
 }
 
@@ -154,6 +157,8 @@ const TOMBSTONE_LEDGER_GENESIS_PATH = "_control/account-deletion-ledger-genesis.
 const CURRENT_TOMBSTONE_LEDGER_PATH = "_control/account-deletion-tombstones.json";
 const TOMBSTONE_LEDGER_CHECKPOINT_PATH = "_control/account-deletion-ledger-checkpoint.json";
 const MAX_RECONCILIATION_ATTEMPTS = 3;
+const OFFSITE_BACKUP_REQUEST_TIMEOUT_MS = 60_000;
+const OFFSITE_READINESS_REQUEST_TIMEOUT_MS = 10_000;
 
 function createStorageClient(
   config: OffsiteBackupConfig,
@@ -162,8 +167,8 @@ function createStorageClient(
 ): SupabaseClient {
   return config.clientFactory
     ? config.clientFactory(url, serviceRoleKey)
-    : createClient(url, serviceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
+    : createServerSupabaseClient(url, serviceRoleKey, {
+      timeoutMs: config.requestTimeoutMs ?? OFFSITE_BACKUP_REQUEST_TIMEOUT_MS,
     });
 }
 
@@ -249,6 +254,7 @@ export async function probeOffsiteBackupReadiness(input: {
   lastSuccessfulAt: string | null;
   maxFreshnessHours: number;
   required: boolean;
+  requestTimeoutMs?: number | undefined;
   clientFactory?: ((url: string, serviceRoleKey: string) => SupabaseClient) | undefined;
 }): Promise<OffsiteBackupReadiness> {
   const completedAtMs = input.lastSuccessfulAt ? Date.parse(input.lastSuccessfulAt) : Number.NaN;
@@ -283,8 +289,8 @@ export async function probeOffsiteBackupReadiness(input: {
       }
       const client = input.clientFactory
         ? input.clientFactory(input.destinationSupabaseUrl, input.destinationServiceRoleKey)
-        : createClient(input.destinationSupabaseUrl, input.destinationServiceRoleKey, {
-          auth: { persistSession: false, autoRefreshToken: false },
+        : createServerSupabaseClient(input.destinationSupabaseUrl, input.destinationServiceRoleKey, {
+          timeoutMs: input.requestTimeoutMs ?? OFFSITE_READINESS_REQUEST_TIMEOUT_MS,
         });
       await assertPrivateBucket(client, input.bucketName, "Off-site backup destination");
       await assertBackupDestinationCapabilities(client, input.bucketName);
@@ -663,8 +669,8 @@ export async function appendAccountDeletionTombstone(
   if (normalized.length !== 1) throw new Error("A valid account-deletion tombstone is required.");
   const client = config.clientFactory
     ? config.clientFactory(config.destinationSupabaseUrl, config.destinationServiceRoleKey)
-    : createClient(config.destinationSupabaseUrl, config.destinationServiceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
+    : createServerSupabaseClient(config.destinationSupabaseUrl, config.destinationServiceRoleKey, {
+      timeoutMs: config.requestTimeoutMs ?? OFFSITE_BACKUP_REQUEST_TIMEOUT_MS,
     });
   await assertPrivateBucket(client, config.bucketName, "Account-deletion ledger destination");
   const complete = await ensureAppendOnlyTombstones({
@@ -721,9 +727,9 @@ export async function fetchVerifiedAccountDeletionLedger(
   }
   const client = config.clientFactory
     ? config.clientFactory(config.destinationSupabaseUrl, config.destinationServiceRoleKey)
-    : createClient(config.destinationSupabaseUrl, config.destinationServiceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-  });
+    : createServerSupabaseClient(config.destinationSupabaseUrl, config.destinationServiceRoleKey, {
+      timeoutMs: config.requestTimeoutMs ?? OFFSITE_BACKUP_REQUEST_TIMEOUT_MS,
+    });
   await assertPrivateBucket(client, config.bucketName, "Account-deletion ledger destination");
   const genesis = await downloadBytes(client, config.bucketName, TOMBSTONE_LEDGER_GENESIS_PATH);
   parseLedgerGenesis(genesis.bytes);
@@ -1040,7 +1046,14 @@ export async function runOffsiteBackup(config: OffsiteBackupConfig): Promise<{
     }
     throw error;
   } finally {
-    await fs.promises.rm(temporaryRoot, { recursive: true, force: true });
+    try {
+      await fs.promises.rm(temporaryRoot, { recursive: true, force: true });
+    } catch (error) {
+      logger.warn("Could not remove a temporary off-site backup directory", {
+        backupId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
 
@@ -1049,37 +1062,78 @@ export function scheduleOffsiteBackups(
 ): { stop: () => Promise<void>; runNow: () => Promise<void> } {
   let stopped = false;
   let activeRun: Promise<void> | null = null;
+  let retryTimer: NodeJS.Timeout | null = null;
+  const retryDelayMs = Math.min(config.intervalHours * 60 * 60 * 1000, 15 * 60 * 1000);
+  const clearRetry = () => {
+    if (!retryTimer) return;
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  };
+  const scheduleRetry = () => {
+    if (stopped || retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void execute();
+    }, retryDelayMs);
+    retryTimer.unref();
+  };
+  const reportStatus = async (
+    status: Parameters<NonNullable<OffsiteBackupConfig["onStatus"]>>[0],
+  ): Promise<void> => {
+    try {
+      await config.onStatus?.(status);
+    } catch (error) {
+      logger.error("Could not persist off-site backup status", {
+        state: status.state,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
   const execute = (): Promise<void> => {
     if (stopped) return Promise.resolve();
     if (activeRun) return activeRun;
     const pending = (async () => {
-    let leaseAcquired = false;
-    const startedAt = new Date().toISOString();
-    try {
-      leaseAcquired = config.acquireLease ? await config.acquireLease() : true;
-      if (!leaseAcquired) return;
-      config.onStatus?.({ state: "running", startedAt, completedAt: null });
-      const result = await runOffsiteBackup(config);
-      config.onStatus?.({
-        state: "succeeded",
-        startedAt,
-        completedAt: new Date().toISOString(),
-        ...result,
-      });
-      logger.info("Off-site production backup completed", result);
-    } catch (error) {
-      config.onStatus?.({
-        state: "failed",
-        startedAt,
-        completedAt: new Date().toISOString(),
-        error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Off-site backup failed",
-      });
-      logger.error("Off-site production backup failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    } finally {
-      if (leaseAcquired) await config.releaseLease?.();
-    }
+      let leaseAcquired = false;
+      const startedAt = new Date().toISOString();
+      try {
+        leaseAcquired = config.acquireLease ? await config.acquireLease() : true;
+        if (!leaseAcquired) {
+          scheduleRetry();
+          return;
+        }
+        await reportStatus({ state: "running", startedAt, completedAt: null });
+        const result = await runOffsiteBackup(config);
+        clearRetry();
+        await reportStatus({
+          state: "succeeded",
+          startedAt,
+          completedAt: new Date().toISOString(),
+          ...result,
+        });
+        logger.info("Off-site production backup completed", result);
+      } catch (error) {
+        scheduleRetry();
+        await reportStatus({
+          state: "failed",
+          startedAt,
+          completedAt: new Date().toISOString(),
+          error: error instanceof Error ? redactSecrets(error.message).slice(0, 300) : "Off-site backup failed",
+        });
+        logger.error("Off-site production backup failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        if (leaseAcquired) {
+          try {
+            await config.releaseLease?.();
+          } catch (error) {
+            scheduleRetry();
+            logger.error("Could not release the off-site backup lease", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      }
     })();
     activeRun = pending.finally(() => {
       activeRun = null;
@@ -1100,6 +1154,7 @@ export function scheduleOffsiteBackups(
       stopped = true;
       clearTimeout(initialTimer);
       clearInterval(interval);
+      clearRetry();
       await activeRun;
     },
     runNow: execute,

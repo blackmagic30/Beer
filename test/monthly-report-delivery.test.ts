@@ -612,4 +612,40 @@ describe("monthly report schedule", () => {
     });
     expect(send).toHaveBeenCalledTimes(1);
   });
+
+  it("contains throwing and rejecting status callbacks without rejecting the scheduler", async () => {
+    const repository = createRepository();
+    repository.assignments.splice(2, 1);
+    const generator = {
+      generateScheduledVenueMonthlyReports: vi.fn(({ month }: { month: string }) => ({
+        generatedCount: 1,
+        reports: [{ barId: "venue-1", month, data: { venue: { name: "Report Hotel" } } }],
+      })),
+    };
+    const send = vi.fn(async () => ({ id: "email-123" }));
+    let statusAttempts = 0;
+    const scheduler = scheduleMonthlyReportDelivery({
+      generator,
+      repository,
+      provider: { mode: "resend", send },
+      publicBaseUrl: "https://pintpath.au",
+      from: "Pint Path <reports@pintpath.au>",
+      timezone: "Australia/Melbourne",
+      scheduleDay: 2,
+      scheduleHour: 9,
+      checkIntervalMinutes: 60,
+      initialDelayMs: 60_000,
+      now: () => new Date("2026-07-14T00:00:00.000Z"),
+      onStatus: () => {
+        statusAttempts += 1;
+        if (statusAttempts === 1) throw new Error("status store unavailable");
+        return Promise.reject(new Error("status store still unavailable"));
+      },
+    });
+
+    await expect(scheduler.runNow()).resolves.toBeUndefined();
+    expect(statusAttempts).toBe(2);
+    expect(send).toHaveBeenCalledOnce();
+    await expect(scheduler.stop()).resolves.toBeUndefined();
+  });
 });

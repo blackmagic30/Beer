@@ -160,7 +160,7 @@ export interface MonthlyReportSchedulerConfig extends Omit<RunMonthlyReportDeliv
   checkIntervalMinutes: number;
   initialDelayMs?: number | undefined;
   now?: (() => Date) | undefined;
-  onStatus?: ((status: Record<string, unknown>) => void) | undefined;
+  onStatus?: ((status: Record<string, unknown>) => void | Promise<void>) | undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -775,63 +775,79 @@ export function isMonthlyReportDeliveryDue(input: {
 export function scheduleMonthlyReportDelivery(config: MonthlyReportSchedulerConfig): { stop: () => Promise<void>; runNow: () => Promise<void> } {
   let activeRun: Promise<void> | null = null;
   let stopped = false;
+  const reportStatus = async (status: Record<string, unknown>): Promise<void> => {
+    try {
+      await config.onStatus?.(status);
+    } catch (error) {
+      logger.error("Could not persist monthly venue report delivery status", {
+        state: status.state,
+        error: safeErrorMessage(error),
+      });
+    }
+  };
   const execute = (): Promise<void> => {
     if (stopped) return Promise.resolve();
     if (activeRun) return activeRun;
-    const now = config.now?.() ?? new Date();
-    if (!isMonthlyReportDeliveryDue({
-      now,
-      timezone: config.timezone,
-      scheduleDay: config.scheduleDay,
-      scheduleHour: config.scheduleHour,
-    })) return Promise.resolve();
-
     const pending = (async () => {
-      const startedAt = now.toISOString();
-      config.onStatus?.({ state: "running", startedAt, completedAt: null });
-      try {
-      const result = await runMonthlyReportDelivery({
-        generator: config.generator,
-        repository: config.repository,
-        provider: config.provider,
-        publicBaseUrl: config.publicBaseUrl,
-        from: config.from,
-        ...(config.replyTo ? { replyTo: config.replyTo } : {}),
-        timezone: config.timezone,
+      const now = config.now?.() ?? new Date();
+      if (!isMonthlyReportDeliveryDue({
         now,
-      });
-      const failed = result.rejectedCount + result.uncertainCount > 0;
-      const pendingRecipients = result.generatedCount === 0 ||
-        result.skippedNoEligibleRecipientCount > 0 ||
-        result.skippedUnverifiedAccountCount > 0 ||
-        result.inProgressCount > 0;
-      config.onStatus?.({
-        state: failed ? "failed" : pendingRecipients ? "waiting_for_recipients" : "succeeded",
-        startedAt,
-        completedAt: new Date().toISOString(),
-        ...result,
-      });
-      if (failed) {
-        logger.error("Monthly venue report delivery completed with failures", { ...result });
-      } else if (pendingRecipients) {
-        logger.warn("Monthly venue report delivery is waiting for eligible recipients", { ...result });
-      } else if (result.deliveredCount > 0 || result.mockedCount > 0) {
-        logger.info("Monthly venue report delivery completed", { ...result });
-      }
+        timezone: config.timezone,
+        scheduleDay: config.scheduleDay,
+        scheduleHour: config.scheduleHour,
+      })) return;
+
+      const startedAt = now.toISOString();
+      await reportStatus({ state: "running", startedAt, completedAt: null });
+      try {
+        const result = await runMonthlyReportDelivery({
+          generator: config.generator,
+          repository: config.repository,
+          provider: config.provider,
+          publicBaseUrl: config.publicBaseUrl,
+          from: config.from,
+          ...(config.replyTo ? { replyTo: config.replyTo } : {}),
+          timezone: config.timezone,
+          now,
+        });
+        const failed = result.rejectedCount + result.uncertainCount > 0;
+        const pendingRecipients = result.generatedCount === 0 ||
+          result.skippedNoEligibleRecipientCount > 0 ||
+          result.skippedUnverifiedAccountCount > 0 ||
+          result.inProgressCount > 0;
+        await reportStatus({
+          state: failed ? "failed" : pendingRecipients ? "waiting_for_recipients" : "succeeded",
+          startedAt,
+          completedAt: new Date().toISOString(),
+          ...result,
+        });
+        if (failed) {
+          logger.error("Monthly venue report delivery completed with failures", { ...result });
+        } else if (pendingRecipients) {
+          logger.warn("Monthly venue report delivery is waiting for eligible recipients", { ...result });
+        } else if (result.deliveredCount > 0 || result.mockedCount > 0) {
+          logger.info("Monthly venue report delivery completed", { ...result });
+        }
       } catch (error) {
-      const failure = {
-        state: "failed",
-        startedAt,
-        completedAt: new Date().toISOString(),
-        error: safeErrorMessage(error),
-      };
-      config.onStatus?.(failure);
-      logger.error("Monthly venue report delivery failed", failure);
+        const failure = {
+          state: "failed",
+          startedAt,
+          completedAt: new Date().toISOString(),
+          error: safeErrorMessage(error),
+        };
+        await reportStatus(failure);
+        logger.error("Monthly venue report delivery failed", failure);
       }
     })();
-    activeRun = pending.finally(() => {
-      activeRun = null;
-    });
+    activeRun = pending
+      .catch((error) => {
+        logger.error("Monthly venue report delivery scheduler failed unexpectedly", {
+          error: safeErrorMessage(error),
+        });
+      })
+      .finally(() => {
+        activeRun = null;
+      });
     return activeRun;
   };
 

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type BetterSqlite3 from "better-sqlite3";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -28,6 +28,7 @@ import { logger } from "../../lib/logger.js";
 import type { MenuPhotoOcrResult } from "../../lib/menu-photo-ocr.js";
 import { selectLabeledPintPrice } from "../../lib/menu-price-selection.js";
 import { redactSecrets } from "../../lib/redact.js";
+import { createServerSupabaseClient } from "../../lib/supabase-client.js";
 import {
   createPinnedImageSourceLookup,
   normalizeImageMimeType,
@@ -827,17 +828,14 @@ export class AdminService {
     private readonly priceRecordDatabase?: BetterSqlite3.Database,
   ) {
     if (supabaseUrl && supabaseServiceRoleKey) {
-      this.supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-      });
+      this.supabase = createServerSupabaseClient(supabaseUrl, supabaseServiceRoleKey);
     }
 
     if (openaiApiKey) {
       this.openai = new OpenAI({
         apiKey: openaiApiKey,
+        timeout: 90_000,
+        maxRetries: 0,
       });
     }
 
