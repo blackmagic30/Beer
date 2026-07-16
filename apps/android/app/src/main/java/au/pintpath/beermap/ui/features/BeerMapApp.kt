@@ -40,6 +40,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Business
@@ -47,6 +48,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocalBar
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -204,6 +206,8 @@ class BeerMapState(context: Context) {
     private var pendingLegalAcceptance: PendingLegalAcceptance? = null
 
     val signedIn: Boolean get() = token != null
+    val hasAdminAccess: Boolean
+        get() = signedIn && accountDashboard?.access?.isAdmin == true
     val hasVenueAccess: Boolean
         get() {
             val currentPortal = portal ?: return false
@@ -963,6 +967,7 @@ private enum class AppTab(val label: String) {
     Discover("Find"),
     Contribute("Add"),
     Bars("Bars"),
+    Admin("Admin"),
     Account("Account"),
     Settings("Help")
 }
@@ -985,6 +990,9 @@ fun BeerMapApp(oauthCallback: Uri? = null, onOAuthCallbackConsumed: () -> Unit =
     }
     LaunchedEffect(state.hasVenueAccess) {
         if (!state.hasVenueAccess && tab == AppTab.Bars) tab = AppTab.Account
+    }
+    LaunchedEffect(state.hasAdminAccess) {
+        if (!state.hasAdminAccess && tab == AppTab.Admin) tab = AppTab.Account
     }
 
     CompositionLocalProvider(LocalActionsEnabled provides !state.loading) {
@@ -1009,6 +1017,14 @@ fun BeerMapApp(oauthCallback: Uri? = null, onOAuthCallbackConsumed: () -> Unit =
                         onClick = { tab = AppTab.Bars },
                         icon = { Icon(Icons.Filled.Storefront, contentDescription = null) },
                         label = { Text(AppTab.Bars.label) }
+                    )
+                }
+                if (state.hasAdminAccess) {
+                    NavigationBarItem(
+                        selected = tab == AppTab.Admin,
+                        onClick = { tab = AppTab.Admin },
+                        icon = { Icon(Icons.Filled.AdminPanelSettings, contentDescription = null) },
+                        label = { Text(AppTab.Admin.label) }
                     )
                 }
                 NavigationBarItem(
@@ -1038,10 +1054,44 @@ fun BeerMapApp(oauthCallback: Uri? = null, onOAuthCallbackConsumed: () -> Unit =
                 AppTab.Account -> AccountScreen(state, scope)
                 AppTab.Contribute -> ContributeScreen(state, scope)
                 AppTab.Bars -> if (state.hasVenueAccess) VenuePortalScreen(state, scope) else AccountScreen(state, scope)
+                AppTab.Admin -> if (state.hasAdminAccess) AdminQuickAccessScreen() else AccountScreen(state, scope)
                 AppTab.Settings -> SettingsScreen(state, scope)
             }
         }
     }
+    }
+}
+
+@Composable
+private fun AdminQuickAccessScreen() {
+    val context = LocalContext.current
+    val adminSignInUri = remember {
+        Uri.parse("${BuildConfig.PINT_PATH_API_BASE_URL.trimEnd('/')}/account.html?returnTo=%2Fadmin.html")
+    }
+
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item {
+            AppCard {
+                SectionHeader(
+                    eyebrow = "Admin access",
+                    title = "Open Pint Path admin",
+                    subtitle = "Your current app account has server-verified admin authority. Administration remains in the full secure web workspace.",
+                    icon = Icons.Filled.AdminPanelSettings
+                )
+                StatusBanner(
+                    "Only accounts confirmed as admins by the Pint Path server receive this tab.",
+                    icon = Icons.Filled.Lock
+                )
+                PrimaryAction("Open admin workspace", icon = Icons.Filled.OpenInBrowser) {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, adminSignInUri))
+                }
+                Text(
+                    "Your browser may ask you to sign in again before returning directly to the Admin workspace.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 

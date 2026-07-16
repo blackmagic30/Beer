@@ -52,6 +52,9 @@ final class BeerMapAppModel: ObservableObject {
 
     var isSignedIn: Bool { sessionToken != nil }
     var account: Account? { accountDashboard?.account }
+    var hasAdminAccess: Bool {
+        isSignedIn && accountDashboard?.access?.isAdmin == true
+    }
     var hasVenueAccess: Bool {
         guard let venuePortal, venuePortal.accessState != "claim_required" else { return false }
         let hasCurrentAdminAuthority = accountDashboard?.access?.isAdmin == true && venuePortal.isAdmin == true

@@ -34,6 +34,7 @@ Provider login also requires `pintpath://auth-callback` in the Supabase redirect
 - Missing venue/beer requests and mission reserve/release.
 - Account dashboard, privacy controls, sessions, JSON export, deletion request/status/cancel, rewards, and counter-staff invitations.
 - Venue profile, beer/stock, happy hours, eligible specials, counter/POS tools, analytics, planner, and monthly report export for assigned roles.
+- A server-authority-gated Admin tab that hands verified admins to the secure web workspace.
 - Claim-required accounts are handed to the secure web claim workflow because business evidence and admin review remain web-managed.
 
 ## Deliberate remaining boundaries

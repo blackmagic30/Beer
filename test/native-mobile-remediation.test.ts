@@ -631,6 +631,28 @@ describe("native mobile remediation guardrails", () => {
     expect(service).toContain("isAdmin: currentAdmin");
   });
 
+  it("shows native Admin quick-bar access only with current server-verified admin authority", () => {
+    const hasAdminAccess = (signedIn: boolean, serverIsAdmin: boolean) => signedIn && serverIsAdmin;
+
+    expect(hasAdminAccess(true, true)).toBe(true);
+    expect(hasAdminAccess(true, false)).toBe(false);
+    expect(hasAdminAccess(false, true)).toBe(false);
+
+    expect(iosApp).toContain("isSignedIn && accountDashboard?.access?.isAdmin == true");
+    expect(iosRoot).toContain("if model.hasAdminAccess");
+    expect(iosRoot).toContain('Label("Admin", systemImage: "lock.shield.fill")');
+    expect(iosRoot).toContain('URLQueryItem(name: "returnTo", value: "/admin.html")');
+    expect(iosRoot).not.toContain('account?.role == "admin"');
+
+    expect(androidApp).toContain("get() = signedIn && accountDashboard?.access?.isAdmin == true");
+    expect(androidApp).toContain("if (state.hasAdminAccess)");
+    expect(androidApp).toContain("if (!state.hasAdminAccess && tab == AppTab.Admin) tab = AppTab.Account");
+    expect(androidApp).toContain('Admin("Admin")');
+    expect(androidApp).toContain("/account.html?returnTo=%2Fadmin.html");
+    expect(androidApp).not.toContain('account.role == "admin"');
+    expect(androidApp).not.toContain('account.subscriptionStatus == "admin"');
+  });
+
   it("renders the authoritative upload total when recent history is capped at 12", () => {
     const fixture = JSON.parse(read("test/fixtures/native-account-dashboard-over-12.json")) as {
       dashboardStats: { totalUploads: number };

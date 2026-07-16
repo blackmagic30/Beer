@@ -1,6 +1,6 @@
 # Pint Path Mobile Status Report
 
-Status date: 14 July 2026
+Status date: 17 July 2026
 
 ## Executive status
 
@@ -17,7 +17,7 @@ This is not a claim that the binaries are already store-approved. Code-level and
 | Contributor | Price/photo/happy-hour evidence, optional one-time location, missions | Same | Submissions remain review-first. |
 | Counter staff | Invitation acceptance, member-code preview, purchase/reward actions | Same | Server verifies venue assignment and permissions. |
 | Venue manager | Profile, beers/stock, happy hours, entitled specials, analytics/planner/reports | Same | Claim-required users are handed to the secure web verification workflow. |
-| Admin | Web admin only | Web admin only | Native clients intentionally do not expose moderation or account-administration powers. |
+| Admin | Authority-gated Admin quick-bar tab with secure web workspace handoff | Same | The tab is derived only from current server-verified admin access; moderation remains in the full web workspace. |
 
 ## Remediation completed in this pass
 
@@ -38,6 +38,7 @@ This is not a claim that the binaries are already store-approved. Code-level and
 - Added iOS privacy-manifest coverage for linked account IDs, email, selected photos, optional location, and UserDefaults access.
 - Aligned installed-app branding and user copy to Pint Path.
 - Removed native first-page ceilings: venues, missions, account sessions, and venue prices now follow every offset/cursor page with deduplication and non-progress/repeated-cursor guards.
+- Added an Admin quick-bar tab on both platforms that appears only while the signed-in account has current server-verified admin authority, then hands off to the secure web workspace.
 
 ## Native behavior by area
 

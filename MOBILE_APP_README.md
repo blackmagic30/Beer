@@ -24,9 +24,10 @@ Session storage is device-protected:
 - Contributors: reviewed price/photo/happy-hour submissions, one-time optional location proof, mission reserve/release, progress and rewards.
 - Accounts: signup/login/OAuth/logout/refresh/recovery, fresh-authenticated session/export/deletion controls, suspended-account billing-only recovery, saved venues, privacy settings, device sessions, account export, deletion status/cancel, staff invitations.
 - Venue managers and counter staff: assigned-venue dashboard, profile, stock/beer prices, happy hours, entitled specials, counter/POS and reward checks, privacy-safe analytics/planner, monthly report export.
+- Admins: a server-authority-gated quick-bar tab that hands off to the secure web admin workspace and disappears immediately when current admin authority is absent.
 - Claims: secure web handoff for evidence upload and admin verification.
 
-The native clients cover normal-user, contributor, counter-staff, and venue-manager workflows. Admin moderation remains a web-admin responsibility.
+The native clients cover normal-user, contributor, counter-staff, and venue-manager workflows. Admin navigation is native and authority-gated; moderation remains a web-admin responsibility.
 
 ## Configuration
 
