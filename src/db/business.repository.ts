@@ -8542,10 +8542,16 @@ export class BusinessRepository {
   }
 
   revokeVenueManager(input: { userId: string; venueId: string; now: string }): VenueManagerAssignment | null {
-    this.database.transaction(() => {
-      this.database
-        .prepare("UPDATE venue_manager_assignments SET status = 'revoked', expires_at = NULL, updated_at = ? WHERE user_id = ? AND venue_id = ?")
+    const row = this.database.transaction(() => {
+      const revoked = this.database
+        .prepare(
+          `UPDATE venue_manager_assignments
+           SET status = 'revoked', expires_at = NULL, updated_at = ?
+           WHERE user_id = ? AND venue_id = ? AND status IN ('active', 'pending')`,
+        )
         .run(input.now, input.userId, input.venueId);
+      if (revoked.changes !== 1) return null;
+
       const active = this.database
         .prepare("SELECT 1 FROM venue_manager_assignments WHERE user_id = ? AND status = 'active' AND access_level = 'manager' LIMIT 1")
         .get(input.userId);
@@ -8554,10 +8560,11 @@ export class BusinessRepository {
           .prepare("UPDATE accounts SET role = 'user', updated_at = ? WHERE id = ? AND role = 'venue_manager'")
           .run(input.now, input.userId);
       }
+
+      return this.database
+        .prepare("SELECT * FROM venue_manager_assignments WHERE user_id = ? AND venue_id = ?")
+        .get(input.userId, input.venueId) as VenueManagerAssignmentRow;
     })();
-    const row = this.database
-      .prepare("SELECT * FROM venue_manager_assignments WHERE user_id = ? AND venue_id = ?")
-      .get(input.userId, input.venueId) as VenueManagerAssignmentRow | undefined;
     return row ? toVenueManagerAssignment(row) : null;
   }
 
@@ -8572,7 +8579,14 @@ export class BusinessRepository {
       .run(now, now).changes;
   }
 
-  listVenueManagerAssignments(input: { userId?: string | undefined; venueId?: string | undefined; activeOnly?: boolean | undefined; limit: number; offset?: number }): VenueManagerAssignment[] {
+  listVenueManagerAssignments(input: {
+    userId?: string | undefined;
+    venueId?: string | undefined;
+    activeOnly?: boolean | undefined;
+    currentOnly?: boolean | undefined;
+    limit: number;
+    offset?: number;
+  }): VenueManagerAssignment[] {
     const clauses: string[] = [];
     const values: unknown[] = [];
 
@@ -8588,6 +8602,8 @@ export class BusinessRepository {
 
     if (input.activeOnly) {
       clauses.push("status = 'active'");
+    } else if (input.currentOnly) {
+      clauses.push("status != 'revoked'");
     }
 
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -9534,7 +9550,7 @@ export class BusinessRepository {
     const row = this.database.prepare(`SELECT
       (SELECT count(*) FROM venue_interest_requests) AS interests,
       (SELECT count(*) FROM venue_claim_requests) AS claim_requests,
-      (SELECT count(*) FROM venue_manager_assignments) AS assignments,
+      (SELECT count(*) FROM venue_manager_assignments WHERE status != 'revoked') AS assignments,
       (SELECT count(*) FROM venue_pending_changes WHERE status = 'pending') AS pending_changes,
       (SELECT count(*) FROM venue_partner_outreach) AS outreach,
       (SELECT count(*) FROM venue_partner_outreach WHERE status NOT IN ('closed', 'not_interested')) AS open_outreach`).get() as Record<string, number>;

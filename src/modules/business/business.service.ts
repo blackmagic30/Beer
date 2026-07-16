@@ -11670,7 +11670,10 @@ export class BusinessService {
       metadata: { managerUserId: assignment.userId, venueName: assignment.venueName },
     });
 
-    return { assignment };
+    return {
+      assignment,
+      message: "Venue manager revoked and removed from current assignments.",
+    };
   }
 
   getVenuePartnerAdmin(admin: BusinessAccount, query: AdminPaginationInput = { limit: 100, offset: 0 }) {
@@ -11678,7 +11681,7 @@ export class BusinessService {
       throw new AppError("Admin access required.", 403);
     }
 
-    const assignments = this.repository.listVenueManagerAssignments(query).map((assignment) => {
+    const assignments = this.repository.listVenueManagerAssignments({ ...query, currentOnly: true }).map((assignment) => {
       const manager = this.repository.getAccountById(assignment.userId);
       return {
         ...assignment,

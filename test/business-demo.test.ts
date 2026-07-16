@@ -8322,6 +8322,16 @@ describe("business demo contribution model", () => {
 
     const revoked = service.revokeVenueManager(admin, { userId: manager.id, venueId: "venue-1" });
     expect(revoked.assignment.status).toBe("revoked");
+    const partnerAdminAfterRevoke = service.getVenuePartnerAdmin(admin);
+    expect(partnerAdminAfterRevoke.assignments).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: manager.id, venueId: "venue-1" }),
+    ]));
+    expect(partnerAdminAfterRevoke.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId: normalUser.id, venueId: "venue-1" }),
+    ]));
+    expect(partnerAdminAfterRevoke.totals.assignments).toBe(partnerAdmin.totals.assignments - 1);
+    expect(() => service.revokeVenueManager(admin, { userId: manager.id, venueId: "venue-1" }))
+      .toThrow("Venue manager assignment not found");
   });
 
   it("treats admin account search text as literal text instead of executable query syntax", () => {

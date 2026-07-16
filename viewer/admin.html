@@ -4842,7 +4842,9 @@
             <span class="pill ${assignment.accessLevel === "manager" ? "pill--premium" : ""}">${escapeHtml(assignment.accessLevel === "counter_staff" ? "counter staff" : "manager")}</span>
             <div class="muted">${escapeHtml(assignment.suburb || "Melbourne")} · ${escapeHtml(managerLabel)}</div>
             <div class="muted">${escapeHtml(managerMeta)}</div>
-            <button class="button button--danger" type="button" data-revoke-user="${escapeHtml(assignment.userId)}" data-revoke-venue="${escapeHtml(assignment.venueId)}">Revoke</button>
+            ${["active", "pending"].includes(assignment.status)
+              ? `<button class="button button--danger" type="button" data-revoke-user="${escapeHtml(assignment.userId)}" data-revoke-venue="${escapeHtml(assignment.venueId)}">Revoke</button>`
+              : ""}
           </article>
         `;
         }).join("")
@@ -5057,11 +5059,11 @@
     async function revokeVenueManager(userId, venueId) {
       if (!userId || !venueId) return;
       try {
-        await MelbBeerBusiness.apiFetch("/api/business/admin/venue-managers/revoke", {
+        const result = await MelbBeerBusiness.apiFetch("/api/business/admin/venue-managers/revoke", {
           method: "POST",
           body: JSON.stringify({ userId, venueId }),
         });
-        MelbBeerBusiness.setStatus(statusEl, "Venue manager revoked.");
+        MelbBeerBusiness.setStatus(statusEl, result.message || "Venue manager revoked and removed from current assignments.");
         await loadAdmin();
       } catch (error) {
         MelbBeerBusiness.setStatus(statusEl, error.message, true);

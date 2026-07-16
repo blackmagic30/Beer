@@ -75,6 +75,11 @@ describe("venue and admin remediation", () => {
     expect(admin).toContain('<select id="managerVenueSelect" aria-describedby="managerAssignPreview"></select>');
   });
 
+  it("removes revoked venue managers from the current assignment workflow", () => {
+    expect(admin).toContain('["active", "pending"].includes(assignment.status)');
+    expect(admin).toContain("Venue manager revoked and removed from current assignments.");
+  });
+
   it("announces admin async notices and sends venue support replies to the requested email", () => {
     expect(admin).toContain('element.setAttribute("role", isWarning ? "alert" : "status")');
     expect(admin).toContain('element.setAttribute("aria-live", isWarning ? "assertive" : "polite")');
