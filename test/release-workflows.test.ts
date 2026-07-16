@@ -256,6 +256,13 @@ describe("release workflow contracts", () => {
     expect(smoke).toContain("Public Supabase key does not match protected SUPABASE_ANON_KEY");
   });
 
+  it("does not mix failed retry bodies into successful production health JSON", () => {
+    const source = workflow("production-health.yml");
+
+    expect(source).toContain("curl --fail --silent --show-error");
+    expect(source).not.toContain("--fail-with-body");
+  });
+
   it("documents the live POS reference, rotation, and discount-only contract", () => {
     const contract = releaseDocument("pos-integration-contract.md");
     const checklist = releaseDocument("external-launch-signoffs.md");

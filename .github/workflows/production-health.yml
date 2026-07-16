@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           for path in health ready; do
-            body="$(curl --fail-with-body --silent --show-error \
+            body="$(curl --fail --silent --show-error \
               --retry 3 --retry-all-errors --retry-delay 5 \
               --connect-timeout 10 --max-time 30 \
               "https://pintpath.au/${path}")"
@@ -37,8 +37,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          venues="$(curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 30 'https://pintpath.au/api/business/venues?limit=3')"
-          missions="$(curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors --max-time 30 'https://pintpath.au/api/business/missions?limit=50')"
+          venues="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 'https://pintpath.au/api/business/venues?limit=3')"
+          missions="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 30 'https://pintpath.au/api/business/missions?limit=50')"
           node -e '
             const venues = JSON.parse(process.argv[1])?.data?.venues;
             const missions = JSON.parse(process.argv[2])?.data?.missions;
