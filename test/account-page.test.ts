@@ -858,6 +858,7 @@ describe("account page shell", () => {
     expect(script).toContain("function hasCachedSupabaseSession");
     expect(script).toContain("function isVenueManagerContext");
     expect(script).toContain("function isAdminContext");
+    expect(script).toContain("function isAdminAccountContext");
     expect(script).toContain("function canUseVenuePortalContext");
     expect(script).toContain("function installNavigationChrome");
     expect(script).toContain("subscriptionStatus: account.subscriptionStatus || null");
@@ -873,7 +874,7 @@ describe("account page shell", () => {
     expect(script).toContain('const counterPortalPath = accountContext?.authorityVerified === true');
     expect(script).toContain('isVenueManagerContext() || Boolean(counterPortalPath)');
     expect(script).toContain("const venuePortalNav = canUseVenuePortalContext()");
-    expect(script).toContain("const adminNav = isAdminContext()");
+    expect(script).toContain("const adminNav = isAdminAccountContext()");
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
     expect(script).toContain('{ key: "missions", href: "/missions.html", label: "Missions" }');
@@ -997,7 +998,10 @@ describe("account page shell", () => {
 
   it("keeps the admin page in the same nav with Admin highlighted", () => {
     const helpers = loadBusinessHelpers();
-    helpers.setAccountContext({ id: "admin-user-1", role: "admin", status: "active" }, { isAdmin: true });
+    helpers.setAccountContext(
+      { id: "admin-user-1", role: "admin", status: "active" },
+      { isAdmin: true, isAdminAccount: true },
+    );
     const nav = helpers.renderNav("admin");
 
     expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
@@ -1011,13 +1015,32 @@ describe("account page shell", () => {
       role: "admin",
       status: "active",
       subscriptionStatus: "admin",
-    }, { isAdmin: true, accountRole: "admin" });
+    }, { isAdmin: true, isAdminAccount: true, accountRole: "admin" });
     const nav = helpers.renderNav("account");
 
     expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
     expect(nav).toContain('href="/venue-portal.html">Dashboard</a>');
     expect(nav).toContain('href="/trust.html">FAQ</a>');
     expect(nav).toContain('href="/feedback.html">Contact us</a>');
+  });
+
+  it("keeps Admin in the quick bar when an admin account needs authority step-up", () => {
+    const helpers = loadBusinessHelpers();
+    helpers.setAccountContext({
+      id: "admin-step-up-1",
+      role: "admin",
+      status: "active",
+      subscriptionStatus: "admin",
+    }, {
+      accountRole: "admin",
+      isAdminAccount: true,
+      isAdmin: false,
+    });
+
+    const nav = helpers.renderNav("account");
+    expect(navLinkLabels(nav)).toContain("Admin");
+    expect(nav).toContain('href="/admin.html">Admin</a>');
+    expect(navLinkLabels(nav)).not.toContain("Dashboard");
   });
 
   it("never grants stale persisted admin or venue navigation without server authority", () => {

@@ -4308,6 +4308,9 @@ export class BusinessService {
   }
 
   getAccessState(account: BusinessAccount | null, anonymousSessionId: string | null) {
+    const isAdminAccount = Boolean(
+      account && (account.role === "admin" || account.subscriptionStatus === "admin"),
+    );
     const currentAdmin = account ? this.isAdmin(account) : false;
     const hasFullAccess = isFullAccess(account, currentAdmin);
 
@@ -4315,6 +4318,7 @@ export class BusinessService {
       status: account?.subscriptionStatus ?? "free",
       isAuthenticated: Boolean(account),
       accountRole: account?.role ?? null,
+      isAdminAccount,
       hasFullAccess,
       isAdmin: currentAdmin,
       ageConfirmed: Boolean(account?.ageConfirmedAt),

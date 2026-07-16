@@ -1802,6 +1802,7 @@ describe("production hardening", () => {
     expect(service.getAccessState(freeUser, null)).toMatchObject({
       isAuthenticated: true,
       accountRole: "user",
+      isAdminAccount: false,
       hasFullAccess: false,
       canViewSpecialDiscounts: false,
       freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
@@ -2112,6 +2113,7 @@ describe("production hardening", () => {
     expect(service.getSubmissionSourceEvidenceUrl(currentAdmin, submission.id).signedUrl).toContain("/source-evidence/");
     expect(service.listSubmissions(currentAdmin, { mine: false, limit: 10 })).toHaveLength(1);
     expect(service.getAccessState(currentAdmin, null)).toEqual(expect.objectContaining({
+      isAdminAccount: true,
       isAdmin: true,
       hasFullAccess: true,
       canViewAllPrices: true,
@@ -2147,6 +2149,7 @@ describe("production hardening", () => {
     expect(() => removedAllowlistService.getSubmissionSourceEvidenceUrl(currentAdmin, submission.id)).toThrow("own source evidence");
     expect(removedAllowlistService.listSubmissions(currentAdmin, { mine: false, limit: 10 })).toEqual([]);
     expect(removedAllowlistService.getAccessState(currentAdmin, null)).toEqual(expect.objectContaining({
+      isAdminAccount: true,
       isAdmin: false,
       hasFullAccess: false,
       canViewAllPrices: false,
@@ -2170,6 +2173,7 @@ describe("production hardening", () => {
     expect(() => service.getSubmissionSourceEvidenceUrl(staleMfaAdmin, submission.id)).toThrow("own source evidence");
     expect(service.listSubmissions(staleMfaAdmin, { mine: false, limit: 10 })).toEqual([]);
     expect(service.getAccessState(staleMfaAdmin, null)).toEqual(expect.objectContaining({
+      isAdminAccount: true,
       isAdmin: false,
       hasFullAccess: false,
       canUseDiscountPass: false,

@@ -788,6 +788,13 @@ describe("viewer map UI wiring", () => {
     expect(html).not.toContain("debugToggle");
   });
 
+  it("adds the map Admin quick-bar link for a signed-in admin account designation", () => {
+    expect(html).toContain("isAdminAccount: false");
+    expect(html).toContain("if (!businessAccess.isAdminAccount)");
+    expect(html).toContain('adminLink.href = "/admin.html"');
+    expect(html).toContain('adminLink.textContent = "Admin"');
+  });
+
   it("does not let a stale venue-detail request reopen or overwrite the active card", () => {
     expect(html).toContain("let venueDetailRequestSequence = 0");
     expect(html).toContain("venueDetailRequestSequence += 1");

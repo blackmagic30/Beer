@@ -4028,6 +4028,7 @@
     let businessAccess = {
       hasFullAccess: false,
       isAdmin: false,
+      isAdminAccount: false,
       ageConfirmed: false,
       priceAccessModel: "fixed_preview",
       freePreviewScope: "Happy hours plus the named fixed beer-price preview.",
@@ -4242,7 +4243,7 @@
     function syncAdminNavLink() {
       const existingLink = document.getElementById("adminNavLink");
 
-      if (!businessAccess.isAdmin) {
+      if (!businessAccess.isAdminAccount) {
         existingLink?.remove();
         return;
       }

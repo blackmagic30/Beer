@@ -108,10 +108,18 @@ function setAccountContext(account, access = null) {
   const nextAccountId = account.id || null;
   const sameAccount = Boolean(nextAccountId && previousAccountId === nextAccountId);
   const hasAuthoritativeAdmin = typeof access?.isAdmin === "boolean";
-  const authorityVerified = hasAuthoritativeAdmin || (sameAccount && previousContext?.authorityVerified === true);
+  const hasAuthoritativeAdminAccount = typeof access?.isAdminAccount === "boolean";
+  const authorityVerified = hasAuthoritativeAdmin
+    || hasAuthoritativeAdminAccount
+    || (sameAccount && previousContext?.authorityVerified === true);
   const isAdmin = hasAuthoritativeAdmin
     ? access.isAdmin === true
     : Boolean(sameAccount && previousContext?.isAdmin === true);
+  const isAdminAccount = hasAuthoritativeAdminAccount
+    ? access.isAdminAccount === true
+    : hasAuthoritativeAdmin
+      ? access.isAdmin === true
+      : Boolean(sameAccount && previousContext?.isAdminAccount === true);
   const hasAuthoritativeCounterAssignments = Array.isArray(access?.counterStaffAssignments);
   const counterStaffAssignments = hasAuthoritativeCounterAssignments
     ? access.counterStaffAssignments
@@ -133,6 +141,7 @@ function setAccountContext(account, access = null) {
     subscriptionStatus: account.subscriptionStatus || null,
     authProvider: account.authProvider || (sameAccount ? previousContext?.authProvider : null) || null,
     isAdmin,
+    isAdminAccount,
     counterStaffAssignments,
     authorityVerified,
   }));
@@ -163,6 +172,11 @@ function isVenueManagerContext() {
 
 function isAdminContext() {
   return getAccountContext()?.authorityVerified === true && getAccountContext()?.isAdmin === true;
+}
+
+function isAdminAccountContext() {
+  const account = getAccountContext();
+  return account?.authorityVerified === true && account?.isAdminAccount === true;
 }
 
 function canUseVenuePortalContext() {
@@ -1132,7 +1146,7 @@ function renderNav(active = "") {
     : null;
   const venueManagerNav = active === "venue-portal" || active === "venue-support" || active === "bar-faq" || isVenueManagerContext() || Boolean(counterPortalPath);
   const venuePortalNav = canUseVenuePortalContext();
-  const adminNav = isAdminContext();
+  const adminNav = isAdminAccountContext();
   const activeKey = active === "trust" || active === "bar-faq"
     ? "faq"
     : active === "venue-support"
@@ -1481,6 +1495,7 @@ window.MelbBeerBusiness = {
   getAccountContext,
   isVenueManagerContext,
   isAdminContext,
+  isAdminAccountContext,
   canUseVenuePortalContext,
   hasAuthenticatedSessionHint,
   getAccountScopeId,
