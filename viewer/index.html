@@ -127,6 +127,11 @@
       outline-offset: 3px;
     }
 
+    :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+      outline: 3px solid rgba(34, 211, 238, 0.84);
+      outline-offset: 3px;
+    }
+
     #mainContent {
       display: flex;
       flex: 1 1 auto;
@@ -3003,6 +3008,119 @@
       }
     }
 
+    /* Collapse the long role-aware navigation before it wraps at tablet widths. */
+    @media (max-width: 900px) {
+      .mapNavCard {
+        position: relative;
+        justify-content: space-between;
+        gap: 6px;
+        border-radius: 18px;
+        padding: 6px;
+        overflow: visible;
+      }
+
+      .mapBrand {
+        justify-content: flex-start;
+        width: auto;
+        min-width: 0;
+        min-height: 44px;
+        gap: 8px;
+        padding: 0 6px;
+      }
+
+      .mapBrandLogo {
+        width: 32px;
+        height: 32px;
+        flex-basis: 32px;
+      }
+
+      .mapBrand strong {
+        font-size: 17px;
+      }
+
+      .topbar__actions {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        left: 0;
+        z-index: 20;
+        display: none;
+        width: 100%;
+        border: 1px solid var(--panel-border);
+        border-radius: 14px;
+        padding: 10px;
+        background: rgba(13, 18, 32, 0.985);
+        box-shadow: 0 18px 46px rgba(0, 0, 0, 0.48);
+        backdrop-filter: blur(22px);
+      }
+
+      .topbar__businessLinks {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+        gap: 8px;
+        padding: 0;
+      }
+
+      .mapNavCard.is-mobile-nav-open .topbar__actions {
+        display: block;
+      }
+
+      #topbar .mapNavCard.is-mobile-nav-open {
+        z-index: 30;
+      }
+
+      .mobileNavToggle {
+        appearance: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-width: 88px;
+        min-height: 44px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 999px;
+        padding: 8px 12px;
+        background: rgba(21, 31, 52, 0.9);
+        color: var(--panel-text);
+        font: inherit;
+        font-size: 13px;
+        font-weight: 900;
+        cursor: pointer;
+      }
+
+      .mobileNavToggle__icon {
+        width: 18px;
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1;
+        text-align: center;
+      }
+
+      .mobileNavToggle__icon--close {
+        display: none;
+        font-size: 22px;
+      }
+
+      .mapNavCard.is-mobile-nav-open .mobileNavToggle__icon--menu {
+        display: none;
+      }
+
+      .mapNavCard.is-mobile-nav-open .mobileNavToggle__icon--close {
+        display: inline-block;
+      }
+
+      .topbar__businessLinks a {
+        display: inline-flex;
+        justify-content: center;
+        width: 100%;
+        min-height: 44px;
+        padding: 9px 10px;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+    }
+
     @media (max-width: 640px) {
       html,
       body {
@@ -3358,8 +3476,7 @@
 
       .mapHeroCard .topbar__subtitle,
       .controlDeck__copy,
-      .popularBeerRow,
-      .specialsFilterRow {
+      .popularBeerRow {
         display: none;
       }
 
@@ -4163,20 +4280,29 @@
     function syncAuthenticatedNavLinks() {
       const isAuthenticated = Boolean(window.MelbBeerBusiness?.hasAuthenticatedSessionHint?.());
       const isVenueManager = Boolean(window.MelbBeerBusiness?.isVenueManagerContext?.());
+      const isAdmin = Boolean(window.MelbBeerBusiness?.isAdminContext?.());
       const canUseVenuePortal = Boolean(window.MelbBeerBusiness?.canUseVenuePortalContext?.());
+      const accountContext = window.MelbBeerBusiness?.getAccountContext?.();
+      const counterPortalPath = accountContext?.authorityVerified === true
+        ? accountContext.counterStaffAssignments?.[0]?.portalPath || null
+        : null;
+      const counterOnlyPortalPath = isVenueManager || isAdmin ? null : counterPortalPath;
+      const venueAudience = isVenueManager || Boolean(counterPortalPath);
       document.querySelectorAll("[data-auth-required]").forEach((link) => {
         link.hidden = !isAuthenticated || isVenueManager;
       });
       if (venueDashboardLinkEl) {
         venueDashboardLinkEl.hidden = !canUseVenuePortal;
+        venueDashboardLinkEl.href = counterOnlyPortalPath || "/venue-portal.html";
+        venueDashboardLinkEl.textContent = counterOnlyPortalPath ? "Counter" : "Dashboard";
       }
       if (venueFaqLinkEl) {
-        venueFaqLinkEl.href = isVenueManager ? "/trust.html?audience=bars" : "/trust.html";
-        venueFaqLinkEl.textContent = isVenueManager ? "Bar FAQ" : "FAQ";
+        venueFaqLinkEl.href = venueAudience ? "/trust.html?audience=bars" : "/trust.html";
+        venueFaqLinkEl.textContent = venueAudience ? "Bar FAQ" : "FAQ";
       }
       if (topbarFeedbackLinkEl) {
-        topbarFeedbackLinkEl.href = isVenueManager ? "/feedback.html?audience=bars" : "/feedback.html";
-        topbarFeedbackLinkEl.textContent = isVenueManager ? "Support" : "Contact us";
+        topbarFeedbackLinkEl.href = venueAudience ? "/feedback.html?audience=bars" : "/feedback.html";
+        topbarFeedbackLinkEl.textContent = venueAudience ? "Support" : "Contact us";
       }
     }
 

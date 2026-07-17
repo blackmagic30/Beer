@@ -10300,9 +10300,44 @@ export class BusinessService {
     this.requireVerifiedBarAccount(account);
     this.repository.expireVenueCounterStaffInvitations(nowIso());
     const isAdmin = this.isAdmin(account);
-    const assignments = isAdmin
-      ? this.repository.listVenueManagerAssignments({ activeOnly: true, limit: -1 })
-      : this.repository.listVenueManagerAssignments({ userId: account.id, activeOnly: true, limit: -1 });
+    const managerAssignments = this.repository.listVenueManagerAssignments({
+      ...(isAdmin ? {} : { userId: account.id }),
+      activeOnly: true,
+      limit: -1,
+    });
+    const assignments: VenueManagerAssignment[] = isAdmin
+      ? (() => {
+          const loadedAt = nowIso();
+          const venues = new Map<string, { venueId: string; venueName: string; suburb: string | null }>();
+          this.repository.listPublicVenueDirectoryPage({ limit: -1, offset: 0 }).venues.forEach((venue) => {
+            venues.set(venue.id, { venueId: venue.id, venueName: venue.name, suburb: venue.suburb });
+          });
+          managerAssignments.forEach((assignment) => {
+            if (!venues.has(assignment.venueId)) {
+              venues.set(assignment.venueId, {
+                venueId: assignment.venueId,
+                venueName: assignment.venueName,
+                suburb: assignment.suburb,
+              });
+            }
+          });
+          return [...venues.values()]
+            .sort((left, right) => left.venueName.localeCompare(right.venueName) || left.venueId.localeCompare(right.venueId))
+            .map((venue) => ({
+              id: `admin-venue:${venue.venueId}`,
+              userId: account.id,
+              venueId: venue.venueId,
+              venueName: venue.venueName,
+              suburb: venue.suburb,
+              accessLevel: "manager",
+              status: "active",
+              approvedBy: account.id,
+              expiresAt: null,
+              createdAt: loadedAt,
+              updatedAt: loadedAt,
+            }));
+        })()
+      : managerAssignments;
 
     if (!isAdmin && assignments.length === 0) {
       const claimRequests = this.repository
@@ -10343,7 +10378,9 @@ export class BusinessService {
       };
     }
 
-    const selectedVenueId = query.venueId ?? assignments[0]?.venueId;
+    const selectedVenueId = query.venueId
+      ?? assignments.find((item) => item.accessLevel === "manager")?.venueId
+      ?? assignments[0]?.venueId;
     if (!selectedVenueId) {
       return {
         account: sanitizeAccount(account),

@@ -747,7 +747,7 @@
       </div>
     </div>
 
-    <div id="status" class="notice" style="margin-top:16px;">Log in as an admin account to review submissions.</div>
+    <div id="status" class="notice" style="margin-top:16px;">Checking admin access…</div>
 
     <dialog id="reviewDecisionDialog" class="reviewDecisionDialog" aria-labelledby="reviewDecisionTitle">
       <form method="dialog" class="reviewDecisionDialog__panel">
@@ -4211,11 +4211,19 @@
               <span class="eyebrow">Evidence</span>
               <strong>${escapeHtml(sourceLabel)}</strong>
             </div>
-            ${source ? `<a href="${item.hasImageData ? "#" : escapeHtml(source)}" data-ingestion-evidence-link="${item.hasImageData ? escapeHtml(source) : ""}" target="_blank" rel="noopener" class="button button--small adminSourceEvidence__open">Open</a>` : ""}
+            ${item.hasImageData
+              ? `<span data-ingestion-evidence-link="${escapeHtml(source)}" class="button button--small adminSourceEvidence__open" aria-disabled="true">Loading evidence...</span>`
+              : source
+                ? `<a href="${escapeHtml(source)}" target="_blank" rel="noopener" class="button button--small adminSourceEvidence__open">Open</a>`
+                : ""}
           </div>
-          ${canPreviewImage ? `
+          ${canPreviewImage ? item.hasImageData ? `
+            <div data-ingestion-evidence-image-link class="adminSourceEvidence__imageLink" aria-label="Loading source image">
+              <img data-ingestion-evidence-src="${escapeHtml(source)}" data-ingestion-evidence-auth="true" alt="Menu source for ${escapeHtml(item.venueName)}" />
+            </div>
+          ` : `
             <a href="${escapeHtml(source)}" target="_blank" rel="noopener" class="adminSourceEvidence__imageLink" aria-label="Open source image">
-              <img data-ingestion-evidence-src="${escapeHtml(source)}" data-ingestion-evidence-auth="${item.hasImageData ? "true" : "false"}" alt="Menu source for ${escapeHtml(item.venueName)}" />
+              <img data-ingestion-evidence-src="${escapeHtml(source)}" data-ingestion-evidence-auth="false" alt="Menu source for ${escapeHtml(item.venueName)}" />
             </a>
           ` : `
             <div class="adminSourceEvidence__empty">${imageWasRedacted ? "Image bytes expired under the review retention policy. Re-source the image to continue." : escapeHtml(shortSourceLabel(source))}</div>
@@ -4356,6 +4364,8 @@
           return;
         }
         image.dataset.evidenceLoading = "true";
+        const imageLink = image.closest(".adminSourceEvidence__imageLink");
+        const openPlaceholder = article.querySelector("[data-ingestion-evidence-link]");
         try {
           const token = MelbBeerBusiness.getAuthToken();
           const response = await fetch(source, {
@@ -4374,13 +4384,36 @@
           const objectUrl = URL.createObjectURL(blob);
           article.dataset.ingestionEvidenceObjectUrl = objectUrl;
           image.setAttribute("src", objectUrl);
-          const link = article.querySelector("[data-ingestion-evidence-link]");
-          if (link) link.setAttribute("href", objectUrl);
+          if (imageLink) {
+            const link = document.createElement("a");
+            link.href = objectUrl;
+            link.target = "_blank";
+            link.rel = "noopener";
+            link.className = "adminSourceEvidence__imageLink";
+            link.setAttribute("aria-label", "Open source image");
+            link.append(image);
+            imageLink.replaceWith(link);
+          }
+          if (openPlaceholder) {
+            const link = document.createElement("a");
+            link.href = objectUrl;
+            link.target = "_blank";
+            link.rel = "noopener";
+            link.className = "button button--small adminSourceEvidence__open";
+            link.textContent = "Open";
+            openPlaceholder.replaceWith(link);
+          }
         } catch (error) {
-          image.replaceWith(Object.assign(document.createElement("div"), {
+          const errorMessage = Object.assign(document.createElement("div"), {
             className: "adminSourceEvidence__empty",
             textContent: error.message || "Evidence could not be loaded. Re-source the image and retry.",
-          }));
+          });
+          if (imageLink) imageLink.replaceWith(errorMessage);
+          else image.replaceWith(errorMessage);
+          if (openPlaceholder) {
+            openPlaceholder.textContent = "Evidence unavailable";
+            openPlaceholder.setAttribute("aria-disabled", "true");
+          }
         }
       };
 
@@ -5332,6 +5365,17 @@
 
     let statusEl;
     let adminContentEl;
+    function showAdminAccessRecovery(message, { href = "/account.html", label = "Open account" } = {}) {
+      adminContentEl.hidden = true;
+      updateAdminLoadSummary("Admin access required.");
+      MelbBeerBusiness.setStatus(statusEl, message, true);
+      const link = document.createElement("a");
+      link.className = "button button--small";
+      link.href = href;
+      link.textContent = label;
+      statusEl.append(document.createElement("br"), link);
+    }
+
     window.addEventListener("pagehide", () => {
       adminIngestionQueue?.querySelectorAll("[data-ingestion-evidence-object-url]").forEach((element) => {
         URL.revokeObjectURL(element.dataset.ingestionEvidenceObjectUrl);
@@ -5342,6 +5386,31 @@
       nav.innerHTML = MelbBeerBusiness.renderNav("admin");
       statusEl = document.getElementById("status");
       adminContentEl = document.getElementById("adminContent");
+      let accountResult;
+      try {
+        accountResult = await MelbBeerBusiness.apiFetch("/api/business/account");
+      } catch {
+        showAdminAccessRecovery("Sign in with an admin account before opening the admin workspace.", {
+          href: "/account.html?next=%2Fadmin.html",
+          label: "Sign in",
+        });
+        return;
+      }
+      if (accountResult?.account) {
+        MelbBeerBusiness.setAccountContext(accountResult.account, accountResult.access);
+        nav.innerHTML = MelbBeerBusiness.renderNav("admin");
+      }
+      if (accountResult?.access?.isAdminAccount !== true) {
+        showAdminAccessRecovery("This account does not have Pint Path admin access.");
+        return;
+      }
+      if (accountResult.access.isAdmin !== true) {
+        showAdminAccessRecovery("Admin access needs a current security, verification, and policy check before tools can load.", {
+          href: "/account.html?settings=security&next=%2Fadmin.html",
+          label: "Complete security check",
+        });
+        return;
+      }
       reviewDecisionCancel.addEventListener("click", closeReviewDecision);
       reviewDecisionConfirm.addEventListener("click", confirmReviewDecision);
       refreshAdminPageButton.addEventListener("click", refreshAdminPage);
@@ -5513,11 +5582,6 @@
       setBeerRows(adminBeerRows, []);
       renderAdminCaptureMetrics();
       try {
-        const accountResult = await MelbBeerBusiness.apiFetch("/api/business/account").catch(() => null);
-        if (accountResult?.account) {
-          MelbBeerBusiness.setAccountContext(accountResult.account, accountResult.access);
-          nav.innerHTML = MelbBeerBusiness.renderNav("admin");
-        }
         await loadAdmin();
       } catch (error) {
         adminContentEl.hidden = true;

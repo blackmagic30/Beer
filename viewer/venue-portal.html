@@ -111,22 +111,22 @@
             </select>
           </label>
           <nav class="tabNav" role="tablist" aria-label="Bar dashboard sections">
-            <button class="tabButton is-active" type="button" data-tab="overview" data-manager-only>Overview</button>
-            <button class="tabButton" type="button" data-tab="redemption">Redeem code</button>
-            <button class="tabButton" type="button" data-tab="profile" data-manager-only>Profile</button>
-            <button class="tabButton" type="button" data-tab="beers" data-manager-only>Beers / stock</button>
-            <button class="tabButton" type="button" data-tab="happy-hours" data-manager-only>Happy hours</button>
-            <button class="tabButton" type="button" data-tab="specials" data-specials-only data-manager-only>Specials planner</button>
-            <button class="tabButton" type="button" data-tab="staff-access" data-manager-only>Staff access</button>
-            <button class="tabButton" type="button" data-tab="pending-reviews" data-manager-only>Pending reviews</button>
-            <button class="tabButton" type="button" data-tab="report" data-manager-only>Insights & reports</button>
-            <button class="tabButton" type="button" data-tab="support" data-manager-only>Support</button>
+            <button id="venueTabOverview" class="tabButton is-active" type="button" role="tab" aria-selected="true" aria-controls="venuePanelOverview" tabindex="0" data-tab="overview" data-manager-only>Overview</button>
+            <button id="venueTabRedemption" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelRedemption" tabindex="-1" data-tab="redemption">Redeem code</button>
+            <button id="venueTabProfile" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelProfile" tabindex="-1" data-tab="profile" data-manager-only>Profile</button>
+            <button id="venueTabBeers" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelBeers" tabindex="-1" data-tab="beers" data-manager-only>Beers / stock</button>
+            <button id="venueTabHappyHours" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelHappyHours" tabindex="-1" data-tab="happy-hours" data-manager-only>Happy hours</button>
+            <button id="venueTabSpecials" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelSpecials" tabindex="-1" data-tab="specials" data-specials-only data-manager-only>Specials planner</button>
+            <button id="venueTabStaffAccess" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelStaffAccess" tabindex="-1" data-tab="staff-access" data-manager-only>Staff access</button>
+            <button id="venueTabPendingReviews" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelPendingReviews" tabindex="-1" data-tab="pending-reviews" data-manager-only>Pending reviews</button>
+            <button id="venueTabReport" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelReport" tabindex="-1" data-tab="report" data-manager-only>Insights & reports</button>
+            <button id="venueTabSupport" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelSupport" tabindex="-1" data-tab="support" data-manager-only>Support</button>
           </nav>
           <button id="venueLogoutButton" class="button button--danger venueLogoutButton" type="button">Log out</button>
         </aside>
 
         <div class="dashboardMain">
-          <section class="tabPanel" data-panel="overview">
+          <section id="venuePanelOverview" class="tabPanel" role="tabpanel" aria-labelledby="venueTabOverview" tabindex="0" data-panel="overview">
             <article id="dashboardSetupProgress" class="dashboardSetupProgress"></article>
             <article id="venueDailyActions" class="venueDailyActions"></article>
             <div class="venueOverviewDataGrid">
@@ -155,7 +155,7 @@
             </div>
           </section>
 
-          <section class="tabPanel is-hidden" data-panel="pending-reviews">
+          <section id="venuePanelPendingReviews" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabPendingReviews" tabindex="0" data-panel="pending-reviews" hidden>
             <article class="panel" style="margin-top:16px;">
               <h2>Pending review</h2>
               <p class="helperCopy">Beer, price, profile, and happy-hour edits save straight to your assigned venue. Only controlled subscription, promotion, and bulk-deletion actions require admin review.</p>
@@ -163,7 +163,7 @@
             </article>
           </section>
 
-          <section class="tabPanel is-hidden" data-panel="staff-access">
+          <section id="venuePanelStaffAccess" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabStaffAccess" tabindex="0" data-panel="staff-access" hidden>
             <article class="panel">
               <div class="sectionHeader">
                 <div>
@@ -184,7 +184,7 @@
             </article>
           </section>
 
-          <section class="tabPanel is-hidden" data-panel="redemption">
+          <section id="venuePanelRedemption" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabRedemption" tabindex="0" data-panel="redemption" hidden>
             <article class="panel staffCounterPanel">
               <div class="sectionHeader">
                 <div>
@@ -352,7 +352,7 @@
             </div>
           </section>
 
-          <section class="tabPanel is-hidden" data-panel="profile">
+          <section id="venuePanelProfile" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabProfile" tabindex="0" data-panel="profile" hidden>
             <form id="profileForm" class="panel form">
               <div class="sectionHeader">
                 <div>
@@ -410,7 +410,7 @@
             </form>
           </section>
 
-          <section class="tabPanel is-hidden" data-panel="beers">
+          <section id="venuePanelBeers" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabBeers" tabindex="0" data-panel="beers" hidden>
             <div class="grid grid--two venueBeerStockGrid">
               <form id="beerForm" class="panel form">
                 <div class="sectionHeader">
@@ -501,7 +501,7 @@
             </article>
           </section>
 
-          <section class="tabPanel is-hidden" data-panel="happy-hours">
+          <section id="venuePanelHappyHours" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabHappyHours" tabindex="0" data-panel="happy-hours" hidden>
             <div class="grid grid--two">
               <form id="happyHourForm" class="panel form">
                 <h2>Happy hours</h2>
@@ -545,7 +545,7 @@
             </div>
           </section>
 
-          <section class="tabPanel is-hidden" data-panel="specials">
+          <section id="venuePanelSpecials" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabSpecials" tabindex="0" data-panel="specials" hidden>
             <article id="specialsPlanner" class="specialsPlanner panel is-hidden"></article>
             <article id="specialsGate" class="panel is-hidden">
               <h2>Pint Path specials are a paid venue feature</h2>
@@ -611,7 +611,7 @@
             </div>
           </section>
 
-          <section class="tabPanel is-hidden" data-panel="report">
+          <section id="venuePanelReport" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabReport" tabindex="0" data-panel="report" hidden>
             <article id="venueDemandPanel" class="venueDemandPanel is-hidden"></article>
             <article id="premiumVenueDashboard" class="premiumVenueDashboard"></article>
             <article id="businessToolkit" class="panel businessToolkit is-hidden"></article>
@@ -674,7 +674,7 @@
             </article>
           </section>
 
-          <section class="tabPanel is-hidden" data-panel="support">
+          <section id="venuePanelSupport" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabSupport" tabindex="0" data-panel="support" hidden>
             <article class="panel form">
               <div class="sectionHeader">
                 <div>

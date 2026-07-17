@@ -92,7 +92,7 @@
 
     function venueReturnPath() {
       const requested = new URLSearchParams(window.location.search).get("next") || "";
-      return requested.startsWith("/venue-portal.html") ? requested : "/venue-portal.html";
+      return MelbBeerBusiness.isVenuePortalReturnPath(requested) ? requested : "/venue-portal.html";
     }
 
     window.addEventListener("DOMContentLoaded", () => {

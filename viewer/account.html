@@ -1405,7 +1405,7 @@
       const sensitiveReturnPath = MelbBeerBusiness.consumeSensitiveAuthReturnPath();
       if (account?.role === "venue_manager") {
         const venueReturnPath = sensitiveReturnPath || regularReturnPath;
-        return venueReturnPath?.startsWith("/venue-portal.html") ? venueReturnPath : "/venue-portal.html";
+        return MelbBeerBusiness.isVenuePortalReturnPath(venueReturnPath) ? venueReturnPath : "/venue-portal.html";
       }
       return regularReturnPath;
     }

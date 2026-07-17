@@ -31,4 +31,15 @@ describe("application security headers", () => {
     expect(securityTxt).toContain("Policy: https://pintpath.au/security.html");
     expect(securityTxt).not.toMatch(/service_role|sk_live_|whsec_|AIza/i);
   });
+
+  it("keeps server-rendered venue pages connected to primary and support navigation", () => {
+    const source = appSource();
+
+    expect(source).toContain('<nav class="siteNav" aria-label="Primary">');
+    expect(source).toContain('<a href="/pricing.html">Pricing</a>');
+    expect(source).toContain('<a href="/account.html">Account</a>');
+    expect(source).toContain('<footer class="siteFooter" aria-label="Legal, privacy, and help">');
+    expect(source).toContain('<a href="/privacy.html">Privacy</a>');
+    expect(source).toContain('<a href="/status.html">Service status</a>');
+  });
 });

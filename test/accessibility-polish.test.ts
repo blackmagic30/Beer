@@ -48,6 +48,10 @@ describe("website accessibility polish", () => {
     expect(mapHtml).toContain("venueDetailInertedElements");
     expect(mapHtml).toContain("venueDetailReturnFocus");
     expect(portalHtml).toContain('class="tabNav" role="tablist" aria-label="Bar dashboard sections"');
+    expect(portalHtml).toContain('id="venueTabOverview" class="tabButton is-active" type="button" role="tab" aria-selected="true" aria-controls="venuePanelOverview"');
+    expect(portalHtml).toContain('id="venueTabRedemption" class="tabButton" type="button" role="tab" aria-selected="false" aria-controls="venuePanelRedemption"');
+    expect(portalHtml).toContain('id="venuePanelOverview" class="tabPanel" role="tabpanel" aria-labelledby="venueTabOverview"');
+    expect(portalHtml).toContain('id="venuePanelSupport" class="tabPanel is-hidden" role="tabpanel" aria-labelledby="venueTabSupport"');
     expect(portalHtml).toContain("function configurePortalTabs");
     expect(portalHtml).toContain('button.setAttribute("role", "tab")');
     expect(portalHtml).toContain('panel.setAttribute("role", "tabpanel")');

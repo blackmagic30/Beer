@@ -180,9 +180,12 @@ describe("venue and admin remediation", () => {
     expect(portal).toContain("if (data?.account)");
     expect(portal).toContain("MelbBeerBusiness.setAccountContext(data.account, { isAdmin: data.isAdmin });");
     expect(portal).toContain('nav.innerHTML = MelbBeerBusiness.renderNav("venue-portal");');
-    expect(admin).toContain('MelbBeerBusiness.apiFetch("/api/business/account").catch(() => null)');
+    expect(admin).toContain('accountResult = await MelbBeerBusiness.apiFetch("/api/business/account")');
     expect(admin).toContain("MelbBeerBusiness.setAccountContext(accountResult.account, accountResult.access);");
     expect(admin).toContain('nav.innerHTML = MelbBeerBusiness.renderNav("admin");');
+    expect(admin).toContain("accountResult?.access?.isAdminAccount !== true");
+    expect(admin).toContain("accountResult.access.isAdmin !== true");
+    expect(admin).toContain('href: "/account.html?next=%2Fadmin.html"');
   });
 
   it("paginates every admin trust queue instead of hiding rows after the first response page", () => {
@@ -191,6 +194,17 @@ describe("venue and admin remediation", () => {
     expect(admin).toContain("/api/business/admin/queues?limit=${ADMIN_REVIEW_QUEUE_PAGE_SIZE}&offset=${adminReviewQueueOffset}");
     expect(admin).toContain("pagination.hasMore || {}");
     expect(admin).toContain("adminReviewQueueOffset += ADMIN_REVIEW_QUEUE_PAGE_SIZE");
+  });
+
+  it("does not expose dead private-evidence links while authenticated previews load or fail", () => {
+    expect(admin).not.toContain('href="${item.hasImageData ? "#"');
+    expect(admin).toContain('aria-disabled="true">Loading evidence...</span>');
+    expect(admin).toContain('data-ingestion-evidence-image-link class="adminSourceEvidence__imageLink"');
+    expect(admin).toContain('link.append(image)');
+    expect(admin).toContain('imageLink.replaceWith(link)');
+    expect(admin).toContain('openPlaceholder.replaceWith(link)');
+    expect(admin).toContain('imageLink.replaceWith(errorMessage)');
+    expect(admin).toContain('openPlaceholder.textContent = "Evidence unavailable"');
   });
 
   it("keeps every pending submission reachable and reports the server total", () => {

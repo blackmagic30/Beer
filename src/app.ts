@@ -400,6 +400,13 @@ function renderPublicVenuePage(
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 18% 0%, rgba(34,211,238,.14), transparent 30%), radial-gradient(circle at 90% 10%, rgba(139,92,246,.16), transparent 28%), var(--bg); color: var(--text); font-family: "Avenir Next", "Segoe UI", sans-serif; }
     main { width: min(920px, 100%); display: grid; gap: 18px; }
+    .skip { position: fixed; top: 10px; left: 10px; z-index: 2; transform: translateY(-180%); background: #f8fafc; color: #06101f; }
+    .skip:focus { transform: translateY(0); }
+    .siteNav, .siteFooter { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px; }
+    .siteNav { border: 1px solid rgba(255,255,255,.1); border-radius: 22px; background: rgba(7,10,18,.74); padding: 10px 12px; }
+    .brand { font-size: 18px; letter-spacing: -.02em; }
+    .navLinks, .footerLinks { display: flex; flex-wrap: wrap; gap: 6px; }
+    .siteNav a, .siteFooter a { min-height: 44px; padding: 10px 12px; }
     .panel { border: 1px solid rgba(255,255,255,.12); border-radius: 26px; background: linear-gradient(145deg, rgba(255,255,255,.08), rgba(255,255,255,.025)), rgba(18,26,44,.88); box-shadow: 0 28px 76px rgba(0,0,0,.42); padding: clamp(22px, 4vw, 42px); }
     .eyebrow { color: var(--cyan); font-size: 12px; font-weight: 950; letter-spacing: .13em; text-transform: uppercase; }
     h1 { margin: 10px 0 12px; font-size: clamp(36px, 7vw, 72px); line-height: 1; letter-spacing: -.04em; }
@@ -408,14 +415,33 @@ function renderPublicVenuePage(
     .pill { border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(255,255,255,.07); padding: 8px 12px; color: #e2e8f0; font-size: 13px; font-weight: 850; }
     .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
     a { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 12px 16px; color: var(--text); text-decoration: none; font-weight: 950; }
+    a:focus-visible { outline: 3px solid rgba(56,189,248,.82); outline-offset: 3px; }
     .primary { color: #06101f; background: linear-gradient(135deg, #38bdf8, #22d3ee, #8b5cf6); }
     .secondary { border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); }
     .note { font-size: 13px; color: #94a3b8; }
+    .siteFooter { border-top: 1px solid rgba(255,255,255,.1); padding-top: 12px; }
+    @media (max-width: 640px) {
+      body { padding: 12px; }
+      .siteNav, .siteFooter { align-items: stretch; }
+      .navLinks, .footerLinks { width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+      .actions { display: grid; }
+    }
   </style>
 </head>
 <body>
+  <a class="skip" href="#mainContent">Skip to venue details</a>
   <main>
-    <section class="panel">
+    <nav class="siteNav" aria-label="Primary">
+      <a class="brand" href="/" aria-label="Pint Path home">Pint Path</a>
+      <div class="navLinks">
+        <a href="/">Map</a>
+        <a href="/pricing.html">Pricing</a>
+        <a href="/trust.html">FAQ</a>
+        <a href="/account.html">Account</a>
+        <a href="/feedback.html">Contact us</a>
+      </div>
+    </nav>
+    <section id="mainContent" class="panel" tabindex="-1">
       <div class="eyebrow">Pint Path venue</div>
       <h1>${escapeHtml(venue.name)}</h1>
       <p>${escapeHtml(location || "Mapped Melbourne venue")}</p>
@@ -430,6 +456,15 @@ function renderPublicVenuePage(
       </div>
     </section>
     <p class="note">Venue data may change. Check directly with the venue before ordering, travelling, or relying on special availability.</p>
+    <footer class="siteFooter" aria-label="Legal, privacy, and help">
+      <div class="footerLinks">
+        <a href="/terms.html">Terms</a>
+        <a href="/privacy.html">Privacy</a>
+        <a href="/security.html">Security</a>
+        <a href="/status.html">Service status</a>
+      </div>
+      <a href="/feedback.html">Get help</a>
+    </footer>
   </main>
 </body>
 </html>`;

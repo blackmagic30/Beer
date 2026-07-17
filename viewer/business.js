@@ -423,6 +423,11 @@ function getSafeReturnPath(value = null) {
   }
 }
 
+function isVenuePortalReturnPath(value = null) {
+  const path = String(value || "").trim();
+  return /^\/venue-portal(?:\.html)?(?:[?#]|$)/.test(path);
+}
+
 function getAuthReturnPathFromLocation() {
   const params = new URLSearchParams(window.location.search);
   return getSafeReturnPath(params.get("next") || params.get("returnTo") || window.localStorage.getItem(AUTH_RETURN_KEY));
@@ -430,7 +435,7 @@ function getAuthReturnPathFromLocation() {
 
 function storeSensitiveAuthReturnPath(value) {
   const safePath = getSafeReturnPath(value);
-  if (!safePath.startsWith("/venue-portal.html")) return null;
+  if (!isVenuePortalReturnPath(safePath)) return null;
   window.sessionStorage.setItem(SENSITIVE_AUTH_RETURN_KEY, JSON.stringify({ path: safePath, createdAt: Date.now() }));
   return safePath;
 }
@@ -447,7 +452,7 @@ function consumeSensitiveAuthReturnPath() {
   }
   if (!record?.path || !Number.isFinite(record.createdAt) || Date.now() - record.createdAt > SENSITIVE_AUTH_RETURN_MAX_AGE_MS) return null;
   const safePath = getSafeReturnPath(record.path);
-  if (!safePath.startsWith("/venue-portal.html")) return null;
+  if (!isVenuePortalReturnPath(safePath)) return null;
   const url = new URL(safePath, window.location.origin);
   const discountCode = url.searchParams.get("discountCode");
   const freePintCode = url.searchParams.get("freePintCode");
@@ -1144,9 +1149,12 @@ function renderNav(active = "") {
   const counterPortalPath = accountContext?.authorityVerified === true
     ? accountContext.counterStaffAssignments?.[0]?.portalPath || null
     : null;
+  const counterOnlyPortalPath = isVenueManagerContext() || isAdminContext()
+    ? null
+    : counterPortalPath;
   const venueManagerNav = active === "venue-portal" || active === "venue-support" || active === "bar-faq" || isVenueManagerContext() || Boolean(counterPortalPath);
   const venuePortalNav = canUseVenuePortalContext();
-  const adminNav = isAdminAccountContext();
+  const adminNav = active === "admin" || isAdminAccountContext();
   const activeKey = active === "trust" || active === "bar-faq"
     ? "faq"
     : active === "venue-support"
@@ -1155,7 +1163,7 @@ function renderNav(active = "") {
   const betaPill = isFieldTestMode() ? '<span class="betaPill">Beta field test</span>' : "";
   const navItems = [
     { key: "map", href: "/", label: "Map" },
-    ...(venuePortalNav ? [{ key: "venue-portal", href: counterPortalPath || "/venue-portal.html", label: counterPortalPath ? "Counter" : "Dashboard" }] : []),
+    ...(venuePortalNav ? [{ key: "venue-portal", href: counterOnlyPortalPath || "/venue-portal.html", label: counterOnlyPortalPath ? "Counter" : "Dashboard" }] : []),
     { key: "submit", href: "/submit.html", label: "Submit" },
     { key: "missions", href: "/missions.html", label: "Missions" },
     ...(adminNav ? [{ key: "admin", href: "/admin.html", label: "Admin" }] : []),
@@ -1241,7 +1249,7 @@ function installNavigationChrome() {
     });
   });
 
-  const mobileNavQuery = window.matchMedia?.("(max-width: 760px)");
+  const mobileNavQuery = window.matchMedia?.("(max-width: 900px)");
   mobileNavQuery?.addEventListener?.("change", (event) => {
     if (!event.matches) {
       document.querySelectorAll(".topNav.is-mobile-nav-open").forEach((nav) => {
@@ -1515,6 +1523,7 @@ window.MelbBeerBusiness = {
   hasAnalyticsConsent,
   getCanonicalBaseUrl,
   getSafeReturnPath,
+  isVenuePortalReturnPath,
   getAuthReturnPathFromLocation,
   storeSensitiveAuthReturnPath,
   consumeSensitiveAuthReturnPath,

@@ -521,6 +521,7 @@ describe("viewer map UI wiring", () => {
     expect(venuePortalHtml).toContain("Includes ${escapeHtml(formatHappyHourBeerList(item.happyHourBeers))}");
     expect(venuePortalHtml).not.toContain("price: beer.price ?? null");
     expect(businessCss).toContain(".venueHappyHourBeerChoices");
+    expect(businessCss).toContain(".dayChecklist.venueHappyHourBeerChoices");
     expect(businessCss).toContain(".venueHappyHourBeerChoice");
     expect(businessCss).toContain(".venueHappyHourBeerOffer");
     expect(html).toContain("function happyHourMatchesBeerQuery");

@@ -26,6 +26,7 @@ function appSource() {
 
 function loadBusinessHelpers() {
   const localStorage = new Map<string, string>();
+  const sessionStorage = new Map<string, string>();
   const context = {
     AbortController,
     DOMException,
@@ -47,6 +48,11 @@ function loadBusinessHelpers() {
           return localStorage.size;
         },
       },
+      sessionStorage: {
+        getItem: (key: string) => sessionStorage.get(key) || null,
+        setItem: (key: string, value: string) => sessionStorage.set(key, String(value)),
+        removeItem: (key: string) => sessionStorage.delete(key),
+      },
       addEventListener: () => undefined,
     },
   };
@@ -60,6 +66,9 @@ function loadBusinessHelpers() {
       setAccountScopedStorage: (key: string, value: string) => string;
       getAccountScopedStorageKey: (key: string, accountId?: string) => string | null;
       clearLocalSubmissionDeviceData: (accountId?: string) => Promise<void>;
+      isVenuePortalReturnPath: (value?: string | null) => boolean;
+      storeSensitiveAuthReturnPath: (value?: string | null) => string | null;
+      consumeSensitiveAuthReturnPath: () => string | null;
     };
   }).MelbBeerBusiness;
 }
@@ -597,7 +606,7 @@ describe("account page shell", () => {
     expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountIdentityCard--compact strong\s*\{[\s\S]*white-space:\s*nowrap;[\s\S]*text-overflow:\s*ellipsis;/);
     expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountAccessBadgeRow\s*\{[\s\S]*flex-wrap:\s*nowrap;[\s\S]*overflow-x:\s*auto;/);
     expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountAccessBadge\s*\{[\s\S]*font-size:\s*0\.56rem;/);
-    expect(css).toMatch(/@media \(max-width: 430px\)[\s\S]*\.accountAccessBadgeRow \.accountAccessBadge:not\(:first-child\)\s*\{[\s\S]*display:\s*none;/);
+    expect(css).not.toMatch(/\.accountAccessBadgeRow \.accountAccessBadge:not\(:first-child\)\s*\{[\s\S]*display:\s*none;/);
     expect(css).toContain(".accountDiscountFeature");
     expect(css).toContain(".discountPassModal");
     expect(css).toContain(".discountPassModalClose");
@@ -843,7 +852,39 @@ describe("account page shell", () => {
     expect(venueLogin).toContain('id="venueLoginForm"');
     expect(venueLogin).toContain("MelbBeerBusiness.signInWithEmail");
     expect(venueLogin).toContain('MelbBeerBusiness.apiFetch("/api/business/auth/login"');
-    expect(venueLogin).toContain('requested.startsWith("/venue-portal.html")');
+    expect(venueLogin).toContain("MelbBeerBusiness.isVenuePortalReturnPath(requested)");
+  });
+
+  it("accepts canonical and legacy venue portal return paths without accepting lookalikes", () => {
+    const helpers = loadBusinessHelpers();
+    const validPaths = [
+      "/venue-portal",
+      "/venue-portal?venueId=venue-1",
+      "/venue-portal#redemption",
+      "/venue-portal.html",
+      "/venue-portal.html?venueId=venue-1",
+      "/venue-portal.html#redemption",
+    ];
+    const invalidPaths = [
+      "/venue-portal-archive",
+      "/venue-portal.html.evil",
+      "/venue-portal/extra",
+      "//venue-portal",
+      "/account.html",
+    ];
+
+    validPaths.forEach((returnPath) => expect(helpers.isVenuePortalReturnPath(returnPath)).toBe(true));
+    invalidPaths.forEach((returnPath) => expect(helpers.isVenuePortalReturnPath(returnPath)).toBe(false));
+
+    const extensionlessReturnPath = "/venue-portal?venueId=venue-1&tab=redemption";
+    expect(helpers.storeSensitiveAuthReturnPath(extensionlessReturnPath)).toBe(extensionlessReturnPath);
+    expect(helpers.consumeSensitiveAuthReturnPath()).toBe(extensionlessReturnPath);
+    expect(helpers.storeSensitiveAuthReturnPath("/venue-portal-archive")).toBeNull();
+
+    const script = businessJs();
+    expect(script).toContain("if (!isVenuePortalReturnPath(safePath)) return null;");
+    expect(accountHtml()).toContain("MelbBeerBusiness.isVenuePortalReturnPath(venueReturnPath)");
+    expect(callbackHtml()).toContain("MelbBeerBusiness.isVenuePortalReturnPath(venueReturnPath)");
   });
 
   it("keeps the primary nav consistent and gives privileged accounts dashboard/admin links", () => {
@@ -874,7 +915,7 @@ describe("account page shell", () => {
     expect(script).toContain('const counterPortalPath = accountContext?.authorityVerified === true');
     expect(script).toContain('isVenueManagerContext() || Boolean(counterPortalPath)');
     expect(script).toContain("const venuePortalNav = canUseVenuePortalContext()");
-    expect(script).toContain("const adminNav = isAdminAccountContext()");
+    expect(script).toContain('const adminNav = active === "admin" || isAdminAccountContext()');
     expect(script).toContain('{ key: "map", href: "/", label: "Map" }');
     expect(script).toContain('{ key: "submit", href: "/submit.html", label: "Submit" }');
     expect(script).toContain('{ key: "missions", href: "/missions.html", label: "Missions" }');
@@ -883,7 +924,8 @@ describe("account page shell", () => {
     );
     expect(script).toContain('{ key: "admin", href: "/admin.html", label: "Admin" }');
     expect(script).toContain('{ key: "pricing", href: "/pricing.html", label: "Pricing" }');
-    expect(script).toContain('{ key: "venue-portal", href: counterPortalPath || "/venue-portal.html", label: counterPortalPath ? "Counter" : "Dashboard" }');
+    expect(script).toContain('const counterOnlyPortalPath = isVenueManagerContext() || isAdminContext()');
+    expect(script).toContain('{ key: "venue-portal", href: counterOnlyPortalPath || "/venue-portal.html", label: counterOnlyPortalPath ? "Counter" : "Dashboard" }');
     expect(script).toContain('{ key: "faq", href: venueManagerNav ? "/trust.html?audience=bars" : "/trust.html", label: "FAQ" }');
     expect(script).toContain('{ key: "feedback", href: venueManagerNav ? "/feedback.html?audience=bars" : "/feedback.html", label: "Contact us" }');
     expect(script).toContain('aria-controls="primaryNavLinks" data-mobile-nav-toggle');
@@ -902,6 +944,10 @@ describe("account page shell", () => {
     expect(html).not.toContain('href="/submit.html" data-auth-required');
     expect(html).not.toContain('href="/submit.html" class="primary" data-auth-required');
     expect(html).toContain("function syncAuthenticatedNavLinks");
+    expect(html).toContain("const counterOnlyPortalPath = isVenueManager || isAdmin ? null : counterPortalPath");
+    expect(html).toContain('venueDashboardLinkEl.href = counterOnlyPortalPath || "/venue-portal.html"');
+    expect(html).toContain('venueDashboardLinkEl.textContent = counterOnlyPortalPath ? "Counter" : "Dashboard"');
+    expect(html).toContain("const venueAudience = isVenueManager || Boolean(counterPortalPath)");
     expect(script).toContain("async function clearLocalSubmissionDeviceData");
     expect(script).toContain("submission?.ownerAccountId === normalizedAccountId");
     expect(accountHtml()).toContain("await MelbBeerBusiness.clearLocalSubmissionDeviceData(deletionAccountId)");
@@ -996,6 +1042,45 @@ describe("account page shell", () => {
     expect(nav).toContain('href="/venue-portal.html?venueId=venue-1&amp;tab=redemption"');
   });
 
+  it("keeps mixed manager and counter accounts on the full venue dashboard", () => {
+    const helpers = loadBusinessHelpers();
+    helpers.setAccountContext({ id: "mixed-manager-1", role: "venue_manager", status: "active" }, {
+      isAdmin: false,
+      accountRole: "venue_manager",
+      counterStaffAssignments: [{
+        venueId: "counter-venue-1",
+        venueName: "Counter Venue",
+        portalPath: "/venue-portal.html?venueId=counter-venue-1&tab=redemption",
+        capabilities: { openCounter: true },
+      }],
+    });
+
+    const nav = helpers.renderNav("account");
+    expect(navLinkLabels(nav)).toContain("Dashboard");
+    expect(navLinkLabels(nav)).not.toContain("Counter");
+    expect(nav).toContain('href="/venue-portal.html">Dashboard</a>');
+  });
+
+  it("keeps mixed admin and counter accounts on the full venue dashboard", () => {
+    const helpers = loadBusinessHelpers();
+    helpers.setAccountContext({ id: "mixed-admin-1", role: "admin", status: "active" }, {
+      isAdmin: true,
+      isAdminAccount: true,
+      accountRole: "admin",
+      counterStaffAssignments: [{
+        venueId: "counter-venue-1",
+        venueName: "Counter Venue",
+        portalPath: "/venue-portal.html?venueId=counter-venue-1&tab=redemption",
+        capabilities: { openCounter: true },
+      }],
+    });
+
+    const nav = helpers.renderNav("account");
+    expect(navLinkLabels(nav)).toContain("Dashboard");
+    expect(navLinkLabels(nav)).not.toContain("Counter");
+    expect(nav).toContain('href="/venue-portal.html">Dashboard</a>');
+  });
+
   it("keeps the admin page in the same nav with Admin highlighted", () => {
     const helpers = loadBusinessHelpers();
     helpers.setAccountContext(
@@ -1006,6 +1091,15 @@ describe("account page shell", () => {
 
     expect(navLinkLabels(nav)).toEqual(["Map", "Dashboard", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
     expect(nav).toContain('class="pill" aria-current="page" href="/admin.html">Admin</a>');
+  });
+
+  it("identifies the current admin page before account authority hydrates", () => {
+    const helpers = loadBusinessHelpers();
+    const nav = helpers.renderNav("admin");
+
+    expect(navLinkLabels(nav)).toEqual(["Map", "Submit", "Missions", "Admin", "Pricing", "FAQ", "Account", "Contact us"]);
+    expect(nav).toContain('class="pill" aria-current="page" href="/admin.html">Admin</a>');
+    expect(navLinkLabels(helpers.renderNav("account"))).not.toContain("Admin");
   });
 
   it("shows the venue dashboard link to admins without changing bar-audience labels", () => {
@@ -1043,7 +1137,7 @@ describe("account page shell", () => {
     expect(navLinkLabels(nav)).not.toContain("Dashboard");
   });
 
-  it("never grants stale persisted admin or venue navigation without server authority", () => {
+  it("never grants stale persisted authority while keeping the current admin page identifiable", () => {
     const helpers = loadBusinessHelpers();
     helpers.setAccountContext({
       id: "stale-admin",
@@ -1060,7 +1154,9 @@ describe("account page shell", () => {
       status: "active",
       subscriptionStatus: "admin",
     }, { isAdmin: false, accountRole: "admin" });
-    expect(navLinkLabels(helpers.renderNav("admin"))).not.toContain("Admin");
+    const currentAdminNav = helpers.renderNav("admin");
+    expect(navLinkLabels(currentAdminNav)).toContain("Admin");
+    expect(currentAdminNav).toContain('aria-current="page" href="/admin.html">Admin</a>');
     expect(navLinkLabels(helpers.renderNav("venue-portal"))).not.toContain("Dashboard");
 
     helpers.setAccountContext({
@@ -1318,7 +1414,7 @@ describe("account page shell", () => {
     expect(html).toContain("editable provider profile metadata as consent");
     expect(html).toContain('returnPath.startsWith("/reset-password.html")');
     expect(html).toContain('result.account?.role === "venue_manager"');
-    expect(html).toContain('venueReturnPath.startsWith("/venue-portal.html") ? venueReturnPath : "/venue-portal.html"');
+    expect(html).toContain("MelbBeerBusiness.isVenuePortalReturnPath(venueReturnPath)");
     expect(html).toContain("MelbBeerBusiness.consumeSensitiveAuthReturnPath()");
     expect(html).not.toContain("If this takes more than a moment");
     expect(html).not.toContain("service_role");

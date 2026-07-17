@@ -6331,6 +6331,50 @@ describe("business demo contribution model", () => {
     }));
   });
 
+  it("defaults mixed manager and counter accounts to their manager dashboard", () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository);
+    const admin = createAccount(repository, "mixed-access-admin", "admin");
+    const mixedAccount = createAccount(repository, "mixed-access-manager");
+    const secondManager = createAccount(repository, "mixed-access-second-manager");
+
+    service.assignVenueManager(admin, {
+      userId: mixedAccount.id,
+      venueId: "mixed-manager-venue",
+      venueName: "Mixed Manager Venue",
+      suburb: "Carlton",
+    });
+    service.assignVenueManager(admin, {
+      userId: secondManager.id,
+      venueId: "mixed-counter-venue",
+      venueName: "Mixed Counter Venue",
+      suburb: "Fitzroy",
+    });
+
+    vi.setSystemTime(new Date("2026-05-04T08:15:00.000Z"));
+    const invitation = service.assignVenueCounterStaff(
+      repository.getAccountById(secondManager.id)!,
+      "mixed-counter-venue",
+      { accountId: mixedAccount.publicAccountId },
+    );
+    service.respondToVenueCounterStaffInvitation(
+      repository.getAccountById(mixedAccount.id)!,
+      invitation.assignment.id,
+      { decision: "accept" },
+    );
+
+    const account = repository.getAccountById(mixedAccount.id)!;
+    expect(service.getVenuePortal(account, {})).toEqual(expect.objectContaining({
+      accessLevel: "manager",
+      selectedVenue: expect.objectContaining({ venueId: "mixed-manager-venue" }),
+    }));
+    expect(service.getVenuePortal(account, { venueId: "mixed-counter-venue" })).toEqual(expect.objectContaining({
+      accessState: "counter_staff",
+      accessLevel: "counter_staff",
+      selectedVenue: expect.objectContaining({ venueId: "mixed-counter-venue" }),
+    }));
+  });
+
   it("scopes counter staff to checkout tools and reverses mistaken Pint Points with an audit trail", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository);
@@ -8563,6 +8607,21 @@ describe("business demo contribution model", () => {
     });
     expect(repository.getBarProfile("bar-1")?.membershipTier).toBe("pro");
 
+    service.upsertBarProfile(admin, "bar-unassigned", {
+      name: "Unassigned Test Hotel",
+      address: "1 Test Lane, Melbourne",
+      suburb: "Melbourne",
+      area: "Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      active: true,
+    });
+
     const beer = service.upsertBarBeer(managerAccount, "bar-1", {
       id: null,
       beerName: "Carlton Draught",
@@ -8638,6 +8697,12 @@ describe("business demo contribution model", () => {
 
     const adminPortal = service.getVenuePortal(admin, { venueId: "bar-1" });
     expect(adminPortal.pendingChanges).toHaveLength(0);
+    expect(adminPortal.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ venueId: "bar-1", venueName: "Corner Hotel" }),
+      expect.objectContaining({ venueId: "bar-2", venueName: "Moon Dog OG" }),
+      expect.objectContaining({ venueId: "bar-unassigned", venueName: "Unassigned Test Hotel" }),
+    ]));
+    expect(new Set(adminPortal.assignments.map((assignment) => assignment.venueId)).size).toBe(adminPortal.assignments.length);
     expect(service.getVenuePartnerAdmin(admin).pendingChanges).toHaveLength(0);
     expect(service.getVenuePortal(otherManagerAccount, { venueId: "bar-2" }).pendingChanges).toHaveLength(0);
     expect(() => service.getVenuePortal(otherManagerAccount, { venueId: "bar-1" })).toThrow("assigned venues");

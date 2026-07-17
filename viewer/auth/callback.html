@@ -128,7 +128,7 @@
       let destination = returnPath;
       if (!returnPath.startsWith("/reset-password") && result.account?.role === "venue_manager") {
         const venueReturnPath = sensitiveReturnPath || returnPath;
-        destination = venueReturnPath.startsWith("/venue-portal.html") ? venueReturnPath : "/venue-portal.html";
+        destination = MelbBeerBusiness.isVenuePortalReturnPath(venueReturnPath) ? venueReturnPath : "/venue-portal.html";
       }
       window.localStorage.removeItem("pintPathAuthReturnTo");
       window.location.replace(destination);

@@ -461,6 +461,7 @@ a {
   height: 300px;
   border-radius: 999px;
   background: radial-gradient(circle, rgba(217, 70, 239, 0.2), transparent 62%);
+  pointer-events: none;
 }
 
 .eyebrow {
@@ -853,12 +854,13 @@ h3 {
   align-self: start;
 }
 
-.venueHappyHourBeerChoices {
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+.dayChecklist.venueHappyHourBeerChoices {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   align-items: start;
 }
 
 .venueHappyHourBeerChoice {
+  container-type: inline-size;
   display: grid;
   gap: 10px;
   min-width: 0;
@@ -907,13 +909,19 @@ h3 {
 .venueHappyHourBeerOffer input {
   width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   border: 1px solid var(--border-medium);
   border-radius: 8px;
   background: rgba(7, 12, 24, 0.78);
   color: var(--text-primary);
   padding: 8px 10px;
   font: inherit;
+}
+
+@container (max-width: 280px) {
+  .venueHappyHourBeerOffer {
+    grid-template-columns: 1fr;
+  }
 }
 
 .priceRefreshPanel {
@@ -4282,6 +4290,16 @@ button.adminFocusRail__item:focus-visible {
   align-items: center;
 }
 
+#happyHourForm > .actionRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  width: 100%;
+}
+
+#happyHourForm > .actionRow .button {
+  width: 100%;
+}
+
 .dashboardShell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
@@ -6602,6 +6620,9 @@ body.discountPassModalOpen {
 .discountPassModalPanel {
   position: relative;
   width: min(640px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid rgba(245, 197, 66, 0.34);
   border-radius: 30px;
   background:
@@ -7216,10 +7237,11 @@ body.discountPassModalOpen {
 
 .pricingCard__actions,
 .venuePricingCard__actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 136px), 1fr));
   gap: 10px;
-  align-items: center;
+  align-items: stretch;
+  width: 100%;
   margin-top: auto;
   padding-top: 4px;
 }
@@ -7228,7 +7250,8 @@ body.discountPassModalOpen {
 .venuePricingCard__actions .button {
   display: inline-flex;
   align-items: center;
-  min-width: 136px;
+  width: 100%;
+  min-width: 0;
   justify-content: center;
 }
 
@@ -9062,6 +9085,9 @@ body.discountPassModalOpen {
 
 .reviewDecisionDialog {
   width: min(560px, calc(100vw - 28px));
+  max-height: calc(100dvh - 28px);
+  overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid rgba(34, 211, 238, 0.22);
   border-radius: 24px;
   background:
@@ -9115,7 +9141,10 @@ body.discountPassModalOpen {
   gap: 16px;
   align-items: center;
   max-width: 1120px;
+  max-height: calc(100dvh - 36px);
   margin: 0 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid rgba(244, 214, 150, 0.24);
   border-radius: 24px;
   background:
@@ -9164,6 +9193,132 @@ body.discountPassModalOpen {
 
 .quickPrivacyActions {
   margin: 8px 0;
+}
+
+/* Switch navigation before tablet-width role links begin wrapping into the brand. */
+@media (max-width: 900px) {
+  .topNav,
+  .navLinks {
+    align-items: center;
+  }
+
+  .topNav {
+    position: sticky;
+    justify-content: space-between;
+    gap: 6px;
+    top: 8px;
+    margin-bottom: 16px;
+    border-radius: 18px;
+    padding: 6px;
+    background: rgba(13, 18, 32, 0.96);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+    backdrop-filter: none;
+    overflow: visible;
+  }
+
+  .brand {
+    justify-content: flex-start;
+    width: auto;
+    min-width: 0;
+    min-height: 44px;
+    gap: 8px;
+    padding: 0 6px;
+  }
+
+  .brandLogo {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+  }
+
+  .brand strong {
+    font-size: 17px;
+  }
+
+  .betaPill {
+    display: none;
+  }
+
+  .navLinks {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    left: 0;
+    display: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    padding: 10px;
+    background: rgba(13, 18, 32, 0.985);
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.48);
+    backdrop-filter: blur(22px);
+  }
+
+  .topNav.is-mobile-nav-open .navLinks {
+    display: grid;
+  }
+
+  .mobileNavToggle {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 88px;
+    min-height: 44px;
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-pill);
+    padding: 8px 12px;
+    background: rgba(21, 31, 52, 0.9);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+  }
+
+  .mobileNavToggle__icon {
+    width: 18px;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+  }
+
+  .mobileNavToggle__icon--close {
+    display: none;
+    font-size: 22px;
+  }
+
+  .topNav.is-mobile-nav-open .mobileNavToggle__icon--menu {
+    display: none;
+  }
+
+  .topNav.is-mobile-nav-open .mobileNavToggle__icon--close {
+    display: inline-block;
+  }
+
+  .navLinks a {
+    width: 100%;
+    min-height: 44px;
+    padding: 9px 10px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .button,
+  .button--small,
+  .adminQueueBeerRows .adminBeerRow .field input,
+  .adminQueueBeerRows .adminBeerRow .field select,
+  .adminQueueBeerRows .adminBeerRow > .button,
+  .premiumPlanSwitcher button,
+  .premiumDashboardSubnav button,
+  .venueDemandTab {
+    min-height: 44px;
+  }
 }
 
 @media (max-width: 760px) {
@@ -10644,10 +10799,6 @@ body.discountPassModalOpen {
     font-size: 0.56rem;
   }
 
-  .accountAccessBadgeRow .accountAccessBadge:not(:first-child) {
-    display: none;
-  }
-
   .accountStatsActions {
     gap: 7px;
   }
@@ -10770,6 +10921,61 @@ body.discountPassModalOpen {
   }
 }
 
+/* The 280px venue sidebar leaves too little room for operational forms on small tablets. */
+@media (min-width: 761px) and (max-width: 1040px) {
+  .dashboardShell,
+  .dashboardMain .grid--two,
+  .dashboardMain .grid--three,
+  .venueBeerStockGrid,
+  .premiumDashboardHeader,
+  .premiumDashboardMain,
+  .premiumDashboardMain--free,
+  .premiumDashboardMain--pro,
+  .premiumDashboardBottom,
+  .premiumUpgradeBanner,
+  .venueCommandCenter,
+  .venueDemandPanel__header,
+  .venueDemandPanel__body,
+  .venueDemandPanel__footer,
+  .venueOverviewActionGrid,
+  .venueOverviewColumns,
+  .venueOverviewDataGrid,
+  .redemptionFlowGrid,
+  .staffCounterCodeGrid,
+  .discountQuickPanel,
+  .discountOpsPanel,
+  .selectedDiscountSpecial {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboardSidebar {
+    position: static;
+    grid-template-columns: minmax(0, 1fr);
+    max-height: none;
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+
+  .dashboardSidebar .mobileSectionPicker {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  .dashboardSidebar .mobileSectionPicker select,
+  .dashboardSidebar .venueLogoutButton {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .dashboardSidebar .tabNav {
+    display: none;
+  }
+}
+
 @media (max-width: 760px) {
   .dashboardSetupProgress,
   .venueDailyActions__header {
@@ -10873,6 +11079,18 @@ body.discountPassModalOpen {
   .button,
   .mobileNavToggle,
   .accountStatsActions .button {
+    min-height: 44px;
+  }
+
+  .outreachPipelineCard .button--small,
+  .accountDiscountFeature > .button,
+  .accountIdentityCard--compact .button,
+  .accountIdentityBar > .button,
+  .premiumPlanSwitcher button,
+  .venueDemandTab,
+  .newVenueManualDetails summary,
+  .adminCrawlerDetails summary,
+  .adminIngestionReviewDetails > summary {
     min-height: 44px;
   }
 
