@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -454,7 +455,16 @@ async function downloadBytes(
   bucketName: string,
   objectPath: string,
 ): Promise<{ bytes: Buffer; contentType: string }> {
-  const { data, error } = await client.storage.from(bucketName).download(objectPath);
+  // The current ledger and checkpoint are intentionally upserted at fixed
+  // paths. Supabase Storage may otherwise serve the previous CDN version
+  // immediately after an overwrite, causing a false integrity failure. A
+  // unique cache nonce is part of the supported SDK download API and keeps
+  // every verification read tied to the latest object bytes.
+  const { data, error } = await client.storage.from(bucketName).download(
+    objectPath,
+    { cacheNonce: crypto.randomUUID() },
+    { cache: "no-store" },
+  );
   if (error || !data) throw error ?? new Error(`Storage download failed: ${objectPath}`);
   return {
     bytes: Buffer.from(await data.arrayBuffer()),
@@ -571,7 +581,20 @@ async function publishCurrentTombstoneLedger(
   const genesis = await ensureLedgerGenesis(client, bucketName, now);
   for (let attempt = 1; attempt <= MAX_RECONCILIATION_ATTEMPTS; attempt += 1) {
     const state = await loadAppendOnlyLedgerState(client, bucketName);
-    const currentBody = serializeTombstoneDocument(state.tombstones, now.toISOString());
+    const latestCompletedAt = state.tombstones.reduce<string | null>(
+      (latest, tombstone) => latest === null || Date.parse(tombstone.completedAt) > Date.parse(latest)
+        ? tombstone.completedAt
+        : latest,
+      null,
+    );
+    const stateGeneratedAt = new Date(Math.max(
+      Date.parse(genesis.document.createdAt),
+      latestCompletedAt ? Date.parse(latestCompletedAt) : Number.NEGATIVE_INFINITY,
+    )).toISOString();
+    // This aggregate is a deterministic projection of the immutable ledger.
+    // Two legitimate writers observing the same state must produce identical
+    // bytes; the run time belongs in scheduler status, not integrity authority.
+    const currentBody = serializeTombstoneDocument(state.tombstones, stateGeneratedAt);
     const { error } = await client.storage.from(bucketName).upload(
       CURRENT_TOMBSTONE_LEDGER_PATH,
       currentBody,
@@ -585,7 +608,7 @@ async function publishCurrentTombstoneLedger(
     }
     const checkpoint: AccountDeletionLedgerCheckpoint = {
       version: 2,
-      generatedAt: now.toISOString(),
+      generatedAt: stateGeneratedAt,
       genesisPath: TOMBSTONE_LEDGER_GENESIS_PATH,
       genesisSha256: genesis.sha256,
       currentLedgerPath: CURRENT_TOMBSTONE_LEDGER_PATH,
@@ -593,12 +616,7 @@ async function publishCurrentTombstoneLedger(
       immutableObjectCount: state.objectCount,
       immutableSetSha256: state.immutableSetSha256,
       tombstoneCount: state.tombstones.length,
-      latestCompletedAt: state.tombstones.reduce<string | null>(
-        (latest, tombstone) => latest === null || Date.parse(tombstone.completedAt) > Date.parse(latest)
-          ? tombstone.completedAt
-          : latest,
-        null,
-      ),
+      latestCompletedAt,
     };
     const checkpointBody = Buffer.from(`${JSON.stringify(checkpoint, null, 2)}\n`);
     const { error: checkpointError } = await client.storage.from(bucketName).upload(

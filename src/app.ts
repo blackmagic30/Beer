@@ -10,6 +10,10 @@ import { env } from "./config/env.js";
 import { PREMIUM_PRICING } from "./config/business-rules.js";
 import { AppError } from "./lib/errors.js";
 import { getRateLimitIdentity } from "./lib/client-ip.js";
+import {
+  isCanonicalProductionRuntime,
+  resolveAccountDeletionLedgerRuntimeConfig,
+} from "./lib/deployment-environment.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
 import { redactSecrets } from "./lib/redact.js";
@@ -92,27 +96,35 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
     database,
   );
-  const deletionTombstoneWriter = env.NODE_ENV === "production"
+  const canonicalProductionRuntime = isCanonicalProductionRuntime({
+    nodeEnv: env.NODE_ENV,
+    railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+  });
+  const businessRuntimeEnv = canonicalProductionRuntime
+    ? env
+    : { ...env, REPORT_DELIVERY_SCHEDULE_ENABLED: false };
+  const deletionLedgerRuntimeConfig = resolveAccountDeletionLedgerRuntimeConfig({
+    nodeEnv: env.NODE_ENV,
+    railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+    sourceSupabaseUrl: env.SUPABASE_URL,
+    destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
+    destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
+    bucketName: env.OFFSITE_BACKUP_BUCKET,
+  });
+  const deletionTombstoneWriter = deletionLedgerRuntimeConfig
     ? async (tombstone: { requestId: string; userId: string; completedAt: string }) => {
-        if (
-          !env.SUPABASE_URL ||
-          !env.OFFSITE_BACKUP_SUPABASE_URL ||
-          !env.OFFSITE_BACKUP_SERVICE_ROLE_KEY
-        ) {
-          throw new Error("Independent account-deletion ledger is not configured.");
-        }
         const { appendAccountDeletionTombstone } = await import("./lib/offsite-backup.js");
         await appendAccountDeletionTombstone({
-          sourceSupabaseUrl: env.SUPABASE_URL,
-          destinationSupabaseUrl: env.OFFSITE_BACKUP_SUPABASE_URL,
-          destinationServiceRoleKey: env.OFFSITE_BACKUP_SERVICE_ROLE_KEY,
-          bucketName: env.OFFSITE_BACKUP_BUCKET,
+          sourceSupabaseUrl: deletionLedgerRuntimeConfig.sourceSupabaseUrl,
+          destinationSupabaseUrl: deletionLedgerRuntimeConfig.destinationSupabaseUrl,
+          destinationServiceRoleKey: deletionLedgerRuntimeConfig.destinationServiceRoleKey,
+          bucketName: deletionLedgerRuntimeConfig.bucketName,
         }, tombstone);
       }
     : undefined;
   const businessService = new BusinessService(
     businessRepository,
-    env,
+    businessRuntimeEnv,
     beerCatalogRepository,
     { extract: (input) => adminService.ocrMenuPhotos(input) },
     undefined,
@@ -199,7 +211,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     schedulerStops.push(scheduler.stop);
   }
   if (
-    env.NODE_ENV === "production" &&
+    canonicalProductionRuntime &&
     env.SUPABASE_URL &&
     env.SUPABASE_SERVICE_ROLE_KEY &&
     env.OFFSITE_BACKUP_SUPABASE_URL &&
@@ -239,7 +251,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     });
     schedulerStops.push(scheduler.stop);
   }
-  if (env.NODE_ENV === "production" && env.REPORT_DELIVERY_SCHEDULE_ENABLED) {
+  if (canonicalProductionRuntime && env.REPORT_DELIVERY_SCHEDULE_ENABLED) {
     const {
       createResendReportEmailProvider,
       scheduleMonthlyReportDelivery,
@@ -747,7 +759,10 @@ export function createApp() {
             bucketName: env.OFFSITE_BACKUP_BUCKET,
             lastSuccessfulAt: getOffsiteBackupLastSuccess(),
             maxFreshnessHours: env.OFFSITE_BACKUP_INTERVAL_HOURS + 2,
-            required: env.NODE_ENV === "production",
+            required: isCanonicalProductionRuntime({
+              nodeEnv: env.NODE_ENV,
+              railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+            }),
           })
         )),
       ]);

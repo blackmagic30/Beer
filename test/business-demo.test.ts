@@ -287,6 +287,7 @@ async function withHttpServer(
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   openDatabases.forEach((database) => database.close());
   openDatabases = [];
   evidenceStorageDirs.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true }));
@@ -1341,6 +1342,86 @@ describe("Supabase account and verification foundation", () => {
     expect(repository.listFeedback(10)[0]).toEqual(expect.objectContaining({
       status: "in_progress",
       resolutionNote: "Investigating.",
+    }));
+  });
+
+  it("refuses production deletion without a ledger writer before any destructive side effect", async () => {
+    const { database, repository } = createRepository();
+    const stripeDelete = vi.fn(async () => new Response(null, { status: 200 }));
+    const deleteIdentity = vi.fn(async () => ({ data: null, error: null }));
+    vi.stubGlobal("fetch", stripeDelete);
+    const service = createBusinessService(
+      repository,
+      {
+        NODE_ENV: "production",
+        DEMO_BILLING_MODE: false,
+        STRIPE_SECRET_KEY: "test-stripe-secret-key", // security-scan allow: synthetic no-call fixture only
+      },
+      undefined,
+      {
+        auth: { admin: { deleteUser: deleteIdentity } },
+      } as ConstructorParameters<typeof BusinessService>[4],
+    );
+    const account = createAccount(repository, "deletion-ledger-guard-user");
+    const admin = createAccount(repository, "admin", "admin");
+    repository.updateAccountSecurityClaims({
+      userId: admin.id,
+      emailVerifiedAt: NOW,
+      mfaLevel: "aal2",
+      mfaVerifiedAt: NOW,
+      now: NOW,
+    });
+    const authorisedAdmin = repository.getAccountById(admin.id)!;
+    database.prepare(
+      `UPDATE accounts
+          SET stripe_customer_id = ?, supabase_user_id = ?
+        WHERE id = ?`,
+    ).run("cus_must_remain", "supabase-user-must-remain", account.id);
+    createSession(repository, account.id, "deletion-ledger-guard-session");
+    const deletion = service.requestAccountDeletion(account, { message: "Delete only when safe." });
+    const requestId = String(deletion.request.id);
+    database
+      .prepare("UPDATE account_deletion_requests SET execute_after = ? WHERE id = ?")
+      .run("2026-05-03T08:00:00.000Z", requestId);
+
+    await expect(service.executeAccountDeletion(authorisedAdmin, requestId, "guard regression"))
+      .rejects.toThrow("Independent account-deletion ledger is not configured");
+
+    expect(stripeDelete).not.toHaveBeenCalled();
+    expect(deleteIdentity).not.toHaveBeenCalled();
+    expect(database.prepare(
+      `SELECT status, processing_started_at, attempt_count, last_error
+         FROM account_deletion_requests WHERE id = ?`,
+    ).get(requestId)).toEqual({
+      status: "pending_review",
+      processing_started_at: null,
+      attempt_count: 0,
+      last_error: null,
+    });
+    expect(database.prepare(
+      "SELECT revoked_at FROM auth_sessions WHERE user_id = ?",
+    ).get(account.id)).toEqual({ revoked_at: null });
+    database.prepare(
+      "UPDATE account_deletion_requests SET deletion_tombstone_recorded_at = ? WHERE id = ?",
+    ).run(NOW, requestId);
+    await expect(service.executeAccountDeletion(authorisedAdmin, requestId, "cloned tombstone guard"))
+      .rejects.toThrow("Independent account-deletion ledger is not configured");
+    expect(stripeDelete).not.toHaveBeenCalled();
+    expect(deleteIdentity).not.toHaveBeenCalled();
+    expect(database.prepare(
+      "SELECT status, processing_started_at, attempt_count FROM account_deletion_requests WHERE id = ?",
+    ).get(requestId)).toEqual({
+      status: "pending_review",
+      processing_started_at: null,
+      attempt_count: 0,
+    });
+    expect(database.prepare(
+      "SELECT revoked_at FROM auth_sessions WHERE user_id = ?",
+    ).get(account.id)).toEqual({ revoked_at: null });
+    expect(repository.getAccountById(account.id)).toEqual(expect.objectContaining({
+      stripeCustomerId: "cus_must_remain",
+      supabaseUserId: "supabase-user-must-remain",
+      status: "active",
     }));
   });
 

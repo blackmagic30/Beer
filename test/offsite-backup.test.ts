@@ -16,6 +16,10 @@ import {
   runOffsiteBackup,
   scheduleOffsiteBackups,
 } from "../src/lib/offsite-backup.js";
+import {
+  isCanonicalProductionRuntime,
+  resolveAccountDeletionLedgerRuntimeConfig,
+} from "../src/lib/deployment-environment.js";
 
 interface FakeObject {
   bytes: Buffer;
@@ -24,9 +28,12 @@ interface FakeObject {
 
 class FakeStorageProject {
   readonly buckets = new Map<string, Map<string, FakeObject>>();
+  readonly staleUpsertObjects = new Map<string, FakeObject>();
+  readonly downloadCacheNonces = new Map<string, string[]>();
   rootListCalls = 0;
   mutateSourceOnSecondRootList: (() => void) | null = null;
   backupFileSizeLimit: number | null = null;
+  simulateStaleUpsertDownloads = false;
 
   bucket(name: string): Map<string, FakeObject> {
     let bucket = this.buckets.get(name);
@@ -88,8 +95,20 @@ class FakeStorageProject {
               const limit = options?.limit ?? 100;
               return { data: ordered.slice(offset, offset + limit), error: null };
             },
-            async download(objectPath: string) {
-              const object = project.bucket(name).get(objectPath);
+            async download(
+              objectPath: string,
+              options?: { cacheNonce?: string },
+            ) {
+              const cacheNonce = options?.cacheNonce;
+              if (cacheNonce) {
+                const cacheNonces = project.downloadCacheNonces.get(objectPath) ?? [];
+                cacheNonces.push(cacheNonce);
+                project.downloadCacheNonces.set(objectPath, cacheNonces);
+              }
+              const stale = project.staleUpsertObjects.get(`${name}/${objectPath}`);
+              const object = project.simulateStaleUpsertDownloads && stale && !cacheNonce
+                ? stale
+                : project.bucket(name).get(objectPath);
               return object
                 ? { data: new Blob([object.bytes], { type: object.contentType }), error: null }
                 : { data: null, error: new Error(`Missing object: ${objectPath}`) };
@@ -102,6 +121,17 @@ class FakeStorageProject {
               const bucket = project.bucket(name);
               if (bucket.has(objectPath) && !options?.upsert) {
                 return { data: null, error: new Error(`Object exists: ${objectPath}`) };
+              }
+              const previous = bucket.get(objectPath);
+              if (
+                previous &&
+                options?.upsert &&
+                !project.staleUpsertObjects.has(`${name}/${objectPath}`)
+              ) {
+                project.staleUpsertObjects.set(`${name}/${objectPath}`, {
+                  bytes: Buffer.from(previous.bytes),
+                  contentType: previous.contentType,
+                });
               }
               bucket.set(objectPath, {
                 bytes: Buffer.from(body),
@@ -188,6 +218,89 @@ function makeFreshDatabase(root: string): string {
 }
 
 describe("off-site backup durability", () => {
+  it("permits automatic backup writes only from the canonical Railway environment", () => {
+    expect(isCanonicalProductionRuntime({
+      nodeEnv: "production",
+      railwayEnvironmentName: "production",
+    })).toBe(true);
+    expect(isCanonicalProductionRuntime({
+      nodeEnv: "production",
+      railwayEnvironmentName: "staging",
+    })).toBe(false);
+    expect(isCanonicalProductionRuntime({
+      nodeEnv: "production",
+      railwayEnvironmentName: " ",
+    })).toBe(false);
+    expect(isCanonicalProductionRuntime({
+      nodeEnv: "production",
+    })).toBe(true);
+    expect(isCanonicalProductionRuntime({
+      nodeEnv: "test",
+      railwayEnvironmentName: "production",
+    })).toBe(false);
+  });
+
+  it("does not touch the backup destination when readiness is optional", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(probeOffsiteBackupReadiness({
+      sourceSupabaseUrl: "https://production-source.supabase.co",
+      destinationSupabaseUrl: "https://production-backup.supabase.co",
+      destinationServiceRoleKey: "must-not-be-used-from-staging",
+      bucketName: "pintpath-backups",
+      lastSuccessfulAt: null,
+      maxFreshnessHours: 26,
+      required: false,
+    })).resolves.toMatchObject({
+      status: "ok",
+      required: false,
+      liveProbe: false,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a deletion-ledger writer configuration only for fully configured canonical production", () => {
+    const complete = {
+      nodeEnv: "production",
+      railwayEnvironmentName: "production",
+      sourceSupabaseUrl: "https://source.supabase.co",
+      destinationSupabaseUrl: "https://backup.supabase.co",
+      destinationServiceRoleKey: "fixture-destination-key",
+      bucketName: "pintpath-backups",
+    };
+    expect(resolveAccountDeletionLedgerRuntimeConfig(complete)).toEqual({
+      sourceSupabaseUrl: complete.sourceSupabaseUrl,
+      destinationSupabaseUrl: complete.destinationSupabaseUrl,
+      destinationServiceRoleKey: complete.destinationServiceRoleKey,
+      bucketName: complete.bucketName,
+    });
+    expect(resolveAccountDeletionLedgerRuntimeConfig({
+      ...complete,
+      railwayEnvironmentName: "staging",
+    })).toBeNull();
+    expect(resolveAccountDeletionLedgerRuntimeConfig({
+      ...complete,
+      destinationServiceRoleKey: undefined,
+    })).toBeNull();
+    expect(resolveAccountDeletionLedgerRuntimeConfig({
+      ...complete,
+      destinationSupabaseUrl: " ",
+    })).toBeNull();
+    expect(resolveAccountDeletionLedgerRuntimeConfig({
+      ...complete,
+      destinationSupabaseUrl: "https://SOURCE.supabase.co/",
+    })).toBeNull();
+    expect(resolveAccountDeletionLedgerRuntimeConfig({
+      ...complete,
+      destinationSupabaseUrl: "not-a-url",
+    })).toBeNull();
+    expect(resolveAccountDeletionLedgerRuntimeConfig({
+      ...complete,
+      bucketName: " ",
+    })).toBeNull();
+  });
+
   it("bounds a readiness probe when Supabase Storage never responds", async () => {
     const fetchMock = vi.fn(() => new Promise<Response>(() => undefined));
     vi.stubGlobal("fetch", fetchMock);
@@ -371,6 +484,94 @@ describe("off-site backup durability", () => {
     await expect(fetchVerifiedAccountDeletionLedger(config)).rejects.toThrow(
       "Invalid independent account-deletion ledger genesis record",
     );
+  });
+
+  it("cache-busts fixed-path ledger verification after a Storage upsert", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-offsite-cache-test-"));
+    roots.push(root);
+    const source = new FakeStorageProject();
+    const destination = new FakeStorageProject();
+    source.bucket("beermap-source-evidence");
+    destination.bucket("pintpath-backups");
+    const clients = new Map([
+      ["https://source.supabase.co", source.client()],
+      ["https://backup.supabase.co", destination.client()],
+    ]);
+    const config = {
+      databasePath: makeFreshDatabase(root),
+      evidencePath: path.join(root, "legacy-evidence"),
+      sourceSupabaseUrl: "https://source.supabase.co",
+      sourceServiceRoleKey: "source-key",
+      destinationSupabaseUrl: "https://backup.supabase.co",
+      destinationServiceRoleKey: "destination-key",
+      bucketName: "pintpath-backups",
+      retentionDays: 30,
+      clientFactory: (url: string) => clients.get(url)!,
+    };
+
+    await runOffsiteBackup(config);
+    const firstCurrent = Buffer.from(
+      destination.bucket("pintpath-backups").get("_control/account-deletion-tombstones.json")!.bytes,
+    );
+    const firstCheckpoint = Buffer.from(
+      destination.bucket("pintpath-backups").get("_control/account-deletion-ledger-checkpoint.json")!.bytes,
+    );
+    const database = createDatabase(config.databasePath);
+    const repository = new BusinessRepository(database);
+    repository.createAccount({
+      id: "cache-regression-deleted-user",
+      email: "cache-regression-deleted-user@example.com",
+      passwordHash: "test-password-hash",
+      role: "user",
+      subscriptionStatus: "free",
+      now: "2026-07-15T00:00:00.000Z",
+    });
+    database.prepare(
+      `INSERT INTO account_deletion_requests (
+         id, user_id, status, requested_at, execute_after, completed_at, created_at, updated_at
+       ) VALUES (?, ?, 'completed', ?, ?, ?, ?, ?)`,
+    ).run(
+      "cache-regression-deletion",
+      "cache-regression-deleted-user",
+      "2026-07-15T00:00:00.000Z",
+      "2026-07-15T00:00:00.000Z",
+      "2026-07-16T00:00:00.000Z",
+      "2026-07-15T00:00:00.000Z",
+      "2026-07-16T00:00:00.000Z",
+    );
+    database.close();
+    destination.simulateStaleUpsertDownloads = true;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await expect(runOffsiteBackup(config)).resolves.toMatchObject({
+      deletionTombstones: 1,
+    });
+
+    const currentLedger = destination.bucket("pintpath-backups").get(
+      "_control/account-deletion-tombstones.json",
+    )!.bytes;
+    const currentCheckpoint = destination.bucket("pintpath-backups").get(
+      "_control/account-deletion-ledger-checkpoint.json",
+    )!.bytes;
+    expect(currentLedger).not.toEqual(firstCurrent);
+    expect(currentCheckpoint).not.toEqual(firstCheckpoint);
+    expect(JSON.parse(currentLedger.toString("utf8"))).toMatchObject({
+      tombstones: [{ userId: "cache-regression-deleted-user" }],
+    });
+    expect(destination.staleUpsertObjects.get(
+      "pintpath-backups/_control/account-deletion-tombstones.json",
+    )?.bytes).toEqual(firstCurrent);
+    expect(destination.staleUpsertObjects.get(
+      "pintpath-backups/_control/account-deletion-ledger-checkpoint.json",
+    )?.bytes).toEqual(firstCheckpoint);
+
+    for (const objectPath of [
+      "_control/account-deletion-tombstones.json",
+      "_control/account-deletion-ledger-checkpoint.json",
+    ]) {
+      const nonces = destination.downloadCacheNonces.get(objectPath) ?? [];
+      expect(nonces.length).toBeGreaterThan(1);
+      expect(new Set(nonces).size).toBe(nonces.length);
+    }
   });
 
   it("captures private Storage evidence, retries a concurrent mutation, preserves PDF MIME, and prunes old snapshots", async () => {

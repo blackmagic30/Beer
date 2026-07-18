@@ -7766,6 +7766,17 @@ export class BusinessService {
     const account = this.repository.getAccountById(String(request.user_id));
     if (!account) throw new AppError("Account not found.", 404);
     this.assertAdminControlPreserved(admin, account);
+    // Production deletion is irreversible across auth, billing, and evidence
+    // providers. Refuse before acquiring the job or making any mutation when
+    // this runtime cannot durably record the independent deletion tombstone.
+    if (
+      this.config.NODE_ENV === "production" &&
+      !this.accountDeletionTombstoneWriter
+    ) {
+      throw new ExternalServiceError(
+        "Independent account-deletion ledger is not configured; the request is saved for retry.",
+      );
+    }
     const startedAt = nowIso();
     const processing = this.repository.beginAccountDeletion({
       requestId,
@@ -7835,11 +7846,6 @@ export class BusinessService {
         }
       }
       if (!processing.deletion_tombstone_recorded_at) {
-        if (!this.accountDeletionTombstoneWriter && this.config.NODE_ENV === "production") {
-          throw new ExternalServiceError(
-            "Independent account-deletion ledger is not configured; the request is saved for retry.",
-          );
-        }
         if (this.accountDeletionTombstoneWriter) {
           const tombstoneRecordedAt = nowIso();
           await this.accountDeletionTombstoneWriter({

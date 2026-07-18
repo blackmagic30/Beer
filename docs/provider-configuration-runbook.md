@@ -239,6 +239,14 @@ OFFSITE_BACKUP_INTERVAL_HOURS=24
 OFFSITE_BACKUP_RETENTION_DAYS=30
 ```
 
+Automatic off-site backups and account-deletion-ledger writes run only in the
+canonical Railway environment named `production` (or an explicitly operated
+non-Railway `NODE_ENV=production` runtime). Railway staging/preview environments
+must not share the production backup bucket or service key; use an isolated
+destination only for a deliberate restore rehearsal. This environment guard
+also prevents cloned two-replica staging services from racing the production
+ledger or replacing `latest.json`.
+
 Each run uses SQLite's online backup API, captures Storage, then lists Storage again. A changed object set, missing database-referenced object, byte-size mismatch, or MIME mismatch retries the entire snapshot up to three times. The manifest records every SHA-256 checksum and original MIME type, the live database-reference count, reconciliation attempt, and any unreferenced/orphan paths. A snapshot is never published with a missing live evidence object. Every uploaded file is downloaded and checksum-verified; Storage MIME is also verified, including `application/pdf`, before `latest.json` advances.
 
 Deletion suppression is stored outside snapshot prefixes in the independent bucket. An immutable genesis record lives at `_control/account-deletion-ledger-genesis.json`; immutable deletion records live under `_control/account-deletion-ledger/v1/`; the verified aggregate is `_control/account-deletion-tombstones.json`; its genesis/immutable-set/count/hash checkpoint is `_control/account-deletion-ledger-checkpoint.json`. A new installation with no completed deletions therefore has a cryptographically bound zero-count genesis/checkpoint state, not a missing ledger. Deletion entries contain only request ID, internal user ID, and completion time. Production account deletion must durably append and verify its tombstone before the local request can become `completed`. Scheduled backups reconcile the ledger again.
