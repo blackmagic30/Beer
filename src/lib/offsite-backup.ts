@@ -45,6 +45,7 @@ export interface OffsiteBackupConfig {
     sourceEvidenceObjects?: number;
     deletionTombstones?: number;
     prunedBackups?: number;
+    manifestSha256?: string;
     error?: string;
   }) => void;
 }
@@ -898,6 +899,7 @@ export async function runOffsiteBackup(config: OffsiteBackupConfig): Promise<{
   sourceEvidenceObjects: number;
   deletionTombstones: number;
   prunedBackups: number;
+  manifestSha256: string;
 }> {
   assertIndependentDestination(config);
   if (!Number.isInteger(config.retentionDays) || config.retentionDays < 7 || config.retentionDays > 30) {
@@ -941,6 +943,9 @@ export async function runOffsiteBackup(config: OffsiteBackupConfig): Promise<{
       deletionTombstones: completeTombstones,
     });
     await verifyDataBackup(backupRoot);
+    const manifestSha256 = sha256Bytes(
+      await fs.promises.readFile(path.join(backupRoot, "manifest.json")),
+    );
 
     const files = await listBackupFiles(backupRoot);
     const contentTypes = new Map(
@@ -1006,6 +1011,7 @@ export async function runOffsiteBackup(config: OffsiteBackupConfig): Promise<{
     const latest = Buffer.from(`${JSON.stringify({
       backupId,
       createdAt: manifest.createdAt,
+      manifestSha256,
       deletionTombstoneGenesis: TOMBSTONE_LEDGER_GENESIS_PATH,
       deletionTombstoneGenesisSha256AtBackup: sha256Bytes(currentGenesis.bytes),
       deletionTombstoneLedger: CURRENT_TOMBSTONE_LEDGER_PATH,
@@ -1027,6 +1033,7 @@ export async function runOffsiteBackup(config: OffsiteBackupConfig): Promise<{
       sourceEvidenceObjects: manifest.storageEvidence?.fileCount ?? 0,
       deletionTombstones: completeTombstones.length,
       prunedBackups,
+      manifestSha256,
     };
   } catch (error) {
     if (destinationClient && uploadedPaths.length > 0) {

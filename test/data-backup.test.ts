@@ -65,6 +65,8 @@ describe("production data backups", () => {
     expect(verified).toEqual(manifest);
     expect(manifest.evidence.fileCount).toBe(1);
     expect(manifest.evidence.bytes).toBe(Buffer.byteLength("menu-image"));
+    expect(fs.existsSync(path.join(backupPath, `${manifest.database.path}-wal`))).toBe(false);
+    expect(fs.existsSync(path.join(backupPath, `${manifest.database.path}-shm`))).toBe(false);
 
     const restored = new BetterSqlite3(path.join(backupPath, manifest.database.path), {
       readonly: true,

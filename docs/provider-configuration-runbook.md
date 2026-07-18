@@ -253,7 +253,10 @@ trap 'rm -f "$BACKUP_RESULT"' EXIT INT TERM
 test -r "${DATABASE_PATH:?}"
 case "$(realpath "$DATABASE_PATH")" in /app/data/*) ;; *) exit 1 ;; esac
 npm run --silent data:backup:offsite | tee "$BACKUP_RESULT"
-jq -e '.ok == true and (.backupId | type == "string" and length > 0)' "$BACKUP_RESULT"
+jq -e '.ok == true
+  and (.backupId | type == "string" and length > 0)
+  and (.manifestSha256 | type == "string" and test("^[a-f0-9]{64}$"))' \
+  "$BACKUP_RESULT"
 ```
 
 Capture the sanitized JSON stdout through the protected operator channel if launch evidence is required; the trap deletes its private remote temporary copy. Running this command in a local checkout can silently capture the wrong SQLite file and does not count as production evidence.
@@ -269,19 +272,27 @@ npm run --silent data:backup:verify -- --backup="$LOCAL_BACKUP_PATH"
 
 The local command covers SQLite and legacy filesystem evidence only. It is not a complete production backup when the database contains `supabase_private` evidence references.
 
-For an online drill, take the exact `backupId` from that result and recursively download only `ss:///pintpath-backups/$BACKUP_ID` into a nonexistent mode-`700` destination. The current audited command is pinned because Supabase Storage CLI commands are experimental:
+For an online drill, create a separate temporary secret key in the independent backup project, store it only in a mode-`600` regular non-symlink file, and delete that temporary key after the drill. Never reuse or revoke the long-lived Railway production backup key. Take the exact `backupId` and trusted `manifestSha256` from the protected production result and use the repository SDK downloader to copy only that immutable prefix into a nonexistent mode-`700` destination:
 
 ```bash
-test "$(./node_modules/.bin/supabase --version)" = "2.109.1"
-SUPABASE_PROJECT_ID="${OFFSITE_BACKUP_PROJECT_REF:?}" \
-SUPABASE_AUTH_SERVICE_ROLE_KEY="$(<"${OFFSITE_BACKUP_SECRET_KEY_FILE:?}")" \
-  ./node_modules/.bin/supabase --experimental \
-  storage cp --linked --recursive --jobs 4 \
-  "ss:///pintpath-backups/$BACKUP_ID" "$BACKUP_PATH"
+: "${BACKUP_ID:?set from the protected production backup result}"
+: "${EXPECTED_MANIFEST_SHA256:?set from that result's manifestSha256}"
+test ! -e "$BACKUP_PATH"
+test -f "${OFFSITE_BACKUP_SECRET_KEY_FILE:?}"
+test ! -L "$OFFSITE_BACKUP_SECRET_KEY_FILE"
+chmod 600 "$OFFSITE_BACKUP_SECRET_KEY_FILE"
+
+OFFSITE_BACKUP_SUPABASE_URL="${OFFSITE_BACKUP_SUPABASE_URL:?}" \
+OFFSITE_BACKUP_BUCKET="${OFFSITE_BACKUP_BUCKET:-pintpath-backups}" \
+  npm run --silent data:backup:download-offsite -- \
+    --backup-id="$BACKUP_ID" \
+    --expected-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
+    --output="$BACKUP_PATH" \
+    --service-role-key-file="$OFFSITE_BACKUP_SECRET_KEY_FILE"
 npm run --silent data:backup:verify -- --backup="$BACKUP_PATH"
 ```
 
-The exact CLI is a locked development dependency installed by `npm ci` before credentials are loaded; do not replace this credentialed command with a runtime `npx` download. The CLI transfer preserves bytes and paths, not trusted object metadata or bucket policies; the verified backup manifest remains the authority. Use only a trusted independent project and ensure `$BACKUP_PATH` does not exist before copying. The complete safe variable setup, captures, and cleanup steps are in [`external-launch-signoffs.md`](external-launch-signoffs.md#8-backup_restore).
+The downloader uses the lockfile-installed `@supabase/supabase-js`; it needs no runtime `npx`, Supabase CLI, project linking, access token, or experimental command. It accepts the protected key file path, downloads only the exact validated immutable prefix into a private temporary directory, rejects unsafe paths and existing destinations, verifies the manifest, and then publishes the completed output without object-path progress. The manifest plus the independent verification command remains the integrity authority. Use only a trusted independent project. The complete safe variable setup, captures, and cleanup steps are in [`external-launch-signoffs.md`](external-launch-signoffs.md#8-backup_restore).
 
 The online rehearsal reads the immutable genesis and every deletion object directly, verifies the current aggregate/checkpoint, and accepts a zero-count ledger only when all authority agrees. Set `DATABASE_PATH` to the SQLite file that will be created inside the new rehearsal output, so the operational job state is written only to that isolated restored copy:
 

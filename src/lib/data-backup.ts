@@ -351,6 +351,20 @@ export async function createDataBackup(input: {
   } finally {
     database.close();
   }
+  // The live database runs in WAL mode. Normalize the self-contained backup
+  // copy before any verification opens it so SQLite does not create untracked
+  // `-wal`/`-shm` files beside the manifest-authoritative database object.
+  const normalizedBackup = new BetterSqlite3(backupDatabase, { fileMustExist: true });
+  try {
+    const journalMode = normalizedBackup.pragma("journal_mode = DELETE", { simple: true });
+    if (String(journalMode).toLowerCase() !== "delete") {
+      throw new Error("Could not normalize the backup SQLite journal mode.");
+    }
+  } finally {
+    normalizedBackup.close();
+  }
+  await fs.promises.rm(`${backupDatabase}-wal`, { force: true });
+  await fs.promises.rm(`${backupDatabase}-shm`, { force: true });
 
   const sourceEvidenceBefore = fs.existsSync(sourceEvidence) ? await listBackupFiles(sourceEvidence) : [];
   if (fs.existsSync(sourceEvidence)) {

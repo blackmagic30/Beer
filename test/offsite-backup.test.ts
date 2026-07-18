@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BusinessRepository } from "../src/db/business.repository.js";
 import { createDatabase } from "../src/db/database.js";
-import { rehearseDataRestore } from "../src/lib/data-backup.js";
+import { rehearseDataRestore, sha256Bytes } from "../src/lib/data-backup.js";
 import {
   appendAccountDeletionTombstone,
   fetchVerifiedAccountDeletionLedger,
@@ -429,7 +429,13 @@ describe("off-site backup durability", () => {
     expect(result.deletionTombstones).toBe(2);
     expect(result.prunedBackups).toBe(1);
     expect([...destinationBucket.keys()].some((key) => key.startsWith(`${oldBackupId}/`))).toBe(false);
+    expect([...destinationBucket.keys()].some((key) => (
+      key.startsWith(`${result.backupId}/`) && (key.endsWith("-wal") || key.endsWith("-shm"))
+    ))).toBe(false);
     const manifestObject = destinationBucket.get(`${result.backupId}/manifest.json`)!;
+    expect(result.manifestSha256).toBe(sha256Bytes(manifestObject.bytes));
+    expect(JSON.parse(destinationBucket.get("latest.json")!.bytes.toString("utf8")))
+      .toMatchObject({ backupId: result.backupId, manifestSha256: result.manifestSha256 });
     const manifest = JSON.parse(manifestObject.bytes.toString("utf8")) as {
       storageEvidence: {
         reconciliationAttempts: number;

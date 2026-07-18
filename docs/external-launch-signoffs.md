@@ -341,34 +341,60 @@ Stop and mark the item `fail` if an unauthorized venue is visible, a member code
   case "$(realpath "$DATABASE_PATH")" in /app/data/*) ;; *) exit 1 ;; esac
   PROD_BACKUP_RESULT="$(mktemp)"
   npm run --silent data:backup:offsite | tee "$PROD_BACKUP_RESULT"
-  jq -e '.ok == true and (.backupId | type == "string" and length > 0)' "$PROD_BACKUP_RESULT"
+  jq -e '.ok == true
+    and (.backupId | type == "string" and length > 0)
+    and (.manifestSha256 | type == "string" and test("^[a-f0-9]{64}$"))' \
+    "$PROD_BACKUP_RESULT"
   ```
 
-- [ ] Securely transfer only that sanitized JSON result to `$EVIDENCE_DIR/offsite-backup.json`, delete the production temporary file, and record its backup ID, database/object/evidence counts, bytes, tombstones, and pruning result. Never transfer the live database through this step.
-- [ ] On the protected operator host, confirm the repository-locked Supabase CLI was installed by the earlier secret-free `npm ci`. Only then place the independent project's service/secret key in a mode-`600` file, set its 20-character project reference, and download exactly the new immutable prefix. The destination path must not already exist or the experimental CLI can change directory nesting:
+- [ ] Securely transfer only that sanitized JSON result to `$EVIDENCE_DIR/offsite-backup.json`, delete the production temporary file, and record its backup ID, trusted manifest SHA-256, database/object/evidence counts, bytes, tombstones, and pruning result. Never transfer the live database through this step.
+- [ ] In the independent backup project, create a separate temporary secret key for this rehearsal only. Never reuse or revoke the long-lived Railway production backup key. Place the temporary key in a mode-`600` regular, non-symlink file on the protected operator host; never paste it into chat, screenshots, shell history, or evidence.
+- [ ] On the protected operator host, use the repository-installed SDK downloader from the earlier secret-free `npm ci` and download exactly the new immutable prefix. The downloader accepts the temporary key file path rather than secret bytes, rejects an existing destination or unsafe object path, verifies the downloaded manifest before publishing the directory, cleans a partial download on failure, and emits aggregate JSON without object paths:
 
   ```bash
   export BACKUP_ID="$(jq -er '.backupId' "$EVIDENCE_DIR/offsite-backup.json")"
+  export EXPECTED_MANIFEST_SHA256="$(jq -er \
+    '.manifestSha256 | select(test("^[a-f0-9]{64}$"))' \
+    "$EVIDENCE_DIR/offsite-backup.json")"
   export RESTORE_BASE="$EVIDENCE_DIR/backup-restore/$BACKUP_ID"
   export BACKUP_PATH="$RESTORE_BASE/snapshot"
-  export OFFSITE_BACKUP_PROJECT_REF="${OFFSITE_BACKUP_PROJECT_REF:?}"
   export OFFSITE_BACKUP_SECRET_KEY_FILE="${OFFSITE_BACKUP_SECRET_KEY_FILE:?}"
   test ! -e "$BACKUP_PATH"
   install -d -m 700 "$RESTORE_BASE"
+  test -f "$OFFSITE_BACKUP_SECRET_KEY_FILE"
+  test ! -L "$OFFSITE_BACKUP_SECRET_KEY_FILE"
   chmod 600 "$OFFSITE_BACKUP_SECRET_KEY_FILE"
-  test "$(./node_modules/.bin/supabase --version)" = "2.109.1"
-  SUPABASE_PROJECT_ID="$OFFSITE_BACKUP_PROJECT_REF" \
-  SUPABASE_AUTH_SERVICE_ROLE_KEY="$(<"$OFFSITE_BACKUP_SECRET_KEY_FILE")" \
-    ./node_modules/.bin/supabase --experimental \
-    storage cp --linked --recursive --jobs 4 \
-    "ss:///pintpath-backups/$BACKUP_ID" "$BACKUP_PATH" \
-    >/dev/null 2>&1
+
+  OFFSITE_BACKUP_SUPABASE_URL="${OFFSITE_BACKUP_SUPABASE_URL:?}" \
+  OFFSITE_BACKUP_BUCKET="${OFFSITE_BACKUP_BUCKET:-pintpath-backups}" \
+    npm run --silent data:backup:download-offsite -- \
+      --backup-id="$BACKUP_ID" \
+      --expected-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
+      --output="$BACKUP_PATH" \
+      --service-role-key-file="$OFFSITE_BACKUP_SECRET_KEY_FILE" \
+    | tee "$EVIDENCE_DIR/offsite-backup-download.json"
+
+  jq -e --arg backupId "$BACKUP_ID" \
+    --arg manifestSha256 "$EXPECTED_MANIFEST_SHA256" \
+    --arg outputPath "$BACKUP_PATH" \
+    '.ok == true
+     and .backupId == $backupId
+     and .manifestSha256 == $manifestSha256
+     and .outputPath == $outputPath
+     and (.objectCount | type == "number" and . > 0)
+     and (.bytes | type == "number" and . > 0)' \
+    "$EVIDENCE_DIR/offsite-backup-download.json"
   test -f "$BACKUP_PATH/manifest.json"
   ```
 
-- [ ] The pinned Storage command is experimental and preserves bytes/path hierarchy, not trusted MIME metadata or bucket policy. Its progress is deliberately not retained because object paths can contain internal account identifiers; troubleshoot a failure only in the protected operator session. The repository manifest—not CLI output—is the integrity authority. Verify the downloaded snapshot:
+- [ ] The downloader uses the repository-installed Supabase SDK and emits only aggregate JSON—never Storage object paths or secret values. The downloaded `manifest.json`, followed by the independent verification command, remains the integrity authority for path sets, bytes, checksums, MIME metadata, database references, and orphan reporting. Do not retain raw object-level troubleshooting output. Hash and verify the downloaded snapshot:
 
   ```bash
+  shasum -a 256 "$BACKUP_PATH/manifest.json" \
+    | awk '{print $1}' \
+    | tee "$EVIDENCE_DIR/offsite-backup-manifest.sha256"
+  test "$(<"$EVIDENCE_DIR/offsite-backup-manifest.sha256")" = \
+    "$EXPECTED_MANIFEST_SHA256"
   npm run --silent data:backup:verify -- --backup="$BACKUP_PATH" \
     | tee "$EVIDENCE_DIR/offsite-backup-verify.json"
   jq -e '.ok == true' "$EVIDENCE_DIR/offsite-backup-verify.json"
@@ -408,12 +434,12 @@ Stop and mark the item `fail` if an unauthorized venue is visible, a member code
   ```
 
 - [ ] Configure an access-restricted staging app with `DATABASE_PATH=$REHEARSAL_ROOT/pint-path.sqlite` and that separate staging project's Supabase URL/keys. Keep email, billing, report delivery, and other external writes disabled. Verify `/ready`, login, map prices, private image and PDF evidence review, the orphan report, deletion-tombstone counts, and the staging Admin `job:restore_rehearsal` success state. Never point staging at the live volume or production Storage project.
-- [ ] Redownload the staged bucket to a second new directory or use the helper's verified manifest, compare relative-path SHA-256 values, then purge the restored staging project/bucket and local backup material under the approved retention/incident procedure.
+- [ ] Redownload the staged bucket to a second new directory or use the helper's verified manifest, compare relative-path SHA-256 values, then purge the restored staging project/bucket and local backup material under the approved retention/incident procedure. Delete the rehearsal-only temporary independent-project secret key and its local key file; confirm the long-lived Railway production backup key remains active and unchanged.
 - [ ] Record actual backup age/RPO, restore duration/RTO, rollback target, incident owner, escalation path, and two-person approval.
 
 **Pass:** Backup verification and restore rehearsal exit `0`; functional checks pass; deletion safety passes; production data is untouched; actual RPO/RTO are accepted by the incident owner and second verifier.
 
-**Evidence:** Backup ID, sanitized capture/verification/staging JSON, manifest hash, restore result, staging functional sheet and job-state screenshot, purge record, measured RPO/RTO, rollback target, and two-person sign-off. Do not retain the CLI object-path progress stream.
+**Evidence:** Backup ID; sanitized backup-creation, SDK-download, verification, and staging JSON; manifest SHA-256; restore result; staging functional sheet and job-state screenshot; purge record; measured RPO/RTO; rollback target; and two-person sign-off. Do not retain object-path listings or raw object-level debug output.
 
 ## 9. `accessibility_devices`
 

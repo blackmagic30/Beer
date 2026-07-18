@@ -81,6 +81,7 @@ export function createServerSupabaseClient(
     auth: {
       persistSession: false,
       autoRefreshToken: false,
+      detectSessionInUrl: false,
     },
     global: {
       fetch: createBoundedSupabaseFetch(options),

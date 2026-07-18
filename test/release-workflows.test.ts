@@ -301,18 +301,37 @@ describe("release workflow contracts", () => {
     }
   });
 
-  it("locks the credentialed backup CLI before the operator loads a service key", () => {
+  it("uses the repository SDK downloader without credentialed runtime package downloads", () => {
     const packageJson = JSON.parse(repositoryFile("package.json")) as {
+      scripts?: Record<string, string>;
       devDependencies?: Record<string, string>;
     };
     const checklist = releaseDocument("external-launch-signoffs.md");
+    const runbook = releaseDocument("provider-configuration-runbook.md");
+    const downloader = repositoryFile("scripts/download-offsite-backup.ts");
 
-    expect(packageJson.devDependencies?.supabase).toBe("2.109.1");
-    expect(checklist).toContain('test "$(./node_modules/.bin/supabase --version)" = "2.109.1"');
-    expect(checklist).toContain("./node_modules/.bin/supabase --experimental");
-    expect(checklist).not.toContain("npx --yes supabase@");
-    expect(checklist).not.toContain("supabase --experimental --output-format json");
+    expect(packageJson.scripts?.["data:backup:download-offsite"])
+      .toBe("tsx scripts/download-offsite-backup.ts");
+    expect(packageJson.devDependencies?.supabase).toBeUndefined();
+    expect(downloader).not.toContain("dotenv");
+    expect(downloader).not.toContain("OFFSITE_BACKUP_SERVICE_ROLE_KEY");
+
+    for (const document of [checklist, runbook]) {
+      expect(document).toContain("data:backup:download-offsite");
+      expect(document).toContain('--service-role-key-file="$OFFSITE_BACKUP_SECRET_KEY_FILE"');
+      expect(document).toContain('--expected-manifest-sha256="$EXPECTED_MANIFEST_SHA256"');
+      expect(document).not.toContain("./node_modules/.bin/supabase");
+      expect(document).not.toContain("--experimental");
+      expect(document).not.toContain("storage cp");
+      expect(document).not.toContain("SUPABASE_PROJECT_ID");
+      expect(document).not.toContain("SUPABASE_AUTH_SERVICE_ROLE_KEY");
+      expect(document).not.toContain("OFFSITE_BACKUP_PROJECT_REF");
+    }
+
     expect(checklist).toContain('test -f "$BACKUP_PATH/manifest.json"');
+    expect(checklist).toContain("offsite-backup-download.json");
+    expect(checklist).toContain("offsite-backup-manifest.sha256");
+    expect(checklist).toContain(".manifestSha256 == $manifestSha256");
   });
 
   it("keeps smoke bearer tokens out of process arguments", () => {

@@ -30,6 +30,7 @@
     "data:backup:verify": "tsx scripts/verify-data-backup.ts",
     "data:backup:rehearse": "tsx scripts/rehearse-data-restore.ts",
     "data:backup:offsite": "tsx scripts/backup-data-offsite.ts",
+    "data:backup:download-offsite": "tsx scripts/download-offsite-backup.ts",
     "data:backup:stage-evidence": "tsx scripts/stage-restored-source-evidence.ts",
     "test:seed:pintpath": "ALLOW_FAKE_SEED=true tsx scripts/seed-pintpath-fake-data.ts",
     "test:reset:pintpath": "ALLOW_FAKE_SEED=true tsx scripts/reset-pintpath-test-data.ts",
@@ -69,7 +70,6 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^22.20.1",
-    "supabase": "2.109.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.2",
     "vitest": "^4.1.2"
