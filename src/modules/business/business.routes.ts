@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 
 import { AppError } from "../../lib/errors.js";
 import { success } from "../../lib/http.js";
+import { getClientIp, getRateLimitIdentity } from "../../lib/client-ip.js";
 import { getSessionAuthorization, SESSION_COOKIE_NAME } from "../../lib/session-cookie.js";
 import { parseWithSchema } from "../../lib/validation.js";
 import { createRateLimiter } from "../../middleware/rate-limit.js";
@@ -119,7 +120,7 @@ function getOptionalAccount(req: Request, businessService: BusinessService) {
 
 function getRequestContext(req: Request) {
   return {
-    ip: req.ip ?? req.socket.remoteAddress ?? null,
+    ip: getClientIp(req),
     userAgent: req.get("user-agent") ?? null,
   };
 }
@@ -139,8 +140,8 @@ function requireAdmin(req: Request, businessService: BusinessService) {
   return businessService.requireAdmin(getAuthorization(req), getRequestContext(req));
 }
 
-function rateLimitIdentity(req: Request): string {
-  return req.ip ?? req.socket.remoteAddress ?? "unknown-ip";
+function rateLimitIdentity(req: Request): string | null {
+  return getRateLimitIdentity(req);
 }
 
 const priceReadLimiter = createRateLimiter({
@@ -689,7 +690,7 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     const query = parseWithSchema(priceRecordsQuerySchema, req.query, "Invalid price records query");
     res.json(success(businessService.listPriceRecords(account, {
       ...query,
-      clientIp: req.ip,
+      clientIp: getClientIp(req) ?? undefined,
     })));
   });
 

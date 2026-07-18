@@ -5,13 +5,14 @@ import { Redis } from "ioredis";
 
 import { env } from "../config/env.js";
 import { AppError } from "../lib/errors.js";
+import { getRateLimitIdentity } from "../lib/client-ip.js";
 import { logger } from "../lib/logger.js";
 
 type RateLimiterOptions = {
   windowMs: number;
   max: number;
   keyPrefix: string;
-  keyGenerator?: (req: Request) => string;
+  keyGenerator?: (req: Request) => string | null;
 };
 
 type Bucket = {
@@ -37,6 +38,11 @@ if ttl < 0 then
 end
 return { count, ttl }
 `;
+
+function isRedisRateLimitingRequired(): boolean {
+  return env.REQUIRE_REDIS_RATE_LIMITING
+    || (env.NODE_ENV === "production" && !env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION);
+}
 
 export type RedisReadiness = {
   status: "ok" | "failed" | "required_unconfigured" | "optional_unconfigured";
@@ -182,7 +188,7 @@ async function withRedisTimeout<T>(operation: Promise<T>, timeoutMs = REDIS_CONN
 }
 
 export async function probeRateLimitRedis(): Promise<RedisReadiness> {
-  const required = env.NODE_ENV === "production" && !env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION;
+  const required = isRedisRateLimitingRequired();
   if (!env.REDIS_URL) {
     return {
       status: required ? "required_unconfigured" : "optional_unconfigured",
@@ -289,12 +295,17 @@ function incrementMemoryBucket(key: string, windowMs: number, now: number): Buck
 export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
   return async (req, res, next) => {
     const now = Date.now();
-    const rawIdentity = options.keyGenerator?.(req) ?? req.ip ?? req.socket.remoteAddress ?? "unknown";
+    const rawIdentity = options.keyGenerator ? options.keyGenerator(req) : getRateLimitIdentity(req);
+    if (!rawIdentity) {
+      next(new AppError("Rate limiter could not verify the client identity. Please try again shortly.", 503));
+      return;
+    }
     const key = `${options.keyPrefix}:${hashKey(rawIdentity)}`;
     let bucket: Bucket;
+    const redisRequired = isRedisRateLimitingRequired();
 
     try {
-      if (env.NODE_ENV === "production" && !env.REDIS_URL && !env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
+      if (redisRequired && !env.REDIS_URL) {
         next(new AppError("Rate limiter unavailable. Please try again shortly.", 503));
         return;
       }
@@ -307,7 +318,7 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
         ?? incrementMemoryBucket(key, options.windowMs, now);
     } catch (error) {
       logRedisFailure(error);
-      if (env.NODE_ENV === "production" && !env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION) {
+      if (redisRequired) {
         next(new AppError("Rate limiter unavailable. Please try again shortly.", 503));
         return;
       }
@@ -319,7 +330,7 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
     res.setHeader("RateLimit-Limit", String(options.max));
     res.setHeader("RateLimit-Remaining", String(Math.max(0, options.max - bucket.count)));
     res.setHeader("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
-    if (env.NODE_ENV === "production" && (!env.REDIS_URL || env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION)) {
+    if (env.NODE_ENV === "production" && !redisRequired) {
       res.setHeader("RateLimit-Policy", env.REDIS_URL ? "redis-with-memory-fallback" : "memory-fallback");
     }
 

@@ -14,6 +14,7 @@ const redisMockState = vi.hoisted(() => ({
   }>,
   connectError: undefined as Error | undefined,
   evalNeverResolves: false,
+  counters: new Map<string, number>(),
 }));
 
 vi.mock("ioredis", () => {
@@ -37,7 +38,11 @@ vi.mock("ioredis", () => {
       }
     });
 
-    incr = vi.fn(async () => 1);
+    incr = vi.fn(async (key: string) => {
+      const count = (redisMockState.counters.get(key) ?? 0) + 1;
+      redisMockState.counters.set(key, count);
+      return count;
+    });
     pexpire = vi.fn(async () => 1);
     pttl = vi.fn(async () => 60_000);
     eval = vi.fn(async (script: string, _keyCount: number, key: string, windowMs: number) => {
@@ -113,7 +118,11 @@ function stubProductionEnv(overrides: Record<string, string> = {}) {
     POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
     DEMO_BILLING_MODE: "false",
     REDIS_URL: "redis://default:password@redis.railway.internal:6379",
+    REQUIRE_REDIS_RATE_LIMITING: "false",
     ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "false",
+    RAILWAY_ENVIRONMENT_ID: "",
+    RAILWAY_ENVIRONMENT_NAME: "",
+    RAILWAY_REPLICA_ID: "",
     ...overrides,
   };
 
@@ -127,14 +136,20 @@ async function loadRateLimiter() {
   return import("../src/middleware/rate-limit.js");
 }
 
-async function runLimiter(limiter: ReturnType<typeof import("../src/middleware/rate-limit.js").createRateLimiter>) {
+async function runLimiter(
+  limiter: ReturnType<typeof import("../src/middleware/rate-limit.js").createRateLimiter>,
+  request: { ip?: string; remoteAddress?: string; realIp?: string } = {},
+) {
   const headers = new Map<string, string>();
 
   const error = await new Promise<unknown>((resolve) => {
     limiter(
       {
-        ip: "203.0.113.10",
-        socket: { remoteAddress: "203.0.113.10" },
+        ip: request.ip ?? "203.0.113.10",
+        socket: { remoteAddress: request.remoteAddress ?? "203.0.113.10" },
+        get(name: string) {
+          return name.toLowerCase() === "x-real-ip" ? request.realIp : undefined;
+        },
       } as never,
       {
         setHeader(name: string, value: string) {
@@ -155,6 +170,7 @@ describe("Redis-backed rate limiting", () => {
     redisMockState.instances.length = 0;
     redisMockState.connectError = undefined;
     redisMockState.evalNeverResolves = false;
+    redisMockState.counters.clear();
   });
 
   it("connects the lazy Redis client before writing rate-limit keys", async () => {
@@ -245,6 +261,63 @@ describe("Redis-backed rate limiting", () => {
     expect(redis.pexpire).toHaveBeenCalledWith(expect.stringMatching(/^business:repair:/), 60_000);
   });
 
+  it("shares one Railway client bucket across changing proxy hops and limiter instances", async () => {
+    stubProductionEnv({ RAILWAY_REPLICA_ID: "replica-a" });
+    const firstModule = await loadRateLimiter();
+    const limiterA = firstModule.createRateLimiter({
+      keyPrefix: "business:multi-replica",
+      windowMs: 60_000,
+      max: 2,
+    });
+    const secondModule = await loadRateLimiter();
+    const limiterB = secondModule.createRateLimiter({
+      keyPrefix: "business:multi-replica",
+      windowMs: 60_000,
+      max: 2,
+    });
+
+    const first = await runLimiter(limiterA, {
+      realIp: "198.51.100.77",
+      ip: "100.64.0.11",
+      remoteAddress: "100.64.0.21",
+    });
+    const second = await runLimiter(limiterB, {
+      realIp: "198.51.100.77",
+      ip: "100.64.0.12",
+      remoteAddress: "100.64.0.22",
+    });
+    const third = await runLimiter(limiterA, {
+      realIp: "198.51.100.77",
+      ip: "100.64.0.13",
+      remoteAddress: "100.64.0.23",
+    });
+
+    expect(first.error).toBeUndefined();
+    expect(second.error).toBeUndefined();
+    expect(third.error).toEqual(expect.objectContaining({ statusCode: 429 }));
+    expect(third.headers.get("RateLimit-Remaining")).toBe("0");
+    expect(redisMockState.instances).toHaveLength(2);
+    expect([...redisMockState.counters.values()]).toEqual([3]);
+  });
+
+  it("fails closed before Redis when Railway does not supply one valid client IP", async () => {
+    stubProductionEnv({ RAILWAY_REPLICA_ID: "replica-a" });
+    const { createRateLimiter } = await loadRateLimiter();
+    const limiter = createRateLimiter({ keyPrefix: "business:identity", windowMs: 60_000, max: 2 });
+
+    const missing = await runLimiter(limiter, { ip: "100.64.0.11", remoteAddress: "100.64.0.21" });
+    const malformed = await runLimiter(limiter, {
+      realIp: "198.51.100.77, 100.64.0.1",
+      ip: "100.64.0.12",
+      remoteAddress: "100.64.0.22",
+    });
+
+    expect(missing.error).toEqual(expect.objectContaining({ statusCode: 503 }));
+    expect(malformed.error).toEqual(expect.objectContaining({ statusCode: 503 }));
+    expect(redisMockState.instances).toHaveLength(0);
+    expect(redisMockState.counters.size).toBe(0);
+  });
+
   it("probes Redis once per readiness cache window and closes the lazy client on shutdown", async () => {
     stubProductionEnv();
 
@@ -297,5 +370,63 @@ describe("Redis-backed rate limiting", () => {
       ready: false,
     });
     expect(redisMockState.instances).toHaveLength(0);
+  });
+
+  it("can require fail-closed Redis limiting in a non-production staging runtime", async () => {
+    stubProductionEnv({
+      NODE_ENV: "development",
+      REDIS_URL: "",
+      REQUIRE_REDIS_RATE_LIMITING: "true",
+    });
+
+    const { createRateLimiter, probeRateLimitRedis } = await loadRateLimiter();
+    const limiter = createRateLimiter({ keyPrefix: "staging:required", windowMs: 60_000, max: 2 });
+
+    await expect(probeRateLimitRedis()).resolves.toEqual({
+      status: "required_unconfigured",
+      configured: false,
+      required: true,
+      ready: false,
+    });
+    await expect(runLimiter(limiter)).resolves.toEqual(expect.objectContaining({
+      error: expect.objectContaining({ statusCode: 503 }),
+    }));
+  });
+
+  it("reports and enforces an unreachable required Redis dependency in staging", async () => {
+    stubProductionEnv({
+      NODE_ENV: "development",
+      REQUIRE_REDIS_RATE_LIMITING: "true",
+    });
+    redisMockState.connectError = Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" });
+
+    const { createRateLimiter, probeRateLimitRedis } = await loadRateLimiter();
+    const limiter = createRateLimiter({ keyPrefix: "staging:unreachable", windowMs: 60_000, max: 2 });
+
+    await expect(probeRateLimitRedis()).resolves.toEqual({
+      status: "failed",
+      configured: true,
+      required: true,
+      ready: false,
+      error: "ECONNREFUSED",
+    });
+    await expect(runLimiter(limiter)).resolves.toEqual(expect.objectContaining({
+      error: expect.objectContaining({ statusCode: 503 }),
+    }));
+  });
+
+  it("does not let the production memory override weaken an explicit Redis requirement", async () => {
+    stubProductionEnv({
+      REQUIRE_REDIS_RATE_LIMITING: "true",
+      ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "true",
+    });
+    redisMockState.connectError = Object.assign(new Error("connect failed"), { code: "ECONNREFUSED" });
+
+    const { createRateLimiter } = await loadRateLimiter();
+    const limiter = createRateLimiter({ keyPrefix: "production:required", windowMs: 60_000, max: 2 });
+
+    await expect(runLimiter(limiter)).resolves.toEqual(expect.objectContaining({
+      error: expect.objectContaining({ statusCode: 503 }),
+    }));
   });
 });

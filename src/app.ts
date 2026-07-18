@@ -9,6 +9,7 @@ import type { Request, RequestHandler, Response } from "express";
 import { env } from "./config/env.js";
 import { PREMIUM_PRICING } from "./config/business-rules.js";
 import { AppError } from "./lib/errors.js";
+import { getRateLimitIdentity } from "./lib/client-ip.js";
 import { success } from "./lib/http.js";
 import { logger } from "./lib/logger.js";
 import { redactSecrets } from "./lib/redact.js";
@@ -685,7 +686,7 @@ export function createApp() {
     windowMs: 10 * 60 * 1000,
     max: 12,
     keyPrefix: "preparse:large-json",
-    keyGenerator: (req) => req.ip ?? req.socket.remoteAddress ?? "unknown",
+    keyGenerator: getRateLimitIdentity,
   });
   app.use((req, res, next) => {
     if (!acceptsLargeJsonPayload(req)) {

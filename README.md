@@ -210,6 +210,8 @@ HOST=0.0.0.0
 PORT=8080
 PUBLIC_BASE_URL=https://pintpath.au
 DATABASE_PATH=/app/data/pint-path.sqlite
+# Keep at one on Railway for forwarded scheme/host handling. Client security
+# identity uses Railway's platform-provided X-Real-IP, not proxy hop count.
 TRUST_PROXY_HOPS=1
 SUPABASE_URL=https://your-production-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_publishable_or_legacy_anon_key
@@ -249,6 +251,7 @@ REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
 REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
 REDIS_URL=redis://default:replace_me@host:6379
+REQUIRE_REDIS_RATE_LIMITING=false
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
 SOURCE_EVIDENCE_STORAGE_DIR=/app/data/source-evidence
@@ -340,6 +343,7 @@ REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
 REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
 REDIS_URL=
+REQUIRE_REDIS_RATE_LIMITING=false
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 DEMO_BILLING_MODE=true
 ALLOW_DEMO_BILLING_IN_PRODUCTION=false
@@ -397,6 +401,7 @@ What each one does:
 - `REPORT_DELIVERY_DAY` / `REPORT_DELIVERY_HOUR`: Melbourne-local monthly delivery threshold, defaulting to day 2 at 09:00. The previous completed month is sent once and missed windows catch up later.
 - `REPORT_DELIVERY_CHECK_INTERVAL_MINUTES`: due-check interval, default `60`. Completed monthly state short-circuits before report regeneration.
 - `REDIS_URL`: Redis connection URL for production/distributed rate limiting. Configure this for Railway/production before exposing auth, uploads, price access, feedback, or checkout publicly.
+- `REQUIRE_REDIS_RATE_LIMITING`: hosted-staging fail-closed switch. Set it to `true` for the two-replica Redis outage drill; production already requires Redis whenever the emergency memory override is false.
 - `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION`: emergency fallback for a single-instance controlled beta only. Defaults to `false`; leave it false for full-scale production so protected routes fail closed if Redis is missing or unavailable.
 - `DEMO_BILLING_MODE`: when `true`, checkout can simulate a premium subscription without Stripe. Keep this `false` for normal production, where all five Stripe values are startup requirements. A production-hosted private demo must also set `ALLOW_DEMO_BILLING_IN_PRODUCTION=true` and clearly label billing as simulated.
 - `ALLOW_DEMO_BILLING_IN_PRODUCTION`: emergency override that allows demo billing in production. Leave `false` unless you are intentionally running a demo environment.

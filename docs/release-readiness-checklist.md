@@ -104,7 +104,7 @@ These are launch-critical but require provider/staging verification:
 - **Google Maps Map ID:** Create a JavaScript/vector Map ID in Google Maps Platform, set `GOOGLE_MAPS_MAP_ID`, and verify AdvancedMarkerElement markers render on staging.
 - **Stripe:** Test-mode signed webhooks must first prove verification, duplicate-event idempotency, subscription updates, cancellations, and failed invoices. Before public paid entry points open, complete the controlled smallest-value live checkout/webhook/portal/cancel/refund reconciliation in [`external-launch-signoffs.md`](external-launch-signoffs.md#10-legal_billing); test mode alone is not live-provider evidence.
 - **Report email:** The Resend adapter and monthly scheduler are implemented but opt-in. Do not announce live delivery until the sending domain/key/from address are configured, a targeted staging email proves manager-only recipient scoping, and Railway records a successful `job:monthly_report_delivery` state.
-- **Redis rate limiting:** Full-scale production should use `REDIS_URL`; in-memory fallback is acceptable only for controlled beta/preview.
+- **Redis rate limiting:** Full-scale production should use `REDIS_URL`; in-memory fallback is acceptable only for controlled beta/preview. Set `REQUIRE_REDIS_RATE_LIMITING=true` for the isolated two-replica staging outage drill so protected traffic and readiness fail closed when staging Redis is unavailable.
 - **DAST/mobile E2E:** Do not run dynamic scanners against production. Run any ZAP/Lighthouse/Playwright mobile pass only against local, preview, or staging.
 - **Backups/restore:** Run and document a provider-level restore drill before full-scale launch.
 

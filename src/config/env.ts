@@ -153,6 +153,7 @@ const envSchema = z.object({
   REPORT_DELIVERY_HOUR: z.coerce.number().int().min(0).max(23).default(9),
   REPORT_DELIVERY_CHECK_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   REDIS_URL: optionalStringFromEnv,
+  REQUIRE_REDIS_RATE_LIMITING: booleanFromEnv.default(false),
   ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(false),
   DEMO_BILLING_MODE: demoBillingModeFromEnv,
   ALLOW_DEMO_BILLING_IN_PRODUCTION: booleanFromEnv.default(false),

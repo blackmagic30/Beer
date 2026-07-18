@@ -57,6 +57,8 @@ HOST=0.0.0.0
 PORT=8080
 PUBLIC_BASE_URL=https://pintpath.au
 DATABASE_PATH=/app/data/pint-path.sqlite
+# Keep at one on Railway for forwarded scheme/host handling. Client security
+# identity uses Railway's platform-provided X-Real-IP, not proxy hop count.
 TRUST_PROXY_HOPS=1
 GOOGLE_MAPS_API_KEY=restricted_browser_key
 GOOGLE_MAPS_MAP_ID=javascript_vector_map_id
@@ -79,6 +81,7 @@ REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
 REPORT_DELIVERY_CHECK_INTERVAL_MINUTES=60
 REDIS_URL=redis://default:replace_me@host:6379
+REQUIRE_REDIS_RATE_LIMITING=false
 ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=false
 SOURCE_EVIDENCE_SIGNING_SECRET=replace_with_32_plus_random_characters
 SOURCE_EVIDENCE_SIGNED_URL_TTL_SECONDS=300
@@ -215,6 +218,7 @@ Full-scale production should set `REDIS_URL`. The in-memory limiter is acceptabl
 Before public launch:
 
 - Confirm protected auth/upload/feedback/checkout endpoints rate limit through Redis.
+- In isolated two-replica staging, set `REQUIRE_REDIS_RATE_LIMITING=true` and verify `/ready` reports `rateLimiterRedis.required=true`. Interrupt only staging Redis and prove readiness plus protected traffic fail closed with `503`, then restore the exact staging Redis reference and confirm recovery.
 - Confirm production is not using `ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION=true`.
 
 ## Backups And Restore Drills

@@ -19,6 +19,7 @@ const productionRequiredEnv = {
   OFFSITE_BACKUP_SUPABASE_URL: "https://independent-backup-project.supabase.co",
   OFFSITE_BACKUP_SERVICE_ROLE_KEY: "test-independent-service-role",
   REDIS_URL: "redis://localhost:6379",
+  REQUIRE_REDIS_RATE_LIMITING: "false",
   DEMO_BILLING_MODE: "",
   ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
   STRIPE_SECRET_KEY: "test-fixture-not-a-real-stripe-key",
@@ -154,6 +155,7 @@ describe("environment safety defaults", () => {
 
     expect(env.NODE_ENV).toBe("production");
     expect(env.REDIS_URL).toBeUndefined();
+    expect(env.REQUIRE_REDIS_RATE_LIMITING).toBe(false);
     expect(env.ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION).toBe(false);
   });
 
