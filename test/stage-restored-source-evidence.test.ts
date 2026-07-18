@@ -26,6 +26,7 @@ class FakeStagingStorage {
   readonly uploads: Array<{ path: string; contentType: string; upsert: boolean }> = [];
   isPublic = false;
   downloadContentTypeOverride: string | null = null;
+  onGetBucket: (() => void) | null = null;
 
   client(): SupabaseClient {
     const storage = this;
@@ -35,6 +36,7 @@ class FakeStagingStorage {
           if (name !== "beermap-source-evidence") {
             return { data: null, error: new Error(`Unknown bucket: ${name}`) };
           }
+          storage.onGetBucket?.();
           return {
             data: { id: name, name, public: storage.isPublic },
             error: null,
@@ -130,13 +132,17 @@ const independentOrigins = {
   offsiteBackupSupabaseUrl: "https://offsite.supabase.co",
 };
 
-async function makeFixture(options: { referenced?: boolean } = {}): Promise<StagingFixture> {
+async function makeFixture(options: {
+  referenced?: boolean;
+  files?: FixtureFile[];
+  storagePath?: string;
+} = {}): Promise<StagingFixture> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-stage-evidence-test-"));
   temporaryRoots.push(root);
   const liveDatabasePath = path.join(root, "live.sqlite");
   const backupPath = path.join(root, "backup");
   const restorePath = path.join(root, "restore");
-  const files: FixtureFile[] = [
+  const files: FixtureFile[] = options.files ?? [
     { path: "owner/menu.pdf", bytes: Buffer.from("%PDF-restored-menu"), contentType: "application/pdf" },
     { path: "orphan/photo.jpg", bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), contentType: "image/jpeg" },
   ];
@@ -173,6 +179,7 @@ async function makeFixture(options: { referenced?: boolean } = {}): Promise<Stag
     backupRoot: backupPath,
   });
   const backupStorageRoot = path.join(backupPath, "supabase-source-evidence");
+  fs.mkdirSync(backupStorageRoot, { recursive: true });
   for (const file of files) {
     const destination = path.join(backupStorageRoot, ...file.path.split("/"));
     fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -184,7 +191,7 @@ async function makeFixture(options: { referenced?: boolean } = {}): Promise<Stag
     storageEvidence: {
       provider: "supabase",
       bucket: "beermap-source-evidence",
-      path: "supabase-source-evidence",
+      path: options.storagePath ?? "supabase-source-evidence",
       fileCount: backupFiles.length,
       bytes: backupFiles.reduce((total, file) => total + file.bytes, 0),
       files: backupFiles.map((file) => ({
@@ -211,6 +218,117 @@ afterEach(() => {
 });
 
 describe("staging restored Supabase source evidence", () => {
+  it("accepts an authenticated empty Storage restore without materialising its local directory", async () => {
+    const fixture = await makeFixture({ files: [] });
+    fs.rmSync(path.join(fixture.restorePath, "supabase-source-evidence"), {
+      recursive: true,
+      force: true,
+    });
+    const staging = new FakeStagingStorage();
+
+    const result = await stageRestoredSourceEvidence({
+      backupPath: fixture.backupPath,
+      restorePath: fixture.restorePath,
+      stagingSupabaseUrl: "https://staging.supabase.co",
+      stagingServiceRoleKey: "staging-secret-key",
+      ...independentOrigins,
+      clientFactory: () => staging.client(),
+    });
+
+    expect(result).toMatchObject({
+      bucket: "beermap-source-evidence",
+      objectCount: 0,
+      bytes: 0,
+    });
+    expect(result.objectSetSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(staging.uploads).toEqual([]);
+    expect(staging.objects.size).toBe(0);
+  });
+
+  it("keeps empty Storage restores fail-closed for remote and local state", async () => {
+    const fixture = await makeFixture({ files: [] });
+    const storageRoot = path.join(fixture.restorePath, "supabase-source-evidence");
+    fs.rmSync(storageRoot, { recursive: true, force: true });
+    const base = {
+      backupPath: fixture.backupPath,
+      restorePath: fixture.restorePath,
+      stagingSupabaseUrl: "https://staging.supabase.co",
+      stagingServiceRoleKey: "staging-secret-key",
+      ...independentOrigins,
+    };
+
+    const publicStaging = new FakeStagingStorage();
+    publicStaging.isPublic = true;
+    await expect(stageRestoredSourceEvidence({
+      ...base,
+      clientFactory: () => publicStaging.client(),
+    })).rejects.toThrow("must be private");
+
+    const occupiedStaging = new FakeStagingStorage();
+    occupiedStaging.objects.set("already/here.pdf", {
+      bytes: Buffer.from("occupied"),
+      contentType: "application/pdf",
+    });
+    await expect(stageRestoredSourceEvidence({
+      ...base,
+      clientFactory: () => occupiedStaging.client(),
+    })).rejects.toThrow("must be empty");
+
+    fs.writeFileSync(storageRoot, "not a directory");
+    await expect(stageRestoredSourceEvidence({
+      ...base,
+      clientFactory: () => new FakeStagingStorage().client(),
+    })).rejects.toThrow("directory is missing or unsafe");
+    fs.rmSync(storageRoot);
+
+    fs.symlinkSync(fixture.root, storageRoot, "dir");
+    await expect(stageRestoredSourceEvidence({
+      ...base,
+      clientFactory: () => new FakeStagingStorage().client(),
+    })).rejects.toThrow("directory is missing or unsafe");
+    fs.rmSync(storageRoot);
+
+    const lateLocalFile = new FakeStagingStorage();
+    lateLocalFile.onGetBucket = () => {
+      fs.mkdirSync(storageRoot, { recursive: true });
+      fs.writeFileSync(path.join(storageRoot, "unlisted.txt"), "unexpected");
+    };
+    await expect(stageRestoredSourceEvidence({
+      ...base,
+      clientFactory: () => lateLocalFile.client(),
+    })).rejects.toThrow("unmanifested or deleted object");
+  });
+
+  it("rejects a noncanonical Storage manifest path even when the object set is empty", async () => {
+    const fixture = await makeFixture({ files: [], storagePath: "other-storage-root" });
+
+    await expect(stageRestoredSourceEvidence({
+      backupPath: fixture.backupPath,
+      restorePath: fixture.restorePath,
+      stagingSupabaseUrl: "https://staging.supabase.co",
+      stagingServiceRoleKey: "staging-secret-key",
+      ...independentOrigins,
+      clientFactory: () => new FakeStagingStorage().client(),
+    })).rejects.toThrow("backup Storage path is not supabase-source-evidence");
+  });
+
+  it("rejects a missing restored directory when the verified manifest expects objects", async () => {
+    const fixture = await makeFixture();
+    fs.rmSync(path.join(fixture.restorePath, "supabase-source-evidence"), {
+      recursive: true,
+      force: true,
+    });
+
+    await expect(stageRestoredSourceEvidence({
+      backupPath: fixture.backupPath,
+      restorePath: fixture.restorePath,
+      stagingSupabaseUrl: "https://staging.supabase.co",
+      stagingServiceRoleKey: "staging-secret-key",
+      ...independentOrigins,
+      clientFactory: () => new FakeStagingStorage().client(),
+    })).rejects.toThrow("directory is missing or unsafe");
+  });
+
   it("uploads exact paths without upsert and redownload-verifies bytes and manifest MIME types", async () => {
     const fixture = await makeFixture();
     const staging = new FakeStagingStorage();

@@ -104,9 +104,22 @@ function resolveContainedObjectPath(root: string, objectPath: string): string {
   return resolved;
 }
 
-async function collectLocalStorageFiles(root: string): Promise<LocalStorageFile[]> {
-  const rootStat = await fs.promises.lstat(root).catch(() => null);
-  if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) {
+async function collectLocalStorageFiles(
+  root: string,
+  options: { allowMissing?: boolean } = {},
+): Promise<LocalStorageFile[]> {
+  let rootStat: fs.Stats | null;
+  try {
+    rootStat = await fs.promises.lstat(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    rootStat = null;
+  }
+  if (!rootStat) {
+    if (options.allowMissing) return [];
+    throw new Error(`Restored Storage evidence directory is missing or unsafe: ${root}`);
+  }
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
     throw new Error(`Restored Storage evidence directory is missing or unsafe: ${root}`);
   }
 
@@ -307,6 +320,9 @@ export async function stageRestoredSourceEvidence(
   if (manifest.storageEvidence.bucket !== STAGING_EVIDENCE_BUCKET) {
     throw new Error(`The backup Storage bucket is not ${STAGING_EVIDENCE_BUCKET}.`);
   }
+  if (manifest.storageEvidence.path !== RESTORED_STORAGE_DIRECTORY) {
+    throw new Error(`The backup Storage path is not ${RESTORED_STORAGE_DIRECTORY}.`);
+  }
 
   const storageRoot = path.join(restoreRoot, RESTORED_STORAGE_DIRECTORY);
   const databasePath = path.join(restoreRoot, RESTORED_DATABASE_FILENAME);
@@ -318,7 +334,9 @@ export async function stageRestoredSourceEvidence(
     manifestFiles: manifest.storageEvidence.files,
     references: readRestoredStorageReferences(databasePath),
   });
-  const localFiles = assertLocalFilesMatch(await collectLocalStorageFiles(storageRoot), expectedFiles);
+  const localFiles = assertLocalFilesMatch(await collectLocalStorageFiles(storageRoot, {
+    allowMissing: expectedFiles.length === 0,
+  }), expectedFiles);
   const uploadedPaths: string[] = [];
   let client: SupabaseClient | null = null;
 
@@ -371,7 +389,9 @@ export async function stageRestoredSourceEvidence(
     }
 
     const finalLocalFiles = assertLocalFilesMatch(
-      await collectLocalStorageFiles(storageRoot),
+      await collectLocalStorageFiles(storageRoot, {
+        allowMissing: expectedFiles.length === 0,
+      }),
       expectedFiles,
     );
     return {
