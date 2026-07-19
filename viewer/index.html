@@ -61,6 +61,7 @@
       --accent-electric-blue: #38bdf8;
       --accent-neon-cyan: #22d3ee;
       --accent-violet: #8b5cf6;
+      --accent-violet-text-surface: #9b76f9;
       --accent-magenta: #d946ef;
       --accent-gold: #f5c542;
       --accent-lime: #a3e635;
@@ -70,7 +71,7 @@
       --panel-muted: var(--text-muted);
       --panel-text: var(--text-primary);
       --chip-bg: rgba(21, 31, 52, 0.82);
-      --chip-active-bg: linear-gradient(135deg, var(--accent-electric-blue) 0%, var(--accent-neon-cyan) 44%, var(--accent-violet) 100%);
+      --chip-active-bg: linear-gradient(135deg, var(--accent-electric-blue) 0%, var(--accent-neon-cyan) 44%, var(--accent-violet-text-surface) 100%);
       --chip-active-text: #06101f;
       --accent: var(--accent-neon-cyan);
       --accent-soft: rgba(34, 211, 238, 0.16);
@@ -1608,7 +1609,7 @@
 
     .wrongPriceDialog .button--primary {
       border-color: transparent;
-      background: linear-gradient(135deg, #38bdf8, #22d3ee 48%, #8b5cf6);
+      background: linear-gradient(135deg, #38bdf8, #22d3ee 48%, var(--accent-violet-text-surface));
       color: #06101f;
     }
 
@@ -2157,7 +2158,7 @@
       --panel-muted: #94a3b8;
       --panel-text: #f8fafc;
       --chip-bg: rgba(21, 31, 52, 0.66);
-      --chip-active-bg: linear-gradient(135deg, #38bdf8 0%, #22d3ee 45%, #8b5cf6 100%);
+      --chip-active-bg: linear-gradient(135deg, #38bdf8 0%, #22d3ee 45%, var(--accent-violet-text-surface) 100%);
       --chip-active-text: #06101f;
       --accent: #22d3ee;
       --accent-soft: rgba(34, 211, 238, 0.12);
@@ -2926,7 +2927,7 @@
     .beerPopup__button--primary {
       color: #06101f;
       border-color: transparent;
-      background: linear-gradient(135deg, #38bdf8, #22d3ee, #8b5cf6);
+      background: linear-gradient(135deg, #38bdf8, #22d3ee, var(--accent-violet-text-surface));
       box-shadow: 0 16px 28px rgba(34, 211, 238, 0.12);
     }
 

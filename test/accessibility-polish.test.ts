@@ -7,6 +7,20 @@ function readFile(filePath: string): string {
   return fs.readFileSync(path.resolve(process.cwd(), filePath), "utf8");
 }
 
+function relativeLuminance(hex: string): number {
+  const channels = hex.match(/[\da-f]{2}/gi)?.map((value) => Number.parseInt(value, 16) / 255) ?? [];
+  const [red = 0, green = 0, blue = 0] = channels.map((value) =>
+    value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4,
+  );
+  return (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
+}
+
+function contrastRatio(first: string, second: string): number {
+  const lighter = Math.max(relativeLuminance(first), relativeLuminance(second));
+  const darker = Math.min(relativeLuminance(first), relativeLuminance(second));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 describe("website accessibility polish", () => {
   it("installs shared keyboard and announcement helpers", () => {
     const script = readFile("viewer/business.js");
@@ -73,5 +87,26 @@ describe("website accessibility polish", () => {
     expect(adminHtml).toContain('adminGoogleVenueStatus.textContent = error.message || "Google venue search failed."');
     expect(adminHtml).toContain('has been selected for beer capture.`');
     expect(adminHtml).toContain('details loaded. Check the fields, then create the venue.`');
+  });
+
+  it("keeps dark text on violet gradient endpoints above a safe contrast margin", () => {
+    const css = readFile("viewer/business.css");
+    const mapHtml = readFile("viewer/index.html");
+    const appSource = readFile("src/app.ts");
+    const readableViolet = "#9b76f9";
+
+    for (const foreground of ["#03101d", "#06101f", "#07111f"]) {
+      expect(contrastRatio(readableViolet, foreground)).toBeGreaterThanOrEqual(5.5);
+    }
+    expect(css).toContain("--accent-violet: #8b5cf6;");
+    expect(css).toContain("--accent-violet-text-surface: #9b76f9;");
+    expect(css).toContain("var(--accent-violet-text-surface) 100%");
+    expect(css).toContain("linear-gradient(135deg, #67e8f9, var(--accent-violet-text-surface))");
+    expect(css).toContain("linear-gradient(135deg, #22d3ee, var(--accent-violet-text-surface))");
+    expect(mapHtml).toContain("--accent-violet: #8b5cf6;");
+    expect(mapHtml).toContain("--accent-violet-text-surface: #9b76f9;");
+    expect(mapHtml).toContain("#22d3ee 48%, var(--accent-violet-text-surface)");
+    expect(mapHtml).toContain("#22d3ee, var(--accent-violet-text-surface)");
+    expect(appSource).toContain("linear-gradient(135deg, #38bdf8, #22d3ee, #9b76f9)");
   });
 });

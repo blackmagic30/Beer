@@ -588,7 +588,7 @@ function renderPublicVenuePage(
     .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
     a { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; padding: 12px 16px; color: var(--text); text-decoration: none; font-weight: 950; }
     a:focus-visible { outline: 3px solid rgba(56,189,248,.82); outline-offset: 3px; }
-    .primary { color: #06101f; background: linear-gradient(135deg, #38bdf8, #22d3ee, #8b5cf6); }
+    .primary { color: #06101f; background: linear-gradient(135deg, #38bdf8, #22d3ee, #9b76f9); }
     .secondary { border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); }
     .note { font-size: 13px; color: #94a3b8; }
     .siteFooter { border-top: 1px solid rgba(255,255,255,.1); padding-top: 12px; }

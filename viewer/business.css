@@ -15,6 +15,7 @@
   --accent-electric-blue: #38bdf8;
   --accent-neon-cyan: #22d3ee;
   --accent-violet: #8b5cf6;
+  --accent-violet-text-surface: #9b76f9;
   --accent-magenta: #d946ef;
   --accent-gold: #f5c542;
   --accent-lime: #a3e635;
@@ -286,7 +287,7 @@ a {
 .navLinks a.pill,
 .button--primary {
   border-color: transparent;
-  background: linear-gradient(135deg, var(--accent-electric-blue) 0%, var(--accent-neon-cyan) 42%, var(--accent-violet) 100%);
+  background: linear-gradient(135deg, var(--accent-electric-blue) 0%, var(--accent-neon-cyan) 42%, var(--accent-violet-text-surface) 100%);
   color: #03101d;
   box-shadow: 0 18px 38px rgba(34, 211, 238, 0.18);
 }
@@ -4480,7 +4481,7 @@ button.adminFocusRail__item:focus-visible {
 
 .premiumPlanSwitcher button.is-active {
   color: #06111f;
-  background: linear-gradient(135deg, #67e8f9, #8b5cf6);
+  background: linear-gradient(135deg, #67e8f9, var(--accent-violet-text-surface));
   box-shadow: 0 12px 28px rgba(34, 211, 238, 0.14);
 }
 
@@ -5388,7 +5389,7 @@ button.adminFocusRail__item:focus-visible {
 
 .venueDemandTab.is-active {
   color: #06111f;
-  background: linear-gradient(135deg, #67e8f9, #8b5cf6);
+  background: linear-gradient(135deg, #67e8f9, var(--accent-violet-text-surface));
   box-shadow: 0 12px 32px rgba(34, 211, 238, 0.16);
 }
 
@@ -8442,7 +8443,7 @@ body.discountPassModalOpen {
   height: 34px;
   border: 2px solid rgba(255, 255, 255, 0.82);
   border-radius: 999px;
-  background: linear-gradient(135deg, #22d3ee, #8b5cf6);
+  background: linear-gradient(135deg, #22d3ee, var(--accent-violet-text-surface));
   color: #07111f;
   font-size: 0.78rem;
   font-weight: 950;
