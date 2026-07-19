@@ -4,6 +4,9 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 
 import { initializeDatabaseSchema } from "../src/db/database.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
+
+assertOperatorMutationAllowed("Synthetic Pint Path data reset");
 
 const TEST_PREFIX = "pintpath-release";
 const DEFAULT_DATABASE_PATH = "data/pintpath-release-test.sqlite";

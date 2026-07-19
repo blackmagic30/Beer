@@ -19,7 +19,7 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | n
 
 export function getSessionAuthorization(req: Request): string | undefined {
   const header = req.header("authorization");
-  if (header) return header;
+  if (header && /^Bearer\s+\S/i.test(header)) return header;
   const cookieToken = parseCookie(req.header("cookie"), SESSION_COOKIE_NAME);
   return cookieToken ? `Bearer ${cookieToken}` : undefined;
 }

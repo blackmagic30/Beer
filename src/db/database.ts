@@ -1321,3 +1321,31 @@ export function createDatabase(databasePath = env.DATABASE_PATH): BetterSqlite3.
 
   return database;
 }
+
+/**
+ * Opens an already-restored database without changing either its schema or its
+ * on-disk representation. Restore rehearsals attest the exact database bytes
+ * before the app starts, so the ordinary writable opener (WAL, migrations and
+ * repair/backfill work) must never be used for that runtime.
+ */
+export function openReadOnlyDatabase(databasePath = env.DATABASE_PATH): BetterSqlite3.Database {
+  const database = new BetterSqlite3(databasePath, {
+    readonly: true,
+    fileMustExist: true,
+  });
+
+  try {
+    database.pragma("query_only = ON");
+    database.pragma("foreign_keys = ON");
+    const schemaVersion = currentDatabaseSchemaVersion(database);
+    if (schemaVersion !== CURRENT_DATABASE_SCHEMA_VERSION) {
+      throw new Error(
+        `Restore rehearsal database schema version ${schemaVersion} does not exactly match the supported version (${CURRENT_DATABASE_SCHEMA_VERSION}).`,
+      );
+    }
+    return database;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}

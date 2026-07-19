@@ -307,6 +307,20 @@ async function fetchWithTimeout(url: string | URL, init: RequestInit = {}, timeo
   }
 }
 
+function getSupabaseReadinessHeaders(key: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    apikey: key,
+  };
+  const jwtSegments = key.split(".");
+  const isLegacyJwtKey = key.startsWith("eyJ") && jwtSegments.length === 3 &&
+    jwtSegments.every((segment) => /^[A-Za-z0-9_-]+$/.test(segment));
+  if (isLegacyJwtKey) {
+    headers.Authorization = `Bearer ${key}`;
+  }
+  return headers;
+}
+
 function addDays(baseIso: string, days: number): string {
   const date = new Date(baseIso);
   date.setUTCDate(date.getUTCDate() + days);
@@ -2399,6 +2413,7 @@ export class BusinessService {
       | "GOOGLE_PLACES_API_KEY"
     > & Partial<Pick<Env,
       | "DATABASE_PATH"
+      | "RESTORE_REHEARSAL_MODE"
       | "REPORT_DELIVERY_SCHEDULE_ENABLED"
       | "REPORT_DELIVERY_DAY"
       | "REPORT_DELIVERY_HOUR"
@@ -2636,15 +2651,18 @@ export class BusinessService {
   }
 
   getPublicConfig() {
+    const externalAuthDisconnected = Boolean(this.config.RESTORE_REHEARSAL_MODE);
     return {
       pricing: PREMIUM_PRICING,
       priceAccessModel: "fixed_preview" as const,
       freePreviewScope: "Happy hours plus pint prices for Guinness, Carlton Draught, and Stone & Wood Pacific Ale.",
       contributorUnlockPoints: this.config.CONTRIBUTOR_UNLOCK_POINTS,
       contributorUnlockDays: this.config.CONTRIBUTOR_UNLOCK_DAYS,
-      supabaseUrl: this.config.SUPABASE_URL ?? null,
-      supabaseAnonKey: this.config.SUPABASE_ANON_KEY ?? null,
-      supabaseOauthProviders: this.config.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
+      supabaseUrl: externalAuthDisconnected ? null : this.config.SUPABASE_URL ?? null,
+      supabaseAnonKey: externalAuthDisconnected ? null : this.config.SUPABASE_ANON_KEY ?? null,
+      supabaseOauthProviders: externalAuthDisconnected
+        ? []
+        : this.config.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
       demoBillingMode: this.config.DEMO_BILLING_MODE,
       fieldTestMode: this.config.FIELD_TEST_MODE,
       legalPolicyVersion: CURRENT_LEGAL_POLICY_VERSION,
@@ -2820,6 +2838,10 @@ export class BusinessService {
     authorizationHeader: string | undefined,
     context?: SessionRequestContext | undefined,
   ): BusinessAccount | null {
+    if (this.config.RESTORE_REHEARSAL_MODE) {
+      return null;
+    }
+
     const token = getBearerToken(authorizationHeader);
     if (!token) {
       return null;
@@ -8376,7 +8398,7 @@ export class BusinessService {
       venues.length,
       false,
     );
-    if (!this.supabase) {
+    if (!this.supabase || this.config.RESTORE_REHEARSAL_MODE) {
       const rawQuery = query?.trim();
       const labelStem = rawQuery?.split("·")[0] ?? "";
       const normalizedQuery = (labelStem.split(",")[0] ?? "").trim();
@@ -8584,7 +8606,7 @@ export class BusinessService {
     }
 
     const localVenue = this.getLocalPublicVenueById(normalizedVenueId);
-    if (!this.supabase) return localVenue;
+    if (!this.supabase || this.config.RESTORE_REHEARSAL_MODE) return localVenue;
     if (!isPostgresUuid(normalizedVenueId)) return localVenue;
 
     const { data, error } = await this.supabase
@@ -13061,7 +13083,9 @@ export class BusinessService {
   }
 
   private async getSupabaseOperationalReadiness(): Promise<SupabaseReadinessDependencies> {
-    const required = this.config.NODE_ENV === "production" && !this.config.FIELD_TEST_MODE;
+    const required = this.config.NODE_ENV === "production" && (
+      !this.config.FIELD_TEST_MODE || Boolean(this.config.RESTORE_REHEARSAL_MODE)
+    );
     const configured = Boolean(
       this.config.SUPABASE_URL &&
       this.config.SUPABASE_ANON_KEY &&
@@ -13106,11 +13130,7 @@ export class BusinessService {
     ): Promise<RemoteReadinessDependency> => {
       try {
         const response = await fetchWithTimeout(new URL(endpoint, `${url.replace(/\/$/, "")}/`), {
-          headers: {
-            Accept: "application/json",
-            apikey: key,
-            Authorization: `Bearer ${key}`,
-          },
+          headers: getSupabaseReadinessHeaders(key),
         }, 2_500);
         if (!response.ok) {
           return { status: "failed", required, liveProbe: true, error: `http_${response.status}` };
@@ -13130,9 +13150,15 @@ export class BusinessService {
     };
 
     this.supabaseReadinessInFlight = (async () => {
+      const databaseProbeEndpoint = this.config.RESTORE_REHEARSAL_MODE
+        ? "rest/v1/profiles?select=id&limit=1"
+        : "rest/v1/venues?select=id&limit=1";
       const [supabaseAuth, supabaseDatabase, supabaseEvidenceStorage] = await Promise.all([
         probe("auth/v1/health", anonKey),
-        probe("rest/v1/venues?select=id&limit=1", serviceRoleKey),
+        // `profiles` is created by the repository-owned migration chain. The
+        // production `venues` table is managed by a separate data pipeline and
+        // is intentionally not copied into an isolated restore project.
+        probe(databaseProbeEndpoint, serviceRoleKey),
         probe(`storage/v1/bucket/${encodeURIComponent(SUPABASE_EVIDENCE_BUCKET)}`, serviceRoleKey, async (response) => {
           try {
             const bucket = await response.json() as {
@@ -13192,8 +13218,15 @@ export class BusinessService {
 
     let evidenceStorage: { status: "ok" | "failed"; error?: string };
     try {
-      fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
-      fs.accessSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, fs.constants.R_OK | fs.constants.W_OK);
+      if (!this.config.RESTORE_REHEARSAL_MODE) {
+        fs.mkdirSync(this.config.SOURCE_EVIDENCE_STORAGE_DIR, { recursive: true, mode: 0o700 });
+      }
+      fs.accessSync(
+        this.config.SOURCE_EVIDENCE_STORAGE_DIR,
+        this.config.RESTORE_REHEARSAL_MODE
+          ? fs.constants.R_OK
+          : fs.constants.R_OK | fs.constants.W_OK,
+      );
       evidenceStorage = { status: "ok" };
     } catch (error) {
       evidenceStorage = {
@@ -13215,7 +13248,8 @@ export class BusinessService {
     const reportDeliveryConfigured = this.config.REPORT_EMAIL_MODE === "mock" || Boolean(
       this.config.REPORT_EMAIL_MODE === "resend" && this.config.RESEND_API_KEY && this.config.REPORT_EMAIL_FROM,
     );
-    const providerReady = this.config.NODE_ENV !== "production" || (
+    const externalProvidersRequired = this.config.NODE_ENV === "production" && !this.config.RESTORE_REHEARSAL_MODE;
+    const providerReady = !externalProvidersRequired || (
       billingConfigured &&
       venueLookupConfigured &&
       menuExtractionConfigured &&
@@ -13231,16 +13265,30 @@ export class BusinessService {
         supabaseDatabase: supabase.supabaseDatabase,
         supabaseEvidenceStorage: supabase.supabaseEvidenceStorage,
         billingProvider: {
-          status: this.config.DEMO_BILLING_MODE ? "demo" : billingConfigured ? "configured" : "missing",
-          required: this.config.NODE_ENV === "production" && !this.config.DEMO_BILLING_MODE,
+          status: this.config.RESTORE_REHEARSAL_MODE
+            ? "disabled_for_restore_rehearsal"
+            : this.config.DEMO_BILLING_MODE
+              ? "demo"
+              : billingConfigured
+                ? "configured"
+                : "missing",
+          required: externalProvidersRequired && !this.config.DEMO_BILLING_MODE,
         },
         venueLookupProvider: {
-          status: venueLookupConfigured ? "configured" : "missing",
-          required: this.config.NODE_ENV === "production",
+          status: this.config.RESTORE_REHEARSAL_MODE
+            ? "disabled_for_restore_rehearsal"
+            : venueLookupConfigured
+              ? "configured"
+              : "missing",
+          required: externalProvidersRequired,
         },
         menuExtractionProvider: {
-          status: menuExtractionConfigured ? "configured" : "missing",
-          required: this.config.NODE_ENV === "production",
+          status: this.config.RESTORE_REHEARSAL_MODE
+            ? "disabled_for_restore_rehearsal"
+            : menuExtractionConfigured
+              ? "configured"
+              : "missing",
+          required: externalProvidersRequired,
         },
         reportDelivery: {
           status: this.config.REPORT_EMAIL_MODE === "disabled"
@@ -13249,7 +13297,16 @@ export class BusinessService {
               ? "configured"
               : "missing",
           scheduled: this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false,
-          required: this.config.NODE_ENV === "production" && (this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false),
+          required: externalProvidersRequired && (this.config.REPORT_DELIVERY_SCHEDULE_ENABLED ?? false),
+        },
+        restoreRehearsal: {
+          enabled: Boolean(this.config.RESTORE_REHEARSAL_MODE),
+          externalWritesAllowed: !this.config.RESTORE_REHEARSAL_MODE,
+          httpMutationRoutesAllowed: !this.config.RESTORE_REHEARSAL_MODE,
+          runtimeDatabase: this.config.RESTORE_REHEARSAL_MODE
+            ? "read_only_attested_restored_copy"
+            : "primary_runtime_database",
+          remoteVenueDirectoryEnabled: !this.config.RESTORE_REHEARSAL_MODE,
         },
       },
     };

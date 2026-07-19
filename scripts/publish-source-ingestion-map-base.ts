@@ -11,6 +11,7 @@ import { env } from "../src/config/env.js";
 import { redactSecrets } from "../src/lib/redact.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
 import type { AdminBeerInput } from "../src/modules/admin/admin.schemas.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 const BASELINE_MENU_PATH_RE = /(?:^|[-_\s/])(?:menu|menus|drink|drinks|beverage|beverages|beer|beers)(?:[-_\s/.]|$)|\.pdf(?:$|[?#])/i;
 const HOMEPAGE_MENU_SIGNAL_RE = /\b(?:drink price text|html text rows|menu page|drinks? menu|beverage menu|beer menu)\b/i;
@@ -263,6 +264,9 @@ async function sourceUrlStillReachable(sourceUrl: string, timeoutMs: number): Pr
 
 async function main(): Promise<void> {
   const options = parseOptions();
+  if (!options.dryRun) {
+    assertOperatorMutationAllowed("Menu review publication");
+  }
   const database = new Database(options.databasePath);
   const repository = new AdminIngestionQueueRepository(database);
   const coveredVenueIds = options.includeCoveredVenues

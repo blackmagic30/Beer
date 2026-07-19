@@ -412,16 +412,60 @@ Stop and mark the item `fail` if an unauthorized venue is visible, a member code
   DATABASE_PATH="$REHEARSAL_ROOT/pint-path.sqlite" \
     npm run --silent data:backup:rehearse -- \
       --backup="$BACKUP_PATH" \
+      --backup-id="$BACKUP_ID" \
+      --source-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
       --output="$REHEARSAL_ROOT" \
     | tee "$EVIDENCE_DIR/offsite-restore-rehearsal.json"
   jq -e '.ok == true' "$EVIDENCE_DIR/offsite-restore-rehearsal.json"
+  export DELETION_LEDGER_SHA256="$(jq -er '.deletionLedgerSha256' \
+    "$EVIDENCE_DIR/offsite-restore-rehearsal.json")"
+  export DELETION_LEDGER_GENESIS_SHA256="$(jq -er '.deletionLedgerGenesisSha256' \
+    "$EVIDENCE_DIR/offsite-restore-rehearsal.json")"
+  export DELETION_LEDGER_CHECKPOINT_SHA256="$(jq -er '.deletionLedgerCheckpointSha256' \
+    "$EVIDENCE_DIR/offsite-restore-rehearsal.json")"
   ```
 
 - [ ] Confirm SQLite integrity and foreign keys, database/evidence checksums, MIME/reference reconciliation, current independent deletion-ledger authority, and tombstoned PII/evidence purge all pass.
-- [ ] Create a separate access-restricted staging Supabase project, apply the full current migration chain, and confirm its empty `beermap-source-evidence` bucket is private with no direct `anon`/`authenticated` policies. Stage the restored object tree with the repository helper; it requires an empty bucket, preserves the original object paths and manifest MIME types, and redownloads every object for checksum/MIME verification:
+- [ ] Seal the exact post-rehearsal runtime directory before it leaves the operator host. The command refuses an existing attestation, symlinks, hard links, special files, unexpected sidecars, a changed SQLite file, a mismatched source manifest, failed integrity/foreign-key checks, or an incomplete `job:restore_rehearsal` state:
+
+  ```bash
+  npm run --silent data:backup:attest-restore -- \
+    --restore-root="$REHEARSAL_ROOT" \
+    --backup-id="$BACKUP_ID" \
+    --source-manifest="$BACKUP_PATH/manifest.json" \
+    --source-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
+    --deletion-ledger-sha256="$DELETION_LEDGER_SHA256" \
+    --deletion-ledger-genesis-sha256="$DELETION_LEDGER_GENESIS_SHA256" \
+    --deletion-ledger-checkpoint-sha256="$DELETION_LEDGER_CHECKPOINT_SHA256" \
+    | tee "$EVIDENCE_DIR/restore-runtime-attestation.json"
+  export RESTORE_ATTESTATION_SHA256="$(
+    jq -er '.attestationSha256' "$EVIDENCE_DIR/restore-runtime-attestation.json"
+  )"
+  ```
+
+- [ ] Create a **new, one-shot** access-restricted restore-staging Supabase project in the `Pint Path Backups` organization. Record its exact project ref and the exact ID of the temporary secret key; do not select a project by display name. The restore guard pins the permitted project refs in `src/config/env.ts`, so a new one-shot ref requires a separately reviewed code change and deployment before any restored bytes are uploaded. Unlink any previously selected project, bind the CLI to the exact new ref, verify the link file before and after both migration commands, dry-run the full migration chain, and only then apply it:
+
+  ```bash
+  export RESTORE_STAGING_PROJECT_REF='ibveugyfyzjptyvautlr'
+  test "$RESTORE_STAGING_PROJECT_REF" = 'ibveugyfyzjptyvautlr'
+  supabase unlink
+  test ! -f supabase/.temp/project-ref
+  supabase link --project-ref "$RESTORE_STAGING_PROJECT_REF"
+  test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$RESTORE_STAGING_PROJECT_REF"
+  supabase db push --linked --dry-run
+  test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$RESTORE_STAGING_PROJECT_REF"
+  supabase db push --linked
+  test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$RESTORE_STAGING_PROJECT_REF"
+  ```
+
+  This literal is the reviewed one-shot ref pinned by the current build. Because that project is deleted during teardown, the runbook literal and `src/config/env.ts` pin must be changed together in a reviewed commit before another rehearsal. Confirm the exact project's empty `beermap-source-evidence` bucket is private, has no direct `anon`/`authenticated` policies, and has no pre-existing objects. Keep the exact link and canonical URL verification immediately before staging. The repository helper refuses a non-empty bucket, preserves original object paths and manifest MIME types, and redownloads every object for checksum/MIME verification:
 
   ```bash
   export STAGING_SUPABASE_SECRET_KEY_FILE="${STAGING_SUPABASE_SECRET_KEY_FILE:?}"
+  export STAGING_SUPABASE_URL="https://${RESTORE_STAGING_PROJECT_REF}.supabase.co"
+  test "$STAGING_SUPABASE_URL" = 'https://ibveugyfyzjptyvautlr.supabase.co'
+  test -f "$STAGING_SUPABASE_SECRET_KEY_FILE"
+  test ! -L "$STAGING_SUPABASE_SECRET_KEY_FILE"
   chmod 600 "$STAGING_SUPABASE_SECRET_KEY_FILE"
   SUPABASE_URL="${SUPABASE_URL:?}" \
   OFFSITE_BACKUP_SUPABASE_URL="${OFFSITE_BACKUP_SUPABASE_URL:?}" \
@@ -432,10 +476,164 @@ Stop and mark the item `fail` if an unauthorized venue is visible, a member code
       --restore="$REHEARSAL_ROOT" \
     | tee "$EVIDENCE_DIR/staged-restore-evidence.json"
   jq -e '.ok == true' "$EVIDENCE_DIR/staged-restore-evidence.json"
+  test "$(tr -d '\r\n' < supabase/.temp/project-ref)" = "$RESTORE_STAGING_PROJECT_REF"
   ```
 
-- [ ] Configure an access-restricted staging app with `DATABASE_PATH=$REHEARSAL_ROOT/pint-path.sqlite` and that separate staging project's Supabase URL/keys. Keep email, billing, report delivery, and other external writes disabled. Verify `/ready`, login, map prices, private image and PDF evidence review, the orphan report, deletion-tombstone counts, and the staging Admin `job:restore_rehearsal` success state. Never point staging at the live volume or production Storage project.
-- [ ] Redownload the staged bucket to a second new directory or use the helper's verified manifest, compare relative-path SHA-256 values, then purge the restored staging project/bucket and local backup material under the approved retention/incident procedure. Delete the rehearsal-only temporary independent-project secret key and its local key file; confirm the long-lived Railway production backup key remains active and unchanged.
+- [ ] If the source manifest reports zero Supabase Storage evidence objects, do not manufacture or upload any: preserve the empty private bucket and record the zero count. The filesystem evidence directory and its attestation are still required.
+- [ ] Keep the Railway Beer service stopped while preparing restore staging. Select and record these immutable resources before changing anything; abort if any ID differs:
+
+  ```bash
+  export RAILWAY_PROJECT_ID='48d8c6cd-1c66-4148-874b-20877f48e1a5'
+  export STAGING_ENVIRONMENT_ID='a4e0f507-d6d3-4df9-a818-ad92c0071a35'
+  export STAGING_BEER_SERVICE_ID='6816c4a2-e392-4ee5-826f-2584cb599ec0'
+  export STAGING_REDIS_SERVICE_ID='d6351cec-fe04-4a6f-8e05-1cc164ea1e73'
+  ```
+
+  In Railway, select the exact project ID, staging environment ID, and Beer service ID—not their display names. Reduce Beer to one replica. Create a **new** staging-only Beer volume, attach it at `/app/data`, and record its exact volume ID. Never reuse, move, clone, or attach the production Beer volume. The operator-host path under `$REHEARSAL_ROOT` does not exist in Railway and must never be used as Railway's `DATABASE_PATH`.
+
+- [ ] Before starting bootstrap, deploy only a reviewed build containing the fail-closed restore guard and configure the complete staging contract below. The one-shot `SUPABASE_URL` ref must match the reviewed ref pinned in `src/config/env.ts`. Railway system identity and service references must be selected from the exact resources above, never typed imitations:
+
+  ```dotenv
+  NODE_ENV=production
+  RESTORE_REHEARSAL_MODE=true
+  RESTORE_REHEARSAL_PHASE=bootstrap
+  RESTORE_REHEARSAL_BACKUP_ID=<selected-backup-id>
+  RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256=<trusted-source-manifest-sha256>
+  RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256=<trusted-runtime-attestation-sha256>
+  PUBLIC_BASE_URL=https://<RAILWAY_PUBLIC_DOMAIN>
+  RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL=https://<production-project>.supabase.co
+  RESTORE_REHEARSAL_BACKUP_SUPABASE_URL=https://<independent-backup-project>.supabase.co
+  RESTORE_REHEARSAL_ACCESS_USERNAME=<staging-operator-name>
+  RESTORE_REHEARSAL_ACCESS_PASSWORD=<unique-32-plus-byte-secret>
+  SUPABASE_URL=https://<third-restore-staging-project>.supabase.co
+  SUPABASE_ANON_KEY=<restore-staging-publishable-key>
+  SUPABASE_SERVICE_ROLE_KEY=<restore-staging-secret-key>
+  SUPABASE_OAUTH_PROVIDERS=
+  REDIS_URL=${{Redis.REDIS_URL}}
+  RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID=${{Redis.RAILWAY_ENVIRONMENT_ID}}
+  RESTORE_REHEARSAL_REDIS_SERVICE_ID=${{Redis.RAILWAY_SERVICE_ID}}
+  RESTORE_REHEARSAL_REDIS_SENTINEL=${{Redis.RESTORE_REHEARSAL_IDENTITY_SENTINEL}}
+  REDIS_KEY_NAMESPACE=pint-path:restore:<staging-environment-id>:<backup-id>
+  REQUIRE_REDIS_RATE_LIMITING=true
+  GOOGLE_MAPS_API_KEY=<staging-origin-restricted-browser-key>
+  GOOGLE_MAPS_MAP_ID=<map-id>
+  SOURCE_EVIDENCE_SIGNING_SECRET=<unique-staging-32-plus-byte-secret>
+  REPORT_EMAIL_MODE=disabled
+  REPORT_DELIVERY_SCHEDULE_ENABLED=false
+  DEMO_BILLING_MODE=false
+  ALLOW_DEMO_BILLING_IN_PRODUCTION=false
+  ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION=false
+  DATABASE_PATH=/app/data/bootstrap/pint-path.sqlite
+  SOURCE_EVIDENCE_STORAGE_DIR=/app/data/bootstrap/source-evidence
+  ```
+
+  Completely remove all `STRIPE_*`, Resend/report sender, Google Places, OpenAI, POS webhook, production smoke/admin bearer, shared-admin-secret, public Stripe, and offsite-backup URL/key variables. The restore guard must reject startup if any are present; if the Railway project, environment, Beer service, Redis service, or Supabase refs differ; if the authenticated Redis URL is not `redis.railway.internal:6379`; if the public origin is not the exact staging Railway domain; or if either restored path is not exact for the selected phase.
+
+- [ ] Seed a unique 32+ byte sentinel in the exact staging Redis service at `pint-path:restore:<staging-environment-id>:<backup-id>:identity`; configure `RESTORE_REHEARSAL_IDENTITY_SENTINEL` on that Redis service. In its console, bind the operation to the immutable service identity, require the private host and authenticated connection, create the identity only when absent with `SET ... NX`, and compare the stored value server-side without printing the key or secret:
+
+  ```bash
+  set -euo pipefail
+  umask 077
+  test "$RAILWAY_ENVIRONMENT_ID" = 'a4e0f507-d6d3-4df9-a818-ad92c0071a35'
+  test "$RAILWAY_SERVICE_ID" = 'd6351cec-fe04-4a6f-8e05-1cc164ea1e73'
+  test "${RAILWAY_PRIVATE_DOMAIN:?}" = 'redis.railway.internal'
+  test "${REDISHOST:?}" = 'redis.railway.internal'
+  test "${REDISPORT:?}" = '6379'
+  export BACKUP_ID='<recorded-selected-backup-id>'
+  test "$(printf '%s' "$BACKUP_ID" | wc -c | tr -d ' ')" -ge 10
+  export REDIS_KEY_NAMESPACE="pint-path:restore:${RAILWAY_ENVIRONMENT_ID}:${BACKUP_ID}"
+  export IDENTITY_KEY="${REDIS_KEY_NAMESPACE}:identity"
+  export SENTINEL="${RESTORE_REHEARSAL_IDENTITY_SENTINEL:?}"
+  test "$(printf '%s' "$SENTINEL" | wc -c | tr -d ' ')" -ge 32
+  export REDISCLI_AUTH="${REDISPASSWORD:?}"
+  test "$(redis-cli --no-auth-warning -h "$REDISHOST" -p "$REDISPORT" \
+    --user "${REDISUSER:-default}" SET "$IDENTITY_KEY" "$SENTINEL" NX)" = 'OK'
+  test "$(redis-cli --no-auth-warning -h "$REDISHOST" -p "$REDISPORT" \
+    --user "${REDISUSER:-default}" EVAL \
+    'return redis.call("GET", KEYS[1]) == ARGV[1] and 1 or 0' \
+    1 "$IDENTITY_KEY" "$SENTINEL")" = '1'
+  unset REDISCLI_AUTH SENTINEL IDENTITY_KEY
+  ```
+
+  A failed `NX`, identity mismatch, wrong service ID, or wrong host is a hard stop: never overwrite an existing identity. Configure Beer with Railway references only after this proof. The app performs the sentinel comparison and rate-limit mutation atomically on every protected Redis write. Never copy a production Redis URL or sentinel.
+
+- [ ] Start bootstrap only after the full contract above is deployed. In the Beer console, prove the container and new empty volume are the selected resources, and prove neither upload destination exists:
+
+  ```bash
+  set -euo pipefail
+  umask 077
+  export BACKUP_ID="${RESTORE_REHEARSAL_BACKUP_ID:?}"
+  export RESTORE_ATTESTATION_SHA256="${RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256:?}"
+  export EXPECTED_MANIFEST_SHA256="${RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256:?}"
+  test "$RAILWAY_PROJECT_ID" = '48d8c6cd-1c66-4148-874b-20877f48e1a5'
+  test "$RAILWAY_ENVIRONMENT_ID" = 'a4e0f507-d6d3-4df9-a818-ad92c0071a35'
+  test "$RAILWAY_SERVICE_ID" = '6816c4a2-e392-4ee5-826f-2584cb599ec0'
+  test "$RAILWAY_VOLUME_MOUNT_PATH" = '/app/data'
+  test "$RESTORE_REHEARSAL_REDIS_SERVICE_ID" = 'd6351cec-fe04-4a6f-8e05-1cc164ea1e73'
+  test ! -e "/app/data/incoming-$BACKUP_ID"
+  test ! -e "/app/data/restore-$BACKUP_ID"
+  ```
+
+  Bootstrap must return `200` from `/health` and `/ready`, report `backendServicesInitialized=false` and `databaseOpened=false`, and return `503` for every other route. Compare the volume ID visible in the Railway file browser with the recorded fresh volume ID before uploading. Upload the complete attested directory into exactly `/app/data/incoming-$BACKUP_ID`; never upload over an existing path and never use `--overwrite`.
+
+- [ ] Inside that exact staging Beer container, activate the uploaded directory. The command verifies the incoming directory against the trusted backup ID and both hashes, requires an unused final path on the same volume, holds an exclusive lock, atomically renames, fsyncs, and verifies the activated bytes again. Capture aggregate output and require both successful activation and clean lock removal:
+
+  ```bash
+  set -euo pipefail
+  umask 077
+  export BACKUP_ID="${RESTORE_REHEARSAL_BACKUP_ID:?}"
+  export RESTORE_ATTESTATION_SHA256="${RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256:?}"
+  export EXPECTED_MANIFEST_SHA256="${RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256:?}"
+  export ACTIVATION_RESULT="$(mktemp /tmp/pint-path-restore-activation.XXXXXX)"
+  trap 'rm -f "$ACTIVATION_RESULT"' EXIT HUP INT TERM
+  npm run --silent data:backup:activate-restore -- \
+    --incoming-root="/app/data/incoming-$BACKUP_ID" \
+    --final-root="/app/data/restore-$BACKUP_ID" \
+    --backup-id="$BACKUP_ID" \
+    --attestation-sha256="$RESTORE_ATTESTATION_SHA256" \
+    --source-manifest-sha256="$EXPECTED_MANIFEST_SHA256" \
+    > "$ACTIVATION_RESULT"
+  jq -e '.activated == true and .activationLockCleanupRequired == false' \
+    "$ACTIVATION_RESULT"
+  ```
+
+  Securely transfer only that aggregate JSON into the operator-host `$EVIDENCE_DIR` through the approved evidence channel, then run `rm -f "$ACTIVATION_RESULT"` before leaving the shell. The output file is opened successfully before activation starts; no `tee` or operator-host path is used inside Railway.
+
+  If the command exits nonzero, its output is lost, or `activationLockCleanupRequired` is true, stop Beer and do not rerun activation or manually remove/rename the lock. Run the read-only verifier separately against each root that exists:
+
+  ```bash
+  set -euo pipefail
+  umask 077
+  export BACKUP_ID="${RESTORE_REHEARSAL_BACKUP_ID:?}"
+  export RESTORE_ATTESTATION_SHA256="${RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256:?}"
+  export EXPECTED_MANIFEST_SHA256="${RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256:?}"
+  npm run --silent data:backup:verify-runtime -- \
+    --restore-root='<exact-existing-incoming-or-final-root>' \
+    --backup-id="$BACKUP_ID" \
+    --attestation-sha256="$RESTORE_ATTESTATION_SHA256" \
+    --source-manifest-sha256="$EXPECTED_MANIFEST_SHA256"
+  ```
+
+  Apply this decision tree with a second verifier: final exists + verifies and incoming is absent means the rename committed (retain the cleanup warning as evidence, do not rerun activation, and continue only after sign-off); incoming exists + verifies and final is absent means it did not commit (leave the lock untouched and repeat on a fresh volume); both, neither, or any failed verification means quarantine the volume, preserve aggregate evidence, delete that staging volume, and repeat on a fresh volume. Never start active mode from an ambiguous state.
+
+- [ ] Change the phase and both runtime paths together, then redeploy. Active startup must re-run attestation, SQLite integrity/foreign keys, evidence reconciliation, and successful rehearsal-state checks before opening the database:
+
+  ```dotenv
+  RESTORE_REHEARSAL_PHASE=active
+  DATABASE_PATH=/app/data/restore-<backup-id>/pint-path.sqlite
+  SOURCE_EVIDENCE_STORAGE_DIR=/app/data/restore-<backup-id>/source-evidence
+  ```
+- [ ] Confirm anonymous access to every restored page is denied while `/health` and `/ready` remain available to Railway. After the first valid Basic-authentication request, confirm the short-lived Secure/HttpOnly/SameSite=Strict access cookie works in Safari without repeatedly sending a Basic header. Confirm all responses carry `X-Robots-Tag: noindex, nofollow, noarchive` and `Cache-Control: no-store`.
+- [ ] Exercise only the four allowlisted read endpoints: `/api/business/config`, `/api/business/access`, `/api/business/venues`, and `/api/business/price-records`. Confirm map/list prices render from the local restored SQLite copy. Prove every other `/api` path, every mixed-case API prefix, every API `HEAD`, and every mutation returns `503`; browser Supabase configuration is blank; background retention/mission/report jobs do not start; external provider writes are disabled; and public `/ready` exposes only boolean verification state (never backup IDs, hashes, counts, object paths, or credentials) while confirming the restore-staging Supabase read probe and matching staging Redis identity. Keep the detailed backup/attestation/database hashes only in the access-restricted operator evidence. Do not test restored user credentials, admin actions, claims, reports, or private-account flows in this rehearsal.
+- [ ] Confirm Railway still shows exactly one Beer replica and capture sanitized evidence plus actual RPO/RTO. Remove staging public networking, prove the rehearsal URL is no longer reachable, and stop Beer. Keep the exact staging Redis service online only for namespace cleanup in item 1; perform all cleanup from its own console, never from an absent stopped-Beer console. Operate only against recorded IDs, in this order:
+
+  1. In the exact staging Redis service console, require `RAILWAY_ENVIRONMENT_ID=a4e0f507-d6d3-4df9-a818-ad92c0071a35`, `RAILWAY_SERVICE_ID=d6351cec-fe04-4a6f-8e05-1cc164ea1e73`, `REDISHOST=redis.railway.internal`, `REDISPORT=6379`, and authenticated `REDISPASSWORD`. Re-enter the recorded backup ID and construct only `pint-path:restore:$RAILWAY_ENVIRONMENT_ID:$BACKUP_ID`. Use `REDISCLI_AUTH="$REDISPASSWORD" redis-cli` with bounded `SCAN`; store matched names only in a mode-`600` temporary file, reject every returned name that is outside the exact prefix, issue one `UNLINK` per validated name, rescan, require aggregate zero, and delete the temporary file. Do not print names. `FLUSHALL`, `FLUSHDB`, `KEYS *`, and wildcard deletion outside this exact namespace are forbidden. If any ID, namespace, host, authentication, or prefix check differs, abort without deleting.
+  2. Remove only this reviewed staging variable/reference allowlist: `RESTORE_REHEARSAL_ACCESS_PASSWORD`, `RESTORE_REHEARSAL_ACCESS_USERNAME`, `RESTORE_REHEARSAL_PHASE`, `RESTORE_REHEARSAL_BACKUP_ID`, `RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256`, `RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256`, `RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL`, `RESTORE_REHEARSAL_BACKUP_SUPABASE_URL`, `RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID`, `RESTORE_REHEARSAL_REDIS_SERVICE_ID`, `RESTORE_REHEARSAL_REDIS_SENTINEL`, `RESTORE_REHEARSAL_MODE`, `REDIS_KEY_NAMESPACE`, `DATABASE_PATH`, `SOURCE_EVIDENCE_STORAGE_DIR`, `SOURCE_EVIDENCE_SIGNING_SECRET`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_OAUTH_PROVIDERS`. Remove `RESTORE_REHEARSAL_IDENTITY_SENTINEL` from the exact staging Redis service. Do not bulk-clear either service's environment.
+  3. Revoke the exact temporary Supabase secret-key ID recorded at creation, delete its exact local key file, and delete the exact one-shot restore project ref. Project deletion is the purge boundary for its private bucket and database; verify that exact ref is no longer listed and cannot be linked. Do not delete or rotate anything in production or the independent backup project. If a project is ever retained instead, first enumerate the exact attested object set, delete only that set, verify the bucket has zero objects, revoke every restore key, and prove the project is credential-free. Regardless of deletion or retention, run `supabase unlink` and require `supabase/.temp/project-ref` to be absent before continuing.
+  4. Delete the exact recorded staging Beer volume ID, record the deletion request timestamp and Railway's scheduled-destruction timestamp, and verify the service has no volume attached. Railway may retain a recoverable deleted volume for up to 48 hours; after that window, complete a follow-up proving the exact volume can no longer be restored.
+  5. Compare the post-teardown production baseline with the pre-rehearsal evidence: exact production deployment, volume, domains, Supabase ref, independent-backup ref/key identity, and Redis service must be unchanged. These checks are read-only. Remove local restored material only under the approved retention/incident procedure.
+
+  A second verifier must review every exact ID and aggregate zero-count before signing teardown.
 - [ ] Record actual backup age/RPO, restore duration/RTO, rollback target, incident owner, escalation path, and two-person approval.
 
 **Pass:** Backup verification and restore rehearsal exit `0`; functional checks pass; deletion safety passes; production data is untouched; actual RPO/RTO are accepted by the incident owner and second verifier.

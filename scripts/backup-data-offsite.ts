@@ -3,8 +3,11 @@ import path from "node:path";
 import dotenv from "dotenv";
 
 import { runOffsiteBackup } from "../src/lib/offsite-backup.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 dotenv.config({ quiet: true });
+
+assertOperatorMutationAllowed("Off-site backup upload and retention");
 
 function required(name: string): string {
   const value = process.env[name]?.trim();

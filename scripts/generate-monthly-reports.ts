@@ -19,6 +19,10 @@ const venueId = getArgValue("venue-id") ?? process.env.PINTPATH_REPORT_VENUE_ID 
 const dryRun = process.argv.includes("--dry-run") || process.env.PINTPATH_REPORT_DRY_RUN === "true";
 const deliver = process.argv.includes("--deliver") || process.env.PINTPATH_REPORT_DELIVER === "true";
 
+if (env.RESTORE_REHEARSAL_MODE) {
+  throw new Error("Monthly report generation is disabled during an isolated restore rehearsal.");
+}
+
 const database = createDatabase();
 
 try {

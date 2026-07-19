@@ -22,6 +22,7 @@ import {
 } from "../src/lib/menu-source-dedupe.js";
 import { isTimeLimitedMenuSource } from "../src/lib/menu-source-filter.js";
 import { selectLabeledPintPrice } from "../src/lib/menu-price-selection.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 type SourceKind = "menu_page" | "menu_image" | "menu_pdf" | "homepage_menu_signal";
 type SourceOrigin = "official_host" | "trusted_external_menu_host";
@@ -368,6 +369,10 @@ const includePackageOnly = hasFlag("include-package-only");
 const includeExternal = hasFlag("include-external");
 const maxPrice = numberArg("max-price", 40);
 const limit = numberArg("limit", Number.POSITIVE_INFINITY);
+
+// This utility performs schema/table setup before evaluating candidates, even
+// in dry-run mode, so every invocation is a database mutation.
+assertOperatorMutationAllowed("Menu crawler review queue import");
 
 const rawReport = JSON.parse(fs.readFileSync(inputPath, "utf8")) as MenuCrawlerReport;
 const candidates = rawReport.candidates.filter((candidate) => sourceRows(candidate).length > 0);

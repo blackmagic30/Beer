@@ -4,7 +4,7 @@ import path from "node:path";
 import compression from "compression";
 import express from "express";
 import helmet from "helmet";
-import type { Request, RequestHandler, Response } from "express";
+import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 import { env } from "./config/env.js";
 import { PREMIUM_PRICING } from "./config/business-rules.js";
@@ -23,6 +23,7 @@ import { notFoundHandler } from "./middleware/not-found.js";
 import { createRateLimiter } from "./middleware/rate-limit.js";
 import { captureRawBody } from "./middleware/raw-body.js";
 import type { BusinessService } from "./modules/business/business.service.js";
+import type { VerifiedRestoreRuntimeAttestation } from "./lib/restore-rehearsal.js";
 
 type LazyRouters = {
   adminRouter: RequestHandler;
@@ -33,6 +34,7 @@ type LazyRouters = {
 };
 
 let lazyRoutersPromise: Promise<LazyRouters> | undefined;
+let verifiedRestoreRuntime: VerifiedRestoreRuntimeAttestation | undefined;
 
 export const LARGE_JSON_BODY_LIMIT_BYTES = 16 * 1024 * 1024;
 const LARGE_JSON_UPLOAD_PATHS = new Set([
@@ -40,9 +42,131 @@ const LARGE_JSON_UPLOAD_PATHS = new Set([
   "/api/admin/captures/menu-photo-ocr",
   "/api/admin/ingestions/queue",
 ]);
+const RESTORE_REHEARSAL_ACCESS_COOKIE = "__Host-pint_path_restore_access";
+const RESTORE_REHEARSAL_ACCESS_TTL_SECONDS = 8 * 60 * 60;
+const RESTORE_REHEARSAL_ALLOWED_API_READS = new Set([
+  "/api/business/config",
+  "/api/business/access",
+  "/api/business/venues",
+  "/api/business/price-records",
+]);
+
+function timingSafeStringEqual(left: string, right: string): boolean {
+  const leftDigest = crypto.createHash("sha256").update(left).digest();
+  const rightDigest = crypto.createHash("sha256").update(right).digest();
+  return crypto.timingSafeEqual(leftDigest, rightDigest);
+}
+
+type RestoreRehearsalAccessConfig = {
+  RESTORE_REHEARSAL_MODE: boolean;
+  RESTORE_REHEARSAL_ACCESS_USERNAME?: string | undefined;
+  RESTORE_REHEARSAL_ACCESS_PASSWORD?: string | undefined;
+};
+
+function getRestoreAccessCookieToken(config: RestoreRehearsalAccessConfig, expiresAtSeconds: number): string {
+  const payload = `v1.${expiresAtSeconds}`;
+  const signature = crypto
+    .createHmac("sha256", config.RESTORE_REHEARSAL_ACCESS_PASSWORD!)
+    .update(`pint-path-restore-access:${config.RESTORE_REHEARSAL_ACCESS_USERNAME}:${payload}`)
+    .digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function getCookieValue(req: Request, name: string): string | null {
+  const cookieHeader = req.get("cookie");
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 0 || part.slice(0, separator).trim() !== name) continue;
+    return part.slice(separator + 1).trim();
+  }
+  return null;
+}
+
+function hasValidRestoreBasicAuthorization(req: Request, config: RestoreRehearsalAccessConfig): boolean {
+  const authorization = req.get("authorization");
+  if (!authorization?.startsWith("Basic ")) return false;
+  try {
+    const decoded = Buffer.from(authorization.slice(6).trim(), "base64").toString("utf8");
+    const separator = decoded.indexOf(":");
+    if (separator < 0) return false;
+    return timingSafeStringEqual(decoded.slice(0, separator), config.RESTORE_REHEARSAL_ACCESS_USERNAME!) &&
+      timingSafeStringEqual(decoded.slice(separator + 1), config.RESTORE_REHEARSAL_ACCESS_PASSWORD!);
+  } catch {
+    return false;
+  }
+}
+
+function hasValidRestoreAccessCookie(req: Request, config: RestoreRehearsalAccessConfig, now = Date.now()): boolean {
+  const providedCookie = getCookieValue(req, RESTORE_REHEARSAL_ACCESS_COOKIE);
+  if (!providedCookie) return false;
+  const match = providedCookie.match(/^v1\.(\d{10})\.([A-Za-z0-9_-]{43})$/);
+  if (!match) return false;
+  const expiresAtSeconds = Number(match[1]);
+  if (!Number.isSafeInteger(expiresAtSeconds) || expiresAtSeconds * 1000 <= now) return false;
+  const expectedCookie = getRestoreAccessCookieToken(config, expiresAtSeconds);
+  return timingSafeStringEqual(providedCookie, expectedCookie);
+}
+
+export function createRestoreRehearsalAccessGate(config: RestoreRehearsalAccessConfig): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!config.RESTORE_REHEARSAL_MODE || ["/health", "/ready"].includes(req.path)) {
+      next();
+      return;
+    }
+
+    if (hasValidRestoreAccessCookie(req, config)) {
+      next();
+      return;
+    }
+
+    if (hasValidRestoreBasicAuthorization(req, config)) {
+      const expiresAtSeconds = Math.floor(Date.now() / 1000) + RESTORE_REHEARSAL_ACCESS_TTL_SECONDS;
+      const accessCookie = getRestoreAccessCookieToken(config, expiresAtSeconds);
+      res.append(
+        "Set-Cookie",
+        `${RESTORE_REHEARSAL_ACCESS_COOKIE}=${accessCookie}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${RESTORE_REHEARSAL_ACCESS_TTL_SECONDS}`,
+      );
+      next();
+      return;
+    }
+
+    res.setHeader("WWW-Authenticate", 'Basic realm="Pint Path restore rehearsal", charset="UTF-8"');
+    res.status(401).type("text/plain; charset=utf-8").send("Restore rehearsal access required.");
+  };
+}
+
+export function isRestoreRehearsalMutationAllowed(method: string, requestPath: string): boolean {
+  const normalizedPath = requestPath.toLowerCase();
+  if (normalizedPath === "/api" || normalizedPath.startsWith("/api/")) {
+    if (requestPath !== "/api" && !requestPath.startsWith("/api/")) {
+      return false;
+    }
+    return method === "GET" && RESTORE_REHEARSAL_ALLOWED_API_READS.has(requestPath);
+  }
+  return method === "GET" || method === "HEAD";
+}
+
+export function getPublicRestoreRuntimeReadiness(verified: boolean) {
+  if (!verified) return { status: "not_verified" } as const;
+  return {
+    status: "verified",
+    immutableBindingsVerified: true,
+    databaseIntegrityVerified: true,
+    evidenceIntegrityVerified: true,
+    readOnly: true,
+  } as const;
+}
 
 function acceptsLargeJsonPayload(req: Request): boolean {
   return ["POST", "PUT", "PATCH"].includes(req.method) && LARGE_JSON_UPLOAD_PATHS.has(req.path);
+}
+
+export function shouldRunAutomaticMaintenance(
+  nodeEnv = env.NODE_ENV,
+  restoreRehearsalMode = env.RESTORE_REHEARSAL_MODE,
+): boolean {
+  return nodeEnv !== "test" && !restoreRehearsalMode;
 }
 
 function hasSyntacticallyValidSession(req: Request): boolean {
@@ -63,8 +187,27 @@ function deploymentMetadata() {
 async function buildLazyRouters(): Promise<LazyRouters> {
   console.info("Initializing backend services...");
 
+  if (env.RESTORE_REHEARSAL_MODE) {
+    if (env.RESTORE_REHEARSAL_PHASE !== "active") {
+      throw new Error("Restore backend services may initialize only in active phase.");
+    }
+    const { verifyRestoreRuntimeAttestation } = await import("./lib/restore-rehearsal.js");
+    verifiedRestoreRuntime = await verifyRestoreRuntimeAttestation({
+      restoreRoot: path.dirname(env.DATABASE_PATH),
+      expectedAttestationSha256: env.RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256!,
+      expectedBackupId: env.RESTORE_REHEARSAL_BACKUP_ID!,
+      expectedSourceManifestSha256: env.RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256!,
+    });
+    if (
+      verifiedRestoreRuntime.databasePath !== env.DATABASE_PATH ||
+      verifiedRestoreRuntime.evidencePath !== env.SOURCE_EVIDENCE_STORAGE_DIR
+    ) {
+      throw new Error("Verified restore runtime paths do not match the configured active paths.");
+    }
+  }
+
   const [
-    { createDatabase },
+    { createDatabase, openReadOnlyDatabase },
     { AdminIngestionQueueRepository },
     { BeerCatalogRepository },
     { BusinessRepository },
@@ -83,26 +226,38 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     import("./modules/business/business.service.js"),
   ]);
 
-  const database = createDatabase();
-  const adminIngestionQueueRepository = new AdminIngestionQueueRepository(database);
+  const database = env.RESTORE_REHEARSAL_MODE
+    ? openReadOnlyDatabase()
+    : createDatabase();
+  const adminIngestionQueueRepository = env.RESTORE_REHEARSAL_MODE
+    ? undefined
+    : new AdminIngestionQueueRepository(database);
   const beerCatalogRepository = new BeerCatalogRepository(database);
   const businessRepository = new BusinessRepository(database);
   const adminService = new AdminService(
     adminIngestionQueueRepository,
-    env.SUPABASE_URL,
-    env.SUPABASE_SERVICE_ROLE_KEY,
+    env.RESTORE_REHEARSAL_MODE ? undefined : env.SUPABASE_URL,
+    env.RESTORE_REHEARSAL_MODE ? undefined : env.SUPABASE_SERVICE_ROLE_KEY,
     env.SUPABASE_MENU_CAPTURE_TABLE,
-    env.OPENAI_API_KEY,
-    env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
-    database,
+    env.RESTORE_REHEARSAL_MODE ? undefined : env.OPENAI_API_KEY,
+    env.RESTORE_REHEARSAL_MODE ? undefined : env.GOOGLE_PLACES_API_KEY ?? env.GOOGLE_MAPS_API_KEY,
+    env.RESTORE_REHEARSAL_MODE ? undefined : database,
   );
   const canonicalProductionRuntime = isCanonicalProductionRuntime({
     nodeEnv: env.NODE_ENV,
     railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
   });
-  const businessRuntimeEnv = canonicalProductionRuntime
-    ? env
-    : { ...env, REPORT_DELIVERY_SCHEDULE_ENABLED: false };
+  const businessRuntimeEnv = env.RESTORE_REHEARSAL_MODE
+    ? {
+        ...env,
+        GOOGLE_MAPS_API_KEY: undefined,
+        GOOGLE_PLACES_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+        REPORT_DELIVERY_SCHEDULE_ENABLED: false,
+      }
+    : canonicalProductionRuntime
+      ? env
+      : { ...env, REPORT_DELIVERY_SCHEDULE_ENABLED: false };
   const deletionLedgerRuntimeConfig = resolveAccountDeletionLedgerRuntimeConfig({
     nodeEnv: env.NODE_ENV,
     railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
@@ -126,7 +281,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
     businessRepository,
     businessRuntimeEnv,
     beerCatalogRepository,
-    { extract: (input) => adminService.ocrMenuPhotos(input) },
+    env.RESTORE_REHEARSAL_MODE ? undefined : { extract: (input) => adminService.ocrMenuPhotos(input) },
     undefined,
     deletionTombstoneWriter,
   );
@@ -178,7 +333,7 @@ async function buildLazyRouters(): Promise<LazyRouters> {
       });
     }));
   }
-  if (env.NODE_ENV !== "test") {
+  if (shouldRunAutomaticMaintenance()) {
     const { scheduleMissionMaintenance } = await import("./lib/mission-maintenance.js");
     const evidenceScheduler = scheduleMissionMaintenance({
       run: runEvidenceRetention,
@@ -314,8 +469,12 @@ function safeJsonForHtml(value: unknown): string {
   return JSON.stringify(value).replaceAll("<", "\\u003c");
 }
 
-export function getStaticAssetCacheControl(filePath: string, nodeEnv = env.NODE_ENV): string {
-  if (nodeEnv !== "production") {
+export function getStaticAssetCacheControl(
+  filePath: string,
+  nodeEnv = env.NODE_ENV,
+  restoreRehearsalMode = env.RESTORE_REHEARSAL_MODE,
+): string {
+  if (nodeEnv !== "production" || restoreRehearsalMode) {
     return "no-store";
   }
 
@@ -484,6 +643,9 @@ function renderPublicVenuePage(
 }
 
 async function getLazyRouters(): Promise<LazyRouters> {
+  if (env.RESTORE_REHEARSAL_MODE && env.RESTORE_REHEARSAL_PHASE === "bootstrap") {
+    throw new AppError("Restore rehearsal is in bootstrap phase; application data routes are unavailable.", 503);
+  }
   if (!lazyRoutersPromise) {
     lazyRoutersPromise = buildLazyRouters().catch((error) => {
       lazyRoutersPromise = undefined;
@@ -498,12 +660,17 @@ async function getLazyRouters(): Promise<LazyRouters> {
 }
 
 export async function initializeAppServices(): Promise<void> {
+  if (env.RESTORE_REHEARSAL_MODE && env.RESTORE_REHEARSAL_PHASE === "bootstrap") {
+    logger.info("Restore rehearsal bootstrap phase ready; backend services and restored database remain unopened.");
+    return;
+  }
   await getLazyRouters();
 }
 
 export async function shutdownAppServices(): Promise<void> {
   const active = lazyRoutersPromise;
   lazyRoutersPromise = undefined;
+  verifiedRestoreRuntime = undefined;
   if (!active) return;
   const routers = await active.catch(() => null);
   await routers?.shutdown();
@@ -566,6 +733,12 @@ export function createApp() {
   const app = express();
   const viewerDirectory = path.resolve(process.cwd(), "viewer");
   const allowedOrigins = getAllowedOrigins();
+  const restoreAccessAttemptLimiter = createRateLimiter({
+    windowMs: 10 * 60 * 1000,
+    max: 20,
+    keyPrefix: "restore:access-attempt",
+    keyGenerator: getRateLimitIdentity,
+  });
   const cspConnectSources = [
     "'self'",
     "https://maps.googleapis.com",
@@ -581,6 +754,7 @@ export function createApp() {
   }
 
   app.set("trust proxy", env.TRUST_PROXY_HOPS);
+  app.set("case sensitive routing", true);
   app.use((_req, res, next) => {
     res.locals.cspNonce = crypto.randomBytes(18).toString("base64");
     next();
@@ -644,8 +818,51 @@ export function createApp() {
     filter: (req, res) => !req.path.startsWith("/api/") && compression.filter(req, res),
   }));
   app.use((_req, res, next) => {
-    res.setHeader("Permissions-Policy", "camera=(self), geolocation=(self), microphone=(), payment=(self)");
+    res.setHeader(
+      "Permissions-Policy",
+      env.RESTORE_REHEARSAL_MODE
+        ? "camera=(), geolocation=(self), microphone=(), payment=()"
+        : "camera=(self), geolocation=(self), microphone=(), payment=(self)",
+    );
+    if (env.RESTORE_REHEARSAL_MODE) {
+      res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+      res.setHeader("Cache-Control", "no-store");
+    }
     next();
+  });
+  app.use((req, _res, next) => {
+    if (
+      !env.RESTORE_REHEARSAL_MODE ||
+      env.RESTORE_REHEARSAL_PHASE !== "bootstrap" ||
+      ["/health", "/ready"].includes(req.path)
+    ) {
+      next();
+      return;
+    }
+    next(new AppError("Restore rehearsal bootstrap is ready for verified file transfer; application routes are offline.", 503));
+  });
+  app.use((req, res, next) => {
+    if (
+      !env.RESTORE_REHEARSAL_MODE ||
+      ["/health", "/ready"].includes(req.path) ||
+      hasValidRestoreAccessCookie(req, env)
+    ) {
+      next();
+      return;
+    }
+    restoreAccessAttemptLimiter(req, res, next);
+  });
+  app.use(createRestoreRehearsalAccessGate(env));
+  app.use((req, _res, next) => {
+    if (
+      !env.RESTORE_REHEARSAL_MODE ||
+      isRestoreRehearsalMutationAllowed(req.method, req.path)
+    ) {
+      next();
+      return;
+    }
+
+    next(new AppError("Writes are disabled during the isolated restore rehearsal.", 503));
   });
   app.use((req, res, next) => {
     const origin = req.get("origin");
@@ -653,7 +870,10 @@ export function createApp() {
     if (origin && isTrustedOrigin(req, origin, allowedOrigins)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+      res.setHeader(
+        "Access-Control-Allow-Methods",
+        env.RESTORE_REHEARSAL_MODE ? "GET" : "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+      );
       res.setHeader(
         "Access-Control-Allow-Headers",
         "Content-Type,Authorization,Stripe-Signature,X-Requested-With,X-Pint-Path-Reauth-Token,X-Pint-Path-Current-Password",
@@ -740,6 +960,9 @@ export function createApp() {
         service: "pint-path",
         status: "ok",
         deployment: deploymentMetadata(),
+        ...(env.RESTORE_REHEARSAL_MODE
+          ? { restoreRehearsal: { phase: env.RESTORE_REHEARSAL_PHASE } }
+          : {}),
       }),
     );
   });
@@ -747,6 +970,31 @@ export function createApp() {
   app.get("/ready", async (_req, res, next) => {
     try {
       res.setHeader("Cache-Control", "no-store");
+      if (env.RESTORE_REHEARSAL_MODE && env.RESTORE_REHEARSAL_PHASE === "bootstrap") {
+        const fs = await import("node:fs/promises");
+        let volumeReady = false;
+        try {
+          const [stat, realPath] = await Promise.all([
+            fs.lstat("/app/data"),
+            fs.realpath("/app/data"),
+          ]);
+          volumeReady = stat.isDirectory() && !stat.isSymbolicLink() && realPath === "/app/data";
+        } catch {
+          volumeReady = false;
+        }
+        res.status(volumeReady ? 200 : 503).json(success({
+          service: "pint-path",
+          status: volumeReady ? "bootstrap_ready" : "bootstrap_not_ready",
+          deployment: deploymentMetadata(),
+          restoreRehearsal: {
+            phase: "bootstrap",
+            backendServicesInitialized: false,
+            databaseOpened: false,
+            volumeMount: volumeReady ? "verified" : "missing_or_invalid",
+          },
+        }));
+        return;
+      }
       const { businessService, getOffsiteBackupLastSuccess } = await getLazyRouters();
       const [readiness, rateLimiterRedis, offsiteBackup] = await Promise.all([
         businessService.getOperationalReadiness(),
@@ -766,7 +1014,8 @@ export function createApp() {
           })
         )),
       ]);
-      const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok";
+      const restoreRuntimeReady = !env.RESTORE_REHEARSAL_MODE || Boolean(verifiedRestoreRuntime);
+      const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok" && restoreRuntimeReady;
       res.status(ready ? 200 : 503).json(
         success({
           service: "pint-path",
@@ -776,6 +1025,11 @@ export function createApp() {
             ...readiness.dependencies,
             rateLimiterRedis,
             offsiteBackup,
+            ...(env.RESTORE_REHEARSAL_MODE
+              ? {
+                  restoreRuntime: getPublicRestoreRuntimeReadiness(Boolean(verifiedRestoreRuntime)),
+                }
+              : {}),
           },
         }),
       );
@@ -794,16 +1048,21 @@ export function createApp() {
         googleMapsApiKey: env.GOOGLE_MAPS_API_KEY ?? "",
         googleMapsMapId: env.GOOGLE_MAPS_MAP_ID ?? "",
         publicBaseUrl: env.PUBLIC_BASE_URL,
-        supabaseUrl: env.SUPABASE_URL ?? "",
-        supabaseAnonKey: env.SUPABASE_ANON_KEY ?? "",
-        supabaseOauthProviders: env.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
+        // Restore rehearsals keep browser authentication fully disconnected.
+        // The server-only readiness probe still verifies the dedicated staging project.
+        supabaseUrl: env.RESTORE_REHEARSAL_MODE ? "" : env.SUPABASE_URL ?? "",
+        supabaseAnonKey: env.RESTORE_REHEARSAL_MODE ? "" : env.SUPABASE_ANON_KEY ?? "",
+        supabaseOauthProviders: env.RESTORE_REHEARSAL_MODE
+          ? []
+          : env.SUPABASE_OAUTH_PROVIDERS.split(",").map((provider) => provider.trim()).filter(Boolean),
         trackedBeers: publicConfig.trackedBeers,
         business: {
           publicBaseUrl: env.PUBLIC_BASE_URL,
           contributorUnlockPoints: env.CONTRIBUTOR_UNLOCK_POINTS,
           contributorUnlockDays: env.CONTRIBUTOR_UNLOCK_DAYS,
           demoBillingMode: env.DEMO_BILLING_MODE,
-          fieldTestMode: env.FIELD_TEST_MODE,
+          fieldTestMode: env.FIELD_TEST_MODE || env.RESTORE_REHEARSAL_MODE,
+          restoreRehearsalMode: env.RESTORE_REHEARSAL_MODE,
           legalPolicyVersion: publicConfig.legalPolicyVersion,
           pricing: {
             monthly: PREMIUM_PRICING.monthlyLabel,
@@ -837,7 +1096,10 @@ export function createApp() {
       const venue = await businessService.getPublicVenueById(req.params.venueId);
       res
         .type("html")
-        .setHeader("Cache-Control", env.NODE_ENV === "production" ? "public, max-age=300" : "no-store")
+        .setHeader(
+          "Cache-Control",
+          env.NODE_ENV === "production" && !env.RESTORE_REHEARSAL_MODE ? "public, max-age=300" : "no-store",
+        )
         .send(renderPublicVenuePage(venue, String(res.locals.cspNonce)));
     } catch (error) {
       next(error);
@@ -889,7 +1151,10 @@ export function createApp() {
   app.get(["/.well-known/security.txt", "/security.txt"], (_req, res) => {
     res
       .type("text/plain; charset=utf-8")
-      .setHeader("Cache-Control", env.NODE_ENV === "production" ? "public, max-age=300" : "no-store")
+      .setHeader(
+        "Cache-Control",
+        env.NODE_ENV === "production" && !env.RESTORE_REHEARSAL_MODE ? "public, max-age=300" : "no-store",
+      )
       .sendFile(path.join(viewerDirectory, "security.txt"));
   });
   app.use(express.static(viewerDirectory, {

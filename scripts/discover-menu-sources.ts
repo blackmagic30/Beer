@@ -24,6 +24,7 @@ import {
   shouldImportBarOrPubPlace,
   type GooglePlaceCandidate,
 } from "../src/lib/venue-directory.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 const GOOGLE_TEXT_SEARCH_API_URL = "https://places.googleapis.com/v1/places:searchText";
 const GOOGLE_FIELD_MASK = [
@@ -3122,6 +3123,10 @@ async function maybeQueueDirectImage(candidate: MenuSourceCandidate): Promise<bo
 }
 
 async function main(): Promise<void> {
+  // Discovery performs outbound provider/venue requests and always persists run artifacts.
+  // Keep the entire utility outside the restore-rehearsal trust boundary.
+  assertOperatorMutationAllowed("Menu source discovery and OCR");
+
   const limit = numberArg("limit", DEFAULT_LIMIT);
   const maxLinksPerVenue = numberArg("max-links-per-venue", DEFAULT_MAX_LINKS_PER_VENUE);
   const concurrency = numberArg("concurrency", Number(process.env.MENU_DISCOVERY_CONCURRENCY ?? DEFAULT_CONCURRENCY));

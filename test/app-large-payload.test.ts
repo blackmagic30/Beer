@@ -3,8 +3,17 @@ import type { AddressInfo } from "node:net";
 import { gunzipSync } from "node:zlib";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import express from "express";
 
-import { createApp, getStaticAssetCacheControl, LARGE_JSON_BODY_LIMIT_BYTES } from "../src/app.js";
+import {
+  createApp,
+  createRestoreRehearsalAccessGate,
+  getPublicRestoreRuntimeReadiness,
+  getStaticAssetCacheControl,
+  isRestoreRehearsalMutationAllowed,
+  LARGE_JSON_BODY_LIMIT_BYTES,
+  shouldRunAutomaticMaintenance,
+} from "../src/app.js";
 
 async function withHttpServer(callback: (baseUrl: string) => Promise<void>): Promise<void> {
   const server = http.createServer(createApp());
@@ -86,6 +95,90 @@ describe("large JSON upload pre-parser containment", () => {
   });
 });
 
+describe("restore rehearsal containment", () => {
+  it("gates restored data while leaving health probes available and preserving Bearer app auth", async () => {
+    const app = express();
+    app.use(createRestoreRehearsalAccessGate({
+      RESTORE_REHEARSAL_MODE: true,
+      RESTORE_REHEARSAL_ACCESS_USERNAME: "restore-operator",
+      RESTORE_REHEARSAL_ACCESS_PASSWORD: "fixture-restore-access-password-32-bytes",
+    }));
+    app.get(["/health", "/ready", "/private"], (_req, res) => res.json({ ok: true }));
+    const server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      expect((await fetch(`${baseUrl}/health`)).status).toBe(200);
+      expect((await fetch(`${baseUrl}/ready`)).status).toBe(200);
+
+      const denied = await fetch(`${baseUrl}/private`);
+      expect(denied.status).toBe(401);
+      expect(denied.headers.get("www-authenticate")).toContain("Pint Path restore rehearsal");
+
+      const basic = Buffer.from("restore-operator:fixture-restore-access-password-32-bytes").toString("base64");
+      const admitted = await fetch(`${baseUrl}/private`, {
+        headers: { authorization: `Basic ${basic}` },
+      });
+      expect(admitted.status).toBe(200);
+      const cookie = admitted.headers.get("set-cookie");
+      expect(cookie).toContain("__Host-pint_path_restore_access=");
+      expect(cookie).toContain("HttpOnly");
+      expect(cookie).toContain("Secure");
+      expect(cookie).toContain("SameSite=Strict");
+
+      const bearerRequest = await fetch(`${baseUrl}/private`, {
+        headers: {
+          authorization: "Bearer restored-app-session-token",
+          cookie: cookie!.split(";", 1)[0]!,
+        },
+      });
+      expect(bearerRequest.status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
+  });
+
+  it("allows only the exact public map reads in restore mode", () => {
+    expect(isRestoreRehearsalMutationAllowed("GET", "/api/business/venues")).toBe(true);
+    expect(isRestoreRehearsalMutationAllowed("GET", "/api/business/config")).toBe(true);
+    expect(isRestoreRehearsalMutationAllowed("GET", "/api/business/access")).toBe(true);
+    expect(isRestoreRehearsalMutationAllowed("GET", "/api/business/price-records")).toBe(true);
+    expect(isRestoreRehearsalMutationAllowed("GET", "/API/business/venues")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("GET", "/Api/business/config")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("GET", "/api")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("GET", "/API")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("HEAD", "/api/business/venues")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("GET", "/api/business/auth/session")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("POST", "/api/business/auth/login")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("POST", "/api/business/auth/supabase-session")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("POST", "/api/business/events")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("POST", "/api/business/billing/checkout")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("DELETE", "/api/business/account/delete-request/id")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("POST", "/api/admin/venues")).toBe(false);
+    expect(isRestoreRehearsalMutationAllowed("GET", "/pricing.html")).toBe(true);
+    expect(shouldRunAutomaticMaintenance("production", true)).toBe(false);
+    expect(shouldRunAutomaticMaintenance("production", false)).toBe(true);
+  });
+
+  it("keeps public restore readiness free of backup identifiers, hashes, paths, and counts", () => {
+    const readiness = getPublicRestoreRuntimeReadiness(true);
+    expect(readiness).toEqual({
+      status: "verified",
+      immutableBindingsVerified: true,
+      databaseIntegrityVerified: true,
+      evidenceIntegrityVerified: true,
+      readOnly: true,
+    });
+    expect(JSON.stringify(readiness)).not.toMatch(
+      /backup|sha256|hash|path|fileCount|object|credential|secret/i,
+    );
+    expect(getPublicRestoreRuntimeReadiness(false)).toEqual({ status: "not_verified" });
+  });
+});
+
 describe("static response compression", () => {
   it("compresses large public pages without applying compression to API responses", async () => {
     await withHttpServer(async (baseUrl) => {
@@ -115,6 +208,7 @@ describe("static response compression", () => {
     expect(getStaticAssetCacheControl("/app/viewer/account.html", "production")).toBe("no-store");
     expect(getStaticAssetCacheControl("/app/viewer/assets/logo.png", "production"))
       .toContain("max-age=86400");
+    expect(getStaticAssetCacheControl("/app/viewer/assets/logo.png", "production", true)).toBe("no-store");
   });
 
   it("prevents every Pint Path page from being embedded in another frame", async () => {

@@ -2278,7 +2278,9 @@ describe("production hardening", () => {
 
   it("live-probes and caches every required Supabase readiness dependency", async () => {
     const { repository } = createRepository();
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    const legacyAnonKey = ["eyJ0eXAiOiJKV1QifQ", "legacy-anon", "signature"].join(".");
+    const legacyServiceRoleKey = ["eyJ0eXAiOiJKV1QifQ", "legacy-service-role", "signature"].join(".");
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/storage/v1/bucket/")) {
         return new Response(JSON.stringify({
@@ -2300,8 +2302,8 @@ describe("production hardening", () => {
       const service = createBusinessService(repository, {
         NODE_ENV: "production",
         SUPABASE_URL: "https://project.supabase.co",
-        SUPABASE_ANON_KEY: "supabase-anon-readiness-key",
-        SUPABASE_SERVICE_ROLE_KEY: "supabase-service-readiness-key",
+        SUPABASE_ANON_KEY: legacyAnonKey,
+        SUPABASE_SERVICE_ROLE_KEY: legacyServiceRoleKey,
         SOURCE_EVIDENCE_SIGNING_SECRET: "production-readiness-source-evidence-secret-32",
         GOOGLE_PLACES_API_KEY: "google-places-readiness-key",
         OPENAI_API_KEY: "test-openai-api-key", // security-scan allow: synthetic readiness fixture only
@@ -2323,6 +2325,82 @@ describe("production hardening", () => {
         "https://project.supabase.co/rest/v1/venues?select=id&limit=1",
         "https://project.supabase.co/storage/v1/bucket/beermap-source-evidence",
       ]));
+      for (const [input, init] of fetchMock.mock.calls) {
+        const headers = new Headers(init?.headers);
+        const expectedKey = String(input).includes("/auth/v1/") ? legacyAnonKey : legacyServiceRoleKey;
+        expect(headers.get("apikey")).toBe(expectedKey);
+        expect(headers.get("authorization")).toBe(`Bearer ${expectedKey}`);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps Supabase live checks required but disables external providers in restore rehearsal mode", async () => {
+    const { repository } = createRepository();
+    const publishableKey = ["sb", "publishable", "restore_readiness_fixture"].join("_");
+    const secretKey = ["sb", "secret", "restore_readiness_fixture"].join("_");
+    const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+      if (String(input).includes("/storage/v1/bucket/")) {
+        return new Response(JSON.stringify({
+          public: false,
+          file_size_limit: 8 * 1024 * 1024,
+          allowed_mime_types: [
+            "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf",
+          ],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const service = createBusinessService(repository, {
+        NODE_ENV: "production",
+        RESTORE_REHEARSAL_MODE: true,
+        DEMO_BILLING_MODE: false,
+        SUPABASE_URL: "https://restore-staging.supabase.co",
+        SUPABASE_ANON_KEY: publishableKey,
+        SUPABASE_SERVICE_ROLE_KEY: secretKey,
+        GOOGLE_PLACES_API_KEY: undefined,
+        OPENAI_API_KEY: undefined,
+      });
+
+      const readiness = await service.getOperationalReadiness();
+      const directory = await service.listVenuesPage(undefined, 20, 0);
+
+      expect(readiness.ready).toBe(true);
+      expect(readiness.dependencies.supabaseDatabase).toEqual(expect.objectContaining({
+        status: "ok",
+        required: true,
+        liveProbe: true,
+      }));
+      expect(readiness.dependencies.billingProvider).toEqual({
+        status: "disabled_for_restore_rehearsal",
+        required: false,
+      });
+      expect(readiness.dependencies.venueLookupProvider).toEqual({
+        status: "disabled_for_restore_rehearsal",
+        required: false,
+      });
+      expect(readiness.dependencies.menuExtractionProvider).toEqual({
+        status: "disabled_for_restore_rehearsal",
+        required: false,
+      });
+      expect(readiness.dependencies.restoreRehearsal).toEqual({
+        enabled: true,
+        externalWritesAllowed: false,
+        httpMutationRoutesAllowed: false,
+        runtimeDatabase: "read_only_attested_restored_copy",
+        remoteVenueDirectoryEnabled: false,
+      });
+      expect(directory.venues).toEqual([]);
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/rest/v1/venues"))).toBe(false);
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/rest/v1/profiles"))).toBe(true);
+      for (const [input, init] of fetchMock.mock.calls) {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("apikey")).toBe(String(input).includes("/auth/v1/") ? publishableKey : secretKey);
+        expect(headers.get("authorization")).toBeNull();
+      }
     } finally {
       vi.unstubAllGlobals();
     }
@@ -4639,6 +4717,58 @@ describe("production hardening", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("disconnects restored sessions and browser Supabase config without touching session state", async () => {
+    const { database, repository } = createRepository();
+    const account = createAccount(repository, "restore-session-user");
+    const token = "restore-session-token-with-enough-entropy-123456789";
+    const authorization = createSession(repository, account.id, token);
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const sessionBefore = database.prepare(
+      "SELECT last_used_at, last_ip_hash, user_agent_hash FROM auth_sessions WHERE token_hash = ?",
+    ).get(tokenHash);
+    const service = createBusinessService(repository, {
+      RESTORE_REHEARSAL_MODE: true,
+      SUPABASE_URL: "https://restore-staging.supabase.co",
+      SUPABASE_ANON_KEY: "restore-staging-browser-key",
+      SUPABASE_OAUTH_PROVIDERS: "google,apple",
+    });
+
+    expect(service.getAccountFromAuthorization(authorization, {
+      ip: "203.0.113.10",
+      userAgent: "Restore rehearsal browser",
+    })).toBeNull();
+    expect(service.getPublicConfig()).toEqual(expect.objectContaining({
+      supabaseUrl: null,
+      supabaseAnonKey: null,
+      supabaseOauthProviders: [],
+    }));
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+    await withHttpServer(app, async (baseUrl) => {
+      const configResponse = await fetch(`${baseUrl}/api/business/config`);
+      expect(configResponse.status).toBe(200);
+      expect(await configResponse.json()).toEqual(expect.objectContaining({
+        data: expect.objectContaining({
+          supabaseUrl: null,
+          supabaseAnonKey: null,
+          supabaseOauthProviders: [],
+        }),
+      }));
+
+      const accessResponse = await fetch(`${baseUrl}/api/business/access`, {
+        headers: { authorization },
+      });
+      expect(accessResponse.status).toBe(200);
+    });
+
+    expect(database.prepare(
+      "SELECT last_used_at, last_ip_hash, user_agent_hash FROM auth_sessions WHERE token_hash = ?",
+    ).get(tokenHash)).toEqual(sessionBefore);
   });
 
   it("rejects expired, revoked, and suspended sessions and supports logout flows", async () => {

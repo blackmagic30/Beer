@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -10,6 +11,7 @@ import {
   createDatabase,
   CURRENT_DATABASE_SCHEMA_VERSION,
   initializeDatabaseSchema,
+  openReadOnlyDatabase,
 } from "../src/db/database.js";
 
 const roots: string[] = [];
@@ -19,6 +21,67 @@ afterEach(() => {
 });
 
 describe("database schema migration safety", () => {
+  it("opens an attested restore database read-only without changing its bytes across app reads or reopen", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-read-only-restore-"));
+    roots.push(root);
+    const databasePath = path.join(root, "pint-path.sqlite");
+    createDatabase(databasePath).close();
+    const normalized = new BetterSqlite3(databasePath, { fileMustExist: true });
+    try {
+      expect(normalized.pragma("journal_mode = DELETE", { simple: true })).toBe("delete");
+    } finally {
+      normalized.close();
+    }
+
+    const originalBytes = fs.readFileSync(databasePath);
+    const originalHash = crypto.createHash("sha256").update(originalBytes).digest("hex");
+    const originalEntries = fs.readdirSync(root).sort();
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const restored = openReadOnlyDatabase(databasePath);
+      try {
+        expect(restored.pragma("query_only", { simple: true })).toBe(1);
+        expect(restored.pragma("user_version", { simple: true })).toBe(CURRENT_DATABASE_SCHEMA_VERSION);
+
+        const repository = new BusinessRepository(restored);
+        expect(repository.listPublicVenueDirectoryPage({ limit: 20, offset: 0 })).toEqual({
+          venues: [],
+          total: 0,
+        });
+        expect(repository.listCurrentPriceRecordPage({ limit: 20 })).toEqual([]);
+        expect(() => restored.prepare("DELETE FROM venue_profiles").run()).toThrow();
+      } finally {
+        restored.close();
+      }
+    }
+
+    const finalBytes = fs.readFileSync(databasePath);
+    expect(finalBytes.byteLength).toBe(originalBytes.byteLength);
+    expect(crypto.createHash("sha256").update(finalBytes).digest("hex")).toBe(originalHash);
+    expect(finalBytes.equals(originalBytes)).toBe(true);
+    expect(fs.readdirSync(root).sort()).toEqual(originalEntries);
+  });
+
+  it("rejects a restore database at any other schema version without migrating or creating files", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-read-only-schema-"));
+    roots.push(root);
+    const databasePath = path.join(root, "pint-path.sqlite");
+    const legacy = new BetterSqlite3(databasePath);
+    legacy.exec(`
+      CREATE TABLE preserved (id TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO preserved VALUES ('before', 'unchanged');
+      PRAGMA user_version = ${CURRENT_DATABASE_SCHEMA_VERSION - 1};
+    `);
+    legacy.close();
+    const originalBytes = fs.readFileSync(databasePath);
+
+    expect(() => openReadOnlyDatabase(databasePath)).toThrow(
+      `does not exactly match the supported version (${CURRENT_DATABASE_SCHEMA_VERSION})`,
+    );
+    expect(fs.readFileSync(databasePath).equals(originalBytes)).toBe(true);
+    expect(fs.readdirSync(root).sort()).toEqual(["pint-path.sqlite"]);
+  });
+
   it("backs up v6 before migrating provider-session containment and reconciles legacy uniqueness conflicts", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-v6-migration-"));
     roots.push(root);

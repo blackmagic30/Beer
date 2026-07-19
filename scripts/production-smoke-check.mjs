@@ -1,3 +1,11 @@
+const restoreRehearsalValue = process.env.RESTORE_REHEARSAL_MODE?.trim().toLowerCase() ?? "";
+if (restoreRehearsalValue && !["0", "false", "no", "off"].includes(restoreRehearsalValue)) {
+  throw new Error(
+    "Production smoke authentication is disabled while RESTORE_REHEARSAL_MODE is enabled. "
+    + "Use an ordinary non-restore environment for authenticated smoke checks.",
+  );
+}
+
 const baseUrl = (process.env.PINTPATH_SMOKE_BASE_URL || "https://pintpath.au").replace(/\/$/, "");
 const strictAuth = process.argv.includes("--strict-auth");
 const authOnly = process.argv.includes("--auth-only");

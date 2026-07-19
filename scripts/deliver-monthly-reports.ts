@@ -20,6 +20,9 @@ const month = getArgValue("month") ?? process.env.PINTPATH_REPORT_MONTH ?? undef
 const venueId = getArgValue("venue-id") ?? process.env.PINTPATH_REPORT_VENUE_ID ?? null;
 const dryRun = process.argv.includes("--dry-run") || process.env.PINTPATH_REPORT_DRY_RUN === "true";
 const retryRejected = process.argv.includes("--retry-rejected");
+if (env.RESTORE_REHEARSAL_MODE) {
+  throw new Error("Monthly report delivery is disabled in RESTORE_REHEARSAL_MODE.");
+}
 const database = createDatabase();
 
 try {

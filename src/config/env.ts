@@ -1,7 +1,10 @@
+import fs from "node:fs";
 import path from "node:path";
 
 import dotenv from "dotenv";
 import { z } from "zod";
+
+import { isCanonicalProductionRuntime } from "../lib/deployment-environment.js";
 
 dotenv.config({ quiet: true });
 
@@ -89,6 +92,66 @@ const optionalHttpUrlFromEnv = z.preprocess((value) => {
   return normalised.length === 0 ? undefined : normalised;
 }, z.string().url().optional());
 
+const optionalSha256FromEnv = z.preprocess((value) => {
+  const trimmed = sanitizeEnvString(value);
+  if (typeof trimmed !== "string" || trimmed.length === 0) {
+    return undefined;
+  }
+  return trimmed.toLowerCase();
+}, z.string().regex(/^[a-f0-9]{64}$/).optional());
+
+const RESTORE_REHEARSAL_RAILWAY_ENVIRONMENT_ID = "a4e0f507-d6d3-4df9-a818-ad92c0071a35";
+const RESTORE_REHEARSAL_RAILWAY_PROJECT_ID = "48d8c6cd-1c66-4148-874b-20877f48e1a5";
+const RESTORE_REHEARSAL_BEER_SERVICE_ID = "6816c4a2-e392-4ee5-826f-2584cb599ec0";
+const RESTORE_REHEARSAL_REDIS_SERVICE_ID = "d6351cec-fe04-4a6f-8e05-1cc164ea1e73";
+const RESTORE_REHEARSAL_PRODUCTION_SUPABASE_REF = "jxpubqlmqnnqwadmjgyk";
+const RESTORE_REHEARSAL_BACKUP_SUPABASE_REF = "gjjffexmflwtnewtkkiy";
+const RESTORE_REHEARSAL_SUPABASE_REF = "ibveugyfyzjptyvautlr";
+
+function canonicalSupabaseProjectRef(value: string, variableName: string): string {
+  const url = new URL(value);
+  const hostname = url.hostname.toLowerCase();
+  const match = hostname.match(/^([a-z0-9]{20})\.supabase\.co$/);
+  if (
+    url.protocol !== "https:" ||
+    !match ||
+    url.port ||
+    url.username ||
+    url.password ||
+    (url.pathname !== "/" && url.pathname !== "") ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      `${variableName} must be the canonical HTTPS project origin https://<project-ref>.supabase.co with no alias, port, path, query, or fragment.`,
+    );
+  }
+  return match[1]!;
+}
+
+function assertCanonicalRestoreRedisUrl(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Restore rehearsal REDIS_URL must be the staging Redis private Railway URL.");
+  }
+  if (
+    !["redis:", "rediss:"].includes(url.protocol) ||
+    url.hostname.toLowerCase() !== "redis.railway.internal" ||
+    url.port !== "6379" ||
+    (url.pathname !== "" && url.pathname !== "/") ||
+    url.search ||
+    url.hash ||
+    !url.username ||
+    !url.password
+  ) {
+    throw new Error(
+      "Restore rehearsal REDIS_URL must use the authenticated redis.railway.internal:6379 endpoint from the staging Redis service reference.",
+    );
+  }
+}
+
 const timeZoneFromEnv = z.preprocess(
   sanitizeEnvString,
   z.string().min(1).refine((value) => {
@@ -110,6 +173,18 @@ function isSafeConfiguredEmail(value: string): boolean {
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  RESTORE_REHEARSAL_MODE: booleanFromEnv.default(false),
+  RESTORE_REHEARSAL_PHASE: z.enum(["bootstrap", "active"]).optional(),
+  RESTORE_REHEARSAL_BACKUP_ID: optionalStringFromEnv,
+  RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256: optionalSha256FromEnv,
+  RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256: optionalSha256FromEnv,
+  RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL: optionalHttpUrlFromEnv,
+  RESTORE_REHEARSAL_BACKUP_SUPABASE_URL: optionalHttpUrlFromEnv,
+  RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID: optionalStringFromEnv,
+  RESTORE_REHEARSAL_REDIS_SERVICE_ID: optionalStringFromEnv,
+  RESTORE_REHEARSAL_REDIS_SENTINEL: optionalStringFromEnv,
+  RESTORE_REHEARSAL_ACCESS_USERNAME: optionalStringFromEnv,
+  RESTORE_REHEARSAL_ACCESS_PASSWORD: optionalStringFromEnv,
   TARGET_BEER: z.enum(["guinness", "carlton_draft", "stone_and_wood", "happy_hour"]).default("guinness"),
   HOST: z.preprocess((value) => {
     const trimmed = sanitizeEnvString(value);
@@ -153,6 +228,7 @@ const envSchema = z.object({
   REPORT_DELIVERY_HOUR: z.coerce.number().int().min(0).max(23).default(9),
   REPORT_DELIVERY_CHECK_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
   REDIS_URL: optionalStringFromEnv,
+  REDIS_KEY_NAMESPACE: optionalStringFromEnv,
   REQUIRE_REDIS_RATE_LIMITING: booleanFromEnv.default(false),
   ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: booleanFromEnv.default(false),
   DEMO_BILLING_MODE: demoBillingModeFromEnv,
@@ -178,6 +254,74 @@ const parsedEnv = envSchema.safeParse(process.env);
 
 if (!parsedEnv.success) {
   throw new Error(`Invalid environment configuration: ${JSON.stringify(parsedEnv.error.flatten(), null, 2)}`);
+}
+
+const railwayEnvironmentName = process.env.RAILWAY_ENVIRONMENT_NAME?.trim().toLowerCase();
+const canonicalProductionRuntime = isCanonicalProductionRuntime({
+  nodeEnv: parsedEnv.data.NODE_ENV,
+  railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
+});
+
+const requireStrongSecret = (name: string, value: string | undefined) => {
+  const normalized = value?.trim() ?? "";
+  const documentedPlaceholder = /(?:replace[_ -]?with|change[_ -]?me|placeholder|your[_ -].*secret)/i.test(normalized);
+  const repeatedCharacter = normalized.length > 0 && new Set(normalized).size < 4;
+  if (Buffer.byteLength(normalized, "utf8") < 32 || documentedPlaceholder || repeatedCharacter) {
+    throw new Error(`${name} must be a unique high-entropy secret of at least 32 bytes in production.`);
+  }
+};
+
+if (!parsedEnv.data.RESTORE_REHEARSAL_MODE) {
+  const restoreMarkers: string[] = [
+    ["RESTORE_REHEARSAL_PHASE", parsedEnv.data.RESTORE_REHEARSAL_PHASE],
+    ["RESTORE_REHEARSAL_BACKUP_ID", parsedEnv.data.RESTORE_REHEARSAL_BACKUP_ID],
+    ["RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256", parsedEnv.data.RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256],
+    ["RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256", parsedEnv.data.RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256],
+    ["RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL", parsedEnv.data.RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL],
+    ["RESTORE_REHEARSAL_BACKUP_SUPABASE_URL", parsedEnv.data.RESTORE_REHEARSAL_BACKUP_SUPABASE_URL],
+    ["RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID", parsedEnv.data.RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID],
+    ["RESTORE_REHEARSAL_REDIS_SERVICE_ID", parsedEnv.data.RESTORE_REHEARSAL_REDIS_SERVICE_ID],
+    ["RESTORE_REHEARSAL_REDIS_SENTINEL", parsedEnv.data.RESTORE_REHEARSAL_REDIS_SENTINEL],
+    ["RESTORE_REHEARSAL_ACCESS_USERNAME", parsedEnv.data.RESTORE_REHEARSAL_ACCESS_USERNAME],
+    ["RESTORE_REHEARSAL_ACCESS_PASSWORD", parsedEnv.data.RESTORE_REHEARSAL_ACCESS_PASSWORD],
+  ]
+    .filter((entry) => entry[1] !== undefined)
+    .map((entry) => entry[0] as string);
+  const normalizedDatabasePath = path.normalize(parsedEnv.data.DATABASE_PATH);
+  const normalizedEvidencePath = path.normalize(parsedEnv.data.SOURCE_EVIDENCE_STORAGE_DIR);
+  if (/^\/app\/data\/(?:bootstrap|(?:incoming|restore)-pint-path-)/.test(normalizedDatabasePath)) {
+    restoreMarkers.push("DATABASE_PATH");
+  }
+  if (/^\/app\/data\/(?:bootstrap|(?:incoming|restore)-pint-path-)/.test(normalizedEvidencePath)) {
+    restoreMarkers.push("SOURCE_EVIDENCE_STORAGE_DIR");
+  }
+  if (parsedEnv.data.REDIS_KEY_NAMESPACE?.startsWith("pint-path:restore:")) {
+    restoreMarkers.push("REDIS_KEY_NAMESPACE");
+  }
+  if (parsedEnv.data.SUPABASE_URL?.toLowerCase().includes(`${RESTORE_REHEARSAL_SUPABASE_REF}.supabase.co`)) {
+    restoreMarkers.push("SUPABASE_URL");
+  }
+
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH?.trim() === "/app/data") {
+    try {
+      const restoreEntries = fs.readdirSync("/app/data", { withFileTypes: true })
+        .filter((entry) =>
+          (entry.isDirectory() || entry.isSymbolicLink()) &&
+          /^(?:bootstrap|incoming-pint-path-|restore-pint-path-)/.test(entry.name),
+        );
+      if (restoreEntries.length > 0) restoreMarkers.push("RAILWAY_RESTORE_VOLUME_CONTENTS");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error("Unable to verify that the mounted Railway volume contains no restore runtime.");
+      }
+    }
+  }
+
+  if (restoreMarkers.length > 0) {
+    throw new Error(
+      `Restore-shaped configuration or volume contents require RESTORE_REHEARSAL_MODE=true: ${[...new Set(restoreMarkers)].join(", ")}.`,
+    );
+  }
 }
 
 if (
@@ -210,18 +354,19 @@ if (parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED && parsedEnv.data.REPORT_EMA
 }
 
 if (parsedEnv.data.NODE_ENV === "production") {
-  const requireStrongSecret = (name: string, value: string | undefined) => {
-    const normalized = value?.trim() ?? "";
-    const documentedPlaceholder = /(?:replace[_ -]?with|change[_ -]?me|placeholder|your[_ -].*secret)/i.test(normalized);
-    const repeatedCharacter = normalized.length > 0 && new Set(normalized).size < 4;
-    if (Buffer.byteLength(normalized, "utf8") < 32 || documentedPlaceholder || repeatedCharacter) {
-      throw new Error(`${name} must be a unique high-entropy secret of at least 32 bytes in production.`);
-    }
-  };
   const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
   if (publicBaseUrl.protocol !== "https:") {
     throw new Error("PUBLIC_BASE_URL must use https:// in production.");
   }
+
+  requireStrongSecret("SOURCE_EVIDENCE_SIGNING_SECRET", parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET);
+  if (!parsedEnv.data.RESTORE_REHEARSAL_MODE) {
+    requireStrongSecret("POS_WEBHOOK_SIGNING_SECRET", parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET);
+  }
+}
+
+if (canonicalProductionRuntime) {
+  const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
 
   if (publicBaseUrl.hostname !== "pintpath.au") {
     throw new Error("PUBLIC_BASE_URL must be https://pintpath.au in production. Do not use Railway preview domains as the canonical public app URL.");
@@ -256,9 +401,6 @@ if (parsedEnv.data.NODE_ENV === "production") {
     }
   }
 
-  requireStrongSecret("SOURCE_EVIDENCE_SIGNING_SECRET", parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET);
-  requireStrongSecret("POS_WEBHOOK_SIGNING_SECRET", parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET);
-
   if (!parsedEnv.data.SUPABASE_URL || !parsedEnv.data.SUPABASE_ANON_KEY || !parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error("SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY are required in production for authentication and durable source-evidence storage.");
   }
@@ -287,6 +429,212 @@ if (parsedEnv.data.NODE_ENV === "production") {
     throw new Error("OFFSITE_BACKUP_SUPABASE_URL must identify an independent project/provider, not the production Supabase project.");
   }
 
+}
+
+if (parsedEnv.data.RESTORE_REHEARSAL_MODE) {
+  if (parsedEnv.data.NODE_ENV !== "production" || railwayEnvironmentName !== "staging") {
+    throw new Error(
+      "RESTORE_REHEARSAL_MODE is allowed only with NODE_ENV=production in the Railway environment named exactly staging.",
+    );
+  }
+
+  const railwayEnvironmentId = process.env.RAILWAY_ENVIRONMENT_ID?.trim();
+  if (railwayEnvironmentId !== RESTORE_REHEARSAL_RAILWAY_ENVIRONMENT_ID) {
+    throw new Error("Restore rehearsal is bound to the dedicated Railway staging environment ID.");
+  }
+  if (process.env.RAILWAY_PROJECT_ID?.trim() !== RESTORE_REHEARSAL_RAILWAY_PROJECT_ID) {
+    throw new Error("Restore rehearsal is bound to the immutable Pint Path Railway project ID.");
+  }
+  if (process.env.RAILWAY_SERVICE_ID?.trim() !== RESTORE_REHEARSAL_BEER_SERVICE_ID) {
+    throw new Error("Restore rehearsal is bound to the immutable staging Beer Railway service ID.");
+  }
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH?.trim() !== "/app/data") {
+    throw new Error("Restore rehearsal requires RAILWAY_VOLUME_MOUNT_PATH=/app/data.");
+  }
+  if (!parsedEnv.data.RESTORE_REHEARSAL_PHASE) {
+    throw new Error("Restore rehearsal requires RESTORE_REHEARSAL_PHASE=bootstrap or active.");
+  }
+  const backupId = parsedEnv.data.RESTORE_REHEARSAL_BACKUP_ID?.trim() ?? "";
+  if (!/^pint-path-[A-Za-z0-9][A-Za-z0-9._-]{8,120}$/.test(backupId)) {
+    throw new Error("RESTORE_REHEARSAL_BACKUP_ID must be the selected safe Pint Path backup ID.");
+  }
+  if (!parsedEnv.data.RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256) {
+    throw new Error("RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256 is required to bind the restore to its verified source backup.");
+  }
+  if (!parsedEnv.data.RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256) {
+    throw new Error("RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256 is required to anchor the post-rehearsal runtime copy.");
+  }
+
+  const railwayPublicDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim().toLowerCase();
+  if (!railwayPublicDomain) {
+    throw new Error("RESTORE_REHEARSAL_MODE requires Railway's RAILWAY_PUBLIC_DOMAIN system variable.");
+  }
+  const publicBaseUrl = new URL(parsedEnv.data.PUBLIC_BASE_URL);
+  if (
+    publicBaseUrl.protocol !== "https:" ||
+    publicBaseUrl.origin.toLowerCase() !== `https://${railwayPublicDomain}` ||
+    publicBaseUrl.pathname !== "/" ||
+    publicBaseUrl.username ||
+    publicBaseUrl.password
+  ) {
+    throw new Error(
+      "Restore rehearsal PUBLIC_BASE_URL must be the exact HTTPS origin identified by RAILWAY_PUBLIC_DOMAIN.",
+    );
+  }
+  if (["pintpath.au", "www.pintpath.au"].includes(publicBaseUrl.hostname.toLowerCase())) {
+    throw new Error("Restore rehearsal PUBLIC_BASE_URL must never use a Pint Path production hostname.");
+  }
+
+  const databasePath = parsedEnv.data.DATABASE_PATH;
+  const evidencePath = parsedEnv.data.SOURCE_EVIDENCE_STORAGE_DIR;
+  const restoreRoot = path.dirname(databasePath);
+  const expectedRestoreRoot = parsedEnv.data.RESTORE_REHEARSAL_PHASE === "bootstrap"
+    ? "/app/data/bootstrap"
+    : `/app/data/restore-${backupId}`;
+  if (path.normalize(databasePath) !== path.join(expectedRestoreRoot, "pint-path.sqlite")) {
+    throw new Error(
+      parsedEnv.data.RESTORE_REHEARSAL_PHASE === "bootstrap"
+        ? "Restore bootstrap DATABASE_PATH must be /app/data/bootstrap/pint-path.sqlite and is never opened."
+        : "Active restore DATABASE_PATH must exactly match /app/data/restore-${RESTORE_REHEARSAL_BACKUP_ID}/pint-path.sqlite.",
+    );
+  }
+  if (!path.isAbsolute(evidencePath) || path.normalize(evidencePath) !== path.join(restoreRoot, "source-evidence")) {
+    throw new Error("Restore rehearsal SOURCE_EVIDENCE_STORAGE_DIR must be the source-evidence directory beside DATABASE_PATH.");
+  }
+
+  if (!parsedEnv.data.SUPABASE_URL || !parsedEnv.data.SUPABASE_ANON_KEY || !parsedEnv.data.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error(
+      "Restore rehearsal requires its own SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY.",
+    );
+  }
+  if (
+    !parsedEnv.data.RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL ||
+    !parsedEnv.data.RESTORE_REHEARSAL_BACKUP_SUPABASE_URL
+  ) {
+    throw new Error(
+      "Restore rehearsal requires the production and independent-backup Supabase URLs so it can prove the staging project is distinct.",
+    );
+  }
+  const restoreSupabaseRef = canonicalSupabaseProjectRef(parsedEnv.data.SUPABASE_URL, "SUPABASE_URL");
+  const productionSupabaseRef = canonicalSupabaseProjectRef(
+    parsedEnv.data.RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL,
+    "RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL",
+  );
+  const backupSupabaseRef = canonicalSupabaseProjectRef(
+    parsedEnv.data.RESTORE_REHEARSAL_BACKUP_SUPABASE_URL,
+    "RESTORE_REHEARSAL_BACKUP_SUPABASE_URL",
+  );
+  if (
+    restoreSupabaseRef !== RESTORE_REHEARSAL_SUPABASE_REF ||
+    productionSupabaseRef !== RESTORE_REHEARSAL_PRODUCTION_SUPABASE_REF ||
+    backupSupabaseRef !== RESTORE_REHEARSAL_BACKUP_SUPABASE_REF ||
+    new Set([restoreSupabaseRef, productionSupabaseRef, backupSupabaseRef]).size !== 3
+  ) {
+    throw new Error(
+      "Restore rehearsal Supabase identities must exactly match the dedicated restore, production, and independent-backup project refs.",
+    );
+  }
+
+  if (!parsedEnv.data.REDIS_URL || !parsedEnv.data.REQUIRE_REDIS_RATE_LIMITING) {
+    throw new Error("Restore rehearsal requires its own REDIS_URL and REQUIRE_REDIS_RATE_LIMITING=true.");
+  }
+  assertCanonicalRestoreRedisUrl(parsedEnv.data.REDIS_URL);
+  if (parsedEnv.data.RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID !== railwayEnvironmentId) {
+    throw new Error("RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID must be a Railway reference to the current staging environment ID.");
+  }
+  if (parsedEnv.data.RESTORE_REHEARSAL_REDIS_SERVICE_ID !== RESTORE_REHEARSAL_REDIS_SERVICE_ID) {
+    throw new Error("RESTORE_REHEARSAL_REDIS_SERVICE_ID must be the immutable staging Redis Railway service ID.");
+  }
+  const expectedRedisNamespace = `pint-path:restore:${railwayEnvironmentId}:${backupId}`;
+  if (parsedEnv.data.REDIS_KEY_NAMESPACE !== expectedRedisNamespace) {
+    throw new Error(`REDIS_KEY_NAMESPACE must exactly bind the staging environment and selected backup (${expectedRedisNamespace}).`);
+  }
+  requireStrongSecret("RESTORE_REHEARSAL_REDIS_SENTINEL", parsedEnv.data.RESTORE_REHEARSAL_REDIS_SENTINEL);
+  if (!parsedEnv.data.GOOGLE_MAPS_API_KEY || !parsedEnv.data.GOOGLE_MAPS_MAP_ID) {
+    throw new Error(
+      "Restore rehearsal requires a staging-origin-restricted GOOGLE_MAPS_API_KEY and GOOGLE_MAPS_MAP_ID for visual map checks.",
+    );
+  }
+  if (parsedEnv.data.SUPABASE_OAUTH_PROVIDERS.trim() !== "") {
+    throw new Error("Restore rehearsal requires SUPABASE_OAUTH_PROVIDERS to be explicitly empty.");
+  }
+  if (parsedEnv.data.REPORT_EMAIL_MODE !== "disabled" || parsedEnv.data.REPORT_DELIVERY_SCHEDULE_ENABLED) {
+    throw new Error("Restore rehearsal requires reports and scheduled email delivery to remain disabled.");
+  }
+  if (parsedEnv.data.DEMO_BILLING_MODE || parsedEnv.data.ALLOW_DEMO_BILLING_IN_PRODUCTION) {
+    throw new Error("Restore rehearsal requires billing to be fully disabled, not demo-enabled.");
+  }
+  if (parsedEnv.data.ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION) {
+    throw new Error("Restore rehearsal cannot enable demo image storage in the production build.");
+  }
+  if (
+    parsedEnv.data.FIELD_TEST_MODE ||
+    !parsedEnv.data.REQUIRE_ADMIN_MFA_IN_PRODUCTION ||
+    !parsedEnv.data.REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION
+  ) {
+    throw new Error(
+      "Restore rehearsal requires field-test mode off, production admin MFA on, and verified accounts required.",
+    );
+  }
+
+  const prohibitedConfiguredVariables = [
+    ["OFFSITE_BACKUP_SUPABASE_URL", parsedEnv.data.OFFSITE_BACKUP_SUPABASE_URL],
+    ["OFFSITE_BACKUP_SERVICE_ROLE_KEY", parsedEnv.data.OFFSITE_BACKUP_SERVICE_ROLE_KEY],
+    ["RESEND_API_KEY", parsedEnv.data.RESEND_API_KEY],
+    ["REPORT_EMAIL_FROM", parsedEnv.data.REPORT_EMAIL_FROM],
+    ["REPORT_EMAIL_REPLY_TO", parsedEnv.data.REPORT_EMAIL_REPLY_TO],
+    ["STRIPE_SECRET_KEY", parsedEnv.data.STRIPE_SECRET_KEY],
+    ["STRIPE_WEBHOOK_SECRET", parsedEnv.data.STRIPE_WEBHOOK_SECRET],
+    ["STRIPE_PRICE_MONTHLY", parsedEnv.data.STRIPE_PRICE_MONTHLY],
+    ["STRIPE_PRICE_YEARLY", parsedEnv.data.STRIPE_PRICE_YEARLY],
+    ["STRIPE_PRO_PRICE_ID", parsedEnv.data.STRIPE_PRO_PRICE_ID],
+    ["OPENAI_API_KEY", parsedEnv.data.OPENAI_API_KEY],
+    ["GOOGLE_PLACES_API_KEY", parsedEnv.data.GOOGLE_PLACES_API_KEY],
+    ["POS_WEBHOOK_SIGNING_SECRET", parsedEnv.data.POS_WEBHOOK_SIGNING_SECRET],
+    ["ADMIN_EMAILS", parsedEnv.data.ADMIN_EMAILS],
+    ["ADMIN_SHARED_SECRET", process.env.ADMIN_SHARED_SECRET],
+    ["NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY],
+    ["ADMIN_BEARER_TOKEN", process.env.ADMIN_BEARER_TOKEN],
+    ["PINTPATH_SMOKE_USER_TOKEN", process.env.PINTPATH_SMOKE_USER_TOKEN],
+    ["PINTPATH_SMOKE_VENUE_TOKEN", process.env.PINTPATH_SMOKE_VENUE_TOKEN],
+    ["PINTPATH_SMOKE_ADMIN_TOKEN", process.env.PINTPATH_SMOKE_ADMIN_TOKEN],
+    ["PINTPATH_SMOKE_USER_EMAIL", process.env.PINTPATH_SMOKE_USER_EMAIL],
+    ["PINTPATH_SMOKE_USER_PASSWORD", process.env.PINTPATH_SMOKE_USER_PASSWORD],
+    ["PINTPATH_SMOKE_VENUE_EMAIL", process.env.PINTPATH_SMOKE_VENUE_EMAIL],
+    ["PINTPATH_SMOKE_VENUE_PASSWORD", process.env.PINTPATH_SMOKE_VENUE_PASSWORD],
+    ["PINTPATH_SMOKE_ADMIN_EMAIL", process.env.PINTPATH_SMOKE_ADMIN_EMAIL],
+    ["PINTPATH_SMOKE_ADMIN_PASSWORD", process.env.PINTPATH_SMOKE_ADMIN_PASSWORD],
+    ["PINTPATH_SMOKE_BASE_URL", process.env.PINTPATH_SMOKE_BASE_URL],
+    ["MENU_DISCOVERY_ADMIN_BEARER", process.env.MENU_DISCOVERY_ADMIN_BEARER],
+    ["MENU_DISCOVERY_ADMIN_BASE_URL", process.env.MENU_DISCOVERY_ADMIN_BASE_URL],
+  ].filter(([, value]) => typeof value === "string" && value.trim().length > 0);
+  if (prohibitedConfiguredVariables.length > 0) {
+    throw new Error(
+      `Restore rehearsal prohibits external-write credentials: ${prohibitedConfiguredVariables.map(([name]) => name).join(", ")}.`,
+    );
+  }
+
+  const prohibitedEnabledFlags = [
+    ["PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS", booleanFromEnv.safeParse(process.env.PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS).data],
+    ["ALLOW_FAKE_SEED", booleanFromEnv.safeParse(process.env.ALLOW_FAKE_SEED).data],
+    ["MENU_DISCOVERY_QUEUE_OCR", booleanFromEnv.safeParse(process.env.MENU_DISCOVERY_QUEUE_OCR).data],
+    ["ALLOW_MENU_DISCOVERY_QUEUE", booleanFromEnv.safeParse(process.env.ALLOW_MENU_DISCOVERY_QUEUE).data],
+    ["PINTPATH_REPORT_DELIVER", booleanFromEnv.safeParse(process.env.PINTPATH_REPORT_DELIVER).data],
+  ].filter(([, enabled]) => enabled === true);
+  if (prohibitedEnabledFlags.length > 0) {
+    throw new Error(
+      `Restore rehearsal prohibits write-enabling flags: ${prohibitedEnabledFlags.map(([name]) => name).join(", ")}.`,
+    );
+  }
+
+  requireStrongSecret("SOURCE_EVIDENCE_SIGNING_SECRET", parsedEnv.data.SOURCE_EVIDENCE_SIGNING_SECRET);
+  requireStrongSecret("RESTORE_REHEARSAL_ACCESS_PASSWORD", parsedEnv.data.RESTORE_REHEARSAL_ACCESS_PASSWORD);
+  const accessUsername = parsedEnv.data.RESTORE_REHEARSAL_ACCESS_USERNAME?.trim() ?? "";
+  if (!/^[A-Za-z0-9._-]{3,64}$/.test(accessUsername)) {
+    throw new Error(
+      "RESTORE_REHEARSAL_ACCESS_USERNAME must be 3-64 characters using letters, numbers, dot, underscore, or hyphen.",
+    );
+  }
 }
 
 export const env = {

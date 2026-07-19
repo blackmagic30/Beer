@@ -2318,7 +2318,17 @@
     }
 
     window.addEventListener("DOMContentLoaded", async () => {
+      await MelbBeerBusiness.prepareRestoreIsolation();
       nav.innerHTML = MelbBeerBusiness.renderNav("submit");
+      if (MelbBeerBusiness.isRestoreRehearsalMode()) {
+        loginRequiredPanel.classList.remove("is-hidden");
+        submissionPanel.classList.add("is-hidden");
+        MelbBeerBusiness.setStatus(
+          authGateStatus,
+          "Submissions are disabled during the isolated restore rehearsal.",
+        );
+        return;
+      }
       await purgeExpiredSubmissionDataBeforeAuth();
       const canSubmit = await requireSubmitLogin();
       if (!canSubmit) {

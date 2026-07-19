@@ -26,10 +26,29 @@ let warnedMemoryFallback = false;
 let lastRedisFailureLogAt = 0;
 let redisReadinessCache: { expiresAt: number; value: RedisReadiness } | null = null;
 let redisReadinessInFlight: Promise<RedisReadiness> | null = null;
+let redisIdentityCache: {
+  expiresAt: number;
+  namespace: string;
+  sentinelDigest: string;
+} | null = null;
+let redisIdentityInFlight: Promise<void> | null = null;
 const REDIS_CONNECT_TIMEOUT_MS = 1_500;
 const REDIS_FAILURE_LOG_INTERVAL_MS = 60_000;
 const REDIS_READINESS_CACHE_MS = 15_000;
 const REDIS_INCREMENT_SCRIPT = `
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return { count, ttl }
+`;
+const REDIS_RESTORE_INCREMENT_SCRIPT = `
+local identity = redis.call('GET', KEYS[2])
+if not identity or identity ~= ARGV[2] then
+  return { -1, -1 }
+end
 local count = redis.call('INCR', KEYS[1])
 local ttl = redis.call('PTTL', KEYS[1])
 if ttl < 0 then
@@ -50,7 +69,58 @@ export type RedisReadiness = {
   required: boolean;
   ready: boolean;
   error?: string;
+  identity?: {
+    required: true;
+    verified: boolean;
+  };
 };
+
+type RestoreRedisIdentitySettings = {
+  namespace: string;
+  sentinel: string;
+  sentinelDigest: string;
+};
+
+class RestoreRedisIdentityError extends Error {
+  readonly code: string;
+
+  constructor(code: string) {
+    super("Restore rehearsal Redis identity verification failed");
+    this.name = "RestoreRedisIdentityError";
+    this.code = code;
+  }
+}
+
+function getRedisKeyNamespace(): string | undefined {
+  return process.env.REDIS_KEY_NAMESPACE?.trim() || undefined;
+}
+
+function getRestoreRedisIdentitySettings(): RestoreRedisIdentitySettings | null {
+  if (!env.RESTORE_REHEARSAL_MODE) {
+    return null;
+  }
+
+  const namespace = getRedisKeyNamespace();
+  if (!namespace) {
+    throw new RestoreRedisIdentityError("RestoreRedisNamespaceMissing");
+  }
+
+  const sentinel = process.env.RESTORE_REHEARSAL_REDIS_SENTINEL?.trim();
+  if (!sentinel) {
+    throw new RestoreRedisIdentityError("RestoreRedisSentinelMissing");
+  }
+
+  return {
+    namespace,
+    sentinel,
+    sentinelDigest: crypto.createHash("sha256").update(sentinel).digest("hex"),
+  };
+}
+
+function qualifyRedisRateLimitKey(key: string): string {
+  const namespace = getRedisKeyNamespace();
+  return namespace ? `${namespace}:${key}` : key;
+}
 
 function warnMemoryFallback(reason: string): void {
   if (warnedMemoryFallback || env.NODE_ENV !== "production") {
@@ -187,6 +257,57 @@ async function withRedisTimeout<T>(operation: Promise<T>, timeoutMs = REDIS_CONN
   }
 }
 
+function timingSafeStringEqual(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual, "utf8");
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  return actualBuffer.length === expectedBuffer.length
+    && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+async function ensureRestoreRedisIdentity(client: Redis): Promise<void> {
+  const settings = getRestoreRedisIdentitySettings();
+  if (!settings) {
+    return;
+  }
+
+  const now = Date.now();
+  if (
+    redisIdentityCache
+    && redisIdentityCache.expiresAt > now
+    && redisIdentityCache.namespace === settings.namespace
+    && redisIdentityCache.sentinelDigest === settings.sentinelDigest
+  ) {
+    return;
+  }
+
+  if (redisIdentityInFlight) {
+    return redisIdentityInFlight;
+  }
+
+  redisIdentityInFlight = (async () => {
+    const identity = await withRedisTimeout(
+      client.get(`${settings.namespace}:identity`),
+      REDIS_CONNECT_TIMEOUT_MS,
+    );
+    if (typeof identity !== "string" || !timingSafeStringEqual(identity, settings.sentinel)) {
+      redisIdentityCache = null;
+      throw new RestoreRedisIdentityError("RestoreRedisIdentityMismatch");
+    }
+
+    redisIdentityCache = {
+      expiresAt: Date.now() + REDIS_READINESS_CACHE_MS,
+      namespace: settings.namespace,
+      sentinelDigest: settings.sentinelDigest,
+    };
+  })();
+
+  try {
+    await redisIdentityInFlight;
+  } finally {
+    redisIdentityInFlight = null;
+  }
+}
+
 export async function probeRateLimitRedis(): Promise<RedisReadiness> {
   const required = isRedisRateLimitingRequired();
   if (!env.REDIS_URL) {
@@ -219,7 +340,16 @@ export async function probeRateLimitRedis(): Promise<RedisReadiness> {
     try {
       await ensureRedisReady(client);
       await withRedisTimeout(client.ping(), REDIS_CONNECT_TIMEOUT_MS);
-      return { status: "ok", configured: true, required, ready: true } satisfies RedisReadiness;
+      await ensureRestoreRedisIdentity(client);
+      return {
+        status: "ok",
+        configured: true,
+        required,
+        ready: true,
+        ...(env.RESTORE_REHEARSAL_MODE
+          ? { identity: { required: true as const, verified: true } }
+          : {}),
+      } satisfies RedisReadiness;
     } catch (error) {
       return {
         status: "failed",
@@ -227,6 +357,9 @@ export async function probeRateLimitRedis(): Promise<RedisReadiness> {
         required,
         ready: false,
         error: redisErrorMetadata(error).errorCode ?? redisErrorMetadata(error).errorName ?? "RedisProbeFailed",
+        ...(env.RESTORE_REHEARSAL_MODE
+          ? { identity: { required: true as const, verified: false } }
+          : {}),
       } satisfies RedisReadiness;
     }
   })();
@@ -245,6 +378,8 @@ export async function shutdownRateLimitRedis(): Promise<void> {
   redisClient = undefined;
   redisReadinessCache = null;
   redisReadinessInFlight = null;
+  redisIdentityCache = null;
+  redisIdentityInFlight = null;
   if (!client) return;
 
   try {
@@ -263,13 +398,26 @@ async function incrementRedisBucket(key: string, windowMs: number, now: number):
   }
 
   await ensureRedisReady(client);
-
+  const restoreIdentity = getRestoreRedisIdentitySettings();
   const result = await withRedisTimeout(
-    client.eval(REDIS_INCREMENT_SCRIPT, 1, key, windowMs),
+    restoreIdentity
+      ? client.eval(
+        REDIS_RESTORE_INCREMENT_SCRIPT,
+        2,
+        key,
+        `${restoreIdentity.namespace}:identity`,
+        windowMs,
+        restoreIdentity.sentinel,
+      )
+      : client.eval(REDIS_INCREMENT_SCRIPT, 1, key, windowMs),
     REDIS_CONNECT_TIMEOUT_MS,
   ) as [number | string, number | string];
   const count = Number(result?.[0]);
   const ttl = Number(result?.[1]);
+  if (restoreIdentity && count === -1 && ttl === -1) {
+    redisIdentityCache = null;
+    throw new RestoreRedisIdentityError("RestoreRedisIdentityMismatch");
+  }
   if (!Number.isFinite(count) || !Number.isFinite(ttl)) {
     throw new Error("Redis rate-limit script returned an invalid result");
   }
@@ -300,7 +448,7 @@ export function createRateLimiter(options: RateLimiterOptions): RequestHandler {
       next(new AppError("Rate limiter could not verify the client identity. Please try again shortly.", 503));
       return;
     }
-    const key = `${options.keyPrefix}:${hashKey(rawIdentity)}`;
+    const key = qualifyRedisRateLimitKey(`${options.keyPrefix}:${hashKey(rawIdentity)}`);
     let bucket: Bucket;
     const redisRequired = isRedisRateLimitingRequired();
 

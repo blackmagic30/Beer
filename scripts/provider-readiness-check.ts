@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 
 import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 dotenv.config({ quiet: true });
 
@@ -224,6 +225,9 @@ const sourceEvidenceBucketCheck = await checkPrivateStorageBucket({
   minimumFileSizeBytes: 8 * 1024 * 1024,
 });
 const offsiteBackupBucketName = getValue("OFFSITE_BACKUP_BUCKET") || "pintpath-backups";
+if (isProduction()) {
+  assertOperatorMutationAllowed("Provider readiness storage write probe");
+}
 const offsiteBackupBucketCheck = await checkPrivateStorageBucket({
   id: "OFFSITE_BACKUP_BUCKET",
   label: "Private off-site backup bucket",

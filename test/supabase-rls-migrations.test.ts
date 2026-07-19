@@ -20,6 +20,14 @@ describe("Supabase auth/upload RLS migrations", () => {
     expect(sql).not.toContain("grant truncate");
   });
 
+  it("lets the backend readiness probe select profiles without widening browser access", () => {
+    const sql = migration("20260718234027_grant_profiles_readiness_to_service_role.sql");
+
+    expect(sql).toMatch(/grant select on table public\.profiles to service_role/i);
+    expect(sql).not.toMatch(/\bto\s+(?:anon|authenticated)\b/i);
+    expect(sql).not.toMatch(/grant\s+(?:insert|update|delete|truncate)/i);
+  });
+
   it("guards every optional legacy relation so the clean migration chain does not require it", () => {
     const sql = migration("20260712013512_harden_browser_table_grants.sql");
 

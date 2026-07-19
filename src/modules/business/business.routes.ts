@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 
+import { env } from "../../config/env.js";
 import { AppError } from "../../lib/errors.js";
 import { success } from "../../lib/http.js";
 import { getClientIp, getRateLimitIdentity } from "../../lib/client-ip.js";
@@ -249,7 +250,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.get("/config", (_req, res) => {
-    res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+    res.setHeader(
+      "Cache-Control",
+      env.RESTORE_REHEARSAL_MODE ? "private, no-store" : "public, max-age=300, stale-while-revalidate=600",
+    );
     res.json(success(businessService.getPublicConfig()));
   });
 
@@ -517,7 +521,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
     try {
       const query = parseWithSchema(venuesQuerySchema, req.query, "Invalid venue query");
       const result = await businessService.listVenuesPage(query.q, query.limit, query.offset);
-      res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=120");
+      res.setHeader(
+        "Cache-Control",
+        env.RESTORE_REHEARSAL_MODE ? "private, no-store" : "public, max-age=30, stale-while-revalidate=120",
+      );
       res.json(success(result));
     } catch (error) {
       next(error);

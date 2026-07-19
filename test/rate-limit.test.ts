@@ -4,6 +4,7 @@ const redisMockState = vi.hoisted(() => ({
   instances: [] as Array<{
     status: string;
     connect: ReturnType<typeof vi.fn>;
+    get: ReturnType<typeof vi.fn>;
     incr: ReturnType<typeof vi.fn>;
     pexpire: ReturnType<typeof vi.fn>;
     pttl: ReturnType<typeof vi.fn>;
@@ -15,6 +16,7 @@ const redisMockState = vi.hoisted(() => ({
   connectError: undefined as Error | undefined,
   evalNeverResolves: false,
   counters: new Map<string, number>(),
+  strings: new Map<string, string>(),
 }));
 
 vi.mock("ioredis", () => {
@@ -38,6 +40,7 @@ vi.mock("ioredis", () => {
       }
     });
 
+    get = vi.fn(async (key: string) => redisMockState.strings.get(key) ?? null);
     incr = vi.fn(async (key: string) => {
       const count = (redisMockState.counters.get(key) ?? 0) + 1;
       redisMockState.counters.set(key, count);
@@ -45,9 +48,19 @@ vi.mock("ioredis", () => {
     });
     pexpire = vi.fn(async () => 1);
     pttl = vi.fn(async () => 60_000);
-    eval = vi.fn(async (script: string, _keyCount: number, key: string, windowMs: number) => {
+    eval = vi.fn(async (script: string, _keyCount: number, key: string, ...args: Array<string | number>) => {
       if (redisMockState.evalNeverResolves) {
         return await new Promise<never>(() => undefined);
+      }
+      let windowMs: number;
+      if (script.includes("local identity = redis.call('GET', KEYS[2])")) {
+        const [identityKey, rawWindowMs, expectedSentinel] = args;
+        if (redisMockState.strings.get(String(identityKey)) !== String(expectedSentinel)) {
+          return [-1, -1];
+        }
+        windowMs = Number(rawWindowMs);
+      } else {
+        windowMs = Number(args[0]);
       }
       const count = await this.incr(key);
       let ttl = await this.pttl(key);
@@ -118,6 +131,9 @@ function stubProductionEnv(overrides: Record<string, string> = {}) {
     POS_WEBHOOK_SIGNING_SECRET: "test-pos-webhook-signing-secret-32-bytes",
     DEMO_BILLING_MODE: "false",
     REDIS_URL: "redis://default:password@redis.railway.internal:6379",
+    REDIS_KEY_NAMESPACE: "",
+    RESTORE_REHEARSAL_MODE: "false",
+    RESTORE_REHEARSAL_REDIS_SENTINEL: "",
     REQUIRE_REDIS_RATE_LIMITING: "false",
     ALLOW_IN_MEMORY_RATE_LIMITING_IN_PRODUCTION: "false",
     RAILWAY_ENVIRONMENT_ID: "",
@@ -129,6 +145,62 @@ function stubProductionEnv(overrides: Record<string, string> = {}) {
   for (const [key, value] of Object.entries(env)) {
     vi.stubEnv(key, value);
   }
+}
+
+function restoreRehearsalOverrides(namespace: string, sentinel: string): Record<string, string> {
+  return {
+    NODE_ENV: "production",
+    RESTORE_REHEARSAL_MODE: "true",
+    RESTORE_REHEARSAL_PHASE: "active",
+    RESTORE_REHEARSAL_BACKUP_ID: "pint-path-test-backup",
+    RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256: "a".repeat(64),
+    RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256: "b".repeat(64),
+    RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL: "https://jxpubqlmqnnqwadmjgyk.supabase.co",
+    RESTORE_REHEARSAL_BACKUP_SUPABASE_URL: "https://gjjffexmflwtnewtkkiy.supabase.co",
+    RESTORE_REHEARSAL_ACCESS_USERNAME: "restore-operator",
+    RESTORE_REHEARSAL_ACCESS_PASSWORD: "restore-access-password-with-enough-entropy",
+    RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    RAILWAY_ENVIRONMENT_NAME: "staging",
+    RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+    RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+    RAILWAY_VOLUME_MOUNT_PATH: "/app/data",
+    RAILWAY_PUBLIC_DOMAIN: "beer-staging.up.railway.app",
+    PUBLIC_BASE_URL: "https://beer-staging.up.railway.app",
+    DATABASE_PATH: "/app/data/restore-pint-path-test-backup/pint-path.sqlite",
+    SOURCE_EVIDENCE_STORAGE_DIR: "/app/data/restore-pint-path-test-backup/source-evidence",
+    SUPABASE_URL: "https://ibveugyfyzjptyvautlr.supabase.co",
+    SUPABASE_ANON_KEY: "restore-anon-key",
+    SUPABASE_SERVICE_ROLE_KEY: "restore-service-role-key",
+    SUPABASE_OAUTH_PROVIDERS: "",
+    GOOGLE_MAPS_API_KEY: "restore-browser-map-key",
+    GOOGLE_MAPS_MAP_ID: "restore-map-id",
+    GOOGLE_PLACES_API_KEY: "",
+    OPENAI_API_KEY: "",
+    OFFSITE_BACKUP_SUPABASE_URL: "",
+    OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
+    REPORT_EMAIL_MODE: "disabled",
+    REPORT_DELIVERY_SCHEDULE_ENABLED: "false",
+    RESEND_API_KEY: "",
+    REPORT_EMAIL_FROM: "",
+    REPORT_EMAIL_REPLY_TO: "",
+    DEMO_BILLING_MODE: "false",
+    ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
+    STRIPE_SECRET_KEY: "",
+    STRIPE_WEBHOOK_SECRET: "",
+    STRIPE_PRICE_MONTHLY: "",
+    STRIPE_PRICE_YEARLY: "",
+    STRIPE_PRO_PRICE_ID: "",
+    POS_WEBHOOK_SIGNING_SECRET: "",
+    SOURCE_EVIDENCE_SIGNING_SECRET: "restore-source-signing-secret-with-enough-entropy",
+    ADMIN_SHARED_SECRET: "",
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "",
+    REQUIRE_REDIS_RATE_LIMITING: "true",
+    REDIS_KEY_NAMESPACE: namespace,
+    RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+    RESTORE_REHEARSAL_REDIS_SERVICE_ID: "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+    RESTORE_REHEARSAL_REDIS_SENTINEL: sentinel,
+    REDIS_URL: "redis://default:fixture-password@redis.railway.internal:6379",
+  };
 }
 
 async function loadRateLimiter() {
@@ -171,6 +243,7 @@ describe("Redis-backed rate limiting", () => {
     redisMockState.connectError = undefined;
     redisMockState.evalNeverResolves = false;
     redisMockState.counters.clear();
+    redisMockState.strings.clear();
   });
 
   it("connects the lazy Redis client before writing rate-limit keys", async () => {
@@ -196,6 +269,101 @@ describe("Redis-backed rate limiting", () => {
     );
     expect(redis.connect.mock.invocationCallOrder[0]).toBeLessThan(redis.eval.mock.invocationCallOrder[0]);
     expect(headers.get("RateLimit-Remaining")).toBe("1");
+  });
+
+  it("prefixes every Redis rate-limit key with the configured namespace", async () => {
+    stubProductionEnv({ REDIS_KEY_NAMESPACE: "production:pint-path" });
+
+    const { createRateLimiter } = await loadRateLimiter();
+    const limiter = createRateLimiter({
+      keyPrefix: "business:test",
+      windowMs: 60_000,
+      max: 2,
+    });
+
+    const { error } = await runLimiter(limiter);
+    const redis = redisMockState.instances[0]!;
+
+    expect(error).toBeUndefined();
+    expect(redis.eval).toHaveBeenCalledWith(
+      expect.any(String),
+      1,
+      expect.stringMatching(/^production:pint-path:business:test:/),
+      60_000,
+    );
+  });
+
+  it("verifies the restore Redis identity atomically with every write", async () => {
+    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    const sentinel = "restore-redis-sentinel-with-enough-entropy-2026";
+    stubProductionEnv(restoreRehearsalOverrides(namespace, sentinel));
+    redisMockState.strings.set(`${namespace}:identity`, sentinel);
+
+    const { createRateLimiter } = await loadRateLimiter();
+    const limiter = createRateLimiter({ keyPrefix: "restore:test", windowMs: 60_000, max: 2 });
+
+    const first = await runLimiter(limiter);
+    const second = await runLimiter(limiter);
+    const redis = redisMockState.instances[0]!;
+
+    expect(first.error).toBeUndefined();
+    expect(second.error).toBeUndefined();
+    expect(redis.get).not.toHaveBeenCalled();
+    expect(redis.eval).toHaveBeenCalledTimes(2);
+    expect(redis.eval).toHaveBeenCalledWith(
+      expect.stringContaining("local identity = redis.call('GET', KEYS[2])"),
+      2,
+      expect.stringMatching(/^pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup:restore:test:/),
+      `${namespace}:identity`,
+      60_000,
+      sentinel,
+    );
+  });
+
+  it("fails closed without writing when the restore Redis identity does not match", async () => {
+    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    stubProductionEnv(restoreRehearsalOverrides(
+      namespace,
+      "expected-restore-redis-sentinel-with-entropy",
+    ));
+    redisMockState.strings.set(`${namespace}:identity`, "wrong-environment-sentinel");
+
+    const { createRateLimiter } = await loadRateLimiter();
+    const limiter = createRateLimiter({ keyPrefix: "restore:test", windowMs: 60_000, max: 2 });
+
+    const { error } = await runLimiter(limiter);
+    const redis = redisMockState.instances[0]!;
+
+    expect(error).toEqual(expect.objectContaining({
+      message: "Rate limiter unavailable. Please try again shortly.",
+      statusCode: 503,
+    }));
+    expect(redis.get).not.toHaveBeenCalled();
+    expect(redis.eval).toHaveBeenCalledWith(
+      expect.stringContaining("local identity = redis.call('GET', KEYS[2])"),
+      2,
+      expect.any(String),
+      `${namespace}:identity`,
+      60_000,
+      "expected-restore-redis-sentinel-with-entropy",
+    );
+    expect(redis.incr).not.toHaveBeenCalled();
+  });
+
+  it("fails the next write if the staging identity sentinel changes", async () => {
+    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    const sentinel = "expected-restore-redis-sentinel-with-entropy";
+    stubProductionEnv(restoreRehearsalOverrides(namespace, sentinel));
+    redisMockState.strings.set(`${namespace}:identity`, sentinel);
+    const { createRateLimiter } = await loadRateLimiter();
+    const limiter = createRateLimiter({ keyPrefix: "restore:test", windowMs: 60_000, max: 3 });
+
+    expect((await runLimiter(limiter)).error).toBeUndefined();
+    redisMockState.strings.delete(`${namespace}:identity`);
+    const second = await runLimiter(limiter);
+
+    expect(second.error).toEqual(expect.objectContaining({ statusCode: 503 }));
+    expect(redisMockState.instances[0]!.incr).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when Redis cannot connect and memory fallback is disabled", async () => {
@@ -335,6 +503,47 @@ describe("Redis-backed rate limiting", () => {
     expect(redis.ping).toHaveBeenCalledTimes(1);
     await shutdownRateLimitRedis();
     expect(redis.quit).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports verified restore Redis identity in readiness without exposing the sentinel", async () => {
+    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    const sentinel = "restore-readiness-sentinel-with-enough-entropy";
+    stubProductionEnv(restoreRehearsalOverrides(namespace, sentinel));
+    redisMockState.strings.set(`${namespace}:identity`, sentinel);
+
+    const { probeRateLimitRedis } = await loadRateLimiter();
+    const readiness = await probeRateLimitRedis();
+
+    expect(readiness).toEqual({
+      status: "ok",
+      configured: true,
+      required: true,
+      ready: true,
+      identity: { required: true, verified: true },
+    });
+    expect(JSON.stringify(readiness)).not.toContain(sentinel);
+  });
+
+  it("reports a failed restore Redis identity probe without writing or leaking sentinels", async () => {
+    const namespace = "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-test-backup";
+    const sentinel = "expected-restore-readiness-sentinel-with-entropy";
+    stubProductionEnv(restoreRehearsalOverrides(namespace, sentinel));
+    redisMockState.strings.set(`${namespace}:identity`, "other-environment");
+
+    const { probeRateLimitRedis } = await loadRateLimiter();
+    const readiness = await probeRateLimitRedis();
+    const redis = redisMockState.instances[0]!;
+
+    expect(readiness).toEqual({
+      status: "failed",
+      configured: true,
+      required: true,
+      ready: false,
+      error: "RestoreRedisIdentityMismatch",
+      identity: { required: true, verified: false },
+    });
+    expect(redis.eval).not.toHaveBeenCalled();
+    expect(JSON.stringify(readiness)).not.toContain(sentinel);
   });
 
   it("reports dependency-specific Redis readiness failures without connection secrets", async () => {

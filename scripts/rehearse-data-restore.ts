@@ -5,22 +5,33 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import dotenv from "dotenv";
 
-import { rehearseDataRestore } from "../src/lib/data-backup.js";
+import { rehearseDataRestore, sha256File } from "../src/lib/data-backup.js";
 import { fetchVerifiedAccountDeletionLedger } from "../src/lib/offsite-backup.js";
+import { parseStrictArguments } from "./lib/strict-arguments.js";
 
 dotenv.config({ quiet: true });
 
-function argumentValue(name: string): string | null {
-  const inline = process.argv.find((value) => value.startsWith(`${name}=`));
-  if (inline) return inline.slice(name.length + 1);
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] ?? null : null;
-}
+const allowedArguments = new Set([
+  "--backup",
+  "--backup-id",
+  "--source-manifest-sha256",
+  "--tombstones",
+  "--tombstone-sha256",
+  "--tombstone-genesis",
+  "--tombstone-genesis-sha256",
+  "--tombstone-checkpoint",
+  "--tombstone-checkpoint-sha256",
+  "--output",
+]);
+const argumentsByName = parseStrictArguments(process.argv.slice(2), {
+  allowed: allowedArguments,
+  positionalName: "--backup",
+});
+const argumentValue = (name: string): string | null => argumentsByName.get(name) ?? null;
 
-function recordRestoreState(value: Record<string, unknown>): void {
-  const sourceDatabase = path.resolve(process.env.DATABASE_PATH || "./data/pint-path.sqlite");
-  if (!fs.existsSync(sourceDatabase)) return;
-  const database = new BetterSqlite3(sourceDatabase);
+function recordRestoreState(databasePath: string, value: Record<string, unknown>): void {
+  if (!fs.existsSync(databasePath)) return;
+  const database = new BetterSqlite3(databasePath);
   try {
     const stateTable = database
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'system_state'")
@@ -37,9 +48,26 @@ function recordRestoreState(value: Record<string, unknown>): void {
   }
 }
 
-const backupArgument = argumentValue("--backup") || process.argv[2];
+const backupArgument = argumentValue("--backup");
 if (!backupArgument) {
   throw new Error("Pass the backup directory with --backup=/path/to/backup.");
+}
+const backupPath = path.resolve(backupArgument);
+const backupId = (argumentValue("--backup-id") || process.env.BACKUP_ID || "").trim();
+if (!/^pint-path-[A-Za-z0-9][A-Za-z0-9._-]{8,120}$/.test(backupId)) {
+  throw new Error("Pass the trusted off-site backup ID with --backup-id or BACKUP_ID.");
+}
+const expectedSourceManifestSha256 = (
+  argumentValue("--source-manifest-sha256") || process.env.EXPECTED_MANIFEST_SHA256 || ""
+).trim().toLowerCase();
+if (!/^[a-f0-9]{64}$/.test(expectedSourceManifestSha256)) {
+  throw new Error(
+    "Pass the trusted source manifest SHA-256 with --source-manifest-sha256 or EXPECTED_MANIFEST_SHA256.",
+  );
+}
+const actualSourceManifestSha256 = await sha256File(path.join(backupPath, "manifest.json"));
+if (actualSourceManifestSha256 !== expectedSourceManifestSha256) {
+  throw new Error("The source manifest does not match its trusted SHA-256 value.");
 }
 const tombstoneArgument = argumentValue("--tombstones");
 const tombstoneShaArgument = argumentValue("--tombstone-sha256")?.trim().toLowerCase() ?? null;
@@ -52,11 +80,12 @@ const explicitOutput = argumentValue("--output");
 const restoreRoot = explicitOutput
   ? path.resolve(explicitOutput)
   : fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-restore-rehearsal-"));
+const restoreDatabasePath = path.join(restoreRoot, "pint-path.sqlite");
 const ledgerTemporaryRoot = tombstoneArgument
   ? null
   : fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-restore-ledger-"));
 const startedAt = new Date().toISOString();
-recordRestoreState({ state: "running", startedAt });
+recordRestoreState(restoreDatabasePath, { state: "running", startedAt });
 
 try {
   let deletionTombstonePath: string;
@@ -77,9 +106,9 @@ try {
       checkpointArgument,
       checkpointShaArgument,
     ];
-    if (authorityArguments.some(Boolean) && !authorityArguments.every(Boolean)) {
+    if (!authorityArguments.every(Boolean)) {
       throw new Error(
-        "Offline empty-ledger authority requires genesis/checkpoint paths and both trusted SHA-256 values.",
+        "Offline restore requires genesis/checkpoint paths and both trusted SHA-256 values.",
       );
     }
     if (genesisArgument && genesisShaArgument && checkpointArgument && checkpointShaArgument) {
@@ -112,36 +141,45 @@ try {
     expectedDeletionLedgerCheckpointSha256 = verified.checkpointSha256;
   }
   const result = await rehearseDataRestore({
-    backupPath: path.resolve(backupArgument),
+    backupPath,
     restoreRoot,
     deletionTombstonePath,
     expectedDeletionTombstoneSha256,
-    ...(deletionLedgerGenesisPath &&
-      expectedDeletionLedgerGenesisSha256 &&
-      deletionLedgerCheckpointPath &&
-      expectedDeletionLedgerCheckpointSha256
-      ? {
-        deletionLedgerGenesisPath,
-        expectedDeletionLedgerGenesisSha256,
-        deletionLedgerCheckpointPath,
-        expectedDeletionLedgerCheckpointSha256,
-      }
-      : {}),
+    deletionLedgerGenesisPath: deletionLedgerGenesisPath!,
+    expectedDeletionLedgerGenesisSha256: expectedDeletionLedgerGenesisSha256!,
+    deletionLedgerCheckpointPath: deletionLedgerCheckpointPath!,
+    expectedDeletionLedgerCheckpointSha256: expectedDeletionLedgerCheckpointSha256!,
   });
+  if (result.authority.sourceManifestSha256 !== expectedSourceManifestSha256) {
+    throw new Error("The source manifest changed during restore rehearsal.");
+  }
   const completedAt = new Date().toISOString();
-  recordRestoreState({
+  recordRestoreState(result.databasePath, {
     state: "succeeded",
     startedAt,
     completedAt,
+    backupId,
+    sourceManifestSha256: result.authority.sourceManifestSha256,
+    sourceDatabaseSha256: result.authority.sourceDatabaseSha256,
+    deletionLedgerSha256: result.authority.deletionLedgerSha256,
+    deletionLedgerGenesisSha256: result.authority.deletionLedgerGenesisSha256,
+    deletionLedgerCheckpointSha256: result.authority.deletionLedgerCheckpointSha256,
     databaseBytes: result.manifest.database.bytes,
     evidenceFileCount: result.manifest.evidence.fileCount,
     storageEvidenceFileCount: result.manifest.storageEvidence?.fileCount ?? 0,
     tombstonesApplied: result.tombstonesApplied,
     evidenceFilesPurged: result.evidenceFilesPurged,
+    evidencePurgedPathSha256s: result.evidencePurgedPathSha256s,
   });
   console.log(JSON.stringify({
     ok: true,
     completedAt,
+    backupId,
+    sourceManifestSha256: result.authority.sourceManifestSha256,
+    sourceDatabaseSha256: result.authority.sourceDatabaseSha256,
+    deletionLedgerSha256: result.authority.deletionLedgerSha256,
+    deletionLedgerGenesisSha256: result.authority.deletionLedgerGenesisSha256,
+    deletionLedgerCheckpointSha256: result.authority.deletionLedgerCheckpointSha256,
     restoreRoot,
     database: result.databasePath,
     evidenceFiles: result.manifest.evidence.fileCount,
@@ -152,7 +190,7 @@ try {
   }, null, 2));
 } catch (error) {
   const completedAt = new Date().toISOString();
-  recordRestoreState({
+  recordRestoreState(restoreDatabasePath, {
     state: "failed",
     startedAt,
     completedAt,

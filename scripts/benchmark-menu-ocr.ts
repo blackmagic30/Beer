@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 import { initializeDatabaseSchema } from "../src/db/database.js";
 import { scoreOcrBenchmark, type OcrBenchmarkManifest } from "../src/lib/menu-ocr-benchmark.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 dotenv.config({ quiet: true });
 
@@ -34,9 +35,14 @@ function fileDataUrl(filename: string): { kind: "image" | "document"; dataUrl: s
   };
 }
 
+const live = process.argv.includes("--live");
+const outputPath = argumentValue("--write-results");
+if (live || outputPath) {
+  assertOperatorMutationAllowed("Live or persistent menu OCR benchmark");
+}
+
 const manifestPath = path.resolve(argumentValue("--manifest") ?? "test/fixtures/ocr-benchmark-scorer.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as OcrBenchmarkManifest;
-const live = process.argv.includes("--live");
 
 if (live) {
   if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is required for a live OCR benchmark.");
@@ -74,7 +80,6 @@ if (live) {
   }
 }
 
-const outputPath = argumentValue("--write-results");
 if (outputPath) fs.writeFileSync(path.resolve(outputPath), `${JSON.stringify(manifest, null, 2)}\n`);
 
 const report = scoreOcrBenchmark(manifest);

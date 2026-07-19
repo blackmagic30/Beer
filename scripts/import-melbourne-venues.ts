@@ -7,6 +7,7 @@ import {
   type GooglePlaceCandidate,
 } from "../src/lib/venue-directory.js";
 import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 const GOOGLE_PLACES_API_URL = "https://places.googleapis.com/v1/places:searchNearby";
 const GOOGLE_TEXT_SEARCH_API_URL = "https://places.googleapis.com/v1/places:searchText";
@@ -396,13 +397,17 @@ async function fetchExistingVenues() {
 }
 
 async function main() {
+  const dryRun = hasFlag("dry-run");
+  if (!dryRun) {
+    assertOperatorMutationAllowed("Venue directory import");
+  }
+
   const googleApiKey = process.env.GOOGLE_PLACES_API_KEY ?? process.env.GOOGLE_MAPS_API_KEY;
 
   if (!googleApiKey) {
     throw new Error("Missing GOOGLE_PLACES_API_KEY or GOOGLE_MAPS_API_KEY");
   }
 
-  const dryRun = hasFlag("dry-run");
   const cityBackfill = hasFlag("city-backfill");
   const cityOnly = hasFlag("city-only");
   const innerRingBackfill = hasFlag("inner-ring-backfill");

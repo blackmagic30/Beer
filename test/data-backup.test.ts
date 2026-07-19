@@ -21,7 +21,18 @@ function makeTemporaryDirectory(): string {
 function writeDeletionLedger(
   root: string,
   tombstones: Array<{ requestId: string; userId: string; completedAt: string }> = [],
-): { path: string; sha256: string } {
+): {
+  path: string;
+  sha256: string;
+  restoreArguments: {
+    deletionTombstonePath: string;
+    expectedDeletionTombstoneSha256: string;
+    deletionLedgerGenesisPath: string;
+    expectedDeletionLedgerGenesisSha256: string;
+    deletionLedgerCheckpointPath: string;
+    expectedDeletionLedgerCheckpointSha256: string;
+  };
+} {
   const ledgerPath = path.join(root, `deletion-ledger-${Math.random().toString(16).slice(2)}.json`);
   const bytes = Buffer.from(`${JSON.stringify({
     version: 1,
@@ -29,9 +40,49 @@ function writeDeletionLedger(
     tombstones,
   }, null, 2)}\n`);
   fs.writeFileSync(ledgerPath, bytes);
+  const ledgerSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+  const nonce = Math.random().toString(16).slice(2);
+  const genesisPath = path.join(root, `deletion-ledger-genesis-${nonce}.json`);
+  const genesisBytes = Buffer.from(`${JSON.stringify({
+    version: 1,
+    kind: "pint-path-account-deletion-ledger-genesis",
+    createdAt: "2026-07-14T12:00:00.000Z",
+    immutablePrefix: "_control/account-deletion-ledger/v1",
+    currentLedgerPath: "_control/account-deletion-tombstones.json",
+  }, null, 2)}\n`);
+  fs.writeFileSync(genesisPath, genesisBytes);
+  const genesisSha256 = crypto.createHash("sha256").update(genesisBytes).digest("hex");
+  const latestCompletedAt = tombstones.reduce<string | null>((latest, tombstone) => (
+    latest === null || Date.parse(tombstone.completedAt) > Date.parse(latest)
+      ? tombstone.completedAt
+      : latest
+  ), null);
+  const checkpointPath = path.join(root, `deletion-ledger-checkpoint-${nonce}.json`);
+  const checkpointBytes = Buffer.from(`${JSON.stringify({
+    version: 2,
+    generatedAt: "2026-07-14T12:00:00.000Z",
+    genesisPath: "_control/account-deletion-ledger-genesis.json",
+    genesisSha256,
+    currentLedgerPath: "_control/account-deletion-tombstones.json",
+    currentLedgerSha256: ledgerSha256,
+    immutableObjectCount: tombstones.length,
+    immutableSetSha256: crypto.createHash("sha256").update(JSON.stringify(tombstones)).digest("hex"),
+    tombstoneCount: tombstones.length,
+    latestCompletedAt,
+  }, null, 2)}\n`);
+  fs.writeFileSync(checkpointPath, checkpointBytes);
+  const checkpointSha256 = crypto.createHash("sha256").update(checkpointBytes).digest("hex");
   return {
     path: ledgerPath,
-    sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+    sha256: ledgerSha256,
+    restoreArguments: {
+      deletionTombstonePath: ledgerPath,
+      expectedDeletionTombstoneSha256: ledgerSha256,
+      deletionLedgerGenesisPath: genesisPath,
+      expectedDeletionLedgerGenesisSha256: genesisSha256,
+      deletionLedgerCheckpointPath: checkpointPath,
+      expectedDeletionLedgerCheckpointSha256: checkpointSha256,
+    },
   };
 }
 
@@ -121,8 +172,7 @@ describe("production data backups", () => {
     const restored = await rehearseDataRestore({
       backupPath,
       restoreRoot: restorePath,
-      deletionTombstonePath: ledger.path,
-      expectedDeletionTombstoneSha256: ledger.sha256,
+      ...ledger.restoreArguments,
     });
 
     expect(restored.manifest.evidence.fileCount).toBe(1);
@@ -196,10 +246,7 @@ describe("production data backups", () => {
         userId: "later-deleted-user",
         completedAt,
         }]);
-        return {
-          deletionTombstonePath: ledger.path,
-          expectedDeletionTombstoneSha256: ledger.sha256,
-        };
+        return ledger.restoreArguments;
       })(),
     });
 
@@ -241,8 +288,7 @@ describe("production data backups", () => {
     await expect(rehearseDataRestore({
       backupPath,
       restoreRoot: path.join(root, "tampered-restore"),
-      deletionTombstonePath: trusted.path,
-      expectedDeletionTombstoneSha256: trusted.sha256,
+      ...trusted.restoreArguments,
     })).rejects.toThrow("does not match its trusted SHA-256 checkpoint");
 
     const empty = writeDeletionLedger(root);
@@ -251,7 +297,9 @@ describe("production data backups", () => {
       restoreRoot: path.join(root, "empty-restore"),
       deletionTombstonePath: empty.path,
       expectedDeletionTombstoneSha256: empty.sha256,
-    })).rejects.toThrow("empty deletion ledger requires its authenticated independent genesis and checkpoint");
+    } as unknown as Parameters<typeof rehearseDataRestore>[0])).rejects.toThrow(
+      "Trusted SHA-256 checkpoints are required for deletion-ledger genesis and checkpoint records",
+    );
   });
 
   it("rejects unlisted evidence and refuses to overwrite a backup directory", async () => {

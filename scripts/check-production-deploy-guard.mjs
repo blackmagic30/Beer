@@ -35,6 +35,7 @@ assert(
 
 const productionFixture = {
   NODE_ENV: "production",
+  RAILWAY_ENVIRONMENT_NAME: "production",
   PUBLIC_BASE_URL: "https://pintpath.au",
   PORT: "3000",
   GOOGLE_MAPS_API_KEY: "ci-maps-browser-key",
@@ -58,8 +59,85 @@ const productionFixture = {
   REPORT_DELIVERY_SCHEDULE_ENABLED: "false",
 };
 
-function runValidator({ overrides = {}, unset = [] } = {}) {
-  const env = { ...process.env, ...productionFixture, ...overrides };
+const restoreRehearsalFixture = {
+  NODE_ENV: "production",
+  RAILWAY_ENVIRONMENT_NAME: "staging",
+  RAILWAY_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  RAILWAY_PROJECT_ID: "48d8c6cd-1c66-4148-874b-20877f48e1a5",
+  RAILWAY_SERVICE_ID: "6816c4a2-e392-4ee5-826f-2584cb599ec0",
+  RAILWAY_VOLUME_MOUNT_PATH: "/app/data",
+  RAILWAY_PUBLIC_DOMAIN: "beer-staging.up.railway.app",
+  RESTORE_REHEARSAL_MODE: "true",
+  RESTORE_REHEARSAL_PHASE: "active",
+  RESTORE_REHEARSAL_BACKUP_ID: "pint-path-ci-backup",
+  RESTORE_REHEARSAL_SOURCE_MANIFEST_SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  RESTORE_REHEARSAL_RUNTIME_ATTESTATION_SHA256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL: "https://jxpubqlmqnnqwadmjgyk.supabase.co",
+  RESTORE_REHEARSAL_BACKUP_SUPABASE_URL: "https://gjjffexmflwtnewtkkiy.supabase.co",
+  RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID: "a4e0f507-d6d3-4df9-a818-ad92c0071a35",
+  RESTORE_REHEARSAL_REDIS_SERVICE_ID: "d6351cec-fe04-4a6f-8e05-1cc164ea1e73",
+  RESTORE_REHEARSAL_REDIS_SENTINEL: "ci-restore-redis-sentinel-42fbe92a-2f56",
+  RESTORE_REHEARSAL_ACCESS_USERNAME: "restore-operator",
+  RESTORE_REHEARSAL_ACCESS_PASSWORD: "ci-restore-access-1cd92e0a-784f-4f21",
+  PUBLIC_BASE_URL: "https://beer-staging.up.railway.app",
+  DATABASE_PATH: "/app/data/restore-pint-path-ci-backup/pint-path.sqlite",
+  SOURCE_EVIDENCE_STORAGE_DIR: "/app/data/restore-pint-path-ci-backup/source-evidence",
+  GOOGLE_MAPS_API_KEY: "ci-staging-origin-restricted-maps-key",
+  GOOGLE_MAPS_MAP_ID: "ci-staging-vector-map-id",
+  GOOGLE_PLACES_API_KEY: "",
+  OPENAI_API_KEY: "",
+  SUPABASE_URL: "https://ibveugyfyzjptyvautlr.supabase.co",
+  SUPABASE_ANON_KEY: "ci-restore-browser-key",
+  SUPABASE_SERVICE_ROLE_KEY: "ci-restore-service-key",
+  SUPABASE_OAUTH_PROVIDERS: "",
+  OFFSITE_BACKUP_SUPABASE_URL: "",
+  OFFSITE_BACKUP_SERVICE_ROLE_KEY: "",
+  SOURCE_EVIDENCE_SIGNING_SECRET: "ci-restore-source-bb07c1be-75cf-4ec8-b8f6",
+  POS_WEBHOOK_SIGNING_SECRET: "",
+  REDIS_URL: "redis://default:fixture-password@redis.railway.internal:6379",
+  REDIS_KEY_NAMESPACE: "pint-path:restore:a4e0f507-d6d3-4df9-a818-ad92c0071a35:pint-path-ci-backup",
+  REQUIRE_REDIS_RATE_LIMITING: "true",
+  DEMO_BILLING_MODE: "false",
+  ALLOW_DEMO_BILLING_IN_PRODUCTION: "false",
+  ALLOW_DEMO_IMAGE_STORAGE_IN_PRODUCTION: "false",
+  STRIPE_SECRET_KEY: "",
+  STRIPE_WEBHOOK_SECRET: "",
+  STRIPE_PRICE_MONTHLY: "",
+  STRIPE_PRICE_YEARLY: "",
+  STRIPE_PRO_PRICE_ID: "",
+  REPORT_EMAIL_MODE: "disabled",
+  REPORT_EMAIL_FROM: "",
+  REPORT_EMAIL_REPLY_TO: "",
+  RESEND_API_KEY: "",
+  REPORT_DELIVERY_SCHEDULE_ENABLED: "false",
+  ADMIN_EMAILS: "",
+  ADMIN_BEARER_TOKEN: "",
+  ADMIN_SHARED_SECRET: "",
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: "",
+  MENU_DISCOVERY_ADMIN_BEARER: "",
+  MENU_DISCOVERY_ADMIN_BASE_URL: "",
+  PINTPATH_SMOKE_BASE_URL: "",
+  PINTPATH_SMOKE_USER_TOKEN: "",
+  PINTPATH_SMOKE_VENUE_TOKEN: "",
+  PINTPATH_SMOKE_ADMIN_TOKEN: "",
+  PINTPATH_SMOKE_USER_EMAIL: "",
+  PINTPATH_SMOKE_USER_PASSWORD: "",
+  PINTPATH_SMOKE_VENUE_EMAIL: "",
+  PINTPATH_SMOKE_VENUE_PASSWORD: "",
+  PINTPATH_SMOKE_ADMIN_EMAIL: "",
+  PINTPATH_SMOKE_ADMIN_PASSWORD: "",
+  PINTPATH_REVOKE_DIRECT_SMOKE_TOKENS: "false",
+  ALLOW_FAKE_SEED: "false",
+  MENU_DISCOVERY_QUEUE_OCR: "false",
+  ALLOW_MENU_DISCOVERY_QUEUE: "false",
+  PINTPATH_REPORT_DELIVER: "false",
+  FIELD_TEST_MODE: "false",
+  REQUIRE_ADMIN_MFA_IN_PRODUCTION: "true",
+  REQUIRE_VERIFIED_ACCOUNT_IN_PRODUCTION: "true",
+};
+
+function runValidator({ fixture = productionFixture, overrides = {}, unset = [] } = {}) {
+  const env = { ...process.env, ...fixture, ...overrides };
   for (const name of unset) delete env[name];
   return spawnSync(process.execPath, [compiledEnvPath], {
     cwd: tmpdir(),
@@ -91,4 +169,57 @@ assertExit(
   "Production validation with a non-independent backup destination",
 );
 
-console.log("Production deployment guard contract passed.");
+assertExit(
+  runValidator({ fixture: restoreRehearsalFixture }),
+  true,
+  "Complete restore rehearsal environment validation",
+);
+assertExit(
+  runValidator({ fixture: restoreRehearsalFixture, overrides: { RESTORE_REHEARSAL_MODE: "false" } }),
+  false,
+  "Restore-shaped staging validation with restore rehearsal mode disabled",
+);
+const ordinaryStagingFixture = {
+  NODE_ENV: "production",
+  RAILWAY_ENVIRONMENT_NAME: "staging",
+  RAILWAY_ENVIRONMENT_ID: "ordinary-staging-environment",
+  PUBLIC_BASE_URL: "https://ordinary-staging.up.railway.app",
+  SOURCE_EVIDENCE_SIGNING_SECRET: "ci-staging-source-bf644d2c-401c-493b-b590",
+  POS_WEBHOOK_SIGNING_SECRET: "ci-staging-pos-f71ed34d-c2dd-4175-bda0",
+  DEMO_BILLING_MODE: "false",
+};
+assertExit(
+  runValidator({ fixture: ordinaryStagingFixture }),
+  true,
+  "Clean ordinary staging validation",
+);
+assertExit(
+  runValidator({ fixture: ordinaryStagingFixture, overrides: { PUBLIC_BASE_URL: "http://ordinary-staging.up.railway.app" } }),
+  false,
+  "Ordinary staging validation with insecure transport",
+);
+assertExit(
+  runValidator({
+    fixture: restoreRehearsalFixture,
+    overrides: { SUPABASE_URL: restoreRehearsalFixture.RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL },
+  }),
+  false,
+  "Restore validation with production Supabase reuse",
+);
+assertExit(
+  runValidator({ fixture: restoreRehearsalFixture, overrides: { RESEND_API_KEY: "ci-forbidden-resend-key" } }),
+  false,
+  "Restore validation with an external-write credential",
+);
+assertExit(
+  runValidator({ fixture: restoreRehearsalFixture, overrides: { PINTPATH_SMOKE_USER_PASSWORD: "ci-forbidden-smoke-secret" } }),
+  false,
+  "Restore validation with a production smoke credential",
+);
+assertExit(
+  runValidator({ fixture: restoreRehearsalFixture, overrides: { FIELD_TEST_MODE: "true" } }),
+  false,
+  "Restore validation with field-test mode enabled",
+);
+
+console.log("Production and restore-rehearsal deployment guard contracts passed.");

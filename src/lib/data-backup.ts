@@ -98,17 +98,97 @@ export interface RestoreRehearsalResult {
   storageEvidencePath: string | null;
   tombstonesApplied: number;
   evidenceFilesPurged: number;
+  evidencePurgedPathSha256s: string[];
+  authority: {
+    sourceManifestSha256: string;
+    sourceDatabaseSha256: string;
+    deletionLedgerSha256: string;
+    deletionLedgerGenesisSha256: string;
+    deletionLedgerCheckpointSha256: string;
+  };
+}
+
+interface StableFileSnapshot {
+  bytes: Buffer | null;
+  size: number;
+  sha256: string;
+}
+
+function sameStableFile(
+  identity: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number },
+  stat: fs.Stats,
+): boolean {
+  return identity.dev === stat.dev &&
+    identity.ino === stat.ino &&
+    identity.size === stat.size &&
+    identity.mtimeMs === stat.mtimeMs &&
+    identity.ctimeMs === stat.ctimeMs;
+}
+
+async function readStableFileSnapshot(
+  filePath: string,
+  includeBytes: boolean,
+): Promise<StableFileSnapshot> {
+  const before = await fs.promises.lstat(filePath);
+  if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1) {
+    throw new Error("Trusted file must be one regular, non-linked file.");
+  }
+  const identity = {
+    dev: before.dev,
+    ino: before.ino,
+    size: before.size,
+    mtimeMs: before.mtimeMs,
+    ctimeMs: before.ctimeMs,
+  };
+  const handle = await fs.promises.open(
+    filePath,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  const hash = crypto.createHash("sha256");
+  const chunks: Buffer[] = [];
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.nlink !== 1 || !sameStableFile(identity, opened)) {
+      throw new Error("Trusted file changed before it was read.");
+    }
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let position = 0;
+    while (position < opened.size) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, opened.size - position),
+        position,
+      );
+      if (bytesRead === 0) throw new Error("Trusted file ended before its declared size.");
+      const chunk = Buffer.from(buffer.subarray(0, bytesRead));
+      hash.update(chunk);
+      if (includeBytes) chunks.push(chunk);
+      position += bytesRead;
+    }
+    const afterDescriptor = await handle.stat();
+    const afterPath = await fs.promises.lstat(filePath);
+    if (
+      afterPath.isSymbolicLink() ||
+      !afterPath.isFile() ||
+      afterPath.nlink !== 1 ||
+      !sameStableFile(identity, afterDescriptor) ||
+      !sameStableFile(identity, afterPath)
+    ) {
+      throw new Error("Trusted file changed while it was read.");
+    }
+  } finally {
+    await handle.close();
+  }
+  return {
+    bytes: includeBytes ? Buffer.concat(chunks, before.size) : null,
+    size: before.size,
+    sha256: hash.digest("hex"),
+  };
 }
 
 export async function sha256File(filePath: string): Promise<string> {
-  const hash = crypto.createHash("sha256");
-  await new Promise<void>((resolve, reject) => {
-    const stream = fs.createReadStream(filePath);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("error", reject);
-    stream.on("end", resolve);
-  });
-  return hash.digest("hex");
+  return (await readStableFileSnapshot(filePath, false)).sha256;
 }
 
 export function sha256Bytes(bytes: Buffer): string {
@@ -447,11 +527,14 @@ function assertSqliteIntegrity(databasePath: string): void {
   }
 }
 
-export async function verifyDataBackup(backupPath: string): Promise<BackupManifest> {
+async function verifyDataBackupWithAuthority(backupPath: string): Promise<{
+  manifest: BackupManifest;
+  manifestSha256: string;
+}> {
   const backupRoot = path.resolve(backupPath);
-  const manifest = JSON.parse(
-    await fs.promises.readFile(path.join(backupRoot, "manifest.json"), "utf8"),
-  ) as BackupManifest;
+  const manifestPath = path.join(backupRoot, "manifest.json");
+  const manifestSnapshot = await readStableFileSnapshot(manifestPath, true);
+  const manifest = JSON.parse(manifestSnapshot.bytes!.toString("utf8")) as BackupManifest;
   if (
     ![1, 2].includes(manifest.version) ||
     !manifest.database ||
@@ -537,7 +620,18 @@ export async function verifyDataBackup(backupPath: string): Promise<BackupManife
 
   assertSqliteIntegrity(resolveContainedPath(backupRoot, manifest.database.path));
 
-  return manifest;
+  const manifestAfterChecks = await readStableFileSnapshot(manifestPath, true);
+  if (
+    manifestAfterChecks.sha256 !== manifestSnapshot.sha256 ||
+    !manifestAfterChecks.bytes!.equals(manifestSnapshot.bytes!)
+  ) {
+    throw new Error("Backup manifest changed while the backup was verified.");
+  }
+  return { manifest, manifestSha256: manifestSnapshot.sha256 };
+}
+
+export async function verifyDataBackup(backupPath: string): Promise<BackupManifest> {
+  return (await verifyDataBackupWithAuthority(backupPath)).manifest;
 }
 
 function normalizeMimeType(value: string | null | undefined): string | null {
@@ -587,11 +681,22 @@ async function applyAccountDeletionTombstones(input: {
   evidencePath: string;
   storageEvidencePath: string | null;
   tombstones: AccountDeletionTombstone[];
-}): Promise<{ tombstonesApplied: number; evidenceFilesPurged: number }> {
-  if (input.tombstones.length === 0) return { tombstonesApplied: 0, evidenceFilesPurged: 0 };
+}): Promise<{
+  tombstonesApplied: number;
+  evidenceFilesPurged: number;
+  evidencePurgedPathSha256s: string[];
+}> {
+  if (input.tombstones.length === 0) {
+    return {
+      tombstonesApplied: 0,
+      evidenceFilesPurged: 0,
+      evidencePurgedPathSha256s: [],
+    };
+  }
   const database = new BetterSqlite3(input.databasePath);
   let tombstonesApplied = 0;
   let evidenceFilesPurged = 0;
+  const evidencePurgedPathSha256s = new Set<string>();
   try {
     if (!tableExists(database, "accounts") || !tableExists(database, "account_deletion_requests")) {
       throw new Error("Restored database cannot apply account-deletion tombstones.");
@@ -651,7 +756,13 @@ async function applyAccountDeletionTombstones(input: {
             : null;
         if (!root) continue;
         const restoredObject = resolveContainedPath(root, evidence.objectPath);
-        if (fs.existsSync(restoredObject)) evidenceFilesPurged += 1;
+        if (fs.existsSync(restoredObject)) {
+          evidenceFilesPurged += 1;
+          evidencePurgedPathSha256s.add(sha256Bytes(Buffer.from(
+            `${evidence.storageProvider}\0${evidence.objectPath}`,
+            "utf8",
+          )));
+        }
         await fs.promises.rm(restoredObject, { force: true });
       }
       tombstonesApplied += 1;
@@ -659,50 +770,56 @@ async function applyAccountDeletionTombstones(input: {
   } finally {
     database.close();
   }
-  return { tombstonesApplied, evidenceFilesPurged };
+  return {
+    tombstonesApplied,
+    evidenceFilesPurged,
+    evidencePurgedPathSha256s: [...evidencePurgedPathSha256s].sort(),
+  };
 }
 
-async function assertAuthenticatedEmptyDeletionLedger(input: {
+async function assertDeletionLedgerAuthority(input: {
   actualLedgerSha256: string;
-  deletionLedgerGenesisPath: string | undefined;
-  expectedDeletionLedgerGenesisSha256: string | undefined;
-  deletionLedgerCheckpointPath: string | undefined;
-  expectedDeletionLedgerCheckpointSha256: string | undefined;
-}): Promise<void> {
-  if (
-    !input.deletionLedgerGenesisPath ||
-    !input.deletionLedgerCheckpointPath ||
-    !input.expectedDeletionLedgerGenesisSha256 ||
-    !input.expectedDeletionLedgerCheckpointSha256
-  ) {
-    throw new Error(
-      "An empty deletion ledger requires its authenticated independent genesis and checkpoint records.",
-    );
-  }
+  currentTombstones: AccountDeletionTombstone[];
+  deletionLedgerGenesisPath: string;
+  expectedDeletionLedgerGenesisSha256: string;
+  deletionLedgerCheckpointPath: string;
+  expectedDeletionLedgerCheckpointSha256: string;
+}): Promise<{ genesisSha256: string; checkpointSha256: string }> {
   if (
     !/^[a-f0-9]{64}$/i.test(input.expectedDeletionLedgerGenesisSha256) ||
     !/^[a-f0-9]{64}$/i.test(input.expectedDeletionLedgerCheckpointSha256)
   ) {
-    throw new Error("Trusted SHA-256 checkpoints are required for the empty deletion-ledger authority records.");
+    throw new Error(
+      "Trusted SHA-256 checkpoints are required for deletion-ledger genesis and checkpoint records.",
+    );
   }
 
   const genesisPath = path.resolve(input.deletionLedgerGenesisPath);
   const checkpointPath = path.resolve(input.deletionLedgerCheckpointPath);
-  const actualGenesisSha256 = await sha256File(genesisPath);
-  const actualCheckpointSha256 = await sha256File(checkpointPath);
+  const genesisSnapshot = await readStableFileSnapshot(genesisPath, true);
+  const checkpointSnapshot = await readStableFileSnapshot(checkpointPath, true);
+  const actualGenesisSha256 = genesisSnapshot.sha256;
+  const actualCheckpointSha256 = checkpointSnapshot.sha256;
   if (
     actualGenesisSha256 !== input.expectedDeletionLedgerGenesisSha256.toLowerCase() ||
     actualCheckpointSha256 !== input.expectedDeletionLedgerCheckpointSha256.toLowerCase()
   ) {
-    throw new Error("The empty deletion-ledger authority records do not match their trusted SHA-256 checkpoints.");
+    throw new Error(
+      "The deletion-ledger authority records do not match their trusted SHA-256 checkpoints.",
+    );
   }
 
-  const genesis = JSON.parse(
-    await fs.promises.readFile(genesisPath, "utf8"),
-  ) as EmptyDeletionLedgerGenesis;
+  const genesis = JSON.parse(genesisSnapshot.bytes!.toString("utf8")) as EmptyDeletionLedgerGenesis;
   const checkpoint = JSON.parse(
-    await fs.promises.readFile(checkpointPath, "utf8"),
+    checkpointSnapshot.bytes!.toString("utf8"),
   ) as EmptyDeletionLedgerCheckpoint;
+  const currentTombstones = normalizeTombstones(input.currentTombstones);
+  const expectedLatestCompletedAt = currentTombstones.reduce<string | null>(
+    (latest, tombstone) => latest === null || Date.parse(tombstone.completedAt) > Date.parse(latest)
+      ? tombstone.completedAt
+      : latest,
+    null,
+  );
   const emptyImmutableSetSha256 = sha256Bytes(Buffer.from(JSON.stringify([])));
   if (
     genesis.version !== 1 ||
@@ -718,13 +835,22 @@ async function assertAuthenticatedEmptyDeletionLedger(input: {
     checkpoint.genesisSha256 !== actualGenesisSha256 ||
     checkpoint.currentLedgerPath !== CURRENT_TOMBSTONE_LEDGER_PATH ||
     checkpoint.currentLedgerSha256 !== input.actualLedgerSha256 ||
-    checkpoint.immutableObjectCount !== 0 ||
-    checkpoint.immutableSetSha256 !== emptyImmutableSetSha256 ||
-    checkpoint.tombstoneCount !== 0 ||
-    checkpoint.latestCompletedAt !== null
+    !Number.isSafeInteger(checkpoint.immutableObjectCount) ||
+    checkpoint.immutableObjectCount < currentTombstones.length ||
+    !/^[a-f0-9]{64}$/.test(checkpoint.immutableSetSha256) ||
+    checkpoint.tombstoneCount !== currentTombstones.length ||
+    checkpoint.latestCompletedAt !== expectedLatestCompletedAt ||
+    (currentTombstones.length === 0 && (
+      checkpoint.immutableObjectCount !== 0 ||
+      checkpoint.immutableSetSha256 !== emptyImmutableSetSha256
+    ))
   ) {
-    throw new Error("The empty deletion ledger is not bound to a valid independent genesis/checkpoint state.");
+    throw new Error("The deletion ledger is not bound to a valid independent genesis/checkpoint state.");
   }
+  return {
+    genesisSha256: actualGenesisSha256,
+    checkpointSha256: actualCheckpointSha256,
+  };
 }
 
 export async function rehearseDataRestore(input: {
@@ -732,10 +858,10 @@ export async function rehearseDataRestore(input: {
   restoreRoot: string;
   deletionTombstonePath: string;
   expectedDeletionTombstoneSha256: string;
-  deletionLedgerGenesisPath?: string;
-  expectedDeletionLedgerGenesisSha256?: string;
-  deletionLedgerCheckpointPath?: string;
-  expectedDeletionLedgerCheckpointSha256?: string;
+  deletionLedgerGenesisPath: string;
+  expectedDeletionLedgerGenesisSha256: string;
+  deletionLedgerCheckpointPath: string;
+  expectedDeletionLedgerCheckpointSha256: string;
 }): Promise<RestoreRehearsalResult> {
   const backupRoot = path.resolve(input.backupPath);
   const restoreRoot = path.resolve(input.restoreRoot);
@@ -746,23 +872,25 @@ export async function rehearseDataRestore(input: {
     throw new Error("A trusted expected SHA-256 checkpoint is required for the deletion ledger.");
   }
   const tombstonePath = path.resolve(input.deletionTombstonePath);
-  const actualTombstoneSha256 = await sha256File(tombstonePath);
+  const tombstoneSnapshot = await readStableFileSnapshot(tombstonePath, true);
+  const actualTombstoneSha256 = tombstoneSnapshot.sha256;
   if (actualTombstoneSha256 !== input.expectedDeletionTombstoneSha256.toLowerCase()) {
     throw new Error("The deletion ledger does not match its trusted SHA-256 checkpoint.");
   }
-  const currentTombstoneDocument = await readAccountDeletionTombstones(
-    tombstonePath,
+  const currentTombstoneDocument = parseAccountDeletionTombstones(
+    tombstoneSnapshot.bytes!,
   );
-  if (currentTombstoneDocument.tombstones.length === 0) {
-    await assertAuthenticatedEmptyDeletionLedger({
-      actualLedgerSha256: actualTombstoneSha256,
-      deletionLedgerGenesisPath: input.deletionLedgerGenesisPath,
-      expectedDeletionLedgerGenesisSha256: input.expectedDeletionLedgerGenesisSha256,
-      deletionLedgerCheckpointPath: input.deletionLedgerCheckpointPath,
-      expectedDeletionLedgerCheckpointSha256: input.expectedDeletionLedgerCheckpointSha256,
-    });
-  }
-  const manifest = await verifyDataBackup(backupRoot);
+  const deletionAuthority = await assertDeletionLedgerAuthority({
+    actualLedgerSha256: actualTombstoneSha256,
+    currentTombstones: currentTombstoneDocument.tombstones,
+    deletionLedgerGenesisPath: input.deletionLedgerGenesisPath,
+    expectedDeletionLedgerGenesisSha256: input.expectedDeletionLedgerGenesisSha256,
+    deletionLedgerCheckpointPath: input.deletionLedgerCheckpointPath,
+    expectedDeletionLedgerCheckpointSha256: input.expectedDeletionLedgerCheckpointSha256,
+  });
+  const verifiedBackup = await verifyDataBackupWithAuthority(backupRoot);
+  const manifest = verifiedBackup.manifest;
+  const sourceManifestSha256 = verifiedBackup.manifestSha256;
 
   if (fs.existsSync(restoreRoot) && (await fs.promises.readdir(restoreRoot)).length > 0) {
     throw new Error(`Restore rehearsal destination is not empty: ${restoreRoot}`);
@@ -781,12 +909,14 @@ export async function rehearseDataRestore(input: {
   if (fs.existsSync(backupEvidencePath)) {
     await fs.promises.cp(backupEvidencePath, evidencePath, { recursive: true, errorOnExist: true });
   }
+  await fs.promises.mkdir(evidencePath, { recursive: true, mode: 0o700 });
 
   if (manifest.storageEvidence && storageEvidencePath) {
     const backupStoragePath = resolveContainedPath(backupRoot, manifest.storageEvidence.path);
     if (fs.existsSync(backupStoragePath)) {
       await fs.promises.cp(backupStoragePath, storageEvidencePath, { recursive: true, errorOnExist: true });
     }
+    await fs.promises.mkdir(storageEvidencePath, { recursive: true, mode: 0o700 });
   }
 
   await assertBackupFile(restoreRoot, { ...manifest.database, path: path.basename(databasePath) });
@@ -882,5 +1012,12 @@ export async function rehearseDataRestore(input: {
     evidencePath,
     storageEvidencePath,
     ...applied,
+    authority: {
+      sourceManifestSha256,
+      sourceDatabaseSha256: manifest.database.sha256,
+      deletionLedgerSha256: actualTombstoneSha256,
+      deletionLedgerGenesisSha256: deletionAuthority.genesisSha256,
+      deletionLedgerCheckpointSha256: deletionAuthority.checkpointSha256,
+    },
   };
 }

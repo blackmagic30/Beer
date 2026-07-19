@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import Database from "better-sqlite3";
 
 import { createServerSupabaseClient } from "../src/lib/supabase-client.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 type JsonRow = Record<string, unknown>;
 
@@ -1054,6 +1055,9 @@ async function verifyCleanup(input: {
 
 async function main(): Promise<void> {
   const apply = hasFlag("apply");
+  if (apply) {
+    assertOperatorMutationAllowed("Duplicate venue cleanup --apply");
+  }
   const expectedPairs = requiredExpectedPairCount();
   const databasePath = path.resolve(process.env.DATABASE_PATH || "./data/melb-beer-bot.sqlite");
   if (!fs.existsSync(databasePath)) throw new Error(`SQLite database does not exist: ${databasePath}`);

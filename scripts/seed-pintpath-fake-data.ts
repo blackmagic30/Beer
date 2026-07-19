@@ -9,6 +9,9 @@ import { initializeDatabaseSchema } from "../src/db/database.js";
 import { findTrackedBeerByName, normalizeBeerSearchKey } from "../src/constants/beers.js";
 import { getZonedMonthRangeIso } from "../src/lib/time.js";
 import { BusinessService } from "../src/modules/business/business.service.js";
+import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
+
+assertOperatorMutationAllowed("Synthetic Pint Path data seed");
 
 const TEST_PREFIX = "pintpath-release";
 const DEFAULT_DATABASE_PATH = "data/pintpath-release-test.sqlite";

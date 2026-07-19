@@ -26,6 +26,91 @@ const PASSWORD_RECOVERY_MAX_AGE_MS = 20 * 60 * 1000;
 const API_REQUEST_TIMEOUT_MS = 20 * 1000;
 const LEGACY_SESSION_MIGRATION_TIMEOUT_MS = 8 * 1000;
 const MAX_API_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+const RESTORE_REHEARSAL_LOCAL_STORAGE_KEYS = new Set([
+  AUTH_TOKEN_KEY,
+  ACCOUNT_CONTEXT_KEY,
+  ANON_SESSION_KEY,
+  AUTH_RETURN_KEY,
+  LEGAL_ACCEPTANCE_KEY,
+  ...SUBMISSION_DEVICE_STORAGE_KEYS,
+  "pintPathLocationPreference",
+  "pintPathCanIDriveProfile",
+  "pintPathSupportReceipts",
+  "pintPath.counterReceiptQueue.v1",
+]);
+const RESTORE_REHEARSAL_SESSION_STORAGE_KEYS = new Set([
+  SENSITIVE_AUTH_RETURN_KEY,
+  PENDING_PORTAL_REDEMPTION_KEY,
+  PASSWORD_RECOVERY_KEY,
+  "pintPathBillingRecoveryOptions",
+  "pintPath.counterReceiptQueue.v2",
+]);
+let restoreIsolationPromise = null;
+let restoreAnonymousSessionId = null;
+
+function isRestoreRehearsalMode() {
+  return window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.restoreRehearsalMode === true;
+}
+
+function isSupabaseSessionStorageKey(key) {
+  return /^sb-.+-auth-token(?:-code-verifier)?$/.test(key) || /^supabase[.:_-].*auth/i.test(key);
+}
+
+function isRestoreSensitiveStorageKey(key, exactKeys) {
+  return exactKeys.has(key) || key.includes(":account:") || isSupabaseSessionStorageKey(key);
+}
+
+function clearRestoreSensitiveStorage(storage, exactKeys) {
+  if (!storage) return;
+  try {
+    const keys = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index) || "";
+      if (isRestoreSensitiveStorageKey(key, exactKeys)) keys.push(key);
+    }
+    keys.forEach((key) => storage.removeItem(key));
+    exactKeys.forEach((key) => storage.removeItem(key));
+  } catch {
+    // Storage can be unavailable in private browsing. All restore-mode getters
+    // below still ignore any value that could not be removed.
+  }
+}
+
+function deleteRestoreSubmissionQueue() {
+  if (!window.indexedDB?.deleteDatabase) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      const request = window.indexedDB.deleteDatabase(LOCAL_SUBMISSION_QUEUE_DB_NAME);
+      request.onsuccess = () => resolve(true);
+      request.onerror = () => resolve(false);
+      request.onblocked = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+function prepareRestoreIsolation() {
+  if (!isRestoreRehearsalMode()) {
+    return Promise.resolve({ enabled: false, indexedDbCleared: false });
+  }
+
+  // This synchronous purge runs as business.js is evaluated, before the
+  // DOMContentLoaded handlers render account-dependent browser state.
+  clearRestoreSensitiveStorage(window.localStorage, RESTORE_REHEARSAL_LOCAL_STORAGE_KEYS);
+  clearRestoreSensitiveStorage(window.sessionStorage, RESTORE_REHEARSAL_SESSION_STORAGE_KEYS);
+  window.__melbBeerSupabaseClient = null;
+
+  if (!restoreIsolationPromise) {
+    restoreIsolationPromise = deleteRestoreSubmissionQueue().then((indexedDbCleared) => ({
+      enabled: true,
+      indexedDbCleared,
+    }));
+  }
+  return restoreIsolationPromise;
+}
+
+void prepareRestoreIsolation();
 
 function createFetchDeadline(requestedTimeoutMs, callerSignal = null) {
   const requested = Number(requestedTimeoutMs);
@@ -76,6 +161,10 @@ function escapeHtmlAttribute(value) {
 }
 
 function getAuthToken() {
+  if (isRestoreRehearsalMode()) {
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    return null;
+  }
   return window.localStorage.getItem(AUTH_TOKEN_KEY);
 }
 
@@ -87,6 +176,10 @@ function setAuthToken(token) {
 }
 
 function setAccountContext(account, access = null) {
+  if (isRestoreRehearsalMode()) {
+    window.localStorage.removeItem(ACCOUNT_CONTEXT_KEY);
+    return;
+  }
   const previousContext = getAccountContext();
   const previousAccountId = previousContext?.id || null;
   const announceAccountChange = (accountId) => {
@@ -151,6 +244,10 @@ function setAccountContext(account, access = null) {
 }
 
 function getAccountContext() {
+  if (isRestoreRehearsalMode()) {
+    window.localStorage.removeItem(ACCOUNT_CONTEXT_KEY);
+    return null;
+  }
   const raw = window.localStorage.getItem(ACCOUNT_CONTEXT_KEY);
   if (!raw) {
     return null;
@@ -189,6 +286,10 @@ function canUseVenuePortalContext() {
 }
 
 function hasCachedSupabaseSession() {
+  if (isRestoreRehearsalMode()) {
+    clearCachedSupabaseSessions();
+    return false;
+  }
   try {
     for (let index = 0; index < window.localStorage.length; index += 1) {
       const key = window.localStorage.key(index) || "";
@@ -212,7 +313,7 @@ function clearCachedSupabaseSessions() {
     const keys = [];
     for (let index = 0; index < window.localStorage.length; index += 1) {
       const key = window.localStorage.key(index) || "";
-      if (/^sb-.+-auth-token$/.test(key)) keys.push(key);
+      if (isSupabaseSessionStorageKey(key)) keys.push(key);
     }
     keys.forEach((key) => window.localStorage.removeItem(key));
   } catch {
@@ -230,6 +331,9 @@ function getAccountScopeId() {
 }
 
 function getAccountScopedStorageKey(baseKey, accountId = getAccountScopeId()) {
+  if (isRestoreRehearsalMode()) {
+    return null;
+  }
   if (!accountId) {
     return null;
   }
@@ -245,6 +349,9 @@ function getAccountScopedStorage(baseKey, options = {}) {
 }
 
 function setAccountScopedStorage(baseKey, value, options = {}) {
+  if (isRestoreRehearsalMode()) {
+    throw new Error("Private device storage is disabled during the isolated restore rehearsal.");
+  }
   const key = getAccountScopedStorageKey(baseKey, options.accountId);
   if (!key) {
     throw new Error("A verified account is required before saving private device data.");
@@ -313,6 +420,13 @@ async function clearLocalSubmissionDeviceData(accountId = getAccountScopeId()) {
 }
 
 function getAnonymousSessionId() {
+  if (isRestoreRehearsalMode()) {
+    window.localStorage.removeItem(ANON_SESSION_KEY);
+    if (!restoreAnonymousSessionId) {
+      restoreAnonymousSessionId = crypto.randomUUID ? crypto.randomUUID() : `restore-${Date.now()}-${Math.random()}`;
+    }
+    return restoreAnonymousSessionId;
+  }
   let value = window.localStorage.getItem(ANON_SESSION_KEY);
 
   if (!value) {
@@ -430,10 +544,15 @@ function isVenuePortalReturnPath(value = null) {
 
 function getAuthReturnPathFromLocation() {
   const params = new URLSearchParams(window.location.search);
-  return getSafeReturnPath(params.get("next") || params.get("returnTo") || window.localStorage.getItem(AUTH_RETURN_KEY));
+  const cachedReturnPath = isRestoreRehearsalMode() ? null : window.localStorage.getItem(AUTH_RETURN_KEY);
+  return getSafeReturnPath(params.get("next") || params.get("returnTo") || cachedReturnPath);
 }
 
 function storeSensitiveAuthReturnPath(value) {
+  if (isRestoreRehearsalMode()) {
+    clearSensitiveAuthReturnState();
+    return null;
+  }
   const safePath = getSafeReturnPath(value);
   if (!isVenuePortalReturnPath(safePath)) return null;
   window.sessionStorage.setItem(SENSITIVE_AUTH_RETURN_KEY, JSON.stringify({ path: safePath, createdAt: Date.now() }));
@@ -441,6 +560,10 @@ function storeSensitiveAuthReturnPath(value) {
 }
 
 function consumeSensitiveAuthReturnPath() {
+  if (isRestoreRehearsalMode()) {
+    clearSensitiveAuthReturnState();
+    return null;
+  }
   const stored = window.sessionStorage.getItem(SENSITIVE_AUTH_RETURN_KEY);
   window.sessionStorage.removeItem(SENSITIVE_AUTH_RETURN_KEY);
   if (!stored) return null;
@@ -470,6 +593,10 @@ function consumeSensitiveAuthReturnPath() {
 }
 
 function consumePendingPortalRedemption() {
+  if (isRestoreRehearsalMode()) {
+    window.sessionStorage.removeItem(PENDING_PORTAL_REDEMPTION_KEY);
+    return null;
+  }
   const stored = window.sessionStorage.getItem(PENDING_PORTAL_REDEMPTION_KEY);
   window.sessionStorage.removeItem(PENDING_PORTAL_REDEMPTION_KEY);
   if (!stored) return null;
@@ -528,6 +655,10 @@ function hasCurrentLegalAcceptance(account) {
 }
 
 function setPendingLegalAcceptance(input) {
+  if (isRestoreRehearsalMode()) {
+    clearPendingLegalAcceptance();
+    return;
+  }
   window.localStorage.setItem(LEGAL_ACCEPTANCE_KEY, JSON.stringify({
     ...legalAcceptancePayload(input),
     expectedEmail: String(input.expectedEmail || "").trim().toLowerCase() || null,
@@ -542,6 +673,10 @@ function clearPendingLegalAcceptance() {
 }
 
 function getPendingLegalAcceptance() {
+  if (isRestoreRehearsalMode()) {
+    clearPendingLegalAcceptance();
+    return null;
+  }
   const raw = window.localStorage.getItem(LEGAL_ACCEPTANCE_KEY);
   if (!raw) {
     return null;
@@ -611,6 +746,9 @@ async function setPendingLegalAcceptanceForCurrentSession(input, options = {}) {
 }
 
 function getSupabaseConfig() {
+  if (isRestoreRehearsalMode()) {
+    return { url: null, anonKey: null };
+  }
   const config = getViewerConfig();
   const business = getBusinessConfig();
   return {
@@ -620,6 +758,9 @@ function getSupabaseConfig() {
 }
 
 function getSupabaseOauthProviders() {
+  if (isRestoreRehearsalMode()) {
+    return [];
+  }
   const config = getViewerConfig();
   const business = getBusinessConfig();
   const providers = business.supabaseOauthProviders || config.supabaseOauthProviders || ["google", "apple"];
@@ -627,6 +768,11 @@ function getSupabaseOauthProviders() {
 }
 
 function getSupabaseClient() {
+  if (isRestoreRehearsalMode()) {
+    clearCachedSupabaseSessions();
+    window.__melbBeerSupabaseClient = null;
+    return null;
+  }
   const config = getSupabaseConfig();
   if (!window.supabase || !config.url || !config.anonKey) {
     return null;
@@ -833,6 +979,13 @@ async function migrateLegacySessionCookie(path = "") {
 }
 
 async function syncSupabaseSession(options = {}) {
+  if (isRestoreRehearsalMode()) {
+    await prepareRestoreIsolation();
+    setAuthToken(null);
+    setAccountContext(null);
+    clearPendingLegalAcceptance();
+    return { configured: false, synced: false, restoreRehearsal: true };
+  }
   const client = getSupabaseClient();
   if (!client) {
     return { configured: false, synced: false };
@@ -1059,6 +1212,10 @@ async function requestPasswordReset(email) {
 }
 
 function markPasswordRecoverySession(accountId = getAccountScopeId()) {
+  if (isRestoreRehearsalMode()) {
+    window.sessionStorage.removeItem(PASSWORD_RECOVERY_KEY);
+    throw new Error("Password recovery is disabled during the isolated restore rehearsal.");
+  }
   if (!accountId) {
     throw new Error("A verified recovery account is required.");
   }
@@ -1069,6 +1226,10 @@ function markPasswordRecoverySession(accountId = getAccountScopeId()) {
 }
 
 function hasPasswordRecoverySession() {
+  if (isRestoreRehearsalMode()) {
+    window.sessionStorage.removeItem(PASSWORD_RECOVERY_KEY);
+    return false;
+  }
   try {
     const value = JSON.parse(window.sessionStorage.getItem(PASSWORD_RECOVERY_KEY) || "null");
     const createdAt = Date.parse(value?.createdAt || "");
@@ -1463,6 +1624,9 @@ function setStatus(element, message, isError = false) {
 
 async function trackEvent(eventType, metadata = {}) {
   try {
+    if (isRestoreRehearsalMode()) {
+      return;
+    }
     if (!hasAnalyticsConsent()) {
       return;
     }
@@ -1497,6 +1661,8 @@ window.MelbBeerBusiness = {
   AUTH_TOKEN_KEY,
   ACCOUNT_CONTEXT_KEY,
   LEGAL_POLICY_VERSION,
+  isRestoreRehearsalMode,
+  prepareRestoreIsolation,
   getAuthToken,
   setAuthToken,
   setAccountContext,
@@ -1560,7 +1726,8 @@ window.MelbBeerBusiness = {
   trackEvent,
 };
 
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
+  await prepareRestoreIsolation();
   installAccessibilityChrome();
   installNavigationChrome();
   installFieldTestChrome();
