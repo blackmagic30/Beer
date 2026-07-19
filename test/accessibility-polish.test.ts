@@ -57,4 +57,21 @@ describe("website accessibility polish", () => {
     expect(portalHtml).toContain('panel.setAttribute("role", "tabpanel")');
     expect(portalHtml).toContain('id="portalAccess" class="notice" role="status" aria-live="polite" aria-atomic="true"');
   });
+
+  it("announces camera and Google venue lookup state changes", () => {
+    const portalHtml = readFile("viewer/venue-portal.html");
+    const adminHtml = readFile("viewer/admin.html");
+
+    expect(portalHtml).toContain('id="memberQrScannerStatus" class="muted" role="status" aria-live="polite" aria-atomic="true"');
+    expect(portalHtml).toContain('status.textContent = "Starting camera..."');
+    expect(portalHtml).toContain('status.textContent = "Point the camera at the member\'s Pint Path QR code."');
+    expect(portalHtml).toContain('status.textContent = "That QR is not a Pint Path member code."');
+    expect(portalHtml).toContain('status.textContent = "Keep the QR steady inside the camera view."');
+    expect(adminHtml).toContain('id="adminGoogleVenueStatus" class="fieldHint" role="status" aria-live="polite" aria-atomic="true"');
+    expect(adminHtml).toContain('adminGoogleVenueStatus.textContent = "Searching Google Maps..."');
+    expect(adminHtml).toContain('adminGoogleVenueStatus.textContent = "Loading Google venue details..."');
+    expect(adminHtml).toContain('adminGoogleVenueStatus.textContent = error.message || "Google venue search failed."');
+    expect(adminHtml).toContain('has been selected for beer capture.`');
+    expect(adminHtml).toContain('details loaded. Check the fields, then create the venue.`');
+  });
 });

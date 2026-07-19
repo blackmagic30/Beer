@@ -38,7 +38,8 @@ describe("application security headers", () => {
     expect(source).toContain('<nav class="siteNav" aria-label="Primary">');
     expect(source).toContain('<a href="/pricing.html">Pricing</a>');
     expect(source).toContain('<a href="/account.html">Account</a>');
-    expect(source).toContain('<footer class="siteFooter" aria-label="Legal, privacy, and help">');
+    expect(source).toContain('<footer class="siteFooter" role="contentinfo" aria-label="Legal, privacy, and help">');
+    expect(source).not.toContain('<footer class="siteFooter" aria-label="Legal, privacy, and help">');
     expect(source).toContain('<a href="/privacy.html">Privacy</a>');
     expect(source).toContain('<a href="/status.html">Service status</a>');
   });

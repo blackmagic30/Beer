@@ -628,7 +628,7 @@ function renderPublicVenuePage(
       </div>
     </section>
     <p class="note">Venue data may change. Check directly with the venue before ordering, travelling, or relying on special availability.</p>
-    <footer class="siteFooter" aria-label="Legal, privacy, and help">
+    <footer class="siteFooter" role="contentinfo" aria-label="Legal, privacy, and help">
       <div class="footerLinks">
         <a href="/terms.html">Terms</a>
         <a href="/privacy.html">Privacy</a>
