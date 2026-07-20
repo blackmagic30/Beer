@@ -30,6 +30,7 @@ describe("native mobile remediation guardrails", () => {
   const iosModels = read("apps/ios/BeerMap/Models/BeerMapModels.swift");
   const iosApp = read("apps/ios/BeerMap/App/BeerMapApp.swift");
   const iosRoot = read("apps/ios/BeerMap/Features/RootView.swift");
+  const iosSettings = read("apps/ios/BeerMap/Features/SettingsView.swift");
   const iosKeychain = read("apps/ios/BeerMap/Services/KeychainSessionStore.swift");
   const androidAPI = read("apps/android/app/src/main/java/au/pintpath/beermap/data/BeerMapApiClient.kt");
   const androidModels = read("apps/android/app/src/main/java/au/pintpath/beermap/data/Models.kt");
@@ -156,6 +157,76 @@ describe("native mobile remediation guardrails", () => {
     expect(androidSessions).not.toContain("val ageConfirmed: Boolean");
     expect(androidSessions).not.toContain("val termsAccepted: Boolean");
     expect(androidSessions).not.toContain("val privacyAccepted: Boolean");
+  });
+
+  it("fails closed on missing native policy configuration and derives displayed versions from public config", () => {
+    const iosSignup = sourceSection(iosAPI, "func signup(", "func syncSupabase(");
+    const iosSync = sourceSection(iosAPI, "func syncSupabase(", "func requestPasswordReset(");
+    const iosGuard = sourceSection(iosAPI, "private func requiredLegalPolicyVersion(", "private func path(");
+    expect(iosSignup).toContain("let policyVersion = try requiredLegalPolicyVersion(config)");
+    expect(iosSync).toContain("policyVersion = try requiredLegalPolicyVersion(config)");
+    expect(iosGuard).toContain("config.legalPolicyVersion?.trimmingCharacters");
+    expect(iosGuard).toContain("throw BeerMapAPIError.configuration(");
+
+    const androidSignup = sourceSection(androidAPI, "suspend fun signup(", "suspend fun refreshSupabaseSession(");
+    const androidSync = sourceSection(androidAPI, "private suspend fun syncSupabase(", "suspend fun logout(");
+    const androidGuard = sourceSection(
+      androidAPI,
+      "private fun requiredLegalPolicyVersion(",
+      "private suspend fun supabaseRequest(",
+    );
+    expect(androidSignup).toContain("val policyVersion = requiredLegalPolicyVersion(config)");
+    expect(androidSync).toContain("val policyVersion = requiredLegalPolicyVersion(config)");
+    expect(androidGuard).toContain('config.stringOrNull("legalPolicyVersion")?.trim()?.takeIf { it.isNotEmpty() }');
+    expect(androidGuard).toContain("?: throw IOException(");
+
+    for (const guard of [iosGuard, androidGuard]) {
+      expect(guard).toContain("The current Terms and Privacy Policy version is unavailable.");
+    }
+    for (const source of [iosAPI, androidAPI, iosApp, androidApp, iosSettings]) {
+      expect(source).not.toMatch(/["']20\d{2}-\d{2}-\d{2}["']/);
+    }
+
+    expect(iosApp).toContain("legalAcceptanceVersion = config?.legalPolicyVersion");
+    expect(androidApp).toContain('legalAcceptanceVersion = config.stringOrNull("legalPolicyVersion")');
+    expect(iosSettings).toContain('model.config?.legalPolicyVersion ?? "unavailable"');
+    expect(androidApp).toContain('state.config.stringOrNull("legalPolicyVersion") ?: "unavailable"');
+  });
+
+  it("shows complete operator and legal links in native settings while keeping diagnostics debug-only", () => {
+    const androidSettings = sourceSection(androidApp, "private fun SettingsScreen(", "private fun showTimePicker(");
+    const legalDetails = [
+      "Isaac William De Worsop, sole trader",
+      "ABN 80 319 578 329",
+      "WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia",
+      "admin@pintpath.au",
+      "Terms and Conditions",
+      "Privacy Policy",
+      "Account export and deletion",
+      "terms.html",
+      "privacy.html",
+      "account.html",
+    ];
+    for (const source of [iosSettings, androidSettings]) {
+      for (const detail of legalDetails) expect(source).toContain(detail);
+      expect(source).toContain("mailto:admin@pintpath.au");
+    }
+
+    const iosDebugStart = iosSettings.indexOf("#if DEBUG");
+    const iosDebugEnd = iosSettings.indexOf("#endif", iosDebugStart);
+    const iosDiagnostics = iosSettings.indexOf('title: "Backend connection"');
+    expect(iosDebugStart).toBeGreaterThanOrEqual(0);
+    expect(iosDiagnostics).toBeGreaterThan(iosDebugStart);
+    expect(iosDiagnostics).toBeLessThan(iosDebugEnd);
+    expect(iosSettings.match(/Backend connection/g)).toHaveLength(1);
+
+    const androidDebugStart = androidSettings.indexOf("if (BuildConfig.DEBUG) {");
+    const androidSupportStart = androidSettings.indexOf('SectionHeader("Support"', androidDebugStart);
+    const androidDiagnostics = androidSettings.indexOf('SectionHeader("Configuration", "Backend connection"');
+    expect(androidDebugStart).toBeGreaterThanOrEqual(0);
+    expect(androidDiagnostics).toBeGreaterThan(androidDebugStart);
+    expect(androidDiagnostics).toBeLessThan(androidSupportStart);
+    expect(androidSettings.match(/Backend connection/g)).toHaveLength(1);
   });
 
   it("validates signup password confirmation and clears submitted secrets", () => {

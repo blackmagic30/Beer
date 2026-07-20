@@ -6704,8 +6704,15 @@ body.discountPassModalOpen {
 }
 
 .legalStack h2,
-.legalStack p {
+.legalStack p,
+.legalStack address {
   margin: 0;
+}
+
+.legalContact {
+  color: var(--muted, #a8b2c5);
+  font-style: normal;
+  line-height: 1.65;
 }
 
 .progressTrack {

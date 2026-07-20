@@ -574,7 +574,7 @@ function renderPublicVenuePage(
     main { width: min(920px, 100%); display: grid; gap: 18px; }
     .skip { position: fixed; top: 10px; left: 10px; z-index: 2; transform: translateY(-180%); background: #f8fafc; color: #06101f; }
     .skip:focus { transform: translateY(0); }
-    .siteNav, .siteFooter { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px; }
+    .siteNav, .siteFooter, .footerLinks, .footerIdentity { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px; }
     .siteNav { border: 1px solid rgba(255,255,255,.1); border-radius: 22px; background: rgba(7,10,18,.74); padding: 10px 12px; }
     .brand { font-size: 18px; letter-spacing: -.02em; }
     .navLinks, .footerLinks { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -635,7 +635,11 @@ function renderPublicVenuePage(
         <a href="/security.html">Security</a>
         <a href="/status.html">Service status</a>
       </div>
-      <a href="/feedback.html">Get help</a>
+      <div class="footerIdentity">
+        <span>Pint Path · ABN 80 319 578 329</span>
+        <a href="mailto:admin@pintpath.au">admin@pintpath.au</a>
+        <a href="/feedback.html">Get help</a>
+      </div>
     </footer>
   </main>
 </body>

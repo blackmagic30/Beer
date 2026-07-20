@@ -343,6 +343,11 @@ if (parsedEnv.data.REPORT_EMAIL_MODE === "resend") {
   if (!parsedEnv.data.REPORT_EMAIL_FROM || !isSafeConfiguredEmail(parsedEnv.data.REPORT_EMAIL_FROM)) {
     throw new Error("REPORT_EMAIL_FROM must be a configured sender address when REPORT_EMAIL_MODE=resend.");
   }
+  if (!parsedEnv.data.REPORT_EMAIL_REPLY_TO || !isSafeConfiguredEmail(parsedEnv.data.REPORT_EMAIL_REPLY_TO)) {
+    throw new Error(
+      "REPORT_EMAIL_REPLY_TO must be a monitored valid email address when REPORT_EMAIL_MODE=resend.",
+    );
+  }
 }
 
 if (parsedEnv.data.REPORT_EMAIL_REPLY_TO && !isSafeConfiguredEmail(parsedEnv.data.REPORT_EMAIL_REPLY_TO)) {

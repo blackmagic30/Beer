@@ -84,6 +84,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -808,7 +809,7 @@ class BeerMapState(context: Context) {
             providerRefreshToken ?: apiError.legalAcceptanceRefreshToken
         )
         legalAcceptanceRequired = true
-        legalAcceptanceVersion = config.optString("legalPolicyVersion", "2026-07-12")
+        legalAcceptanceVersion = config.stringOrNull("legalPolicyVersion")
         error = apiError.message ?: "Accept the current Terms and Privacy Policy before continuing."
         message = null
         return true
@@ -2852,6 +2853,8 @@ private fun ReportsCard(state: BeerMapState, scope: CoroutineScope, portal: Port
 @Composable
 private fun SettingsScreen(state: BeerMapState, scope: CoroutineScope) {
     var support by remember { mutableStateOf("") }
+    val uriHandler = LocalUriHandler.current
+    val publicBaseUrl = BuildConfig.PINT_PATH_API_BASE_URL.trimEnd('/')
     Column(
         Modifier
             .fillMaxSize()
@@ -2859,11 +2862,13 @@ private fun SettingsScreen(state: BeerMapState, scope: CoroutineScope) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        AppCard {
-            SectionHeader("Configuration", "Backend connection", "The native app reuses the existing Pint Path API and data.", Icons.Filled.Settings)
-            Text("API base URL: ${BuildConfig.PINT_PATH_API_BASE_URL}", style = MaterialTheme.typography.bodyMedium)
-            Text("Supabase native OAuth: ${if (BuildConfig.SUPABASE_URL.isBlank()) "Not configured" else "Public config present"}", style = MaterialTheme.typography.bodyMedium)
-            Text("Field-test mode: ${if (state.config.optBoolean("fieldTestMode", false)) "On" else "Off"}", style = MaterialTheme.typography.bodyMedium)
+        if (BuildConfig.DEBUG) {
+            AppCard {
+                SectionHeader("Configuration", "Backend connection", "Debug-only connection details.", Icons.Filled.Settings)
+                Text("API base URL: ${BuildConfig.PINT_PATH_API_BASE_URL}", style = MaterialTheme.typography.bodyMedium)
+                Text("Supabase native OAuth: ${if (BuildConfig.SUPABASE_URL.isBlank()) "Not configured" else "Public config present"}", style = MaterialTheme.typography.bodyMedium)
+                Text("Field-test mode: ${if (state.config.optBoolean("fieldTestMode", false)) "On" else "Off"}", style = MaterialTheme.typography.bodyMedium)
+            }
         }
         AppCard {
             SectionHeader("Support", "Need help?", "Use this for privacy, billing, venue account, or moderation support.", Icons.Filled.AccountCircle)
@@ -2880,6 +2885,34 @@ private fun SettingsScreen(state: BeerMapState, scope: CoroutineScope) {
             FeatureCard("Opt-in location", "Location is one-time where used.", Icons.Filled.Map, Sky)
             FeatureCard("Private reports", "Venue reports use aggregate privacy-safe analytics.", Icons.Filled.Analytics, Leaf)
             FeatureCard("Source evidence", "Private source evidence is handled by the backend.", Icons.Filled.Lock, Amber)
+        }
+        AppCard {
+            SectionHeader(
+                "Legal & contact",
+                "Pint Path operator details",
+                "Pint Path is operated by Isaac William De Worsop, sole trader · ABN 80 319 578 329.",
+                Icons.Filled.OpenInBrowser
+            )
+            Text(
+                "WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            SecondaryAction("Email admin@pintpath.au", icon = Icons.Filled.AccountCircle) {
+                uriHandler.openUri("mailto:admin@pintpath.au")
+            }
+            SecondaryAction("Terms and Conditions", icon = Icons.Filled.OpenInBrowser) {
+                uriHandler.openUri("$publicBaseUrl/terms.html")
+            }
+            SecondaryAction("Privacy Policy", icon = Icons.Filled.Lock) {
+                uriHandler.openUri("$publicBaseUrl/privacy.html")
+            }
+            SecondaryAction("Account export and deletion", icon = Icons.Filled.AccountCircle) {
+                uriHandler.openUri("$publicBaseUrl/account.html")
+            }
+            Text(
+                "Policy version ${state.config.stringOrNull("legalPolicyVersion") ?: "unavailable"}",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }

@@ -153,9 +153,36 @@ describe("environment safety defaults", () => {
       REPORT_EMAIL_MODE: "resend",
       RESEND_API_KEY: "",
       REPORT_EMAIL_FROM: "Pint Path <reports@pintpath.au>",
+      REPORT_EMAIL_REPLY_TO: "admin@pintpath.au",
     });
 
     await expect(loadEnv()).rejects.toThrow("RESEND_API_KEY is required");
+  });
+
+  it("fails closed when Resend mode has no monitored reply mailbox", async () => {
+    stubProductionEnv({
+      REPORT_EMAIL_MODE: "resend",
+      RESEND_API_KEY: "re_test_report_delivery",
+      REPORT_EMAIL_FROM: "Pint Path <reports@pintpath.au>",
+      REPORT_EMAIL_REPLY_TO: "",
+    });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "REPORT_EMAIL_REPLY_TO must be a monitored valid email address when REPORT_EMAIL_MODE=resend",
+    );
+  });
+
+  it("rejects an invalid reply mailbox before enabling Resend delivery", async () => {
+    stubProductionEnv({
+      REPORT_EMAIL_MODE: "resend",
+      RESEND_API_KEY: "re_test_report_delivery",
+      REPORT_EMAIL_FROM: "Pint Path <reports@pintpath.au>",
+      REPORT_EMAIL_REPLY_TO: "not-an-email",
+    });
+
+    await expect(loadEnv()).rejects.toThrow(
+      "REPORT_EMAIL_REPLY_TO must be a monitored valid email address when REPORT_EMAIL_MODE=resend",
+    );
   });
 
   it("rejects the mock report transport in production", async () => {
@@ -180,12 +207,14 @@ describe("environment safety defaults", () => {
       REPORT_EMAIL_MODE: "resend",
       RESEND_API_KEY: "re_test_report_delivery",
       REPORT_EMAIL_FROM: "Pint Path <reports@pintpath.au>",
+      REPORT_EMAIL_REPLY_TO: "admin@pintpath.au",
       REPORT_DELIVERY_SCHEDULE_ENABLED: "true",
     });
 
     const { env } = await loadEnv();
 
     expect(env.REPORT_EMAIL_MODE).toBe("resend");
+    expect(env.REPORT_EMAIL_REPLY_TO).toBe("admin@pintpath.au");
     expect(env.REPORT_DELIVERY_SCHEDULE_ENABLED).toBe(true);
   });
 

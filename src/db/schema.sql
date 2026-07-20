@@ -763,7 +763,7 @@ CREATE TABLE IF NOT EXISTS account_privacy_settings (
   venue_report_inclusion_enabled INTEGER NOT NULL DEFAULT 0,
   product_research_enabled INTEGER NOT NULL DEFAULT 0,
   email_updates_enabled INTEGER NOT NULL DEFAULT 0,
-  consent_version TEXT NOT NULL DEFAULT '2026-07-12',
+  consent_version TEXT NOT NULL DEFAULT '2026-07-20',
   consented_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

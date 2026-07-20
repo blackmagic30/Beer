@@ -7,6 +7,7 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+#if DEBUG
                 VStack(alignment: .leading, spacing: 12) {
                     SectionHeader(
                         eyebrow: "Configuration",
@@ -19,6 +20,7 @@ struct SettingsView: View {
                     row("Field-test mode", model.config?.fieldTestMode == true ? "On" : "Off")
                 }
                 .beerMapCard()
+#endif
 
                 VStack(alignment: .leading, spacing: 12) {
                     SectionHeader(
@@ -49,6 +51,26 @@ struct SettingsView: View {
                     Label("Private source evidence is handled by the backend.", systemImage: "photo.badge.checkmark")
                 }
                 .font(.subheadline)
+                .beerMapCard()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionHeader(
+                        eyebrow: "Legal & contact",
+                        title: "Pint Path operator details",
+                        subtitle: "Pint Path is operated by Isaac William De Worsop, sole trader · ABN 80 319 578 329.",
+                        systemImage: "doc.text.fill"
+                    )
+                    Text("WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Link("Email admin@pintpath.au", destination: URL(string: "mailto:admin@pintpath.au")!)
+                    Link("Terms and Conditions", destination: AppConfig.apiBaseURL.appending(path: "terms.html"))
+                    Link("Privacy Policy", destination: AppConfig.apiBaseURL.appending(path: "privacy.html"))
+                    Link("Account export and deletion", destination: AppConfig.apiBaseURL.appending(path: "account.html"))
+                    Text("Policy version \(model.config?.legalPolicyVersion ?? "unavailable")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 .beerMapCard()
             }
             .padding()

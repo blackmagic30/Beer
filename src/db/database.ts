@@ -5,7 +5,6 @@ import path from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 
 import { env } from "../config/env.js";
-import { CURRENT_LEGAL_POLICY_VERSION } from "../config/legal.js";
 import { BeerCatalogRepository, syncStaticBeerCatalog } from "./beer-catalog.repository.js";
 import { isLikelyBeerName } from "../constants/beers.js";
 
@@ -177,7 +176,7 @@ const venueRequestColumns = [
 ] as const;
 
 const accountPrivacySettingsColumns = [
-  { name: "consent_version", definition: "TEXT NOT NULL DEFAULT '2026-07-12'" },
+  { name: "consent_version", definition: "TEXT NOT NULL DEFAULT '2026-07-20'" },
   { name: "consented_at", definition: "TEXT" },
 ] as const;
 
@@ -1198,9 +1197,6 @@ export function initializeDatabaseSchema(database: BetterSqlite3.Database): void
     ensureColumns(database, "venue_requests", venueRequestColumns);
     ensureColumns(database, "venue_interest_requests", trustWorkflowColumns);
     ensureColumns(database, "account_privacy_settings", accountPrivacySettingsColumns);
-    database.prepare(
-      "UPDATE account_privacy_settings SET consent_version = ? WHERE consent_version <> ?",
-    ).run(CURRENT_LEGAL_POLICY_VERSION, CURRENT_LEGAL_POLICY_VERSION);
     ensureColumns(database, "source_evidence_objects", sourceEvidenceColumns);
     ensureColumns(database, "account_deletion_requests", accountDeletionRequestColumns);
     ensureColumns(database, "venue_partner_outreach", venuePartnerOutreachColumns);

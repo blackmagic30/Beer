@@ -27,6 +27,7 @@ describe("application security headers", () => {
     const securityTxt = fs.readFileSync(path.resolve(process.cwd(), "viewer/security.txt"), "utf8");
 
     expect(source).toContain('["/.well-known/security.txt", "/security.txt"]');
+    expect(securityTxt).toContain("Contact: mailto:admin@pintpath.au");
     expect(securityTxt).toContain("Contact: https://pintpath.au/feedback.html");
     expect(securityTxt).toContain("Policy: https://pintpath.au/security.html");
     expect(securityTxt).not.toMatch(/service_role|sk_live_|whsec_|AIza/i);

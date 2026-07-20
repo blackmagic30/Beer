@@ -175,6 +175,7 @@ struct BeerMapAPI {
         termsAccepted: Bool,
         privacyAccepted: Bool
     ) async throws -> SupabaseSignupOutcome {
+        let policyVersion = try requiredLegalPolicyVersion(config)
         let tokens: SupabaseAuthTokens = try await supabaseAuthRequest(
             "/auth/v1/signup",
             method: "POST",
@@ -186,7 +187,7 @@ struct BeerMapAPI {
                     "age_confirmed": .bool(ageConfirmed),
                     "terms_accepted": .bool(termsAccepted),
                     "privacy_accepted": .bool(privacyAccepted),
-                    "legal_policy_version": .string(config.legalPolicyVersion ?? "2026-07-12"),
+                    "legal_policy_version": .string(policyVersion),
                     "consent_source": .string("ios")
                 ]
             ),
@@ -224,7 +225,12 @@ struct BeerMapAPI {
         existingAppToken: String? = nil
     ) async throws -> AuthResult {
         let hasCompleteConsent = ageConfirmed == true && termsAccepted == true && privacyAccepted == true
-        let policyVersion = hasCompleteConsent ? (config.legalPolicyVersion ?? "2026-07-12") : nil
+        let policyVersion: String?
+        if hasCompleteConsent {
+            policyVersion = try requiredLegalPolicyVersion(config)
+        } else {
+            policyVersion = nil
+        }
         return try await send(
             "/api/business/auth/supabase-session",
             method: "POST",
@@ -807,6 +813,18 @@ struct BeerMapAPI {
         let url = config.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = config.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines)
         return !(url?.isEmpty ?? true) && !(key?.isEmpty ?? true)
+    }
+
+    private func requiredLegalPolicyVersion(_ config: PublicConfig) throws -> String {
+        guard
+            let version = config.legalPolicyVersion?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !version.isEmpty
+        else {
+            throw BeerMapAPIError.configuration(
+                "The current Terms and Privacy Policy version is unavailable. Refresh the app and try again."
+            )
+        }
+        return version
     }
 
     private func path(_ path: String, queryItems: [URLQueryItem]) -> String {

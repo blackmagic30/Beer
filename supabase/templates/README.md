@@ -38,6 +38,10 @@ The templates intentionally use only common Supabase Auth variables:
 Do not add private app data, billing details, user location, submission photos,
 or discount codes to Auth email templates.
 
+Each production template also includes the verified Pint Path operator identity,
+ABN, service address, direct support email, and links to the live Terms and
+Privacy pages. Keep those footer details consistent across all three templates.
+
 ## User Flow
 
 - Signup starts from `/account.html`.

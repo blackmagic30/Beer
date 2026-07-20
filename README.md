@@ -245,7 +245,7 @@ REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
 RESEND_API_KEY=
 REPORT_EMAIL_FROM="Pint Path <reports@pintpath.au>"
-REPORT_EMAIL_REPLY_TO=
+REPORT_EMAIL_REPLY_TO=admin@pintpath.au
 REPORT_DELIVERY_SCHEDULE_ENABLED=false
 REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
@@ -337,7 +337,7 @@ REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
 RESEND_API_KEY=
 REPORT_EMAIL_FROM="Pint Path <reports@pintpath.au>"
-REPORT_EMAIL_REPLY_TO=
+REPORT_EMAIL_REPLY_TO=admin@pintpath.au
 REPORT_DELIVERY_SCHEDULE_ENABLED=false
 REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
@@ -399,10 +399,10 @@ What each one does:
 - `RESTORE_REHEARSAL_PRODUCTION_SUPABASE_URL` / `RESTORE_REHEARSAL_BACKUP_SUPABASE_URL`: comparison-only canonical URLs required in restore mode. Startup binds all three Supabase project references to the approved production, independent-backup, and one-shot restore-staging projects and proves they are distinct; no credentials accompany the two comparison URLs. The permitted restore-staging ref is intentionally pinned in the reviewed build. After that one-shot project is deleted, the next rehearsal requires a reviewed ref update and deployment rather than accepting an arbitrary replacement at runtime.
 - `RESTORE_REHEARSAL_REDIS_ENVIRONMENT_ID`, `RESTORE_REHEARSAL_REDIS_SERVICE_ID`, `RESTORE_REHEARSAL_REDIS_SENTINEL`, and `REDIS_KEY_NAMESPACE`: bind Redis to the exact immutable staging Redis service, the same Railway staging environment, and the selected backup. `REDIS_URL` must be the authenticated Railway private `redis.railway.internal:6379` origin. Every protected rate-limit write atomically compares the pre-seeded identity sentinel and performs its counter mutation in the same Redis script; a mismatch fails closed.
 - `RESTORE_REHEARSAL_ACCESS_USERNAME` / `RESTORE_REHEARSAL_ACCESS_PASSWORD`: application access gate for restored data. Use a unique 32+ byte password stored outside the repository. `/health` and `/ready` remain available to Railway, while all restored pages require the gate.
-- `REPORT_EMAIL_MODE`: `disabled` prevents delivery, `mock` is isolated staging/test delivery, and `resend` enables the real HTTPS provider only when its key and sender are configured.
+- `REPORT_EMAIL_MODE`: `disabled` prevents delivery, `mock` is isolated staging/test delivery, and `resend` enables the real HTTPS provider only when its key, sender, and monitored reply mailbox are configured.
 - `RESEND_API_KEY`: private sending-only Resend key. Required when `REPORT_EMAIL_MODE=resend`; never expose it in browser config.
 - `REPORT_EMAIL_FROM`: sender on a verified Resend domain, for example `Pint Path <reports@pintpath.au>`.
-- `REPORT_EMAIL_REPLY_TO`: optional monitored reply mailbox.
+- `REPORT_EMAIL_REPLY_TO`: monitored reply mailbox. It is required when `REPORT_EMAIL_MODE=resend`; production uses `admin@pintpath.au`.
 - `REPORT_DELIVERY_SCHEDULE_ENABLED`: opt-in production scheduler. It cannot be enabled unless `REPORT_EMAIL_MODE=resend` passes configuration validation.
 - `REPORT_DELIVERY_DAY` / `REPORT_DELIVERY_HOUR`: Melbourne-local monthly delivery threshold, defaulting to day 2 at 09:00. The previous completed month is sent once and missed windows catch up later.
 - `REPORT_DELIVERY_CHECK_INTERVAL_MINUTES`: due-check interval, default `60`. Completed monthly state short-circuits before report regeneration.

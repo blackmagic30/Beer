@@ -118,7 +118,7 @@ class BeerMapApiClient(
         termsAccepted: Boolean,
         privacyAccepted: Boolean
     ): NativeAuthOutcome {
-        val policyVersion = config.optString("legalPolicyVersion", "2026-07-12")
+        val policyVersion = requiredLegalPolicyVersion(config)
         val tokens = supabaseRequest(
             path = "/auth/v1/signup",
             body = JSONObject()
@@ -211,7 +211,7 @@ class BeerMapApiClient(
             body = JSONObject().apply {
                 put("accessToken", accessToken)
                 if (hasCompleteConsent) {
-                    val policyVersion = config.optString("legalPolicyVersion", "2026-07-12")
+                    val policyVersion = requiredLegalPolicyVersion(config)
                     put("ageConfirmed", true)
                     put("termsAccepted", true)
                     put("privacyAccepted", true)
@@ -857,6 +857,12 @@ class BeerMapApiClient(
             ?: BuildConfig.SUPABASE_ANON_KEY.takeIf { it.isNotBlank() }
         return !url.isNullOrBlank() && !key.isNullOrBlank()
     }
+
+    private fun requiredLegalPolicyVersion(config: JSONObject): String =
+        config.stringOrNull("legalPolicyVersion")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: throw IOException(
+                "The current Terms and Privacy Policy version is unavailable. Refresh the app and try again."
+            )
 
     private suspend fun supabaseRequest(
         path: String,

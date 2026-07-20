@@ -319,6 +319,8 @@ function buildReportEmail(input: {
   const venueName = typeof venue.name === "string" && venue.name.trim() ? venue.name.trim() : "your venue";
   const label = monthLabel(input.report.month);
   const portalUrl = buildPortalUrl(input.publicBaseUrl, input.report);
+  const termsUrl = new URL("/terms.html", input.publicBaseUrl).toString();
+  const privacyUrl = new URL("/privacy.html", input.publicBaseUrl).toString();
   const attachmentName = `pint-path-${safeFilenamePart(input.report.barId)}-${input.report.month}-monthly-report.json`;
   const attachmentJson = `${JSON.stringify({
     venueId: input.report.barId,
@@ -337,11 +339,25 @@ function buildReportEmail(input: {
       `View the report securely in the venue portal: ${portalUrl}`,
       "",
       "A privacy-safe JSON copy is attached for your records.",
+      "",
+      "Pint Path is a registered business name operated by Isaac William De Worsop, sole trader. ABN 80 319 578 329.",
+      "WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia.",
+      "Contact: admin@pintpath.au",
+      `Terms: ${termsUrl}`,
+      `Privacy: ${privacyUrl}`,
     ].join("\n"),
     html: [
       `<p>Your <strong>${escapeHtml(label)}</strong> Pint Path report for <strong>${escapeHtml(venueName)}</strong> is ready.</p>`,
       `<p><a href="${escapeHtml(portalUrl)}">View the report securely in the venue portal</a>.</p>`,
       "<p>A privacy-safe JSON copy is attached for your records.</p>",
+      '<hr style="margin:24px 0 16px; border:0; border-top:1px solid #CBD5E1;">',
+      '<p style="margin:0; color:#475569; font-size:12px; line-height:19px;">',
+      "Pint Path is a registered business name operated by Isaac William De Worsop, sole trader. ABN 80 319 578 329.<br>",
+      "WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia.<br>",
+      '<a href="mailto:admin@pintpath.au">admin@pintpath.au</a> · ',
+      `<a href="${escapeHtml(termsUrl)}">Terms</a> · `,
+      `<a href="${escapeHtml(privacyUrl)}">Privacy</a>`,
+      "</p>",
     ].join(""),
     idempotencyKey: `pintpath-monthly/${input.report.month}/${safeFilenamePart(input.report.barId)}/${input.recipientKey}`,
     attachments: [{

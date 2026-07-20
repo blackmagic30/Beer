@@ -75,7 +75,7 @@ REPORT_TIMEZONE=Australia/Melbourne
 REPORT_EMAIL_MODE=disabled
 RESEND_API_KEY=
 REPORT_EMAIL_FROM="Pint Path <reports@pintpath.au>"
-REPORT_EMAIL_REPLY_TO=
+REPORT_EMAIL_REPLY_TO=admin@pintpath.au
 REPORT_DELIVERY_SCHEDULE_ENABLED=false
 REPORT_DELIVERY_DAY=2
 REPORT_DELIVERY_HOUR=9
@@ -184,7 +184,7 @@ Real delivery is implemented through the Resend HTTPS API but remains opt-in. Be
 
 1. Add and verify a Pint Path sending domain or dedicated sending subdomain in Resend. Configure SPF and DKIM, and add DMARC before public rollout.
 2. Create a sending-only API key and store it in Railway as `RESEND_API_KEY`.
-3. Set `REPORT_EMAIL_FROM` to an address on that verified domain. Set `REPORT_EMAIL_REPLY_TO` to a monitored inbox if replies should be accepted.
+3. Set `REPORT_EMAIL_FROM` to an address on that verified domain. Set the required `REPORT_EMAIL_REPLY_TO` to the monitored `admin@pintpath.au` inbox.
 4. Keep `REPORT_EMAIL_MODE=disabled` and `REPORT_DELIVERY_SCHEDULE_ENABLED=false` while running `npm run reports:deliver -- --month=YYYY-MM --dry-run` against staging.
 5. Set `REPORT_EMAIL_MODE=resend`, leave the automatic schedule off, and run one targeted staging delivery with `--venue-id=...`.
 6. Confirm the expected verified manager received one email and attachment, then set `REPORT_DELIVERY_SCHEDULE_ENABLED=true` in production.

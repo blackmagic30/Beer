@@ -204,6 +204,15 @@ describe("monthly report delivery job", () => {
     expect(sentMessage.idempotencyKey).toMatch(/^pintpath-monthly\/2026-06\/venue-1\/[a-f0-9]{32}$/);
     expect(sentMessage.to).toBe("owner@example.com");
     expect(sentMessage.html).toContain("https://pintpath.au/venue-portal?venueId=venue-1&amp;month=2026-06");
+    expect(sentMessage.text).toContain("Pint Path is a registered business name operated by Isaac William De Worsop, sole trader.");
+    expect(sentMessage.text).toContain("ABN 80 319 578 329");
+    expect(sentMessage.text).toContain("WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia.");
+    expect(sentMessage.text).toContain("Contact: admin@pintpath.au");
+    expect(sentMessage.text).toContain("Terms: https://pintpath.au/terms.html");
+    expect(sentMessage.text).toContain("Privacy: https://pintpath.au/privacy.html");
+    expect(sentMessage.html).toContain('href="mailto:admin@pintpath.au"');
+    expect(sentMessage.html).toContain('href="https://pintpath.au/terms.html"');
+    expect(sentMessage.html).toContain('href="https://pintpath.au/privacy.html"');
     expect(JSON.stringify([...repository.states.values()])).not.toContain("owner@example.com");
   });
 

@@ -7,7 +7,7 @@ const PENDING_PORTAL_REDEMPTION_KEY = "pintPathPendingPortalRedemption";
 const SENSITIVE_AUTH_RETURN_MAX_AGE_MS = 20 * 60 * 1000;
 const LEGAL_ACCEPTANCE_KEY = "pintPathLegalAcceptance";
 const LEGAL_POLICY_VERSION = String(
-  window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion || "2026-07-12"
+  window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion || "2026-07-20"
 );
 const OPTIONAL_ANALYTICS_KEY = "pintPathOptionalAnalyticsEnabled";
 const VENUE_REPORTS_KEY = "pintPathVenueReportsEnabled";
@@ -1596,7 +1596,7 @@ function installLegalFooter() {
       <a href="/status.html">Service status</a>
       <a href="/feedback.html">Contact us</a>
     </nav>
-    <span>Policy version ${LEGAL_POLICY_VERSION}</span>
+    <span>Pint Path · ABN 80 319 578 329 · <a href="mailto:admin@pintpath.au">admin@pintpath.au</a> · Policy version ${LEGAL_POLICY_VERSION}</span>
   `;
   main.appendChild(footer);
 }

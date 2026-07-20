@@ -21,6 +21,49 @@ afterEach(() => {
 });
 
 describe("database schema migration safety", () => {
+  it("preserves the policy version an account actually consented to when the database reopens", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-consent-provenance-"));
+    roots.push(root);
+    const databasePath = path.join(root, "pint-path.sqlite");
+    const database = createDatabase(databasePath);
+    const recordedAt = "2026-07-12T01:00:00.000Z";
+    try {
+      const repository = new BusinessRepository(database);
+      const account = repository.createAccount({
+        id: "consent-provenance-user",
+        email: "consent-provenance@example.com",
+        passwordHash: "test-password-hash",
+        role: "user",
+        subscriptionStatus: "free",
+        now: recordedAt,
+      });
+      repository.upsertAccountPrivacySettings({
+        userId: account.id,
+        optionalAnalyticsEnabled: false,
+        venueReportInclusionEnabled: false,
+        productResearchEnabled: false,
+        emailUpdatesEnabled: false,
+        consentVersion: "2026-07-12",
+        now: recordedAt,
+      });
+    } finally {
+      database.close();
+    }
+
+    const reopened = createDatabase(databasePath);
+    try {
+      expect(reopened.prepare(
+        "SELECT consent_version, consented_at, updated_at FROM account_privacy_settings WHERE user_id = ?",
+      ).get("consent-provenance-user")).toEqual({
+        consent_version: "2026-07-12",
+        consented_at: recordedAt,
+        updated_at: recordedAt,
+      });
+    } finally {
+      reopened.close();
+    }
+  });
+
   it("opens an attested restore database read-only without changing its bytes across app reads or reopen", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-read-only-restore-"));
     roots.push(root);

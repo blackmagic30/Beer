@@ -136,8 +136,8 @@ function loadBusinessAuthHarness(options: {
             status: "active",
             termsAcceptedAt: "2026-07-14T00:00:00.000Z",
             privacyAcceptedAt: "2026-07-14T00:00:00.000Z",
-            termsVersion: "2026-07-12",
-            privacyVersion: "2026-07-12",
+            termsVersion: "2026-07-20",
+            privacyVersion: "2026-07-20",
           },
         },
       }),
@@ -156,7 +156,7 @@ function loadBusinessAuthHarness(options: {
       MELB_BEER_BOT_VIEWER_CONFIG: {
         supabaseUrl: "https://example.supabase.co",
         supabaseAnonKey: "anon-key",
-        business: { legalPolicyVersion: "2026-07-12" },
+        business: { legalPolicyVersion: "2026-07-20" },
       },
       location: {
         origin: "https://pintpath.au",
@@ -807,7 +807,7 @@ describe("account page shell", () => {
     expect(script).not.toContain("privacy_accepted:");
     expect(script).toContain("window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion");
     expect(script).not.toContain("before continuing with social sign-in");
-    expect(script).toContain('|| "2026-07-12"');
+    expect(script).toContain('|| "2026-07-20"');
     expect(script).toContain("options.applyPendingLegalAcceptance ? getPendingLegalAcceptance() : null");
     expect(script).toContain('consentSource: "web_oauth"');
     expect(script).toContain("LEGAL_ACCEPTANCE_MAX_AGE_MS");
@@ -1452,8 +1452,8 @@ describe("account page shell", () => {
       ageConfirmed: true,
       termsAccepted: true,
       privacyAccepted: true,
-      termsVersion: "2026-07-12",
-      privacyVersion: "2026-07-12",
+      termsVersion: "2026-07-20",
+      privacyVersion: "2026-07-20",
     });
     expect(harness.signups[0]).not.toHaveProperty("options.data.age_confirmed");
     expect(harness.signups[0]).not.toHaveProperty("options.data.terms_accepted");
@@ -1511,8 +1511,8 @@ describe("account page shell", () => {
         ageConfirmed: true,
         termsAccepted: true,
         privacyAccepted: true,
-        termsVersion: "2026-07-12",
-        privacyVersion: "2026-07-12",
+        termsVersion: "2026-07-20",
+        privacyVersion: "2026-07-20",
         ...testCase.acceptance,
       });
       await expect(testCase.harness.helpers.syncSupabaseSession({
@@ -1537,8 +1537,8 @@ describe("account page shell", () => {
       ageConfirmed: true,
       termsAccepted: true,
       privacyAccepted: true,
-      termsVersion: "2026-07-12",
-      privacyVersion: "2026-07-12",
+      termsVersion: "2026-07-20",
+      privacyVersion: "2026-07-20",
       expectedEmail: "victim@example.com",
       expectedProvider: "email",
       authFlowNonce: "flow-a",
@@ -1558,8 +1558,8 @@ describe("account page shell", () => {
       ageConfirmed: true,
       termsAccepted: true,
       privacyAccepted: true,
-      termsVersion: "2026-07-12",
-      privacyVersion: "2026-07-12",
+      termsVersion: "2026-07-20",
+      privacyVersion: "2026-07-20",
     });
 
     const pending = JSON.parse(harness.localStorage.get("pintPathLegalAcceptance") || "{}") as Record<string, unknown>;
@@ -1597,8 +1597,8 @@ describe("account page shell", () => {
       ageConfirmed: true,
       termsAccepted: true,
       privacyAccepted: true,
-      termsVersion: "2026-07-12",
-      privacyVersion: "2026-07-12",
+      termsVersion: "2026-07-20",
+      privacyVersion: "2026-07-20",
       createdAt: "2000-01-01T00:00:00.000Z",
     }));
     await returningHarness.helpers.syncSupabaseSession({ applyPendingLegalAcceptance: true });
@@ -1628,7 +1628,7 @@ describe("account page shell", () => {
 
     expect(app).toContain("legalPolicyVersion: publicConfig.legalPolicyVersion");
     expect(script).toContain("window.MELB_BEER_BOT_VIEWER_CONFIG?.business?.legalPolicyVersion");
-    expect(script).toContain('|| "2026-07-12"');
+    expect(script).toContain('|| "2026-07-20"');
   });
 
   it("hydrates HttpOnly sessions once and clears revoked provider sessions locally", () => {
@@ -1644,6 +1644,10 @@ describe("account page shell", () => {
   it("publishes stronger beta Terms and Privacy pages for account consent", () => {
     const terms = termsHtml();
     const privacy = privacyHtml();
+    const feedback = feedbackHtml();
+    const account = accountHtml();
+    const script = businessJs();
+    const app = fs.readFileSync(path.resolve(process.cwd(), "src/app.ts"), "utf8");
 
     expect(terms).toContain("Terms and Conditions");
     expect(terms).toContain("warn, restrict, suspend, or permanently ban accounts");
@@ -1651,21 +1655,42 @@ describe("account page shell", () => {
     expect(terms).toContain("scrape protected data");
     expect(terms).toContain("Display names/usernames must be unique");
     expect(terms).toContain("We do not tolerate rude or discriminatory names");
-    expect(terms).toContain("Last updated: 12 July 2026");
+    expect(terms).toContain("Last updated: 20 July 2026");
+    expect(terms).toContain("Isaac William De Worsop");
+    expect(terms).toContain("ABN 80 319 578 329");
+    expect(terms).toContain("WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia");
+    expect(terms).toContain('href="mailto:admin@pintpath.au"');
     expect(terms).toContain("Australian Consumer Law");
     expect(terms).toContain("Stripe billing management");
     expect(terms).toContain("Victoria, Australia");
     expect(terms).not.toContain("Beta legal-review notice");
     expect(terms).not.toContain("before launch");
     expect(privacy).toContain("Privacy Policy");
+    expect(privacy).toContain("Last updated: 20 July 2026");
     expect(privacy).toContain("Plain-English beta summary");
     expect(privacy).toContain("Service providers and integrations");
     expect(privacy).toContain("Venue reports are aggregate-only");
     expect(privacy).toContain("We do not store raw ID documents");
     expect(privacy).toContain("one-time upload-location proof");
     expect(privacy).toContain("Account deletion and export");
-    expect(privacy).toContain("Privacy, access, correction, export, and deletion requests");
+    expect(privacy).toContain("Privacy, access, correction, export, deletion, and complaint requests");
     expect(privacy).toContain("Railway for application hosting");
+    expect(privacy).toContain("provide a substantive response within 30 calendar days");
+    expect(privacy).toContain("Office of the Australian Information Commissioner");
+    expect(privacy).toContain("Isaac William De Worsop");
+    expect(privacy).toContain("ABN 80 319 578 329");
+    expect(privacy).toContain("WOTSO, Level 3, 11–19 Bank Place, Melbourne VIC 3000, Australia");
+    expect(privacy).toContain('href="mailto:admin@pintpath.au"');
+    expect(feedback).toContain("Isaac William De Worsop");
+    expect(feedback).toContain("ABN 80 319 578 329");
+    expect(feedback).toContain("WOTSO, Level 3, 11–19 Bank Place");
+    expect(feedback).toContain('href="mailto:admin@pintpath.au"');
+    expect(account).toContain("Pint Path updated these policies on 20 July 2026");
+    expect(account).not.toContain("Pint Path updated these policies on 12 July 2026");
+    expect(script).toContain("Pint Path · ABN 80 319 578 329");
+    expect(script).toContain('href="mailto:admin@pintpath.au"');
+    expect(app).toContain("Pint Path · ABN 80 319 578 329");
+    expect(app).toContain('href="mailto:admin@pintpath.au"');
     expect(privacy).not.toContain("Final owner contact details should be published here");
     expect(privacy).not.toContain("[legal entity name]");
   });

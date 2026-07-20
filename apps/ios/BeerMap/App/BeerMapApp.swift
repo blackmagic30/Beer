@@ -1290,7 +1290,7 @@ final class BeerMapAppModel: ObservableObject {
             refreshToken: providerRefreshToken ?? embeddedRefreshToken
         )
         legalAcceptanceRequired = true
-        legalAcceptanceVersion = config?.legalPolicyVersion ?? "2026-07-12"
+        legalAcceptanceVersion = config?.legalPolicyVersion
         errorMessage = message
         notice = nil
         return true

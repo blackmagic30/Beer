@@ -1,3 +1,4 @@
+Contact: mailto:admin@pintpath.au
 Contact: https://pintpath.au/feedback.html
 Policy: https://pintpath.au/security.html
 Preferred-Languages: en
