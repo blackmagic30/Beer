@@ -5,6 +5,13 @@ import { failure } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
 import { redactSecrets } from "../lib/redact.js";
 
+const SAFE_BILLING_ERROR_CODES = new Set([
+  "BILLING_CUSTOMER_UNLINKED",
+  "BILLING_CUSTOMER_NOT_FOUND_OR_MODE_MISMATCH",
+  "BILLING_PORTAL_NOT_CONFIGURED",
+  "BILLING_PORTAL_UNAVAILABLE",
+]);
+
 function safeRequestPath(req: Request): string {
   return req.path || req.originalUrl?.split("?")[0] || "";
 }
@@ -20,6 +27,9 @@ function safePublicErrorMetadata(details: unknown): {
 } | undefined {
   if (!details || typeof details !== "object" || Array.isArray(details)) return undefined;
   const value = details as Record<string, unknown>;
+  if (typeof value.publicCode === "string" && SAFE_BILLING_ERROR_CODES.has(value.publicCode)) {
+    return { code: value.publicCode };
+  }
   if (
     value.publicCode !== "ACCOUNT_SUSPENDED_BILLING_RECOVERY" &&
     value.publicCode !== "BILLING_RECOVERY_VENUE_SELECTION_REQUIRED" &&

@@ -188,6 +188,15 @@ describe("venue and admin remediation", () => {
     expect(admin).toContain('href: "/account.html?next=%2Fadmin.html"');
   });
 
+  it("shows venue billing availability and portal errors beside the action", () => {
+    expect(portal).toContain("data.billing?.managementAvailable === true");
+    expect(portal).toContain("no paid Stripe billing profile is linked");
+    expect(portal).toContain("data-venue-billing-status");
+    expect(portal).toContain("Stripe did not return a billing portal address");
+    expect(portal).toContain('portalUrl.hostname === "billing.stripe.com"');
+    expect(portal).toContain("billingStatus?.scrollIntoView");
+  });
+
   it("paginates every admin trust queue instead of hiding rows after the first response page", () => {
     expect(admin).toContain('id="adminReviewQueuePager"');
     expect(admin).toContain("const ADMIN_REVIEW_QUEUE_PAGE_SIZE = 25");

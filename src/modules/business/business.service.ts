@@ -811,6 +811,77 @@ function describeStripeCheckoutFailure(status: number, stripeMessage?: string | 
   return "Stripe checkout session failed. Check the Stripe Dashboard request log for the exact setup issue.";
 }
 
+type StripeBillingPortalFailure = {
+  message: string;
+  publicCode:
+    | "BILLING_CUSTOMER_NOT_FOUND_OR_MODE_MISMATCH"
+    | "BILLING_PORTAL_NOT_CONFIGURED"
+    | "BILLING_PORTAL_UNAVAILABLE";
+  statusCode: number;
+};
+
+function describeStripeBillingPortalFailure(
+  status: number,
+  stripeError?: { code?: string | null; message?: string | null; param?: string | null; type?: string | null } | null,
+): StripeBillingPortalFailure {
+  const normalized = stripeError?.message?.trim().toLowerCase() ?? "";
+  const errorCode = stripeError?.code?.trim().toLowerCase() ?? "";
+  const errorParam = stripeError?.param?.trim().toLowerCase() ?? "";
+
+  if (
+    errorParam === "customer" ||
+    (errorCode === "resource_missing" && normalized.includes("customer")) ||
+    normalized.includes("no such customer") ||
+    (normalized.includes("similar object exists in") && normalized.includes("mode"))
+  ) {
+    return {
+      message: "This Stripe customer could not be found in the current test/live mode. Contact support so the billing link can be repaired.",
+      publicCode: "BILLING_CUSTOMER_NOT_FOUND_OR_MODE_MISMATCH",
+      statusCode: 409,
+    };
+  }
+
+  if (
+    (normalized.includes("portal") && normalized.includes("configuration")) ||
+    normalized.includes("default configuration") ||
+    errorParam === "configuration"
+  ) {
+    return {
+      message: "Stripe billing management is not activated yet. Contact support while the Customer Portal setup is completed.",
+      publicCode: "BILLING_PORTAL_NOT_CONFIGURED",
+      statusCode: 503,
+    };
+  }
+
+  return {
+    message: status >= 500
+      ? "Stripe billing management is temporarily unavailable. Try again shortly."
+      : "Stripe billing management could not be opened. Contact support if the problem continues.",
+    publicCode: "BILLING_PORTAL_UNAVAILABLE",
+    statusCode: 502,
+  };
+}
+
+function requireTrustedStripeBillingPortalUrl(value: string): string {
+  let portalUrl: URL;
+  try {
+    portalUrl = new URL(value);
+  } catch {
+    throw new AppError("Stripe returned an invalid billing portal address. Try again shortly.", 502, {
+      publicCode: "BILLING_PORTAL_UNAVAILABLE",
+      reason: "invalid_portal_url",
+    });
+  }
+  if (portalUrl.protocol !== "https:" || portalUrl.hostname !== "billing.stripe.com") {
+    throw new AppError("Stripe returned an invalid billing portal address. Try again shortly.", 502, {
+      publicCode: "BILLING_PORTAL_UNAVAILABLE",
+      reason: "untrusted_portal_url",
+      hostname: portalUrl.hostname,
+    });
+  }
+  return portalUrl.toString();
+}
+
 async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [scheme, salt, hash] = stored.split(":");
 
@@ -6087,6 +6158,14 @@ export class BusinessService {
 
     return {
       account: sanitizeAccount(dashboardAccount),
+      billing: {
+        mode: this.config.DEMO_BILLING_MODE
+          ? "demo"
+          : dashboardAccount.stripeCustomerId
+            ? "stripe"
+            : "unlinked",
+        managementAvailable: this.config.DEMO_BILLING_MODE || Boolean(dashboardAccount.stripeCustomerId),
+      },
       profile: this.repository.getProfileById(account.id),
       access: this.getAccessState(account, null),
       submissions: submissionHistory,
@@ -10702,6 +10781,14 @@ export class BusinessService {
       account: sanitizeAccount(account),
       isAdmin,
       accessLevel,
+      billing: {
+        mode: this.config.DEMO_BILLING_MODE
+          ? "demo"
+          : profile.stripeCustomerId
+            ? "stripe"
+            : "unlinked",
+        managementAvailable: this.config.DEMO_BILLING_MODE || Boolean(profile.stripeCustomerId),
+      },
       assignments,
       selectedVenue: {
         venueId: selectedVenueId,
@@ -12175,10 +12262,16 @@ export class BusinessService {
       };
     }
     if (!this.config.STRIPE_SECRET_KEY) {
-      throw new AppError("Stripe billing management is not configured.", 503);
+      throw new AppError("Stripe billing management is not configured.", 503, {
+        publicCode: "BILLING_PORTAL_NOT_CONFIGURED",
+      });
     }
     if (!customerId) {
-      throw new AppError("This subscription is not linked to a Stripe customer yet. Contact support with your account ID.", 409);
+      throw new AppError(
+        "This premium access is not linked to a paid Stripe subscription, so there is no Stripe billing profile to manage or cancel. Contact support if you expected a paid subscription.",
+        409,
+        { publicCode: "BILLING_CUSTOMER_UNLINKED" },
+      );
     }
 
     const response = await fetchWithTimeout("https://api.stripe.com/v1/billing_portal/sessions", {
@@ -12192,14 +12285,22 @@ export class BusinessService {
         return_url: new URL(returnPath, this.config.PUBLIC_BASE_URL).toString(),
       }),
     });
-    const payload = await response.json().catch(() => null) as { url?: string; error?: { message?: string } } | null;
+    const payload = await response.json().catch(() => null) as {
+      url?: string;
+      error?: { code?: string; message?: string; param?: string; type?: string };
+    } | null;
     if (!response.ok || !payload?.url) {
-      throw new ExternalServiceError("Stripe billing management could not be opened. Try again shortly.", {
-        status: response.status,
-        message: payload?.error?.message,
+      const failure = describeStripeBillingPortalFailure(response.status, payload?.error);
+      throw new AppError(failure.message, failure.statusCode, {
+        publicCode: failure.publicCode,
+        stripeStatus: response.status,
+        stripeType: payload?.error?.type,
+        stripeCode: payload?.error?.code,
+        stripeParam: payload?.error?.param,
+        stripeRequestId: response.headers.get("request-id"),
       });
     }
-    return { mode: "stripe", portalUrl: payload.url };
+    return { mode: "stripe", portalUrl: requireTrustedStripeBillingPortalUrl(payload.url) };
   }
 
   async createBillingPortal(account: BusinessAccount) {

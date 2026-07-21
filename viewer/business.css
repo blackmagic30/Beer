@@ -8687,6 +8687,23 @@ body.discountPassModalOpen {
   overflow-wrap: anywhere;
 }
 
+.accountStatsMembershipCard .button {
+  align-self: flex-start;
+}
+
+.membershipBillingStatus {
+  width: 100%;
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.membershipBillingStatus a {
+  color: inherit;
+  font-weight: 900;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .accountStatDot {
   width: 11px;
   height: 11px;

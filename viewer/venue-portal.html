@@ -1509,14 +1509,18 @@
       const profile = data.profile;
       lastSelectedVenueId = data.selectedVenue?.venueId || lastSelectedVenueId;
       const tier = data.tier || { tier: profile.membershipTier, analyticsLocked: true };
+      const venueBillingManagementAvailable = data.billing?.managementAvailable === true;
       syncPortalAccessControls(data);
       syncTierControls(data);
       selectedVenueSummary.innerHTML = `
         <strong>${escapeHtml(profile.name)}</strong>
         <span>${escapeHtml(profile.suburb || "Melbourne")}</span>
         <span class="pill">${escapeHtml(prettyTier(profile.membershipTier))}</span>
-        ${profile.subscriptionStatus ? `<small>${escapeHtml(String(profile.subscriptionStatus).replaceAll("_", " "))}${profile.subscriptionCurrentPeriodEnd ? ` · renews/ends ${escapeHtml(MelbBeerBusiness.formatDate(profile.subscriptionCurrentPeriodEnd))}` : " · renewal date available in Stripe"}</small>` : ""}
-        ${data.accessLevel !== "counter_staff" && profile.membershipTier === "pro" ? '<button class="button button--small" type="button" data-manage-venue-billing>Manage billing</button>' : ""}
+        ${profile.subscriptionStatus ? `<small>${escapeHtml(String(profile.subscriptionStatus).replaceAll("_", " "))}${profile.subscriptionCurrentPeriodEnd ? ` · renews/ends ${escapeHtml(MelbBeerBusiness.formatDate(profile.subscriptionCurrentPeriodEnd))}` : venueBillingManagementAvailable ? " · renewal date available in Stripe" : ""}</small>` : ""}
+        ${data.accessLevel !== "counter_staff" && profile.membershipTier === "pro" ? venueBillingManagementAvailable
+          ? '<button class="button button--small" type="button" data-manage-venue-billing aria-describedby="venueBillingStatus">Manage billing</button><div class="notice" id="venueBillingStatus" data-venue-billing-status role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>'
+          : '<div class="notice notice--warning" role="status">Pro access is active, but no paid Stripe billing profile is linked. <a href="/feedback.html?type=billing_support">Contact billing support</a> if you expected a paid subscription.</div>'
+          : ""}
       `;
 
       const venuePortalTitle = document.getElementById("venuePortalTitle");
@@ -5576,17 +5580,30 @@
         if (!(target instanceof HTMLElement) || !selectedVenueId()) return;
 
         if (target.dataset.manageVenueBilling != null) {
+          const billingStatus = selectedVenueSummary.querySelector("[data-venue-billing-status]");
           target.setAttribute("aria-busy", "true");
           target.textContent = "Opening Stripe...";
+          MelbBeerBusiness.setStatus(billingStatus, "Opening secure Stripe billing management...");
           try {
             const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(selectedVenueId())}/billing/portal`, {
               method: "POST",
               body: "{}",
             });
-            window.location.assign(result.portalUrl);
+            if (typeof result?.portalUrl !== "string" || !result.portalUrl.trim()) {
+              throw new Error("Stripe did not return a billing portal address. Try again shortly.");
+            }
+            const portalUrl = new URL(result.portalUrl, window.location.origin);
+            const trustedStripePortal = portalUrl.protocol === "https:" && portalUrl.hostname === "billing.stripe.com";
+            if (portalUrl.origin !== window.location.origin && !trustedStripePortal) {
+              throw new Error("Stripe returned an invalid billing portal address. Try again shortly.");
+            }
+            window.location.assign(portalUrl.toString());
           } catch (error) {
             target.removeAttribute("aria-busy");
             target.textContent = "Manage billing";
+            MelbBeerBusiness.setStatus(billingStatus, error.message || "Billing management could not be opened.", true);
+            billingStatus?.focus({ preventScroll: true });
+            billingStatus?.scrollIntoView({ behavior: "smooth", block: "nearest" });
             MelbBeerBusiness.setStatus(portalAccess, error.message || "Billing management could not be opened.", true);
           }
           return;

@@ -2177,6 +2177,9 @@
       const progressPercent = Math.min(100, Math.round((points / threshold) * 100));
       const unlockReached = pointsNeeded <= 0;
       const isPaidMember = ["premium_monthly", "premium_yearly"].includes(String(account.subscriptionStatus || ""));
+      const billing = result.billing || {};
+      const billingManagementAvailable = billing.managementAvailable === true;
+      const billingMode = String(billing.mode || "unlinked");
       const unlockCopy = unlockReached
         ? "Contributor access is unlocked for this month. You get the same premium map access as a paid user."
         : `${formatPoints(pointsNeeded)} more approved points unlock the same premium map access as a paid user until month end.`;
@@ -2202,8 +2205,16 @@
             </div>
             <span class="tierBadge tierBadge--pro">Active</span>
           </div>
-          <p class="helperCopy">Full map prices, filters, beta tools, and eligible partner offers are active on this account.${account.premiumUntil ? ` Current paid period: through ${escapeHtml(MelbBeerBusiness.formatDate(account.premiumUntil))}.` : " Stripe shows the next renewal date, invoices, and payment method."}</p>
-          <button class="button button--primary" type="button" data-manage-billing>Manage billing or cancel</button>
+          <p class="helperCopy" id="membershipBillingHelp">Full map prices, filters, beta tools, and eligible partner offers are active on this account.${billingManagementAvailable ? account.premiumUntil ? ` Current paid period: through ${escapeHtml(MelbBeerBusiness.formatDate(account.premiumUntil))}.` : billingMode === "demo" ? " Demo billing is active; no real payment is being collected." : " Stripe shows the next renewal date, invoices, payment method, and cancellation options." : " This access is not linked to a paid Stripe subscription, so there is no Stripe subscription to manage or cancel."}</p>
+          ${billingManagementAvailable ? `
+            <button class="button button--primary" type="button" data-manage-billing aria-describedby="membershipBillingHelp membershipBillingStatus">Manage billing</button>
+            <div class="notice membershipBillingStatus" id="membershipBillingStatus" data-billing-status role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>
+          ` : `
+            <div class="notice notice--warning membershipBillingStatus" role="status">
+              Premium access is active in Pint Path, but no paid Stripe billing profile is linked.
+              <a href="/feedback.html?type=billing_support">Contact billing support</a> if you expected a paid subscription.
+            </div>
+          `}
         </article>
         ` : `<article class="metricCard accountStatsProgressCard">
           <div class="accountStatsCardHeader">
@@ -2236,17 +2247,32 @@
 
       grid.querySelector("[data-manage-billing]")?.addEventListener("click", async (event) => {
         const button = event.currentTarget;
+        const billingStatus = grid.querySelector("[data-billing-status]");
         const requestedContext = captureAccountUiContext();
         button.disabled = true;
+        button.setAttribute("aria-busy", "true");
         button.textContent = "Opening Stripe...";
+        MelbBeerBusiness.setStatus(billingStatus, "Opening secure Stripe billing management...");
         try {
           const result = await MelbBeerBusiness.apiFetch("/api/business/billing/portal", { method: "POST", body: "{}" });
           if (!isAccountUiContextCurrent(requestedContext)) return;
-          window.location.assign(result.portalUrl);
+          if (typeof result?.portalUrl !== "string" || !result.portalUrl.trim()) {
+            throw new Error("Stripe did not return a billing portal address. Try again shortly.");
+          }
+          const portalUrl = new URL(result.portalUrl, window.location.origin);
+          const trustedStripePortal = portalUrl.protocol === "https:" && portalUrl.hostname === "billing.stripe.com";
+          if (portalUrl.origin !== window.location.origin && !trustedStripePortal) {
+            throw new Error("Stripe returned an invalid billing portal address. Try again shortly.");
+          }
+          window.location.assign(portalUrl.toString());
         } catch (error) {
           if (!isAccountUiContextCurrent(requestedContext)) return;
           button.disabled = false;
-          button.textContent = "Manage billing or cancel";
+          button.removeAttribute("aria-busy");
+          button.textContent = "Manage billing";
+          MelbBeerBusiness.setStatus(billingStatus, error.message || "Billing management could not be opened.", true);
+          billingStatus?.focus({ preventScroll: true });
+          billingStatus?.scrollIntoView({ behavior: "smooth", block: "nearest" });
           MelbBeerBusiness.setStatus($("dashboardStatus"), error.message || "Billing management could not be opened.", true);
         }
       });

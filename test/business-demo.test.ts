@@ -4914,6 +4914,109 @@ describe("production hardening", () => {
     ).get("atomic-session-rollback")).toBeUndefined();
   });
 
+  it("exposes safe billing-management state and opens only trusted Stripe customer portals", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "test-fixture-not-a-real-billing-portal-key",
+    });
+    const unlinkedAccount = updateSubscription(
+      repository,
+      createAccount(repository, "unlinked-billing-user").id,
+      "premium_monthly",
+    );
+    const linkedAccount = repository.updateSubscription({
+      userId: createAccount(repository, "linked-billing-user").id,
+      subscriptionStatus: "premium_monthly",
+      stripePaidSubscriptionStatus: "premium_monthly",
+      stripeCustomerId: "cus_linked_billing_user",
+      premiumUntil: null,
+      now: NOW,
+    });
+
+    expect(service.getAccountDashboard(unlinkedAccount)).toEqual(expect.objectContaining({
+      account: expect.not.objectContaining({ stripeCustomerId: expect.anything() }),
+      billing: { mode: "unlinked", managementAvailable: false },
+    }));
+    expect(service.getAccountDashboard(linkedAccount)).toEqual(expect.objectContaining({
+      account: expect.not.objectContaining({ stripeCustomerId: expect.anything() }),
+      billing: { mode: "stripe", managementAvailable: true },
+    }));
+    await expect(service.createBillingPortal(unlinkedAccount)).rejects.toMatchObject({
+      statusCode: 409,
+      details: { publicCode: "BILLING_CUSTOMER_UNLINKED" },
+      message: expect.stringContaining("no Stripe billing profile"),
+    });
+
+    const originalFetch = globalThis.fetch;
+    const stripeFetch = vi.fn();
+    globalThis.fetch = stripeFetch as typeof fetch;
+    try {
+      stripeFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+        url: "https://billing.stripe.com/p/session/test_session",
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+      await expect(service.createBillingPortal(linkedAccount)).resolves.toEqual({
+        mode: "stripe",
+        portalUrl: "https://billing.stripe.com/p/session/test_session",
+      });
+      const [portalEndpoint, portalInit] = stripeFetch.mock.calls[0] as [string, RequestInit];
+      const portalBody = new URLSearchParams(String(portalInit.body));
+      expect(portalEndpoint).toBe("https://api.stripe.com/v1/billing_portal/sessions");
+      expect(portalBody.get("customer")).toBe("cus_linked_billing_user");
+      expect(portalBody.get("return_url")).toBe("http://127.0.0.1:3000/account.html?billing=returned");
+
+      stripeFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          code: "resource_missing",
+          message: "No such customer; a similar object exists in test mode.",
+          param: "customer",
+          type: "invalid_request_error",
+        },
+      }), {
+        status: 400,
+        headers: { "content-type": "application/json", "request-id": "req_mode_mismatch" },
+      }));
+      await expect(service.createBillingPortal(linkedAccount)).rejects.toMatchObject({
+        statusCode: 409,
+        details: expect.objectContaining({
+          publicCode: "BILLING_CUSTOMER_NOT_FOUND_OR_MODE_MISMATCH",
+          stripeRequestId: "req_mode_mismatch",
+        }),
+      });
+
+      stripeFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+        error: {
+          message: "No configuration provided and your live mode default configuration has not been created.",
+          type: "invalid_request_error",
+        },
+      }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }));
+      await expect(service.createBillingPortal(linkedAccount)).rejects.toMatchObject({
+        statusCode: 503,
+        details: expect.objectContaining({ publicCode: "BILLING_PORTAL_NOT_CONFIGURED" }),
+      });
+
+      stripeFetch.mockResolvedValueOnce(new Response(JSON.stringify({ url: "https://example.com/not-stripe" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+      await expect(service.createBillingPortal(linkedAccount)).rejects.toMatchObject({
+        statusCode: 502,
+        details: expect.objectContaining({
+          publicCode: "BILLING_PORTAL_UNAVAILABLE",
+          reason: "untrusted_portal_url",
+        }),
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("keeps a credential-verified billing-only portal available after suspension", async () => {
     const { repository } = createRepository();
     const service = createBusinessService(repository, {
@@ -4946,7 +5049,7 @@ describe("production hardening", () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async (_url, init) => {
       expect(String(init?.body)).toContain("customer=cus_suspended_billing");
-      return new Response(JSON.stringify({ url: "https://billing.stripe.test/session" }), {
+      return new Response(JSON.stringify({ url: "https://billing.stripe.com/p/session/suspended_test" }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -4956,7 +5059,7 @@ describe("production hardening", () => {
         email: account.email,
         password: "password123",
       })).resolves.toEqual(expect.objectContaining({
-        portalUrl: "https://billing.stripe.test/session",
+        portalUrl: "https://billing.stripe.com/p/session/suspended_test",
         accountId: account.publicAccountId,
         message: expect.stringContaining("without restoring application access"),
       }));

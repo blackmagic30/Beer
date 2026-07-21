@@ -567,6 +567,13 @@ describe("account page shell", () => {
     expect(html).toContain("renderAccountStatsPanel(result)");
     expect(html).toContain("accountStatsProgressCard");
     expect(html).toContain("same premium map access as a paid user");
+    expect(html).toContain("const billingManagementAvailable = billing.managementAvailable === true");
+    expect(html).toContain("This access is not linked to a paid Stripe subscription");
+    expect(html).toContain('data-billing-status role="status" aria-live="polite"');
+    expect(html).toContain("Stripe did not return a billing portal address");
+    expect(html).toContain('portalUrl.hostname === "billing.stripe.com"');
+    expect(html).toContain('button.textContent = "Manage billing"');
+    expect(html).toContain("billingStatus?.scrollIntoView");
     expect(html).toContain("Account ID");
     expect(html).toContain("accountStatCard--");
     expect(html).toContain('class="accountDashboardIntro sectionHeader"');
@@ -595,6 +602,7 @@ describe("account page shell", () => {
     expect(css).toContain(".accountStatsGrid");
     expect(css).toContain("display: grid;");
     expect(css).toContain(".accountStatsProgressCard");
+    expect(css).toContain(".membershipBillingStatus");
     expect(css).toContain(".accountStatCard .helperCopy");
     expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.accountStatsGrid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
     expect(css).toMatch(/@media \(max-width: 760px\)[\s\S]*\.accountStatCard \.helperCopy\s*\{[\s\S]*display:\s*none;/);
