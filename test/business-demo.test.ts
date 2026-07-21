@@ -4611,6 +4611,12 @@ describe("production hardening", () => {
       }) as typeof fetch;
 
       await expect(service.createCheckout(user, { plan: "monthly" })).resolves.toMatchObject({ mode: "stripe" });
+      const checkoutParams = new URLSearchParams(checkoutRequestBody);
+      expect(checkoutParams.get("mode")).toBe("subscription");
+      expect(checkoutParams.get("automatic_tax[enabled]")).toBe("true");
+      expect(checkoutParams.get("billing_address_collection")).toBeNull();
+      expect(checkoutParams.get("tax_id_collection[enabled]")).toBeNull();
+      expect(checkoutParams.get("line_items[0][price]")).toBe("price_test_monthly");
       expect(decodeURIComponent(checkoutRequestBody)).toContain("checkout=success");
       expect(decodeURIComponent(checkoutRequestBody)).toContain("session_id={CHECKOUT_SESSION_ID}");
 
@@ -10145,6 +10151,58 @@ describe("business demo contribution model", () => {
     expect(proCheckout.tier.analyticsLocked).toBe(false);
     expect(proCheckout.profile.highlightedName).toBe(true);
     expect(proCheckout.profile.premiumBadge).toBe("Pro");
+  });
+
+  it("enables automatic tax and venue tax ID collection for live Pro checkout", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      DEMO_BILLING_MODE: false,
+      STRIPE_SECRET_KEY: "sk_test_xxx",
+      STRIPE_PRO_PRICE_ID: "price_test_venue_pro",
+    });
+    const admin = createAccount(repository, "bar-live-checkout-admin", "admin");
+    const manager = createAccount(repository, "bar-live-checkout-manager");
+
+    service.assignVenueManager(admin, {
+      userId: manager.id,
+      venueId: "bar-live-checkout-1",
+      venueName: "Live Checkout Hotel",
+      suburb: "Collingwood",
+    });
+
+    const originalFetch = globalThis.fetch;
+    let checkoutRequestBody = "";
+    try {
+      globalThis.fetch = vi.fn(async (url, init) => {
+        expect(String(url)).toBe("https://api.stripe.com/v1/checkout/sessions");
+        checkoutRequestBody = String(init?.body ?? "");
+        return new Response(JSON.stringify({ url: "https://checkout.stripe.com/c/pay/cs_test_venue_tax" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      await expect(service.createBarTierCheckout(
+        repository.getAccountById(manager.id)!,
+        "bar-live-checkout-1",
+        { tier: "pro" },
+      )).resolves.toMatchObject({
+        mode: "stripe",
+        checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_venue_tax",
+      });
+
+      const checkoutParams = new URLSearchParams(checkoutRequestBody);
+      expect(checkoutParams.get("mode")).toBe("subscription");
+      expect(checkoutParams.get("automatic_tax[enabled]")).toBe("true");
+      expect(checkoutParams.get("billing_address_collection")).toBe("required");
+      expect(checkoutParams.get("tax_id_collection[enabled]")).toBe("true");
+      expect(checkoutParams.get("line_items[0][price]")).toBe("price_test_venue_pro");
+      expect(checkoutParams.get("metadata[billing_context]")).toBe("venue");
+      expect(checkoutParams.get("metadata[venue_id]")).toBe("bar-live-checkout-1");
+      expect(checkoutParams.get("subscription_data[metadata][billing_context]")).toBe("venue");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("preserves dedicated verification timestamps and exposes durable report/reconciliation settings", () => {
