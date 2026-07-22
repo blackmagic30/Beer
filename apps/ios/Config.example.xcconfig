@@ -2,7 +2,7 @@
 // Do not commit real secrets. The mobile app must never contain service-role keys.
 // The project has a safe hosted default; this file is only for local developer overrides.
 
-PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.beermap
+PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.app
 DEVELOPMENT_TEAM =
 
 // Use the existing hosted or local BeerMap/Pint Path backend.

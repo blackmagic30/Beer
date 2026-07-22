@@ -685,7 +685,7 @@ Stop and mark the item `fail` if an unauthorized venue is visible, a member code
 **Owners:** Apple Account Holder/App Manager, iOS release engineer, QA lead, and release owner.
 
 - [ ] Record the native source SHA and confirm Native Apps CI is green for it.
-- [ ] Confirm App Store Connect bundle ID `au.pintpath.beermap`, version/build uniqueness, Apple team, distribution certificate, and provisioning profile.
+- [ ] Confirm App Store Connect bundle ID `au.pintpath.app`, version/build uniqueness, Apple team, distribution certificate, and provisioning profile.
 - [ ] Supply production Supabase public configuration without embedding a private key. Add `pintpath://auth-callback` to Supabase and complete Google/Apple provider-console configuration.
 - [ ] Complete name, subtitle, description, category, keywords, age/alcohol rating, support/marketing/privacy/terms/deletion URLs, review contact, export compliance, and content-rights answers.
 - [ ] Reconcile `PrivacyInfo.xcprivacy` and App Store privacy answers with actual production behavior.

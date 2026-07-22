@@ -4,7 +4,7 @@ This repository contains the existing native Pint Path apps. Do not create dupli
 
 | Platform | Project | UI | Installed name | Internal identifier |
 | --- | --- | --- | --- | --- |
-| iOS | `apps/ios/BeerMap.xcodeproj` | SwiftUI | Pint Path | `BeerMap`, `au.pintpath.beermap` |
+| iOS | `apps/ios/BeerMap.xcodeproj` | SwiftUI | Pint Path | `BeerMap`, `au.pintpath.app` |
 | Android | `apps/android` | Jetpack Compose | Pint Path | `BeerMap`, `au.pintpath.beermap` |
 
 These are native apps, not WebView, React Native, Expo, or Capacitor wrappers.

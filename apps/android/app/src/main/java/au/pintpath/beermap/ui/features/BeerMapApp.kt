@@ -2855,6 +2855,11 @@ private fun SettingsScreen(state: BeerMapState, scope: CoroutineScope) {
     var support by remember { mutableStateOf("") }
     val uriHandler = LocalUriHandler.current
     val publicBaseUrl = BuildConfig.PINT_PATH_API_BASE_URL.trimEnd('/')
+    val hasServerSupabaseConfig =
+        !state.config.stringOrNull("supabaseUrl").isNullOrBlank() &&
+            !state.config.stringOrNull("supabaseAnonKey").isNullOrBlank()
+    val hasEmbeddedSupabaseConfig =
+        BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()
     Column(
         Modifier
             .fillMaxSize()
@@ -2866,7 +2871,10 @@ private fun SettingsScreen(state: BeerMapState, scope: CoroutineScope) {
             AppCard {
                 SectionHeader("Configuration", "Backend connection", "Debug-only connection details.", Icons.Filled.Settings)
                 Text("API base URL: ${BuildConfig.PINT_PATH_API_BASE_URL}", style = MaterialTheme.typography.bodyMedium)
-                Text("Supabase native OAuth: ${if (BuildConfig.SUPABASE_URL.isBlank()) "Not configured" else "Public config present"}", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Supabase native OAuth: ${if (hasServerSupabaseConfig || hasEmbeddedSupabaseConfig) "Public config present" else "Not configured"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 Text("Field-test mode: ${if (state.config.optBoolean("fieldTestMode", false)) "On" else "Off"}", style = MaterialTheme.typography.bodyMedium)
             }
         }

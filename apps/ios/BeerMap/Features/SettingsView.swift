@@ -16,7 +16,7 @@ struct SettingsView: View {
                         systemImage: "server.rack"
                     )
                     row("API base URL", AppConfig.apiBaseURL.absoluteString)
-                    row("Supabase native OAuth", AppConfig.supabaseURL == nil ? "Not configured" : "Public config present")
+                    row("Supabase native OAuth", supabaseConfigurationStatus)
                     row("Field-test mode", model.config?.fieldTestMode == true ? "On" : "Off")
                 }
                 .beerMapCard()
@@ -89,6 +89,14 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)
         }
+    }
+
+    private var supabaseConfigurationStatus: String {
+        let url = model.config?.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = model.config?.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !(url?.isEmpty ?? true) && !(key?.isEmpty ?? true)
+            ? "Public config present"
+            : "Not configured"
     }
 
     private func sendSupport() async {

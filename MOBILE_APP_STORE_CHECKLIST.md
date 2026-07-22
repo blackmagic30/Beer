@@ -7,7 +7,7 @@ Checkboxes marked complete are repository-backed. Unchecked items require releas
 ## Shared product and safety
 
 - [x] Installed app name is `Pint Path` on iOS and Android.
-- [x] Existing bundle/package ID is `au.pintpath.beermap`.
+- [x] Existing iOS bundle ID is `au.pintpath.app`; the Android package ID is `au.pintpath.beermap`.
 - [x] User-facing copy includes 18+ and responsible-service framing.
 - [x] Public prices/availability are described as changeable and server-gated.
 - [x] Native clients contain no service-role or private provider secret.

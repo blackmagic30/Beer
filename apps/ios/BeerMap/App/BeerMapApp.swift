@@ -65,8 +65,8 @@ final class BeerMapAppModel: ObservableObject {
     init(api: BeerMapAPI = BeerMapAPI()) {
         self.api = api
         let defaults = UserDefaults.standard
-        let installMarkerKey = "au.pintpath.beermap.installMarker"
-        let anonymousSessionKey = "au.pintpath.beermap.anonymousSessionId"
+        let installMarkerKey = "au.pintpath.app.installMarker"
+        let anonymousSessionKey = "au.pintpath.app.anonymousSessionId"
         let hasInstallMarker = defaults.object(forKey: installMarkerKey) != nil
         let hasLegacyAppContainer = defaults.object(forKey: anonymousSessionKey) != nil
         if !hasInstallMarker && !hasLegacyAppContainer {
@@ -88,9 +88,9 @@ final class BeerMapAppModel: ObservableObject {
         }
         self.optionalAnalyticsEnabled = restoredSessionToken == nil
             ? false
-            : (defaults.object(forKey: "au.pintpath.beermap.optionalAnalytics") as? Bool ?? false)
+            : (defaults.object(forKey: "au.pintpath.app.optionalAnalytics") as? Bool ?? false)
         if restoredSessionToken == nil {
-            defaults.removeObject(forKey: "au.pintpath.beermap.optionalAnalytics")
+            defaults.removeObject(forKey: "au.pintpath.app.optionalAnalytics")
         }
     }
 
@@ -388,7 +388,7 @@ final class BeerMapAppModel: ObservableObject {
             }) ?? nil
             if let settings = accountDashboard?.privacySettings {
                 optionalAnalyticsEnabled = settings.optionalAnalyticsEnabled ?? false
-                UserDefaults.standard.set(optionalAnalyticsEnabled, forKey: "au.pintpath.beermap.optionalAnalytics")
+                UserDefaults.standard.set(optionalAnalyticsEnabled, forKey: "au.pintpath.app.optionalAnalytics")
             }
             if reauthenticationContext == nil { errorMessage = nil }
         } catch {
@@ -430,7 +430,7 @@ final class BeerMapAppModel: ObservableObject {
                 try await self.api.account(token: token)
             }
             optionalAnalyticsEnabled = settings.optionalAnalyticsEnabled
-            UserDefaults.standard.set(optionalAnalyticsEnabled, forKey: "au.pintpath.beermap.optionalAnalytics")
+            UserDefaults.standard.set(optionalAnalyticsEnabled, forKey: "au.pintpath.app.optionalAnalytics")
             notice = "Privacy preferences saved."
         } catch {
             errorMessage = error.localizedDescription
@@ -1204,7 +1204,7 @@ final class BeerMapAppModel: ObservableObject {
             accountDeletionRequest = (try? await api.accountDeletionStatus(token: result.authResult.token).request) ?? nil
             if let settings = accountDashboard?.privacySettings {
                 optionalAnalyticsEnabled = settings.optionalAnalyticsEnabled ?? false
-                UserDefaults.standard.set(optionalAnalyticsEnabled, forKey: "au.pintpath.beermap.optionalAnalytics")
+                UserDefaults.standard.set(optionalAnalyticsEnabled, forKey: "au.pintpath.app.optionalAnalytics")
             }
             return true
         } catch {
@@ -1337,7 +1337,7 @@ final class BeerMapAppModel: ObservableObject {
 
     private func resetOptionalAnalytics() {
         optionalAnalyticsEnabled = false
-        UserDefaults.standard.removeObject(forKey: "au.pintpath.beermap.optionalAnalytics")
+        UserDefaults.standard.removeObject(forKey: "au.pintpath.app.optionalAnalytics")
     }
 
     private func withAuthenticatedSession<T: Sendable>(

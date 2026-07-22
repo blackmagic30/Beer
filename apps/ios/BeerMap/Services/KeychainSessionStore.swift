@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum KeychainSessionStore {
-    private static let service = "au.pintpath.beermap.session"
+    private static let service = "au.pintpath.app.session"
     private static let account = "pint-path-bearer-token"
     private static let supabaseRefreshAccount = "supabase-refresh-token"
     private static let supabaseAccessAccount = "supabase-access-token"

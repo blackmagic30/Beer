@@ -41,9 +41,18 @@ describe("native mobile remediation guardrails", () => {
 
   it("ships the Pint Path display brand on both platforms", () => {
     const info = read("apps/ios/BeerMap/Info.plist");
+    const iosProject = read("apps/ios/BeerMap.xcodeproj/project.pbxproj");
+    const iosConfig = read("apps/ios/Config.example.xcconfig");
     const strings = read("apps/android/app/src/main/res/values/strings.xml");
 
     expect(info).toMatch(/<key>CFBundleDisplayName<\/key>\s*<string>Pint Path<\/string>/);
+    expect(info).toContain("<string>au.pintpath.app.auth</string>");
+    expect(iosProject).toContain("PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.app;");
+    expect(iosConfig).toContain("PRODUCT_BUNDLE_IDENTIFIER = au.pintpath.app");
+    expect(iosKeychain).toContain('private static let service = "au.pintpath.app.session"');
+    expect([info, iosProject, iosConfig, iosKeychain, iosApp].join("\n")).not.toContain(
+      "au.pintpath.beermap",
+    );
     expect(strings).toContain('<string name="app_name">Pint Path</string>');
   });
 
@@ -62,6 +71,15 @@ describe("native mobile remediation guardrails", () => {
     expect(androidAPI).toContain('put("consentSource", "android")');
     expect(iosModels).not.toContain("stripePublishableKey");
     expect(androidModels).not.toContain("stripePublishableKey");
+  });
+
+  it("reports the effective native Supabase configuration in debug settings", () => {
+    expect(iosSettings).toContain("model.config?.supabaseUrl");
+    expect(iosSettings).toContain("model.config?.supabaseAnonKey");
+    expect(iosSettings).not.toContain("AppConfig.supabaseURL == nil");
+    expect(androidApp).toContain('state.config.stringOrNull("supabaseUrl")');
+    expect(androidApp).toContain('state.config.stringOrNull("supabaseAnonKey")');
+    expect(androidApp).toContain("hasServerSupabaseConfig || hasEmbeddedSupabaseConfig");
   });
 
   it("reuses the logical Pint Path session only when refreshing Supabase credentials", () => {
@@ -392,7 +410,7 @@ describe("native mobile remediation guardrails", () => {
 
   it("keeps optional analytics consent scoped to a confirmed signed-in account", () => {
     expect(iosApp).toContain("guard optionalAnalyticsEnabled, let token = sessionToken else { return }");
-    expect(iosApp).toContain('UserDefaults.standard.removeObject(forKey: "au.pintpath.beermap.optionalAnalytics")');
+    expect(iosApp).toContain('UserDefaults.standard.removeObject(forKey: "au.pintpath.app.optionalAnalytics")');
     expect(iosApp).toMatch(/private func clearLocalSession\(\)[\s\S]*resetOptionalAnalytics\(\)/);
 
     expect(androidApp).toContain("if (optionalAnalytics && current != null)");
