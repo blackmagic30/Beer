@@ -8,14 +8,21 @@ import UniformTypeIdentifiers
 struct ContributeView: View {
     @EnvironmentObject private var model: BeerMapAppModel
     @StateObject private var locationProof = OneTimeLocationProof()
+    @AppStorage("au.pintpath.app.lastContributionVenueId") private var lastVenueId = ""
     @State private var selectedMode: ContributionMode = .price
     @State private var selectedVenueId = ""
+    @State private var showingVenuePicker = false
+    @State private var showingCamera = false
+    @State private var showingAdvancedPriceOptions = false
     @State private var beerName = ""
+    @State private var selectedTrackedBeerId: String?
+    @State private var confirmedCustomBeerName = false
     @State private var priceText = ""
     @State private var servingSize = "pint"
     @State private var notes = ""
     @State private var sourcePhotoItem: PhotosPickerItem?
     @State private var sourcePhotoDataURL: String?
+    @State private var sourcePhotoPreview: UIImage?
     @State private var sourcePhotoStatus = "Choose a clear menu, receipt, tap-list, or happy-hour board photo."
     @State private var sourcePhotoPreparationTask: Task<Void, Never>?
     @State private var happyOffer = ""
@@ -33,13 +40,14 @@ struct ContributeView: View {
     @State private var happyHourSubmissionId = "ios-happy-\(UUID().uuidString)"
     @State private var acceptedMissionId: String?
     @State private var attachLocationProof = false
+    @FocusState private var focusedPriceField: PriceField?
 
     private let servingSizes = ["pint", "pot", "schooner", "jug", "bottle", "can", "other"]
     private let dayCodes = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
     enum ContributionMode: String, CaseIterable, Identifiable {
         case price = "Price"
-        case source = "Photo"
+        case source = "Scan menu"
         case happyHour = "Happy hour"
         case request = "Request"
         case missions = "Missions"
@@ -49,12 +57,17 @@ struct ContributeView: View {
         var systemImage: String {
             switch self {
             case .price: return "mug.fill"
-            case .source: return "photo.on.rectangle.angled"
+            case .source: return "doc.viewfinder"
             case .happyHour: return "clock.badge.checkmark.fill"
             case .request: return "paperplane.fill"
             case .missions: return "target"
             }
         }
+    }
+
+    private enum PriceField: Hashable {
+        case beer
+        case price
     }
 
     enum MissingRequestKind: String, CaseIterable, Identifiable {
@@ -68,16 +81,6 @@ struct ContributeView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                SectionHeader(
-                    eyebrow: "Add updates",
-                    title: "What did you see?",
-                    subtitle: "Pick the shortest path. Pint Path sends everything through the same reviewed backend as the website.",
-                    systemImage: "square.and.arrow.up.fill"
-                )
-                .beerMapCard()
-
-                modePicker
-
                 if acceptedMissionId != nil {
                     StatusBanner(
                         message: "Mission reserved. The next update you send from this form will be linked for review.",
@@ -101,14 +104,47 @@ struct ContributeView: View {
             .padding()
         }
         .beerMapScreen()
-        .navigationTitle("Add")
-        .onAppear(perform: ensureVenueSelection)
+        .navigationTitle(selectedMode == .price ? "Add price" : selectedMode.rawValue)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    ForEach(ContributionMode.allCases) { mode in
+                        Button {
+                            selectedMode = mode
+                        } label: {
+                            Label(mode == .price ? "Quick price" : mode.rawValue, systemImage: mode.systemImage)
+                        }
+                    }
+                } label: {
+                    Label("More updates", systemImage: "ellipsis.circle")
+                }
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    focusedPriceField = nil
+                }
+            }
+        }
+        .onAppear {
+            ensureVenueSelection()
+            applyPendingVenueSelection()
+            syncAcceptedMission()
+        }
         .refreshable {
             await model.loadHome()
             ensureVenueSelection()
         }
         .onChange(of: model.venues) { _, _ in
             ensureVenueSelection()
+            applyPendingVenueSelection()
+        }
+        .onChange(of: model.missions) { _, _ in
+            syncAcceptedMission()
+        }
+        .onChange(of: model.pendingContributionVenueId) { _, _ in
+            applyPendingVenueSelection()
         }
         .onChange(of: sourcePhotoItem) { _, item in
             sourcePhotoPreparationTask?.cancel()
@@ -116,64 +152,140 @@ struct ContributeView: View {
             sourcePhotoPreparationTask = Task { await loadSourcePhoto(item) }
         }
         .onDisappear { sourcePhotoPreparationTask?.cancel() }
-    }
-
-    private var modePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(ContributionMode.allCases) { mode in
-                    Button {
-                        selectedMode = mode
-                    } label: {
-                        Label(mode.rawValue, systemImage: mode.systemImage)
-                            .font(.caption.weight(.bold))
-                            .lineLimit(1)
-                            .padding(.horizontal, 12)
-                            .frame(height: 42)
-                            .background(
-                                selectedMode == mode ? BeerMapTheme.ink : BeerMapTheme.card,
-                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            )
-                            .foregroundStyle(selectedMode == mode ? Color.white : Color.primary)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(BeerMapTheme.hairline, lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Show \(mode.rawValue) contribution form")
-                }
+        .fullScreenCover(isPresented: $showingCamera) {
+            CameraPhotoPicker { image in
+                showingCamera = false
+                sourcePhotoPreparationTask?.cancel()
+                sourcePhotoPreparationTask = Task { await loadCameraPhoto(image) }
+            } onCancel: {
+                showingCamera = false
             }
-            .padding(.vertical, 2)
+            .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showingVenuePicker) {
+            VenueSelectionSheet(
+                venues: model.venues,
+                selectedVenueId: selectedVenueId,
+                recentVenueId: lastVenueId
+            ) { venue in
+                selectedVenueId = venue.id
+                lastVenueId = venue.id
+                showingVenuePicker = false
+            }
         }
     }
 
     private var priceCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             SectionHeader(
-                eyebrow: "Price update",
-                title: "Submit one observed price",
-                subtitle: model.isSignedIn ? "Best for a quick tap-list or menu check." : "Sign in first so the update can earn review history.",
+                eyebrow: nil,
+                title: "Quick price",
+                subtitle: model.isSignedIn ? "Confirm four details. We’ll review the update before it appears." : "Sign in first so your update can be reviewed and credited.",
                 systemImage: "mug.fill"
             )
-            venuePicker
-            TextField("Beer name", text: $beerName)
-                .textFieldStyle(.roundedBorder)
-                .textContentType(.none)
-                .submitLabel(.next)
-            TextField("Observed price", text: $priceText)
-                .keyboardType(.decimalPad)
-                .textFieldStyle(.roundedBorder)
-            Picker("Serving", selection: $servingSize) {
-                ForEach(servingSizes, id: \.self) { size in
-                    Text(size.capitalized).tag(size)
+
+            priceStep(number: 1, title: "Venue") {
+                venuePicker
+            }
+
+            priceStep(number: 2, title: "Beer") {
+                TextField("Start typing a beer", text: $beerName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minHeight: 44)
+                    .textContentType(.none)
+                    .submitLabel(.next)
+                    .focused($focusedPriceField, equals: .beer)
+                    .onSubmit { focusedPriceField = .price }
+                    .onChange(of: beerName) { _, value in
+                        selectedTrackedBeerId = exactTrackedBeer(for: value)?.id
+                        confirmedCustomBeerName = false
+                    }
+
+                if !beerSuggestions.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(beerSuggestions) { beer in
+                                Button(beer.name) {
+                                    beerName = beer.name
+                                    selectedTrackedBeerId = beer.id
+                                    confirmedCustomBeerName = false
+                                    focusedPriceField = .price
+                                }
+                                .buttonStyle(.bordered)
+                                .buttonBorderShape(.capsule)
+                                .frame(minHeight: 44)
+                                .accessibilityHint("Selects this catalogue beer")
+                            }
+                        }
+                    }
+                }
+
+                if let selectedBeer = selectedTrackedBeer {
+                    Label("Catalogue match: \(selectedBeer.name)", systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(BeerMapTheme.leaf)
+                } else if !beerName.trimmed.isEmpty {
+                    Toggle(isOn: $confirmedCustomBeerName) {
+                        Text("This is a new beer name — use it exactly as typed")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .tint(BeerMapTheme.primaryAction)
+                    .frame(minHeight: 44)
+                }
+
+                if beerName.count > 120 {
+                    Label("Beer names can be up to 120 characters.", systemImage: "exclamationmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(BeerMapTheme.danger)
                 }
             }
-            .pickerStyle(.menu)
-            TextField("Notes, optional", text: $notes, axis: .vertical)
-                .lineLimit(3...6)
-                .textFieldStyle(.roundedBorder)
-            locationProofToggle
+
+            priceStep(number: 3, title: "Price") {
+                HStack(spacing: 8) {
+                    Text("$")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    TextField("0.00", text: $priceText)
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minHeight: 44)
+                        .focused($focusedPriceField, equals: .price)
+                        .accessibilityLabel("Observed price in Australian dollars")
+                }
+                .frame(minHeight: 44)
+                if let priceValidationMessage {
+                    Label(priceValidationMessage, systemImage: "exclamationmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(BeerMapTheme.danger)
+                }
+            }
+
+            priceStep(number: 4, title: "Serving") {
+                servingPicker
+            }
+
+            DisclosureGroup("Photo, note, or location proof", isExpanded: $showingAdvancedPriceOptions) {
+                VStack(alignment: .leading, spacing: 12) {
+                    sourcePhotoActions(cameraTitle: "Take evidence photo", libraryTitle: "Choose photo")
+
+                    sourcePhotoPreviewView
+
+                    if sourcePhotoDataURL != nil || sourcePhotoStatus.hasPrefix("Preparing") {
+                        Text(sourcePhotoStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    TextField("Review note, optional", text: $notes, axis: .vertical)
+                        .lineLimit(2...4)
+                        .textFieldStyle(.roundedBorder)
+                    locationProofToggle
+                }
+                .padding(.top, 10)
+            }
+            .font(.subheadline.weight(.semibold))
+
             PrimaryButton(title: "Send price for review", systemImage: "paperplane.fill", isLoading: model.isLoading) {
                 Task {
                     let location = await requestedLocationProof()
@@ -186,42 +298,35 @@ struct ContributeView: View {
                         servingSize: servingSize,
                         priceText: priceText,
                         notes: notes,
+                        sourcePhotoDataUrl: sourcePhotoDataURL,
                         uploadLocation: location
                     )
-                    if submitted { clearPriceFields() }
+                    if submitted {
+                        await model.refreshMissions()
+                        clearPriceFields()
+                    }
                 }
             }
-            .disabled(!model.isSignedIn || selectedVenueId.isEmpty || beerName.trimmed.isEmpty || priceText.trimmed.isEmpty)
-            StatusBanner(message: "For a full menu or board, use Photo. Reviewers keep source evidence private.")
+            .disabled(priceSubmitDisabled)
+
+            SecondaryButton(title: "Scan a full menu instead", systemImage: "doc.viewfinder") {
+                selectedMode = .source
+            }
         }
         .beerMapCard()
     }
 
     private var sourcePhotoCard: some View {
-        let photoButtonTitle = sourcePhotoDataURL == nil ? "Choose photo" : "Replace photo"
-
         return VStack(alignment: .leading, spacing: 12) {
             SectionHeader(
-                eyebrow: "Source photo",
-                title: "Upload a menu or board",
-                subtitle: model.isSignedIn ? "The app sends one compressed image for private reviewer evidence." : "Sign in first so the source upload can be reviewed.",
-                systemImage: "photo.on.rectangle.angled"
+                eyebrow: "Fastest bulk update",
+                title: "Scan a menu or tap board",
+                subtitle: model.isSignedIn ? "Choose the venue, take one clear photo, and send it. Reviewers extract the prices so you do not have to type every row." : "Sign in first so the menu can be reviewed.",
+                systemImage: "doc.viewfinder"
             )
             venuePicker
-            PhotosPicker(selection: $sourcePhotoItem, matching: .images, photoLibrary: .shared()) {
-                Label(photoButtonTitle, systemImage: "photo.badge.plus")
-                    .font(.headline.weight(.bold))
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: 50)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(BeerMapTheme.ink)
-            .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(BeerMapTheme.ink.opacity(0.16), lineWidth: 1)
-            )
-            .accessibilityLabel("Choose source photo")
+            sourcePhotoActions(cameraTitle: "Take menu photo", libraryTitle: "Choose existing")
+            sourcePhotoPreviewView
 
             StatusBanner(
                 message: sourcePhotoStatus,
@@ -232,7 +337,7 @@ struct ContributeView: View {
                 .lineLimit(3...6)
                 .textFieldStyle(.roundedBorder)
             locationProofToggle
-            PrimaryButton(title: "Upload source for review", systemImage: "arrow.up.doc.fill", isLoading: model.isLoading) {
+            PrimaryButton(title: "Send menu for review", systemImage: "arrow.up.doc.fill", isLoading: model.isLoading) {
                 guard let dataURL = sourcePhotoDataURL else {
                     model.errorMessage = "Choose a source photo before uploading."
                     return
@@ -248,7 +353,10 @@ struct ContributeView: View {
                         notes: notes,
                         uploadLocation: location
                     )
-                    if submitted { clearPhotoFields() }
+                    if submitted {
+                        await model.refreshMissions()
+                        clearPhotoFields()
+                    }
                 }
             }
             .disabled(!model.isSignedIn || selectedVenueId.isEmpty || sourcePhotoDataURL == nil)
@@ -291,7 +399,10 @@ struct ContributeView: View {
                         notes: happyNotes,
                         uploadLocation: location
                     )
-                    if submitted { clearHappyHourFields() }
+                    if submitted {
+                        await model.refreshMissions()
+                        clearHappyHourFields()
+                    }
                 }
             }
             .disabled(!model.isSignedIn || selectedVenueId.isEmpty || happyDays.isEmpty || happyOffer.trimmed.isEmpty)
@@ -377,14 +488,26 @@ struct ContributeView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if mission.userProgress == "accepted" || acceptedMissionId == mission.id {
-                            HStack {
+                            VStack(alignment: .leading, spacing: 8) {
                                 StatusBanner(message: "Reserved until \(mission.reservationExpiresAt ?? "24 hours after acceptance")", systemImage: "clock.badge.checkmark.fill")
-                                Button("Release", role: .destructive) {
+                                if mission.venueId != nil {
+                                    PrimaryButton(
+                                        title: acceptedMissionId == mission.id ? "Continue reserved mission" : "Use reserved mission",
+                                        systemImage: "arrow.right.circle.fill",
+                                        isLoading: false
+                                    ) {
+                                        activateMission(mission)
+                                    }
+                                }
+                                Button(role: .destructive) {
                                     Task {
                                         if await model.releaseMission(mission) {
                                             if acceptedMissionId == mission.id { acceptedMissionId = nil }
                                         }
                                     }
+                                } label: {
+                                    Label("Release mission", systemImage: "xmark.circle")
+                                        .frame(maxWidth: .infinity, minHeight: 44)
                                 }
                                 .buttonStyle(.bordered)
                             }
@@ -396,9 +519,7 @@ struct ContributeView: View {
                             ) {
                                 Task {
                                     guard await model.acceptMission(mission) else { return }
-                                    acceptedMissionId = mission.id
-                                    selectedVenueId = venueId
-                                    selectedMode = mission.reason?.localizedCaseInsensitiveContains("happy") == true ? .happyHour : .price
+                                    activateMission(mission, venueId: venueId)
                                 }
                             }
                             .disabled(!model.isSignedIn)
@@ -416,20 +537,235 @@ struct ContributeView: View {
     private var venuePicker: some View {
         Group {
             if model.venues.isEmpty {
-                StatusBanner(message: "No venues loaded yet. Refresh Find before sending venue-specific updates.", isError: true)
-            } else {
-                Picker("Venue", selection: $selectedVenueId) {
-                    ForEach(model.venues) { venue in
-                        Text(venue.name).tag(venue.id)
+                StatusBanner(message: "Venues are not available yet. Refresh and try again.", isError: true)
+            } else if let mission = activeMission {
+                HStack(spacing: 12) {
+                    Image(systemName: "lock.fill")
+                        .font(.headline)
+                        .foregroundStyle(BeerMapTheme.primaryAction)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(selectedVenue?.name ?? mission.venueName)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                        Text("Locked to the reserved mission venue")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    Spacer(minLength: 8)
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(BeerMapTheme.leaf)
                 }
-                .pickerStyle(.menu)
+                .padding(12)
+                .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(BeerMapTheme.primaryAction.opacity(0.35), lineWidth: 1)
+                )
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Mission venue, \(selectedVenue?.name ?? mission.venueName), locked")
+            } else {
+                Button {
+                    showingVenuePicker = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "mappin.and.ellipse")
+                            .font(.headline)
+                            .foregroundStyle(BeerMapTheme.primaryAction)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(selectedVenue?.name ?? "Choose a venue")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                            Text(selectedVenue?.displayLocation.nilIfBlank ?? "Search all \(model.venues.count) venues")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(selectedVenue == nil ? Color.orange.opacity(0.55) : BeerMapTheme.separator.opacity(0.4), lineWidth: 1)
+                )
+                .accessibilityLabel(selectedVenue.map { "Venue, \($0.name)" } ?? "Choose a venue")
+                .accessibilityHint("Opens searchable venue selection")
             }
         }
     }
 
+    private var selectedVenue: Venue? {
+        model.venues.first { $0.id == selectedVenueId }
+    }
+
+    private var activeMission: Mission? {
+        guard let acceptedMissionId else { return nil }
+        return model.missions.first { mission in
+            mission.id == acceptedMissionId && mission.userProgress == "accepted"
+        }
+    }
+
+    private func activateMission(_ mission: Mission, venueId explicitVenueId: String? = nil) {
+        guard let venueId = explicitVenueId ?? mission.venueId else { return }
+        acceptedMissionId = mission.id
+        selectedVenueId = venueId
+        lastVenueId = venueId
+        selectedMode = mission.reason?.localizedCaseInsensitiveContains("happy") == true ? .happyHour : .price
+    }
+
+    private func syncAcceptedMission() {
+        if let acceptedMissionId,
+           let current = model.missions.first(where: {
+               $0.id == acceptedMissionId && $0.userProgress == "accepted"
+           }) {
+            if let venueId = current.venueId {
+                selectedVenueId = venueId
+                lastVenueId = venueId
+            }
+            return
+        }
+
+        guard let reserved = model.missions.first(where: { $0.userProgress == "accepted" }) else {
+            acceptedMissionId = nil
+            return
+        }
+        activateMission(reserved)
+    }
+
+    private var selectedTrackedBeer: TrackedBeer? {
+        guard let selectedTrackedBeerId else { return nil }
+        return model.config?.trackedBeers?.first { $0.id == selectedTrackedBeerId }
+    }
+
+    private func exactTrackedBeer(for value: String) -> TrackedBeer? {
+        let normalized = value.trimmed
+        guard !normalized.isEmpty else { return nil }
+        return model.config?.trackedBeers?.first {
+            $0.name.compare(normalized, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        }
+    }
+
+    private var beerSuggestions: [TrackedBeer] {
+        let query = beerName.trimmed
+        guard !query.isEmpty else { return [] }
+        let beers = model.config?.trackedBeers ?? []
+        return beers
+            .filter { $0.name.localizedStandardContains(query) }
+            .sorted { lhs, rhs in
+                let lhsPrefix = lhs.name.lowercased().hasPrefix(query.lowercased())
+                let rhsPrefix = rhs.name.lowercased().hasPrefix(query.lowercased())
+                if lhsPrefix != rhsPrefix { return lhsPrefix }
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            }
+            .prefix(6)
+            .map { $0 }
+    }
+
+    private var cleanedPriceText: String {
+        priceText
+            .replacingOccurrences(of: "$", with: "")
+            .replacingOccurrences(of: ",", with: ".")
+            .trimmed
+    }
+
+    private var validPrice: Double? {
+        ObservedPriceParser.parse(cleanedPriceText)
+    }
+
+    private var priceValidationMessage: String? {
+        guard !priceText.trimmed.isEmpty, validPrice == nil else { return nil }
+        return "Enter a price from $0.01 to $250 with no more than two decimal places."
+    }
+
+    private var priceSubmitDisabled: Bool {
+        let hasConfirmedBeer = selectedTrackedBeer != nil || confirmedCustomBeerName
+        return !model.isSignedIn
+            || selectedVenue == nil
+            || beerName.trimmed.isEmpty
+            || beerName.count > 120
+            || !hasConfirmedBeer
+            || validPrice == nil
+    }
+
+    private var servingPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(servingSizes.prefix(4), id: \.self) { size in
+                    FilterChip(
+                        title: size.capitalized,
+                        systemImage: servingSystemImage(size),
+                        isSelected: servingSize == size
+                    ) {
+                        servingSize = size
+                    }
+                }
+
+                Menu {
+                    ForEach(servingSizes.dropFirst(4), id: \.self) { size in
+                        Button {
+                            servingSize = size
+                        } label: {
+                            Label(size.capitalized, systemImage: servingSystemImage(size))
+                        }
+                    }
+                } label: {
+                    Label(
+                        servingSizes.dropFirst(4).contains(servingSize) ? servingSize.capitalized : "More",
+                        systemImage: "ellipsis.circle"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 13)
+                    .frame(minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+            }
+        }
+    }
+
+    private func servingSystemImage(_ serving: String) -> String {
+        switch serving {
+        case "bottle": return "waterbottle.fill"
+        case "can": return "cylinder.fill"
+        case "jug": return "takeoutbag.and.cup.and.straw.fill"
+        case "other": return "ellipsis"
+        default: return "mug.fill"
+        }
+    }
+
+    private func priceStep<Content: View>(
+        number: Int,
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Text("\(number)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(BeerMapTheme.primaryActionForeground)
+                    .frame(width: 24, height: 24)
+                    .background(BeerMapTheme.primaryAction, in: Circle())
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+            }
+            content()
+        }
+    }
+
     private var dayPicker: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 8) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 68), spacing: 8)], spacing: 8) {
             ForEach(dayCodes, id: \.self) { day in
                 Button {
                     if happyDays.contains(day) {
@@ -441,11 +777,12 @@ struct ContributeView: View {
                     Text(day.uppercased())
                         .font(.caption.weight(.bold))
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 9)
+                        .frame(minHeight: 44)
                 }
                 .buttonStyle(.plain)
                 .background(happyDays.contains(day) ? BeerMapTheme.amber.opacity(0.28) : BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityLabel("\(day.uppercased()) \(happyDays.contains(day) ? "selected" : "not selected")")
+                .accessibilityAddTraits(happyDays.contains(day) ? .isSelected : [])
             }
         }
     }
@@ -481,8 +818,75 @@ struct ContributeView: View {
     }
 
     private func ensureVenueSelection() {
-        if selectedVenueId.isEmpty || !model.venues.contains(where: { $0.id == selectedVenueId }) {
-            selectedVenueId = model.venues.first?.id ?? ""
+        guard selectedVenueId.isEmpty || !model.venues.contains(where: { $0.id == selectedVenueId }) else { return }
+        if model.venues.count == 1 {
+            selectedVenueId = model.venues[0].id
+        } else {
+            selectedVenueId = ""
+        }
+    }
+
+    private func applyPendingVenueSelection() {
+        guard
+            activeMission == nil,
+            let venueId = model.pendingContributionVenueId,
+            model.venues.contains(where: { $0.id == venueId })
+        else { return }
+
+        selectedMode = .price
+        selectedVenueId = venueId
+        lastVenueId = venueId
+        _ = model.takePendingContributionVenueId()
+    }
+
+    private func sourcePhotoActions(cameraTitle: String, libraryTitle: String) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 148), spacing: 10)], spacing: 10) {
+            Button {
+                showingCamera = true
+            } label: {
+                Label(cameraTitle, systemImage: "camera.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(BeerMapTheme.primaryAction)
+            .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+            .accessibilityHint("Opens the camera for a private evidence photo")
+
+            PhotosPicker(selection: $sourcePhotoItem, matching: .images) {
+                Label(libraryTitle, systemImage: "photo.on.rectangle")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityHint("Chooses one existing photo for private review")
+        }
+    }
+
+    @ViewBuilder
+    private var sourcePhotoPreviewView: some View {
+        if let sourcePhotoPreview {
+            ZStack(alignment: .topTrailing) {
+                Image(uiImage: sourcePhotoPreview)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 168)
+                    .clipped()
+                    .accessibilityLabel("Selected evidence photo preview")
+
+                Button {
+                    clearSourcePhoto()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(Color.white, Color.black.opacity(0.72))
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Remove selected photo")
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
     }
 
@@ -495,37 +899,94 @@ struct ContributeView: View {
                 let data = try await item.loadTransferable(type: Data.self)
             else {
                 sourcePhotoDataURL = nil
+                sourcePhotoPreview = nil
                 sourcePhotoStatus = "Could not read this photo. Try a JPEG, PNG, HEIC, or WebP image."
                 return
             }
+            await loadSourcePhotoData(data)
+        } catch is CancellationError {
+            return
+        } catch {
+            sourcePhotoDataURL = nil
+            sourcePhotoPreview = nil
+            sourcePhotoStatus = "Could not prepare this photo. \(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func loadSourcePhotoData(_ data: Data) async {
+        sourcePhotoStatus = "Preparing photo for review..."
+        do {
             try Task<Never, Never>.checkCancellation()
-            let preparedPhoto = try await Task.detached(priority: .userInitiated) {
+            let worker = Task.detached(priority: .userInitiated) {
                 try prepareSourcePhoto(data)
-            }.value
+            }
+            let preparedPhoto = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
             try Task<Never, Never>.checkCancellation()
             sourcePhotoDataURL = preparedPhoto.dataURL
+            sourcePhotoPreview = UIImage(data: preparedPhoto.jpegData)
             sourcePhotoStatus = "Photo ready for private review (\(ByteCountFormatter.string(fromByteCount: Int64(preparedPhoto.byteCount), countStyle: .file)))."
         } catch is CancellationError {
             return
         } catch {
             sourcePhotoDataURL = nil
+            sourcePhotoPreview = nil
             sourcePhotoStatus = "Could not prepare this photo. \(error.localizedDescription)"
         }
     }
 
+    @MainActor
+    private func loadCameraPhoto(_ image: CameraPhotoPayload) async {
+        sourcePhotoStatus = "Preparing photo for review..."
+        do {
+            try Task<Never, Never>.checkCancellation()
+            let worker = Task.detached(priority: .userInitiated) {
+                try prepareCameraPhoto(image)
+            }
+            let preparedPhoto = try await withTaskCancellationHandler {
+                try await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            try Task<Never, Never>.checkCancellation()
+            sourcePhotoDataURL = preparedPhoto.dataURL
+            sourcePhotoPreview = UIImage(data: preparedPhoto.jpegData)
+            sourcePhotoStatus = "Photo ready for private review (\(ByteCountFormatter.string(fromByteCount: Int64(preparedPhoto.byteCount), countStyle: .file)))."
+        } catch is CancellationError {
+            return
+        } catch {
+            sourcePhotoDataURL = nil
+            sourcePhotoPreview = nil
+            sourcePhotoStatus = "Could not prepare this photo. \(error.localizedDescription)"
+        }
+    }
+
+    private func clearSourcePhoto() {
+        sourcePhotoPreparationTask?.cancel()
+        sourcePhotoItem = nil
+        sourcePhotoDataURL = nil
+        sourcePhotoPreview = nil
+        sourcePhotoStatus = "Choose a clear menu, receipt, tap-list, or happy-hour board photo."
+    }
+
     private func clearPriceFields() {
         beerName = ""
+        selectedTrackedBeerId = nil
+        confirmedCustomBeerName = false
         priceText = ""
         notes = ""
-        servingSize = "pint"
+        clearSourcePhoto()
+        showingAdvancedPriceOptions = false
         priceSubmissionId = "ios-\(UUID().uuidString)"
         acceptedMissionId = nil
     }
 
     private func clearPhotoFields() {
-        sourcePhotoItem = nil
-        sourcePhotoDataURL = nil
-        sourcePhotoStatus = "Choose a clear menu, receipt, tap-list, or happy-hour board photo."
+        clearSourcePhoto()
         notes = ""
         photoSubmissionId = "ios-photo-\(UUID().uuidString)"
         acceptedMissionId = nil
@@ -544,6 +1005,103 @@ struct ContributeView: View {
         requestBeerName = ""
         requestSuburb = ""
         requestNotes = ""
+    }
+}
+
+private struct VenueSelectionSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let venues: [Venue]
+    let selectedVenueId: String
+    let recentVenueId: String
+    let onSelect: (Venue) -> Void
+    @State private var searchText = ""
+
+    private var recentVenue: Venue? {
+        venues.first { $0.id == recentVenueId }
+    }
+
+    private var filteredVenues: [Venue] {
+        let query = searchText.trimmed
+        let candidates = venues.filter { $0.id != recentVenue?.id }
+        guard !query.isEmpty else {
+            return candidates.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
+        return candidates
+            .filter { venue in
+                [venue.name, venue.address, venue.suburb, venue.postcode]
+                    .compactMap { $0 }
+                    .contains { $0.localizedStandardContains(query) }
+            }
+            .sorted { lhs, rhs in
+                let lhsPrefix = lhs.name.lowercased().hasPrefix(query.lowercased())
+                let rhsPrefix = rhs.name.lowercased().hasPrefix(query.lowercased())
+                if lhsPrefix != rhsPrefix { return lhsPrefix }
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let recentVenue {
+                    Section("Recent") {
+                        venueRow(recentVenue)
+                    }
+                }
+
+                Section(searchText.trimmed.isEmpty ? "All venues" : "Matches") {
+                    if filteredVenues.isEmpty {
+                        ContentUnavailableView.search(text: searchText)
+                    } else {
+                        ForEach(filteredVenues) { venue in
+                            venueRow(venue)
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Venue, suburb, or postcode")
+            .textInputAutocapitalization(.words)
+            .autocorrectionDisabled()
+            .navigationTitle("Choose venue")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func venueRow(_ venue: Venue) -> some View {
+        Button {
+            onSelect(venue)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "mappin.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(BeerMapTheme.primaryAction)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(venue.name)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(venue.displayLocation.nilIfBlank ?? venue.address ?? "Melbourne")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if venue.id == selectedVenueId {
+                    Image(systemName: "checkmark")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(BeerMapTheme.primaryAction)
+                        .accessibilityHidden(true)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(venue.id == selectedVenueId ? .isSelected : [])
     }
 }
 
@@ -645,7 +1203,7 @@ private enum SourcePhotoPreparationError: LocalizedError {
         case .outputFailed:
             return "The image could not be compressed. Try a different photo."
         case .outputTooLarge:
-            return "The photo is still larger than 6MB after compression. Try a different photo."
+            return "The photo is still larger than 4MB after compression. Try a different photo."
         }
     }
 }
@@ -653,6 +1211,49 @@ private enum SourcePhotoPreparationError: LocalizedError {
 private struct PreparedSourcePhoto: Sendable {
     let dataURL: String
     let byteCount: Int
+    let jpegData: Data
+}
+
+private struct CameraPhotoPayload: @unchecked Sendable {
+    let cgImage: CGImage
+    let orientation: UIImage.Orientation
+}
+
+private func prepareCameraPhoto(_ image: CameraPhotoPayload) throws -> PreparedSourcePhoto {
+    try Task<Never, Never>.checkCancellation()
+    let rotatesDimensions = [
+        UIImage.Orientation.left,
+        .leftMirrored,
+        .right,
+        .rightMirrored
+    ].contains(image.orientation)
+    let sourceWidth = CGFloat(rotatesDimensions ? image.cgImage.height : image.cgImage.width)
+    let sourceHeight = CGFloat(rotatesDimensions ? image.cgImage.width : image.cgImage.height)
+    guard sourceWidth > 0, sourceHeight > 0, sourceWidth <= 100_000, sourceHeight <= 100_000 else {
+        throw SourcePhotoPreparationError.invalidImage
+    }
+    let longestSide = max(sourceWidth, sourceHeight)
+    let resizeScale = min(1, 1_800 / longestSide)
+    let targetSize = CGSize(
+        width: max(1, (sourceWidth * resizeScale).rounded()),
+        height: max(1, (sourceHeight * resizeScale).rounded())
+    )
+    let sourceImage = UIImage(cgImage: image.cgImage, scale: 1, orientation: image.orientation)
+    let format = UIGraphicsImageRendererFormat.preferred()
+    format.scale = 1
+    format.opaque = true
+    let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+    let jpegData = renderer.jpegData(withCompressionQuality: 0.78) { _ in
+        sourceImage.draw(in: CGRect(origin: .zero, size: targetSize))
+    }
+    try Task<Never, Never>.checkCancellation()
+    guard !jpegData.isEmpty else { throw SourcePhotoPreparationError.outputFailed }
+    guard jpegData.count <= 4 * 1024 * 1024 else { throw SourcePhotoPreparationError.outputTooLarge }
+    return PreparedSourcePhoto(
+        dataURL: "data:image/jpeg;base64,\(jpegData.base64EncodedString())",
+        byteCount: jpegData.count,
+        jpegData: jpegData
+    )
 }
 
 private func prepareSourcePhoto(_ data: Data) throws -> PreparedSourcePhoto {
@@ -672,7 +1273,7 @@ private func prepareSourcePhoto(_ data: Data) throws -> PreparedSourcePhoto {
     let thumbnailOptions: [CFString: Any] = [
         kCGImageSourceCreateThumbnailFromImageAlways: true,
         kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceThumbnailMaxPixelSize: 2_200,
+        kCGImageSourceThumbnailMaxPixelSize: 1_800,
         kCGImageSourceShouldCacheImmediately: true
     ]
     guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
@@ -691,19 +1292,64 @@ private func prepareSourcePhoto(_ data: Data) throws -> PreparedSourcePhoto {
     CGImageDestinationAddImage(
         destination,
         thumbnail,
-        [kCGImageDestinationLossyCompressionQuality: 0.84] as CFDictionary
+        [kCGImageDestinationLossyCompressionQuality: 0.78] as CFDictionary
     )
     guard CGImageDestinationFinalize(destination) else {
         throw SourcePhotoPreparationError.outputFailed
     }
     try Task<Never, Never>.checkCancellation()
     let jpegData = jpeg as Data
-    guard jpegData.count <= 6 * 1024 * 1024 else {
+    guard jpegData.count <= 4 * 1024 * 1024 else {
         throw SourcePhotoPreparationError.outputTooLarge
     }
     let dataURL = "data:image/jpeg;base64,\(jpegData.base64EncodedString())"
     try Task<Never, Never>.checkCancellation()
-    return PreparedSourcePhoto(dataURL: dataURL, byteCount: jpegData.count)
+    return PreparedSourcePhoto(dataURL: dataURL, byteCount: jpegData.count, jpegData: jpegData)
+}
+
+private struct CameraPhotoPicker: UIViewControllerRepresentable {
+    let onPhoto: (CameraPhotoPayload) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let parent: CameraPhotoPicker
+
+        init(parent: CameraPhotoPicker) {
+            self.parent = parent
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            guard
+                let image = info[.originalImage] as? UIImage,
+                let cgImage = image.cgImage
+            else {
+                parent.onCancel()
+                return
+            }
+            parent.onPhoto(CameraPhotoPayload(cgImage: cgImage, orientation: image.imageOrientation))
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.onCancel()
+        }
+    }
 }
 
 private func contributionTime(_ date: Date) -> String {

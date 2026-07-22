@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "data": {
+    "trackedBeers": [
+      {
+        "key": "fixture_lager",
+        "name": "Fixture Lager",
+        "aliases": ["Fixture Lager"],
+        "brewery": "Fixture Brewery",
+        "style": "Lager",
+        "abv": 4.5
+      }
+    ]
+  }
+}

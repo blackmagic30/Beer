@@ -82,6 +82,28 @@ describe("native mobile remediation guardrails", () => {
     expect(androidApp).toContain("hasServerSupabaseConfig || hasEmbeddedSupabaseConfig");
   });
 
+  it("matches the production public-config and venue discovery response shapes", () => {
+    const trackedBeer = sourceSection(iosModels, "struct TrackedBeer", "struct AuthResult");
+    expect(trackedBeer).toContain("case key");
+    expect(trackedBeer).toMatch(/decodeIfPresent\(String\.self, forKey: \.key\)/);
+    expect(iosModels).toContain("let highlightedName: Bool?");
+    expect(iosModels).not.toContain("let highlightedName: String?");
+
+    expect(iosAPI).toContain("APIStatusEnvelope");
+    expect(iosAPI).toContain("throw BeerMapAPIError.invalidResponse");
+    expect(iosAPI).not.toContain("let envelope = try? decoder.decode(APIEnvelope<T>.self, from: data)");
+  });
+
+  it("clusters iOS venue annotations instead of rebuilding hundreds of SwiftUI pin views", () => {
+    expect(iosDiscover).toContain("UIViewRepresentable");
+    expect(iosDiscover).toContain("MKMarkerAnnotationView");
+    expect(iosDiscover).toContain("clusteringIdentifier = Self.clusterIdentifier");
+    expect(iosDiscover).toContain("incomingSnapshots != snapshotsByID");
+    expect(iosDiscover).not.toContain("Map(position: $mapPosition)");
+    expect(iosDiscover).not.toContain("ForEach(mappedVenues)");
+    expect(iosDiscover).not.toContain(".background(.thinMaterial, in: Circle())");
+  });
+
   it("reuses the logical Pint Path session only when refreshing Supabase credentials", () => {
     const iosSync = sourceSection(iosAPI, "func syncSupabase(", "func requestPasswordReset(");
     const iosRefresh = sourceSection(iosAPI, "func refreshSupabaseSession(", "func exchangeSupabasePKCE(");
@@ -112,9 +134,9 @@ describe("native mobile remediation guardrails", () => {
     expect(androidOAuth).not.toContain("existingAppToken");
   });
 
-  it("describes free price access as a fixed preview without a fictional daily counter", () => {
-    expect(iosDiscover).toContain('title: "Free price access"');
-    expect(iosDiscover).toContain('value: "Fixed preview"');
+  it("keeps price-access contracts without obstructing Explore with account metrics", () => {
+    expect(iosDiscover).not.toContain('title: "Free price access"');
+    expect(iosDiscover).not.toContain('value: "Fixed preview"');
     expect(iosDiscover).not.toMatch(/free reveals\/day|reveals per day/i);
     expect(iosModels).not.toContain("freePriceRevealsPerDay");
     expect(iosModels).not.toContain("freePriceRevealsRemaining");
@@ -144,6 +166,51 @@ describe("native mobile remediation guardrails", () => {
       expect(client).not.toContain("&reveal=true");
       expect(client).not.toMatch(/freePriceReveals(PerDay|Remaining)/);
     }
+  });
+
+  it("keeps iOS exploration map-first with stable navigation and accessible filters", () => {
+    expect(iosRoot).toContain('Label("Explore", systemImage: "map.fill")');
+    expect(iosRoot).toContain('Label("Add Price", systemImage: "plus.circle.fill")');
+    expect(iosRoot).toContain('Label("Account", systemImage: "person.crop.circle")');
+    expect(iosRoot).toContain('Label("More", systemImage: "ellipsis.circle.fill")');
+    expect(iosRoot).not.toContain('Label("Find"');
+    expect(iosRoot).not.toContain('Label("Bars"');
+    expect(iosDiscover).not.toContain('.navigationTitle("Find")');
+    expect(iosDiscover).toContain('.searchable(');
+    expect(iosDiscover).toContain('case map = "Map"');
+    expect(iosDiscover).toContain('case list = "List"');
+    expect(iosDiscover).toContain('FilterChip(');
+    expect(iosDiscover).toContain('ExploreFilterSheet(');
+    expect(iosDiscover).toContain('didFitInitialRegion');
+    expect(iosDiscover).toContain('mapView.isRotateEnabled = false');
+    expect(iosDiscover).toContain('manager.desiredAccuracy = kCLLocationAccuracyHundredMeters');
+    expect(iosDiscover).toContain('manager.requestLocation()');
+    expect(iosDiscover).not.toContain('manager.startUpdatingLocation()');
+    expect(iosDiscover).toContain('model.startPriceContribution(for: venue)');
+    expect(iosApp).toContain('pendingContributionVenueId = venue.id');
+    expect(iosApp).toContain('selectedTab = .addPrice');
+  });
+
+  it("makes the iOS quick-price flow explicit, searchable, and evidence-aware", () => {
+    const iosContribute = read("apps/ios/BeerMap/Features/ContributeView.swift");
+    const info = read("apps/ios/BeerMap/Info.plist");
+    expect(iosContribute).toContain('title: "Quick price"');
+    expect(iosContribute).toContain('VenueSelectionSheet(');
+    expect(iosContribute).toContain('.searchable(text: $searchText');
+    expect(iosContribute).toContain('model.config?.trackedBeers');
+    expect(iosContribute).toContain('sourcePhotoDataUrl: sourcePhotoDataURL');
+    expect(iosContribute).toContain('Enter a price from $0.01 to $250');
+    expect(iosContribute).not.toContain('selectedVenueId = model.venues.first');
+    expect(iosContribute).not.toContain('kCGImageSourceThumbnailMaxPixelSize: 2_200');
+    expect(iosContribute).toContain('kCGImageSourceThumbnailMaxPixelSize: 1_800');
+    expect(iosContribute).toContain('applyPendingVenueSelection()');
+    expect(iosContribute).toContain('takePendingContributionVenueId()');
+    expect(iosContribute).toContain('CameraPhotoPicker { image in');
+    expect(iosContribute).toContain('UIImagePickerController.isSourceTypeAvailable(.camera)');
+    expect(iosContribute).toContain('confirmedCustomBeerName');
+    expect(info).toContain('<key>NSCameraUsageDescription</key>');
+    expect(iosModels).toContain('let statusCopy: String?');
+    expect(iosModels).toContain('let ocrStatus: String?');
   });
 
   it("requires legal consent at signup or after a verified policy-version 403, never on routine login", () => {
@@ -729,7 +796,8 @@ describe("native mobile remediation guardrails", () => {
 
     expect(iosApp).toContain("isSignedIn && accountDashboard?.access?.isAdmin == true");
     expect(iosRoot).toContain("if model.hasAdminAccess");
-    expect(iosRoot).toContain('Label("Admin", systemImage: "lock.shield.fill")');
+    expect(iosRoot).toContain('title: "Admin workspace"');
+    expect(iosRoot).toContain('systemImage: "lock.shield.fill"');
     expect(iosRoot).toContain('URLQueryItem(name: "returnTo", value: "/admin.html")');
     expect(iosRoot).not.toContain('account?.role == "admin"');
 

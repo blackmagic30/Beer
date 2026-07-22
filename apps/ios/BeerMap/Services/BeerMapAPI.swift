@@ -35,6 +35,7 @@ enum AppConfig {
 enum BeerMapAPIError: LocalizedError {
     case invalidURL(String)
     case missingData
+    case invalidResponse
     case server(String)
     case unexpectedStatus(Int)
     case configuration(String)
@@ -57,6 +58,8 @@ enum BeerMapAPIError: LocalizedError {
             return "Invalid API path: \(path)"
         case .missingData:
             return "The server response did not include data."
+        case .invalidResponse:
+            return "Pint Path could not read the latest server response. Please update the app and try again."
         case .server(let message):
             return message
         case .unexpectedStatus(let status):
@@ -92,11 +95,23 @@ struct BeerMapAPI {
     let baseURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let session: URLSession
 
-    init(baseURL: URL = AppConfig.apiBaseURL) {
+    init(baseURL: URL = AppConfig.apiBaseURL, session: URLSession? = nil) {
         self.baseURL = baseURL
         self.encoder = JSONEncoder()
         self.decoder = JSONDecoder()
+        self.session = session ?? Self.makeSession()
+    }
+
+    private static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.requestCachePolicy = .useProtocolCachePolicy
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 60
+        configuration.waitsForConnectivity = true
+        configuration.httpMaximumConnectionsPerHost = 6
+        return URLSession(configuration: configuration)
     }
 
     func getConfig() async throws -> PublicConfig {
@@ -412,8 +427,13 @@ struct BeerMapAPI {
         try await send("/api/business/account/free-pint-reward-code", method: "POST", body: EmptyResponse(), token: token)
     }
 
-    func listVenues(query: String? = nil, limit: Int = 500) async throws -> [Venue] {
-        let pageSize = min(1000, max(1, limit))
+    func listVenues(
+        query: String? = nil,
+        limit: Int = 250,
+        maximumResults: Int = 1_000
+    ) async throws -> [Venue] {
+        let resultLimit = min(2_000, max(1, maximumResults))
+        let pageSize = min(resultLimit, min(500, max(1, limit)))
         let normalizedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         var offset = 0
         var venues: [Venue] = []
@@ -426,7 +446,11 @@ struct BeerMapAPI {
             ]
             if let normalizedQuery { items.append(URLQueryItem(name: "q", value: normalizedQuery)) }
             let response: VenueListResponse = try await get(path("/api/business/venues", queryItems: items))
-            venues.append(contentsOf: response.venues.filter { seenIds.insert($0.id).inserted })
+            let remainingCapacity = resultLimit - venues.count
+            venues.append(contentsOf: response.venues
+                .filter { seenIds.insert($0.id).inserted }
+                .prefix(max(0, remainingCapacity)))
+            guard venues.count < resultLimit else { break }
             let hasMore = response.pagination?.hasMore ?? (response.venues.count == pageSize)
             guard hasMore else { break }
             guard !response.venues.isEmpty else {
@@ -520,13 +544,14 @@ struct BeerMapAPI {
             .filter { $0.isLetter || $0.isNumber }
     }
 
-    func missions(token: String? = nil) async throws -> [Mission] {
-        let pageSize = 200
+    func missions(token: String? = nil, limit: Int = 100) async throws -> [Mission] {
+        let resultLimit = min(200, max(1, limit))
         var offset = 0
         var missions: [Mission] = []
         var seenIds = Set<String>()
 
-        while true {
+        while missions.count < resultLimit {
+            let pageSize = min(100, resultLimit - missions.count)
             let response: MissionListResponse = try await get(
                 path("/api/business/missions", queryItems: [
                     URLQueryItem(name: "limit", value: "\(pageSize)"),
@@ -534,9 +559,12 @@ struct BeerMapAPI {
                 ]),
                 token: token
             )
-            missions.append(contentsOf: response.missions.filter { seenIds.insert($0.id).inserted })
+            let remainingCapacity = resultLimit - missions.count
+            missions.append(contentsOf: response.missions
+                .filter { seenIds.insert($0.id).inserted }
+                .prefix(remainingCapacity))
             let hasMore = response.pagination?.hasMore ?? (response.missions.count == pageSize)
-            guard hasMore else { break }
+            guard hasMore, missions.count < resultLimit else { break }
             guard !response.missions.isEmpty else {
                 throw BeerMapAPIError.server("Mission pagination stopped making progress. Refresh and try again.")
             }
@@ -655,7 +683,7 @@ struct BeerMapAPI {
         var request = URLRequest(url: url)
         request.setValue(format == "csv" ? "text/csv" : "application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw BeerMapAPIError.missingData }
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 401 { throw BeerMapAPIError.unexpectedStatus(401) }
@@ -693,17 +721,17 @@ struct BeerMapAPI {
             request.httpBody = try encoder.encode(body)
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw BeerMapAPIError.missingData
         }
 
-        let envelope = try? decoder.decode(APIEnvelope<T>.self, from: data)
-        if !(200..<300).contains(http.statusCode) || envelope?.ok == false {
-            let message = envelope?.error?.message ?? "Request failed (\(http.statusCode))."
+        let statusEnvelope = try? decoder.decode(APIStatusEnvelope.self, from: data)
+        if !(200..<300).contains(http.statusCode) || statusEnvelope?.ok == false {
+            let message = statusEnvelope?.error?.message ?? "Request failed (\(http.statusCode))."
             let normalizedMessage = message.lowercased()
-            let recoveryCode = envelope?.error?.code
-            let recovery = envelope?.error?.recovery
+            let recoveryCode = statusEnvelope?.error?.code
+            let recovery = statusEnvelope?.error?.recovery
             let recoveryHasTarget = recovery?.consumer == true || recovery?.venues?.isEmpty == false
             let productionBillingRecovery = (
                 recoveryCode == "ACCOUNT_SUSPENDED_BILLING_RECOVERY" && (
@@ -714,7 +742,7 @@ struct BeerMapAPI {
                 recovery?.eligible == true && recovery?.venues?.isEmpty == false
             )
             let legacyBillingRecovery = recoveryCode == nil && recovery == nil && (
-                envelope?.error?.details?.billingRecoveryEligible == true ||
+                statusEnvelope?.error?.details?.billingRecoveryEligible == true ||
                 normalizedMessage.contains("billing recovery") ||
                 normalizedMessage.contains("billing management remains available")
             )
@@ -730,7 +758,7 @@ struct BeerMapAPI {
                 )
             }
             if http.statusCode == 403 && (
-                envelope?.error?.details?.reauthenticationRequired == true ||
+                statusEnvelope?.error?.details?.reauthenticationRequired == true ||
                 normalizedMessage.contains("reauthenticat") ||
                 normalizedMessage.contains("fresh provider sign-in") ||
                 normalizedMessage.contains("recent sign-in")
@@ -746,18 +774,29 @@ struct BeerMapAPI {
                     refreshToken: nil
                 )
             }
-            if let message = envelope?.error?.message {
+            if let message = statusEnvelope?.error?.message {
                 if http.statusCode == 401 { throw BeerMapAPIError.unexpectedStatus(401) }
                 throw BeerMapAPIError.server(message)
             }
             throw BeerMapAPIError.unexpectedStatus(http.statusCode)
         }
-        if let data = envelope?.data {
-            return data
-        }
 
         if T.self == EmptyResponse.self {
             return EmptyResponse() as! T
+        }
+
+        let envelope: APIEnvelope<T>
+        do {
+            envelope = try decoder.decode(APIEnvelope<T>.self, from: data)
+        } catch {
+#if DEBUG
+            print("Pint Path API response decoding failed for \(path): \(error)")
+#endif
+            throw BeerMapAPIError.invalidResponse
+        }
+
+        if let data = envelope.data {
+            return data
         }
         throw BeerMapAPIError.missingData
     }
@@ -788,7 +827,7 @@ struct BeerMapAPI {
             request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = try encoder.encode(body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw BeerMapAPIError.missingData }
 
         if !(200..<300).contains(http.statusCode) {

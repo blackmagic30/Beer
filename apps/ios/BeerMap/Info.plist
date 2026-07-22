@@ -35,8 +35,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.food-and-drink</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Pint Path uses the camera only when you choose to photograph a menu or tap board for private price-review evidence.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Pint Path can attach a one-time location fix when you choose location proof for a venue submission. It never requests background location.</string>
+	<string>Pint Path can use a one-time location fix to show nearby venues or, when you choose, attach review evidence to a submission. It never requests background location.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Pint Path can use selected photos as private source evidence for venue updates.</string>
 	<key>PINT_PATH_API_BASE_URL</key>

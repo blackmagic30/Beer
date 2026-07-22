@@ -1,5 +1,12 @@
 import SwiftUI
 
+enum AppTab: Hashable {
+    case explore
+    case addPrice
+    case account
+    case more
+}
+
 @main
 struct BeerMapApp: App {
     @StateObject private var model = BeerMapAppModel()
@@ -15,6 +22,9 @@ struct BeerMapApp: App {
 
 @MainActor
 final class BeerMapAppModel: ObservableObject {
+    private static let missionFetchLimit = 100
+    private static let supportedServingSizes = Set(["pint", "pot", "schooner", "jug", "bottle", "can", "other"])
+
     @Published var config: PublicConfig?
     @Published var accountDashboard: AccountDashboard?
     @Published var venues: [Venue] = []
@@ -42,11 +52,15 @@ final class BeerMapAppModel: ObservableObject {
     @Published private(set) var legalAcceptanceRequired = false
     @Published private(set) var legalAcceptanceVersion: String?
     @Published var optionalAnalyticsEnabled = false
+    @Published var selectedTab: AppTab = .explore
+    @Published private(set) var pendingContributionVenueId: String?
 
     let api: BeerMapAPI
     let anonymousSessionId: String
     private(set) var sessionToken: String?
     private var activeLoadingOperations = 0
+    private var hasStarted = false
+    private var accountDashboardNeedsRefresh = false
     private var billingRecoveryAccessToken: String?
     private var pendingLegalAcceptance: (accessToken: String, refreshToken: String?)?
 
@@ -60,6 +74,16 @@ final class BeerMapAppModel: ObservableObject {
         let hasCurrentAdminAuthority = accountDashboard?.access?.isAdmin == true && venuePortal.isAdmin == true
         let hasAssignedVenue = venuePortal.isAdmin != true && venuePortal.assignments?.isEmpty == false
         return hasCurrentAdminAuthority || hasAssignedVenue
+    }
+
+    func startPriceContribution(for venue: Venue) {
+        pendingContributionVenueId = venue.id
+        selectedTab = .addPrice
+    }
+
+    func takePendingContributionVenueId() -> String? {
+        defer { pendingContributionVenueId = nil }
+        return pendingContributionVenueId
     }
 
     init(api: BeerMapAPI = BeerMapAPI()) {
@@ -95,6 +119,8 @@ final class BeerMapAppModel: ObservableObject {
     }
 
     func start() async {
+        guard !hasStarted else { return }
+        hasStarted = true
         await loadHome()
         if sessionToken != nil {
             await refreshAccount()
@@ -110,12 +136,17 @@ final class BeerMapAppModel: ObservableObject {
             async let venueTask = api.listVenues(query: search)
             config = try await configTask
             async let missionTask = withOptionalAuthenticatedSession { token in
-                try await self.api.missions(token: token)
+                try await self.api.missions(token: token, limit: Self.missionFetchLimit)
             }
             venues = try await venueTask
             missions = try await missionTask
             errorMessage = nil
-            await track("map_viewed", metadata: ["source": .string("ios_app"), "privacyScope": .string("optional_analytics")])
+            Task { [weak self] in
+                await self?.track(
+                    "map_viewed",
+                    metadata: ["source": .string("ios_app"), "privacyScope": .string("optional_analytics")]
+                )
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -380,6 +411,7 @@ final class BeerMapAppModel: ObservableObject {
             accountDashboard = try await withAuthenticatedSession { token in
                 try await self.api.account(token: token)
             }
+            accountDashboardNeedsRefresh = false
             if accountDashboard?.access?.isAdmin != true, venuePortal?.isAdmin == true {
                 venuePortal = nil
             }
@@ -396,6 +428,12 @@ final class BeerMapAppModel: ObservableObject {
             venuePortal = nil
             errorMessage = error.localizedDescription
         }
+    }
+
+    func refreshAccountIfNeeded() async {
+        guard sessionToken != nil else { return }
+        guard accountDashboard == nil || accountDashboardNeedsRefresh else { return }
+        await refreshAccount()
     }
 
     func loadAccountSessions() async {
@@ -607,7 +645,14 @@ final class BeerMapAppModel: ObservableObject {
                 )
             }
             selectedVenuePrices[venue.id] = response
-            await track("venue_detail_opened", venueId: venue.id, suburb: venue.suburb, metadata: ["source": .string("ios_app")])
+            Task { [weak self] in
+                await self?.track(
+                    "venue_detail_opened",
+                    venueId: venue.id,
+                    suburb: venue.suburb,
+                    metadata: ["source": .string("ios_app")]
+                )
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -863,7 +908,7 @@ final class BeerMapAppModel: ObservableObject {
                 try await self.api.acceptMission(mission.id, token: token)
             }
             missions = try await withAuthenticatedSession { token in
-                try await self.api.missions(token: token)
+                try await self.api.missions(token: token, limit: Self.missionFetchLimit)
             }
             notice = "Mission reserved for 24 hours. Submit the linked update before it expires."
             return true
@@ -886,7 +931,7 @@ final class BeerMapAppModel: ObservableObject {
                 try await self.api.releaseMission(mission.id, token: token)
             }
             missions = try await withAuthenticatedSession { token in
-                try await self.api.missions(token: token)
+                try await self.api.missions(token: token, limit: Self.missionFetchLimit)
             }
             notice = "Mission released for another contributor."
             return true
@@ -896,8 +941,29 @@ final class BeerMapAppModel: ObservableObject {
         }
     }
 
+    func refreshMissions() async {
+        do {
+            missions = try await withOptionalAuthenticatedSession { token in
+                try await self.api.missions(token: token, limit: Self.missionFetchLimit)
+            }
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     @discardableResult
-    func submitPriceUpdate(clientSubmissionId: String, missionId: String? = nil, venueId: String, beerName: String, servingSize: String, priceText: String, notes: String, uploadLocation: UploadLocationRequest? = nil) async -> Bool {
+    func submitPriceUpdate(
+        clientSubmissionId: String,
+        missionId: String? = nil,
+        venueId: String,
+        beerName: String,
+        servingSize: String,
+        priceText: String,
+        notes: String,
+        sourcePhotoDataUrl: String? = nil,
+        uploadLocation: UploadLocationRequest? = nil
+    ) async -> Bool {
         guard sessionToken != nil else {
             errorMessage = "Sign in before submitting venue data."
             return false
@@ -911,13 +977,24 @@ final class BeerMapAppModel: ObservableObject {
             errorMessage = "Add the beer name before submitting."
             return false
         }
-        let cleanedPrice = priceText
-            .replacingOccurrences(of: "$", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let price = Double(cleanedPrice), price > 0 else {
-            errorMessage = "Add a valid observed price."
+        guard trimmedBeer.count <= 120 else {
+            errorMessage = "Keep the beer name to 120 characters or fewer."
             return false
         }
+        let normalizedServingSize = servingSize
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard Self.supportedServingSizes.contains(normalizedServingSize) else {
+            errorMessage = "Choose a supported serving size before submitting."
+            return false
+        }
+        guard let price = validatedObservedPrice(priceText) else {
+            errorMessage = "Enter a price from $0.01 to $250 with no more than two decimal places."
+            return false
+        }
+        let normalizedSourcePhotoDataUrl = sourcePhotoDataUrl?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfBlank
 
         setLoading(true)
         defer { setLoading(false) }
@@ -931,7 +1008,7 @@ final class BeerMapAppModel: ObservableObject {
                 newVenue: nil,
                 submissionType: "single_beer_price",
                 observedAt: isoNow(),
-                sourcePhotoDataUrl: nil,
+                sourcePhotoDataUrl: normalizedSourcePhotoDataUrl,
                 sourcePhotoDataUrls: [],
                 sourceDocumentDataUrl: nil,
                 sourcePhotoUrl: nil,
@@ -940,7 +1017,7 @@ final class BeerMapAppModel: ObservableObject {
                 items: [
                     SubmissionItemRequest(
                         beerName: trimmedBeer,
-                        servingSize: servingSize,
+                        servingSize: normalizedServingSize,
                         price: price,
                         isHappyHourPrice: false,
                         happyHourDetails: nil,
@@ -948,11 +1025,11 @@ final class BeerMapAppModel: ObservableObject {
                     )
                 ]
             )
-            _ = try await withAuthenticatedSession { token in
+            let result = try await withAuthenticatedSession { token in
                 try await self.api.createSubmission(submission, token: token)
             }
-            notice = "Price update sent for review."
-            await refreshAccount()
+            markAccountDashboardDirty()
+            notice = result.statusCopy ?? "Price update sent for review."
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -991,11 +1068,11 @@ final class BeerMapAppModel: ObservableObject {
                 notes: notes.nilIfBlank,
                 items: []
             )
-            _ = try await withAuthenticatedSession { token in
+            let result = try await withAuthenticatedSession { token in
                 try await self.api.createSubmission(submission, token: token)
             }
-            notice = "Source photo sent for review."
-            await refreshAccount()
+            markAccountDashboardDirty()
+            notice = result.statusCopy ?? "Source photo sent for review."
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -1058,11 +1135,11 @@ final class BeerMapAppModel: ObservableObject {
                     )
                 ]
             )
-            _ = try await withAuthenticatedSession { token in
+            let result = try await withAuthenticatedSession { token in
                 try await self.api.createSubmission(submission, token: token)
             }
-            notice = "Happy-hour update sent for review."
-            await refreshAccount()
+            markAccountDashboardDirty()
+            notice = result.statusCopy ?? "Happy-hour update sent for review."
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -1180,6 +1257,7 @@ final class BeerMapAppModel: ObservableObject {
             pintPoints: nil,
             counterStaffInvitations: nil
         )
+        accountDashboardNeedsRefresh = true
     }
 
     private func refreshExpiredSession() async -> Bool {
@@ -1198,6 +1276,7 @@ final class BeerMapAppModel: ObservableObject {
             KeychainSessionStore.saveSupabaseRefreshToken(result.refreshToken ?? refreshToken)
             KeychainSessionStore.saveSupabaseAccessToken(result.accessToken)
             accountDashboard = try await api.account(token: result.authResult.token)
+            accountDashboardNeedsRefresh = false
             if accountDashboard?.access?.isAdmin != true, venuePortal?.isAdmin == true {
                 venuePortal = nil
             }
@@ -1219,6 +1298,7 @@ final class BeerMapAppModel: ObservableObject {
         clearLegalAcceptanceState()
         resetOptionalAnalytics()
         accountDashboard = nil
+        accountDashboardNeedsRefresh = false
         venuePortal = nil
         discountPass = nil
         freePintReward = nil
@@ -1383,5 +1463,13 @@ final class BeerMapAppModel: ObservableObject {
 
     private func isoNow() -> String {
         ISO8601DateFormatter().string(from: Date())
+    }
+
+    private func markAccountDashboardDirty() {
+        accountDashboardNeedsRefresh = true
+    }
+
+    private func validatedObservedPrice(_ priceText: String) -> Double? {
+        ObservedPriceParser.parse(priceText)
     }
 }

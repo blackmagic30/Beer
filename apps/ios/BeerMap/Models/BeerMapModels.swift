@@ -52,6 +52,11 @@ struct APIEnvelope<T: Decodable>: Decodable {
     let error: APIErrorPayload?
 }
 
+struct APIStatusEnvelope: Decodable {
+    let ok: Bool?
+    let error: APIErrorPayload?
+}
+
 struct APIErrorPayload: Decodable {
     let message: String?
     let code: String?
@@ -94,6 +99,25 @@ struct PublicConfig: Codable {
 struct TrackedBeer: Codable, Identifiable, Hashable {
     let id: String
     let name: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case key
+        case name
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .key)
+            ?? container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .key)
+        try container.encode(name, forKey: .name)
+    }
 }
 
 struct AuthResult: Codable {
@@ -415,7 +439,7 @@ struct Venue: Codable, Identifiable, Hashable {
     let latitude: Double?
     let longitude: Double?
     let membershipTier: String?
-    let highlightedName: String?
+    let highlightedName: Bool?
     let premiumBadge: String?
     let promoted: Bool?
     let featuredSpecialEligible: Bool?
@@ -521,6 +545,9 @@ struct FeedbackRequest: Codable {
 }
 
 struct SubmissionResult: Codable, Hashable {
+    let submission: SubmissionSummary?
+    let statusCopy: String?
+    let ocrStatus: String?
     let id: String?
     let status: String?
     let idempotentReplay: Bool?
@@ -891,6 +918,29 @@ struct PrivacySettingsRequest: Codable {
     let venueReportInclusionEnabled: Bool
     let productResearchEnabled: Bool
     let emailUpdatesEnabled: Bool
+}
+
+enum ObservedPriceParser {
+    static func parse(_ priceText: String) -> Double? {
+        let normalized = priceText
+            .replacingOccurrences(of: "$", with: "")
+            .replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            normalized.count <= 6,
+            normalized.range(
+                of: #"^[0-9]{1,3}(?:\.[0-9]{0,2})?$"#,
+                options: .regularExpression
+            ) != nil,
+            let price = Double(normalized),
+            price.isFinite,
+            price >= 0.01,
+            price <= 250
+        else {
+            return nil
+        }
+        return price
+    }
 }
 
 extension Optional where Wrapped == String {

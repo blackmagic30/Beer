@@ -304,6 +304,15 @@ describe("submission payload validation", () => {
     sourcePhotoUrl: null,
     notes: null,
   };
+  const submissionItem = (overrides: Record<string, unknown> = {}) => ({
+    beerName: "Guinness",
+    servingSize: "pint",
+    price: 13,
+    isHappyHourPrice: false,
+    happyHourDetails: null,
+    isOnTap: "yes",
+    ...overrides,
+  });
 
   it("allows photo/source uploads without manual beer rows", () => {
     const parsed = createSubmissionSchema.parse({
@@ -338,6 +347,41 @@ describe("submission payload validation", () => {
     expect(result.success).toBe(false);
   });
 
+  it("requires exactly one beer row for single beer price submissions", () => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      submissionType: "single_beer_price",
+      items: [submissionItem(), submissionItem({ beerName: "Carlton Draught" })],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it.each([
+    [0, "zero"],
+    [-1, "negative"],
+    [250.01, "over the maximum"],
+    [12.345, "more than two decimal places"],
+  ])("rejects a %s price (%s)", (price) => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      submissionType: "single_beer_price",
+      items: [submissionItem({ price })],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it.each([0.01, 12.3, 12.34, 250, "12.30"])("accepts a valid price of %s", (price) => {
+    const parsed = createSubmissionSchema.parse({
+      ...baseSubmission,
+      submissionType: "single_beer_price",
+      items: [submissionItem({ price })],
+    });
+
+    expect(parsed.items[0]?.price).toBe(Number(price));
+  });
+
   it("requires three beer rows for full venue updates", () => {
     const result = createSubmissionSchema.safeParse({
       ...baseSubmission,
@@ -360,6 +404,63 @@ describe("submission payload validation", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("requires every full venue update row to contain a meaningful observation", () => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      submissionType: "full_venue_update",
+      items: [
+        submissionItem(),
+        submissionItem({
+          beerName: "Carlton Draught",
+          price: null,
+          isHappyHourPrice: true,
+          isOnTap: "unknown",
+        }),
+        submissionItem({ beerName: "Stone & Wood Pacific Ale" }),
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: ["items", 1, "price"] }),
+      ]));
+    }
+  });
+
+  it("rejects duplicate normalized beer and serving rows", () => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      submissionType: "full_venue_update",
+      items: [
+        submissionItem({ beerName: "Stone & Wood Pacific Ale", price: 14 }),
+        submissionItem({ beerName: " stone and wood pacific ale ", price: 15 }),
+        submissionItem({ beerName: "Guinness" }),
+      ],
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: ["items", 1, "beerName"] }),
+      ]));
+    }
+  });
+
+  it("allows the same normalized beer in different serving sizes", () => {
+    const result = createSubmissionSchema.safeParse({
+      ...baseSubmission,
+      submissionType: "full_venue_update",
+      items: [
+        submissionItem({ beerName: "Stone & Wood Pacific Ale", price: 14 }),
+        submissionItem({ beerName: "stone and wood pacific ale", servingSize: "pot", price: 8 }),
+        submissionItem({ beerName: "Guinness" }),
+      ],
+    });
+
+    expect(result.success).toBe(true);
   });
 
   it("requires source evidence for photo/source uploads", () => {

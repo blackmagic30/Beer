@@ -3881,13 +3881,18 @@ export class BusinessRepository {
              WHERE progress.mission_id = ?
                AND progress.user_id = ?
                AND progress.status = 'accepted'
+               AND mission.venue_id = ?
                AND mission.active = 1
                AND julianday(progress.accepted_at) > julianday(?)
              LIMIT 1`,
           )
-          .get(input.missionId, input.userId, input.missionAcceptedAfter) as { id: string } | undefined;
+          .get(input.missionId, input.userId, input.venueId, input.missionAcceptedAfter) as
+            | { id: string }
+            | undefined;
         if (!reservation) {
-          throw new MissionReservationError("This mission reservation expired or belongs to another contributor.");
+          throw new MissionReservationError(
+            "This mission reservation expired, belongs to another contributor, or is for a different venue.",
+          );
         }
       }
 

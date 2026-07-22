@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "data": {
+    "venues": [
+      {
+        "id": "fixture-venue",
+        "name": "Fixture Venue",
+        "highlightedName": true,
+        "promoted": false,
+        "featuredSpecialEligible": false
+      }
+    ],
+    "pagination": {
+      "limit": 500,
+      "offset": 0,
+      "total": 1,
+      "hasMore": false
+    }
+  }
+}

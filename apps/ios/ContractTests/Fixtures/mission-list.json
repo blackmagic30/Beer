@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "data": {
+    "missions": [
+      {
+        "id": "fixture-mission",
+        "venueId": "fixture-venue",
+        "venueName": "Fixture Venue",
+        "suburb": "Melbourne",
+        "reason": "Verify a current beer price",
+        "priority": "normal",
+        "points": 5,
+        "multiplier": 1,
+        "userProgress": "available",
+        "reservationAcceptedAt": null,
+        "reservationExpiresAt": null
+      }
+    ],
+    "pagination": {
+      "total": 1,
+      "limit": 100,
+      "offset": 0,
+      "hasMore": false
+    }
+  }
+}

@@ -5,38 +5,22 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            TabView {
+            TabView(selection: $model.selectedTab) {
                 NavigationStack {
                     DiscoverView()
                 }
                 .tabItem {
-                    Label("Find", systemImage: "map.fill")
+                    Label("Explore", systemImage: "map.fill")
                 }
+                .tag(AppTab.explore)
 
                 NavigationStack {
                     ContributeView()
                 }
                 .tabItem {
-                    Label("Add", systemImage: "plus.circle.fill")
+                    Label("Add Price", systemImage: "plus.circle.fill")
                 }
-
-                if model.hasVenueAccess {
-                    NavigationStack {
-                        VenuePortalView()
-                    }
-                    .tabItem {
-                        Label("Bars", systemImage: "building.2.fill")
-                    }
-                }
-
-                if model.hasAdminAccess {
-                    NavigationStack {
-                        AdminQuickAccessView()
-                    }
-                    .tabItem {
-                        Label("Admin", systemImage: "lock.shield.fill")
-                    }
-                }
+                .tag(AppTab.addPrice)
 
                 NavigationStack {
                     AccountView()
@@ -44,19 +28,21 @@ struct RootView: View {
                 .tabItem {
                     Label("Account", systemImage: "person.crop.circle")
                 }
+                .tag(AppTab.account)
 
                 NavigationStack {
-                    SettingsView()
+                    MoreView()
                 }
                 .tabItem {
-                    Label("Help", systemImage: "questionmark.circle.fill")
+                    Label("More", systemImage: "ellipsis.circle.fill")
                 }
+                .tag(AppTab.more)
             }
             .task {
                 await model.start()
             }
 
-            if model.isLoading {
+            if model.isLoading && model.venues.isEmpty {
                 VStack {
                     Spacer()
                     LoadingOverlay(message: "Updating Pint Path")
@@ -65,7 +51,7 @@ struct RootView: View {
                 .transition(.opacity)
             }
         }
-        .alert("Pint Path", isPresented: Binding(
+        .alert(model.errorMessage == nil ? "Pint Path" : "Something went wrong", isPresented: Binding(
             get: { model.errorMessage != nil || model.notice != nil },
             set: { if !$0 { model.dismissMessages() } }
         )) {
@@ -74,6 +60,73 @@ struct RootView: View {
             }
         } message: {
             Text(model.errorMessage ?? model.notice ?? "")
+        }
+    }
+}
+
+private struct MoreView: View {
+    @EnvironmentObject private var model: BeerMapAppModel
+
+    var body: some View {
+        List {
+            if model.hasVenueAccess || model.hasAdminAccess {
+                Section("Workspaces") {
+                    if model.hasVenueAccess {
+                        NavigationLink {
+                            VenuePortalView()
+                        } label: {
+                            moreRow(
+                                title: "Manage venue",
+                                message: "Prices, happy hours, specials, redemptions, and staff",
+                                systemImage: "building.2.fill"
+                            )
+                        }
+                    }
+
+                    if model.hasAdminAccess {
+                        NavigationLink {
+                            AdminQuickAccessView()
+                        } label: {
+                            moreRow(
+                                title: "Admin workspace",
+                                message: "Review data and manage Pint Path",
+                                systemImage: "lock.shield.fill"
+                            )
+                        }
+                    }
+                }
+            }
+
+            Section("Help and information") {
+                NavigationLink {
+                    SettingsView()
+                } label: {
+                    moreRow(
+                        title: "Help, privacy, and legal",
+                        message: "Support, service status, policies, and security",
+                        systemImage: "questionmark.circle.fill"
+                    )
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("More")
+    }
+
+    private func moreRow(title: String, message: String, systemImage: String) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.body.weight(.semibold))
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 4)
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(BeerMapTheme.primaryAction)
         }
     }
 }

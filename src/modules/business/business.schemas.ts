@@ -94,7 +94,15 @@ const nullablePriceSchema = z.preprocess((value) => {
 
   const numeric = Number(value);
   return Number.isNaN(numeric) ? value : numeric;
-}, z.number().min(0).max(250).nullable());
+}, z
+  .number()
+  .gt(0, "Price must be greater than $0.")
+  .max(250, "Price cannot exceed $250.")
+  .refine(
+    (value) => Math.abs((value * 100) - Math.round(value * 100)) < 1e-8,
+    "Price can have at most 2 decimal places.",
+  )
+  .nullable());
 
 const dataImageUrlSchema = z
   .string()
@@ -276,7 +284,7 @@ export const submissionItemSchema = z.object({
   happyHourDetails: nullableTrimmedStringSchema.default(null),
   isOnTap: tapStatusSchema.default("unknown"),
 }).superRefine((value, ctx) => {
-  if (!value.isHappyHourPrice && value.price == null && value.isOnTap === "unknown") {
+  if (value.price == null && value.isOnTap === "unknown" && !value.happyHourDetails) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Add a price, tap status, or happy-hour detail for this item.",
@@ -356,10 +364,10 @@ export const createSubmissionSchema = z.object({
     }
   }
 
-  if (value.submissionType === "single_beer_price" && value.items.length < 1) {
+  if (value.submissionType === "single_beer_price" && value.items.length !== 1) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "A single beer price submission needs one beer row.",
+      message: "A single beer price submission needs exactly one beer row.",
       path: ["items"],
     });
   }
@@ -387,6 +395,29 @@ export const createSubmissionSchema = z.object({
       path: ["items"],
     });
   }
+
+  const seenBeerServings = new Map<string, number>();
+  value.items.forEach((item, index) => {
+    const normalizedBeerName = item.beerName
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase()
+      .replaceAll("&", " and ")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    const key = `${normalizedBeerName}:${item.servingSize}`;
+    const firstIndex = seenBeerServings.get(key);
+    if (firstIndex !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `This beer and serving size already appear in row ${firstIndex + 1}.`,
+        path: ["items", index, "beerName"],
+      });
+      return;
+    }
+    seenBeerServings.set(key, index);
+  });
 
 });
 

@@ -57,6 +57,13 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - name: Validate iOS production API response contracts
+        run: |
+          xcrun swiftc \
+            apps/ios/BeerMap/Models/BeerMapModels.swift \
+            apps/ios/ContractTests/IOSAPIContractCheck.swift \
+            -o "$RUNNER_TEMP/ios-api-contract-check"
+          "$RUNNER_TEMP/ios-api-contract-check"
       - name: Build unsigned iOS simulator app
         run: >-
           xcodebuild

@@ -22,6 +22,9 @@ struct AccountView: View {
         }
         .beerMapScreen()
         .navigationTitle("Account")
+        .task {
+            await model.refreshAccountIfNeeded()
+        }
         .refreshable {
             await model.refreshAccount()
             await model.refreshVenuePortal()

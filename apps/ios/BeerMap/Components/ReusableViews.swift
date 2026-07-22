@@ -10,17 +10,17 @@ struct SectionHeader: View {
         HStack(alignment: .top, spacing: 12) {
             if let systemImage {
                 Image(systemName: systemImage)
-                    .font(.headline.weight(.bold))
+                    .font(.headline.weight(.semibold))
                     .foregroundStyle(BeerMapTheme.amber)
-                    .frame(width: 34, height: 34)
-                    .background(BeerMapTheme.amber.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(width: 36, height: 36)
+                    .background(BeerMapTheme.amber.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .accessibilityHidden(true)
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 if let eyebrow {
-                    Text(eyebrow.uppercased())
-                        .font(.caption.weight(.black))
+                    Text(eyebrow)
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(BeerMapTheme.amber)
                         .accessibilityHidden(true)
                 }
@@ -28,6 +28,7 @@ struct SectionHeader: View {
                     .font(.title2.weight(.bold))
                     .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
                 if let subtitle {
                     Text(subtitle)
                         .font(.subheadline)
@@ -37,7 +38,7 @@ struct SectionHeader: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -47,7 +48,7 @@ struct StatusBanner: View {
     var systemImage: String?
 
     private var tint: Color {
-        isError ? .red : BeerMapTheme.leaf
+        isError ? BeerMapTheme.danger : BeerMapTheme.leaf
     }
 
     var body: some View {
@@ -62,9 +63,9 @@ struct StatusBanner: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 8))
+        .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(tint.opacity(0.18), lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
@@ -116,29 +117,42 @@ struct PrimaryButton: View {
     let isLoading: Bool
     let action: () -> Void
 
+    private var isInteractive: Bool {
+        isEnabled && !isLoading
+    }
+
     var body: some View {
         Button(action: action) {
             HStack {
                 if isLoading {
                     ProgressView()
-                        .tint(.white)
+                        .tint(.secondary)
                 } else {
                     Image(systemName: systemImage)
                 }
                 Text(title)
                     .fontWeight(.bold)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
             .frame(minHeight: 50)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white)
-        .background(isEnabled && !isLoading ? BeerMapTheme.ink : Color.secondary.opacity(0.36), in: RoundedRectangle(cornerRadius: 8))
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(isInteractive ? BeerMapTheme.primaryActionForeground : Color.secondary)
+        .background(
+            isInteractive ? BeerMapTheme.primaryAction : BeerMapTheme.softCard,
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isInteractive ? Color.clear : BeerMapTheme.separator.opacity(0.45), lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .disabled(isLoading || !isEnabled)
         .accessibilityLabel(title)
+        .accessibilityValue(isLoading ? "In progress" : "")
     }
 }
 
@@ -154,18 +168,19 @@ struct SecondaryButton: View {
                 Image(systemName: systemImage)
                 Text(title)
                     .fontWeight(.bold)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
             .frame(minHeight: 48)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isDestructive ? Color.red : BeerMapTheme.ink)
-        .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(isDestructive ? BeerMapTheme.danger : BeerMapTheme.primaryAction)
+        .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke((isDestructive ? Color.red : BeerMapTheme.ink).opacity(0.16), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke((isDestructive ? BeerMapTheme.danger : BeerMapTheme.primaryAction).opacity(0.22), lineWidth: 1)
         )
         .accessibilityLabel(title)
     }
@@ -281,6 +296,7 @@ struct FormFieldShell<Content: View>: View {
 
 struct VenueCard: View {
     let venue: Venue
+    var detail: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -308,6 +324,11 @@ struct VenueCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let detail {
+                Label(detail, systemImage: "location.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(BeerMapTheme.primaryAction)
+            }
         }
         .beerMapCard()
         .accessibilityElement(children: .combine)
@@ -326,12 +347,55 @@ struct LoadingOverlay: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(BeerMapTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(BeerMapTheme.hairline, lineWidth: 1)
         )
-        .shadow(color: BeerMapTheme.softShadow, radius: 16, x: 0, y: 8)
         .accessibilityElement(children: .combine)
+    }
+}
+
+struct FilterChip: View {
+    let title: String
+    let systemImage: String
+    var isSelected = false
+    var badge: Int?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .lineLimit(1)
+                if let badge, badge > 0 {
+                    Text("\(badge)")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            (isSelected ? BeerMapTheme.primaryActionForeground : BeerMapTheme.primaryAction).opacity(0.14),
+                            in: Capsule()
+                        )
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 13)
+            .frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? BeerMapTheme.primaryActionForeground : BeerMapTheme.primaryAction)
+        .background(
+            isSelected ? BeerMapTheme.primaryAction : BeerMapTheme.card,
+            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(isSelected ? Color.clear : BeerMapTheme.separator.opacity(0.45), lineWidth: 1)
+        )
+        .accessibilityLabel(badge.map { "\(title), \($0) active" } ?? title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

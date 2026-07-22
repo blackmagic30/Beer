@@ -330,6 +330,32 @@ describe("autonomous mission lifecycle", () => {
     )).toBeNull();
   });
 
+  it("rejects a reserved mission submission for a different venue inside the repository transaction", () => {
+    const { repository, service } = createHarness();
+    const contributor = createAccount(repository, "mission-cross-venue-contributor");
+    const mission = createMission(service);
+
+    service.acceptMission(contributor, mission.id);
+    expect(() => seedLegacyMissionSubmission(
+      repository,
+      contributor,
+      {
+        ...mission,
+        venueId: "different-venue",
+        venueName: "Different Venue Hotel",
+      },
+      "cross-venue-mission-submission",
+    )).toThrow(
+      "This mission reservation expired, belongs to another contributor, or is for a different venue.",
+    );
+    expect(repository.getSubmissionByClientSubmissionId(
+      contributor.id,
+      "legacy-cross-venue-mission-submission",
+    )).toBeNull();
+    expect(repository.getMissionProgress({ missionId: mission.id, userId: contributor.id }))
+      .toMatchObject({ status: "accepted", submissionId: null });
+  });
+
   it("blocks an active reservation but atomically reclaims it after the 24-hour acceptance TTL", () => {
     const { repository, service } = createHarness();
     const first = createAccount(repository, "mission-first-acceptor");
