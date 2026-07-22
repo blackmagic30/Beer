@@ -703,7 +703,10 @@ private struct ClusteredVenueMap: UIViewRepresentable {
             view.annotation = venueAnnotation
             view.clusteringIdentifier = Self.clusterIdentifier
             view.markerTintColor = venueAnnotation.snapshot.isPro ? .systemOrange : .systemIndigo
-            view.glyphImage = UIImage(systemName: venueAnnotation.snapshot.isPro ? "star.fill" : "mug.fill")
+            view.glyphImage = venueAnnotation.snapshot.isPro
+                ? UIImage(systemName: "star.fill")
+                : (UIImage(named: BeerMapAsset.beerPint)?.withRenderingMode(.alwaysTemplate)
+                    ?? UIImage(systemName: "wineglass.fill"))
             view.displayPriority = venueAnnotation.snapshot.isPro ? .defaultHigh : .defaultLow
             view.canShowCallout = false
             view.collisionMode = .circle

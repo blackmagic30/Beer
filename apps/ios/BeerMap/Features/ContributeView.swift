@@ -56,7 +56,7 @@ struct ContributeView: View {
 
         var systemImage: String {
             switch self {
-            case .price: return "mug.fill"
+            case .price: return "plus.circle.fill"
             case .source: return "doc.viewfinder"
             case .happyHour: return "clock.badge.checkmark.fill"
             case .request: return "paperplane.fill"
@@ -113,7 +113,15 @@ struct ContributeView: View {
                         Button {
                             selectedMode = mode
                         } label: {
-                            Label(mode == .price ? "Quick price" : mode.rawValue, systemImage: mode.systemImage)
+                            if mode == .price {
+                                Label {
+                                    Text("Quick price")
+                                } icon: {
+                                    BeerPintIcon(size: 17)
+                                }
+                            } else {
+                                Label(mode.rawValue, systemImage: mode.systemImage)
+                            }
                         }
                     }
                 } label: {
@@ -181,7 +189,8 @@ struct ContributeView: View {
                 eyebrow: nil,
                 title: "Quick price",
                 subtitle: model.isSignedIn ? "Confirm four details. We’ll review the update before it appears." : "Sign in first so your update can be reviewed and credited.",
-                systemImage: "mug.fill"
+                systemImage: nil,
+                assetImage: BeerMapAsset.beerPint
             )
 
             priceStep(number: 1, title: "Venue") {
@@ -534,7 +543,10 @@ struct ContributeView: View {
         .beerMapCard()
     }
 
+    @ViewBuilder
     private var venuePicker: some View {
+        let currentVenue = selectedVenue
+
         Group {
             if model.venues.isEmpty {
                 StatusBanner(message: "Venues are not available yet. Refresh and try again.", isError: true)
@@ -545,7 +557,7 @@ struct ContributeView: View {
                         .foregroundStyle(BeerMapTheme.primaryAction)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(selectedVenue?.name ?? mission.venueName)
+                        Text(currentVenue?.name ?? mission.venueName)
                             .font(.body.weight(.semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(2)
@@ -565,7 +577,7 @@ struct ContributeView: View {
                         .stroke(BeerMapTheme.primaryAction.opacity(0.35), lineWidth: 1)
                 )
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("Mission venue, \(selectedVenue?.name ?? mission.venueName), locked")
+                .accessibilityLabel("Mission venue, \(currentVenue?.name ?? mission.venueName), locked")
             } else {
                 Button {
                     showingVenuePicker = true
@@ -576,11 +588,11 @@ struct ContributeView: View {
                             .foregroundStyle(BeerMapTheme.primaryAction)
                             .frame(width: 28)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(selectedVenue?.name ?? "Choose a venue")
+                            Text(currentVenue?.name ?? "Choose a venue")
                                 .font(.body.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(2)
-                            Text(selectedVenue?.displayLocation.nilIfBlank ?? "Search all \(model.venues.count) venues")
+                            Text(currentVenue?.displayLocation.nilIfBlank ?? "Search all \(model.venues.count) venues")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -596,9 +608,9 @@ struct ContributeView: View {
                 .background(BeerMapTheme.softCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(selectedVenue == nil ? Color.orange.opacity(0.55) : BeerMapTheme.separator.opacity(0.4), lineWidth: 1)
+                        .stroke(currentVenue == nil ? Color.orange.opacity(0.55) : BeerMapTheme.separator.opacity(0.4), lineWidth: 1)
                 )
-                .accessibilityLabel(selectedVenue.map { "Venue, \($0.name)" } ?? "Choose a venue")
+                .accessibilityLabel(currentVenue.map { "Venue, \($0.name)" } ?? "Choose a venue")
                 .accessibilityHint("Opens searchable venue selection")
             }
         }
@@ -701,12 +713,22 @@ struct ContributeView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(servingSizes.prefix(4), id: \.self) { size in
-                    FilterChip(
-                        title: size.capitalized,
-                        systemImage: servingSystemImage(size),
-                        isSelected: servingSize == size
-                    ) {
-                        servingSize = size
+                    if usesBeerPintIcon(size) {
+                        FilterChip(
+                            title: size.capitalized,
+                            assetImage: BeerMapAsset.beerPint,
+                            isSelected: servingSize == size
+                        ) {
+                            servingSize = size
+                        }
+                    } else {
+                        FilterChip(
+                            title: size.capitalized,
+                            systemImage: servingSystemImage(size),
+                            isSelected: servingSize == size
+                        ) {
+                            servingSize = size
+                        }
                     }
                 }
 
@@ -737,10 +759,14 @@ struct ContributeView: View {
         switch serving {
         case "bottle": return "waterbottle.fill"
         case "can": return "cylinder.fill"
-        case "jug": return "takeoutbag.and.cup.and.straw.fill"
+        case "jug": return "wineglass.fill"
         case "other": return "ellipsis"
-        default: return "mug.fill"
+        default: return "wineglass.fill"
         }
+    }
+
+    private func usesBeerPintIcon(_ serving: String) -> Bool {
+        ["pint", "pot", "schooner", "jug"].contains(serving)
     }
 
     private func priceStep<Content: View>(
@@ -1020,9 +1046,9 @@ private struct VenueSelectionSheet: View {
         venues.first { $0.id == recentVenueId }
     }
 
-    private var filteredVenues: [Venue] {
+    private func filteredVenues(excluding recentVenueId: String?) -> [Venue] {
         let query = searchText.trimmed
-        let candidates = venues.filter { $0.id != recentVenue?.id }
+        let candidates = venues.filter { $0.id != recentVenueId }
         guard !query.isEmpty else {
             return candidates.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
@@ -1041,6 +1067,9 @@ private struct VenueSelectionSheet: View {
     }
 
     var body: some View {
+        let recentVenue = recentVenue
+        let visibleVenues = filteredVenues(excluding: recentVenue?.id)
+
         NavigationStack {
             List {
                 if let recentVenue {
@@ -1050,10 +1079,10 @@ private struct VenueSelectionSheet: View {
                 }
 
                 Section(searchText.trimmed.isEmpty ? "All venues" : "Matches") {
-                    if filteredVenues.isEmpty {
+                    if visibleVenues.isEmpty {
                         ContentUnavailableView.search(text: searchText)
                     } else {
-                        ForEach(filteredVenues) { venue in
+                        ForEach(visibleVenues) { venue in
                             venueRow(venue)
                         }
                     }

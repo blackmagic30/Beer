@@ -21,12 +21,14 @@ struct VenuePortalView: View {
             case .dashboard: return "chart.bar.fill"
             case .counter: return "barcode.viewfinder"
             case .profile: return "building.2.fill"
-            case .beers: return "mug.fill"
+            case .beers: return "list.bullet"
             case .happyHours: return "clock.badge.checkmark.fill"
             case .specials: return "tag.fill"
             case .reports: return "doc.text.fill"
             }
         }
+
+        var usesBeerPintIcon: Bool { self == .beers }
     }
 
     var body: some View {
@@ -125,7 +127,15 @@ struct VenuePortalView: View {
                         Button {
                             selectedSection = section
                         } label: {
-                            Label(section.rawValue, systemImage: section.systemImage)
+                            HStack(spacing: 6) {
+                                if section.usesBeerPintIcon {
+                                    BeerPintIcon(size: 16)
+                                } else {
+                                    Image(systemName: section.systemImage)
+                                        .accessibilityHidden(true)
+                                }
+                                Text(section.rawValue)
+                            }
                                 .font(.caption.weight(.bold))
                                 .lineLimit(1)
                                 .padding(.horizontal, 12)
@@ -334,7 +344,7 @@ struct PortalDashboard: View {
     var body: some View {
         VStack(spacing: 16) {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                MetricPill(title: "Beers", value: "\(portal.inventory?.beers?.count ?? 0)", systemImage: "mug.fill", tint: BeerMapTheme.amber)
+                MetricPill(title: "Beers", value: "\(portal.inventory?.beers?.count ?? 0)", assetImage: BeerMapAsset.beerPint, tint: BeerMapTheme.amber)
                 MetricPill(title: "Happy hours", value: "\(portal.inventory?.happyHours?.count ?? 0)", systemImage: "clock.badge.checkmark.fill", tint: BeerMapTheme.leaf)
                 MetricPill(title: "Specials", value: "\(portal.inventory?.specials?.count ?? 0)", systemImage: "tag.fill", tint: BeerMapTheme.plum)
                 MetricPill(title: "Pending", value: "\(portal.pendingChanges?.count ?? 0)", systemImage: "tray.full.fill", tint: BeerMapTheme.sky)
@@ -511,7 +521,13 @@ struct BeerInventoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(eyebrow: "Stock", title: "Beers and prices", subtitle: "Venue updates stay server-reviewed where required.", systemImage: "mug.fill")
+            SectionHeader(
+                eyebrow: "Stock",
+                title: "Beers and prices",
+                subtitle: "Venue updates stay server-reviewed where required.",
+                systemImage: nil,
+                assetImage: BeerMapAsset.beerPint
+            )
             if beers.isEmpty {
                 EmptyStateView(
                     title: "No beer rows yet",

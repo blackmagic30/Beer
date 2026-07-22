@@ -193,6 +193,9 @@ describe("native mobile remediation guardrails", () => {
 
   it("makes the iOS quick-price flow explicit, searchable, and evidence-aware", () => {
     const iosContribute = read("apps/ios/BeerMap/Features/ContributeView.swift");
+    const iosReusable = read("apps/ios/BeerMap/Components/ReusableViews.swift");
+    const iosVenuePortal = read("apps/ios/BeerMap/Features/VenuePortalView.swift");
+    const beerPintAsset = read("apps/ios/BeerMap/Assets.xcassets/BeerPint.imageset/beer-pint.svg");
     const info = read("apps/ios/BeerMap/Info.plist");
     expect(iosContribute).toContain('title: "Quick price"');
     expect(iosContribute).toContain('VenueSelectionSheet(');
@@ -208,6 +211,12 @@ describe("native mobile remediation guardrails", () => {
     expect(iosContribute).toContain('CameraPhotoPicker { image in');
     expect(iosContribute).toContain('UIImagePickerController.isSourceTypeAvailable(.camera)');
     expect(iosContribute).toContain('confirmedCustomBeerName');
+    expect(iosContribute).toContain('let recentVenue = recentVenue');
+    expect(iosContribute).toContain('let visibleVenues = filteredVenues(excluding: recentVenue?.id)');
+    expect(iosContribute.match(/filteredVenues/g)).toHaveLength(2);
+    expect(beerPintAsset).toContain('<svg width="24" height="24"');
+    expect([iosContribute, iosDiscover, iosReusable, iosVenuePortal].join("\n")).not.toContain('"mug.fill"');
+    expect([iosContribute, iosDiscover, iosReusable, iosVenuePortal].join("\n")).toContain('BeerMapAsset.beerPint');
     expect(info).toContain('<key>NSCameraUsageDescription</key>');
     expect(iosModels).toContain('let statusCopy: String?');
     expect(iosModels).toContain('let ocrStatus: String?');
