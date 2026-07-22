@@ -2853,9 +2853,10 @@
     }
 
     function generateCounterReference() {
-      if (window.crypto?.randomUUID) return `counter-${window.crypto.randomUUID()}`;
-      return `counter-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      return `counter-${window.crypto.randomUUID()}`;
     }
+
+    const pendingCounterAuthorizations = new Map();
 
     function readPendingCounterReceipts() {
       try {
@@ -2867,14 +2868,13 @@
           .filter((entry) => entry && typeof entry === "object")
           .map((entry) => {
             const authorizationExpiresAt = Date.parse(entry.authorizationExpiresAt);
-            if (!Number.isFinite(authorizationExpiresAt) || authorizationExpiresAt > now || !entry.payload?.checkoutToken) {
+            if (!Number.isFinite(authorizationExpiresAt) || authorizationExpiresAt > now || !pendingCounterAuthorizations.has(entry.id)) {
               return entry;
             }
             removedExpiredAuthorization = true;
-            const { checkoutToken: _expiredCheckoutToken, ...nonSecretPayload } = entry.payload;
+            pendingCounterAuthorizations.delete(entry.id);
             return {
               ...entry,
-              payload: nonSecretPayload,
               reconciliationOnly: true,
               lastError: entry.lastError || "Member authorization expired. Check the server record before dismissing this receipt.",
             };
@@ -2893,7 +2893,11 @@
     function writePendingCounterReceipts(entries) {
       try {
         if (entries.length > COUNTER_RECEIPT_QUEUE_LIMIT) return false;
-        window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, JSON.stringify(entries));
+        const nonSecretEntries = entries.map((entry) => {
+          const { checkoutToken: _checkoutToken, ...nonSecretPayload } = entry.payload || {};
+          return { ...entry, payload: nonSecretPayload };
+        });
+        window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY, JSON.stringify(nonSecretEntries));
         return true;
       } catch {
         return false;
@@ -2902,13 +2906,15 @@
 
     function queuePendingCounterReceipt(venueId, accountId, payload, authorizationExpiresAt) {
       const id = `${venueId}:${String(payload.transactionReference || "").toLowerCase()}`;
+      const checkoutToken = String(payload.checkoutToken || "");
+      const { checkoutToken: _checkoutToken, ...nonSecretPayload } = payload;
       const entries = readPendingCounterReceipts();
       const existing = entries.find((entry) => entry.id === id);
       if (existing) {
         const exactRetry = existing.venueId === venueId
           && existing.accountId === accountId
           && existing.authorizationExpiresAt === authorizationExpiresAt
-          && JSON.stringify(existing.payload) === JSON.stringify(payload);
+          && JSON.stringify(existing.payload) === JSON.stringify(nonSecretPayload);
         renderPendingCounterReceipts();
         return exactRetry
           ? { id, saved: true, idempotent: true }
@@ -2922,18 +2928,20 @@
         venueId,
         venueName: currentPortal?.selectedVenue?.venueName || currentPortal?.profile?.name || venueId,
         accountId,
-        payload,
+        payload: nonSecretPayload,
         authorizationExpiresAt,
         createdAt: new Date().toISOString(),
         attempts: 0,
         lastError: null,
       });
+      if (checkoutToken) pendingCounterAuthorizations.set(id, checkoutToken);
       const saved = writePendingCounterReceipts(entries);
       renderPendingCounterReceipts();
       return { id, saved };
     }
 
     function removePendingCounterReceipt(id) {
+      pendingCounterAuthorizations.delete(id);
       writePendingCounterReceipts(readPendingCounterReceipts().filter((entry) => entry.id !== id));
       renderPendingCounterReceipts();
     }
@@ -2958,7 +2966,8 @@
       const entry = readPendingCounterReceipts().find((item) => item.id === id);
       const status = document.getElementById("memberPurchaseStatus");
       if (!entry) return;
-      if (!entry.payload?.checkoutToken || entry.reconciliationOnly) {
+      const checkoutToken = pendingCounterAuthorizations.get(id);
+      if (!checkoutToken || entry.reconciliationOnly) {
         MelbBeerBusiness.setStatus(status, "Member authorization expired. The non-secret receipt details remain for manual reconciliation; check the server record, then dismiss the receipt.", true);
         return;
       }
@@ -2966,7 +2975,7 @@
       try {
         const result = await MelbBeerBusiness.apiFetch(`/api/business/venue-portal/${encodeURIComponent(entry.venueId)}/pint-point-drinks`, {
           method: "POST",
-          body: JSON.stringify(entry.payload),
+          body: JSON.stringify({ ...entry.payload, checkoutToken }),
         });
         removePendingCounterReceipt(id);
         await loadPortal(entry.venueId);
@@ -3008,7 +3017,7 @@
                 ${entry.lastError ? `<small class="fieldHint fieldHint--error">${escapeHtml(entry.lastError)}</small>` : ""}
               </div>
               <div class="actionRow actionRow--compact">
-                <button class="button button--small button--primary" type="button" data-retry-counter-receipt="${escapeHtml(entry.id)}" ${entry.reconciliationOnly || !entry.payload?.checkoutToken ? 'disabled title="Authorization expired; reconcile manually"' : ""}>Retry</button>
+                <button class="button button--small button--primary" type="button" data-retry-counter-receipt="${escapeHtml(entry.id)}" ${entry.reconciliationOnly || !pendingCounterAuthorizations.has(entry.id) ? 'disabled title="Authorization is not held in memory; reconcile manually"' : ""}>Retry</button>
                 <button class="button button--small" type="button" data-remove-counter-receipt="${escapeHtml(entry.id)}">Dismiss</button>
               </div>
             </div>

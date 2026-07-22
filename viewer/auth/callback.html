@@ -56,6 +56,16 @@
       );
     }
 
+    function replaceWithSafeReturnPath(requestedPath) {
+      const safePath = MelbBeerBusiness.getSafeReturnPath(requestedPath);
+      const destination = new URL(safePath, window.location.origin);
+      if (destination.origin !== window.location.origin) {
+        window.location.replace("/account.html");
+        return;
+      }
+      window.location.replace(`${destination.pathname}${destination.search}${destination.hash}`);
+    }
+
     function callbackAuthFlowNonce() {
       return new URLSearchParams(window.location.search).get("authFlow") || "";
     }
@@ -131,7 +141,7 @@
         destination = MelbBeerBusiness.isVenuePortalReturnPath(venueReturnPath) ? venueReturnPath : "/venue-portal.html";
       }
       window.localStorage.removeItem("pintPathAuthReturnTo");
-      window.location.replace(destination);
+      replaceWithSafeReturnPath(destination);
     }
 
     window.addEventListener("DOMContentLoaded", async () => {

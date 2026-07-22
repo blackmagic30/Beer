@@ -60,11 +60,11 @@ export function getBeerByKey(key: TargetBeerKey): BeerDefinition {
 }
 
 export function normalizeBeerSearchKey(value: string | null | undefined): string {
-  return String(value ?? "")
+  const normalized = String(value ?? "")
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
+    .replace(/[^a-z0-9]+/g, "_");
+  return normalized.startsWith("_") ? normalized.slice(1) : normalized.endsWith("_") ? normalized.slice(0, -1) : normalized;
 }
 
 export function findTrackedBeerByName(value: string | null | undefined): ViewerTrackedBeerDefinition | null {

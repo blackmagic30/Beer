@@ -970,8 +970,8 @@ function inferFreshness(text: string): { freshness: MenuSourceCandidate["freshne
 
 function stripHtml(html: string): string {
   return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -986,17 +986,17 @@ function decodeHtml(value: string): string {
     .replace(/&bull;/g, " ")
     .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
-    .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 function htmlToPlainText(html: string): string {
   return decodeHtml(html)
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(?:p|div|li|tr|td|th|h[1-6]|section|article|table)>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
@@ -1538,8 +1538,9 @@ function decodePdfTextLikeContent(value: string): string {
 }
 
 async function extractPdfTextWithPdftotext(buffer: Buffer): Promise<string> {
-  const tempPath = path.join(os.tmpdir(), `pintpath-menu-${process.pid}-${Date.now()}.pdf`);
-  fs.writeFileSync(tempPath, buffer);
+  const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pintpath-menu-"));
+  const tempPath = path.join(tempDirectory, "source.pdf");
+  fs.writeFileSync(tempPath, buffer, { flag: "wx", mode: 0o600 });
   try {
     const { stdout } = await execFileAsync("pdftotext", ["-layout", tempPath, "-"], {
       encoding: "utf8",
@@ -1551,7 +1552,7 @@ async function extractPdfTextWithPdftotext(buffer: Buffer): Promise<string> {
     return "";
   } finally {
     try {
-      fs.unlinkSync(tempPath);
+      fs.rmSync(tempDirectory, { recursive: true, force: true });
     } catch {
       // Best effort cleanup only.
     }

@@ -54,10 +54,12 @@ describe("venue and admin remediation", () => {
   });
 
   it("retains pending receipt evidence for reconciliation but erases expired authorization", () => {
-    expect(portal).toContain("const { checkoutToken: _expiredCheckoutToken, ...nonSecretPayload } = entry.payload");
+    expect(portal).toContain("const pendingCounterAuthorizations = new Map()");
+    expect(portal).toContain("pendingCounterAuthorizations.delete(entry.id)");
+    expect(portal).toContain("const { checkoutToken: _checkoutToken, ...nonSecretPayload } = entry.payload || {}");
     expect(portal).toContain("reconciliationOnly: true");
     expect(portal).toContain("Expired checkout authorization is erased automatically while the non-secret receipt details remain");
-    expect(portal).toContain("Authorization expired; reconcile manually");
+    expect(portal).toContain("Authorization is not held in memory; reconcile manually");
     expect(portal).not.toContain("COUNTER_RECEIPT_QUEUE_TTL_MS");
     expect(portal).not.toContain("COUNTER_RECEIPT_RECONCILIATION_GRACE_MS");
   });
@@ -151,7 +153,7 @@ describe("venue and admin remediation", () => {
     expect(portal).toContain('window.sessionStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY');
     expect(portal).not.toContain('window.localStorage.setItem(COUNTER_RECEIPT_QUEUE_KEY');
     expect(portal).toContain("const existing = entries.find((entry) => entry.id === id);");
-    expect(portal).toContain("JSON.stringify(existing.payload) === JSON.stringify(payload)");
+    expect(portal).toContain("JSON.stringify(existing.payload) === JSON.stringify(nonSecretPayload)");
     expect(portal).toContain("? { id, saved: true, idempotent: true }");
     expect(portal).toContain(": { id, saved: false, conflict: true }");
     expect(portal).toContain("if (queuedReceipt.conflict)");

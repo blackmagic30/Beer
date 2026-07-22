@@ -2436,7 +2436,10 @@ function monthlyReportToCsv(report: MonthlyBarReport): string {
 }
 
 function getMonthlyReportFilename(input: { venueId: string; month: string; format: "json" | "csv" }): string {
-  const safeVenue = input.venueId.replace(/[^a-z0-9-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "venue";
+  let safeVenue = input.venueId.replace(/[^a-z0-9-]+/gi, "-").slice(0, 80);
+  if (safeVenue.startsWith("-")) safeVenue = safeVenue.slice(1);
+  if (safeVenue.endsWith("-")) safeVenue = safeVenue.slice(0, -1);
+  safeVenue ||= "venue";
   return `pint-path-${safeVenue}-${input.month}-monthly-report.${input.format}`;
 }
 

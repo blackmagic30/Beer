@@ -65,8 +65,13 @@ type RestoreRehearsalAccessConfig = {
 
 function getRestoreAccessCookieToken(config: RestoreRehearsalAccessConfig, expiresAtSeconds: number): string {
   const payload = `v1.${expiresAtSeconds}`;
+  const signingKey = crypto.scryptSync(
+    config.RESTORE_REHEARSAL_ACCESS_PASSWORD!,
+    `pint-path:restore-access:${config.RESTORE_REHEARSAL_ACCESS_USERNAME}`,
+    32,
+  );
   const signature = crypto
-    .createHmac("sha256", config.RESTORE_REHEARSAL_ACCESS_PASSWORD!)
+    .createHmac("sha256", signingKey)
     .update(`pint-path-restore-access:${config.RESTORE_REHEARSAL_ACCESS_USERNAME}:${payload}`)
     .digest("base64url");
   return `${payload}.${signature}`;

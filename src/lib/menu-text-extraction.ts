@@ -386,17 +386,17 @@ function decodeMenuHtml(value: string): string {
     .replace(/&bull;/g, " ")
     .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
-    .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 function stripMenuHtml(value: string): string {
   return decodeMenuHtml(value)
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
     .replace(/<br\s*\/?>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")

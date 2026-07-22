@@ -95,6 +95,18 @@
       return MelbBeerBusiness.isVenuePortalReturnPath(requested) ? requested : "/venue-portal.html";
     }
 
+    function redirectToVenuePortal(requestedPath) {
+      const safePath = MelbBeerBusiness.isVenuePortalReturnPath(requestedPath)
+        ? requestedPath
+        : "/venue-portal.html";
+      const destination = new URL(safePath, window.location.origin);
+      if (destination.origin !== window.location.origin || !MelbBeerBusiness.isVenuePortalReturnPath(`${destination.pathname}${destination.search}`)) {
+        window.location.assign("/venue-portal.html");
+        return;
+      }
+      window.location.assign(`${destination.pathname}${destination.search}`);
+    }
+
     window.addEventListener("DOMContentLoaded", () => {
       $("nav").innerHTML = MelbBeerBusiness.renderNav("account");
 
@@ -126,7 +138,7 @@
             MelbBeerBusiness.setAuthToken(result.token);
             MelbBeerBusiness.setAccountContext(result.account, result.access);
           }
-          window.location.assign(venueReturnPath());
+          redirectToVenuePortal(venueReturnPath());
         } catch (error) {
           form.password.value = "";
           MelbBeerBusiness.setStatus($("venueLoginStatus"), error.message || "Venue login failed.", true);

@@ -423,14 +423,14 @@ function getAnonymousSessionId() {
   if (isRestoreRehearsalMode()) {
     window.localStorage.removeItem(ANON_SESSION_KEY);
     if (!restoreAnonymousSessionId) {
-      restoreAnonymousSessionId = crypto.randomUUID ? crypto.randomUUID() : `restore-${Date.now()}-${Math.random()}`;
+      restoreAnonymousSessionId = crypto.randomUUID();
     }
     return restoreAnonymousSessionId;
   }
   let value = window.localStorage.getItem(ANON_SESSION_KEY);
 
   if (!value) {
-    value = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    value = crypto.randomUUID();
     window.localStorage.setItem(ANON_SESSION_KEY, value);
   }
 

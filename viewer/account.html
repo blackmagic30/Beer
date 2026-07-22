@@ -3621,7 +3621,10 @@
         }
         const nextPath = authenticatedReturnDestination(dashboard?.account);
         if (nextPath && nextPath !== "/account.html" && !nextPath.startsWith("/account.html")) {
-          window.location.assign(nextPath);
+          const destination = new URL(MelbBeerBusiness.getSafeReturnPath(nextPath), window.location.origin);
+          window.location.assign(destination.origin === window.location.origin
+            ? `${destination.pathname}${destination.search}${destination.hash}`
+            : "/account.html");
           return;
         }
       } catch (error) {
@@ -3681,7 +3684,10 @@
         if (!dashboard || pendingCheckoutPlan()) return;
         const nextPath = authenticatedReturnDestination(dashboard.account);
         if (nextPath && nextPath !== "/account.html" && !nextPath.startsWith("/account.html")) {
-          window.location.assign(nextPath);
+          const destination = new URL(MelbBeerBusiness.getSafeReturnPath(nextPath), window.location.origin);
+          window.location.assign(destination.origin === window.location.origin
+            ? `${destination.pathname}${destination.search}${destination.hash}`
+            : "/account.html");
           return;
         }
       } catch (error) {
