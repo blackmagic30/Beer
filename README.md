@@ -121,7 +121,7 @@ Supabase auth/account foundation:
 - App APIs still use scoped Pint Path sessions, issued after a verified Supabase Auth exchange through `POST /api/business/auth/supabase-session`. The browser receives that app session in an HttpOnly cookie; native apps keep it in platform-protected storage.
 - `/account.html` uses Supabase Auth for email/password plus configured Google and Apple sign-in. Direct Pint Path password signup/login exists only for localhost/development compatibility and returns `410` in production.
 - Supabase OAuth providers must be configured in the Supabase dashboard. Use only minimal scopes: email/profile for Google and name/email for Apple.
-- In Supabase Auth URL configuration, allow the app callback pages: `http://localhost:3000/auth/callback` and `https://pintpath.au/auth/callback`.
+- In Supabase Auth URL configuration, set the Site URL to `https://pintpath.au` and allow the exact app callbacks: `http://localhost:3000/auth/callback`, `https://pintpath.au/auth/callback`, and `pintpath://auth-callback`. The custom-scheme callback is required for native Google/Apple sign-in.
 - In the Google and Apple provider consoles, allow the Supabase provider callback URL derived from `SUPABASE_URL`. For production with `SUPABASE_URL=https://auth.pintpath.au`, the exact provider callback is `https://auth.pintpath.au/auth/v1/callback`.
 - New or linked users get an app-facing profile row in the local `profiles` table; private provider/auth data should stay in Supabase Auth, not public app tables.
 - Supabase `user_metadata` is not trusted for age confirmation, legal acceptance, roles, venue access, or paid entitlements. Pint Path records those states through its own server-side account/legal/admin/Stripe flows.
@@ -314,7 +314,8 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your_supabase_publishable_or_legacy_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 # Configure Google/Apple OAuth providers in Supabase dashboard.
-# Redirect URLs: http://localhost:3000/auth/callback and https://pintpath.au/auth/callback.
+# Redirect URLs: http://localhost:3000/auth/callback, https://pintpath.au/auth/callback,
+# and pintpath://auth-callback for the native apps.
 SUPABASE_OAUTH_PROVIDERS=google,apple
 SUPABASE_MENU_CAPTURE_TABLE=venue_menu_captures
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key
@@ -771,7 +772,7 @@ npm run check
 
 - Confirm `PUBLIC_BASE_URL=https://pintpath.au` in production.
 - Confirm Supabase Auth Site URL is `https://pintpath.au`.
-- Confirm Supabase redirect URLs include `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`.
+- Confirm Supabase redirect URLs include `https://pintpath.au/auth/callback`, `pintpath://auth-callback`, and local `http://localhost:3000/auth/callback`.
 - Confirm Google OAuth Authorized redirect URIs and Apple Sign in Return URLs include the Supabase provider callback from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`.
 - Confirm the chosen OAuth provider is enabled in Supabase and its provider console.
 - Confirm rate limiting is available: set `REDIS_URL` for production or explicitly allow the in-memory fallback for a short controlled beta.

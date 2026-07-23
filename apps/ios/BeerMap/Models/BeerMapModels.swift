@@ -443,6 +443,7 @@ struct Venue: Codable, Identifiable, Hashable {
     let premiumBadge: String?
     let promoted: Bool?
     let featuredSpecialEligible: Bool?
+    let beerKeys: [String]?
 
     var displayLocation: String {
         [suburb, state].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")

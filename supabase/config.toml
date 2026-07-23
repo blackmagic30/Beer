@@ -165,6 +165,7 @@ additional_redirect_urls = [
   "http://localhost:3000/resend-confirmation.html",
   "http://127.0.0.1:3000/resend-confirmation.html",
   "https://pintpath.au/auth/callback",
+  "pintpath://auth-callback",
   "https://pintpath.au/reset-password.html",
   "https://pintpath.au/resend-confirmation.html",
 ]

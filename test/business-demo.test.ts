@@ -17,6 +17,7 @@ import { initializeDatabaseSchema } from "../src/db/database.js";
 import { errorHandler } from "../src/middleware/error-handler.js";
 import { AppError } from "../src/lib/errors.js";
 import { scheduleMissionMaintenance } from "../src/lib/mission-maintenance.js";
+import { SESSION_COOKIE_NAME } from "../src/lib/session-cookie.js";
 import { getZonedMonthKey, getZonedMonthRangeIso } from "../src/lib/time.js";
 import { createAdminRouter } from "../src/modules/admin/admin.routes.js";
 import { AdminService } from "../src/modules/admin/admin.service.js";
@@ -3136,6 +3137,11 @@ describe("production hardening", () => {
       latitude: -37.798,
       longitude: 144.979,
     }));
+    expect(publishedVenue?.beerKeys).toEqual([
+      "carlton_draft",
+      "guinness",
+      "stone_and_wood_pacific_ale",
+    ]);
 
     expect(service.listPriceRecords(admin, {
       limit: 20,
@@ -3733,6 +3739,229 @@ describe("production hardening", () => {
     });
     expect(from).toHaveBeenCalledTimes(1);
     expect(builder.range).toHaveBeenCalledTimes(1);
+  });
+
+  it("hydrates each venue page with deduplicated tracked beer keys in one bounded repository query", async () => {
+    const { database, repository } = createRepository();
+    const service = createBusinessService(repository);
+    const canonicalVenueId = "beer-summary-canonical";
+    const aliasVenueId = "beer-summary-alias";
+    const upsertProfile = (barId: string, active: boolean) => repository.upsertBarProfile({
+      barId,
+      name: active ? "Beer Summary Hotel" : "Old Beer Summary Hotel",
+      address: null,
+      suburb: "Melbourne",
+      area: "Melbourne",
+      phone: null,
+      website: null,
+      instagram: null,
+      description: null,
+      openingHours: {},
+      venueTags: [],
+      membershipTier: "basic",
+      highlightedName: false,
+      premiumBadge: null,
+      promoted: false,
+      featuredSpecialEligible: false,
+      active,
+      now: NOW,
+    });
+    upsertProfile(canonicalVenueId, true);
+    upsertProfile(aliasVenueId, false);
+    repository.upsertVenueIdentityAlias({
+      aliasVenueId,
+      canonicalVenueId,
+      identityKey: "beer-summary-hotel|melbourne",
+      now: NOW,
+    });
+
+    const insertCommunityPrice = database.prepare(
+      `INSERT INTO venue_price_records (
+        id, venue_id, venue_name, suburb, beer_name, normalized_beer_id, serving_size,
+        price, is_happy_hour_price, happy_hour_details, is_on_tap, confidence,
+        source_type, source_submission_id, last_verified_at, created_at, updated_at
+      ) VALUES (?, ?, 'Beer Summary Hotel', 'Melbourne', ?, ?, 'pint', 12, 0, NULL, 'yes',
+        'photo_verified', 'source_ingestion', NULL, ?, ?, ?)`,
+    );
+    insertCommunityPrice.run(
+      "beer-summary-community-guinness",
+      aliasVenueId,
+      "Guinness",
+      "guinness",
+      NOW,
+      NOW,
+      NOW,
+    );
+    insertCommunityPrice.run(
+      "beer-summary-community-stone-wood",
+      canonicalVenueId,
+      "Stone & Wood Pacific Ale",
+      "stone_and_wood",
+      NOW,
+      NOW,
+      NOW,
+    );
+    insertCommunityPrice.run(
+      "beer-summary-community-non-beer",
+      canonicalVenueId,
+      "House Red",
+      "house_red",
+      NOW,
+      NOW,
+      NOW,
+    );
+
+    const upsertInventoryBeer = (input: {
+      id: string;
+      barId: string;
+      beerName: string;
+      normalizedBeerId: string;
+      inStock: boolean;
+    }) => repository.upsertBarBeer({
+      ...input,
+      brewery: null,
+      style: null,
+      abv: null,
+      serveSize: "pint",
+      price: 13,
+      currency: "AUD",
+      onTap: true,
+      notes: null,
+      now: NOW,
+    });
+    upsertInventoryBeer({
+      id: "beer-summary-manager-carlton",
+      barId: canonicalVenueId,
+      beerName: "Carlton Draught",
+      normalizedBeerId: "carlton_draft",
+      inStock: true,
+    });
+    upsertInventoryBeer({
+      id: "beer-summary-manager-guinness-duplicate",
+      barId: canonicalVenueId,
+      beerName: "Guinness",
+      normalizedBeerId: "guinness",
+      inStock: true,
+    });
+    upsertInventoryBeer({
+      id: "beer-summary-manager-out-of-stock",
+      barId: canonicalVenueId,
+      beerName: "Hahn Super Dry",
+      normalizedBeerId: "hahn_super_dry",
+      inStock: false,
+    });
+    upsertInventoryBeer({
+      id: "beer-summary-manager-paid-only",
+      barId: canonicalVenueId,
+      beerName: "Victoria Bitter",
+      normalizedBeerId: "victoria_bitter",
+      inStock: true,
+    });
+    upsertInventoryBeer({
+      id: "beer-summary-manager-inactive-alias",
+      barId: aliasVenueId,
+      beerName: "Victoria Bitter",
+      normalizedBeerId: "victoria_bitter",
+      inStock: true,
+    });
+
+    const summarySpy = vi.spyOn(repository, "listPublicVenueBeerKeys");
+    const result = await service.listVenuesPage(undefined, 20, 0);
+
+    expect(summarySpy).toHaveBeenCalledTimes(1);
+    expect(summarySpy).toHaveBeenCalledWith([canonicalVenueId]);
+    expect(result.venues).toEqual([
+      expect.objectContaining({
+        id: canonicalVenueId,
+        beerKeys: [
+          "carlton_draft",
+          "guinness",
+          "stone_and_wood_pacific_ale",
+        ],
+      }),
+    ]);
+
+    const premiumAccount = updateSubscription(
+      repository,
+      createAccount(repository, "beer-summary-premium").id,
+      "premium_monthly",
+    );
+    const premiumResult = await service.listVenuesPage(undefined, 20, 0, premiumAccount);
+    expect(premiumResult.venues).toEqual([
+      expect.objectContaining({
+        id: canonicalVenueId,
+        beerKeys: [
+          "carlton_draft",
+          "guinness",
+          "stone_and_wood_pacific_ale",
+          "victoria_bitter",
+        ],
+      }),
+    ]);
+
+    const premiumAuthorization = createSession(
+      repository,
+      premiumAccount.id,
+      "beer-summary-premium-session-token",
+    );
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+
+    await withHttpServer(app, async (baseUrl) => {
+      const anonymousResponse = await fetch(`${baseUrl}/api/business/venues?limit=20`);
+      expect(anonymousResponse.status).toBe(200);
+      expect(anonymousResponse.headers.get("cache-control")).toBe(
+        "public, max-age=30, stale-while-revalidate=120",
+      );
+      expect(anonymousResponse.headers.get("vary")).toBeNull();
+      expect(await anonymousResponse.json()).toEqual(expect.objectContaining({
+        data: expect.objectContaining({
+          venues: [
+            expect.objectContaining({
+              beerKeys: [
+                "carlton_draft",
+                "guinness",
+                "stone_and_wood_pacific_ale",
+              ],
+            }),
+          ],
+        }),
+      }));
+
+      const premiumResponse = await fetch(`${baseUrl}/api/business/venues?limit=20`, {
+        headers: { authorization: premiumAuthorization },
+      });
+      expect(premiumResponse.status).toBe(200);
+      expect(premiumResponse.headers.get("cache-control")).toBe("private, no-store");
+      expect(premiumResponse.headers.get("vary")).toContain("Authorization");
+      expect(premiumResponse.headers.get("vary")).toContain("Cookie");
+      expect(await premiumResponse.json()).toEqual(expect.objectContaining({
+        data: expect.objectContaining({
+          venues: [
+            expect.objectContaining({
+              beerKeys: [
+                "carlton_draft",
+                "guinness",
+                "stone_and_wood_pacific_ale",
+                "victoria_bitter",
+              ],
+            }),
+          ],
+        }),
+      }));
+
+      const invalidBearerResponse = await fetch(`${baseUrl}/api/business/venues?limit=20`, {
+        headers: { authorization: "Bearer invalid-session-token" },
+      });
+      expect(invalidBearerResponse.status).toBe(401);
+
+      const invalidCookieResponse = await fetch(`${baseUrl}/api/business/venues?limit=20`, {
+        headers: { cookie: `${SESSION_COOKIE_NAME}=invalid-session-token` },
+      });
+      expect(invalidCookieResponse.status).toBe(401);
+    });
   });
 
   it("deduplicates public price records that are also present in venue inventory", () => {
@@ -10318,6 +10547,7 @@ describe("business demo contribution model", () => {
       active: true,
     });
 
+    const beerSummarySpy = vi.spyOn(repository, "listPublicVenueBeerKeys");
     const venue = await service.getPublicVenueById("venue-detail-1");
 
     expect(venue?.name).toBe("Moonlit Taproom");
@@ -10332,6 +10562,8 @@ describe("business demo contribution model", () => {
       openingHours: { friday: { open: true, openTime: "16:00", closeTime: "01:00" } },
     }));
     expect(venue).not.toHaveProperty("stripeCustomerId");
+    expect(venue).not.toHaveProperty("beerKeys");
+    expect(beerSummarySpy).not.toHaveBeenCalled();
     expect(await service.getPublicVenueById("missing-venue")).toBeNull();
   });
 

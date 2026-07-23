@@ -2,6 +2,9 @@ import SwiftUI
 
 enum BeerMapAsset {
     static let beerPint = "BeerPint"
+    static let beerPot = "BeerPot"
+    static let beerSchooner = "BeerSchooner"
+    static let beerJug = "BeerJug"
 }
 
 struct BeerPintIcon: View {

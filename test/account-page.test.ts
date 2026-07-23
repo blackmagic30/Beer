@@ -86,6 +86,7 @@ function loadBusinessAuthHarness(options: {
   const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
   const signups: Array<Record<string, unknown>> = [];
   const oauthSignIns: Array<Record<string, unknown>> = [];
+  const createdClientOptions: Array<Record<string, unknown>> = [];
   const sessionProvider = options.sessionProvider || "email";
   const authSession = {
     access_token: "provider-access-token",
@@ -173,7 +174,16 @@ function loadBusinessAuthHarness(options: {
           return localStorage.size;
         },
       },
-      supabase: { createClient: () => ({ auth }) },
+      supabase: {
+        createClient: (
+          _url: string,
+          _anonKey: string,
+          clientOptions: Record<string, unknown>,
+        ) => {
+          createdClientOptions.push(clientOptions);
+          return { auth };
+        },
+      },
       addEventListener: () => undefined,
     },
   };
@@ -196,6 +206,7 @@ function loadBusinessAuthHarness(options: {
     requests,
     signups,
     oauthSignIns,
+    createdClientOptions,
   };
 }
 
@@ -1406,7 +1417,11 @@ describe("account page shell", () => {
     const html = callbackHtml();
 
     expect(html).toContain("Finishing your Pint Path login");
-    expect(html).toContain("exchangeCodeForSession");
+    expect(html.match(/exchangeCodeForSession\(/g)).toHaveLength(1);
+    expect(html).toContain("callbackFlowState = MelbBeerBusiness.peekAuthFlowState()");
+    expect(html).toContain('callbackFlowState?.kind !== "oauth"');
+    expect(html).toContain("client.auth.setSession({");
+    expect(html).toContain("data.session.refresh_token");
     expect(html).toContain("authFlowNonce: callbackAuthFlowNonce()");
     expect(html).toContain("authFlowNonce,");
     expect(html).toContain("MelbBeerBusiness.clearPendingLegalAcceptance()");
@@ -1414,6 +1429,8 @@ describe("account page shell", () => {
     expect(html).toContain('id="callbackAcceptanceForm"');
     expect(html).toContain('id="callbackCancelButton"');
     expect(html).toContain('auth.signOut({ scope: "local" })');
+    expect(html).toContain('MelbBeerBusiness.apiFetch("/api/business/auth/logout"');
+    expect(html).toContain("MelbBeerBusiness.setAccountContext(null)");
     expect(html).toContain("Sign-in cancelled. No policy choices were saved.");
     expect(html).toContain("function needsFirstAccountAcceptance");
     expect(html).toContain("showCallbackAcceptance();");
@@ -1439,7 +1456,8 @@ describe("account page shell", () => {
     expect(script).toContain("Signup acceptance did not match this signed-in identity.");
     expect(callback).toContain("Your signup acceptance was missing or expired on this device.");
     expect(callback).toContain("[403, 409].includes(Number(error?.status))");
-    expect(callback).toContain('get("authFlow")');
+    expect(callback).toContain("callbackFlowState?.nonce");
+    expect(callback).toContain("MelbBeerBusiness.peekAuthFlowState()");
     expect(callback).toContain("Accept and finish account");
   });
 
@@ -1467,9 +1485,39 @@ describe("account page shell", () => {
     expect(harness.signups[0]).not.toHaveProperty("options.data.terms_accepted");
     expect(harness.signups[0]).toHaveProperty(
       "options.emailRedirectTo",
-      "https://pintpath.au/auth/callback?returnTo=%2Faccount.html&authFlow=test-uuid",
+      "https://pintpath.au/auth/callback",
     );
     expect(harness.localStorage.has("pintPathLegalAcceptance")).toBe(false);
+  });
+
+  it("starts provider OAuth with one exact PKCE callback and browser-bound return state", async () => {
+    const harness = loadBusinessAuthHarness();
+    await harness.helpers.signInWithOAuth("google", { returnTo: "/submit.html" });
+
+    expect(harness.oauthSignIns).toHaveLength(1);
+    expect(harness.oauthSignIns[0]).toMatchObject({
+      provider: "google",
+      options: {
+        redirectTo: "https://pintpath.au/auth/callback",
+        scopes: "email profile",
+      },
+    });
+    expect(harness.createdClientOptions).toHaveLength(1);
+    expect(harness.createdClientOptions[0]).toMatchObject({
+      auth: {
+        flowType: "pkce",
+        persistSession: true,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+        storageKey: "pintPathSupabaseOAuth",
+      },
+    });
+    expect(JSON.parse(harness.localStorage.get("pintPathAuthFlow") || "{}")).toMatchObject({
+      nonce: "test-uuid",
+      returnTo: "/submit.html",
+      kind: "oauth",
+      provider: "google",
+    });
   });
 
   it("clears consent when Supabase rejects email signup or OAuth before redirect", async () => {
@@ -1490,6 +1538,32 @@ describe("account page shell", () => {
       legalAcceptance: { ageConfirmed: true, termsAccepted: true, privacyAccepted: true },
     })).rejects.toThrow("Provider rejected");
     expect(oauthHarness.localStorage.has("pintPathLegalAcceptance")).toBe(false);
+    expect(oauthHarness.localStorage.has("pintPathAuthFlow")).toBe(false);
+  });
+
+  it("does not persist auth return state when signup consent is incomplete", async () => {
+    const harness = loadBusinessAuthHarness();
+
+    await expect(harness.helpers.signUpWithEmail(
+      "new@example.com",
+      "safe-password",
+      false,
+      true,
+      true,
+    )).rejects.toThrow("Confirm you are 18+");
+
+    expect(harness.localStorage.has("pintPathAuthFlow")).toBe(false);
+    expect(harness.localStorage.has("pintPathAuthReturnTo")).toBe(false);
+  });
+
+  it("canonicalises the www host before origin-bound PKCE state can be created", () => {
+    const source = appSource();
+
+    expect(source).toContain("requestHost === `www.${canonicalHost}`");
+    expect(source).toContain("buildCanonicalHostRedirectUrl(publicBaseUrl.origin, req.originalUrl)");
+    expect(source.indexOf("requestHost === `www.${canonicalHost}`")).toBeLessThan(
+      source.indexOf("res.locals.cspNonce"),
+    );
   });
 
   it("rejects crossed email, callback nonce, and provider consent before any server sync", async () => {

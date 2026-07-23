@@ -95,7 +95,7 @@ Both scripts refuse to run when `NODE_ENV=production` or when `PUBLIC_BASE_URL` 
 
 These are launch-critical but require provider/staging verification:
 
-- **Supabase OAuth:** Google and Apple provider credentials, Supabase app redirect URLs, provider callback URLs, and email-confirmation behavior must be verified. Supabase should allow `https://pintpath.au/auth/callback`; Google/Apple should allow the Supabase provider callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`.
+- **Supabase OAuth:** Google and Apple provider credentials, Supabase app redirect URLs, provider callback URLs, and email-confirmation behavior must be verified. Supabase should allow both `https://pintpath.au/auth/callback` and the native `pintpath://auth-callback`; Google/Apple should allow the Supabase provider callback derived from `SUPABASE_URL`, for example `https://auth.pintpath.au/auth/v1/callback`.
 - **Supabase Auth security:** Enable leaked-password protection before public launch.
 - **Supabase RLS live audit:** Apply migrations, then test anonymous/authenticated access in the Supabase dashboard or staging client. Local SQL parsing is not a substitute for live policy verification.
 - **Supabase database version:** Confirm the live project is not on deprecated Postgres 14 before launch.

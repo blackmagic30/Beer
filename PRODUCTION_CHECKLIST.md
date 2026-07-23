@@ -33,7 +33,7 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 
 - `NODE_ENV=production`
 - `PUBLIC_BASE_URL=https://pintpath.au`. The current production validator intentionally rejects preview domains and alternate canonical hosts.
-- Supabase Auth site URL is `https://pintpath.au` and redirect URLs include `https://pintpath.au/auth/callback`.
+- Supabase Auth Site URL is `https://pintpath.au`, and redirect URLs include exact `http://localhost:3000/auth/callback`, `https://pintpath.au/auth/callback`, and `pintpath://auth-callback`.
 - `DATABASE_PATH` points to a persistent Railway volume path.
 - Keep `TRUST_PROXY_HOPS=1` on Railway for forwarded scheme/host handling; security identity uses Railway's platform-provided `X-Real-IP`, not a variable-length proxy hop count. Do not use the obsolete `TRUST_PROXY` variable.
 - `ADMIN_EMAILS` is set to the exact admin owner email list before enabling admin access. If the official ABN/admin email is pending, leave it blank and confirm admin routes return `403`.

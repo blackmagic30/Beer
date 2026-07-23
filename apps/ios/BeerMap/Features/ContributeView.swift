@@ -713,10 +713,10 @@ struct ContributeView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(servingSizes.prefix(4), id: \.self) { size in
-                    if usesBeerPintIcon(size) {
+                    if let assetImage = servingAssetImage(size) {
                         FilterChip(
                             title: size.capitalized,
-                            assetImage: BeerMapAsset.beerPint,
+                            assetImage: assetImage,
                             isSelected: servingSize == size
                         ) {
                             servingSize = size
@@ -765,8 +765,14 @@ struct ContributeView: View {
         }
     }
 
-    private func usesBeerPintIcon(_ serving: String) -> Bool {
-        ["pint", "pot", "schooner", "jug"].contains(serving)
+    private func servingAssetImage(_ serving: String) -> String? {
+        switch serving {
+        case "pint": return BeerMapAsset.beerPint
+        case "pot": return BeerMapAsset.beerPot
+        case "schooner": return BeerMapAsset.beerSchooner
+        case "jug": return BeerMapAsset.beerJug
+        default: return nil
+        }
     }
 
     private func priceStep<Content: View>(
@@ -1040,35 +1046,66 @@ private struct VenueSelectionSheet: View {
     let selectedVenueId: String
     let recentVenueId: String
     let onSelect: (Venue) -> Void
+    @StateObject private var locationProvider = VenuePickerLocationProvider()
     @State private var searchText = ""
+    @State private var visibleVenueLimit = 10
+
+    private let venuePageSize = 10
 
     private var recentVenue: Venue? {
         venues.first { $0.id == recentVenueId }
     }
 
-    private func filteredVenues(excluding recentVenueId: String?) -> [Venue] {
+    private func matchingVenues(excluding recentVenueId: String?) -> [Venue] {
         let query = searchText.trimmed
         let candidates = venues.filter { $0.id != recentVenueId }
-        guard !query.isEmpty else {
-            return candidates.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        }
-        return candidates
-            .filter { venue in
+
+        if !query.isEmpty {
+            return candidates
+                .filter { venue in
                 [venue.name, venue.address, venue.suburb, venue.postcode]
                     .compactMap { $0 }
                     .contains { $0.localizedStandardContains(query) }
-            }
+                }
+                .sorted { lhs, rhs in
+                    let lhsPrefix = lhs.name.lowercased().hasPrefix(query.lowercased())
+                    let rhsPrefix = rhs.name.lowercased().hasPrefix(query.lowercased())
+                    if lhsPrefix != rhsPrefix { return lhsPrefix }
+                    return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                }
+        }
+
+        guard let origin = locationProvider.location else {
+            // Preserve the API order while the one-shot location request finishes so
+            // the sheet can present immediately without sorting the full catalogue.
+            return candidates
+        }
+
+        let ranked = candidates.map { venue in
+            (venue: venue, distance: venueLocation(venue).map(origin.distance(from:)))
+        }
+        return ranked
             .sorted { lhs, rhs in
-                let lhsPrefix = lhs.name.lowercased().hasPrefix(query.lowercased())
-                let rhsPrefix = rhs.name.lowercased().hasPrefix(query.lowercased())
-                if lhsPrefix != rhsPrefix { return lhsPrefix }
-                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                switch (lhs.distance, rhs.distance) {
+                case let (lhsDistance?, rhsDistance?):
+                    if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                case (nil, nil):
+                    break
+                }
+                return lhs.venue.name.localizedStandardCompare(rhs.venue.name) == .orderedAscending
             }
+            .map { $0.venue }
     }
 
     var body: some View {
         let recentVenue = recentVenue
-        let visibleVenues = filteredVenues(excluding: recentVenue?.id)
+        let allMatches = matchingVenues(excluding: recentVenue?.id)
+        let visibleVenues = Array(allMatches.prefix(visibleVenueLimit))
+        let remainingVenueCount = max(0, allMatches.count - visibleVenues.count)
 
         NavigationStack {
             List {
@@ -1078,7 +1115,16 @@ private struct VenueSelectionSheet: View {
                     }
                 }
 
-                Section(searchText.trimmed.isEmpty ? "All venues" : "Matches") {
+                Section {
+                    if searchText.trimmed.isEmpty, locationProvider.isLocating {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Finding venues near you…")
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+
                     if visibleVenues.isEmpty {
                         ContentUnavailableView.search(text: searchText)
                     } else {
@@ -1086,12 +1132,38 @@ private struct VenueSelectionSheet: View {
                             venueRow(venue)
                         }
                     }
+
+                    if remainingVenueCount > 0 {
+                        Button {
+                            visibleVenueLimit = min(allMatches.count, visibleVenueLimit + venuePageSize)
+                        } label: {
+                            Label(
+                                "Load \(min(venuePageSize, remainingVenueCount)) more",
+                                systemImage: "arrow.down.circle"
+                            )
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .accessibilityHint("\(remainingVenueCount) venues remain")
+                    }
+                } header: {
+                    Text(venueSectionTitle)
+                } footer: {
+                    if remainingVenueCount > 0 {
+                        Text("Search checks every venue, including those not yet shown.")
+                    }
                 }
             }
             .listStyle(.insetGrouped)
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Venue, suburb, or postcode")
             .textInputAutocapitalization(.words)
             .autocorrectionDisabled()
+            .onChange(of: searchText) { _, _ in
+                visibleVenueLimit = venuePageSize
+            }
+            .onAppear {
+                locationProvider.requestOnce()
+            }
             .navigationTitle("Choose venue")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1100,6 +1172,11 @@ private struct VenueSelectionSheet: View {
                 }
             }
         }
+    }
+
+    private var venueSectionTitle: String {
+        if !searchText.trimmed.isEmpty { return "Matches" }
+        return locationProvider.location == nil ? "Venues" : "Nearby venues"
     }
 
     private func venueRow(_ venue: Venue) -> some View {
@@ -1115,7 +1192,7 @@ private struct VenueSelectionSheet: View {
                     Text(venue.name)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.primary)
-                    Text(venue.displayLocation.nilIfBlank ?? venue.address ?? "Melbourne")
+                    Text(venueDetail(venue))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1131,6 +1208,94 @@ private struct VenueSelectionSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(venue.id == selectedVenueId ? .isSelected : [])
+    }
+
+    private func venueDetail(_ venue: Venue) -> String {
+        let place = venue.displayLocation.nilIfBlank ?? venue.address ?? "Melbourne"
+        guard
+            let origin = locationProvider.location,
+            let venueLocation = venueLocation(venue)
+        else {
+            return place
+        }
+
+        let distance = origin.distance(from: venueLocation)
+        let distanceCopy: String
+        if distance < 1_000 {
+            distanceCopy = "\(max(50, Int((distance / 50).rounded()) * 50)) m"
+        } else {
+            distanceCopy = String(format: "%.1f km", distance / 1_000)
+        }
+        return "\(place) · \(distanceCopy)"
+    }
+
+    private func venueLocation(_ venue: Venue) -> CLLocation? {
+        guard
+            let latitude = venue.latitude,
+            let longitude = venue.longitude,
+            (-90.0...90.0).contains(latitude),
+            (-180.0...180.0).contains(longitude)
+        else {
+            return nil
+        }
+        return CLLocation(latitude: latitude, longitude: longitude)
+    }
+}
+
+@MainActor
+private final class VenuePickerLocationProvider: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
+    @Published private(set) var location: CLLocation?
+    @Published private(set) var isLocating = false
+
+    private let manager = CLLocationManager()
+    private var hasRequested = false
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+
+    func requestOnce() {
+        guard !hasRequested else { return }
+        hasRequested = true
+
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            isLocating = true
+            manager.requestLocation()
+        case .notDetermined:
+            isLocating = true
+            manager.requestWhenInUseAuthorization()
+        case .denied, .restricted:
+            isLocating = false
+        @unknown default:
+            isLocating = false
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard hasRequested else { return }
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            isLocating = true
+            manager.requestLocation()
+        case .denied, .restricted:
+            isLocating = false
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        location = locations
+            .filter { $0.horizontalAccuracy >= 0 }
+            .max { $0.timestamp < $1.timestamp }
+        isLocating = false
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        isLocating = false
     }
 }
 

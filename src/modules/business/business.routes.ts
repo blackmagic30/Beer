@@ -4,7 +4,11 @@ import { env } from "../../config/env.js";
 import { AppError } from "../../lib/errors.js";
 import { success } from "../../lib/http.js";
 import { getClientIp, getRateLimitIdentity } from "../../lib/client-ip.js";
-import { getSessionAuthorization, SESSION_COOKIE_NAME } from "../../lib/session-cookie.js";
+import {
+  getSessionAuthorization,
+  hasSessionCredential,
+  SESSION_COOKIE_NAME,
+} from "../../lib/session-cookie.js";
 import { parseWithSchema } from "../../lib/validation.js";
 import { createRateLimiter } from "../../middleware/rate-limit.js";
 
@@ -519,12 +523,23 @@ export function createBusinessRouter(businessService: BusinessService): Router {
 
   router.get("/venues", async (req, res, next) => {
     try {
+      const credentialsSupplied = hasSessionCredential(req);
+      if (credentialsSupplied) {
+        res.setHeader("Cache-Control", "private, no-store");
+        res.setHeader("Vary", "Authorization, Cookie");
+      }
+      const account = getOptionalAccount(req, businessService);
+      if (credentialsSupplied && !account) {
+        throw new AppError("Login required.", 401);
+      }
       const query = parseWithSchema(venuesQuerySchema, req.query, "Invalid venue query");
-      const result = await businessService.listVenuesPage(query.q, query.limit, query.offset);
-      res.setHeader(
-        "Cache-Control",
-        env.RESTORE_REHEARSAL_MODE ? "private, no-store" : "public, max-age=30, stale-while-revalidate=120",
-      );
+      const result = await businessService.listVenuesPage(query.q, query.limit, query.offset, account);
+      if (!credentialsSupplied) {
+        res.setHeader(
+          "Cache-Control",
+          env.RESTORE_REHEARSAL_MODE ? "private, no-store" : "public, max-age=30, stale-while-revalidate=120",
+        );
+      }
       res.json(success(result));
     } catch (error) {
       next(error);

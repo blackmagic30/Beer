@@ -333,8 +333,11 @@ private final class NativeOAuthCoordinator: NSObject, ObservableObject, ASWebAut
     func signIn(provider: String, config: PublicConfig) async throws -> SupabaseAuthTokens {
         guard !isRunning else { throw BeerMapAPIError.server("An account sign-in is already open.") }
         guard
-            let baseText = config.supabaseUrl,
-            var components = URLComponents(string: baseText.trimmingCharacters(in: .whitespacesAndNewlines) + "/auth/v1/authorize")
+            let baseURL = Self.canonicalSupabaseOrigin(config.supabaseUrl),
+            var components = URLComponents(
+                url: baseURL.appendingPathComponent("auth/v1/authorize"),
+                resolvingAgainstBaseURL: false
+            )
         else {
             throw BeerMapAPIError.configuration("Secure provider sign-in is temporarily unavailable.")
         }
@@ -391,11 +394,44 @@ private final class NativeOAuthCoordinator: NSObject, ObservableObject, ASWebAut
         guard let authCode = values["code"], !authCode.isEmpty else {
             throw BeerMapAPIError.server("Secure provider sign-in did not return a one-time authorization code.")
         }
-        return try await BeerMapAPI().exchangeSupabasePKCE(
+        let tokens = try await BeerMapAPI().exchangeSupabasePKCE(
             authCode: authCode,
             codeVerifier: codeVerifier,
             config: config
         )
+        guard
+            let accessToken = tokens.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !accessToken.isEmpty,
+            let refreshToken = tokens.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !refreshToken.isEmpty
+        else {
+            throw BeerMapAPIError.server("Secure provider sign-in returned an incomplete session. Please start again.")
+        }
+        return SupabaseAuthTokens(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            expiresIn: tokens.expiresIn
+        )
+    }
+
+    private static func canonicalSupabaseOrigin(_ rawValue: String?) -> URL? {
+        guard
+            let rawValue,
+            var components = URLComponents(
+                string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
+            ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
+            !(components.host?.isEmpty ?? true),
+            components.user == nil,
+            components.password == nil,
+            components.query == nil,
+            components.fragment == nil,
+            components.path.isEmpty || components.path == "/"
+        else {
+            return nil
+        }
+        components.path = ""
+        return components.url
     }
 
     private static func pkceVerifier() throws -> String {

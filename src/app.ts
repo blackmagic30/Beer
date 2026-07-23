@@ -10,6 +10,7 @@ import { env } from "./config/env.js";
 import { PREMIUM_PRICING } from "./config/business-rules.js";
 import { AppError } from "./lib/errors.js";
 import { getRateLimitIdentity } from "./lib/client-ip.js";
+import { buildCanonicalHostRedirectUrl } from "./lib/canonical-redirect.js";
 import {
   isCanonicalProductionRuntime,
   resolveAccountDeletionLedgerRuntimeConfig,
@@ -764,6 +765,19 @@ export function createApp() {
 
   app.set("trust proxy", env.TRUST_PROXY_HOPS);
   app.set("case sensitive routing", true);
+  app.use((req, res, next) => {
+    const publicBaseUrl = new URL(env.PUBLIC_BASE_URL);
+    const canonicalHost = publicBaseUrl.hostname.toLowerCase();
+    const requestHost = req.hostname.toLowerCase();
+    if (requestHost === `www.${canonicalHost}`) {
+      res.redirect(
+        308,
+        buildCanonicalHostRedirectUrl(publicBaseUrl.origin, req.originalUrl),
+      );
+      return;
+    }
+    next();
+  });
   app.use((_req, res, next) => {
     res.locals.cspNonce = crypto.randomBytes(18).toString("base64");
     next();

@@ -2,13 +2,60 @@ import CoreLocation
 import MapKit
 import SwiftUI
 
+private struct ExploreBeerOption: Identifiable, Hashable {
+    let id: String
+    let name: String
+}
+
+private enum ExploreBeerFilterAccess {
+    static let freeOptions = [
+        ExploreBeerOption(id: "guinness", name: "Guinness"),
+        ExploreBeerOption(id: "carlton_draft", name: "Carlton Draught"),
+        ExploreBeerOption(id: "stone_and_wood_pacific_ale", name: "Stone & Wood Pacific Ale"),
+    ]
+
+    private static let freeKeys = Set(freeOptions.map(\.id))
+
+    static func canonicalKey(_ value: String) -> String {
+        let folded = value.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "en_AU")
+        )
+        let normalized = folded
+            .replacingOccurrences(of: "&", with: " and ")
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .joined(separator: "_")
+
+        switch normalized {
+        case "carlton_draught":
+            return "carlton_draft"
+        case "stone_wood", "stone_and_wood", "stone_wood_pacific_ale":
+            return "stone_and_wood_pacific_ale"
+        default:
+            return normalized
+        }
+    }
+
+    static func isFree(_ key: String) -> Bool {
+        freeKeys.contains(canonicalKey(key))
+    }
+
+    static func venueMatches(beerKey: String, venueBeerKeys: [String]?) -> Bool {
+        let selectedKey = canonicalKey(beerKey)
+        return venueBeerKeys?.contains {
+            canonicalKey($0) == selectedKey
+        } == true
+    }
+}
+
 struct DiscoverView: View {
     @EnvironmentObject private var model: BeerMapAppModel
     @StateObject private var locationProvider = ExploreLocationProvider()
     @State private var searchText = ""
     @State private var selectedMapVenue: Venue?
-    @State private var displayMode: ExploreDisplayMode = .map
     @State private var selectedSuburb: String?
+    @State private var selectedBeerKey: String?
     @State private var partnerOnly = false
     @State private var nearbyOnly = false
     @State private var nearbyRadiusKm = 5.0
@@ -36,15 +83,33 @@ struct DiscoverView: View {
         let suburbs: [String]
     }
 
-    private enum ExploreDisplayMode: String, CaseIterable, Identifiable {
-        case map = "Map"
-        case list = "List"
+    private var hasFullBeerAccess: Bool {
+        model.accountDashboard?.access?.hasFullAccess == true
+    }
 
-        var id: String { rawValue }
-
-        var systemImage: String {
-            self == .map ? "map.fill" : "list.bullet"
+    private var beerOptions: [ExploreBeerOption] {
+        var optionsByKey: [String: ExploreBeerOption] = [:]
+        for beer in model.config?.trackedBeers ?? [] {
+            let key = ExploreBeerFilterAccess.canonicalKey(beer.id)
+            guard !key.isEmpty else { continue }
+            optionsByKey[key] = ExploreBeerOption(id: key, name: beer.name)
         }
+
+        let freeOptions = ExploreBeerFilterAccess.freeOptions.map {
+            optionsByKey.removeValue(forKey: $0.id) ?? $0
+        }
+        let lockedOptions = optionsByKey.values.sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        return freeOptions + lockedOptions
+    }
+
+    private var selectedBeerName: String? {
+        guard let selectedBeerKey else { return nil }
+        return beerOptions.first {
+            ExploreBeerFilterAccess.canonicalKey($0.id)
+                == ExploreBeerFilterAccess.canonicalKey(selectedBeerKey)
+        }?.name
     }
 
     var body: some View {
@@ -87,10 +152,8 @@ struct DiscoverView: View {
                 }
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if displayMode == .map {
-                venueMap(filteredVenues: results.filtered, mappedVenues: results.mapped)
             } else {
-                venueList(venues: results.filtered)
+                venueMap(filteredVenues: results.filtered, mappedVenues: results.mapped)
             }
         }
         .beerMapScreen()
@@ -116,7 +179,9 @@ struct DiscoverView: View {
         .sheet(isPresented: $showingFilters) {
             ExploreFilterSheet(
                 suburbs: results.suburbs,
+                beers: beerOptions,
                 selectedSuburb: $selectedSuburb,
+                selectedBeerKey: $selectedBeerKey,
                 partnerOnly: $partnerOnly,
                 nearbyOnly: Binding(
                     get: { nearbyOnly },
@@ -126,12 +191,20 @@ struct DiscoverView: View {
                 ),
                 nearbyRadiusKm: $nearbyRadiusKm,
                 isLocating: isLocating,
+                hasFullBeerAccess: hasFullBeerAccess,
                 resultCount: results.filtered.count,
                 clear: clearFilterValues
             )
         }
         .onChange(of: model.venues) { _, venues in
             rebuildDistanceCache(for: venues, from: userLocation)
+        }
+        .onChange(of: model.accountDashboard?.access?.hasFullAccess) { _, hasFullAccess in
+            guard hasFullAccess != true,
+                  let selectedBeerKey,
+                  !ExploreBeerFilterAccess.isFree(selectedBeerKey)
+            else { return }
+            self.selectedBeerKey = nil
         }
         .navigationDestination(for: Venue.self) { venue in
             VenueDetailView(venue: venue)
@@ -143,19 +216,11 @@ struct DiscoverView: View {
 
     private func controls(resultCount: Int) -> some View {
         VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                Picker("Display", selection: $displayMode) {
-                    ForEach(ExploreDisplayMode.allCases) { mode in
-                        Label(mode.rawValue, systemImage: mode.systemImage)
-                            .tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                Text("\(resultCount)")
+            HStack {
+                Label("\(resultCount) venues", systemImage: "mappin.and.ellipse")
                     .font(.subheadline.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel("\(resultCount) venues")
+                Spacer()
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -195,27 +260,22 @@ struct DiscoverView: View {
                         }
                     }
 
+                    if let selectedBeerName {
+                        FilterChip(
+                            title: selectedBeerName,
+                            assetImage: BeerMapAsset.beerPint,
+                            isSelected: true
+                        ) {
+                            selectedBeerKey = nil
+                        }
+                    }
+
                     if activeFilterCount > 0 || !searchText.isEmpty {
                         FilterChip(title: "Clear", systemImage: "xmark", action: clearFilters)
                     }
                 }
             }
         }
-    }
-
-    private func venueList(venues: [Venue]) -> some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                ForEach(venues) { venue in
-                    NavigationLink(value: venue) {
-                        VenueCard(venue: venue, detail: distanceText(for: venue))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding()
-        }
-        .refreshable { await model.loadHome() }
     }
 
     private func makeVenueResults() -> VenueResults {
@@ -238,6 +298,13 @@ struct DiscoverView: View {
             }
             if let selectedSuburb,
                venue.suburb?.caseInsensitiveCompare(selectedSuburb) != .orderedSame {
+                return false
+            }
+            if let selectedBeerKey,
+               !ExploreBeerFilterAccess.venueMatches(
+                   beerKey: selectedBeerKey,
+                   venueBeerKeys: venue.beerKeys
+               ) {
                 return false
             }
             if nearbyOnly, userLocation != nil {
@@ -265,7 +332,10 @@ struct DiscoverView: View {
     }
 
     private var activeFilterCount: Int {
-        (selectedSuburb == nil ? 0 : 1) + (partnerOnly ? 1 : 0) + (nearbyOnly ? 1 : 0)
+        (selectedSuburb == nil ? 0 : 1)
+            + (selectedBeerKey == nil ? 0 : 1)
+            + (partnerOnly ? 1 : 0)
+            + (nearbyOnly ? 1 : 0)
     }
 
     @ViewBuilder
@@ -273,12 +343,12 @@ struct DiscoverView: View {
         if mappedVenues.isEmpty {
             VStack(spacing: 14) {
                 EmptyStateView(
-                    title: "These venues have no map pin",
-                    message: "Their details are still available in the venue list.",
-                    systemImage: "list.bullet.rectangle"
+                    title: "No map pins available",
+                    message: "These venues do not have map coordinates yet. Try another filter or refresh the map.",
+                    systemImage: "mappin.slash"
                 )
-                SecondaryButton(title: "Show venue list", systemImage: "list.bullet") {
-                    displayMode = .list
+                SecondaryButton(title: "Refresh map", systemImage: "arrow.clockwise") {
+                    Task { await model.loadHome() }
                 }
                 .frame(maxWidth: 320)
             }
@@ -289,21 +359,15 @@ struct DiscoverView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottom) {
                     if mappedVenues.count < filteredVenues.count {
-                        Button {
-                            displayMode = .list
-                        } label: {
-                            Label(
-                                "\(filteredVenues.count - mappedVenues.count) more in List",
-                                systemImage: "list.bullet"
-                            )
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 44)
-                            .background(BeerMapTheme.card, in: Capsule())
-                        }
-                        .buttonStyle(.plain)
+                        Label(
+                            "\(filteredVenues.count - mappedVenues.count) venues need map coordinates",
+                            systemImage: "mappin.slash"
+                        )
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .background(BeerMapTheme.card, in: Capsule())
                         .padding(.bottom, 12)
-                        .accessibilityHint("Switches to the complete venue list")
                     }
                 }
                 .accessibilityLabel("Venue map with \(mappedVenues.count) mapped venues")
@@ -317,6 +381,7 @@ struct DiscoverView: View {
 
     private func clearFilterValues() {
         selectedSuburb = nil
+        selectedBeerKey = nil
         partnerOnly = false
         nearbyOnly = false
     }
@@ -367,13 +432,6 @@ struct DiscoverView: View {
         return distanceByVenue[key]
     }
 
-    private func distanceText(for venue: Venue) -> String? {
-        guard nearbyOnly, userLocation != nil, let meters = cachedDistance(to: venue) else { return nil }
-        if meters < 1_000 {
-            return "\(Int(meters.rounded())) m away"
-        }
-        return String(format: "%.1f km away", meters / 1_000)
-    }
 }
 
 @MainActor
@@ -455,21 +513,61 @@ private enum ExploreLocationError: LocalizedError {
 }
 
 private struct ExploreFilterSheet: View {
+    private static let pageSize = 6
+
     @Environment(\.dismiss) private var dismiss
     let suburbs: [String]
+    let beers: [ExploreBeerOption]
     @Binding var selectedSuburb: String?
+    @Binding var selectedBeerKey: String?
     @Binding var partnerOnly: Bool
     @Binding var nearbyOnly: Bool
     @Binding var nearbyRadiusKm: Double
     let isLocating: Bool
+    let hasFullBeerAccess: Bool
     let resultCount: Int
     let clear: () -> Void
-    @State private var suburbSearch = ""
+    @State private var filterSearch = ""
+    @State private var visibleSuburbCount = Self.pageSize
+    @State private var visibleBeerCount = Self.pageSize
+    @State private var showingLockedBeerMessage = false
 
-    private var visibleSuburbs: [String] {
-        let query = suburbSearch.trimmed
+    private var matchingSuburbs: [String] {
+        let query = filterSearch.trimmed
         guard !query.isEmpty else { return suburbs }
         return suburbs.filter { $0.localizedStandardContains(query) }
+    }
+
+    private var visibleSuburbs: [String] {
+        var values = Array(matchingSuburbs.prefix(visibleSuburbCount))
+        if let selectedSuburb,
+           matchingSuburbs.contains(selectedSuburb),
+           !values.contains(selectedSuburb) {
+            values.insert(selectedSuburb, at: 0)
+        }
+        return values
+    }
+
+    private var matchingBeers: [ExploreBeerOption] {
+        let query = filterSearch.trimmed
+        guard !query.isEmpty else { return beers }
+        return beers.filter { beer in
+            beer.name.localizedStandardContains(query)
+                || beer.id.localizedStandardContains(query)
+        }
+    }
+
+    private var visibleBeers: [ExploreBeerOption] {
+        var values = Array(matchingBeers.prefix(visibleBeerCount))
+        if let selectedBeerKey,
+           let selected = matchingBeers.first(where: {
+               ExploreBeerFilterAccess.canonicalKey($0.id)
+                   == ExploreBeerFilterAccess.canonicalKey(selectedBeerKey)
+           }),
+           !values.contains(selected) {
+            values.insert(selected, at: 0)
+        }
+        return values
     }
 
     var body: some View {
@@ -497,6 +595,41 @@ private struct ExploreFilterSheet: View {
                     Toggle("Partner venues only", systemImage: "checkmark.seal.fill", isOn: $partnerOnly)
                 }
 
+                Section("Beer type") {
+                    Button {
+                        selectedBeerKey = nil
+                    } label: {
+                        filterRow(title: "All beers", selected: selectedBeerKey == nil)
+                    }
+
+                    ForEach(visibleBeers) { beer in
+                        let isLocked = !hasFullBeerAccess
+                            && !ExploreBeerFilterAccess.isFree(beer.id)
+                        Button {
+                            if isLocked {
+                                showingLockedBeerMessage = true
+                            } else {
+                                selectedBeerKey = ExploreBeerFilterAccess.canonicalKey(beer.id)
+                            }
+                        } label: {
+                            beerFilterRow(beer, locked: isLocked)
+                        }
+                        .accessibilityHint(
+                            isLocked
+                                ? "Available to contributors and paid members"
+                                : "Filters the map to venues with this beer"
+                        )
+                    }
+
+                    if matchingBeers.count > visibleBeerCount {
+                        Button {
+                            visibleBeerCount += Self.pageSize
+                        } label: {
+                            Label("Load more beers", systemImage: "chevron.down.circle")
+                        }
+                    }
+                }
+
                 Section("Area") {
                     Button {
                         selectedSuburb = nil
@@ -511,9 +644,17 @@ private struct ExploreFilterSheet: View {
                             filterRow(title: suburb, selected: selectedSuburb == suburb)
                         }
                     }
+
+                    if matchingSuburbs.count > visibleSuburbCount {
+                        Button {
+                            visibleSuburbCount += Self.pageSize
+                        } label: {
+                            Label("Load more areas", systemImage: "chevron.down.circle")
+                        }
+                    }
                 }
             }
-            .searchable(text: $suburbSearch, prompt: "Search suburbs")
+            .searchable(text: $filterSearch, prompt: "Search areas or beers")
             .navigationTitle("Filters")
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
@@ -525,15 +666,33 @@ private struct ExploreFilterSheet: View {
                     ) {
                         dismiss()
                     }
-                    Button("Reset filters", action: clear)
+                    Button("Reset filters", action: resetFilters)
                         .font(.subheadline.weight(.semibold))
                         .frame(minHeight: 44)
                 }
                 .padding()
                 .background(BeerMapTheme.background)
             }
+            .onChange(of: filterSearch) { _, _ in
+                visibleSuburbCount = Self.pageSize
+                visibleBeerCount = Self.pageSize
+            }
+            .alert("More beer filters", isPresented: $showingLockedBeerMessage) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(
+                    "Contributors and paid members can filter every beer. Free accounts can filter Guinness, Carlton Draught and Stone & Wood Pacific Ale."
+                )
+            }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private func resetFilters() {
+        clear()
+        filterSearch = ""
+        visibleSuburbCount = Self.pageSize
+        visibleBeerCount = Self.pageSize
     }
 
     private func filterRow(title: String, selected: Bool) -> some View {
@@ -542,6 +701,38 @@ private struct ExploreFilterSheet: View {
                 .foregroundStyle(.primary)
             Spacer()
             if selected {
+                Image(systemName: "checkmark")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(BeerMapTheme.primaryAction)
+                    .accessibilityHidden(true)
+            }
+        }
+        .contentShape(Rectangle())
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func beerFilterRow(_ beer: ExploreBeerOption, locked: Bool) -> some View {
+        let selected = selectedBeerKey.map {
+            ExploreBeerFilterAccess.canonicalKey($0)
+                == ExploreBeerFilterAccess.canonicalKey(beer.id)
+        } ?? false
+
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(beer.name)
+                    .foregroundStyle(.primary)
+                if locked {
+                    Text("Contributor or paid")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if locked {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            } else if selected {
                 Image(systemName: "checkmark")
                     .fontWeight(.semibold)
                     .foregroundStyle(BeerMapTheme.primaryAction)

@@ -31,7 +31,7 @@ Provider-specific setup lives in [docs/provider-configuration-runbook.md](/Users
 - Confirm Google Maps browser keys are HTTP-referrer restricted to localhost and the live beta domain.
 - Confirm a JavaScript/vector Google Maps Map ID exists in Google Maps Platform and is set as `GOOGLE_MAPS_MAP_ID`.
 - Confirm the server Google Places/geocoding key is not exposed in `/config.js` and has Places API plus Geocoding API enabled for venue imports and mission area lookup.
-- Confirm Supabase OAuth providers and redirect URLs are configured if quick login is enabled: `https://pintpath.au/auth/callback` and local `http://localhost:3000/auth/callback`.
+- Confirm Supabase Auth Site URL is `https://pintpath.au`, and redirect URLs include exact `http://localhost:3000/auth/callback`, `https://pintpath.au/auth/callback`, and `pintpath://auth-callback`.
 - Confirm Supabase Auth leaked-password protection is enabled before public signup.
 - Confirm Supabase Row Level Security policies from `supabase/migrations/20260512000000_auth_profiles_activity.sql` are reviewed before any direct browser writes are enabled.
 

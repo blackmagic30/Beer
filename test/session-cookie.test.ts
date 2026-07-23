@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { getSessionAuthorization, SESSION_COOKIE_NAME } from "../src/lib/session-cookie.js";
+import {
+  getSessionAuthorization,
+  hasSessionCredential,
+  SESSION_COOKIE_NAME,
+} from "../src/lib/session-cookie.js";
 
 function requestWithHeaders(headers: Record<string, string>) {
   const normalized = new Map(
@@ -37,5 +41,11 @@ describe("session authorization", () => {
     const request = requestWithHeaders({ authorization: "Basic cmVzdG9yZTp0ZXN0" });
 
     expect(getSessionAuthorization(request)).toBeUndefined();
+  });
+
+  it("detects supplied authorization and app-cookie credentials even when malformed", () => {
+    expect(hasSessionCredential(requestWithHeaders({ authorization: "Basic invalid" }))).toBe(true);
+    expect(hasSessionCredential(requestWithHeaders({ cookie: `${SESSION_COOKIE_NAME}=%E0%A4%A` }))).toBe(true);
+    expect(hasSessionCredential(requestWithHeaders({ cookie: "unrelated=value" }))).toBe(false);
   });
 });

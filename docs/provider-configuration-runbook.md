@@ -138,6 +138,7 @@ Required checks:
 - Supabase Auth redirect URLs include the app callback pages:
   - `http://localhost:3000/auth/callback`
   - `https://pintpath.au/auth/callback`
+  - `pintpath://auth-callback`
 - Google and Apple provider consoles include the Supabase provider callback URL derived from `SUPABASE_URL`:
   - `https://auth.pintpath.au/auth/v1/callback` when `SUPABASE_URL=https://auth.pintpath.au`
 - RLS policies from `supabase/migrations/` are applied and tested in staging.

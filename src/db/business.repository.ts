@@ -348,6 +348,8 @@ export interface LocalVenueLookup {
   isUserSubmittedVenue?: boolean;
 }
 
+const MAX_PUBLIC_VENUE_BEER_SUMMARY_IDS = 1000;
+
 export interface BarHappyHourBeer {
   beerId: string | null;
   beerName: string;
@@ -7451,6 +7453,95 @@ export class BusinessRepository {
       }),
       total: Number(countRow.count ?? 0),
     };
+  }
+
+  listPublicVenueBeerKeys(venueIds: readonly string[]): Map<string, string[]> {
+    const requestedVenueIds = Array.from(new Set(
+      venueIds
+        .map((venueId) => venueId.trim())
+        .filter(Boolean),
+    )).slice(0, MAX_PUBLIC_VENUE_BEER_SUMMARY_IDS);
+    const beerKeysByVenue = new Map<string, string[]>(
+      requestedVenueIds.map((venueId) => [venueId, []]),
+    );
+    if (requestedVenueIds.length === 0) {
+      return beerKeysByVenue;
+    }
+
+    // Resolve the requested page, canonical IDs, and aliases in one bounded
+    // statement. This avoids a venue-by-venue lookup while still including
+    // community records stored against a historical alias.
+    const rows = this.database.prepare(
+      `WITH requested AS (
+         SELECT DISTINCT trim(CAST(value AS TEXT)) AS requested_venue_id
+         FROM json_each(?)
+         WHERE type = 'text' AND trim(CAST(value AS TEXT)) != ''
+       ), requested_canonical AS (
+         SELECT
+           requested.requested_venue_id,
+           COALESCE(identity.canonical_venue_id, requested.requested_venue_id) AS canonical_venue_id
+         FROM requested
+         LEFT JOIN venue_identity_aliases identity
+           ON identity.alias_venue_id = requested.requested_venue_id
+       ), source_ids AS (
+         SELECT requested_venue_id, canonical_venue_id AS source_venue_id
+         FROM requested_canonical
+         UNION
+         SELECT requested.requested_venue_id, identity.alias_venue_id AS source_venue_id
+         FROM requested_canonical requested
+         INNER JOIN venue_identity_aliases identity
+           ON identity.canonical_venue_id = requested.canonical_venue_id
+       ), beer_sources AS (
+         SELECT
+           sources.requested_venue_id AS venue_id,
+           record.normalized_beer_id AS normalized_beer_id,
+           record.beer_name AS beer_name
+         FROM source_ids sources
+         INNER JOIN venue_price_records record
+           ON record.venue_id = sources.source_venue_id
+         WHERE trim(record.beer_name) != ''
+         UNION ALL
+         SELECT
+           sources.requested_venue_id AS venue_id,
+           beer.normalized_beer_id AS normalized_beer_id,
+           beer.beer_name AS beer_name
+         FROM source_ids sources
+         INNER JOIN venue_beers beer
+           ON beer.venue_id = sources.source_venue_id
+         INNER JOIN venue_profiles profile
+           ON profile.venue_id = beer.venue_id
+         WHERE profile.active = 1
+           AND beer.in_stock = 1
+           AND trim(beer.beer_name) != ''
+       )
+       SELECT venue_id, normalized_beer_id, beer_name
+       FROM beer_sources
+       ORDER BY venue_id ASC, beer_name COLLATE NOCASE ASC`,
+    ).all(JSON.stringify(requestedVenueIds)) as Array<{
+      venue_id: string;
+      normalized_beer_id: string | null;
+      beer_name: string;
+    }>;
+
+    const uniqueKeysByVenue = new Map<string, Set<string>>(
+      requestedVenueIds.map((venueId) => [venueId, new Set<string>()]),
+    );
+    for (const row of rows) {
+      const trackedBeer =
+        findTrackedBeerByName(row.normalized_beer_id) ??
+        findTrackedBeerByName(row.beer_name);
+      if (!trackedBeer) {
+        continue;
+      }
+      uniqueKeysByVenue.get(row.venue_id)?.add(trackedBeer.key);
+    }
+    for (const venueId of requestedVenueIds) {
+      beerKeysByVenue.set(
+        venueId,
+        Array.from(uniqueKeysByVenue.get(venueId) ?? []).sort((left, right) => left.localeCompare(right)),
+      );
+    }
+    return beerKeysByVenue;
   }
 
   listVenueManagerPriceRecords(

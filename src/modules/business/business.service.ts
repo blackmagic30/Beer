@@ -172,6 +172,7 @@ interface VenueRow {
   acceptsPintPathCodes?: boolean;
   venueTags?: string[];
   isUserSubmittedVenue?: boolean;
+  beerKeys?: string[];
 }
 
 interface MissionAreaLookup {
@@ -8464,14 +8465,39 @@ export class BusinessService {
     return CONTRIBUTION_POINTS.staleUpdate;
   }
 
-  async listVenues(query: string | undefined, limit: number): Promise<VenueRow[]> {
-    return (await this.listVenuesPage(query, limit, 0)).venues;
+  async listVenues(
+    query: string | undefined,
+    limit: number,
+    account: BusinessAccount | null = null,
+  ): Promise<VenueRow[]> {
+    return (await this.listVenuesPage(query, limit, 0, account)).venues;
   }
 
-  async listVenuesPage(query: string | undefined, limit: number, offset = 0): Promise<{
+  private attachVenueBeerKeys(venues: VenueRow[], hasFullAccess: boolean): VenueRow[] {
+    if (venues.length === 0) {
+      return venues;
+    }
+    const beerKeysByVenue = this.repository.listPublicVenueBeerKeys(
+      venues.map((venue) => venue.id),
+    );
+    return venues.map((venue) => ({
+      ...venue,
+      beerKeys: (beerKeysByVenue.get(venue.id) ?? []).filter(
+        (beerKey) => hasFullAccess || FREE_PREVIEW_BEER_KEYS.has(beerKey),
+      ),
+    }));
+  }
+
+  async listVenuesPage(
+    query: string | undefined,
+    limit: number,
+    offset = 0,
+    account: BusinessAccount | null = null,
+  ): Promise<{
     venues: VenueRow[];
     pagination: { total: number; limit: number; offset: number; hasMore: boolean };
   }> {
+    const hasFullAccess = isFullAccess(account, account ? this.isAdmin(account) : false);
     const normalizedLimit = Math.min(1000, Math.max(1, limit));
     const normalizedOffset = Math.max(0, offset);
     const deduplicateLocalVenues = (venues: VenueRow[]) => this.mergeVenueRows(
@@ -8492,7 +8518,7 @@ export class BusinessService {
       const directory = deduplicateLocalVenues(rawDirectory.venues);
       const venues = directory.slice(normalizedOffset, normalizedOffset + normalizedLimit);
       return {
-        venues,
+        venues: this.attachVenueBeerKeys(venues, hasFullAccess),
         pagination: {
           total: directory.length,
           limit: normalizedLimit,
@@ -8671,7 +8697,7 @@ export class BusinessService {
     const estimatedTotal = localDirectory.length + estimatedRemoteTotal;
     const hasMore = normalizedOffset + page.length < estimatedTotal;
     return {
-      venues: page,
+      venues: this.attachVenueBeerKeys(page, hasFullAccess),
       pagination: {
         total: estimatedTotal,
         limit: normalizedLimit,

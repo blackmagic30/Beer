@@ -133,7 +133,9 @@ final class BeerMapAppModel: ObservableObject {
         defer { setLoading(false) }
         do {
             async let configTask = api.getConfig()
-            async let venueTask = api.listVenues(query: search)
+            async let venueTask = withOptionalAuthenticatedSession { token in
+                try await self.api.listVenues(query: search, token: token)
+            }
             config = try await configTask
             async let missionTask = withOptionalAuthenticatedSession { token in
                 try await self.api.missions(token: token, limit: Self.missionFetchLimit)
@@ -1263,13 +1265,19 @@ final class BeerMapAppModel: ObservableObject {
     private func refreshExpiredSession() async -> Bool {
         guard
             let currentToken = sessionToken,
-            let config,
             let refreshToken = KeychainSessionStore.loadSupabaseRefreshToken()
         else { return false }
         do {
+            let activeConfig: PublicConfig
+            if let config {
+                activeConfig = config
+            } else {
+                activeConfig = try await api.getConfig()
+                config = activeConfig
+            }
             let result = try await api.refreshSupabaseSession(
                 refreshToken: refreshToken,
-                config: config,
+                config: activeConfig,
                 existingAppToken: currentToken
             )
             storeSession(result.authResult, resetAuthority: false)

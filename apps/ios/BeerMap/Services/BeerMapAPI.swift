@@ -430,7 +430,8 @@ struct BeerMapAPI {
     func listVenues(
         query: String? = nil,
         limit: Int = 250,
-        maximumResults: Int = 1_000
+        maximumResults: Int = 1_000,
+        token: String? = nil
     ) async throws -> [Venue] {
         let resultLimit = min(2_000, max(1, maximumResults))
         let pageSize = min(resultLimit, min(500, max(1, limit)))
@@ -445,7 +446,10 @@ struct BeerMapAPI {
                 URLQueryItem(name: "offset", value: "\(offset)")
             ]
             if let normalizedQuery { items.append(URLQueryItem(name: "q", value: normalizedQuery)) }
-            let response: VenueListResponse = try await get(path("/api/business/venues", queryItems: items))
+            let response: VenueListResponse = try await get(
+                path("/api/business/venues", queryItems: items),
+                token: token
+            )
             let remainingCapacity = resultLimit - venues.count
             venues.append(contentsOf: response.venues
                 .filter { seenIds.insert($0.id).inserted }

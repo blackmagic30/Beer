@@ -57,6 +57,7 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("uses Supabase Auth plus a scoped app-session exchange in production", () => {
+    const supabaseConfig = read("supabase/config.toml");
     for (const client of [iosAPI, androidAPI]) {
       expect(client).toContain("/auth/v1/token?grant_type=password");
       expect(client).toContain("/auth/v1/token?grant_type=refresh_token");
@@ -71,6 +72,25 @@ describe("native mobile remediation guardrails", () => {
     expect(androidAPI).toContain('put("consentSource", "android")');
     expect(iosModels).not.toContain("stripePublishableKey");
     expect(androidModels).not.toContain("stripePublishableKey");
+    expect(supabaseConfig).toContain('"https://pintpath.au/auth/callback"');
+    expect(supabaseConfig).toContain('"pintpath://auth-callback"');
+    expect(iosAuth).toContain('callbackURLScheme: "pintpath"');
+    expect(iosAuth).toContain(
+      'URLQueryItem(name: "redirect_to", value: "pintpath://auth-callback")',
+    );
+    expect(androidApp).toContain(
+      '.appendQueryParameter("redirect_to", "pintpath://auth-callback")',
+    );
+    expect(iosAuth).toContain('appendingPathComponent("auth/v1/authorize")');
+    expect(iosAuth).toContain("private static func canonicalSupabaseOrigin");
+    expect(iosAuth).toContain("components.user == nil");
+    expect(iosAuth).toContain("components.password == nil");
+    expect(iosAuth).toContain("components.query == nil");
+    expect(iosAuth).toContain("components.fragment == nil");
+    expect(iosAuth).toContain('components.path.isEmpty || components.path == "/"');
+    expect(iosAuth).toContain("Secure provider sign-in returned an incomplete session.");
+    expect(iosAuth).toContain("accessToken: accessToken");
+    expect(iosAuth).toContain("refreshToken: refreshToken");
   });
 
   it("reports the effective native Supabase configuration in debug settings", () => {
@@ -177,10 +197,32 @@ describe("native mobile remediation guardrails", () => {
     expect(iosRoot).not.toContain('Label("Bars"');
     expect(iosDiscover).not.toContain('.navigationTitle("Find")');
     expect(iosDiscover).toContain('.searchable(');
-    expect(iosDiscover).toContain('case map = "Map"');
-    expect(iosDiscover).toContain('case list = "List"');
+    expect(iosDiscover).not.toContain("ExploreDisplayMode");
+    expect(iosDiscover).not.toContain("venueList(");
+    expect(iosDiscover).not.toContain("Show venue list");
+    expect(iosDiscover).not.toContain("more in List");
+    expect(iosDiscover).toContain("venueMap(filteredVenues: results.filtered, mappedVenues: results.mapped)");
     expect(iosDiscover).toContain('FilterChip(');
     expect(iosDiscover).toContain('ExploreFilterSheet(');
+    expect(iosDiscover).toContain("private static let pageSize = 6");
+    expect(iosDiscover).toContain('Label("Load more areas"');
+    expect(iosDiscover).toContain('Label("Load more beers"');
+    expect(iosDiscover).toContain("matchingSuburbs.prefix(visibleSuburbCount)");
+    expect(iosDiscover).toContain("matchingBeers.prefix(visibleBeerCount)");
+    expect(iosDiscover).toContain("visibleSuburbCount = Self.pageSize");
+    expect(iosDiscover).toContain("visibleBeerCount = Self.pageSize");
+    expect(iosDiscover).toContain('ExploreBeerOption(id: "guinness"');
+    expect(iosDiscover).toContain('ExploreBeerOption(id: "carlton_draft"');
+    expect(iosDiscover).toContain('ExploreBeerOption(id: "stone_and_wood_pacific_ale"');
+    expect(iosDiscover).toContain("model.accountDashboard?.access?.hasFullAccess == true");
+    expect(iosDiscover).toContain("venueBeerKeys: venue.beerKeys");
+    expect(iosDiscover).toContain('Image(systemName: "lock.fill")');
+    expect(iosDiscover).toContain('Text("Contributor or paid")');
+    expect(iosDiscover).toContain("assetImage: BeerMapAsset.beerPint");
+    expect(iosModels).toContain("let beerKeys: [String]?");
+    expect(iosAPI).toMatch(/func listVenues\([\s\S]*token: String\? = nil/);
+    expect(iosAPI).toMatch(/\/api\/business\/venues[\s\S]*token: token/);
+    expect(iosApp).toMatch(/api\.listVenues\(query: search, token: token\)/);
     expect(iosDiscover).toContain('didFitInitialRegion');
     expect(iosDiscover).toContain('mapView.isRotateEnabled = false');
     expect(iosDiscover).toContain('manager.desiredAccuracy = kCLLocationAccuracyHundredMeters');
@@ -195,7 +237,19 @@ describe("native mobile remediation guardrails", () => {
     const iosContribute = read("apps/ios/BeerMap/Features/ContributeView.swift");
     const iosReusable = read("apps/ios/BeerMap/Components/ReusableViews.swift");
     const iosVenuePortal = read("apps/ios/BeerMap/Features/VenuePortalView.swift");
-    const beerPintAsset = read("apps/ios/BeerMap/Assets.xcassets/BeerPint.imageset/beer-pint.svg");
+    const servingAssets = {
+      pint: read("apps/ios/BeerMap/Assets.xcassets/BeerPint.imageset/beer-pint.svg"),
+      pot: read("apps/ios/BeerMap/Assets.xcassets/BeerPot.imageset/beer-pot.svg"),
+      schooner: read(
+        "apps/ios/BeerMap/Assets.xcassets/BeerSchooner.imageset/beer-schooner.svg",
+      ),
+      jug: read("apps/ios/BeerMap/Assets.xcassets/BeerJug.imageset/beer-jug.svg"),
+    };
+    const venuePicker = sourceSection(
+      iosContribute,
+      "private struct VenueSelectionSheet",
+      "@MainActor\nprivate final class VenuePickerLocationProvider",
+    );
     const info = read("apps/ios/BeerMap/Info.plist");
     expect(iosContribute).toContain('title: "Quick price"');
     expect(iosContribute).toContain('VenueSelectionSheet(');
@@ -212,11 +266,32 @@ describe("native mobile remediation guardrails", () => {
     expect(iosContribute).toContain('UIImagePickerController.isSourceTypeAvailable(.camera)');
     expect(iosContribute).toContain('confirmedCustomBeerName');
     expect(iosContribute).toContain('let recentVenue = recentVenue');
-    expect(iosContribute).toContain('let visibleVenues = filteredVenues(excluding: recentVenue?.id)');
-    expect(iosContribute.match(/filteredVenues/g)).toHaveLength(2);
-    expect(beerPintAsset).toContain('<svg width="24" height="24"');
+    expect(venuePicker).toContain("let venuePageSize = 10");
+    expect(venuePicker).toContain("let allMatches = matchingVenues(excluding: recentVenue?.id)");
+    expect(venuePicker).toContain("Array(allMatches.prefix(visibleVenueLimit))");
+    expect(venuePicker).toContain('localizedStandardContains(query)');
+    expect(venuePicker.indexOf("localizedStandardContains(query)")).toBeLessThan(
+      venuePicker.indexOf("allMatches.prefix(visibleVenueLimit)"),
+    );
+    expect(venuePicker).toContain("visibleVenueLimit + venuePageSize");
+    expect(venuePicker).toContain(".onChange(of: searchText)");
+    expect(venuePicker).toContain("locationProvider.requestOnce()");
+    expect(venuePicker).toContain("origin.distance(from: venueLocation)");
+    expect(iosContribute).toContain("manager.requestLocation()");
+    expect(iosContribute).not.toContain("manager.startUpdatingLocation()");
+    expect(iosContribute).toMatch(/case "pint": return BeerMapAsset\.beerPint/);
+    expect(iosContribute).toMatch(/case "pot": return BeerMapAsset\.beerPot/);
+    expect(iosContribute).toMatch(/case "schooner": return BeerMapAsset\.beerSchooner/);
+    expect(iosContribute).toMatch(/case "jug": return BeerMapAsset\.beerJug/);
+    expect(iosContribute).not.toContain('["pint", "pot", "schooner", "jug"].contains(serving)');
+    expect(new Set(Object.values(servingAssets)).size).toBe(4);
+    for (const asset of Object.values(servingAssets)) {
+      expect(asset).toContain('<svg width="24" height="24"');
+    }
     expect([iosContribute, iosDiscover, iosReusable, iosVenuePortal].join("\n")).not.toContain('"mug.fill"');
-    expect([iosContribute, iosDiscover, iosReusable, iosVenuePortal].join("\n")).toContain('BeerMapAsset.beerPint');
+    for (const assetName of ["beerPint", "beerPot", "beerSchooner", "beerJug"]) {
+      expect([iosContribute, iosReusable].join("\n")).toContain(`BeerMapAsset.${assetName}`);
+    }
     expect(info).toContain('<key>NSCameraUsageDescription</key>');
     expect(iosModels).toContain('let statusCopy: String?');
     expect(iosModels).toContain('let ocrStatus: String?');
