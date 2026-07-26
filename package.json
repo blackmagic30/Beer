@@ -54,18 +54,18 @@
     "check": "npm run build && npm run test && npm run security:scan && npm run deployment:guard:check"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.103.0",
+    "@supabase/supabase-js": "^2.110.8",
     "@types/qrcode": "^1.5.6",
     "better-sqlite3": "^12.8.0",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
-    "dotenv": "^17.4.0",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "helmet": "^8.1.0",
-    "ioredis": "^5.10.1",
-    "openai": "^6.33.0",
+    "helmet": "^8.3.0",
+    "ioredis": "^5.11.1",
+    "openai": "^6.49.0",
     "qrcode": "^1.5.4",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
