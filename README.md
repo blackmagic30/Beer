@@ -238,7 +238,7 @@ GOOGLE_MAPS_API_KEY=your_google_maps_browser_key
 GOOGLE_MAPS_MAP_ID=your_google_vector_map_id
 GOOGLE_PLACES_API_KEY=your_server_side_google_places_api_key
 OPENAI_API_KEY=your_openai_api_key_for_menu_ocr
-OPENAI_MENU_OCR_MODEL=gpt-5.5
+OPENAI_MENU_OCR_MODEL=gpt-5.6-sol
 OPENAI_MENU_OCR_FALLBACK_MODEL=gpt-4.1
 OPENAI_MENU_OCR_REVIEW_PASS=true
 REPORT_TIMEZONE=Australia/Melbourne
@@ -321,7 +321,7 @@ GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 GOOGLE_MAPS_MAP_ID=your_google_vector_map_id
 GOOGLE_PLACES_API_KEY=your_server_side_google_places_api_key
 OPENAI_API_KEY=your_openai_api_key_for_menu_ocr
-OPENAI_MENU_OCR_MODEL=gpt-5.5
+OPENAI_MENU_OCR_MODEL=gpt-5.6-sol
 OPENAI_MENU_OCR_FALLBACK_MODEL=gpt-4.1
 OPENAI_MENU_OCR_REVIEW_PASS=true
 ADMIN_EMAILS=you@example.com
@@ -380,7 +380,7 @@ What each one does:
 - `GOOGLE_MAPS_MAP_ID`: production-required JavaScript/vector Google Maps Map ID for branded map styling and AdvancedMarkerElement support. Local development can fall back to `DEMO_MAP_ID`.
 - `GOOGLE_PLACES_API_KEY`: server-side key used by venue imports and mission area geocoding. Enable Places API and Geocoding API on this key. A development fallback may use `GOOGLE_MAPS_API_KEY`, but production startup requires this dedicated value.
 - `OPENAI_API_KEY`: server-only key used to extract structured beer rows from submitted menu photos. Photo evidence is never exposed through browser configuration.
-- `OPENAI_MENU_OCR_MODEL`: primary vision model for menu-photo extraction. Defaults to `gpt-5.5`.
+- `OPENAI_MENU_OCR_MODEL`: primary vision model for menu-photo extraction. Defaults to `gpt-5.6-sol`.
 - `OPENAI_MENU_OCR_FALLBACK_MODEL`: model used only if the primary OCR request fails. Defaults to `gpt-4.1`.
 - `OPENAI_MENU_OCR_REVIEW_PASS`: when `true`, asks the vision model to review its first structured extraction before deterministic beer, food/noise, package-size, and catalogue checks run.
 - `ADMIN_EMAILS`: comma-separated emails that become admin accounts on signup. In production this can be left blank while the official ABN/admin email is pending; the public site will still boot, but admin routes will return `403` until the allowlist is configured.

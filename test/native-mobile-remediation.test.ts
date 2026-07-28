@@ -201,8 +201,7 @@ describe("native mobile remediation guardrails", () => {
     expect(iosContribute).toContain('sourcePhotoDataUrl: sourcePhotoDataURL');
     expect(iosContribute).toContain('Enter a price from $0.01 to $250');
     expect(iosContribute).not.toContain('selectedVenueId = model.venues.first');
-    expect(iosContribute).not.toContain('kCGImageSourceThumbnailMaxPixelSize: 2_200');
-    expect(iosContribute).toContain('kCGImageSourceThumbnailMaxPixelSize: 1_800');
+    expect(iosContribute).toContain('kCGImageSourceThumbnailMaxPixelSize: 2_800');
     expect(iosContribute).toContain('applyPendingVenueSelection()');
     expect(iosContribute).toContain('takePendingContributionVenueId()');
     expect(iosContribute).toContain('CameraPhotoPicker { image in');
@@ -211,6 +210,55 @@ describe("native mobile remediation guardrails", () => {
     expect(info).toContain('<key>NSCameraUsageDescription</key>');
     expect(iosModels).toContain('let statusCopy: String?');
     expect(iosModels).toContain('let ocrStatus: String?');
+  });
+
+  it("makes Android menu capture durable enough for OCR and explicit about camera, venue, and result state", () => {
+    const manifest = read("apps/android/app/src/main/AndroidManifest.xml");
+    const filePaths = read("apps/android/app/src/main/res/xml/file_paths.xml");
+    const photoApi = sourceSection(
+      androidAPI,
+      "suspend fun submitPhotoUpload(",
+      "suspend fun submitHappyHourUpdate(",
+    );
+    const photoCard = sourceSection(
+      androidApp,
+      "private fun PhotoUploadCard(",
+      "private fun LocationProofCard(",
+    );
+    const venueSearch = sourceSection(
+      androidApp,
+      "private fun SearchablePhotoVenueChoice(",
+      "private fun VenueChoiceChips(",
+    );
+
+    expect(photoApi).toContain("readTimeoutMs = 300_000");
+    expect(androidAPI).toMatch(
+      /private suspend fun request\([\s\S]*readTimeoutMs: Int = 20_000[\s\S]*readTimeout = readTimeoutMs/,
+    );
+    expect(androidApp).toContain('result.stringOrNull("statusCopy")');
+    expect(androidApp).not.toContain("selectedVenueId = state.venues.firstOrNull()?.id.orEmpty()");
+    expect(androidApp).toContain("var contributionVenues by mutableStateOf<List<Venue>>(emptyList())");
+    expect(androidApp).toContain("if (search.isNullOrBlank()) contributionVenues = loadedVenues");
+    expect(androidApp).toContain("val venue = contributionVenues.firstOrNull { it.id == venueId }");
+    expect(photoCard).toContain("state.contributionVenues");
+    expect(photoCard).toContain("SearchablePhotoVenueChoice");
+    expect(venueSearch).toContain("venues.asSequence()");
+    expect(venueSearch).toContain("venue.suburb");
+    expect(venueSearch).toContain("venue.address");
+    expect(venueSearch.indexOf(".filter { venue ->")).toBeLessThan(venueSearch.indexOf(".take(12)"));
+    expect(androidApp).toContain("ActivityResultContracts.TakePicture()");
+    expect(androidApp).toContain("FileProvider.getUriForFile");
+    expect(androidApp).toContain("pendingCameraPhotoPath by rememberSaveable");
+    expect(photoCard).toContain('SecondaryAction("Take menu photo"');
+    expect(androidApp).toContain("decodeSourcePhotoBitmap(cacheFile, sampleSize, 2_800)");
+    expect(androidApp).toContain("decoder.setTargetSize(");
+    expect(androidApp).toContain("OCR will read the beer rows and pint prices");
+    expect(manifest).toContain('android:name="androidx.core.content.FileProvider"');
+    expect(manifest).toContain('android:authorities="${applicationId}.fileprovider"');
+    expect(manifest).not.toContain("android.permission.CAMERA");
+    expect(filePaths).toContain('name="camera_source_images"');
+    expect(filePaths).toContain('path="camera/"');
+    expect(filePaths).not.toContain('path="."');
   });
 
   it("requires legal consent at signup or after a verified policy-version 403, never on routine login", () => {
@@ -503,6 +551,9 @@ describe("native mobile remediation guardrails", () => {
     expect(iosContribute).toContain("Task.detached(priority: .userInitiated)");
     expect(iosContribute).toContain("CGImageSourceCreateThumbnailAtIndex");
     expect(iosContribute).toContain("sourcePhotoPreparationTask?.cancel()");
+    expect(iosContribute).toContain("withCompressionQuality: 0.84");
+    expect(iosAPI).toContain("configuration.timeoutIntervalForResource = 330");
+    expect(iosAPI).toContain('timeoutInterval: submission.submissionType == "photo_upload" ? 300 : nil');
     expect(iosContribute).toMatch(/private func prepareSourcePhoto[\s\S]*base64EncodedString\(\)/);
     expect(iosContribute).not.toContain("sourcePhotoData.base64EncodedString()");
 

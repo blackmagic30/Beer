@@ -80,6 +80,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -91,6 +92,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.annotation.RequiresApi
 import androidx.exifinterface.media.ExifInterface
 import au.pintpath.beermap.BuildConfig
@@ -168,6 +170,8 @@ class BeerMapState(context: Context) {
     var token by mutableStateOf(sessions.loadToken())
     var config by mutableStateOf(JSONObject())
     var venues by mutableStateOf<List<Venue>>(emptyList())
+    var contributionVenues by mutableStateOf<List<Venue>>(emptyList())
+        private set
     var missions by mutableStateOf<List<Mission>>(emptyList())
     var accountDashboard by mutableStateOf<AccountDashboard?>(null)
     var accountSessions by mutableStateOf<List<AccountSession>>(emptyList())
@@ -228,7 +232,9 @@ class BeerMapState(context: Context) {
 
     suspend fun loadHome(search: String? = null) = busy {
         config = api.config()
-        venues = api.venues(search)
+        val loadedVenues = api.venues(search)
+        venues = loadedVenues
+        if (search.isNullOrBlank()) contributionVenues = loadedVenues
         missions = api.missions(token)
         track("map_viewed")
     }
@@ -584,9 +590,13 @@ class BeerMapState(context: Context) {
 
     suspend fun submitPhotoUpload(clientSubmissionId: String, missionId: String?, venueId: String, sourcePhotoDataUrl: String, notes: String, uploadLocation: UploadLocation?) = mutate {
         val current = token ?: error("Sign in before uploading source evidence.")
-        val venue = venues.firstOrNull { it.id == venueId } ?: error("Choose a venue before uploading.")
-        api.submitPhotoUpload(clientSubmissionId, missionId, venue, sourcePhotoDataUrl, notes.blankToNull(), uploadLocation, current)
-        message = "Source photo sent for review."
+        val venue = contributionVenues.firstOrNull { it.id == venueId } ?: error("Choose a venue before uploading.")
+        val result = api.submitPhotoUpload(clientSubmissionId, missionId, venue, sourcePhotoDataUrl, notes.blankToNull(), uploadLocation, current)
+        message = result.stringOrNull("statusCopy") ?: when (result.stringOrNull("ocrStatus")) {
+            "processed" -> "Menu scan complete and sent for review."
+            "failed", "manual_review_required" -> "Source photo sent for manual review."
+            else -> "Source photo sent for review."
+        }
         refreshAccount()
     }
 
@@ -1250,8 +1260,12 @@ private fun ContributeScreen(state: BeerMapState, scope: CoroutineScope) {
     var serving by remember { mutableStateOf("pint") }
     var notes by remember { mutableStateOf("") }
     var sourcePhotoDataUrl by remember { mutableStateOf<String?>(null) }
-    var sourcePhotoStatus by remember { mutableStateOf("Choose a clear menu, receipt, tap-list, or happy-hour board photo.") }
+    var sourcePhotoStatus by remember {
+        mutableStateOf("Fill the frame, hold the camera square, and avoid glare. OCR will read the beer rows and pint prices.")
+    }
     var sourcePhotoPreparationJob by remember { mutableStateOf<Job?>(null) }
+    var pendingCameraPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingCameraPhotoUri by rememberSaveable { mutableStateOf<String?>(null) }
     var happyOffer by remember { mutableStateOf("") }
     var happyNotes by remember { mutableStateOf("") }
     var happyStart by remember { mutableStateOf("16:00") }
@@ -1291,29 +1305,73 @@ private fun ContributeScreen(state: BeerMapState, scope: CoroutineScope) {
         if (granted) scope.launch { fetchLocation() }
         else locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
     }
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) {
-            sourcePhotoPreparationJob?.cancel()
-            sourcePhotoDataUrl = null
-            sourcePhotoStatus = "Preparing photo for review..."
-            sourcePhotoPreparationJob = scope.launch {
-                runCatching {
-                    sourcePhotoDataUrlFromUri(context, uri)
-                }.onSuccess {
-                    sourcePhotoDataUrl = it
-                    sourcePhotoStatus = "Photo ready for private reviewer evidence."
-                }.onFailure {
-                    if (it is kotlinx.coroutines.CancellationException) return@onFailure
-                    sourcePhotoDataUrl = null
-                    sourcePhotoStatus = it.message ?: "Could not prepare this photo."
-                }
+    val prepareSourcePhoto: (Uri, (() -> Unit)?) -> Unit = { uri, onComplete ->
+        sourcePhotoPreparationJob?.cancel()
+        sourcePhotoDataUrl = null
+        sourcePhotoStatus = "Preparing photo for review..."
+        sourcePhotoPreparationJob = scope.launch {
+            try {
+                sourcePhotoDataUrl = sourcePhotoDataUrlFromUri(context, uri)
+                sourcePhotoStatus = "Photo ready. OCR will read the menu when you submit it."
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                sourcePhotoDataUrl = null
+                sourcePhotoStatus = error.message ?: "Could not prepare this photo."
+            } finally {
+                onComplete?.invoke()
             }
         }
     }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) prepareSourcePhoto(uri, null)
+    }
+    val cameraPhotoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
+        val capturedFile = pendingCameraPhotoPath?.let { File(it) }
+        val capturedUri = pendingCameraPhotoUri?.let { Uri.parse(it) }
+        pendingCameraPhotoPath = null
+        pendingCameraPhotoUri = null
+        if (captured && capturedFile != null && capturedUri != null) {
+            prepareSourcePhoto(capturedUri) {
+                capturedFile.delete()
+            }
+        } else {
+            capturedFile?.delete()
+            if (sourcePhotoDataUrl == null) {
+                sourcePhotoStatus = "Camera capture cancelled. Take a menu photo or choose an existing image."
+            }
+        }
+    }
+    val takeMenuPhoto: () -> Unit = {
+        pendingCameraPhotoPath?.let { File(it).delete() }
+        pendingCameraPhotoPath = null
+        pendingCameraPhotoUri = null
+        runCatching {
+            val cameraDirectory = File(context.cacheDir, "camera")
+            check(cameraDirectory.isDirectory || cameraDirectory.mkdirs()) {
+                "Could not create private camera storage."
+            }
+            val photoFile = File.createTempFile("pint-path-menu-", ".jpg", cameraDirectory)
+            pendingCameraPhotoPath = photoFile.absolutePath
+            val photoUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                photoFile
+            )
+            pendingCameraPhotoUri = photoUri.toString()
+            cameraPhotoLauncher.launch(photoUri)
+        }.onFailure { error ->
+            pendingCameraPhotoPath?.let { File(it).delete() }
+            pendingCameraPhotoPath = null
+            pendingCameraPhotoUri = null
+            sourcePhotoStatus = "Could not open the camera. ${error.message ?: "Choose an existing photo instead."}"
+        }
+    }
 
-    LaunchedEffect(state.venues) {
-        if (selectedVenueId.isBlank() || state.venues.none { it.id == selectedVenueId }) {
-            selectedVenueId = state.venues.firstOrNull()?.id.orEmpty()
+    LaunchedEffect(mode, state.venues, state.contributionVenues) {
+        val availableVenues = if (mode == "Photo") state.contributionVenues else state.venues
+        if (selectedVenueId.isNotBlank() && availableVenues.none { it.id == selectedVenueId }) {
+            selectedVenueId = ""
         }
     }
 
@@ -1362,12 +1420,13 @@ private fun ContributeScreen(state: BeerMapState, scope: CoroutineScope) {
                     sourcePhotoStatus = sourcePhotoStatus,
                     notes = notes,
                     onNotes = { notes = it },
+                    onTakePhoto = takeMenuPhoto,
                     onChoosePhoto = {
                         photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
                     onSubmitted = {
                         sourcePhotoDataUrl = null
-                        sourcePhotoStatus = "Choose a clear menu, receipt, tap-list, or happy-hour board photo."
+                        sourcePhotoStatus = "Fill the frame, hold the camera square, and avoid glare. OCR will read the beer rows and pint prices."
                         notes = ""
                         photoSubmissionId = "android-photo-${UUID.randomUUID()}"
                         acceptedMissionId = null
@@ -1479,6 +1538,7 @@ private fun PhotoUploadCard(
     sourcePhotoStatus: String,
     notes: String,
     onNotes: (String) -> Unit,
+    onTakePhoto: () -> Unit,
     onChoosePhoto: () -> Unit,
     onSubmitted: () -> Unit
 ) {
@@ -1486,11 +1546,14 @@ private fun PhotoUploadCard(
         SectionHeader(
             eyebrow = "Source photo",
             title = "Upload a menu or board",
-            subtitle = if (state.signedIn) "The app sends one private reviewer image." else "Sign in first so the source upload can be reviewed.",
+            subtitle = if (state.signedIn) "Take a clear photo. OCR reads beer rows and pint prices automatically, then a reviewer confirms them." else "Sign in first so the menu can be read and reviewed.",
             icon = Icons.Filled.PhotoCamera
         )
-        VenueChoiceChips(state.venues, selectedVenueId, onVenueSelected)
-        SecondaryAction(if (sourcePhotoDataUrl == null) "Choose photo" else "Replace photo", icon = Icons.Filled.PhotoCamera) {
+        SearchablePhotoVenueChoice(state.contributionVenues, selectedVenueId, onVenueSelected)
+        SecondaryAction("Take menu photo", icon = Icons.Filled.PhotoCamera) {
+            onTakePhoto()
+        }
+        SecondaryAction(if (sourcePhotoDataUrl == null) "Choose existing photo" else "Replace with existing photo", icon = Icons.Filled.PhotoCamera) {
             onChoosePhoto()
         }
         StatusBanner(sourcePhotoStatus, isError = sourcePhotoStatus.startsWith("Could not"), icon = if (sourcePhotoDataUrl == null) Icons.Filled.PhotoCamera else Icons.Filled.CheckCircle)
@@ -1740,6 +1803,76 @@ private fun MissionsCard(
                     }
                 }
                 HorizontalDivider()
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchablePhotoVenueChoice(
+    venues: List<Venue>,
+    selectedVenueId: String,
+    onSelected: (String) -> Unit
+) {
+    var searchText by remember { mutableStateOf("") }
+    if (venues.isEmpty()) {
+        StatusBanner("No venues loaded yet. Refresh discovery before sending venue-specific updates.", isError = true)
+        return
+    }
+
+    val selectedVenue = venues.firstOrNull { it.id == selectedVenueId }
+    val normalizedSearch = searchText.trim()
+    val matches = remember(venues, normalizedSearch) {
+        if (normalizedSearch.isEmpty()) {
+            emptyList()
+        } else {
+            venues.asSequence()
+                .filter { venue ->
+                    listOfNotNull(venue.name, venue.suburb, venue.address).any {
+                        it.contains(normalizedSearch, ignoreCase = true)
+                    }
+                }
+                .sortedBy { if (it.name.startsWith(normalizedSearch, ignoreCase = true)) 0 else 1 }
+                .take(12)
+                .toList()
+        }
+    }
+
+    OutlinedTextField(
+        value = searchText,
+        onValueChange = { searchText = it },
+        label = { Text("Search venue") },
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+    if (selectedVenue != null) {
+        StatusBanner(
+            "Selected venue: ${selectedVenue.name}${selectedVenue.location.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}",
+            icon = Icons.Filled.CheckCircle
+        )
+    } else {
+        StatusBanner("Search by venue, suburb, or address, then choose the exact venue before scanning.")
+    }
+
+    when {
+        normalizedSearch.isEmpty() -> Unit
+        matches.isEmpty() -> Text(
+            "No matching venue found. Try its suburb or street address.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        else -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(matches, key = { it.id }) { venue ->
+                AssistChip(
+                    onClick = {
+                        onSelected(venue.id)
+                        searchText = venue.name
+                    },
+                    label = {
+                        Text(if (venue.id == selectedVenueId) "${venue.name} (selected)" else venue.name)
+                    }
+                )
             }
         }
     }
@@ -3019,13 +3152,13 @@ private suspend fun sourcePhotoDataUrlFromUri(context: Context, uri: Uri): Strin
             bounds.outWidth in 1..100_000 && bounds.outHeight in 1..100_000
         ) { "Try a JPEG, PNG, HEIC, or WebP photo with valid image dimensions." }
         var sampleSize = 1
-        while (bounds.outWidth / sampleSize > 2_200 || bounds.outHeight / sampleSize > 2_200) {
+        while (bounds.outWidth / sampleSize > 2_800 || bounds.outHeight / sampleSize > 2_800) {
             sampleSize *= 2
         }
 
         currentCoroutineContext().ensureActive()
-        val bitmap = decodeSourcePhotoBitmap(cacheFile, sampleSize)
-        require(bitmap.byteCount <= 24 * 1024 * 1024) { "This image is too large to prepare safely." }
+        val bitmap = decodeSourcePhotoBitmap(cacheFile, sampleSize, 2_800)
+        require(bitmap.byteCount <= 36 * 1024 * 1024) { "This image is too large to prepare safely." }
         val uploadBytes = try {
             ByteArrayOutputStream().use { output ->
                 require(bitmap.compress(Bitmap.CompressFormat.JPEG, 84, output)) {
@@ -3045,9 +3178,9 @@ private suspend fun sourcePhotoDataUrlFromUri(context: Context, uri: Uri): Strin
     }
 }
 
-private fun decodeSourcePhotoBitmap(file: File, sampleSize: Int): Bitmap {
+private fun decodeSourcePhotoBitmap(file: File, sampleSize: Int, maximumEdge: Int): Bitmap {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-        decodeSourcePhotoWithImageDecoder(file, sampleSize)
+        decodeSourcePhotoWithImageDecoder(file, maximumEdge)
     } else {
         val decoded = BitmapFactory.decodeFile(
             file.absolutePath,
@@ -3058,12 +3191,19 @@ private fun decodeSourcePhotoBitmap(file: File, sampleSize: Int): Bitmap {
 }
 
 @RequiresApi(Build.VERSION_CODES.P)
-private fun decodeSourcePhotoWithImageDecoder(file: File, sampleSize: Int): Bitmap {
+private fun decodeSourcePhotoWithImageDecoder(file: File, maximumEdge: Int): Bitmap {
     val source = ImageDecoder.createSource(file)
-    return ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+    return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
         // ImageDecoder applies encoded EXIF orientation before the upload JPEG is made.
         decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-        decoder.setTargetSampleSize(sampleSize)
+        val longestSide = maxOf(info.size.width, info.size.height)
+        if (longestSide > maximumEdge) {
+            val scale = maximumEdge.toDouble() / longestSide
+            decoder.setTargetSize(
+                (info.size.width * scale).toInt().coerceAtLeast(1),
+                (info.size.height * scale).toInt().coerceAtLeast(1)
+            )
+        }
     }
 }
 

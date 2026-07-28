@@ -184,8 +184,8 @@
           </label>
           <div id="missionContext" class="notice missionContext is-hidden"></div>
           <label id="sourcePhotoField" class="field">Optional source photo/menu/receipt/happy-hour board
-            <input id="sourcePhoto" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,application/pdf,.pdf" multiple />
-            <span id="sourcePhotoHint" class="fieldHint" role="status" aria-live="polite">Evidence is optional for data-entry modes and required for Photo/upload source. Upload up to 6 JPEG, PNG, or WebP images (25MB maximum each), or one flat PDF menu (8MB maximum). Convert HEIC/HEIF photos to JPEG first because web-browser decoding is inconsistent.</span>
+            <input id="sourcePhoto" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,application/pdf,.pdf" capture="environment" multiple />
+            <span id="sourcePhotoHint" class="fieldHint" role="status" aria-live="polite">Evidence is optional for data-entry modes and required for Photo/upload source. Upload up to 6 JPEG, PNG, or WebP images (25MB maximum each), or one flat PDF menu (8MB maximum). For the best menu reading, fill the frame, hold the camera square to the menu, avoid glare, and add overlapping close-ups when the print is small. Convert HEIC/HEIF photos to JPEG first because web-browser decoding is inconsistent.</span>
             <div id="sourcePhotoList" class="sourcePhotoList" aria-live="polite" hidden></div>
           </label>
           <div id="happyHourSection" class="submitModeBlock is-hidden">
@@ -229,7 +229,7 @@
         </section>
 
         <div class="submitActionDock">
-          <button class="button button--primary submitPrimaryAction" type="submit">Submit for review</button>
+          <button id="submitButton" class="button button--primary submitPrimaryAction" type="submit">Submit for review</button>
           <div id="status" class="notice submitReviewNotice" hidden></div>
         </div>
       </form>
@@ -254,14 +254,16 @@
     let selectedNewVenueGooglePlace = null;
     let submittedNewVenueRequestPlaceId = null;
     let isSubmittingNewVenueRequest = false;
+    let isSubmissionInFlight = false;
     let activeSubmissionAccountId = null;
+    const submitButton = document.getElementById("submitButton");
     const UPLOAD_LOCATION_STORAGE_KEY = "pintPathUploadLocationProof";
     const FIELD_DRAFT_STORAGE_KEY = "pintPathSubmitDraft";
     const SUBMISSION_QUEUE_STORAGE_KEY = "pintPathQueuedSubmissions";
     const SUBMISSION_QUEUE_DB_NAME = "pintPathSubmissionQueue";
     const SUBMISSION_QUEUE_DB_VERSION = 1;
     const SUBMISSION_QUEUE_STORE_NAME = "queuedSubmissions";
-    const SOURCE_PHOTO_MAX_EDGE = 2200;
+    const SOURCE_PHOTO_MAX_EDGE = 2800;
     const SOURCE_PHOTO_MAX_FILES = 6;
     const SOURCE_PHOTO_MAX_RAW_BYTES = 25 * 1024 * 1024;
     const SOURCE_PDF_MAX_BYTES = 8 * 1024 * 1024;
@@ -271,7 +273,7 @@
     const SOURCE_EVIDENCE_COMBINED_MAX_BYTES = 11 * 1024 * 1024;
     const SOURCE_EVIDENCE_ENCODED_MAX_CHARS = 15 * 1024 * 1024;
     const SOURCE_PHOTO_OUTPUT_TYPE = "image/jpeg";
-    const SOURCE_PHOTO_OUTPUT_QUALITY = 0.86;
+    const SOURCE_PHOTO_OUTPUT_QUALITY = 0.88;
     const UPLOAD_LOCATION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
     const FIELD_DRAFT_MAX_AGE_MS = 18 * 60 * 60 * 1000;
     const SUBMISSION_QUEUE_MAX_ITEMS = 20;
@@ -2187,7 +2189,7 @@
       return MelbBeerBusiness.apiFetch("/api/business/submissions", {
         method: "POST",
         body: JSON.stringify(payload),
-        timeoutMs: 120_000,
+        timeoutMs: 300_000,
       });
     }
 
@@ -2339,7 +2341,10 @@
       const initialVenueName = params.get("venueName") || "";
       const missionId = params.get("missionId") || "";
       const missionReason = params.get("missionReason") || "";
-      const initialSubmissionType = params.get("type");
+      const requestedSubmissionType = params.get("type");
+      const initialSubmissionType = requestedSubmissionType === "menu_photo"
+        ? "photo_upload"
+        : requestedSubmissionType;
       seedTrackedBeerLookup();
       void renderLegacyQueueWarning();
       populateTrackedBeerSuggestions();
@@ -2572,6 +2577,9 @@
 
       submissionForm.addEventListener("submit", async (event) => {
         event.preventDefault();
+        if (isSubmissionInFlight) {
+          return;
+        }
         if (!MelbBeerBusiness.hasAuthenticatedSessionHint()) {
           MelbBeerBusiness.setStatus(statusEl, "Log in before submitting venue data.", true);
           loginRequiredPanel.classList.remove("is-hidden");
@@ -2579,6 +2587,10 @@
           return;
         }
 
+        isSubmissionInFlight = true;
+        submitButton.disabled = true;
+        submitButton.setAttribute("aria-busy", "true");
+        submitButton.textContent = "Submitting…";
         let submissionPayload = null;
         try {
           const formData = new FormData(submissionForm);
@@ -2639,6 +2651,13 @@
             return;
           }
 
+          if (submissionTypeSelect.value === "photo_upload") {
+            submitButton.textContent = "Reading menu…";
+            MelbBeerBusiness.setStatus(
+              statusEl,
+              "Uploading the photo and reading every menu section; detailed menus can take a couple of minutes.",
+            );
+          }
           const result = await sendSubmissionPayload(submissionPayload);
           MelbBeerBusiness.setStatus(statusEl, result.statusCopy || `${result.submission.venueName} submitted and pending review.`);
           resetSubmissionFormAfterSave();
@@ -2664,6 +2683,11 @@
             }
           }
           MelbBeerBusiness.setStatus(statusEl, error.message, true);
+        } finally {
+          isSubmissionInFlight = false;
+          submitButton.disabled = false;
+          submitButton.removeAttribute("aria-busy");
+          submitButton.textContent = "Submit for review";
         }
       });
     });

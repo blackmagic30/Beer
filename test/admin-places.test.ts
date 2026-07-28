@@ -8,6 +8,10 @@ import { AdminService } from "../src/modules/admin/admin.service.js";
 const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([
   0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46,
 ]).toString("base64")}`;
+const PDF_DATA_URL = `data:application/pdf;base64,${Buffer.from(
+  "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF",
+  "ascii",
+).toString("base64")}`;
 
 describe("admin Google Places venue lookup", () => {
   afterEach(() => {
@@ -244,13 +248,14 @@ describe("admin Google Places venue lookup", () => {
         responses: { create },
       };
 
-      const result = await service.ocrMenuPhoto({
+      const result = await service.ocrMenuPhotos({
         venueNameHint: "Test Venue",
-        imageDataUrl: JPEG_DATA_URL,
+        imageDataUrls: [JPEG_DATA_URL],
+        documentDataUrls: [PDF_DATA_URL],
       });
 
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
-        model: "gpt-5.5",
+        model: "gpt-5.6-sol",
         store: false,
         reasoning: { effort: "low" },
         text: expect.objectContaining({
@@ -260,14 +265,18 @@ describe("admin Google Places venue lookup", () => {
           expect.objectContaining({
             content: expect.arrayContaining([
               expect.objectContaining({ type: "input_image", detail: "original" }),
+              expect.objectContaining({ type: "input_file", detail: "high" }),
             ]),
           }),
         ]),
+      }), expect.objectContaining({
+        timeout: expect.any(Number),
       }));
       expect(create).toHaveBeenCalledTimes(2);
       expect(prompts[0]).toContain("Very Local Hazy Pint");
       expect(prompts[0]).toContain("285ml, 425ml, and 570ml");
       expect(prompts[0]).toContain("pint-equivalent price");
+      expect(prompts[0]).toContain("untrusted menu content");
       expect(prompts[1]).toContain("second-pass quality check");
       expect(prompts[1]).toContain("Proposed first-pass extraction JSON");
       expect(result.beers[0]).toEqual(expect.objectContaining({
@@ -277,6 +286,85 @@ describe("admin Google Places venue lookup", () => {
     } finally {
       database.close();
     }
+  });
+
+  it("reviews with the model that completed the first pass instead of retrying a failed primary", async () => {
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      "test-openai-key",
+      undefined,
+    );
+    const attemptedModels: string[] = [];
+    const create = vi.fn(async (request: { model: string }) => {
+      attemptedModels.push(request.model);
+      if (request.model === "gpt-5.6-sol") {
+        throw new Error("Primary unavailable");
+      }
+      return {
+        output_text: JSON.stringify({
+          venue_name_guess: "Test Venue",
+          captured_notes: null,
+          overall_confidence: 0.9,
+          beers: [{
+            name: "Carlton Draught",
+            product_category: "beer",
+            brewery: "Carlton & United Breweries",
+            abv: 4.6,
+            price_numeric: 14,
+            price_text: "$14",
+            availability_status: "on_tap",
+            available_on_tap: true,
+            available_package_only: false,
+            unavailable_reason: null,
+            notes: null,
+            source_text: "Carlton Draught pint $14",
+            confidence: 0.9,
+          }],
+          rejected_candidates: [],
+        }),
+      };
+    });
+    (service as unknown as {
+      openai: { responses: { create: typeof create } };
+    }).openai = {
+      responses: { create },
+    };
+
+    const result = await service.ocrMenuPhoto({
+      venueNameHint: "Test Venue",
+      imageDataUrl: JPEG_DATA_URL,
+    });
+
+    expect(result.model).toBe("gpt-4.1");
+    expect(attemptedModels).toEqual(["gpt-5.6-sol", "gpt-4.1", "gpt-4.1"]);
+  });
+
+  it("does not send non-retryable provider authentication failures to a fallback model", async () => {
+    const service = new AdminService(
+      undefined,
+      undefined,
+      undefined,
+      "venue_menu_captures",
+      "test-openai-key",
+      undefined,
+    );
+    const create = vi.fn(async () => {
+      throw Object.assign(new Error("Invalid API key"), { status: 401 });
+    });
+    (service as unknown as {
+      openai: { responses: { create: typeof create } };
+    }).openai = {
+      responses: { create },
+    };
+
+    await expect(service.ocrMenuPhoto({
+      venueNameHint: "Test Venue",
+      imageDataUrl: JPEG_DATA_URL,
+    })).rejects.toMatchObject({ statusCode: 502 });
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("rejects food rows and does not turn package volume into a beer price", async () => {
@@ -339,6 +427,51 @@ describe("admin Google Places venue lookup", () => {
             source_text: "Pots / Pints / Jugs Carlton Draught 7.5 / 14.5 / 29",
             confidence: 0.9,
           },
+          {
+            name: "Stone & Wood Pacific Ale",
+            product_category: "beer",
+            brewery: "Stone & Wood",
+            abv: 4.4,
+            price_numeric: 7.5,
+            price_text: "$7.50",
+            availability_status: "on_tap",
+            available_on_tap: true,
+            available_package_only: false,
+            unavailable_reason: null,
+            notes: null,
+            source_text: "Stone & Wood Pacific Ale 7.5 / 10 / 15",
+            confidence: 0.9,
+          },
+          {
+            name: "Heineken 6 pack",
+            product_category: "beer",
+            brewery: "Heineken",
+            abv: 5,
+            price_numeric: 24,
+            price_text: "$24",
+            availability_status: "package_only",
+            available_on_tap: false,
+            available_package_only: true,
+            unavailable_reason: "cans_or_bottles",
+            notes: null,
+            source_text: "Heineken 6 pack / $24",
+            confidence: 0.9,
+          },
+          {
+            name: "Asahi Super Dry 6 pack",
+            product_category: "beer",
+            brewery: "Asahi",
+            abv: 5,
+            price_numeric: 26,
+            price_text: "$26",
+            availability_status: "on_tap",
+            available_on_tap: true,
+            available_package_only: false,
+            unavailable_reason: null,
+            notes: null,
+            source_text: "Asahi Super Dry 6 pack / $26",
+            confidence: 0.9,
+          },
         ],
         rejected_candidates: [],
       }),
@@ -354,7 +487,7 @@ describe("admin Google Places venue lookup", () => {
       imageDataUrl: JPEG_DATA_URL,
     });
 
-    expect(result.beers).toHaveLength(2);
+    expect(result.beers).toHaveLength(5);
     expect(result.beers).toContainEqual(expect.objectContaining({
       name: "Guinness Stout",
       brewery: "Guinness",
@@ -367,6 +500,23 @@ describe("admin Google Places venue lookup", () => {
       priceNumeric: 14.5,
       priceText: "$14.50 pint",
       availabilityStatus: "on_tap",
+    }));
+    expect(result.beers).toContainEqual(expect.objectContaining({
+      name: "Stone & Wood Pacific Ale",
+      priceNumeric: 7.5,
+      availabilityStatus: "on_tap",
+      needsReview: true,
+    }));
+    expect(result.beers).toContainEqual(expect.objectContaining({
+      name: "Heineken 6 pack",
+      priceNumeric: null,
+      availabilityStatus: "package_only",
+    }));
+    expect(result.beers).toContainEqual(expect.objectContaining({
+      name: "Asahi Super Dry 6 pack",
+      priceNumeric: null,
+      availabilityStatus: "on_tap",
+      needsReview: true,
     }));
     expect(result.rejectedCandidateCount).toBe(1);
   });

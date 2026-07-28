@@ -24,6 +24,8 @@ export interface OcrBenchmarkCase {
   expected: OcrBenchmarkBeer[];
   forbiddenNames?: string[];
   observed?: OcrBenchmarkObservedBeer[];
+  observedModel?: string;
+  durationMs?: number;
 }
 
 export interface OcrBenchmarkThresholds {
@@ -107,6 +109,12 @@ export function scoreOcrBenchmark(manifest: OcrBenchmarkManifest): OcrBenchmarkR
 
     for (const expected of benchmarkCase.expected) {
       rowRecall.total += 1;
+      canonicalNames.total += 1;
+      if (expected.priceNumeric !== undefined) prices.total += 1;
+      if (expected.availabilityStatus !== undefined) availability.total += 1;
+      if (expected.abv !== undefined) abv.total += 1;
+      if (expected.brewery !== undefined) brewery.total += 1;
+
       const acceptedNames = normalizedNames(expected);
       const observedIndex = observed.findIndex((candidate, index) =>
         !usedObserved.has(index) && acceptedNames.has(normalizeBeerSearchKey(candidate.name)),
@@ -120,23 +128,18 @@ export function scoreOcrBenchmark(manifest: OcrBenchmarkManifest): OcrBenchmarkR
       rowRecall.correct += 1;
       const candidate = observed[observedIndex]!;
 
-      canonicalNames.total += 1;
       if (normalizeBeerSearchKey(candidate.name) === normalizeBeerSearchKey(expected.name)) canonicalNames.correct += 1;
 
       if (expected.priceNumeric !== undefined) {
-        prices.total += 1;
         if (nearlyEqual(candidate.priceNumeric, expected.priceNumeric, 0.01)) prices.correct += 1;
       }
       if (expected.availabilityStatus !== undefined) {
-        availability.total += 1;
         if (candidate.availabilityStatus === expected.availabilityStatus) availability.correct += 1;
       }
       if (expected.abv !== undefined) {
-        abv.total += 1;
         if (nearlyEqual(candidate.abv, expected.abv, 0.05)) abv.correct += 1;
       }
       if (expected.brewery !== undefined) {
-        brewery.total += 1;
         if (normalizeBeerSearchKey(candidate.brewery) === normalizeBeerSearchKey(expected.brewery)) brewery.correct += 1;
       }
     }
@@ -187,6 +190,22 @@ export function scoreOcrBenchmark(manifest: OcrBenchmarkManifest): OcrBenchmarkR
   const failures = (Object.entries(manifest.thresholds) as Array<[keyof OcrBenchmarkThresholds, number]>)
     .filter(([key, threshold]) => scores[key] < threshold)
     .map(([key, threshold]) => `${key} ${(scores[key] * 100).toFixed(1)}% is below ${(threshold * 100).toFixed(1)}%`);
+  if (manifest.cases.length === 0) {
+    failures.unshift("OCR benchmark corpus must contain at least one case");
+  }
+  const requiredCoverage: Array<[string, MetricCount]> = [
+    ["expected beer rows", rowRecall],
+    ["price labels", prices],
+    ["availability labels", availability],
+    ["ABV labels", abv],
+    ["brewery labels", brewery],
+    ["forbidden non-beer candidates", nonBeerRejection],
+  ];
+  for (const [label, count] of requiredCoverage) {
+    if (count.total === 0) {
+      failures.push(`OCR benchmark corpus has no ${label}`);
+    }
+  }
 
   return {
     passed: failures.length === 0,

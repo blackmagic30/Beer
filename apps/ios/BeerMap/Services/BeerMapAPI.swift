@@ -108,7 +108,7 @@ struct BeerMapAPI {
         let configuration = URLSessionConfiguration.default
         configuration.requestCachePolicy = .useProtocolCachePolicy
         configuration.timeoutIntervalForRequest = 20
-        configuration.timeoutIntervalForResource = 60
+        configuration.timeoutIntervalForResource = 330
         configuration.waitsForConnectivity = true
         configuration.httpMaximumConnectionsPerHost = 6
         return URLSession(configuration: configuration)
@@ -591,7 +591,13 @@ struct BeerMapAPI {
     }
 
     func createSubmission(_ submission: CreateSubmissionRequest, token: String) async throws -> SubmissionResult {
-        try await send("/api/business/submissions", method: "POST", body: submission, token: token)
+        try await send(
+            "/api/business/submissions",
+            method: "POST",
+            body: submission,
+            token: token,
+            timeoutInterval: submission.submissionType == "photo_upload" ? 300 : nil
+        )
     }
 
     func reportWrongPrice(_ report: WrongPriceReportRequest, token: String?) async throws -> EmptyResponse {
@@ -697,17 +703,41 @@ struct BeerMapAPI {
         try await request(path, method: "GET", body: Optional<EmptyResponse>.none, token: token, reauthenticationToken: reauthenticationToken)
     }
 
-    func send<T: Decodable, Body: Encodable>(_ path: String, method: String, body: Body, token: String? = nil, reauthenticationToken: String? = nil) async throws -> T {
-        try await request(path, method: method, body: body, token: token, reauthenticationToken: reauthenticationToken)
+    func send<T: Decodable, Body: Encodable>(
+        _ path: String,
+        method: String,
+        body: Body,
+        token: String? = nil,
+        reauthenticationToken: String? = nil,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> T {
+        try await request(
+            path,
+            method: method,
+            body: body,
+            token: token,
+            reauthenticationToken: reauthenticationToken,
+            timeoutInterval: timeoutInterval
+        )
     }
 
-    private func request<T: Decodable, Body: Encodable>(_ path: String, method: String, body: Body?, token: String?, reauthenticationToken: String?) async throws -> T {
+    private func request<T: Decodable, Body: Encodable>(
+        _ path: String,
+        method: String,
+        body: Body?,
+        token: String?,
+        reauthenticationToken: String?,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> T {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw BeerMapAPIError.invalidURL(path)
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("PintPath iOS/1.0.0", forHTTPHeaderField: "User-Agent")
         if let token {

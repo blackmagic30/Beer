@@ -132,7 +132,7 @@ describe("submit page auth gate", () => {
     expect(html).not.toContain('name="observedAt"');
     expect(html).not.toContain('name="notes" placeholder="Optional notes, conditions, or source details"');
     expect(html).toContain('id="sourcePhotoField" class="field"');
-    expect(html).toContain('id="sourcePhoto" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,application/pdf,.pdf" multiple');
+    expect(html).toContain('id="sourcePhoto" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,application/pdf,.pdf" capture="environment" multiple');
     expect(html).toContain('id="sourcePhotoList" class="sourcePhotoList" aria-live="polite" hidden');
     expect(html).toContain("let selectedSourcePhotoFiles = [];");
     expect(html).toContain('sourcePhotoField.classList.remove("is-hidden")');
@@ -140,6 +140,12 @@ describe("submit page auth gate", () => {
     expect(html).toContain("sourcePhoto.required = isPhotoOnly && selectedSourcePhotoFiles.length === 0");
     expect(html).toContain("Evidence is optional for data-entry modes and required for Photo/upload source.");
     expect(html).toContain("Upload up to 6 JPEG, PNG, or WebP images (25MB maximum each), or one flat PDF menu (8MB maximum).");
+    expect(html).toContain("hold the camera square to the menu");
+    expect(html).toContain("SOURCE_PHOTO_MAX_EDGE = 2800");
+    expect(html).toContain("SOURCE_PHOTO_OUTPUT_QUALITY = 0.88");
+    expect(html).toContain("timeoutMs: 300_000");
+    expect(html).toContain("if (isSubmissionInFlight)");
+    expect(html).toContain('submitButton.setAttribute("aria-busy", "true")');
     expect(html).toContain("assertPreparedEvidenceFits(sourcePhotoDataUrls, sourceDocumentDataUrl)");
     expect(html).toContain("SOURCE_IMAGE_COMBINED_MAX_BYTES = 8 * 1024 * 1024");
     expect(html).toContain("SOURCE_EVIDENCE_COMBINED_MAX_BYTES = 11 * 1024 * 1024");
@@ -169,7 +175,8 @@ describe("submit page auth gate", () => {
     expect(html).toContain('id="missionContext"');
     expect(html).toContain("const missionId = params.get(\"missionId\") || \"\"");
     expect(html).toContain("const missionReason = params.get(\"missionReason\") || \"\"");
-    expect(html).toContain("const initialSubmissionType = params.get(\"type\")");
+    expect(html).toContain('const requestedSubmissionType = params.get("type")');
+    expect(html).toContain('requestedSubmissionType === "menu_photo"');
     expect(html).toContain("submissionTypeSelect.value = initialSubmissionType");
     expect(html).toContain("Mission accepted");
     expect(html).toContain("Your upload should match this mission");

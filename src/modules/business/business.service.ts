@@ -7062,11 +7062,25 @@ export class BusinessService {
       },
     });
 
+    const ocrItems = options.photoOcr
+      ? standardizedItems.filter((item) => item.captureSource === "photo_ocr")
+      : [];
+    const ocrPreview = options.photoOcr
+      ? ocrItems
+          .slice(0, 3)
+          .map((item) => {
+            const price = item.price == null
+              ? ""
+              : ` ($${item.price.toFixed(item.price % 1 === 0 ? 0 : 2)} pint)`;
+            return `${item.beerName}${price}`;
+          })
+          .join(", ")
+      : "";
     return {
       submission,
       statusCopy: options.photoOcr
-        ? standardizedItems.length
-          ? `OCR read ${standardizedItems.length} beer row${standardizedItems.length === 1 ? "" : "s"}. ${pendingCatalogCount ? `${pendingCatalogCount} new beer name${pendingCatalogCount === 1 ? " needs" : "s need"} catalogue approval. ` : ""}Everything remains pending admin review before publication.`
+        ? ocrItems.length
+          ? `OCR read ${ocrItems.length} beer row${ocrItems.length === 1 ? "" : "s"}${ocrPreview ? `: ${ocrPreview}${ocrItems.length > 3 ? ", and more" : ""}` : ""}. ${pendingCatalogCount ? `${pendingCatalogCount} new beer name${pendingCatalogCount === 1 ? " needs" : "s need"} catalogue approval. ` : ""}Everything remains pending admin review before publication.`
           : options.photoOcr.summary.message ?? "Images attached for manual admin review."
         : publishedVenueImmediately
         ? "Venue added to the public map. Drink data is saved for review before prices appear publicly."
