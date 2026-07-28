@@ -39,7 +39,7 @@ Provider login requires the callback URI in Supabase's redirect allow list and c
 
 ## Deliberate remaining boundaries
 
-Android currently uses a venue list plus an external Maps handoff rather than bundling a map SDK/API key. The photo picker supports one image. Direct camera capture, multiple images, PDF evidence, offline queues, general plan/checkout changes, and admin moderation remain outside this release. The narrow suspended-account billing-recovery portal is implemented. Real-device/provider testing, screenshots, reviewer accounts, and Play listing/data-safety declarations require release-owner credentials.
+Android currently uses a venue list plus an external Maps handoff rather than bundling a map SDK/API key. Menu evidence supports either a direct camera capture or one existing image. Multiple images, PDF evidence, offline queues, general plan/checkout changes, and admin moderation remain outside this release. The narrow suspended-account billing-recovery portal is implemented. Real-device/provider testing, screenshots, reviewer accounts, and Play listing/data-safety declarations require release-owner credentials.
 
 ## Signed release bundle
 

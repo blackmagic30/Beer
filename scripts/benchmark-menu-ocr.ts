@@ -6,7 +6,6 @@ import dotenv from "dotenv";
 
 import { initializeDatabaseSchema } from "../src/db/database.js";
 import { scoreOcrBenchmark, type OcrBenchmarkManifest } from "../src/lib/menu-ocr-benchmark.js";
-import { AdminService } from "../src/modules/admin/admin.service.js";
 import { assertOperatorMutationAllowed } from "./lib/operator-mutation-guard.js";
 
 dotenv.config({ quiet: true });
@@ -50,6 +49,7 @@ if (live) {
     throw new Error("Live OCR benchmarks require a manifest with mode labelled_corpus.");
   }
 
+  const { AdminService } = await import("../src/modules/admin/admin.service.js");
   const database = new BetterSqlite3(":memory:");
   initializeDatabaseSchema(database);
   const service = new AdminService(
@@ -65,11 +65,14 @@ if (live) {
   for (const benchmarkCase of manifest.cases) {
     if (!benchmarkCase.sources?.length) throw new Error(`${benchmarkCase.id} has no source files.`);
     const sources = benchmarkCase.sources.map((source) => fileDataUrl(path.resolve(manifestDirectory, source)));
+    const startedAt = Date.now();
     const result = await service.ocrMenuPhotos({
       venueNameHint: benchmarkCase.venueName,
       imageDataUrls: sources.filter((source) => source.kind === "image").map((source) => source.dataUrl),
       documentDataUrls: sources.filter((source) => source.kind === "document").map((source) => source.dataUrl),
     });
+    benchmarkCase.observedModel = result.model;
+    benchmarkCase.durationMs = Date.now() - startedAt;
     benchmarkCase.observed = result.beers.map((beer) => ({
       name: beer.name,
       brewery: beer.brewery,

@@ -4791,13 +4791,24 @@ describe("production hardening", () => {
       sourcePhotoDataUrls: [PNG_DATA_URL, JPEG_DATA_URL],
       sourcePhotoUrl: null,
       notes: null,
-      items: [],
+      items: [{
+        beerName: "Guinness",
+        servingSize: "pint",
+        price: 15,
+        isHappyHourPrice: false,
+        happyHourDetails: null,
+        isOnTap: "yes",
+      }],
     }));
 
     expect(menuPhotoOcr.extract).toHaveBeenCalledWith(expect.objectContaining({
       imageDataUrls: [PNG_DATA_URL, JPEG_DATA_URL],
     }));
     expect(result.ocrStatus).toBe("processed");
+    expect(result.statusCopy).toContain("OCR read 3 beer rows");
+    expect(result.statusCopy).not.toContain("OCR read 4 beer rows");
+    expect(result.statusCopy).toContain("Carlton Draught ($14 pint)");
+    expect(result.statusCopy).toContain("Moonbeam Rice Lager ($16 pint)");
     expect(result.submission.ocrSummary).toEqual(expect.objectContaining({
       model: "gpt-5.5",
       imageCount: 2,

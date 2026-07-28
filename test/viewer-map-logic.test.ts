@@ -343,6 +343,11 @@ describe("viewer map UI wiring", () => {
   const html = fs.readFileSync(path.resolve(process.cwd(), "viewer/index.html"), "utf8");
   const venuePortalHtml = fs.readFileSync(path.resolve(process.cwd(), "viewer/venue-portal.html"), "utf8");
 
+  it("opens menu-photo calls to action in the OCR upload flow", () => {
+    expect(html).toContain('const updateUrl = getVenueSubmitUrl(record, "photo_upload")');
+    expect(html).not.toContain('getVenueSubmitUrl(record, "menu_photo")');
+  });
+
   it("loads every public venue through the paginated venue contract", () => {
     expect(html).toContain("async function fetchBusinessViewerVenues(pageSize = 250)");
     expect(html).toContain("/api/business/venues?limit=${pageSize}&offset=${offset}");

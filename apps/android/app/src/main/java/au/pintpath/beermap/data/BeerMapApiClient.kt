@@ -525,8 +525,8 @@ class BeerMapApiClient(
         notes: String?,
         uploadLocation: UploadLocation?,
         token: String
-    ) {
-        request(
+    ): JSONObject {
+        return request(
             path = "/api/business/submissions",
             method = "POST",
             body = JSONObject()
@@ -545,7 +545,8 @@ class BeerMapApiClient(
                 .putNullable("uploadLocation", uploadLocation?.toJson())
                 .putNullable("notes", notes)
                 .put("items", org.json.JSONArray()),
-            token = token
+            token = token,
+            readTimeoutMs = 300_000
         )
     }
 
@@ -766,13 +767,14 @@ class BeerMapApiClient(
         method: String = "GET",
         body: JSONObject? = null,
         token: String? = null,
-        reauthenticationToken: String? = null
+        reauthenticationToken: String? = null,
+        readTimeoutMs: Int = 20_000
     ): JSONObject = withContext(Dispatchers.IO) {
         val url = URL(baseUrl.trimEnd('/') + path)
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 15_000
-            readTimeout = 20_000
+            readTimeout = readTimeoutMs
             setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", "PintPath Android/1.0.0")
             if (!token.isNullOrBlank()) setRequestProperty("Authorization", "Bearer $token")

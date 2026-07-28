@@ -23,7 +23,7 @@ struct ContributeView: View {
     @State private var sourcePhotoItem: PhotosPickerItem?
     @State private var sourcePhotoDataURL: String?
     @State private var sourcePhotoPreview: UIImage?
-    @State private var sourcePhotoStatus = "Choose a clear menu, receipt, tap-list, or happy-hour board photo."
+    @State private var sourcePhotoStatus = "Fill the frame, hold the camera square, and avoid glare. OCR will read the beer rows and pint prices."
     @State private var sourcePhotoPreparationTask: Task<Void, Never>?
     @State private var happyOffer = ""
     @State private var happyNotes = ""
@@ -330,7 +330,7 @@ struct ContributeView: View {
             SectionHeader(
                 eyebrow: "Fastest bulk update",
                 title: "Scan a menu or tap board",
-                subtitle: model.isSignedIn ? "Choose the venue, take one clear photo, and send it. Reviewers extract the prices so you do not have to type every row." : "Sign in first so the menu can be reviewed.",
+                subtitle: model.isSignedIn ? "Choose the venue and take one clear photo. OCR reads the beer rows and pint prices automatically, then a reviewer confirms them." : "Sign in first so the menu can be read and reviewed.",
                 systemImage: "doc.viewfinder"
             )
             venuePicker
@@ -346,7 +346,7 @@ struct ContributeView: View {
                 .lineLimit(3...6)
                 .textFieldStyle(.roundedBorder)
             locationProofToggle
-            PrimaryButton(title: "Send menu for review", systemImage: "arrow.up.doc.fill", isLoading: model.isLoading) {
+            PrimaryButton(title: "Scan and submit menu", systemImage: "arrow.up.doc.fill", isLoading: model.isLoading) {
                 guard let dataURL = sourcePhotoDataURL else {
                     model.errorMessage = "Choose a source photo before uploading."
                     return
@@ -1002,7 +1002,7 @@ struct ContributeView: View {
         sourcePhotoItem = nil
         sourcePhotoDataURL = nil
         sourcePhotoPreview = nil
-        sourcePhotoStatus = "Choose a clear menu, receipt, tap-list, or happy-hour board photo."
+        sourcePhotoStatus = "Fill the frame, hold the camera square, and avoid glare. OCR will read the beer rows and pint prices."
     }
 
     private func clearPriceFields() {
@@ -1397,7 +1397,7 @@ private enum SourcePhotoPreparationError: LocalizedError {
         case .outputFailed:
             return "The image could not be compressed. Try a different photo."
         case .outputTooLarge:
-            return "The photo is still larger than 4MB after compression. Try a different photo."
+            return "The photo is still larger than 5MB after compression. Try a different photo."
         }
     }
 }
@@ -1427,7 +1427,7 @@ private func prepareCameraPhoto(_ image: CameraPhotoPayload) throws -> PreparedS
         throw SourcePhotoPreparationError.invalidImage
     }
     let longestSide = max(sourceWidth, sourceHeight)
-    let resizeScale = min(1, 1_800 / longestSide)
+    let resizeScale = min(1, 2_800 / longestSide)
     let targetSize = CGSize(
         width: max(1, (sourceWidth * resizeScale).rounded()),
         height: max(1, (sourceHeight * resizeScale).rounded())
@@ -1437,12 +1437,12 @@ private func prepareCameraPhoto(_ image: CameraPhotoPayload) throws -> PreparedS
     format.scale = 1
     format.opaque = true
     let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
-    let jpegData = renderer.jpegData(withCompressionQuality: 0.78) { _ in
+    let jpegData = renderer.jpegData(withCompressionQuality: 0.84) { _ in
         sourceImage.draw(in: CGRect(origin: .zero, size: targetSize))
     }
     try Task<Never, Never>.checkCancellation()
     guard !jpegData.isEmpty else { throw SourcePhotoPreparationError.outputFailed }
-    guard jpegData.count <= 4 * 1024 * 1024 else { throw SourcePhotoPreparationError.outputTooLarge }
+    guard jpegData.count <= 5 * 1024 * 1024 else { throw SourcePhotoPreparationError.outputTooLarge }
     return PreparedSourcePhoto(
         dataURL: "data:image/jpeg;base64,\(jpegData.base64EncodedString())",
         byteCount: jpegData.count,
@@ -1467,7 +1467,7 @@ private func prepareSourcePhoto(_ data: Data) throws -> PreparedSourcePhoto {
     let thumbnailOptions: [CFString: Any] = [
         kCGImageSourceCreateThumbnailFromImageAlways: true,
         kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceThumbnailMaxPixelSize: 1_800,
+        kCGImageSourceThumbnailMaxPixelSize: 2_800,
         kCGImageSourceShouldCacheImmediately: true
     ]
     guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
@@ -1486,14 +1486,14 @@ private func prepareSourcePhoto(_ data: Data) throws -> PreparedSourcePhoto {
     CGImageDestinationAddImage(
         destination,
         thumbnail,
-        [kCGImageDestinationLossyCompressionQuality: 0.78] as CFDictionary
+        [kCGImageDestinationLossyCompressionQuality: 0.84] as CFDictionary
     )
     guard CGImageDestinationFinalize(destination) else {
         throw SourcePhotoPreparationError.outputFailed
     }
     try Task<Never, Never>.checkCancellation()
     let jpegData = jpeg as Data
-    guard jpegData.count <= 4 * 1024 * 1024 else {
+    guard jpegData.count <= 5 * 1024 * 1024 else {
         throw SourcePhotoPreparationError.outputTooLarge
     }
     let dataURL = "data:image/jpeg;base64,\(jpegData.base64EncodedString())"

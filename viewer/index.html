@@ -7852,7 +7852,7 @@
       const venueName = venue.name || row.venue_name || "Unknown venue";
       const address = formatAddress(venue) || "Address unavailable";
       const submitUrl = getVenueSubmitUrl(record, "single_beer_price");
-      const updateUrl = getVenueSubmitUrl(record, "menu_photo");
+      const updateUrl = getVenueSubmitUrl(record, "photo_upload");
       const directionsUrl = getVenueDirectionsUrl(record);
       const detailVenueId = getRecordVenueId(record);
       const isSavedVenue = savedVenueIds.has(detailVenueId);
