@@ -74,23 +74,26 @@ describe("native mobile remediation guardrails", () => {
     expect(androidModels).not.toContain("stripePublishableKey");
     expect(supabaseConfig).toContain('"https://pintpath.au/auth/callback"');
     expect(supabaseConfig).toContain('"pintpath://auth-callback"');
-    expect(iosAuth).toContain('callbackURLScheme: "pintpath"');
+    expect(iosAuth).toContain("SignInWithAppleButton");
+    expect(iosAuth).toContain("nonce: nonce");
+    expect(iosAuth).toContain("ASAuthorizationAppleIDCredential");
+    expect(iosAuth).toContain("request.nonce = Self.sha256(nonce)");
+    expect(iosAuth).toContain('provider: "google"');
+    expect(iosAuth).toContain('provider: "apple"');
+    expect(iosAuth).toContain("exchangeSupabaseIDToken");
+    expect(iosAPI).toContain("/auth/v1/token?grant_type=id_token");
+    expect(iosAuth).toContain("ASWebAuthenticationSession");
+    expect(iosAuth).toContain('appendingPathComponent("auth/v1/authorize")');
     expect(iosAuth).toContain(
       'URLQueryItem(name: "redirect_to", value: "pintpath://auth-callback")',
     );
+    expect(iosAuth).toContain("code_challenge");
+    expect(iosAPI).toContain("exchangeSupabasePKCE");
     expect(androidApp).toContain(
       '.appendQueryParameter("redirect_to", "pintpath://auth-callback")',
     );
-    expect(iosAuth).toContain('appendingPathComponent("auth/v1/authorize")');
-    expect(iosAuth).toContain("private static func canonicalSupabaseOrigin");
-    expect(iosAuth).toContain("components.user == nil");
-    expect(iosAuth).toContain("components.password == nil");
-    expect(iosAuth).toContain("components.query == nil");
-    expect(iosAuth).toContain("components.fragment == nil");
-    expect(iosAuth).toContain('components.path.isEmpty || components.path == "/"');
-    expect(iosAuth).toContain("Secure provider sign-in returned an incomplete session.");
-    expect(iosAuth).toContain("accessToken: accessToken");
-    expect(iosAuth).toContain("refreshToken: refreshToken");
+    expect(androidApp).toContain("code_challenge");
+    expect(androidApp).toContain("code_challenge_method");
   });
 
   it("reports the effective native Supabase configuration in debug settings", () => {
@@ -126,7 +129,7 @@ describe("native mobile remediation guardrails", () => {
 
   it("reuses the logical Pint Path session only when refreshing Supabase credentials", () => {
     const iosSync = sourceSection(iosAPI, "func syncSupabase(", "func requestPasswordReset(");
-    const iosRefresh = sourceSection(iosAPI, "func refreshSupabaseSession(", "func exchangeSupabasePKCE(");
+    const iosRefresh = sourceSection(iosAPI, "func refreshSupabaseSession(", "func exchangeSupabaseIDToken(");
     const iosLogin = sourceSection(iosAPI, "func login(", "func billingRecoveryPortal(");
     const iosSignup = sourceSection(iosAPI, "func signup(", "func syncSupabase(");
     const iosOAuth = sourceSection(iosApp, "func completeOAuthSignIn(", "func openBillingRecovery(");
@@ -684,25 +687,73 @@ describe("native mobile remediation guardrails", () => {
     );
     expect(iosApp).toMatch(/private func withAuthenticatedSession<T:\s*Sendable>/);
     expect(iosApp).toMatch(/private func withOptionalAuthenticatedSession<T:\s*Sendable>/);
-    expect(iosAuth).toMatch(/let callbackURL:\s*URL\s*=\s*try await withCheckedThrowingContinuation/);
-    expect(iosAuth).toMatch(/CheckedContinuation<URL,\s*(?:any\s+)?Error>/);
+    expect(iosAuth).toMatch(/^import AuthenticationServices$/m);
+    expect(iosAuth).toMatch(/^import CryptoKit$/m);
+    expect(iosAuth).not.toMatch(/^import GoogleSignIn$/m);
+    expect(iosAuth).toMatch(/@MainActor\s+private final class NativeProviderSignInCoordinator/);
     expect(iosSync).toContain("return try await send(");
     expect(iosAPI).not.toMatch(/pagination\?\.hasMore\s*\?\?\s*response\.\w+\.count\s*==\s*pageSize/);
     expect(iosContribute).toMatch(/^extension String \{\s*var trimmed:/m);
     expect(iosContribute).not.toMatch(/^(?:private|fileprivate) extension String \{\s*var trimmed:/m);
   });
 
-  it("binds native provider login with PKCE instead of a caller-controlled OAuth state", () => {
-    for (const source of [iosAuth, androidApp]) {
-      expect(source).toContain("code_challenge");
-      expect(source).toContain("code_challenge_method");
-      expect(source).not.toContain('URLQueryItem(name: "state"');
-      expect(source).not.toContain('.appendQueryParameter("state"');
-    }
+  it("binds native Apple and an app-returning verified Google flow", () => {
+    expect(iosAuth).toContain("SignInWithAppleButton");
+    expect(iosAuth).toContain("exchangeSupabaseIDToken");
+    expect(iosAPI).toContain("/auth/v1/token?grant_type=id_token");
+    expect(iosModels).toContain("struct SupabaseIDTokenRequest");
+    expect(iosModels).toContain('case idToken = "id_token"');
+    expect(iosModels).toContain('case accessToken = "access_token"');
+    expect(iosAuth).toContain('try await signInWithSupabaseBrowser(provider: "google"');
+    expect(iosAuth).toContain('callbackURLScheme: "pintpath"');
+    expect(iosAuth).toContain('callbackURL.scheme?.lowercased() == "pintpath"');
+    expect(iosAuth).toContain('callbackURL.host?.lowercased() == "auth-callback"');
+    expect(iosAuth).toContain("callbackURL.path.isEmpty");
+    expect(iosAuth).toContain("callbackURL.user == nil");
+    expect(iosAuth).toContain("BrowserSignInOperation");
+    expect(iosAuth).toContain("withTaskCancellationHandler");
+    expect(iosAuth).toContain("prefersEphemeralWebBrowserSession = true");
+    expect(iosAuth).toContain("guard values[item.name] == nil");
+    expect(iosAuth).toContain("sanitizedProviderError");
+    expect(iosAuth).toContain("code_challenge");
+    expect(iosAuth).not.toContain('URLQueryItem(name: "state"');
     expect(iosAPI).toContain("/auth/v1/token?grant_type=pkce");
+    expect(iosModels).toContain("struct SupabasePKCERequest");
+    expect(iosModels).toContain('case authCode = "auth_code"');
+    expect(iosModels).toContain('case codeVerifier = "code_verifier"');
+  });
+
+  it("keeps Android provider login on PKCE without caller-controlled OAuth state", () => {
+    expect(androidApp).toContain("code_challenge");
+    expect(androidApp).toContain("code_challenge_method");
+    expect(androidApp).not.toContain('.appendQueryParameter("state"');
     expect(androidAPI).toContain("/auth/v1/token?grant_type=pkce");
-    expect(iosAuth).toContain('callbackURL.scheme == "pintpath"');
     expect(androidApp).toContain('uri.scheme == "pintpath" && uri.host == "auth-callback"');
+  });
+
+  it("ships Apple capability and one non-empty iOS provider callback", () => {
+    const info = read("apps/ios/BeerMap/Info.plist");
+    const iosProject = read("apps/ios/BeerMap.xcodeproj/project.pbxproj");
+    const iosEntitlements = read("apps/ios/BeerMap/BeerMap.entitlements");
+
+    expect(info).toContain("<string>pintpath</string>");
+    expect(info).not.toContain("GOOGLE_IOS_REVERSED_CLIENT_ID");
+    expect(info).not.toContain("<key>GIDClientID</key>");
+    expect(iosProject).not.toContain("GoogleSignIn");
+    expect(iosProject).toContain("CODE_SIGN_ENTITLEMENTS = BeerMap/BeerMap.entitlements;");
+    expect(iosEntitlements).toContain("<key>com.apple.developer.applesignin</key>");
+    expect(iosEntitlements).toContain("<string>Default</string>");
+    expect(iosApp).not.toContain("GIDSignIn.sharedInstance.handle(url)");
+  });
+
+  it("requires HTTPS for provider authorization in Release builds", () => {
+    const oauthOrigin = sourceSection(
+      iosAuth,
+      "private static func canonicalSupabaseOrigin",
+      "private static func callbackValues",
+    );
+    expect(oauthOrigin).toContain("#if DEBUG");
+    expect(oauthOrigin).toContain('guard components.scheme?.lowercased() == "https"');
   });
 
   it("protects session material and handles uninstall/reinstall safely", () => {
@@ -959,19 +1010,22 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("keeps mobile documentation aligned with the implemented feature set", () => {
-    const docs = [
+    const iosReadme = read("apps/ios/README.md");
+    const iosDocs = [
       "apps/ios/README.md",
-      "apps/android/README.md",
       "MOBILE_APP_README.md",
       "MOBILE_STATUS_REPORT.md",
       "MOBILE_APP_STORE_CHECKLIST.md",
       "MOBILE_APP_RELEASE_NOTES_DRAFT.md",
     ].map(read).join("\n");
+    const androidDocs = read("apps/android/README.md");
 
-    expect(docs).not.toMatch(/native (google|apple) oauth is not wired/i);
-    expect(docs).not.toMatch(/photo evidence upload is not wired/i);
-    expect(docs).not.toMatch(/upload-location proof is not wired/i);
-    expect(docs).toContain("Pint Path");
-    expect(docs).toContain("PKCE");
+    expect(iosDocs).not.toMatch(/native (google|apple) oauth is not wired/i);
+    expect(iosDocs).not.toMatch(/photo evidence upload is not wired/i);
+    expect(iosDocs).not.toMatch(/upload-location proof is not wired/i);
+    expect(iosDocs).toContain("Pint Path");
+    expect(iosDocs).toMatch(/identity token|ID token/i);
+    expect(iosReadme).toContain("PKCE");
+    expect(androidDocs).toContain("PKCE");
   });
 });

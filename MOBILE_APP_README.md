@@ -11,7 +11,7 @@ These are native apps, not WebView, React Native, Expo, or Capacitor wrappers.
 
 ## Architecture and authentication
 
-The Express `/api/business/*` API is the product source of truth. The apps use Supabase Auth REST for email/password and Google/Apple provider authentication, then exchange the Supabase access token for a scoped Pint Path app session at `/api/business/auth/supabase-session`. Provider login uses authorization-code PKCE. Apps do not access private Supabase tables and never contain service-role keys.
+The Express `/api/business/*` API is the product source of truth. The apps use Supabase Auth REST for email/password and Google/Apple provider authentication, then exchange the Supabase access token for a scoped Pint Path app session at `/api/business/auth/supabase-session`. iOS uses native Apple sign-in with direct Supabase ID-token exchange and an in-app Google authorization-code PKCE session that captures the callback, dismisses itself, and signs the app in. Android uses authorization-code PKCE. Apps do not access private Supabase tables and never contain service-role keys.
 
 Session storage is device-protected:
 
@@ -37,7 +37,7 @@ Only public configuration belongs in native builds:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 
-Google/Apple sign-in additionally requires `pintpath://auth-callback` in the Supabase redirect allow list and valid provider-console configuration.
+Android Google/Apple sign-in and iOS Google sign-in require `pintpath://auth-callback` in the Supabase redirect allow list. iOS Apple sign-in requires the Sign in with Apple capability. Both platforms require valid provider-console and Supabase configuration.
 
 iOS local configuration uses `apps/ios/Config.xcconfig`; Android uses `apps/android/local.properties`. Both local files are ignored.
 

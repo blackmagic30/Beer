@@ -7,7 +7,7 @@ import UIKit
 struct AuthView: View {
     @EnvironmentObject private var model: BeerMapAppModel
     @Environment(\.openURL) private var openURL
-    @StateObject private var oauth = NativeOAuthCoordinator()
+    @StateObject private var providerSignIn = NativeProviderSignInCoordinator()
     @State private var mode: AuthMode = .login
     @State private var email = ""
     @State private var password = ""
@@ -263,42 +263,61 @@ struct AuthView: View {
             .font(.subheadline.weight(.semibold))
 
             if let providers = model.config?.supabaseOauthProviders, !providers.isEmpty {
+                let enabledProviders = Set(providers.map { $0.lowercased() })
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Or continue securely", systemImage: "link.badge.plus")
+                    Label("Or continue securely", systemImage: "checkmark.shield.fill")
                         .font(.subheadline.weight(.semibold))
-                    ForEach(providers.filter { ["google", "apple"].contains($0.lowercased()) }, id: \.self) { provider in
+
+                    if enabledProviders.contains("apple") {
+                        SignInWithAppleButton(.continue) { request in
+                            password = ""
+                            confirmPassword = ""
+                            do {
+                                try providerSignIn.prepareAppleRequest(request)
+                            } catch {
+                                model.errorMessage = error.localizedDescription
+                            }
+                        } onCompletion: { result in
+                            Task {
+                                await completeProviderSignIn {
+                                    guard let config = model.config else {
+                                        throw BeerMapAPIError.configuration("Account configuration is still loading. Try again in a moment.")
+                                    }
+                                    return try await providerSignIn.completeAppleSignIn(
+                                        result: result,
+                                        config: config
+                                    )
+                                }
+                            }
+                        }
+                        .signInWithAppleButtonStyle(.whiteOutline)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .disabled(model.isLoading || providerSignIn.isRunning)
+                        .accessibilityLabel("Continue with Apple")
+                    }
+
+                    if enabledProviders.contains("google") {
                         Button {
                             password = ""
                             confirmPassword = ""
                             Task {
-                                do {
+                                await completeProviderSignIn {
                                     guard let config = model.config else {
                                         throw BeerMapAPIError.configuration("Account configuration is still loading. Try again in a moment.")
                                     }
-                                    let tokens = try await oauth.signIn(provider: provider.lowercased(), config: config)
-                                    guard let accessToken = tokens.accessToken else { throw BeerMapAPIError.missingData }
-                                    await model.completeOAuthSignIn(
-                                        accessToken: accessToken,
-                                        refreshToken: tokens.refreshToken
-                                    )
-                                } catch {
-                                    let nsError = error as NSError
-                                    let cancelled = nsError.domain == ASWebAuthenticationSessionErrorDomain
-                                        && nsError.code == ASWebAuthenticationSessionError.Code.canceledLogin.rawValue
-                                    if !cancelled {
-                                        model.errorMessage = error.localizedDescription
-                                    }
+                                    return try await providerSignIn.signInWithGoogle(config: config)
                                 }
                             }
                         } label: {
-                            Label("Continue with \(provider.capitalized)", systemImage: provider.lowercased() == "apple" ? "apple.logo" : "globe")
+                            Label("Continue with Google", systemImage: "g.circle.fill")
                                 .font(.headline.weight(.bold))
                                 .frame(maxWidth: .infinity, minHeight: 50)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(model.isLoading || oauth.isRunning)
+                        .disabled(model.isLoading || providerSignIn.isRunning)
                     }
-                    Text("The provider signs you in through Supabase, then Pint Path creates the same scoped app session used by email sign-in.")
+
+                    Text("Apple and Google return directly to Pint Path. Supabase verifies the provider token before the app creates its scoped account session.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -323,15 +342,105 @@ struct AuthView: View {
                 : ""
         }
     }
+
+    @MainActor
+    private func completeProviderSignIn(
+        _ operation: @escaping @MainActor () async throws -> SupabaseAuthTokens
+    ) async {
+        do {
+            let tokens = try await operation()
+            guard let accessToken = tokens.accessToken else {
+                throw BeerMapAPIError.missingData
+            }
+            await model.completeOAuthSignIn(
+                accessToken: accessToken,
+                refreshToken: tokens.refreshToken
+            )
+        } catch {
+            if !NativeProviderSignInCoordinator.isCancellation(error) {
+                model.errorMessage = error.localizedDescription
+            }
+        }
+    }
 }
 
 @MainActor
-private final class NativeOAuthCoordinator: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
+private final class NativeProviderSignInCoordinator: NSObject, ObservableObject,
+    ASWebAuthenticationPresentationContextProviding {
     @Published var isRunning = false
-    private var session: ASWebAuthenticationSession?
+    private var appleNonce: String?
+    private var browserSession: ASWebAuthenticationSession?
+    private var browserOperation: BrowserSignInOperation?
 
-    func signIn(provider: String, config: PublicConfig) async throws -> SupabaseAuthTokens {
-        guard !isRunning else { throw BeerMapAPIError.server("An account sign-in is already open.") }
+    func signInWithGoogle(config: PublicConfig) async throws -> SupabaseAuthTokens {
+        try await signInWithSupabaseBrowser(provider: "google", config: config)
+    }
+
+    func prepareAppleRequest(_ request: ASAuthorizationAppleIDRequest) throws {
+        guard !isRunning else {
+            throw BeerMapAPIError.server("An account sign-in is already open.")
+        }
+        let nonce = try Self.randomNonce()
+        appleNonce = nonce
+        isRunning = true
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = Self.sha256(nonce)
+    }
+
+    func completeAppleSignIn(
+        result: Result<ASAuthorization, any Error>,
+        config: PublicConfig
+    ) async throws -> SupabaseAuthTokens {
+        defer {
+            appleNonce = nil
+            isRunning = false
+        }
+
+        let authorization = try result.get()
+        guard
+            let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+            let identityTokenData = credential.identityToken,
+            let identityToken = String(data: identityTokenData, encoding: .utf8),
+            !identityToken.isEmpty,
+            let nonce = appleNonce
+        else {
+            throw BeerMapAPIError.server("Apple did not return a complete identity token. Please start sign-in again.")
+        }
+        return try await BeerMapAPI().exchangeSupabaseIDToken(
+            provider: "apple",
+            idToken: identityToken,
+            nonce: nonce,
+            config: config
+        )
+    }
+
+    static func isCancellation(_ error: any Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == ASAuthorizationError.errorDomain,
+           nsError.code == ASAuthorizationError.canceled.rawValue {
+            return true
+        }
+        if nsError.domain == ASWebAuthenticationSessionErrorDomain,
+           nsError.code == ASWebAuthenticationSessionError.Code.canceledLogin.rawValue {
+            return true
+        }
+        return error is CancellationError
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+    }
+
+    private func signInWithSupabaseBrowser(
+        provider: String,
+        config: PublicConfig
+    ) async throws -> SupabaseAuthTokens {
+        guard !isRunning else {
+            throw BeerMapAPIError.server("An account sign-in is already open.")
+        }
         guard
             let baseURL = Self.canonicalSupabaseOrigin(config.supabaseUrl),
             var components = URLComponents(
@@ -341,76 +450,92 @@ private final class NativeOAuthCoordinator: NSObject, ObservableObject, ASWebAut
         else {
             throw BeerMapAPIError.configuration("Secure provider sign-in is temporarily unavailable.")
         }
+
         let codeVerifier = try Self.pkceVerifier()
         let challengeDigest = SHA256.hash(data: Data(codeVerifier.utf8))
-        let codeChallenge = Data(challengeDigest).base64URLEncodedString()
         components.queryItems = [
             URLQueryItem(name: "provider", value: provider),
             URLQueryItem(name: "redirect_to", value: "pintpath://auth-callback"),
-            URLQueryItem(name: "code_challenge", value: codeChallenge),
+            URLQueryItem(name: "code_challenge", value: Data(challengeDigest).base64URLEncodedString()),
             URLQueryItem(name: "code_challenge_method", value: "s256")
         ]
-        guard let url = components.url else { throw BeerMapAPIError.invalidURL("Supabase OAuth") }
+        guard let authorizationURL = components.url else {
+            throw BeerMapAPIError.invalidURL("Supabase OAuth")
+        }
 
         isRunning = true
         defer {
+            browserOperation = nil
+            browserSession = nil
             isRunning = false
-            session = nil
         }
 
-        let callbackURL: URL = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, any Error>) in
-            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "pintpath") { callbackURL, error in
+        let operation = BrowserSignInOperation()
+        browserOperation = operation
+        let session = ASWebAuthenticationSession(
+            url: authorizationURL,
+            callbackURLScheme: "pintpath"
+        ) { [weak operation] callbackURL, error in
+            Task { @MainActor in
                 if let error {
-                    continuation.resume(throwing: error)
+                    operation?.resolve(.failure(error))
                 } else if let callbackURL {
-                    continuation.resume(returning: callbackURL)
+                    operation?.resolve(.success(callbackURL))
                 } else {
-                    continuation.resume(throwing: BeerMapAPIError.missingData)
+                    operation?.resolve(.failure(BeerMapAPIError.missingData))
                 }
             }
-            session.presentationContextProvider = self
-            session.prefersEphemeralWebBrowserSession = false
-            self.session = session
-            if !session.start() {
-                continuation.resume(throwing: BeerMapAPIError.server("Could not open secure provider sign-in."))
+        }
+        session.presentationContextProvider = self
+        session.prefersEphemeralWebBrowserSession = true
+        browserSession = session
+
+        let callbackURL = try await withTaskCancellationHandler {
+            guard session.start() else {
+                operation.resolve(
+                    .failure(BeerMapAPIError.server("Could not open secure provider sign-in."))
+                )
+                return try await operation.value()
+            }
+            return try await operation.value()
+        } onCancel: {
+            Task { @MainActor [weak self, weak operation] in
+                self?.browserSession?.cancel()
+                operation?.resolve(.failure(CancellationError()))
             }
         }
 
-        guard callbackURL.scheme == "pintpath", callbackURL.host == "auth-callback" else {
+        guard
+            callbackURL.scheme?.lowercased() == "pintpath",
+            callbackURL.host?.lowercased() == "auth-callback",
+            callbackURL.user == nil,
+            callbackURL.password == nil,
+            callbackURL.port == nil,
+            callbackURL.path.isEmpty
+        else {
             throw BeerMapAPIError.server("The provider returned an invalid sign-in callback.")
         }
 
-        var values: [String: String] = [:]
-        if let queryItems = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems {
-            queryItems.forEach { values[$0.name] = $0.value }
+        let callbackValues = try Self.callbackValues(from: callbackURL)
+        if let providerError = callbackValues["error_description"] ?? callbackValues["error"] {
+            throw BeerMapAPIError.server(
+                Self.sanitizedProviderError(providerError)
+            )
         }
-        if let fragment = callbackURL.fragment,
-           let fragmentItems = URLComponents(string: "?\(fragment)")?.queryItems {
-            fragmentItems.forEach { values[$0.name] = $0.value }
+        guard
+            let authorizationCode = callbackValues["code"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !authorizationCode.isEmpty
+        else {
+            throw BeerMapAPIError.server(
+                "Secure provider sign-in did not return a one-time authorization code."
+            )
         }
-        if let errorDescription = values["error_description"] ?? values["error"] {
-            throw BeerMapAPIError.server(errorDescription.replacingOccurrences(of: "+", with: " "))
-        }
-        guard let authCode = values["code"], !authCode.isEmpty else {
-            throw BeerMapAPIError.server("Secure provider sign-in did not return a one-time authorization code.")
-        }
-        let tokens = try await BeerMapAPI().exchangeSupabasePKCE(
-            authCode: authCode,
+
+        return try await BeerMapAPI().exchangeSupabasePKCE(
+            authCode: authorizationCode,
             codeVerifier: codeVerifier,
             config: config
-        )
-        guard
-            let accessToken = tokens.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !accessToken.isEmpty,
-            let refreshToken = tokens.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !refreshToken.isEmpty
-        else {
-            throw BeerMapAPIError.server("Secure provider sign-in returned an incomplete session. Please start again.")
-        }
-        return SupabaseAuthTokens(
-            accessToken: accessToken,
-            refreshToken: refreshToken,
-            expiresIn: tokens.expiresIn
         )
     }
 
@@ -420,7 +545,6 @@ private final class NativeOAuthCoordinator: NSObject, ObservableObject, ASWebAut
             var components = URLComponents(
                 string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
             ),
-            ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
             !(components.host?.isEmpty ?? true),
             components.user == nil,
             components.password == nil,
@@ -430,8 +554,53 @@ private final class NativeOAuthCoordinator: NSObject, ObservableObject, ASWebAut
         else {
             return nil
         }
+#if DEBUG
+        guard ["http", "https"].contains(components.scheme?.lowercased() ?? "") else {
+            return nil
+        }
+#else
+        guard components.scheme?.lowercased() == "https" else {
+            return nil
+        }
+#endif
+        components.scheme = components.scheme?.lowercased()
         components.path = ""
         return components.url
+    }
+
+    private static func callbackValues(from callbackURL: URL) throws -> [String: String] {
+        let allowedNames = Set(["code", "error", "error_description"])
+        let callbackComponents = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
+        var values: [String: String] = [:]
+
+        func include(_ items: [URLQueryItem]?) throws {
+            for item in items ?? [] where allowedNames.contains(item.name) {
+                guard values[item.name] == nil else {
+                    throw BeerMapAPIError.server(
+                        "The provider returned an invalid sign-in callback."
+                    )
+                }
+                values[item.name] = item.value ?? ""
+            }
+        }
+
+        try include(callbackComponents?.queryItems)
+        if let fragment = callbackURL.fragment, !fragment.isEmpty {
+            try include(URLComponents(string: "?\(fragment)")?.queryItems)
+        }
+        return values
+    }
+
+    private static func sanitizedProviderError(_ value: String) -> String {
+        let flattened = value
+            .replacingOccurrences(of: "+", with: " ")
+            .components(separatedBy: .controlCharacters)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let safeValue = String(flattened.prefix(240))
+        return safeValue.isEmpty
+            ? "Secure provider sign-in was not completed."
+            : safeValue
     }
 
     private static func pkceVerifier() throws -> String {
@@ -443,11 +612,89 @@ private final class NativeOAuthCoordinator: NSObject, ObservableObject, ASWebAut
         return Data(bytes).base64URLEncodedString()
     }
 
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+    private static func randomNonce() throws -> String {
+        let alphabet = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        let acceptanceLimit = (256 / alphabet.count) * alphabet.count
+        var result: [Character] = []
+        result.reserveCapacity(32)
+
+        while result.count < 32 {
+            var bytes = [UInt8](repeating: 0, count: 64)
+            let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+            guard status == errSecSuccess else {
+                throw BeerMapAPIError.server(
+                    "Secure provider sign-in could not create a protected request. Please try again."
+                )
+            }
+            for byte in bytes where Int(byte) < acceptanceLimit {
+                result.append(alphabet[Int(byte) % alphabet.count])
+                if result.count == 32 {
+                    break
+                }
+            }
+        }
+        return String(result)
+    }
+
+    private static func sha256(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+}
+
+@MainActor
+private final class BrowserSignInOperation {
+    private enum Outcome {
+        case success(URL)
+        case failure(any Error)
+    }
+
+    private var continuation: CheckedContinuation<URL, any Error>?
+    private var pendingOutcome: Outcome?
+    private var isResolved = false
+
+    func value() async throws -> URL {
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<URL, any Error>) in
+            if let pendingOutcome {
+                resume(continuation, with: pendingOutcome)
+            } else {
+                self.continuation = continuation
+            }
+        }
+    }
+
+    func resolve(_ result: Result<URL, any Error>) {
+        guard !isResolved else {
+            return
+        }
+        isResolved = true
+        let outcome: Outcome
+        switch result {
+        case .success(let url):
+            outcome = .success(url)
+        case .failure(let error):
+            outcome = .failure(error)
+        }
+        if let continuation {
+            self.continuation = nil
+            resume(continuation, with: outcome)
+        } else {
+            pendingOutcome = outcome
+        }
+    }
+
+    private func resume(
+        _ continuation: CheckedContinuation<URL, any Error>,
+        with outcome: Outcome
+    ) {
+        switch outcome {
+        case .success(let url):
+            continuation.resume(returning: url)
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
     }
 }
 

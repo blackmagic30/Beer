@@ -1,6 +1,6 @@
 # Pint Path Mobile Store Checklist
 
-Status date: 14 July 2026
+Status date: 29 July 2026
 
 Checkboxes marked complete are repository-backed. Unchecked items require release credentials, live provider configuration, device evidence, or store-console work.
 
@@ -18,13 +18,13 @@ Checkboxes marked complete are repository-backed. Unchecked items require releas
 ## Authentication
 
 - [x] Email/password uses Supabase Auth REST and scoped Pint Path session exchange.
-- [x] Provider login uses authorization-code PKCE and validates the native callback destination.
+- [x] iOS uses native Apple sign-in plus an app-returning Google PKCE session; Android uses authorization-code PKCE. Both validate the native callback destination before creating an app session.
 - [x] Refresh and logout cover both Supabase and Pint Path sessions.
 - [x] Consent source/version fields match the backend contract.
-- [ ] Add `pintpath://auth-callback` to the production Supabase redirect allow list.
-- [ ] Complete and verify production Google and Apple provider-console settings.
+- [x] Add `pintpath://auth-callback` to the production Supabase redirect allow list for Android and iOS Google sign-in.
+- [ ] Enable and verify Sign in with Apple for the production App ID and Supabase provider.
 - [ ] Test success/cancel/error/replay/interruption on signed physical devices.
-- [ ] Confirm whether Apple requires Sign in with Apple based on enabled third-party login choices and final review policy.
+- [x] Include Sign in with Apple alongside Google sign-in on iOS.
 
 ## Privacy and security
 

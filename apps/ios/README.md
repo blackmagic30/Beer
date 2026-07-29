@@ -18,14 +18,14 @@ PINT_PATH_API_BASE_URL = http:/$()/127.0.0.1:3000
 ## Current integration
 
 - Email/password signup, login, refresh, password recovery, and logout use Supabase Auth REST endpoints.
-- Google and Apple provider login use an ephemeral authorization code protected by PKCE, then exchange it for Supabase tokens.
+- Apple uses `AuthenticationServices` and exchanges its ID token directly for Supabase tokens. Google uses an `ASWebAuthenticationSession` PKCE flow that captures `pintpath://auth-callback`, closes the authentication sheet, and creates the same Pint Path app session.
 - Supabase access tokens are exchanged at `POST /api/business/auth/supabase-session` for the scoped Pint Path app session.
 - Sensitive session/export/deletion actions require a fresh provider sign-in token; a rejected action is never reported as complete.
 - A suspended paid account receives billing-only recovery without an app session, including personal-versus-managed-venue selection when needed.
 - App, Supabase refresh, and Supabase access tokens are stored in Keychain as `WhenUnlockedThisDeviceOnly`; a non-Keychain installation marker clears surviving Keychain sessions after reinstall.
 - No service-role key is bundled, and the app never reads private Supabase tables directly.
 
-Provider login also requires `pintpath://auth-callback` in the Supabase redirect allow list and correctly configured Google/Apple provider consoles.
+Google login requires `pintpath://auth-callback` in Supabase's redirect allow list. Apple login requires the Sign in with Apple capability for the same App ID. The production Supabase project must have the corresponding Google and Apple providers enabled.
 
 ## Native coverage
 
@@ -45,7 +45,7 @@ The photo library supports one image per native submission. Direct camera captur
 
 ```bash
 swiftc -parse $(rg --files apps/ios/BeerMap -g '*.swift')
-plutil -lint apps/ios/BeerMap/Info.plist apps/ios/BeerMap/PrivacyInfo.xcprivacy
+plutil -lint apps/ios/BeerMap/Info.plist apps/ios/BeerMap/BeerMap.entitlements apps/ios/BeerMap/PrivacyInfo.xcprivacy
 xcodebuild -project apps/ios/BeerMap.xcodeproj -scheme BeerMap -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
 

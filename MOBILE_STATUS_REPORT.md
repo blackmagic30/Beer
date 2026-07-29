@@ -1,6 +1,6 @@
 # Pint Path Mobile Status Report
 
-Status date: 17 July 2026
+Status date: 29 July 2026
 
 ## Executive status
 
@@ -23,7 +23,7 @@ This is not a claim that the binaries are already store-approved. Code-level and
 
 - Corrected session refresh so consent fields and versions are sent only with a complete consent set.
 - Normalized native consent sources to backend-supported `ios` and `android` values.
-- Replaced fragile provider-login callbacks with authorization-code PKCE and strict callback scheme/host checks.
+- Added native Apple sign-in with direct Supabase ID-token exchange on iOS. Google now uses a constrained `ASWebAuthenticationSession` PKCE flow that captures and validates the exact app callback, dismisses the authentication sheet, and creates the app session. Android retains authorization-code PKCE with the same callback checks.
 - Added Supabase access-token storage and best-effort Supabase logout alongside Pint Path session logout.
 - Added fresh-provider proof for session review/revocation, account export/deletion, and global logout, with explicit retry guidance and no false success after a rejected action.
 - Added billing-only recovery for suspended paid users without issuing an app session, including selection between personal and assigned-venue billing profiles.
@@ -44,7 +44,7 @@ This is not a claim that the binaries are already store-approved. Code-level and
 
 ### Authentication
 
-Email/password, signup confirmation handling, password recovery, token refresh, provider login, logout, app-session synchronization, recent-authentication prompts, and suspended-account billing-only recovery are implemented. Google/Apple provider flows still require correct Supabase redirect allow-list entries and provider-console settings before they can be proven end-to-end.
+Email/password, signup confirmation handling, password recovery, token refresh, provider login, logout, app-session synchronization, recent-authentication prompts, and suspended-account billing-only recovery are implemented. The iOS app now captures the provider return and creates the Pint Path session instead of leaving the user signed in only inside a browser. All provider flows still require matching Supabase/provider settings and signed-device tests.
 
 ### Contributions
 
@@ -67,7 +67,7 @@ Assigned venue managers can edit core venue data, inventory, happy hours, eligib
 ## External release blockers
 
 1. Apple/Google signing identities and final store records.
-2. Supabase redirect allow list and live Google/Apple provider-console verification.
+2. Live Google/Apple provider-console and Supabase verification; Android additionally requires its redirect allow-list entry.
 3. Physical-device tests for provider return, permissions, photo input, location, export, accessibility, rotation, interruption, and poor networks.
 4. Final icons/screenshots/store copy, reviewer accounts/instructions, support and marketing URLs.
 5. App Store privacy answers and Play Data Safety declarations verified against production policy and retention behavior.

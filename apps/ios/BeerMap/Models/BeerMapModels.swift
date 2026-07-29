@@ -187,6 +187,20 @@ struct SupabaseRefreshRequest: Codable {
     }
 }
 
+struct SupabaseIDTokenRequest: Codable {
+    let provider: String
+    let idToken: String
+    let accessToken: String?
+    let nonce: String?
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case idToken = "id_token"
+        case accessToken = "access_token"
+        case nonce
+    }
+}
+
 struct SupabasePKCERequest: Codable {
     let authCode: String
     let codeVerifier: String

@@ -295,16 +295,69 @@ struct BeerMapAPI {
         return (result, tokens.refreshToken, accessToken)
     }
 
+    func exchangeSupabaseIDToken(
+        provider: String,
+        idToken: String,
+        accessToken: String? = nil,
+        nonce: String? = nil,
+        config: PublicConfig
+    ) async throws -> SupabaseAuthTokens {
+        let tokens: SupabaseAuthTokens = try await supabaseAuthRequest(
+            "/auth/v1/token?grant_type=id_token",
+            method: "POST",
+            body: SupabaseIDTokenRequest(
+                provider: provider,
+                idToken: idToken,
+                accessToken: accessToken,
+                nonce: nonce
+            ),
+            config: config
+        )
+        guard
+            let normalizedAccessToken = tokens.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !normalizedAccessToken.isEmpty,
+            let normalizedRefreshToken = tokens.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !normalizedRefreshToken.isEmpty
+        else {
+            throw BeerMapAPIError.server(
+                "The identity provider returned an incomplete session. Please start sign-in again."
+            )
+        }
+        return SupabaseAuthTokens(
+            accessToken: normalizedAccessToken,
+            refreshToken: normalizedRefreshToken,
+            expiresIn: tokens.expiresIn
+        )
+    }
+
     func exchangeSupabasePKCE(
         authCode: String,
         codeVerifier: String,
         config: PublicConfig
     ) async throws -> SupabaseAuthTokens {
-        try await supabaseAuthRequest(
+        let tokens: SupabaseAuthTokens = try await supabaseAuthRequest(
             "/auth/v1/token?grant_type=pkce",
             method: "POST",
-            body: SupabasePKCERequest(authCode: authCode, codeVerifier: codeVerifier),
+            body: SupabasePKCERequest(
+                authCode: authCode,
+                codeVerifier: codeVerifier
+            ),
             config: config
+        )
+        guard
+            let normalizedAccessToken = tokens.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !normalizedAccessToken.isEmpty,
+            let normalizedRefreshToken = tokens.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !normalizedRefreshToken.isEmpty
+        else {
+            throw BeerMapAPIError.server(
+                "Secure provider sign-in returned an incomplete session. Please start sign-in again."
+            )
+        }
+        return SupabaseAuthTokens(
+            accessToken: normalizedAccessToken,
+            refreshToken: normalizedRefreshToken,
+            expiresIn: tokens.expiresIn
         )
     }
 
@@ -843,11 +896,13 @@ struct BeerMapAPI {
         accessToken: String? = nil
     ) async throws -> T {
         guard
-            let urlText = config.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
-            let supabaseURL = URL(string: urlText),
+            let supabaseURL = canonicalSupabaseOrigin(config.supabaseUrl),
             let key = config.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines),
             !key.isEmpty,
-            let url = URL(string: path, relativeTo: supabaseURL)
+            let url = URL(string: path, relativeTo: supabaseURL)?.absoluteURL,
+            url.scheme == supabaseURL.scheme,
+            url.host == supabaseURL.host,
+            url.port == supabaseURL.port
         else {
             throw BeerMapAPIError.configuration("Secure account sign-in is temporarily unavailable. Please try again later.")
         }
@@ -883,9 +938,37 @@ struct BeerMapAPI {
     }
 
     private func hasSupabaseConfiguration(_ config: PublicConfig) -> Bool {
-        let url = config.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = config.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !(url?.isEmpty ?? true) && !(key?.isEmpty ?? true)
+        return canonicalSupabaseOrigin(config.supabaseUrl) != nil && !(key?.isEmpty ?? true)
+    }
+
+    private func canonicalSupabaseOrigin(_ rawValue: String?) -> URL? {
+        guard
+            let rawValue,
+            var components = URLComponents(
+                string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            ),
+            !(components.host?.isEmpty ?? true),
+            components.user == nil,
+            components.password == nil,
+            components.query == nil,
+            components.fragment == nil,
+            components.path.isEmpty || components.path == "/"
+        else {
+            return nil
+        }
+#if DEBUG
+        guard ["http", "https"].contains(components.scheme?.lowercased() ?? "") else {
+            return nil
+        }
+#else
+        guard components.scheme?.lowercased() == "https" else {
+            return nil
+        }
+#endif
+        components.scheme = components.scheme?.lowercased()
+        components.path = ""
+        return components.url
     }
 
     private func requiredLegalPolicyVersion(_ config: PublicConfig) throws -> String {
