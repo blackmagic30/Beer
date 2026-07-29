@@ -35,36 +35,59 @@ enum KeychainSessionStore {
         return String(data: data, encoding: .utf8)
     }
 
-    static func saveToken(_ token: String) {
+    @discardableResult
+    static func saveToken(_ token: String) -> Bool {
         save(token, account: account)
     }
 
-    static func saveSupabaseRefreshToken(_ token: String?) {
+    @discardableResult
+    static func saveSupabaseRefreshToken(_ token: String?) -> Bool {
         guard let token, !token.isEmpty else {
-            delete(account: supabaseRefreshAccount)
-            return
+            return delete(account: supabaseRefreshAccount)
         }
-        save(token, account: supabaseRefreshAccount)
+        return save(token, account: supabaseRefreshAccount)
     }
 
-    static func saveSupabaseAccessToken(_ token: String?) {
+    @discardableResult
+    static func saveSupabaseAccessToken(_ token: String?) -> Bool {
         guard let token, !token.isEmpty else {
-            delete(account: supabaseAccessAccount)
-            return
+            return delete(account: supabaseAccessAccount)
         }
-        save(token, account: supabaseAccessAccount)
+        return save(token, account: supabaseAccessAccount)
     }
 
-    private static func save(_ token: String, account: String) {
-        delete(account: account)
-        let query: [String: Any] = [
+    private static func save(_ token: String, account: String) -> Bool {
+        let lookup: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let update: [String: Any] = [
+            kSecValueData as String: Data(token.utf8)
+        ]
+        let updateStatus = SecItemUpdate(lookup as CFDictionary, update as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return true
+        }
+        guard updateStatus == errSecItemNotFound else {
+            return false
+        }
+
+        let item: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecValueData as String: Data(token.utf8)
         ]
-        SecItemAdd(query as CFDictionary, nil)
+        let addStatus = SecItemAdd(item as CFDictionary, nil)
+        if addStatus == errSecSuccess {
+            return true
+        }
+        if addStatus == errSecDuplicateItem {
+            return SecItemUpdate(lookup as CFDictionary, update as CFDictionary) == errSecSuccess
+        }
+        return false
     }
 
     static func deleteToken() {
@@ -73,12 +96,14 @@ enum KeychainSessionStore {
         delete(account: supabaseAccessAccount)
     }
 
-    private static func delete(account: String) {
+    @discardableResult
+    private static func delete(account: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 }

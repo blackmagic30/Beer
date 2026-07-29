@@ -323,6 +323,44 @@ struct AuthView: View {
                 }
                 .beerMapCard()
             }
+
+            if model.providerSignInRetryAvailable {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionHeader(
+                        eyebrow: "Provider verified",
+                        title: "Finish signing in",
+                        subtitle: "Apple or Google succeeded, but Pint Path could not finish the last server step. Retry without reopening the provider.",
+                        systemImage: "arrow.clockwise.circle.fill"
+                    )
+                    PrimaryButton(
+                        title: "Retry finishing sign-in",
+                        systemImage: "arrow.clockwise",
+                        isLoading: model.isLoading
+                    ) {
+                        Task { await model.retryPendingProviderSignIn() }
+                    }
+                }
+                .beerMapCard()
+            }
+
+            if model.config == nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionHeader(
+                        eyebrow: "Connection needed",
+                        title: "Account sign-in is still loading",
+                        subtitle: "Retry the account configuration without leaving this screen.",
+                        systemImage: "wifi.exclamationmark"
+                    )
+                    PrimaryButton(
+                        title: "Retry account connection",
+                        systemImage: "arrow.clockwise",
+                        isLoading: model.isLoading
+                    ) {
+                        Task { await model.reloadAccountConfiguration() }
+                    }
+                }
+                .beerMapCard()
+            }
             }
         }
         .onChange(of: mode) { _, _ in
@@ -371,6 +409,7 @@ private final class NativeProviderSignInCoordinator: NSObject, ObservableObject,
     private var appleNonce: String?
     private var browserSession: ASWebAuthenticationSession?
     private var browserOperation: BrowserSignInOperation?
+    private var browserPresentationAnchor: ASPresentationAnchor?
 
     func signInWithGoogle(config: PublicConfig) async throws -> SupabaseAuthTokens {
         try await signInWithSupabaseBrowser(provider: "google", config: config)
@@ -428,10 +467,9 @@ private final class NativeProviderSignInCoordinator: NSObject, ObservableObject,
     }
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+        // signInWithSupabaseBrowser resolves and retains a real, visible app window
+        // before starting the authentication session.
+        browserPresentationAnchor!
     }
 
     private func signInWithSupabaseBrowser(
@@ -440,6 +478,11 @@ private final class NativeProviderSignInCoordinator: NSObject, ObservableObject,
     ) async throws -> SupabaseAuthTokens {
         guard !isRunning else {
             throw BeerMapAPIError.server("An account sign-in is already open.")
+        }
+        guard let presentationAnchor = Self.activePresentationAnchor() else {
+            throw BeerMapAPIError.server(
+                "Pint Path could not present secure sign-in. Return to the app and try again."
+            )
         }
         guard
             let baseURL = Self.canonicalSupabaseOrigin(config.supabaseUrl),
@@ -464,9 +507,11 @@ private final class NativeProviderSignInCoordinator: NSObject, ObservableObject,
         }
 
         isRunning = true
+        browserPresentationAnchor = presentationAnchor
         defer {
             browserOperation = nil
             browserSession = nil
+            browserPresentationAnchor = nil
             isRunning = false
         }
 
@@ -537,6 +582,24 @@ private final class NativeProviderSignInCoordinator: NSObject, ObservableObject,
             codeVerifier: codeVerifier,
             config: config
         )
+    }
+
+    private static func activePresentationAnchor() -> ASPresentationAnchor? {
+        let activeScenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive }
+
+        for scene in activeScenes {
+            if let keyWindow = scene.windows.first(where: \.isKeyWindow) {
+                return keyWindow
+            }
+            if let visibleWindow = scene.windows.first(where: {
+                !$0.isHidden && $0.alpha > 0 && $0.windowLevel == .normal
+            }) {
+                return visibleWindow
+            }
+        }
+        return nil
     }
 
     private static func canonicalSupabaseOrigin(_ rawValue: String?) -> URL? {

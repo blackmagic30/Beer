@@ -37,6 +37,7 @@ enum BeerMapAPIError: LocalizedError {
     case missingData
     case invalidResponse
     case server(String)
+    case authenticationRejected(String)
     case unexpectedStatus(Int)
     case configuration(String)
     case reauthenticationRequired
@@ -62,6 +63,8 @@ enum BeerMapAPIError: LocalizedError {
             return "Pint Path could not read the latest server response. Please update the app and try again."
         case .server(let message):
             return message
+        case .authenticationRejected(let message):
+            return message
         case .unexpectedStatus(let status):
             return "Request failed (\(status))."
         case .configuration(let message):
@@ -77,6 +80,11 @@ enum BeerMapAPIError: LocalizedError {
 
     var isUnauthorized: Bool {
         if case .unexpectedStatus(401) = self { return true }
+        return false
+    }
+
+    var isConclusiveAuthenticationRejection: Bool {
+        if case .authenticationRejected = self { return true }
         return false
     }
 
@@ -246,20 +254,33 @@ struct BeerMapAPI {
         } else {
             policyVersion = nil
         }
-        return try await send(
-            "/api/business/auth/supabase-session",
-            method: "POST",
-            body: SupabaseSessionRequest(
-                accessToken: accessToken,
-                ageConfirmed: hasCompleteConsent ? true : nil,
-                termsAccepted: hasCompleteConsent ? true : nil,
-                privacyAccepted: hasCompleteConsent ? true : nil,
-                termsVersion: policyVersion,
-                privacyVersion: policyVersion,
-                consentSource: hasCompleteConsent ? "ios" : nil
-            ),
-            token: existingAppToken
+        let body = SupabaseSessionRequest(
+            accessToken: accessToken,
+            ageConfirmed: hasCompleteConsent ? true : nil,
+            termsAccepted: hasCompleteConsent ? true : nil,
+            privacyAccepted: hasCompleteConsent ? true : nil,
+            termsVersion: policyVersion,
+            privacyVersion: policyVersion,
+            consentSource: hasCompleteConsent ? "ios" : nil
         )
+        do {
+            return try await send(
+                "/api/business/auth/supabase-session",
+                method: "POST",
+                body: body,
+                token: existingAppToken
+            )
+        } catch let apiError as BeerMapAPIError
+            where apiError.isUnauthorized && existingAppToken != nil {
+            // The Supabase token in the body is the credential that establishes the
+            // refreshed app session. A stale Pint Path bearer token must not prevent
+            // that verified provider session from being exchanged.
+            return try await send(
+                "/api/business/auth/supabase-session",
+                method: "POST",
+                body: body
+            )
+        }
     }
 
     func requestPasswordReset(email: String, config: PublicConfig) async throws {
@@ -277,10 +298,8 @@ struct BeerMapAPI {
         config: PublicConfig,
         existingAppToken: String
     ) async throws -> (authResult: AuthResult, refreshToken: String?, accessToken: String) {
-        let tokens: SupabaseAuthTokens = try await supabaseAuthRequest(
-            "/auth/v1/token?grant_type=refresh_token",
-            method: "POST",
-            body: SupabaseRefreshRequest(refreshToken: refreshToken),
+        let tokens = try await refreshSupabaseTokens(
+            refreshToken: refreshToken,
             config: config
         )
         guard let accessToken = tokens.accessToken else { throw BeerMapAPIError.missingData }
@@ -293,6 +312,29 @@ struct BeerMapAPI {
             existingAppToken: existingAppToken
         )
         return (result, tokens.refreshToken, accessToken)
+    }
+
+    func refreshSupabaseTokens(
+        refreshToken: String,
+        config: PublicConfig
+    ) async throws -> SupabaseAuthTokens {
+        let tokens: SupabaseAuthTokens = try await supabaseAuthRequest(
+            "/auth/v1/token?grant_type=refresh_token",
+            method: "POST",
+            body: SupabaseRefreshRequest(refreshToken: refreshToken),
+            config: config
+        )
+        guard
+            let accessToken = tokens.accessToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !accessToken.isEmpty
+        else {
+            throw BeerMapAPIError.missingData
+        }
+        return SupabaseAuthTokens(
+            accessToken: accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresIn: tokens.expiresIn
+        )
     }
 
     func exchangeSupabaseIDToken(
@@ -926,7 +968,7 @@ struct BeerMapAPI {
                 ?? object?["message"] as? String
                 ?? "Authentication failed (\(http.statusCode))."
             if http.statusCode == 401 || http.statusCode == 400 {
-                throw BeerMapAPIError.server(message)
+                throw BeerMapAPIError.authenticationRejected(message)
             }
             throw BeerMapAPIError.unexpectedStatus(http.statusCode)
         }

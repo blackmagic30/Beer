@@ -135,9 +135,16 @@ describe("native mobile remediation guardrails", () => {
     const iosOAuth = sourceSection(iosApp, "func completeOAuthSignIn(", "func openBillingRecovery(");
     expect(iosSync).toContain("existingAppToken: String? = nil");
     expect(iosSync).toContain("token: existingAppToken");
+    expect(iosSync).toMatch(
+      /catch let apiError as BeerMapAPIError[\s\S]*apiError\.isUnauthorized && existingAppToken != nil[\s\S]*return try await send\([\s\S]*body: body/,
+    );
     expect(iosRefresh).toContain("existingAppToken: String");
     expect(iosRefresh).toContain("existingAppToken: existingAppToken");
-    expect(iosApp).toMatch(/refreshSupabaseSession\([\s\S]*existingAppToken: currentToken/);
+    expect(iosApp).toContain("api.refreshSupabaseTokens(");
+    expect(iosApp).toMatch(
+      /saveSupabaseRefreshToken\(providerTokens\.refreshToken \?\? refreshToken\)[\s\S]*api\.syncSupabase\([\s\S]*existingAppToken: currentToken/,
+    );
+    expect(iosApp).toContain("sessionRefreshTask");
     expect(iosLogin).not.toContain("existingAppToken:");
     expect(iosSignup).not.toContain("existingAppToken:");
     expect(iosOAuth).not.toContain("existingAppToken:");
@@ -155,6 +162,100 @@ describe("native mobile remediation guardrails", () => {
     expect(androidLogin).not.toContain("existingAppToken");
     expect(androidSignup).not.toContain("existingAppToken");
     expect(androidOAuth).not.toContain("existingAppToken");
+  });
+
+  it("preserves valid iOS sessions across transient refresh and provider-sync failures", () => {
+    const refreshGate = sourceSection(
+      iosApp,
+      "private func refreshExpiredSession()",
+      "private func performSessionRefresh(",
+    );
+    const refresh = sourceSection(
+      iosApp,
+      "private func performSessionRefresh(",
+      "private func clearLocalSession()",
+    );
+    const providerEntry = sourceSection(
+      iosApp,
+      "func completeOAuthSignIn(",
+      "private func completeOAuthSignIn(",
+    );
+    const providerFinish = sourceSection(
+      iosApp,
+      "private func completeOAuthSignIn(",
+      "func retryPendingProviderSignIn()",
+    );
+    const providerRetry = sourceSection(
+      iosApp,
+      "func retryPendingProviderSignIn()",
+      "func acceptCurrentPolicies(",
+    );
+    const authenticatedRetry = sourceSection(
+      iosApp,
+      "private func withAuthenticatedSession",
+      "private func withOptionalAuthenticatedSession",
+    );
+    const optionalRetry = sourceSection(
+      iosApp,
+      "private func withOptionalAuthenticatedSession",
+      "private func setLoading",
+    );
+    const clearSession = sourceSection(
+      iosApp,
+      "private func clearLocalSession()",
+      "private func invalidateSessionRefresh()",
+    );
+    const invalidateRefresh = sourceSection(
+      iosApp,
+      "private func invalidateSessionRefresh()",
+      "private func authenticationIsCurrent(",
+    );
+
+    expect(iosApp).toContain("private enum SessionRefreshOutcome: Sendable");
+    expect(iosApp).toContain("private var authenticationGeneration: UInt64 = 0");
+    expect(refreshGate).toMatch(
+      /let refreshGeneration = authenticationGeneration[\s\S]*expectedGeneration: refreshGeneration[\s\S]*if authenticationGeneration == refreshGeneration/,
+    );
+    expect(refresh).toMatch(
+      /saveSupabaseRefreshToken\(providerTokens\.refreshToken \?\? refreshToken\)[\s\S]*saveSupabaseAccessToken\(providerAccessToken\)[\s\S]*api\.syncSupabase\([\s\S]*existingAppToken: currentToken/,
+    );
+    expect(refresh.match(/authenticationIsCurrent\(/g)?.length).toBeGreaterThanOrEqual(7);
+    expect(refresh).toMatch(
+      /catch let apiError as BeerMapAPIError where apiError\.isConclusiveAuthenticationRejection \{[\s\S]*clearLocalSession\(\)[\s\S]*return \.invalidCredentials/,
+    );
+    expect(refresh).toMatch(/catch \{\s*return \.retryableFailure\s*\}/);
+    expect(clearSession).toContain("invalidateSessionRefresh()");
+    expect(invalidateRefresh).toContain("authenticationGeneration &+= 1");
+    expect(invalidateRefresh).toContain("sessionRefreshTask?.cancel()");
+    expect(invalidateRefresh).toContain("sessionRefreshTask = nil");
+    for (const retry of [authenticatedRetry, optionalRetry]) {
+      expect(retry).toContain("let operationGeneration = authenticationGeneration");
+      expect(retry.match(/authenticationGeneration == operationGeneration/g)?.length).toBe(2);
+      expect(retry).toContain("if sessionToken != currentToken, let newerToken = sessionToken");
+      expect(retry).toContain("case .retryableFailure:");
+      expect(retry).not.toMatch(/case \.retryableFailure:[\s\S]*clearLocalSession\(\)/);
+    }
+
+    expect(iosApp).toContain(
+      "private static let providerSignInRetryWindow: TimeInterval = 10 * 60",
+    );
+    expect(providerEntry).toContain(
+      "Date().addingTimeInterval(Self.providerSignInRetryWindow)",
+    );
+    expect(providerFinish).toMatch(
+      /pendingProviderSignIn = PendingProviderSignIn[\s\S]*providerSignInRetryAvailable = true/,
+    );
+    expect(providerFinish).toMatch(
+      /try storeAuthenticatedSession\([\s\S]*clearPendingProviderSignIn\(\)[\s\S]*finishSignIn/,
+    );
+    expect(providerFinish).toContain(
+      "Your verified provider sign-in is still available; choose Retry finishing sign-in.",
+    );
+    expect(providerRetry).toContain("guard pendingProviderSignIn.expiresAt > Date()");
+    expect(providerRetry).toContain("expiresAt: pendingProviderSignIn.expiresAt");
+    expect(iosAuth).toContain("Retry finishing sign-in");
+    expect(iosAccount).toContain("Session retained");
+    expect(iosAccount).toContain("Log out or switch account");
   });
 
   it("keeps price-access contracts without obstructing Explore with account metrics", () => {
@@ -622,7 +723,7 @@ describe("native mobile remediation guardrails", () => {
 
   it("refreshes and retries authenticated actions without discarding venue context", () => {
     expect(iosApp).toContain("withAuthenticatedSession");
-    expect(iosApp).toContain("storeSession(result.authResult, resetAuthority: false)");
+    expect(iosApp).toContain("try storeSession(result, resetAuthority: false)");
     expect(iosApp).toMatch(/func saveProfile[\s\S]*withAuthenticatedSession/);
     expect(iosApp).toMatch(/func submitSourcePhotoUpdate[\s\S]*withAuthenticatedSession/);
 
@@ -698,6 +799,21 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("binds native Apple and an app-returning verified Google flow", () => {
+    const presentationProvider = sourceSection(
+      iosAuth,
+      "func presentationAnchor(",
+      "private func signInWithSupabaseBrowser",
+    );
+    const browserFlow = sourceSection(
+      iosAuth,
+      "private func signInWithSupabaseBrowser",
+      "private static func activePresentationAnchor",
+    );
+    const anchorFinder = sourceSection(
+      iosAuth,
+      "private static func activePresentationAnchor",
+      "private static func canonicalSupabaseOrigin",
+    );
     expect(iosAuth).toContain("SignInWithAppleButton");
     expect(iosAuth).toContain("exchangeSupabaseIDToken");
     expect(iosAPI).toContain("/auth/v1/token?grant_type=id_token");
@@ -713,6 +829,19 @@ describe("native mobile remediation guardrails", () => {
     expect(iosAuth).toContain("BrowserSignInOperation");
     expect(iosAuth).toContain("withTaskCancellationHandler");
     expect(iosAuth).toContain("prefersEphemeralWebBrowserSession = true");
+    expect(presentationProvider).toContain("browserPresentationAnchor!");
+    expect(browserFlow).toContain(
+      "guard let presentationAnchor = Self.activePresentationAnchor() else",
+    );
+    expect(browserFlow).toMatch(
+      /browserPresentationAnchor = presentationAnchor[\s\S]*session\.presentationContextProvider = self/,
+    );
+    expect(browserFlow).toMatch(/defer \{[\s\S]*browserPresentationAnchor = nil/);
+    expect(anchorFinder).toContain(".foregroundActive");
+    expect(anchorFinder).toContain("first(where: \\.isKeyWindow)");
+    expect(anchorFinder).toContain("!$0.isHidden");
+    expect(anchorFinder).toContain("return nil");
+    expect(iosAuth).not.toContain("ASPresentationAnchor()");
     expect(iosAuth).toContain("guard values[item.name] == nil");
     expect(iosAuth).toContain("sanitizedProviderError");
     expect(iosAuth).toContain("code_challenge");
@@ -757,8 +886,46 @@ describe("native mobile remediation guardrails", () => {
   });
 
   it("protects session material and handles uninstall/reinstall safely", () => {
+    const keychainSave = sourceSection(
+      iosKeychain,
+      "private static func save(",
+      "static func deleteToken()",
+    );
+    const credentialSave = sourceSection(
+      iosApp,
+      "private func storeAuthenticatedSession(",
+      "private func storeSession(",
+    );
+    const appSessionSave = sourceSection(
+      iosApp,
+      "private func storeSession(",
+      "private func refreshExpiredSession()",
+    );
     expect(iosKeychain).toContain("kSecAttrAccessibleWhenUnlockedThisDeviceOnly");
     expect(iosKeychain).not.toContain("kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly");
+    expect(iosKeychain).toContain("SecItemUpdate");
+    expect(iosKeychain).toContain("errSecItemNotFound");
+    expect(iosKeychain).toContain("errSecDuplicateItem");
+    expect(keychainSave).not.toContain("delete(account: account)");
+    expect(iosKeychain).toMatch(/static func saveToken\(_ token: String\) -> Bool/);
+    expect(iosKeychain).toMatch(
+      /static func saveSupabaseRefreshToken\(_ token: String\?\) -> Bool/,
+    );
+    expect(iosKeychain).toMatch(
+      /static func saveSupabaseAccessToken\(_ token: String\?\) -> Bool/,
+    );
+    expect(keychainSave).toMatch(
+      /SecItemUpdate[\s\S]*updateStatus == errSecSuccess[\s\S]*guard updateStatus == errSecItemNotFound[\s\S]*SecItemAdd/,
+    );
+    expect(keychainSave).toMatch(
+      /addStatus == errSecDuplicateItem[\s\S]*SecItemUpdate/,
+    );
+    expect(credentialSave).toMatch(
+      /invalidateSessionRefresh\(\)[\s\S]*saveSupabaseRefreshToken\(refreshToken\)[\s\S]*saveSupabaseAccessToken\(accessToken\)[\s\S]*else \{[\s\S]*clearLocalSession\(\)[\s\S]*throw/,
+    );
+    expect(appSessionSave).toContain(
+      "guard KeychainSessionStore.saveToken(result.token) else",
+    );
     expect(iosApp).toContain("installMarker");
     expect(iosApp).toContain("hasLegacyAppContainer");
     expect(iosApp).toContain("KeychainSessionStore.deleteToken()");
