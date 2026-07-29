@@ -175,11 +175,50 @@ final class BeerMapAppModel: ObservableObject {
         setLoading(true)
         defer { setLoading(false) }
         do {
-            config = try await api.getConfig()
+            config = try await api.getConfig(forceRefresh: true)
             errorMessage = nil
         } catch {
             errorMessage = "Pint Path could not load account sign-in yet. Check your connection and try again."
         }
+    }
+
+    func providerSignInConfiguration(for provider: String) async throws -> PublicConfig {
+        let normalizedProvider = provider
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard ["apple", "google"].contains(normalizedProvider) else {
+            throw BeerMapAPIError.configuration("That secure sign-in provider is not supported.")
+        }
+
+        let existingConfig = config
+        let candidate: PublicConfig
+        do {
+            candidate = try await api.getConfig(forceRefresh: true)
+            config = candidate
+        } catch {
+            guard
+                let existingConfig,
+                Self.supportsProviderSignIn(normalizedProvider, config: existingConfig)
+            else {
+                throw BeerMapAPIError.configuration(
+                    "Pint Path could not refresh secure sign-in. Check your connection and try again."
+                )
+            }
+            candidate = existingConfig
+        }
+
+        guard Self.supportsProviderSignIn(normalizedProvider, config: candidate) else {
+            throw BeerMapAPIError.configuration(
+                "\(normalizedProvider.capitalized) sign-in is not enabled for this Pint Path environment."
+            )
+        }
+        errorMessage = nil
+        return candidate
+    }
+
+    func isProviderSignInExplicitlyUnavailable(_ provider: String) -> Bool {
+        guard let config else { return false }
+        return !Self.supportsProviderSignIn(provider, config: config)
     }
 
     func login(email: String, password: String) async {
@@ -1755,6 +1794,49 @@ final class BeerMapAppModel: ObservableObject {
 
     private func markAccountDashboardDirty() {
         accountDashboardNeedsRefresh = true
+    }
+
+    private static func supportsProviderSignIn(
+        _ provider: String,
+        config: PublicConfig
+    ) -> Bool {
+        let normalizedProvider = provider
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard ["apple", "google"].contains(normalizedProvider) else { return false }
+        guard
+            let rawURL = config.supabaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+            let components = URLComponents(string: rawURL),
+            !(components.host?.isEmpty ?? true),
+            components.user == nil,
+            components.password == nil,
+            components.query == nil,
+            components.fragment == nil,
+            components.path.isEmpty || components.path == "/",
+            let key = config.supabaseAnonKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !key.isEmpty
+        else {
+            return false
+        }
+
+        #if DEBUG
+        guard ["http", "https"].contains(components.scheme?.lowercased() ?? "") else {
+            return false
+        }
+        #else
+        guard components.scheme?.lowercased() == "https" else {
+            return false
+        }
+        #endif
+
+        // Older compatible servers may omit this optional field. An explicit
+        // empty list remains authoritative for isolated restore rehearsals.
+        guard let configuredProviders = config.supabaseOauthProviders else {
+            return true
+        }
+        return configuredProviders.contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedProvider
+        }
     }
 
     private func validatedObservedPrice(_ priceText: String) -> Double? {

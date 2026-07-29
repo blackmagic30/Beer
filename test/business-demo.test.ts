@@ -5066,6 +5066,30 @@ describe("production hardening", () => {
     }
   });
 
+  it("serves provider configuration without reusable browser or CDN caching", async () => {
+    const { repository } = createRepository();
+    const service = createBusinessService(repository, {
+      SUPABASE_URL: "https://pint-path-auth.supabase.co",
+      SUPABASE_ANON_KEY: "public-anon-key",
+      SUPABASE_OAUTH_PROVIDERS: "google,apple",
+    });
+    const app = express();
+    app.use(express.json());
+    app.use("/api/business", createBusinessRouter(service));
+    app.use(errorHandler);
+
+    await withHttpServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/business/config`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("private, no-store");
+      expect(await response.json()).toEqual(expect.objectContaining({
+        data: expect.objectContaining({
+          supabaseOauthProviders: ["google", "apple"],
+        }),
+      }));
+    });
+  });
+
   it("disconnects restored sessions and browser Supabase config without touching session state", async () => {
     const { database, repository } = createRepository();
     const account = createAccount(repository, "restore-session-user");

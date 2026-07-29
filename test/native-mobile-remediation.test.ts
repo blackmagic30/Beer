@@ -96,6 +96,30 @@ describe("native mobile remediation guardrails", () => {
     expect(androidApp).toContain("code_challenge_method");
   });
 
+  it("keeps Apple and Google visible while provider configuration recovers", () => {
+    const providerControls = sourceSection(
+      iosAuth,
+      'Label("Or continue securely"',
+      "if model.providerSignInRetryAvailable",
+    );
+    expect(providerControls).toContain("SignInWithAppleButton");
+    expect(providerControls).toContain('Label("Continue with Google"');
+    expect(providerControls).toContain('model.providerSignInConfiguration(for: "apple")');
+    expect(providerControls).toContain('model.providerSignInConfiguration(for: "google")');
+    expect(providerControls).toContain("Retry secure sign-in connection");
+    expect(providerControls).toContain('model.isProviderSignInExplicitlyUnavailable("apple")');
+    expect(providerControls).toContain('model.isProviderSignInExplicitlyUnavailable("google")');
+    expect(iosAuth).not.toMatch(
+      /if let providers = model\.config\?\.supabaseOauthProviders[\s\S]{0,5000}SignInWithAppleButton/,
+    );
+    expect(iosApp).toContain("func providerSignInConfiguration(for provider: String)");
+    expect(iosApp).toContain("try await api.getConfig(forceRefresh: true)");
+    expect(iosApp).toContain("guard let configuredProviders = config.supabaseOauthProviders else");
+    expect(iosApp).toContain("trimmingCharacters(in: .whitespacesAndNewlines).lowercased()");
+    expect(iosAPI).toContain("func getConfig(forceRefresh: Bool = false)");
+    expect(iosAPI).toContain('request.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")');
+  });
+
   it("reports the effective native Supabase configuration in debug settings", () => {
     expect(iosSettings).toContain("model.config?.supabaseUrl");
     expect(iosSettings).toContain("model.config?.supabaseAnonKey");

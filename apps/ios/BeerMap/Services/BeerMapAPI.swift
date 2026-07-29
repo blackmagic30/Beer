@@ -122,8 +122,11 @@ struct BeerMapAPI {
         return URLSession(configuration: configuration)
     }
 
-    func getConfig() async throws -> PublicConfig {
-        try await get("/api/business/config")
+    func getConfig(forceRefresh: Bool = false) async throws -> PublicConfig {
+        try await get(
+            "/api/business/config",
+            bypassCache: forceRefresh
+        )
     }
 
     func login(
@@ -798,8 +801,20 @@ struct BeerMapAPI {
         return data
     }
 
-    func get<T: Decodable>(_ path: String, token: String? = nil, reauthenticationToken: String? = nil) async throws -> T {
-        try await request(path, method: "GET", body: Optional<EmptyResponse>.none, token: token, reauthenticationToken: reauthenticationToken)
+    func get<T: Decodable>(
+        _ path: String,
+        token: String? = nil,
+        reauthenticationToken: String? = nil,
+        bypassCache: Bool = false
+    ) async throws -> T {
+        try await request(
+            path,
+            method: "GET",
+            body: Optional<EmptyResponse>.none,
+            token: token,
+            reauthenticationToken: reauthenticationToken,
+            bypassCache: bypassCache
+        )
     }
 
     func send<T: Decodable, Body: Encodable>(
@@ -826,7 +841,8 @@ struct BeerMapAPI {
         body: Body?,
         token: String?,
         reauthenticationToken: String?,
-        timeoutInterval: TimeInterval? = nil
+        timeoutInterval: TimeInterval? = nil,
+        bypassCache: Bool = false
     ) async throws -> T {
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw BeerMapAPIError.invalidURL(path)
@@ -834,6 +850,11 @@ struct BeerMapAPI {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if bypassCache {
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache, no-store", forHTTPHeaderField: "Cache-Control")
+            request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+        }
         if let timeoutInterval {
             request.timeoutInterval = timeoutInterval
         }

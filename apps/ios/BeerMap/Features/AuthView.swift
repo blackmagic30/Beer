@@ -262,67 +262,94 @@ struct AuthView: View {
             .buttonStyle(.plain)
             .font(.subheadline.weight(.semibold))
 
-            if let providers = model.config?.supabaseOauthProviders, !providers.isEmpty {
-                let enabledProviders = Set(providers.map { $0.lowercased() })
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Or continue securely", systemImage: "checkmark.shield.fill")
-                        .font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Or continue securely", systemImage: "checkmark.shield.fill")
+                    .font(.subheadline.weight(.semibold))
 
-                    if enabledProviders.contains("apple") {
-                        SignInWithAppleButton(.continue) { request in
-                            password = ""
-                            confirmPassword = ""
-                            do {
-                                try providerSignIn.prepareAppleRequest(request)
-                            } catch {
-                                model.errorMessage = error.localizedDescription
-                            }
-                        } onCompletion: { result in
-                            Task {
-                                await completeProviderSignIn {
-                                    guard let config = model.config else {
-                                        throw BeerMapAPIError.configuration("Account configuration is still loading. Try again in a moment.")
-                                    }
-                                    return try await providerSignIn.completeAppleSignIn(
-                                        result: result,
-                                        config: config
-                                    )
-                                }
-                            }
-                        }
-                        .signInWithAppleButtonStyle(.whiteOutline)
-                        .frame(maxWidth: .infinity, minHeight: 50)
-                        .disabled(model.isLoading || providerSignIn.isRunning)
-                        .accessibilityLabel("Continue with Apple")
+                SignInWithAppleButton(.continue) { request in
+                    password = ""
+                    confirmPassword = ""
+                    do {
+                        try providerSignIn.prepareAppleRequest(request)
+                    } catch {
+                        model.errorMessage = error.localizedDescription
                     }
-
-                    if enabledProviders.contains("google") {
-                        Button {
-                            password = ""
-                            confirmPassword = ""
-                            Task {
-                                await completeProviderSignIn {
-                                    guard let config = model.config else {
-                                        throw BeerMapAPIError.configuration("Account configuration is still loading. Try again in a moment.")
-                                    }
-                                    return try await providerSignIn.signInWithGoogle(config: config)
-                                }
-                            }
-                        } label: {
-                            Label("Continue with Google", systemImage: "g.circle.fill")
-                                .font(.headline.weight(.bold))
-                                .frame(maxWidth: .infinity, minHeight: 50)
+                } onCompletion: { result in
+                    Task {
+                        await completeProviderSignIn {
+                            let config = try await model.providerSignInConfiguration(for: "apple")
+                            return try await providerSignIn.completeAppleSignIn(
+                                result: result,
+                                config: config
+                            )
                         }
-                        .buttonStyle(.bordered)
-                        .disabled(model.isLoading || providerSignIn.isRunning)
                     }
-
-                    Text("Apple and Google return directly to Pint Path. Supabase verifies the provider token before the app creates its scoped account session.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-                .beerMapCard()
+                .signInWithAppleButtonStyle(.whiteOutline)
+                .frame(maxWidth: .infinity, minHeight: 50)
+                .disabled(
+                    model.isLoading ||
+                    providerSignIn.isRunning ||
+                    model.isProviderSignInExplicitlyUnavailable("apple")
+                )
+                .accessibilityLabel("Continue with Apple")
+
+                Button {
+                    password = ""
+                    confirmPassword = ""
+                    Task {
+                        await completeProviderSignIn {
+                            let config = try await model.providerSignInConfiguration(for: "google")
+                            return try await providerSignIn.signInWithGoogle(config: config)
+                        }
+                    }
+                } label: {
+                    Label("Continue with Google", systemImage: "g.circle.fill")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                }
+                .buttonStyle(.bordered)
+                .disabled(
+                    model.isLoading ||
+                    providerSignIn.isRunning ||
+                    model.isProviderSignInExplicitlyUnavailable("google")
+                )
+
+                Text("Apple and Google return directly to Pint Path. Supabase verifies the provider token before the app creates its scoped account session.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if model.config == nil {
+                    Label(
+                        "Secure sign-in configuration is loading. The buttons will remain here while Pint Path reconnects.",
+                        systemImage: "wifi.exclamationmark"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else if model.isProviderSignInExplicitlyUnavailable("apple") ||
+                            model.isProviderSignInExplicitlyUnavailable("google") {
+                    Label(
+                        "An unavailable option is disabled for this environment. Retry to refresh the provider settings.",
+                        systemImage: "exclamationmark.shield.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                if model.config == nil ||
+                    model.isProviderSignInExplicitlyUnavailable("apple") ||
+                    model.isProviderSignInExplicitlyUnavailable("google") {
+                    Button {
+                        Task { await model.reloadAccountConfiguration() }
+                    } label: {
+                        Label("Retry secure sign-in connection", systemImage: "arrow.clockwise")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isLoading || providerSignIn.isRunning)
+                }
             }
+            .beerMapCard()
 
             if model.providerSignInRetryAvailable {
                 VStack(alignment: .leading, spacing: 10) {
@@ -343,24 +370,6 @@ struct AuthView: View {
                 .beerMapCard()
             }
 
-            if model.config == nil {
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionHeader(
-                        eyebrow: "Connection needed",
-                        title: "Account sign-in is still loading",
-                        subtitle: "Retry the account configuration without leaving this screen.",
-                        systemImage: "wifi.exclamationmark"
-                    )
-                    PrimaryButton(
-                        title: "Retry account connection",
-                        systemImage: "arrow.clockwise",
-                        isLoading: model.isLoading
-                    ) {
-                        Task { await model.reloadAccountConfiguration() }
-                    }
-                }
-                .beerMapCard()
-            }
             }
         }
         .onChange(of: mode) { _, _ in
