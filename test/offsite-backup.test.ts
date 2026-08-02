@@ -325,6 +325,51 @@ describe("off-site backup durability", () => {
     });
   });
 
+  it("uses recent scheduled-backup evidence without privileged canary writes in serving readiness", async () => {
+    const clientFactory = vi.fn(() => {
+      throw new Error("Serving readiness must not create a Storage client for capability writes");
+    });
+
+    const readiness = await probeOffsiteBackupReadiness({
+      sourceSupabaseUrl: "https://serving-source.supabase.co",
+      destinationSupabaseUrl: "https://serving-backup.supabase.co",
+      destinationServiceRoleKey: "destination-key",
+      bucketName: "pintpath-backups",
+      lastSuccessfulAt: new Date().toISOString(),
+      maxFreshnessHours: 26,
+      required: true,
+      probeCapabilities: false,
+      clientFactory,
+    });
+
+    expect(clientFactory).not.toHaveBeenCalled();
+    expect(readiness).toMatchObject({
+      status: "ok",
+      required: true,
+      liveProbe: false,
+    });
+  });
+
+  it("still fails serving readiness when the last scheduled backup is stale", async () => {
+    const readiness = await probeOffsiteBackupReadiness({
+      sourceSupabaseUrl: "https://stale-source.supabase.co",
+      destinationSupabaseUrl: "https://stale-backup.supabase.co",
+      destinationServiceRoleKey: "destination-key",
+      bucketName: "pintpath-backups",
+      lastSuccessfulAt: new Date(Date.now() - 27 * 60 * 60 * 1000).toISOString(),
+      maxFreshnessHours: 26,
+      required: true,
+      probeCapabilities: false,
+    });
+
+    expect(readiness).toMatchObject({
+      status: "failed",
+      required: true,
+      liveProbe: false,
+      error: "last_successful_backup_stale",
+    });
+  });
+
   it("bounds a backup attempt when Supabase Storage never responds", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pint-path-offsite-timeout-test-"));
     roots.push(root);
