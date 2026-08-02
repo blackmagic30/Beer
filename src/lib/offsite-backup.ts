@@ -256,6 +256,7 @@ export async function probeOffsiteBackupReadiness(input: {
   lastSuccessfulAt: string | null;
   maxFreshnessHours: number;
   required: boolean;
+  probeCapabilities?: boolean | undefined;
   requestTimeoutMs?: number | undefined;
   clientFactory?: ((url: string, serviceRoleKey: string) => SupabaseClient) | undefined;
 }): Promise<OffsiteBackupReadiness> {
@@ -281,35 +282,36 @@ export async function probeOffsiteBackupReadiness(input: {
     };
   }
   let capabilityError: string | null = null;
-  const cacheKey = `${normalizedProjectOrigin(input.destinationSupabaseUrl)}:${input.bucketName}`;
-  if (destinationCapabilityCache?.key === cacheKey && destinationCapabilityCache.expiresAt > Date.now()) {
-    capabilityError = destinationCapabilityCache.error;
-  } else {
-    try {
-      if (normalizedProjectOrigin(input.sourceSupabaseUrl) === normalizedProjectOrigin(input.destinationSupabaseUrl)) {
-        throw new Error("destination_not_independent");
-      }
-      const client = input.clientFactory
-        ? input.clientFactory(input.destinationSupabaseUrl, input.destinationServiceRoleKey)
-        : createServerSupabaseClient(input.destinationSupabaseUrl, input.destinationServiceRoleKey, {
-          timeoutMs: input.requestTimeoutMs ?? OFFSITE_READINESS_REQUEST_TIMEOUT_MS,
-        });
-      await assertPrivateBucket(client, input.bucketName, "Off-site backup destination");
-      await assertBackupDestinationCapabilities(client, input.bucketName);
-      await probeBackupDestinationReadWrite(client, input.bucketName);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      capabilityError = message === "destination_not_independent"
-        ? "destination_not_independent"
-        : message.includes("private")
+  const sourceOrigin = normalizedProjectOrigin(input.sourceSupabaseUrl);
+  const destinationOrigin = normalizedProjectOrigin(input.destinationSupabaseUrl);
+  if (sourceOrigin === destinationOrigin) {
+    capabilityError = "destination_not_independent";
+  } else if (input.probeCapabilities !== false) {
+    const cacheKey = `${destinationOrigin}:${input.bucketName}`;
+    if (destinationCapabilityCache?.key === cacheKey && destinationCapabilityCache.expiresAt > Date.now()) {
+      capabilityError = destinationCapabilityCache.error;
+    } else {
+      try {
+        const client = input.clientFactory
+          ? input.clientFactory(input.destinationSupabaseUrl, input.destinationServiceRoleKey)
+          : createServerSupabaseClient(input.destinationSupabaseUrl, input.destinationServiceRoleKey, {
+            timeoutMs: input.requestTimeoutMs ?? OFFSITE_READINESS_REQUEST_TIMEOUT_MS,
+          });
+        await assertPrivateBucket(client, input.bucketName, "Off-site backup destination");
+        await assertBackupDestinationCapabilities(client, input.bucketName);
+        await probeBackupDestinationReadWrite(client, input.bucketName);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        capabilityError = message.includes("private")
           ? "bucket_not_private_or_unreachable"
           : message.includes("MIME")
             ? "bucket_mime_types_incomplete"
             : message.includes("object cap")
               ? "bucket_object_cap_present"
               : "bucket_canary_failed";
+      }
+      destinationCapabilityCache = { key: cacheKey, expiresAt: Date.now() + 60_000, error: capabilityError };
     }
-    destinationCapabilityCache = { key: cacheKey, expiresAt: Date.now() + 60_000, error: capabilityError };
   }
   const freshnessError = ageHours === null
     ? "no_successful_backup"
@@ -320,7 +322,7 @@ export async function probeOffsiteBackupReadiness(input: {
   return {
     status: error ? "failed" : "ok",
     required: true,
-    liveProbe: true,
+    liveProbe: input.probeCapabilities !== false,
     lastSuccessfulAt: input.lastSuccessfulAt,
     ageHours,
     ...(error ? { error } : {}),

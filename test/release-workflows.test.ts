@@ -121,8 +121,8 @@ describe("release workflow contracts", () => {
       .map(workflow)
       .join("\n");
     const expectedPins = new Map([
-      ["actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", 7],
-      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 4],
+      ["actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", 8],
+      ["actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", 5],
       ["actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a", 1],
       ["actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", 2],
       ["android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699", 1],
@@ -143,7 +143,7 @@ describe("release workflow contracts", () => {
     const checkoutIndexes = lines
       .map((line, index) => line.includes("uses: actions/checkout@") ? index : -1)
       .filter((index) => index >= 0);
-    expect(checkoutIndexes).toHaveLength(7);
+    expect(checkoutIndexes).toHaveLength(8);
     for (const index of checkoutIndexes) {
       expect(lines.slice(index, index + 4).join("\n")).toContain("persist-credentials: false");
     }
@@ -258,9 +258,24 @@ describe("release workflow contracts", () => {
 
   it("does not mix failed retry bodies into successful production health JSON", () => {
     const source = workflow("production-health.yml");
+    const monitor = repositoryFile("scripts/production-health-check.mjs");
 
-    expect(source).toContain("curl --fail --silent --show-error");
-    expect(source).not.toContain("--fail-with-body");
+    expect(source).toContain("node scripts/production-health-check.mjs");
+    expect(source).not.toContain("curl --retry");
+    expect(monitor).toContain("readinessAttempts: 6");
+    expect(monitor).toContain("readinessRetryDelayMs: 15_000");
+    expect(monitor).toContain("SAFE_DEPENDENCY_FIELDS");
+    expect(monitor).not.toContain("body.slice");
+  });
+
+  it("keeps Railway production activation local while retaining deep non-production readiness", () => {
+    const railway = repositoryFile("railway.toml");
+    const app = repositoryFile("src/app.ts");
+
+    expect(railway).toContain('healthcheckPath = "/ready"');
+    expect(railway).toContain('[environments.production.deploy]\nhealthcheckPath = "/health"');
+    expect(app).toContain("probeCapabilities: false");
+    expect(app).toContain('logger.warn("Operational readiness check failed"');
   });
 
   it("documents the live POS reference, rotation, and discount-only contract", () => {

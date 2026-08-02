@@ -1015,11 +1015,43 @@ export function createApp() {
               nodeEnv: env.NODE_ENV,
               railwayEnvironmentName: process.env.RAILWAY_ENVIRONMENT_NAME,
             }),
+            // A recent successful scheduled backup is the serving-readiness
+            // signal. Privileged write/list/download/delete canaries belong in
+            // provider/release checks, not in a public GET or deploy gate.
+            probeCapabilities: false,
           })
         )),
       ]);
       const restoreRuntimeReady = !env.RESTORE_REHEARSAL_MODE || Boolean(verifiedRestoreRuntime);
       const ready = readiness.ready && rateLimiterRedis.ready && offsiteBackup.status === "ok" && restoreRuntimeReady;
+      if (!ready) {
+        const safeDependencyFields = [
+          "status",
+          "required",
+          "ready",
+          "liveProbe",
+          "error",
+          "foreignKeyViolations",
+          "lastSuccessfulAt",
+          "ageHours",
+        ];
+        const dependencies = {
+          ...readiness.dependencies,
+          rateLimiterRedis,
+          offsiteBackup,
+        };
+        logger.warn("Operational readiness check failed", {
+          dependencies: Object.fromEntries(Object.entries(dependencies).map(([name, value]) => [
+            name,
+            Object.fromEntries(safeDependencyFields.flatMap((field) => (
+              Object.prototype.hasOwnProperty.call(value, field)
+                ? [[field, (value as Record<string, unknown>)[field]]]
+                : []
+            ))),
+          ])),
+          restoreRuntimeReady,
+        });
+      }
       res.status(ready ? 200 : 503).json(
         success({
           service: "pint-path",
