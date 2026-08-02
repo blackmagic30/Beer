@@ -16,7 +16,7 @@ Find Melbourne beer prices and happy hours, contribute verified updates, and man
 - Reserve and release local data missions.
 - Manage privacy choices, active sessions, account export, deletion requests, rewards, and staff invitations.
 - For assigned venue teams: update profile, beer/stock, happy hours and eligible specials; use counter tools, analytics/planner insights, and monthly report exports.
-- Sign in with email/password or configured Google/Apple providers using secure PKCE authentication.
+- Sign in with email/password or configured Google/Apple providers. iPhone uses native Apple sign-in and an app-returning Google PKCE session; Android uses secure PKCE authentication.
 
 ## Platform notes
 

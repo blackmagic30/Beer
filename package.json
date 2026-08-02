@@ -9,6 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "predev": "node scripts/ensure-native-dependencies.mjs",
     "dev": "tsx watch src/server.ts",
     "build": "rm -rf dist && tsc --project tsconfig.json && mkdir -p dist/src/db && cp src/db/schema.sql dist/src/db/schema.sql",
     "start": "node dist/src/server.js",
@@ -50,6 +51,7 @@
     "smoke:production:auth": "node scripts/production-smoke-check.mjs --strict-auth",
     "release:evidence": "tsx scripts/validate-release-evidence.ts",
     "release:evidence:strict": "tsx scripts/validate-release-evidence.ts --strict",
+    "pretest": "node scripts/ensure-native-dependencies.mjs",
     "test": "vitest run test",
     "security:scan": "node scripts/security-scan.mjs",
     "security:audit": "npm audit --audit-level=low",

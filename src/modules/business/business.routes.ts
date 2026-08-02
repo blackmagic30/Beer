@@ -254,10 +254,10 @@ export function createBusinessRouter(businessService: BusinessService): Router {
   });
 
   router.get("/config", (_req, res) => {
-    res.setHeader(
-      "Cache-Control",
-      env.RESTORE_REHEARSAL_MODE ? "private, no-store" : "public, max-age=300, stale-while-revalidate=600",
-    );
+    // Authentication provider availability and public Supabase keys can change
+    // independently of an app release. Never let a CDN or device keep a stale
+    // provider list that hides or disables a working sign-in option.
+    res.setHeader("Cache-Control", "private, no-store");
     res.json(success(businessService.getPublicConfig()));
   });
 

@@ -14,6 +14,8 @@ struct AccountView: View {
                 }
                 if model.isSignedIn, let dashboard = model.accountDashboard {
                     signedInView(dashboard)
+                } else if model.isSignedIn {
+                    signedInRecoveryView
                 } else {
                     AuthView()
                 }
@@ -65,6 +67,35 @@ struct AccountView: View {
         } message: {
             Text("This revokes every active Pint Path session, including this device. You will need to sign in again everywhere.")
         }
+    }
+
+    private var signedInRecoveryView: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(
+                eyebrow: "Session retained",
+                title: "Account details are temporarily unavailable",
+                subtitle: "You are still signed in. Check your connection and retry; there is no need to sign in again.",
+                systemImage: "person.crop.circle.badge.clock"
+            )
+            PrimaryButton(
+                title: "Retry account details",
+                systemImage: "arrow.clockwise",
+                isLoading: model.isLoading
+            ) {
+                Task {
+                    await model.refreshAccount()
+                    await model.refreshVenuePortal()
+                }
+            }
+            SecondaryButton(
+                title: "Log out or switch account",
+                systemImage: "rectangle.portrait.and.arrow.right",
+                isDestructive: true
+            ) {
+                showLogoutConfirmation = true
+            }
+        }
+        .beerMapCard()
     }
 
     private func reauthenticationCard(_ context: String) -> some View {
