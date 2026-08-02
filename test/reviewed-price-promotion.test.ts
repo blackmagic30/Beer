@@ -413,8 +413,14 @@ describe("reviewed production price promotion", () => {
     const hash = writeNewJsonArtifact(manifestPath, manifest);
 
     expect(hash).toBe(sha256Bytes(fs.readFileSync(manifestPath)));
+    const readFile = vi.spyOn(fs, "readFileSync");
     expect(loadReviewedPricePromotionManifest(manifestPath, hash).manifest).toEqual(manifest);
+    expect(readFile.mock.calls.at(-1)?.[0]).toEqual(expect.any(Number));
     expect(() => loadReviewedPricePromotionManifest(manifestPath, "b".repeat(64))).toThrow("SHA-256 mismatch");
+    expect(readFile.mock.calls.at(-1)?.[0]).toEqual(expect.any(Number));
+    const manifestLinkPath = path.join(temporaryRoot!, "linked-reviewed-manifest.json");
+    fs.symlinkSync(manifestPath, manifestLinkPath);
+    expect(() => loadReviewedPricePromotionManifest(manifestLinkPath, hash)).toThrow("not a symlink");
     expect(() => writeNewJsonArtifact(manifestPath, manifest)).toThrow("already exists");
     expect(() => writeNewJsonArtifact("relative.json", manifest)).toThrow("canonical absolute path");
   });
@@ -666,10 +672,12 @@ describe("reviewed production price promotion", () => {
     };
     const inProgressPath = path.join(temporaryRoot!, "promotion-in-progress.json");
     const inProgressSha256 = writeNewJsonArtifact(inProgressPath, inProgress);
+    const readFile = vi.spyOn(fs, "readFileSync");
     const loadedInProgress = loadPromotionReceiptAuthority(
       inProgressPath,
       inProgressSha256,
     );
+    expect(readFile.mock.calls.at(-1)?.[0]).toEqual(expect.any(Number));
     expect(loadedInProgress.receipt.outcome).toBe("in_progress");
 
     const execution = await executeReviewedPriceQuarantine({

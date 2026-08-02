@@ -662,20 +662,66 @@ function sameStableFile(before: fs.Stats, after: fs.Stats): boolean {
     before.ctimeMs === after.ctimeMs;
 }
 
+function pathStillNamesStableFile(filePath: string, descriptorStat: fs.Stats): boolean {
+  try {
+    const pathStat = fs.lstatSync(filePath);
+    return pathStat.isFile() &&
+      !pathStat.isSymbolicLink() &&
+      fs.realpathSync(filePath) === filePath &&
+      sameStableFile(descriptorStat, pathStat);
+  } catch {
+    return false;
+  }
+}
+
+function readStableCanonicalFile(
+  filePath: string,
+  fieldName: string,
+  changedMessage: string,
+): Buffer {
+  assertCanonicalAbsoluteFile(filePath, fieldName);
+  const noFollowFlag = Number.isInteger(fs.constants.O_NOFOLLOW)
+    ? fs.constants.O_NOFOLLOW
+    : 0;
+  const nonBlockingFlag = Number.isInteger(fs.constants.O_NONBLOCK)
+    ? fs.constants.O_NONBLOCK
+    : 0;
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | noFollowFlag | nonBlockingFlag,
+  );
+  try {
+    const before = fs.fstatSync(descriptor);
+    if (!before.isFile() || !pathStillNamesStableFile(filePath, before)) {
+      throw new Error(`${fieldName} must remain the same canonical regular file while it is opened.`);
+    }
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    if (
+      bytes.length !== after.size ||
+      !sameStableFile(before, after) ||
+      !pathStillNamesStableFile(filePath, after)
+    ) {
+      throw new Error(changedMessage);
+    }
+    return bytes;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 export function loadReviewedPricePromotionManifest(
   manifestPath: string,
   expectedSha256: string,
 ): { bytes: Buffer; manifest: ReviewedPricePromotionManifest; sha256: string } {
-  assertCanonicalAbsoluteFile(manifestPath, "Manifest path");
   if (!/^[a-f0-9]{64}$/.test(expectedSha256)) {
     throw new Error("Expected manifest SHA-256 must be exactly 64 lowercase hexadecimal characters.");
   }
-  const before = fs.lstatSync(manifestPath);
-  const bytes = fs.readFileSync(manifestPath);
-  const after = fs.lstatSync(manifestPath);
-  if (!sameStableFile(before, after)) {
-    throw new Error("Manifest changed while it was being read.");
-  }
+  const bytes = readStableCanonicalFile(
+    manifestPath,
+    "Manifest path",
+    "Manifest changed while it was being read.",
+  );
   const actualSha256 = sha256Bytes(bytes);
   if (actualSha256 !== expectedSha256) {
     throw new Error(`Manifest SHA-256 mismatch: expected ${expectedSha256}, received ${actualSha256}.`);
@@ -1019,16 +1065,14 @@ export function loadPromotionReceiptAuthority(
   receiptPath: string,
   expectedSha256: string,
 ): { bytes: Buffer; receipt: PromotionReceiptAuthority; sha256: string } {
-  assertCanonicalAbsoluteFile(receiptPath, "Promotion receipt path");
   if (!/^[a-f0-9]{64}$/.test(expectedSha256)) {
     throw new Error("Expected promotion receipt SHA-256 must be exactly 64 lowercase hexadecimal characters.");
   }
-  const before = fs.lstatSync(receiptPath);
-  const bytes = fs.readFileSync(receiptPath);
-  const after = fs.lstatSync(receiptPath);
-  if (!sameStableFile(before, after)) {
-    throw new Error("Promotion receipt changed while it was being read.");
-  }
+  const bytes = readStableCanonicalFile(
+    receiptPath,
+    "Promotion receipt path",
+    "Promotion receipt changed while it was being read.",
+  );
   const actualSha256 = sha256Bytes(bytes);
   if (actualSha256 !== expectedSha256) {
     throw new Error(`Promotion receipt SHA-256 mismatch: expected ${expectedSha256}, received ${actualSha256}.`);
